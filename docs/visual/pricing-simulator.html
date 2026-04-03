@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pricing Simulator — Ethical Yoga App</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: Georgia, 'Times New Roman', serif;
+    background: #F7F4EF;
+    color: #3a3a3a;
+    padding: 40px 20px;
+    line-height: 1.6;
+  }
+  .container { max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 28px; color: #1A5653; margin-bottom: 4px; }
+  .subtitle {
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    color: #6B5B4E;
+    margin-bottom: 32px;
+  }
+
+  /* Tier ratio controls */
+  .controls-box {
+    background: #1A5653;
+    color: #F7F4EF;
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin-bottom: 32px;
+  }
+  .controls-box h2 {
+    font-size: 18px;
+    color: #C4A96A;
+    margin-bottom: 6px;
+  }
+  .controls-box .formula {
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin-bottom: 6px;
+    line-height: 1.5;
+  }
+  .tier-inputs {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    margin-top: 16px;
+  }
+  .tier-input-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .tier-input-group label {
+    font-family: Arial, sans-serif;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    opacity: 0.8;
+  }
+  .tier-input-group input {
+    width: 72px;
+    padding: 8px 6px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-radius: 6px;
+    background: rgba(255,255,255,0.1);
+    color: white;
+    font-family: 'Courier New', monospace;
+    font-size: 16px;
+    text-align: center;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .tier-input-group input:focus { border-color: #C4A96A; }
+  .tier-input-group input.locked { opacity: 0.5; cursor: not-allowed; }
+  .ratio-info {
+    font-family: Arial, sans-serif;
+    font-size: 13px;
+    margin-top: 14px;
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .ratio-info span { opacity: 0.8; }
+  .ratio-info strong { color: #C4A96A; }
+  .preset-buttons {
+    margin-top: 14px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .preset-btn {
+    font-family: Arial, sans-serif;
+    font-size: 12px;
+    padding: 6px 14px;
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 20px;
+    background: transparent;
+    color: #F7F4EF;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .preset-btn:hover { background: rgba(255,255,255,0.15); border-color: #C4A96A; }
+  .preset-btn.active { background: #C4A96A; color: #1A5653; border-color: #C4A96A; font-weight: 600; }
+
+  /* Section titles */
+  .section-title {
+    font-size: 22px;
+    color: #1A5653;
+    margin: 36px 0 16px 0;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #E8DCC8;
+  }
+
+  /* Setup cards */
+  .setup-card {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .setup-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .setup-card h3 { font-size: 17px; color: #1A5653; margin-bottom: 4px; }
+  .setup-meta {
+    font-family: Arial, sans-serif;
+    font-size: 13px;
+    color: #6B5B4E;
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .setup-edit {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .setup-edit label {
+    font-family: Arial, sans-serif;
+    font-size: 11px;
+    color: #6B5B4E;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .setup-edit input {
+    width: 58px;
+    padding: 5px 4px;
+    border: 1px solid #E8DCC8;
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    text-align: center;
+    color: #1A5653;
+    outline: none;
+  }
+  .setup-edit input:focus { border-color: #1A5653; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: Arial, sans-serif;
+    font-size: 13px;
+  }
+  thead th {
+    text-align: right;
+    padding: 8px 8px;
+    font-weight: 600;
+    color: #6B5B4E;
+    border-bottom: 2px solid #E8DCC8;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  thead th:first-child { text-align: left; }
+  tbody td {
+    text-align: right;
+    padding: 6px 8px;
+    border-bottom: 1px solid #f0ebe3;
+    font-variant-numeric: tabular-nums;
+  }
+  tbody td:first-child { text-align: left; font-weight: 600; color: #1A5653; }
+  tbody tr:hover { background: #f9f6f0; }
+  td.rate-cell { color: #1A5653; font-weight: 600; }
+  td.total-cell { color: #6B5B4E; }
+
+  .tier-1 { color: #2d8659; }
+  .tier-2 { color: #4a9e6e; }
+  .tier-3 { color: #6B5B4E; }
+  .tier-4 { color: #c47a32; }
+  .tier-5 { color: #b85430; }
+
+  .insight {
+    margin-top: 12px;
+    padding: 10px 14px;
+    background: #f4f0e8;
+    border-radius: 8px;
+    font-family: Arial, sans-serif;
+    font-size: 13px;
+    color: #6B5B4E;
+  }
+  .insight strong { color: #1A5653; }
+
+  /* Test case cards */
+  .test-card {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .test-card h3 { font-size: 17px; color: #1A5653; margin-bottom: 4px; }
+  .test-meta {
+    font-family: Arial, sans-serif;
+    font-size: 13px;
+    color: #6B5B4E;
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .tier-row {
+    display: flex;
+    align-items: center;
+    padding: 7px 0;
+    border-bottom: 1px solid #f0ebe3;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+  }
+  .tier-row:last-of-type { border-bottom: none; }
+  .tier-label { width: 130px; font-weight: 600; font-size: 13px; }
+  .tier-bar-wrap { flex: 1; display: flex; align-items: center; gap: 8px; }
+  .tier-bar {
+    height: 26px;
+    border-radius: 4px;
+    min-width: 6px;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: white;
+    transition: width 0.3s ease;
+  }
+  .tier-count { font-size: 12px; color: #999; width: 70px; }
+  .tier-price { width: 85px; text-align: right; font-weight: 600; font-size: 15px; }
+
+  .bg-tier-1 { background: #2d8659; }
+  .bg-tier-2 { background: #4a9e6e; }
+  .bg-tier-3 { background: #6B5B4E; }
+  .bg-tier-4 { background: #c47a32; }
+  .bg-tier-5 { background: #b85430; }
+
+  .result-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 2px solid #E8DCC8;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+  }
+  .result-item { text-align: center; flex: 1; }
+  .result-value { font-size: 17px; font-weight: 700; color: #1A5653; }
+  .result-label { font-size: 11px; color: #999; text-transform: uppercase; letter-spacing: 0.5px; }
+  .check { color: #2d8659; }
+
+  .note {
+    font-family: Arial, sans-serif;
+    font-size: 13px;
+    color: #999;
+    margin-top: 8px;
+    font-style: italic;
+  }
+
+  .rate-badge {
+    display: inline-block;
+    background: #1A5653;
+    color: white;
+    font-family: Arial, sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 12px;
+    margin-left: 6px;
+  }
+
+  @media (max-width: 750px) {
+    .tier-count { display: none; }
+    .tier-label { width: 90px; font-size: 12px; }
+    .tier-price { width: 65px; font-size: 13px; }
+    .setup-edit { flex-wrap: wrap; }
+    .result-row { flex-wrap: wrap; gap: 8px; }
+    .result-item { min-width: 80px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>Pricing Simulator</h1>
+  <p class="subtitle">Ethical Yoga App — interactive income-based pricing engine with scaling teacher rate</p>
+
+  <!-- TIER RATIO CONTROLS -->
+  <div class="controls-box">
+    <h2>Tier Ratios</h2>
+    <div class="formula">teacher rate = min rate + (target rate − min rate) × (students − min) / (max − min)</div>
+    <div class="formula">student price = (room + teacher rate) / sum of ratios × student's ratio</div>
+    <div class="tier-inputs">
+      <div class="tier-input-group">
+        <label>Tier 1</label>
+        <input type="number" id="ratio1" value="0.50" step="0.05" min="0.1" max="0.99">
+      </div>
+      <div class="tier-input-group">
+        <label>Tier 2</label>
+        <input type="number" id="ratio2" value="0.75" step="0.05" min="0.1" max="0.99">
+      </div>
+      <div class="tier-input-group">
+        <label>Tier 3</label>
+        <input type="number" id="ratio3" value="1.00" class="locked" disabled>
+      </div>
+      <div class="tier-input-group">
+        <label>Tier 4</label>
+        <input type="number" id="ratio4" value="1.25" step="0.05" min="1.01" max="2.0">
+      </div>
+      <div class="tier-input-group">
+        <label>Tier 5</label>
+        <input type="number" id="ratio5" value="1.50" step="0.05" min="1.01" max="2.0">
+      </div>
+    </div>
+    <div class="ratio-info">
+      <span>Sum: <strong id="ratioSum">5.00</strong></span>
+      <span>Average: <strong id="ratioAvg">1.00</strong></span>
+      <span>Max ratio (T5/T1): <strong id="maxRatio">3.00×</strong></span>
+      <span>Inner step: <strong id="innerStep">0.25</strong></span>
+      <span>Outer step: <strong id="outerStep">0.25</strong></span>
+    </div>
+    <div class="preset-buttons">
+      <button class="preset-btn active" data-ratios="0.50,0.75,1.00,1.25,1.50">Linear 3×</button>
+      <button class="preset-btn" data-ratios="0.67,0.83,1.00,1.17,1.33">Linear 2×</button>
+      <button class="preset-btn" data-ratios="0.65,0.80,1.00,1.20,1.35">Compressed 2×</button>
+      <button class="preset-btn" data-ratios="0.72,0.82,1.00,1.18,1.28">√ compressed</button>
+    </div>
+  </div>
+
+  <!-- PART 1 -->
+  <h2 class="section-title">Part 1 — Teacher Setup Previews</h2>
+  <p class="note" style="margin-bottom:16px;">What the teacher sees during class creation. Teacher rate scales from min rate to target rate as students increase. Prices assume a balanced tier mix.</p>
+  <div id="setupCards"></div>
+
+  <!-- PART 2 -->
+  <h2 class="section-title">Part 2 — Algorithm Test Cases</h2>
+  <p class="note" style="margin-bottom:16px;">Actual pricing with specific student tier distributions and scaling teacher rate.</p>
+  <div id="testCards"></div>
+
+</div>
+
+<script>
+// ── Data ──
+const SETUPS = [
+  { name: 'Typical class — affordable room',     room: 50,  minRate: 30, targetRate: 55, min: 6,  max: 14 },
+  { name: 'Premium teacher — higher rate',        room: 50,  minRate: 50, targetRate: 85, min: 8,  max: 16 },
+  { name: 'Community class — building momentum',  room: 20,  minRate: 15, targetRate: 35, min: 4,  max: 12 },
+  { name: 'Large group — expensive venue',        room: 100, minRate: 40, targetRate: 70, min: 10, max: 25 },
+];
+
+const TESTS = [
+  { name: '1. Happy path — balanced class',      room: 50, minRate: 30, targetRate: 55, min: 6,  max: 14, tiers: { 1:2, 2:2, 3:3, 4:2, 5:1 } },
+  { name: '2. Skewed low income',                 room: 50, minRate: 30, targetRate: 55, min: 6,  max: 14, tiers: { 1:4, 2:3, 3:1, 4:1, 5:1 } },
+  { name: '3. Small class — building momentum',   room: 50, minRate: 30, targetRate: 55, min: 6,  max: 14, tiers: { 1:2, 2:2, 3:1, 5:1 } },
+  { name: '4. Minimum viable — barely enough',    room: 50, minRate: 30, targetRate: 55, min: 6,  max: 14, tiers: { 1:2, 2:2, 3:1, 4:1 } },
+  { name: '5. Full class — teacher rewarded',     room: 50, minRate: 30, targetRate: 55, min: 6,  max: 14, tiers: { 1:2, 2:3, 3:4, 4:3, 5:2 } },
+  { name: '6. Large class — 20 students',         room: 80, minRate: 40, targetRate: 70, min: 10, max: 25, tiers: { 1:3, 2:4, 3:6, 4:4, 5:3 } },
+  { name: '7. One outlier — 9 low, 1 high',       room: 50, minRate: 30, targetRate: 55, min: 6,  max: 14, tiers: { 1:9, 5:1 } },
+];
+
+const TIER_COLORS = { 1:'tier-1', 2:'tier-2', 3:'tier-3', 4:'tier-4', 5:'tier-5' };
+const TIER_BG    = { 1:'bg-tier-1', 2:'bg-tier-2', 3:'bg-tier-3', 4:'bg-tier-4', 5:'bg-tier-5' };
+
+// ── Helpers ──
+let ratios = {};
+function getRatios() {
+  return {
+    1: parseFloat(document.getElementById('ratio1').value) || 0.5,
+    2: parseFloat(document.getElementById('ratio2').value) || 0.75,
+    3: 1.0,
+    4: parseFloat(document.getElementById('ratio4').value) || 1.25,
+    5: parseFloat(document.getElementById('ratio5').value) || 1.50,
+  };
+}
+function fmt(n) { return '€' + n.toFixed(2); }
+
+function scalingRate(numStudents, minStudents, maxStudents, minRate, targetRate) {
+  if (numStudents >= maxStudents) return targetRate;
+  if (numStudents <= minStudents) return minRate;
+  const t = (numStudents - minStudents) / (maxStudents - minStudents);
+  return minRate + (targetRate - minRate) * t;
+}
+
+function updateInfo() {
+  ratios = getRatios();
+  const sum = Object.values(ratios).reduce((a, b) => a + b, 0);
+  document.getElementById('ratioSum').textContent = sum.toFixed(2);
+  document.getElementById('ratioAvg').textContent = (sum / 5).toFixed(2);
+  document.getElementById('maxRatio').textContent = (ratios[5] / ratios[1]).toFixed(2) + '×';
+  document.getElementById('innerStep').textContent = (ratios[3] - ratios[2]).toFixed(2);
+  document.getElementById('outerStep').textContent = (ratios[2] - ratios[1]).toFixed(2);
+  document.querySelectorAll('.preset-btn').forEach(btn => {
+    const vals = btn.dataset.ratios.split(',').map(Number);
+    const match = Math.abs(vals[0] - ratios[1]) < 0.005
+              && Math.abs(vals[1] - ratios[2]) < 0.005
+              && Math.abs(vals[3] - ratios[4]) < 0.005
+              && Math.abs(vals[4] - ratios[5]) < 0.005;
+    btn.classList.toggle('active', match);
+  });
+}
+
+// ── Part 1: Setup previews ──
+function renderSetups() {
+  ratios = getRatios();
+  const container = document.getElementById('setupCards');
+  container.innerHTML = '';
+  const avgRatio = Object.values(ratios).reduce((a, b) => a + b, 0) / 5;
+
+  SETUPS.forEach((s, idx) => {
+    // Pick student counts
+    const counts = [];
+    const step = Math.max(1, Math.floor((s.max - s.min) / 4));
+    for (let n = s.min; n <= s.max; n += step) counts.push(n);
+    if (counts[counts.length - 1] !== s.max) counts.push(s.max);
+
+    let rows = '';
+    counts.forEach(n => {
+      const rate = scalingRate(n, s.min, s.max, s.minRate, s.targetRate);
+      const total = s.room + rate;
+      let cells = `<td>${n}</td><td class="rate-cell">${fmt(rate)}</td><td class="total-cell">${fmt(total)}</td>`;
+      for (let t = 1; t <= 5; t++) {
+        const price = total / n / avgRatio * ratios[t];
+        cells += `<td class="${TIER_COLORS[t]}">${fmt(price)}</td>`;
+      }
+      rows += `<tr>${cells}</tr>`;
+    });
+
+    // Insight: compare min vs max students for tier 3
+    const rateAtMin = scalingRate(s.min, s.min, s.max, s.minRate, s.targetRate);
+    const rateAtMax = scalingRate(s.max, s.min, s.max, s.minRate, s.targetRate);
+    const totalAtMin = s.room + rateAtMin;
+    const totalAtMax = s.room + rateAtMax;
+    const priceMinT3 = totalAtMin / s.min / avgRatio * ratios[3];
+    const priceMaxT3 = totalAtMax / s.max / avgRatio * ratios[3];
+    const pctCheaper = Math.round((1 - priceMaxT3 / priceMinT3) * 100);
+
+    const card = document.createElement('div');
+    card.className = 'setup-card';
+    card.innerHTML = `
+      <div class="setup-header">
+        <div>
+          <h3>${s.name}</h3>
+          <div class="setup-meta">
+            <span>Room: <strong>${fmt(s.room)}</strong></span>
+            <span>Rate: <strong>${fmt(s.minRate)} → ${fmt(s.targetRate)}</strong></span>
+            <span>Students: <strong>${s.min} – ${s.max}</strong></span>
+          </div>
+        </div>
+        <div class="setup-edit">
+          <label>Room <input type="number" value="${s.room}" data-setup="${idx}" data-field="room"></label>
+          <label>Min rate <input type="number" value="${s.minRate}" data-setup="${idx}" data-field="minRate"></label>
+          <label>Target rate <input type="number" value="${s.targetRate}" data-setup="${idx}" data-field="targetRate"></label>
+          <label>Min <input type="number" value="${s.min}" data-setup="${idx}" data-field="min"></label>
+          <label>Max <input type="number" value="${s.max}" data-setup="${idx}" data-field="max"></label>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Students</th>
+            <th style="text-align:right">Teacher rate</th>
+            <th style="text-align:right">Total</th>
+            <th class="tier-1">Tier 1</th>
+            <th class="tier-2">Tier 2</th>
+            <th class="tier-3">Tier 3</th>
+            <th class="tier-4">Tier 4</th>
+            <th class="tier-5">Tier 5</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="insight">
+        <strong>Teacher earns ${fmt(rateAtMin)}</strong> at ${s.min} students, scaling to <strong>${fmt(rateAtMax)}</strong> at ${s.max} students.
+        Tier 3 student price drops <strong>${pctCheaper}%</strong> from ${fmt(priceMinT3)} to ${fmt(priceMaxT3)}.
+      </div>
+    `;
+    container.appendChild(card);
+  });
+
+  container.querySelectorAll('.setup-edit input').forEach(input => {
+    input.addEventListener('change', e => {
+      const idx = parseInt(e.target.dataset.setup);
+      SETUPS[idx][e.target.dataset.field] = parseFloat(e.target.value);
+      renderSetups();
+    });
+  });
+}
+
+// ── Part 2: Test cases ──
+function renderTests() {
+  ratios = getRatios();
+  const container = document.getElementById('testCards');
+  container.innerHTML = '';
+
+  TESTS.forEach(test => {
+    const students = Object.values(test.tiers).reduce((a, b) => a + b, 0);
+    const rate = scalingRate(students, test.min, test.max, test.minRate, test.targetRate);
+    const total = test.room + rate;
+    const ratePct = test.targetRate > test.minRate
+      ? Math.round(((rate - test.minRate) / (test.targetRate - test.minRate)) * 100)
+      : 100;
+
+    // Weighted ratio sum
+    let weightedSum = 0;
+    for (const [tier, count] of Object.entries(test.tiers)) {
+      weightedSum += ratios[tier] * count;
+    }
+    const baseUnit = total / weightedSum;
+
+    // Tier rows
+    let tierRows = '';
+    let totalCollected = 0;
+    let minPrice = Infinity, maxPrice = 0;
+    const maxCount = Math.max(...Object.values(test.tiers));
+
+    for (let t = 1; t <= 5; t++) {
+      if (!test.tiers[t]) continue;
+      const count = test.tiers[t];
+      const price = baseUnit * ratios[t];
+      totalCollected += price * count;
+      minPrice = Math.min(minPrice, price);
+      maxPrice = Math.max(maxPrice, price);
+      const barPct = Math.max(5, (count / maxCount) * 80);
+      tierRows += `
+        <div class="tier-row">
+          <span class="tier-label ${TIER_COLORS[t]}">Tier ${t} (${ratios[t].toFixed(2)}×)</span>
+          <div class="tier-bar-wrap">
+            <div class="tier-bar ${TIER_BG[t]}" style="width:${barPct}%;">${count}</div>
+            <span class="tier-count">${count} student${count > 1 ? 's' : ''}</span>
+          </div>
+          <span class="tier-price ${TIER_COLORS[t]}">${fmt(price)}</span>
+        </div>
+      `;
+    }
+
+    const priceRange = minPrice === maxPrice ? fmt(minPrice) : `${fmt(minPrice)} → ${fmt(maxPrice)}`;
+
+    const card = document.createElement('div');
+    card.className = 'test-card';
+    card.innerHTML = `
+      <h3>${test.name}</h3>
+      <div class="test-meta">
+        <span>Room: <strong>${fmt(test.room)}</strong></span>
+        <span>Rate range: <strong>${fmt(test.minRate)} → ${fmt(test.targetRate)}</strong></span>
+        <span>Students: <strong>${students}</strong> (${test.min}–${test.max})</span>
+        <span>Effective rate: <strong>${fmt(rate)}</strong> <span class="rate-badge">${ratePct}%</span></span>
+      </div>
+      ${tierRows}
+      <div class="result-row">
+        <div class="result-item">
+          <div class="result-value">${fmt(totalCollected)}</div>
+          <div class="result-label">Total collected</div>
+        </div>
+        <div class="result-item">
+          <div class="result-value">${fmt(test.room)}</div>
+          <div class="result-label">Room cost</div>
+        </div>
+        <div class="result-item">
+          <div class="result-value check">${fmt(rate)} ✓</div>
+          <div class="result-label">Teacher earns</div>
+        </div>
+        <div class="result-item">
+          <div class="result-value">${priceRange}</div>
+          <div class="result-label">Price range</div>
+        </div>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+// ── Render all ──
+function renderAll() {
+  updateInfo();
+  renderSetups();
+  renderTests();
+}
+
+// ── Events ──
+['ratio1', 'ratio2', 'ratio4', 'ratio5'].forEach(id => {
+  document.getElementById(id).addEventListener('input', renderAll);
+});
+
+document.querySelectorAll('.preset-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const vals = btn.dataset.ratios.split(',').map(Number);
+    document.getElementById('ratio1').value = vals[0].toFixed(2);
+    document.getElementById('ratio2').value = vals[1].toFixed(2);
+    document.getElementById('ratio4').value = vals[3].toFixed(2);
+    document.getElementById('ratio5').value = vals[4].toFixed(2);
+    renderAll();
+  });
+});
+
+renderAll();
+</script>
+</body>
+</html>
