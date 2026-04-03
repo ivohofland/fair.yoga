@@ -62,6 +62,7 @@ export async function PUT(
   }
 
   // Prevent changing teacherId or id
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { teacherId: _t, id: _i, ...updateData } = body;
 
   const updated = await prisma.class.update({
