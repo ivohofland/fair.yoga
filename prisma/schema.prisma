@@ -387,3 +387,37 @@ model Announcement {
   teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
   class   Class?  @relation(fields: [classId], references: [id], onDelete: SetNull)
 }
+
+// ============================================================================
+// AUTH
+// ============================================================================
+
+model Session {
+  id        String        @id
+  userId    String
+  userType  RecipientType
+  expiresAt DateTime
+  createdAt DateTime      @default(now())
+
+  @@index([userId, userType])
+}
+
+model MagicLinkToken {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique
+  email     String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model PasskeyCredential {
+  id         String        @id
+  userId     String
+  userType   RecipientType
+  publicKey  Bytes
+  counter    BigInt
+  transports String[]
+  createdAt  DateTime      @default(now())
+
+  @@index([userId, userType])
+}
