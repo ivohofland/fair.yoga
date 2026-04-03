@@ -3,7 +3,6 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
-  respondError,
   requireTeacher,
   parseBody,
   isErrorResponse,
