@@ -8,6 +8,19 @@ import {
   isErrorResponse,
 } from '@/lib/api-utils';
 
+export async function GET(request: NextRequest) {
+  const session = await requireTeacher(request);
+  if (isErrorResponse(session)) return session;
+
+  const teacherRooms = await prisma.teacherRoom.findMany({
+    where: { teacherId: session.userId },
+    include: { room: true },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return respondOk(teacherRooms);
+}
+
 interface CreateTeacherRoomBody {
   roomId: string;
   capacityOverride: number;
