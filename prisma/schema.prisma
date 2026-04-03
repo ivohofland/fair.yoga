@@ -1,0 +1,389 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum ReminderPref {
+  morning_of
+  evening_before
+  one_hour_before
+}
+
+enum PaymentLevel {
+  LEVEL_1
+  LEVEL_2
+}
+
+enum ProcessorType {
+  mollie
+  stripe
+}
+
+enum StudentReminderPref {
+  eve
+  morning
+  one_hour
+  off
+}
+
+enum CancelDeadline {
+  HOURS_48
+  HOURS_24
+  HOURS_12
+  HOURS_6
+}
+
+enum AutoCancelCheck {
+  HOURS_4
+  HOURS_2
+  HOURS_1
+}
+
+enum ClassStatus {
+  draft
+  open
+  full
+  in_progress
+  completed
+  cancelled
+}
+
+enum RegistrationStatus {
+  registered
+  attended
+  no_show
+  late_cancel
+  cancelled
+}
+
+enum WaitlistStatus {
+  waiting
+  promoted
+  claimed
+  expired
+  removed
+}
+
+enum PaymentStatus {
+  pending
+  paid
+  overdue
+}
+
+enum RecipientType {
+  teacher
+  student
+}
+
+enum NotificationType {
+  booking_confirmed
+  class_cancelled
+  payment_received
+  waitlist_promoted
+  spot_available
+  reminder
+  missed_you
+  announcement
+}
+
+// ============================================================================
+// PEOPLE
+// ============================================================================
+
+model Teacher {
+  id                 String         @id @default(uuid())
+  firstName          String
+  lastName           String
+  email              String         @unique
+  photoUrl           String?
+  bio                String         @db.VarChar(250)
+  pageSlug           String         @unique
+  customDomain       String?
+  defaultCurrency    String         @default("EUR")
+  defaultTimezone    String         @default("Europe/Amsterdam")
+  defaultReminder    ReminderPref   @default(morning_of)
+  paymentLevel       PaymentLevel   @default(LEVEL_1)
+  bankIban           String?
+  bankAccountName    String?
+  processorType      ProcessorType?
+  processorAccountId String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  teacherRooms   TeacherRoom[]
+  classTemplates ClassTemplate[]
+  classes        Class[]
+  studioClasses  StudioClass[]
+  announcements  Announcement[]
+  studentPrivacy StudentPrivacy[]
+  createdRooms   Room[]           @relation("RoomCreator")
+}
+
+model Student {
+  id                 String              @id @default(uuid())
+  firstName          String
+  lastName           String
+  email              String              @unique
+  incomeTier         Int                 @default(3)
+  phone              String?
+  birthday           DateTime?           @db.Date
+  address            String?
+  reminderPref       StudentReminderPref @default(morning)
+  emailNotifications Boolean             @default(true)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  registrations   Registration[]
+  waitlistEntries WaitlistEntry[]
+  studentPrivacy  StudentPrivacy[]
+}
+
+model StudentPrivacy {
+  id            String   @id @default(uuid())
+  studentId     String
+  teacherId     String
+  shareEmail    Boolean  @default(false)
+  sharePhone    Boolean  @default(false)
+  shareBirthday Boolean  @default(false)
+  shareAddress  Boolean  @default(false)
+  receiveComms  Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, teacherId])
+}
+
+// ============================================================================
+// SPACES
+// ============================================================================
+
+model Room {
+  id          String   @id @default(uuid())
+  venueName   String
+  address     String
+  city        String
+  postcode    String
+  floor       String
+  roomName    String
+  maxCapacity Int
+  equipment   Json     @default("[]")
+  notes       String?  @db.Text
+  isPublic    Boolean  @default(true)
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy    Teacher       @relation("RoomCreator", fields: [createdById], references: [id])
+  teacherRooms TeacherRoom[]
+
+  @@unique([address, roomName])
+}
+
+model TeacherRoom {
+  id               String   @id @default(uuid())
+  teacherId        String
+  roomId           String
+  capacityOverride Int
+  rentalRate       Decimal  @db.Decimal(10, 2)
+  equipmentNotes   String?  @db.Text
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  teacher        Teacher         @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  room           Room            @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  classTemplates ClassTemplate[]
+  classes        Class[]
+
+  @@unique([teacherId, roomId])
+}
+
+// ============================================================================
+// CLASSES
+// ============================================================================
+
+model ClassTemplate {
+  id              String          @id @default(uuid())
+  teacherId       String
+  teacherRoomId   String
+  classType       String
+  description     String?         @db.Text
+  dayOfWeek       Int
+  startTime       String
+  durationMinutes Int
+  roomCost        Decimal         @db.Decimal(10, 2)
+  minRate         Decimal         @db.Decimal(10, 2)
+  targetRate      Decimal         @db.Decimal(10, 2)
+  minStudents     Int
+  maxStudents     Int
+  cancelDeadline  CancelDeadline  @default(HOURS_24)
+  autoCancelCheck AutoCancelCheck @default(HOURS_2)
+  isActive        Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  teacher     Teacher     @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  teacherRoom TeacherRoom @relation(fields: [teacherRoomId], references: [id])
+  classes     Class[]
+}
+
+model Class {
+  id                   String          @id @default(uuid())
+  teacherId            String
+  teacherRoomId        String
+  templateId           String?
+  classType            String
+  description          String?         @db.Text
+  date                 DateTime        @db.Date
+  startTime            String
+  durationMinutes      Int
+  roomCost             Decimal         @db.Decimal(10, 2)
+  minRate              Decimal         @db.Decimal(10, 2)
+  targetRate           Decimal         @db.Decimal(10, 2)
+  minStudents          Int
+  maxStudents          Int
+  cancelDeadline       CancelDeadline  @default(HOURS_24)
+  autoCancelCheck      AutoCancelCheck @default(HOURS_2)
+  status               ClassStatus     @default(draft)
+  settingsLocked       Boolean         @default(false)
+  effectiveTeacherRate Decimal?        @db.Decimal(10, 2)
+  totalStudents        Int?
+  totalRevenue         Decimal?        @db.Decimal(10, 2)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  teacher         Teacher         @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  teacherRoom     TeacherRoom     @relation(fields: [teacherRoomId], references: [id])
+  template        ClassTemplate?  @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  registrations   Registration[]
+  waitlistEntries WaitlistEntry[]
+  notifications   Notification[]
+  announcements   Announcement[]
+
+  @@index([teacherId, date])
+}
+
+model StudioClass {
+  id              String   @id @default(uuid())
+  teacherId       String
+  date            DateTime @db.Date
+  startTime       String
+  durationMinutes Int
+  location        String
+  studentCount    Int?
+  hourlyRate      Decimal  @db.Decimal(10, 2)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================================
+// BOOKINGS
+// ============================================================================
+
+model Registration {
+  id            String             @id @default(uuid())
+  classId       String
+  studentId     String
+  status        RegistrationStatus @default(registered)
+  isWalkIn      Boolean            @default(false)
+  tierAtBooking Int
+  price         Decimal?           @db.Decimal(10, 2)
+  tierRatio     Decimal?           @db.Decimal(5, 4)
+  registeredAt  DateTime           @default(now())
+  cancelledAt   DateTime?
+  updatedAt     DateTime           @updatedAt
+
+  class         Class          @relation(fields: [classId], references: [id], onDelete: Cascade)
+  student       Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  payment       Payment?
+  waitlistEntry WaitlistEntry?
+
+  @@unique([classId, studentId])
+  @@index([studentId, status])
+}
+
+model WaitlistEntry {
+  id             String         @id @default(uuid())
+  classId        String
+  studentId      String
+  position       Int
+  status         WaitlistStatus @default(waiting)
+  promotedAt     DateTime?
+  registrationId String?        @unique
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  class        Class         @relation(fields: [classId], references: [id], onDelete: Cascade)
+  student      Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  registration Registration? @relation(fields: [registrationId], references: [id])
+
+  @@unique([classId, studentId])
+  @@index([classId, position])
+}
+
+// ============================================================================
+// PAYMENTS
+// ============================================================================
+
+model Payment {
+  id             String        @id @default(uuid())
+  registrationId String        @unique
+  amount         Decimal       @db.Decimal(10, 2)
+  status         PaymentStatus @default(pending)
+  method         String?
+  processorRef   String?
+  reminderSentAt DateTime?
+  paidAt         DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+}
+
+// ============================================================================
+// COMMUNICATION
+// ============================================================================
+
+model Notification {
+  id             String           @id @default(uuid())
+  recipientType  RecipientType
+  recipientId    String
+  type           NotificationType
+  title          String
+  body           String           @db.Text
+  relatedClassId String?
+  isRead         Boolean          @default(false)
+  emailSent      Boolean          @default(false)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  relatedClass Class? @relation(fields: [relatedClassId], references: [id], onDelete: SetNull)
+
+  @@index([recipientType, recipientId, isRead])
+}
+
+model Announcement {
+  id             String   @id @default(uuid())
+  teacherId      String
+  classId        String?
+  message        String   @db.Text
+  recipientCount Int
+  sentAt         DateTime @default(now())
+
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  class   Class?  @relation(fields: [classId], references: [id], onDelete: SetNull)
+}
