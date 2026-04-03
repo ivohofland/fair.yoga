@@ -6,6 +6,7 @@ import {
   requireTeacher,
   parseBody,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { markPaymentPaid } from '@/services/payments';
 
@@ -13,10 +14,10 @@ interface MarkPaidBody {
   method: string;
 }
 
-export async function POST(
+export const POST = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
@@ -43,4 +44,4 @@ export async function POST(
   const result = await markPaymentPaid(prisma, id, body.method);
   if (!result.ok) return respondError(result.error, 409);
   return respondOk(result.payment);
-}
+});

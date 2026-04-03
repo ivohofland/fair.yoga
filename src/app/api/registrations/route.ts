@@ -6,6 +6,7 @@ import {
   requireSession,
   parseBody,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 
 interface CreateRegistrationBody {
@@ -13,7 +14,7 @@ interface CreateRegistrationBody {
   studentId?: string;
 }
 
-export async function POST(request: NextRequest) {
+export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
@@ -81,4 +82,4 @@ export async function POST(request: NextRequest) {
   }
 
   return respondOk(registration, 201);
-}
+});

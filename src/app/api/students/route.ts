@@ -19,6 +19,11 @@ export async function POST(request: NextRequest) {
     return respondError('Missing required fields: firstName, lastName, email', 400);
   }
 
+  const tier = incomeTier ?? 3;
+  if (tier < 1 || tier > 5 || !Number.isInteger(tier)) {
+    return respondError('Income tier must be an integer between 1 and 5', 400);
+  }
+
   const existing = await prisma.student.findUnique({ where: { email } });
   if (existing) {
     return respondError('Email already in use', 409, 'EMAIL_TAKEN');
@@ -29,7 +34,7 @@ export async function POST(request: NextRequest) {
       firstName,
       lastName,
       email,
-      incomeTier: incomeTier ?? 3,
+      incomeTier: tier,
     },
   });
 

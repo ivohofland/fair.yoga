@@ -6,8 +6,8 @@ import {
   requireTeacher,
   parseBody,
   isErrorResponse,
+  pick,
 } from '@/lib/api-utils';
-import { ECONOMIC_FIELDS, type EconomicField } from '@/services/class-lifecycle';
 
 export async function GET(
   request: NextRequest,
@@ -47,27 +47,37 @@ export async function PUT(
   const body = await parseBody<Record<string, unknown>>(request);
   if (!body) return respondError('Invalid request body', 400);
 
-  // If settings are locked, reject changes to economic fields
-  if (cls.settingsLocked) {
-    const attemptedEconomicFields = Object.keys(body).filter((key) =>
-      (ECONOMIC_FIELDS as readonly string[]).includes(key),
-    ) as EconomicField[];
+  // Allowlist: only these fields can be updated
+  const ALWAYS_ALLOWED = [
+    'classType',
+    'description',
+    'date',
+    'startTime',
+    'durationMinutes',
+  ] as const;
 
-    if (attemptedEconomicFields.length > 0) {
-      return respondError(
-        `Cannot modify locked economic fields: ${attemptedEconomicFields.join(', ')}`,
-        409,
-      );
-    }
+  const ECONOMIC_ALLOWED = [
+    'roomCost',
+    'minRate',
+    'targetRate',
+    'minStudents',
+    'maxStudents',
+  ] as const;
+
+  const allowedFields = pick(body, ALWAYS_ALLOWED);
+
+  // Only include economic fields if settings are NOT locked
+  if (!cls.settingsLocked) {
+    Object.assign(allowedFields, pick(body, ECONOMIC_ALLOWED));
   }
 
-  // Prevent changing teacherId or id
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { teacherId: _t, id: _i, ...updateData } = body;
+  if (Object.keys(allowedFields).length === 0) {
+    return respondError('No valid fields to update', 400);
+  }
 
   const updated = await prisma.class.update({
     where: { id },
-    data: updateData as Record<string, unknown>,
+    data: allowedFields,
   });
 
   return respondOk(updated);

@@ -1,5 +1,4 @@
 import { NextRequest } from 'next/server';
-import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
@@ -7,6 +6,7 @@ import {
   requireTeacher,
   parseBody,
   isErrorResponse,
+  pick,
 } from '@/lib/api-utils';
 
 export async function GET(
@@ -27,18 +27,18 @@ export async function GET(
   return respondOk(room);
 }
 
-interface UpdateRoomBody {
-  venueName?: string;
-  address?: string;
-  city?: string;
-  postcode?: string;
-  floor?: string;
-  roomName?: string;
-  maxCapacity?: number;
-  equipment?: Prisma.InputJsonValue;
-  notes?: string;
-  isPublic?: boolean;
-}
+const ROOM_ALLOWED_FIELDS = [
+  'venueName',
+  'address',
+  'city',
+  'postcode',
+  'floor',
+  'roomName',
+  'maxCapacity',
+  'equipment',
+  'notes',
+  'isPublic',
+] as const;
 
 export async function PUT(
   request: NextRequest,
@@ -55,12 +55,18 @@ export async function PUT(
     return respondError('Only the room creator can update this room', 403);
   }
 
-  const body = await parseBody<UpdateRoomBody>(request);
+  const body = await parseBody<Record<string, unknown>>(request);
   if (!body) return respondError('Invalid request body', 400);
+
+  const updateData = pick(body, ROOM_ALLOWED_FIELDS);
+
+  if (Object.keys(updateData).length === 0) {
+    return respondError('No valid fields to update', 400);
+  }
 
   const updated = await prisma.room.update({
     where: { id },
-    data: body,
+    data: updateData,
   });
 
   return respondOk(updated);

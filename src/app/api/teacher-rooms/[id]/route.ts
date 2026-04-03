@@ -6,6 +6,7 @@ import {
   requireTeacher,
   parseBody,
   isErrorResponse,
+  pick,
 } from '@/lib/api-utils';
 
 export async function GET(
@@ -30,11 +31,11 @@ export async function GET(
   return respondOk(teacherRoom);
 }
 
-interface UpdateTeacherRoomBody {
-  capacityOverride?: number;
-  rentalRate?: number;
-  equipmentNotes?: string;
-}
+const TEACHER_ROOM_ALLOWED_FIELDS = [
+  'capacityOverride',
+  'rentalRate',
+  'equipmentNotes',
+] as const;
 
 export async function PUT(
   request: NextRequest,
@@ -51,12 +52,18 @@ export async function PUT(
     return respondError('Access denied', 403);
   }
 
-  const body = await parseBody<UpdateTeacherRoomBody>(request);
+  const body = await parseBody<Record<string, unknown>>(request);
   if (!body) return respondError('Invalid request body', 400);
+
+  const updateData = pick(body, TEACHER_ROOM_ALLOWED_FIELDS);
+
+  if (Object.keys(updateData).length === 0) {
+    return respondError('No valid fields to update', 400);
+  }
 
   const updated = await prisma.teacherRoom.update({
     where: { id },
-    data: body,
+    data: updateData,
   });
 
   return respondOk(updated);

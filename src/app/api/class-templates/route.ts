@@ -74,6 +74,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Verify teacherRoomId belongs to this teacher
+  const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id: teacherRoomId } });
+  if (!teacherRoom || teacherRoom.teacherId !== session.userId) {
+    return respondError('Invalid teacher room', 400);
+  }
+
   const template = await prisma.classTemplate.create({
     data: {
       teacherId: session.userId,

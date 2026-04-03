@@ -59,3 +59,37 @@ export function isErrorResponse(
 ): result is NextResponse {
   return result instanceof NextResponse;
 }
+
+/**
+ * Pick only the specified keys from an object, filtering out undefined values.
+ * Used to allowlist fields on PUT endpoints to prevent mass assignment.
+ */
+export function pick<T extends Record<string, unknown>>(
+  obj: T,
+  keys: readonly string[],
+): Partial<T> {
+  const result: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (obj[key] !== undefined) {
+      result[key] = obj[key];
+    }
+  }
+  return result as Partial<T>;
+}
+
+/**
+ * Wraps an API route handler in a try-catch to prevent unhandled exceptions
+ * from leaking stack traces to the client.
+ */
+export function withErrorHandler<Args extends unknown[]>(
+  handler: (...args: Args) => Promise<NextResponse>,
+): (...args: Args) => Promise<NextResponse> {
+  return async (...args: Args): Promise<NextResponse> => {
+    try {
+      return await handler(...args);
+    } catch (error) {
+      console.error('API error:', error);
+      return respondError('Internal server error', 500);
+    }
+  };
+}

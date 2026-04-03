@@ -5,13 +5,14 @@ import {
   respondError,
   requireTeacher,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { completeClass } from '@/services/class-lifecycle';
 
-export async function POST(
+export const POST = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
@@ -25,4 +26,4 @@ export async function POST(
   if (!result.ok) return respondError(result.error, 409);
 
   return respondOk(result);
-}
+});

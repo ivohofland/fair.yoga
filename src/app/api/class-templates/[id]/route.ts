@@ -6,6 +6,7 @@ import {
   requireTeacher,
   parseBody,
   isErrorResponse,
+  pick,
 } from '@/lib/api-utils';
 
 export async function GET(
@@ -26,21 +27,21 @@ export async function GET(
   return respondOk(template);
 }
 
-interface UpdateClassTemplateBody {
-  teacherRoomId?: string;
-  classType?: string;
-  description?: string;
-  dayOfWeek?: number;
-  startTime?: string;
-  durationMinutes?: number;
-  roomCost?: number;
-  minRate?: number;
-  targetRate?: number;
-  minStudents?: number;
-  maxStudents?: number;
-  cancelDeadline?: 'HOURS_48' | 'HOURS_24' | 'HOURS_12' | 'HOURS_6';
-  autoCancelCheck?: 'HOURS_4' | 'HOURS_2' | 'HOURS_1';
-}
+const CLASS_TEMPLATE_ALLOWED_FIELDS = [
+  'classType',
+  'description',
+  'teacherRoomId',
+  'dayOfWeek',
+  'startTime',
+  'durationMinutes',
+  'roomCost',
+  'minRate',
+  'targetRate',
+  'minStudents',
+  'maxStudents',
+  'cancelDeadline',
+  'autoCancelCheck',
+] as const;
 
 export async function PUT(
   request: NextRequest,
@@ -57,12 +58,18 @@ export async function PUT(
     return respondError('Access denied', 403);
   }
 
-  const body = await parseBody<UpdateClassTemplateBody>(request);
+  const body = await parseBody<Record<string, unknown>>(request);
   if (!body) return respondError('Invalid request body', 400);
+
+  const updateData = pick(body, CLASS_TEMPLATE_ALLOWED_FIELDS);
+
+  if (Object.keys(updateData).length === 0) {
+    return respondError('No valid fields to update', 400);
+  }
 
   const updated = await prisma.classTemplate.update({
     where: { id },
-    data: body,
+    data: updateData,
   });
 
   return respondOk(updated);

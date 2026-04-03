@@ -6,6 +6,7 @@ import {
   requireSession,
   parseBody,
   isErrorResponse,
+  pick,
 } from '@/lib/api-utils';
 
 export async function GET(
@@ -58,17 +59,16 @@ export async function GET(
   return respondError('Access denied', 403);
 }
 
-interface UpdateStudentBody {
-  firstName?: string;
-  lastName?: string;
-  email?: string;
-  incomeTier?: number;
-  phone?: string;
-  birthday?: string;
-  address?: string;
-  reminderPref?: 'eve' | 'morning' | 'one_hour' | 'off';
-  emailNotifications?: boolean;
-}
+const STUDENT_ALLOWED_FIELDS = [
+  'firstName',
+  'lastName',
+  'phone',
+  'birthday',
+  'address',
+  'incomeTier',
+  'reminderPref',
+  'emailNotifications',
+] as const;
 
 export async function PUT(
   request: NextRequest,
@@ -82,22 +82,18 @@ export async function PUT(
     return respondError('Access denied', 403);
   }
 
-  const body = await parseBody<UpdateStudentBody>(request);
+  const body = await parseBody<Record<string, unknown>>(request);
   if (!body) return respondError('Invalid request body', 400);
 
-  // Check for email conflicts
-  if (body.email) {
-    const existing = await prisma.student.findUnique({
-      where: { email: body.email },
-    });
-    if (existing && existing.id !== id) {
-      return respondError('Email already in use', 409, 'EMAIL_TAKEN');
-    }
+  const updateData = pick(body, STUDENT_ALLOWED_FIELDS);
+
+  if (Object.keys(updateData).length === 0) {
+    return respondError('No valid fields to update', 400);
   }
 
   const student = await prisma.student.update({
     where: { id },
-    data: body,
+    data: updateData,
   });
 
   return respondOk(student);
