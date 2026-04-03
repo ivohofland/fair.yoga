@@ -6,14 +6,11 @@ import { useSearchParams, useRouter } from 'next/navigation';
 function VerifyContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const [status, setStatus] = useState<'verifying' | 'error'>('verifying');
+  const token = searchParams.get('token');
+  const [status, setStatus] = useState<'verifying' | 'error'>(token ? 'verifying' : 'error');
 
   useEffect(() => {
-    const token = searchParams.get('token');
-    if (!token) {
-      setStatus('error');
-      return;
-    }
+    if (!token) return;
 
     fetch('/api/auth/magic-link/verify', {
       method: 'POST',
@@ -30,7 +27,7 @@ function VerifyContent() {
       .catch(() => {
         setStatus('error');
       });
-  }, [searchParams, router]);
+  }, [token, router]);
 
   return (
     <>
