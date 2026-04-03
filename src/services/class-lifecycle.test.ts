@@ -1,10 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { PrismaClient } from '@prisma/client';
 import {
   VALID_TRANSITIONS,
   ECONOMIC_FIELDS,
   canTransition,
   validateTransition,
   isEconomicFieldLocked,
+  transitionClass,
+  completeClass,
 } from './class-lifecycle';
 
 // We use string literals matching the Prisma ClassStatus enum values.
@@ -166,5 +169,295 @@ describe('ECONOMIC_FIELDS', () => {
 
   it('is readonly (frozen)', () => {
     expect(Object.isFrozen(ECONOMIC_FIELDS)).toBe(true);
+  });
+});
+
+// ===========================================================================
+// Integration tests — DB operations
+// ===========================================================================
+
+const prisma = new PrismaClient();
+const uniqueSuffix = Date.now();
+
+describe('transitionClass (DB)', () => {
+  let teacherId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Transition',
+        lastName: 'Teacher',
+        email: `transition-teacher-${uniqueSuffix}@test.local`,
+        bio: 'Test teacher for transition tests',
+        pageSlug: `transition-teacher-${uniqueSuffix}`,
+      },
+    });
+    teacherId = teacher.id;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Transition Studio',
+        address: `${uniqueSuffix} Transition St`,
+        city: 'Amsterdam',
+        postcode: '1234AB',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: {
+        teacherId,
+        roomId,
+        capacityOverride: 15,
+        rentalRate: 35,
+      },
+    });
+    teacherRoomId = teacherRoom.id;
+  });
+
+  afterAll(async () => {
+    // Clean up all classes created during tests, then fixtures
+    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.delete({ where: { id: roomId } });
+    await prisma.teacher.delete({ where: { id: teacherId } });
+    await prisma.$disconnect();
+  });
+
+  it('transitions draft to open', async () => {
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Hatha',
+        date: new Date('2026-06-01'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 35,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 4,
+        maxStudents: 12,
+        status: 'draft',
+      },
+    });
+
+    const result = await transitionClass(prisma, cls.id, 'open');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.newStatus).toBe('open');
+    }
+
+    const updated = await prisma.class.findUnique({ where: { id: cls.id } });
+    expect(updated?.status).toBe('open');
+  });
+
+  it('rejects invalid transition (draft to completed)', async () => {
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Hatha',
+        date: new Date('2026-06-02'),
+        startTime: '10:00',
+        durationMinutes: 60,
+        roomCost: 35,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 4,
+        maxStudents: 12,
+        status: 'draft',
+      },
+    });
+
+    const result = await transitionClass(prisma, cls.id, 'completed');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('draft');
+      expect(result.error).toContain('completed');
+    }
+
+    const unchanged = await prisma.class.findUnique({ where: { id: cls.id } });
+    expect(unchanged?.status).toBe('draft');
+  });
+
+  it('returns error for non-existent class', async () => {
+    const result = await transitionClass(prisma, 'non-existent-id', 'open');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('not found');
+    }
+  });
+});
+
+describe('completeClass (DB)', () => {
+  let teacherId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+  let classId: string;
+  const studentIds: string[] = [];
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Complete',
+        lastName: 'Teacher',
+        email: `complete-teacher-${uniqueSuffix}@test.local`,
+        bio: 'Test teacher for complete tests',
+        pageSlug: `complete-teacher-${uniqueSuffix}`,
+      },
+    });
+    teacherId = teacher.id;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Complete Studio',
+        address: `${uniqueSuffix} Complete St`,
+        city: 'Amsterdam',
+        postcode: '5678CD',
+        floor: '2',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: {
+        teacherId,
+        roomId,
+        capacityOverride: 15,
+        rentalRate: 35,
+      },
+    });
+    teacherRoomId = teacherRoom.id;
+
+    // Create the in_progress class
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Vinyasa',
+        date: new Date('2026-06-01'),
+        startTime: '18:00',
+        durationMinutes: 75,
+        roomCost: 35,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 4,
+        maxStudents: 12,
+        status: 'in_progress',
+        settingsLocked: true,
+      },
+    });
+    classId = cls.id;
+
+    // Create 5 students with tiers 1-5
+    for (let i = 1; i <= 5; i++) {
+      const student = await prisma.student.create({
+        data: {
+          firstName: `Student${i}`,
+          lastName: 'Test',
+          email: `student-${i}-${uniqueSuffix}@test.local`,
+          incomeTier: i,
+        },
+      });
+      studentIds.push(student.id);
+    }
+
+    // Create 4 'registered' registrations (tiers 1-4) and 1 'cancelled' (tier 5)
+    for (let i = 0; i < 4; i++) {
+      await prisma.registration.create({
+        data: {
+          classId,
+          studentId: studentIds[i]!,
+          status: 'registered',
+          tierAtBooking: i + 1,
+        },
+      });
+    }
+    await prisma.registration.create({
+      data: {
+        classId,
+        studentId: studentIds[4]!,
+        status: 'cancelled',
+        tierAtBooking: 5,
+        cancelledAt: new Date(),
+      },
+    });
+  });
+
+  afterAll(async () => {
+    // Clean up in dependency order: payments → registrations → class → students → teacherRoom → room → teacher
+    await prisma.payment.deleteMany({
+      where: { registration: { classId } },
+    });
+    await prisma.registration.deleteMany({ where: { classId } });
+    await prisma.class.delete({ where: { id: classId } });
+    for (const sid of studentIds) {
+      await prisma.student.delete({ where: { id: sid } });
+    }
+    await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
+    await prisma.room.delete({ where: { id: roomId } });
+    await prisma.teacher.delete({ where: { id: teacherId } });
+    await prisma.$disconnect();
+  });
+
+  it('calculates pricing and creates payments for charged registrations', async () => {
+    const result = await completeClass(prisma, classId);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.newStatus).toBe('completed');
+    }
+
+    // Verify class was updated
+    const cls = await prisma.class.findUnique({ where: { id: classId } });
+    expect(cls?.status).toBe('completed');
+    expect(cls?.totalStudents).toBe(4);
+    expect(cls?.effectiveTeacherRate).not.toBeNull();
+    expect(cls?.totalRevenue).not.toBeNull();
+
+    // Verify charged registrations have price and tierRatio set
+    const chargedRegs = await prisma.registration.findMany({
+      where: { classId, status: { not: 'cancelled' } },
+      orderBy: { tierAtBooking: 'asc' },
+    });
+    expect(chargedRegs).toHaveLength(4);
+    for (const reg of chargedRegs) {
+      expect(reg.price).not.toBeNull();
+      expect(reg.tierRatio).not.toBeNull();
+      expect(Number(reg.price)).toBeGreaterThan(0);
+    }
+
+    // Verify cancelled registration has no price
+    const cancelledReg = await prisma.registration.findFirst({
+      where: { classId, status: 'cancelled' },
+    });
+    expect(cancelledReg?.price).toBeNull();
+
+    // Verify 4 Payment records exist
+    const payments = await prisma.payment.findMany({
+      where: { registration: { classId } },
+    });
+    expect(payments).toHaveLength(4);
+    for (const payment of payments) {
+      expect(payment.status).toBe('pending');
+      expect(Number(payment.amount)).toBeGreaterThan(0);
+    }
+  });
+
+  it('returns error for non-existent class', async () => {
+    const result = await completeClass(prisma, 'non-existent-id');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('not found');
+    }
   });
 });

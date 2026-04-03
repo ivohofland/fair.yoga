@@ -6,7 +6,8 @@
  * with cancellation possible from most non-terminal states.
  */
 
-import type { ClassStatus } from '@prisma/client';
+import type { PrismaClient, ClassStatus, RegistrationStatus } from '@prisma/client';
+import { calculateClassPricing } from './pricing';
 
 // ---------------------------------------------------------------------------
 // State machine
@@ -84,4 +85,100 @@ export type EconomicField = (typeof ECONOMIC_FIELDS)[number];
  */
 export function isEconomicFieldLocked(settingsLocked: boolean): boolean {
   return settingsLocked;
+}
+
+// ---------------------------------------------------------------------------
+// DB operations
+// ---------------------------------------------------------------------------
+
+export type TransitionDbResult =
+  | { ok: true; newStatus: ClassStatus }
+  | { ok: false; error: string };
+
+/**
+ * Transition a class to a new status in the database.
+ * Validates the transition against the state machine before applying.
+ */
+export async function transitionClass(
+  db: PrismaClient,
+  classId: string,
+  targetStatus: ClassStatus,
+): Promise<TransitionDbResult> {
+  const cls = await db.class.findUnique({ where: { id: classId } });
+  if (!cls) return { ok: false, error: `Class not found: ${classId}` };
+
+  const validation = validateTransition(cls.status, targetStatus);
+  if (!validation.ok) return validation;
+
+  await db.class.update({ where: { id: classId }, data: { status: targetStatus } });
+  return { ok: true, newStatus: targetStatus };
+}
+
+// ---------------------------------------------------------------------------
+// Class completion
+// ---------------------------------------------------------------------------
+
+/** Registration statuses that are charged when a class completes. */
+const CHARGED_STATUSES: RegistrationStatus[] = ['registered', 'attended', 'no_show', 'late_cancel'];
+
+/**
+ * Complete a class: validate transition, calculate pricing, update
+ * registrations with prices, and create pending payments.
+ */
+export async function completeClass(
+  db: PrismaClient,
+  classId: string,
+): Promise<TransitionDbResult> {
+  const cls = await db.class.findUnique({
+    where: { id: classId },
+    include: { registrations: true },
+  });
+  if (!cls) return { ok: false, error: `Class not found: ${classId}` };
+
+  const validation = validateTransition(cls.status, 'completed');
+  if (!validation.ok) return validation;
+
+  const chargedRegistrations = cls.registrations.filter((r) =>
+    CHARGED_STATUSES.includes(r.status),
+  );
+
+  if (chargedRegistrations.length === 0) {
+    await db.class.update({
+      where: { id: classId },
+      data: { status: 'completed', effectiveTeacherRate: 0, totalStudents: 0, totalRevenue: 0 },
+    });
+    return { ok: true, newStatus: 'completed' };
+  }
+
+  const pricing = calculateClassPricing({
+    roomCost: Number(cls.roomCost),
+    minRate: Number(cls.minRate),
+    targetRate: Number(cls.targetRate),
+    minStudents: cls.minStudents,
+    maxStudents: cls.maxStudents,
+    studentTiers: chargedRegistrations.map((r) => r.tierAtBooking),
+  });
+
+  await db.class.update({
+    where: { id: classId },
+    data: {
+      status: 'completed',
+      effectiveTeacherRate: pricing.effectiveTeacherRate,
+      totalStudents: pricing.studentCount,
+      totalRevenue: pricing.totalCost,
+    },
+  });
+
+  for (let i = 0; i < chargedRegistrations.length; i++) {
+    const reg = chargedRegistrations[i]!;
+    await db.registration.update({
+      where: { id: reg.id },
+      data: { price: pricing.studentPrices[i]!, tierRatio: pricing.studentTierRatios[i]! },
+    });
+    await db.payment.create({
+      data: { registrationId: reg.id, amount: pricing.studentPrices[i]!, status: 'pending' },
+    });
+  }
+
+  return { ok: true, newStatus: 'completed' };
 }
