@@ -108,6 +108,23 @@ describe('calculateEffectiveTeacherRate', () => {
 });
 
 describe('calculateClassPricing', () => {
+  it('returns zeros for empty student list', () => {
+    const result = calculateClassPricing({
+      roomCost: 35,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 4,
+      maxStudents: 12,
+      studentTiers: [],
+    });
+
+    expect(result.effectiveTeacherRate).toBe(0);
+    expect(result.totalCost).toBe(0);
+    expect(result.studentCount).toBe(0);
+    expect(result.studentPrices).toEqual([]);
+    expect(result.studentTierRatios).toEqual([]);
+  });
+
   it('calculates seed data scenario correctly', () => {
     const result = calculateClassPricing({
       roomCost: 35,

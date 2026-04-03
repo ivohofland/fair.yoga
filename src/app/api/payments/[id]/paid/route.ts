@@ -40,6 +40,7 @@ export async function POST(
   const body = await parseBody<MarkPaidBody>(request);
   if (!body?.method) return respondError('Missing method field', 400);
 
-  const updated = await markPaymentPaid(prisma, id, body.method);
-  return respondOk(updated);
+  const result = await markPaymentPaid(prisma, id, body.method);
+  if (!result.ok) return respondError(result.error, 409);
+  return respondOk(result.payment);
 }

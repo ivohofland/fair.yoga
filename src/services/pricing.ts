@@ -95,6 +95,16 @@ export function calculateClassPricing(
     studentTiers,
   } = input;
 
+  if (studentTiers.length === 0) {
+    return {
+      effectiveTeacherRate: 0,
+      totalCost: 0,
+      studentCount: 0,
+      studentPrices: [],
+      studentTierRatios: [],
+    };
+  }
+
   const studentCount = studentTiers.length;
 
   // 1. Effective teacher rate

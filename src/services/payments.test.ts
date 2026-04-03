@@ -127,11 +127,24 @@ describe('Payment Service (DB)', () => {
   });
 
   it('markPaymentPaid updates status, method, and paidAt', async () => {
-    const payment = await markPaymentPaid(prisma, paymentId, 'bank_transfer');
+    const result = await markPaymentPaid(prisma, paymentId, 'bank_transfer');
 
-    expect(payment.status).toBe('paid');
-    expect(payment.method).toBe('bank_transfer');
-    expect(payment.paidAt).not.toBeNull();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.payment.status).toBe('paid');
+      expect(result.payment.method).toBe('bank_transfer');
+      expect(result.payment.paidAt).not.toBeNull();
+    }
+  });
+
+  it('markPaymentPaid rejects invalid status transition', async () => {
+    // Payment is currently 'paid' from the previous test — should not allow re-paying
+    const result = await markPaymentPaid(prisma, paymentId, 'cash');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('paid');
+    }
   });
 
   it('markPaymentOverdue updates status to overdue', async () => {
@@ -141,9 +154,33 @@ describe('Payment Service (DB)', () => {
       data: { status: 'pending', method: null, paidAt: null },
     });
 
-    const payment = await markPaymentOverdue(prisma, paymentId);
+    const result = await markPaymentOverdue(prisma, paymentId);
 
-    expect(payment.status).toBe('overdue');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.payment.status).toBe('overdue');
+    }
+  });
+
+  it('markPaymentOverdue rejects non-pending status', async () => {
+    // Payment is currently 'overdue' from the previous test
+    const result = await markPaymentOverdue(prisma, paymentId);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('overdue');
+    }
+  });
+
+  it('markPaymentPaid allows transition from overdue', async () => {
+    // Payment is currently 'overdue' — should be allowed to mark as paid
+    const result = await markPaymentPaid(prisma, paymentId, 'cash');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.payment.status).toBe('paid');
+      expect(result.payment.method).toBe('cash');
+    }
   });
 
   it('sendPaymentReminder sets reminderSentAt', async () => {

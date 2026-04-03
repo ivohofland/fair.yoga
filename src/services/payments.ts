@@ -8,19 +8,37 @@
 import type { PrismaClient, Payment } from '@prisma/client';
 
 // ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type PaymentResult = { ok: true; payment: Payment } | { ok: false; error: string };
+
+// ---------------------------------------------------------------------------
 // Status transitions
 // ---------------------------------------------------------------------------
 
 /**
  * Mark a payment as paid with the given method (e.g. 'bank_transfer', 'cash').
  * Sets status to 'paid', records the method, and timestamps paidAt.
+ *
+ * Only valid from 'pending' or 'overdue' status.
  */
 export async function markPaymentPaid(
   db: PrismaClient,
   paymentId: string,
   method: string,
-): Promise<Payment> {
-  return db.payment.update({
+): Promise<PaymentResult> {
+  const payment = await db.payment.findUnique({ where: { id: paymentId } });
+  if (!payment) return { ok: false, error: `Payment not found: ${paymentId}` };
+
+  if (payment.status !== 'pending' && payment.status !== 'overdue') {
+    return {
+      ok: false,
+      error: `Cannot mark payment as paid: current status is "${payment.status}". Must be "pending" or "overdue".`,
+    };
+  }
+
+  const updated = await db.payment.update({
     where: { id: paymentId },
     data: {
       status: 'paid',
@@ -28,22 +46,36 @@ export async function markPaymentPaid(
       paidAt: new Date(),
     },
   });
+  return { ok: true, payment: updated };
 }
 
 /**
  * Mark a payment as overdue.
  * Typically called by a scheduled job when a pending payment passes its due window.
+ *
+ * Only valid from 'pending' status.
  */
 export async function markPaymentOverdue(
   db: PrismaClient,
   paymentId: string,
-): Promise<Payment> {
-  return db.payment.update({
+): Promise<PaymentResult> {
+  const payment = await db.payment.findUnique({ where: { id: paymentId } });
+  if (!payment) return { ok: false, error: `Payment not found: ${paymentId}` };
+
+  if (payment.status !== 'pending') {
+    return {
+      ok: false,
+      error: `Cannot mark payment as overdue: current status is "${payment.status}". Must be "pending".`,
+    };
+  }
+
+  const updated = await db.payment.update({
     where: { id: paymentId },
     data: {
       status: 'overdue',
     },
   });
+  return { ok: true, payment: updated };
 }
 
 // ---------------------------------------------------------------------------

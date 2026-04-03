@@ -124,61 +124,66 @@ const CHARGED_STATUSES: RegistrationStatus[] = ['registered', 'attended', 'no_sh
 /**
  * Complete a class: validate transition, calculate pricing, update
  * registrations with prices, and create pending payments.
+ *
+ * Wrapped in a transaction so that all DB mutations (class status,
+ * registration prices, payment creation) succeed or fail atomically.
  */
 export async function completeClass(
   db: PrismaClient,
   classId: string,
 ): Promise<TransitionDbResult> {
-  const cls = await db.class.findUnique({
-    where: { id: classId },
-    include: { registrations: true },
-  });
-  if (!cls) return { ok: false, error: `Class not found: ${classId}` };
-
-  const validation = validateTransition(cls.status, 'completed');
-  if (!validation.ok) return validation;
-
-  const chargedRegistrations = cls.registrations.filter((r) =>
-    CHARGED_STATUSES.includes(r.status),
-  );
-
-  if (chargedRegistrations.length === 0) {
-    await db.class.update({
+  return db.$transaction(async (tx) => {
+    const cls = await tx.class.findUnique({
       where: { id: classId },
-      data: { status: 'completed', effectiveTeacherRate: 0, totalStudents: 0, totalRevenue: 0 },
+      include: { registrations: true },
     });
-    return { ok: true, newStatus: 'completed' };
-  }
+    if (!cls) return { ok: false, error: `Class not found: ${classId}` };
 
-  const pricing = calculateClassPricing({
-    roomCost: Number(cls.roomCost),
-    minRate: Number(cls.minRate),
-    targetRate: Number(cls.targetRate),
-    minStudents: cls.minStudents,
-    maxStudents: cls.maxStudents,
-    studentTiers: chargedRegistrations.map((r) => r.tierAtBooking),
+    const validation = validateTransition(cls.status, 'completed');
+    if (!validation.ok) return validation;
+
+    const chargedRegistrations = cls.registrations.filter((r) =>
+      CHARGED_STATUSES.includes(r.status),
+    );
+
+    if (chargedRegistrations.length === 0) {
+      await tx.class.update({
+        where: { id: classId },
+        data: { status: 'completed', effectiveTeacherRate: 0, totalStudents: 0, totalRevenue: 0 },
+      });
+      return { ok: true, newStatus: 'completed' as ClassStatus };
+    }
+
+    const pricing = calculateClassPricing({
+      roomCost: Number(cls.roomCost),
+      minRate: Number(cls.minRate),
+      targetRate: Number(cls.targetRate),
+      minStudents: cls.minStudents,
+      maxStudents: cls.maxStudents,
+      studentTiers: chargedRegistrations.map((r) => r.tierAtBooking),
+    });
+
+    await tx.class.update({
+      where: { id: classId },
+      data: {
+        status: 'completed',
+        effectiveTeacherRate: pricing.effectiveTeacherRate,
+        totalStudents: pricing.studentCount,
+        totalRevenue: pricing.totalCost,
+      },
+    });
+
+    for (let i = 0; i < chargedRegistrations.length; i++) {
+      const reg = chargedRegistrations[i]!;
+      await tx.registration.update({
+        where: { id: reg.id },
+        data: { price: pricing.studentPrices[i]!, tierRatio: pricing.studentTierRatios[i]! },
+      });
+      await tx.payment.create({
+        data: { registrationId: reg.id, amount: pricing.studentPrices[i]!, status: 'pending' },
+      });
+    }
+
+    return { ok: true, newStatus: 'completed' as ClassStatus };
   });
-
-  await db.class.update({
-    where: { id: classId },
-    data: {
-      status: 'completed',
-      effectiveTeacherRate: pricing.effectiveTeacherRate,
-      totalStudents: pricing.studentCount,
-      totalRevenue: pricing.totalCost,
-    },
-  });
-
-  for (let i = 0; i < chargedRegistrations.length; i++) {
-    const reg = chargedRegistrations[i]!;
-    await db.registration.update({
-      where: { id: reg.id },
-      data: { price: pricing.studentPrices[i]!, tierRatio: pricing.studentTierRatios[i]! },
-    });
-    await db.payment.create({
-      data: { registrationId: reg.id, amount: pricing.studentPrices[i]!, status: 'pending' },
-    });
-  }
-
-  return { ok: true, newStatus: 'completed' };
 }

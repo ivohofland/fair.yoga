@@ -308,11 +308,14 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
   // Step 16: Mark payment as paid
   // -----------------------------------------------------------------------
   it('Step 16: marks the payment as paid', async () => {
-    const payment = await markPaymentPaid(prisma, paymentId, 'bank_transfer');
+    const result = await markPaymentPaid(prisma, paymentId, 'bank_transfer');
 
-    expect(payment.status).toBe('paid');
-    expect(payment.method).toBe('bank_transfer');
-    expect(payment.paidAt).not.toBeNull();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.payment.status).toBe('paid');
+      expect(result.payment.method).toBe('bank_transfer');
+      expect(result.payment.paidAt).not.toBeNull();
+    }
   });
 
   // -----------------------------------------------------------------------

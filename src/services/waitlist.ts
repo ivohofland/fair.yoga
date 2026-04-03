@@ -7,7 +7,10 @@
  * 3. frozen — after deadline passes, no more promotions
  */
 
-import type { PrismaClient, CancelDeadline, WaitlistEntry } from '@prisma/client';
+import type { PrismaClient, Prisma, CancelDeadline, WaitlistEntry } from '@prisma/client';
+
+/** A Prisma client or transaction client — used for helpers that run inside or outside transactions. */
+type PrismaTransactionClient = Prisma.TransactionClient;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -80,28 +83,32 @@ export function getWaitlistWindow(
  *
  * Finds the current max position among 'waiting' entries for this class,
  * then creates a new entry at position = max + 1 (or 1 if none exist).
+ *
+ * Wrapped in a transaction to prevent race conditions on position assignment.
  */
 export async function addToWaitlist(
   db: PrismaClient,
   classId: string,
   studentId: string,
 ): Promise<WaitlistEntry> {
-  // Find the current max position among 'waiting' entries
-  const maxEntry = await db.waitlistEntry.findFirst({
-    where: { classId, status: 'waiting' },
-    orderBy: { position: 'desc' },
-    select: { position: true },
-  });
+  return db.$transaction(async (tx) => {
+    // Find the current max position among 'waiting' entries
+    const maxEntry = await tx.waitlistEntry.findFirst({
+      where: { classId, status: 'waiting' },
+      orderBy: { position: 'desc' },
+      select: { position: true },
+    });
 
-  const nextPosition = maxEntry ? maxEntry.position + 1 : 1;
+    const nextPosition = maxEntry ? maxEntry.position + 1 : 1;
 
-  return db.waitlistEntry.create({
-    data: {
-      classId,
-      studentId,
-      position: nextPosition,
-      status: 'waiting',
-    },
+    return tx.waitlistEntry.create({
+      data: {
+        classId,
+        studentId,
+        position: nextPosition,
+        status: 'waiting',
+      },
+    });
   });
 }
 
@@ -110,20 +117,24 @@ export async function addToWaitlist(
  *
  * Marks the entry as 'removed', then gets all remaining 'waiting' entries
  * ordered by position and reorders them sequentially starting at 1.
+ *
+ * Wrapped in a transaction so removal and reordering are atomic.
  */
 export async function removeFromWaitlist(
   db: PrismaClient,
   classId: string,
   studentId: string,
 ): Promise<void> {
-  // Mark as removed
-  await db.waitlistEntry.update({
-    where: { classId_studentId: { classId, studentId } },
-    data: { status: 'removed' },
-  });
+  await db.$transaction(async (tx) => {
+    // Mark as removed
+    await tx.waitlistEntry.update({
+      where: { classId_studentId: { classId, studentId } },
+      data: { status: 'removed' },
+    });
 
-  // Reorder remaining 'waiting' entries
-  await reorderWaitingEntries(db, classId);
+    // Reorder remaining 'waiting' entries
+    await reorderWaitingEntries(tx, classId);
+  });
 }
 
 /**
@@ -131,49 +142,54 @@ export async function removeFromWaitlist(
  * to the waitlist entry, and reorders remaining positions.
  *
  * Returns the updated waitlist entry, or null if no waiting students remain.
+ *
+ * Wrapped in a transaction so promotion, registration creation, and
+ * reordering are atomic.
  */
 export async function promoteNext(
   db: PrismaClient,
   classId: string,
 ): Promise<WaitlistEntry | null> {
-  // Find first 'waiting' entry ordered by position
-  const nextEntry = await db.waitlistEntry.findFirst({
-    where: { classId, status: 'waiting' },
-    orderBy: { position: 'asc' },
+  return db.$transaction(async (tx) => {
+    // Find first 'waiting' entry ordered by position
+    const nextEntry = await tx.waitlistEntry.findFirst({
+      where: { classId, status: 'waiting' },
+      orderBy: { position: 'asc' },
+    });
+
+    if (!nextEntry) return null;
+
+    // Look up the student to get their incomeTier
+    const student = await tx.student.findUniqueOrThrow({
+      where: { id: nextEntry.studentId },
+      select: { incomeTier: true },
+    });
+
+    // Create a Registration
+    const registration = await tx.registration.create({
+      data: {
+        classId,
+        studentId: nextEntry.studentId,
+        status: 'registered',
+        tierAtBooking: student.incomeTier,
+      },
+    });
+
+    // Update the waitlist entry: promoted status, promotedAt, link to registration
+    const updatedEntry = await tx.waitlistEntry.update({
+      where: { id: nextEntry.id },
+      data: {
+        status: 'promoted',
+        promotedAt: new Date(),
+        registrationId: registration.id,
+      },
+    });
+
+    // Reorder remaining 'waiting' entries
+    await reorderWaitingEntries(tx, classId);
+
+    return updatedEntry;
   });
-
-  if (!nextEntry) return null;
-
-  // Look up the student to get their incomeTier
-  const student = await db.student.findUniqueOrThrow({
-    where: { id: nextEntry.studentId },
-    select: { incomeTier: true },
-  });
-
-  // Create a Registration
-  const registration = await db.registration.create({
-    data: {
-      classId,
-      studentId: nextEntry.studentId,
-      status: 'registered',
-      tierAtBooking: student.incomeTier,
-    },
-  });
-
-  // Update the waitlist entry: promoted status, promotedAt, link to registration
-  const updatedEntry = await db.waitlistEntry.update({
-    where: { id: nextEntry.id },
-    data: {
-      status: 'promoted',
-      promotedAt: new Date(),
-      registrationId: registration.id,
-    },
-  });
-
-  // Reorder remaining 'waiting' entries
-  await reorderWaitingEntries(db, classId);
-
-  return updatedEntry;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +201,7 @@ export async function promoteNext(
  * sequential starting at 1 with no gaps.
  */
 async function reorderWaitingEntries(
-  db: PrismaClient,
+  db: PrismaTransactionClient,
   classId: string,
 ): Promise<void> {
   const remaining = await db.waitlistEntry.findMany({
