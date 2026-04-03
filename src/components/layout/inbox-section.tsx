@@ -38,7 +38,11 @@ export function InboxSection({ notifications }: InboxSectionProps) {
         >
           <div className="flex items-start gap-2 min-w-0">
             {!notification.isRead && (
-              <span className="mt-1.5 inline-block w-2 h-2 rounded-full bg-teal shrink-0" />
+              <span
+                className="mt-1.5 inline-block w-2 h-2 rounded-full bg-teal shrink-0"
+                role="img"
+                aria-label="Unread"
+              />
             )}
             <div className="flex flex-col gap-1 min-w-0">
               <span

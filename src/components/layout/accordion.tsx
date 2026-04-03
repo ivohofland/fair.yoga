@@ -23,13 +23,22 @@ export function Accordion({ sections, defaultOpen }: AccordionProps) {
         return (
           <div key={section.id}>
             <button
+              id={`heading-${section.id}`}
               onClick={() => setOpenId(isOpen ? '' : section.id)}
+              aria-expanded={isOpen}
+              aria-controls={`section-${section.id}`}
               className="w-full flex items-center justify-between py-4 text-left font-heading text-xl font-bold text-teal border-b border-border"
             >
               <span>{section.label}</span>
               <span className="text-brown text-sm">{isOpen ? '\u25BE' : '\u25B8'}</span>
             </button>
-            <div style={{ display: isOpen ? 'block' : 'none' }} className="py-4">
+            <div
+              id={`section-${section.id}`}
+              role="region"
+              aria-labelledby={`heading-${section.id}`}
+              style={{ display: isOpen ? 'block' : 'none' }}
+              className="py-4"
+            >
               {section.children}
             </div>
           </div>

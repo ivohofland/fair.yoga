@@ -34,8 +34,14 @@ export async function GET(request: NextRequest) {
 
       notificationBus.onNotification(handler);
 
+      // Send periodic keepalive to prevent proxy timeouts
+      const keepalive = setInterval(() => {
+        controller.enqueue(encoder.encode(': keepalive\n\n'));
+      }, 30000);
+
       // Cleanup on client disconnect
       request.signal.addEventListener('abort', () => {
+        clearInterval(keepalive);
         notificationBus.offNotification(handler);
         controller.close();
       });

@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import type { Class, ClassStatus, TeacherRoom, Room } from '@prisma/client';
+import type { Class, TeacherRoom, Room } from '@prisma/client';
 import { StatusDot } from '@/components/ui/status-dot';
 
 type ClassWithDetails = Class & {
@@ -22,10 +22,6 @@ function formatDate(date: Date): string {
   const monthName = months[d.getUTCMonth()];
   const dayNum = d.getUTCDate();
   return `${dayName}, ${monthName} ${dayNum}`;
-}
-
-function statusToDot(status: ClassStatus): ClassStatus {
-  return status;
 }
 
 export function ClassList({ classes }: ClassListProps) {
@@ -62,7 +58,7 @@ export function ClassList({ classes }: ClassListProps) {
                 <span className="text-brown text-sm">
                   {cls._count.registrations}/{cls.maxStudents}
                 </span>
-                <StatusDot status={statusToDot(cls.status)} />
+                <StatusDot status={cls.status} label={cls.status.replace('_', ' ')} />
               </div>
             </Link>
           ))}

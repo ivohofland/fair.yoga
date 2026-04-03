@@ -12,6 +12,7 @@ type Status =
 
 interface StatusDotProps {
   status: Status;
+  label?: string;
 }
 
 const colorMap: Record<Status, string> = {
@@ -27,6 +28,12 @@ const colorMap: Record<Status, string> = {
   overdue: 'bg-error',
 };
 
-export function StatusDot({ status }: StatusDotProps) {
-  return <span className={`inline-block w-2 h-2 rounded-full ${colorMap[status]}`} />;
+export function StatusDot({ status, label }: StatusDotProps) {
+  return (
+    <span
+      className={`inline-block w-2 h-2 rounded-full ${colorMap[status]}`}
+      aria-label={label}
+      role={label ? 'img' : undefined}
+    />
+  );
 }

@@ -19,12 +19,14 @@ export function AttendanceList({ items }: AttendanceListProps) {
     Object.fromEntries(items.map((item) => [item.registrationId, item.status])),
   );
   const [updating, setUpdating] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   async function toggleAttendance(registrationId: string) {
     const currentStatus = attendanceState[registrationId] ?? 'registered';
     const newStatus = currentStatus === 'attended' ? 'no_show' : 'attended';
 
     setUpdating(registrationId);
+    setError(null);
     try {
       const response = await fetch(`/api/registrations/${registrationId}`, {
         method: 'PUT',
@@ -37,7 +39,11 @@ export function AttendanceList({ items }: AttendanceListProps) {
           ...prev,
           [registrationId]: newStatus,
         }));
+      } else {
+        setError(`Failed to update attendance for this student. Please try again.`);
       }
+    } catch {
+      setError('Network error. Please check your connection and try again.');
     } finally {
       setUpdating(null);
     }
@@ -59,6 +65,12 @@ export function AttendanceList({ items }: AttendanceListProps) {
       <h2 className="font-heading text-lg font-bold text-dark mb-3">
         Attendance
       </h2>
+
+      {error && (
+        <p role="alert" className="text-error text-sm mb-3">
+          {error}
+        </p>
+      )}
 
       <div>
         {items.map((item) => {

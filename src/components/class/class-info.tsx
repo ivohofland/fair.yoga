@@ -60,7 +60,7 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
           <p className="text-dark">
             {registrationCount} / {cls.maxStudents}
           </p>
-          <StatusDot status={cls.status} />
+          <StatusDot status={cls.status} label={STATUS_LABELS[cls.status]} />
         </div>
         {waitlistCount > 0 && (
           <p className="text-brown text-xs mt-1">
@@ -72,7 +72,7 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
       <div className="py-3 border-b border-border">
         <span className="text-sm text-brown">Status</span>
         <div className="flex items-center gap-2">
-          <StatusDot status={cls.status} />
+          <StatusDot status={cls.status} label={STATUS_LABELS[cls.status]} />
           <p className="text-dark">{STATUS_LABELS[cls.status]}</p>
         </div>
       </div>

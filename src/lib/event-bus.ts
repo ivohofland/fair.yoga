@@ -28,3 +28,4 @@ class NotificationBus extends EventEmitter {
 }
 
 export const notificationBus = new NotificationBus();
+notificationBus.setMaxListeners(100); // Support up to 100 concurrent SSE connections
