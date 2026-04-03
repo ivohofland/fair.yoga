@@ -1,0 +1,254 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest, NextResponse } from 'next/server';
+import type { SessionUser } from './types';
+
+// Mock auth module before importing api-utils
+vi.mock('./auth', () => ({
+  getSessionToken: vi.fn(),
+  validateSession: vi.fn(),
+}));
+
+// Mock db module
+vi.mock('./db', () => ({
+  prisma: {},
+}));
+
+import {
+  respondOk,
+  respondError,
+  requireSession,
+  requireTeacher,
+  requireStudent,
+  parseBody,
+  isErrorResponse,
+} from './api-utils';
+import { getSessionToken, validateSession } from './auth';
+
+const mockedGetSessionToken = vi.mocked(getSessionToken);
+const mockedValidateSession = vi.mocked(validateSession);
+
+function makeRequest(
+  url = 'http://localhost/api/test',
+  init?: { method?: string; body?: string; headers?: Record<string, string> }
+): NextRequest {
+  return new NextRequest(url, init);
+}
+
+describe('respondOk', () => {
+  it('returns NextResponse with { data } body and correct status', async () => {
+    const response = respondOk({ name: 'test' }, 201);
+
+    expect(response).toBeInstanceOf(NextResponse);
+    expect(response.status).toBe(201);
+
+    const body = await response.json();
+    expect(body).toEqual({ data: { name: 'test' } });
+  });
+
+  it('defaults to status 200', async () => {
+    const response = respondOk({ items: [1, 2, 3] });
+
+    expect(response.status).toBe(200);
+
+    const body = await response.json();
+    expect(body).toEqual({ data: { items: [1, 2, 3] } });
+  });
+});
+
+describe('respondError', () => {
+  it('returns NextResponse with { error: { message } } body and correct status', async () => {
+    const response = respondError('Not found', 404);
+
+    expect(response).toBeInstanceOf(NextResponse);
+    expect(response.status).toBe(404);
+
+    const body = await response.json();
+    expect(body).toEqual({ error: { message: 'Not found', code: undefined } });
+  });
+
+  it('includes code when provided', async () => {
+    const response = respondError('Validation failed', 422, 'VALIDATION_ERROR');
+
+    expect(response.status).toBe(422);
+
+    const body = await response.json();
+    expect(body).toEqual({
+      error: { message: 'Validation failed', code: 'VALIDATION_ERROR' },
+    });
+  });
+});
+
+describe('parseBody', () => {
+  it('returns parsed JSON', async () => {
+    const request = makeRequest('http://localhost/api/test', {
+      method: 'POST',
+      body: JSON.stringify({ title: 'Yoga Class', spots: 10 }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const result = await parseBody<{ title: string; spots: number }>(request);
+    expect(result).toEqual({ title: 'Yoga Class', spots: 10 });
+  });
+
+  it('returns null for invalid JSON', async () => {
+    const request = makeRequest('http://localhost/api/test', {
+      method: 'POST',
+      body: 'not-json{{{',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const result = await parseBody(request);
+    expect(result).toBeNull();
+  });
+});
+
+describe('isErrorResponse', () => {
+  it('returns true for NextResponse', () => {
+    const response = NextResponse.json({ error: 'test' }, { status: 401 });
+    expect(isErrorResponse(response)).toBe(true);
+  });
+
+  it('returns false for SessionUser', () => {
+    const user: SessionUser = {
+      sessionId: 'sess-1',
+      userId: 'user-1',
+      userType: 'teacher',
+    };
+    expect(isErrorResponse(user)).toBe(false);
+  });
+});
+
+describe('requireSession', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('returns 401 when no session token is present', async () => {
+    mockedGetSessionToken.mockReturnValue(null);
+
+    const request = makeRequest();
+    const result = await requireSession(request);
+
+    expect(result).toBeInstanceOf(NextResponse);
+    const response = result as NextResponse;
+    expect(response.status).toBe(401);
+
+    const body = await response.json();
+    expect(body.error.message).toBe('Authentication required');
+  });
+
+  it('returns 401 when session is expired/invalid', async () => {
+    mockedGetSessionToken.mockReturnValue('expired-token');
+    mockedValidateSession.mockResolvedValue(null);
+
+    const request = makeRequest();
+    const result = await requireSession(request);
+
+    expect(result).toBeInstanceOf(NextResponse);
+    const response = result as NextResponse;
+    expect(response.status).toBe(401);
+
+    const body = await response.json();
+    expect(body.error.message).toBe('Session expired');
+  });
+
+  it('returns SessionUser when session is valid', async () => {
+    const sessionUser: SessionUser = {
+      sessionId: 'sess-abc',
+      userId: 'user-abc',
+      userType: 'teacher',
+    };
+    mockedGetSessionToken.mockReturnValue('valid-token');
+    mockedValidateSession.mockResolvedValue(sessionUser);
+
+    const request = makeRequest();
+    const result = await requireSession(request);
+
+    expect(result).not.toBeInstanceOf(NextResponse);
+    expect(result).toEqual(sessionUser);
+  });
+});
+
+describe('requireTeacher', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('returns 403 when user is not a teacher', async () => {
+    const studentUser: SessionUser = {
+      sessionId: 'sess-stu',
+      userId: 'user-stu',
+      userType: 'student',
+    };
+    mockedGetSessionToken.mockReturnValue('valid-token');
+    mockedValidateSession.mockResolvedValue(studentUser);
+
+    const request = makeRequest();
+    const result = await requireTeacher(request);
+
+    expect(result).toBeInstanceOf(NextResponse);
+    const response = result as NextResponse;
+    expect(response.status).toBe(403);
+
+    const body = await response.json();
+    expect(body.error.message).toBe('Teacher access required');
+  });
+
+  it('returns SessionUser when user is a teacher', async () => {
+    const teacherUser: SessionUser = {
+      sessionId: 'sess-tea',
+      userId: 'user-tea',
+      userType: 'teacher',
+    };
+    mockedGetSessionToken.mockReturnValue('valid-token');
+    mockedValidateSession.mockResolvedValue(teacherUser);
+
+    const request = makeRequest();
+    const result = await requireTeacher(request);
+
+    expect(result).not.toBeInstanceOf(NextResponse);
+    expect(result).toEqual(teacherUser);
+  });
+});
+
+describe('requireStudent', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('returns 403 when user is not a student', async () => {
+    const teacherUser: SessionUser = {
+      sessionId: 'sess-tea',
+      userId: 'user-tea',
+      userType: 'teacher',
+    };
+    mockedGetSessionToken.mockReturnValue('valid-token');
+    mockedValidateSession.mockResolvedValue(teacherUser);
+
+    const request = makeRequest();
+    const result = await requireStudent(request);
+
+    expect(result).toBeInstanceOf(NextResponse);
+    const response = result as NextResponse;
+    expect(response.status).toBe(403);
+
+    const body = await response.json();
+    expect(body.error.message).toBe('Student access required');
+  });
+
+  it('returns SessionUser when user is a student', async () => {
+    const studentUser: SessionUser = {
+      sessionId: 'sess-stu',
+      userId: 'user-stu',
+      userType: 'student',
+    };
+    mockedGetSessionToken.mockReturnValue('valid-token');
+    mockedValidateSession.mockResolvedValue(studentUser);
+
+    const request = makeRequest();
+    const result = await requireStudent(request);
+
+    expect(result).not.toBeInstanceOf(NextResponse);
+    expect(result).toEqual(studentUser);
+  });
+});
