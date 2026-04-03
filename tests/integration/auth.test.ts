@@ -6,6 +6,8 @@
  */
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { sha256 } from '@oslojs/crypto/sha2';
+import { encodeHexLowerCase } from '@oslojs/encoding';
 import {
   createSession,
   validateSession,
@@ -13,6 +15,11 @@ import {
   generateMagicLinkToken,
   verifyMagicLinkToken,
 } from '@/lib/auth';
+
+function hashToken(token: string): string {
+  const bytes = sha256(new TextEncoder().encode(token));
+  return encodeHexLowerCase(bytes);
+}
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -92,7 +99,7 @@ describe('Magic link flow (teacher)', () => {
     expect(sessionUser).not.toBeNull();
     expect(sessionUser!.userId).toBe(teacherId);
     expect(sessionUser!.userType).toBe('teacher');
-    expect(sessionUser!.sessionId).toBe(sessionToken);
+    expect(sessionUser!.sessionId).toBe(hashToken(sessionToken));
   });
 });
 
@@ -165,9 +172,9 @@ describe('Session expiry', () => {
   it('expired session returns null on validate', async () => {
     const sessionToken = await createSession(prisma, teacherId, 'teacher');
 
-    // Manually expire the session
+    // Manually expire the session (use hash since that's what's stored in DB)
     await prisma.session.update({
-      where: { id: sessionToken },
+      where: { id: hashToken(sessionToken) },
       data: { expiresAt: new Date(Date.now() - 1000) },
     });
 

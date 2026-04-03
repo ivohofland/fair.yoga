@@ -1,4 +1,5 @@
 import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { validateSession } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import type { SessionUser } from '@/lib/types';
@@ -13,7 +14,7 @@ export async function getSession(): Promise<SessionUser | null> {
 export async function requireTeacherSession(): Promise<SessionUser> {
   const session = await getSession();
   if (!session || session.userType !== 'teacher') {
-    throw new Error('Teacher authentication required');
+    redirect('/login');
   }
   return session;
 }

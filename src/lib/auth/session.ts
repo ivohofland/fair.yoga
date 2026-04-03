@@ -1,5 +1,7 @@
 import crypto from 'crypto';
 import type { PrismaClient, RecipientType } from '@prisma/client';
+import { sha256 } from '@oslojs/crypto/sha2';
+import { encodeHexLowerCase } from '@oslojs/encoding';
 import type { SessionUser } from '../types';
 
 export const SESSION_COOKIE_NAME = 'fair_yoga_session';
@@ -8,17 +10,23 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 const FIFTEEN_DAYS_MS = 15 * 24 * 60 * 60 * 1000;
 const THIRTY_DAYS_SECONDS = 30 * 24 * 60 * 60; // 2592000
 
+function hashToken(token: string): string {
+  const bytes = sha256(new TextEncoder().encode(token));
+  return encodeHexLowerCase(bytes);
+}
+
 export async function createSession(
   db: PrismaClient,
   userId: string,
   userType: RecipientType
 ): Promise<string> {
   const token = crypto.randomBytes(32).toString('hex');
+  const sessionHash = hashToken(token);
   const expiresAt = new Date(Date.now() + THIRTY_DAYS_MS);
 
   await db.session.create({
     data: {
-      id: token,
+      id: sessionHash,
       userId,
       userType,
       expiresAt,
@@ -32,8 +40,10 @@ export async function validateSession(
   db: PrismaClient,
   token: string
 ): Promise<SessionUser | null> {
+  const sessionHash = hashToken(token);
+
   const session = await db.session.findUnique({
-    where: { id: token },
+    where: { id: sessionHash },
   });
 
   if (!session) {
@@ -41,6 +51,7 @@ export async function validateSession(
   }
 
   if (session.expiresAt <= new Date()) {
+    await db.session.delete({ where: { id: sessionHash } }).catch(() => {});
     return null;
   }
 
@@ -48,7 +59,7 @@ export async function validateSession(
   const fifteenDaysAgo = new Date(Date.now() - FIFTEEN_DAYS_MS);
   if (session.createdAt < fifteenDaysAgo) {
     await db.session.update({
-      where: { id: token },
+      where: { id: sessionHash },
       data: { expiresAt: new Date(Date.now() + THIRTY_DAYS_MS) },
     });
   }
@@ -64,8 +75,9 @@ export async function invalidateSession(
   db: PrismaClient,
   token: string
 ): Promise<void> {
+  const sessionHash = hashToken(token);
   await db.session.delete({
-    where: { id: token },
+    where: { id: sessionHash },
   });
 }
 
@@ -95,8 +107,9 @@ export function setSessionCookie(headers: Headers, token: string): void {
 }
 
 export function clearSessionCookie(headers: Headers): void {
-  headers.append(
-    'Set-Cookie',
-    `${SESSION_COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`
-  );
+  let cookie = `${SESSION_COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
+  if (process.env.NODE_ENV === 'production') {
+    cookie += '; Secure';
+  }
+  headers.append('Set-Cookie', cookie);
 }
