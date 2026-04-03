@@ -7,6 +7,7 @@ import {
   parseBody,
   isErrorResponse,
 } from '@/lib/api-utils';
+import { createClassTemplateSchema } from '@/lib/schemas';
 
 export async function GET(request: NextRequest) {
   const session = await requireTeacher(request);
@@ -20,62 +21,16 @@ export async function GET(request: NextRequest) {
   return respondOk(templates);
 }
 
-interface CreateClassTemplateBody {
-  teacherRoomId: string;
-  classType: string;
-  description?: string;
-  dayOfWeek: number;
-  startTime: string;
-  durationMinutes: number;
-  roomCost: number;
-  minRate: number;
-  targetRate: number;
-  minStudents: number;
-  maxStudents: number;
-  cancelDeadline?: 'HOURS_48' | 'HOURS_24' | 'HOURS_12' | 'HOURS_6';
-  autoCancelCheck?: 'HOURS_4' | 'HOURS_2' | 'HOURS_1';
-}
-
 export async function POST(request: NextRequest) {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  const body = await parseBody<CreateClassTemplateBody>(request);
-  if (!body) return respondError('Invalid request body', 400);
-
-  const {
-    teacherRoomId,
-    classType,
-    dayOfWeek,
-    startTime,
-    durationMinutes,
-    roomCost,
-    minRate,
-    targetRate,
-    minStudents,
-    maxStudents,
-  } = body;
-
-  if (
-    !teacherRoomId ||
-    !classType ||
-    dayOfWeek === undefined ||
-    !startTime ||
-    !durationMinutes ||
-    roomCost === undefined ||
-    minRate === undefined ||
-    targetRate === undefined ||
-    !minStudents ||
-    !maxStudents
-  ) {
-    return respondError(
-      'Missing required fields: teacherRoomId, classType, dayOfWeek, startTime, durationMinutes, roomCost, minRate, targetRate, minStudents, maxStudents',
-      400,
-    );
-  }
+  const parsed = await parseBody(request, createClassTemplateSchema);
+  if ('error' in parsed) return parsed.error;
+  const body = parsed.data;
 
   // Verify teacherRoomId belongs to this teacher
-  const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id: teacherRoomId } });
+  const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id: body.teacherRoomId } });
   if (!teacherRoom || teacherRoom.teacherId !== session.userId) {
     return respondError('Invalid teacher room', 400);
   }
@@ -83,17 +38,17 @@ export async function POST(request: NextRequest) {
   const template = await prisma.classTemplate.create({
     data: {
       teacherId: session.userId,
-      teacherRoomId,
-      classType,
+      teacherRoomId: body.teacherRoomId,
+      classType: body.classType,
       description: body.description,
-      dayOfWeek,
-      startTime,
-      durationMinutes,
-      roomCost,
-      minRate,
-      targetRate,
-      minStudents,
-      maxStudents,
+      dayOfWeek: body.dayOfWeek,
+      startTime: body.startTime,
+      durationMinutes: body.durationMinutes,
+      roomCost: body.roomCost,
+      minRate: body.minRate,
+      targetRate: body.targetRate,
+      minStudents: body.minStudents,
+      maxStudents: body.maxStudents,
       cancelDeadline: body.cancelDeadline,
       autoCancelCheck: body.autoCancelCheck,
     },

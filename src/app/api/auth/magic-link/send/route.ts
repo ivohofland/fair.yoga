@@ -1,20 +1,14 @@
 import { NextRequest } from 'next/server';
 import { generateMagicLinkToken } from '@/lib/auth';
-import { respondOk, respondError, parseBody } from '@/lib/api-utils';
+import { respondOk, parseBody } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 import { sendMagicLinkEmail } from '@/lib/email';
-
-interface SendBody {
-  email: string;
-}
+import { magicLinkSendSchema } from '@/lib/schemas';
 
 export async function POST(request: NextRequest) {
-  const body = await parseBody<SendBody>(request);
-  if (!body?.email) {
-    return respondError('Email is required', 400);
-  }
-
-  const { email } = body;
+  const parsed = await parseBody(request, magicLinkSendSchema);
+  if ('error' in parsed) return parsed.error;
+  const { email } = parsed.data;
 
   // Look up user in Teacher table first, then Student
   const teacher = await prisma.teacher.findUnique({ where: { email } });

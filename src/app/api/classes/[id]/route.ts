@@ -6,8 +6,8 @@ import {
   requireTeacher,
   parseBody,
   isErrorResponse,
-  pick,
 } from '@/lib/api-utils';
+import { updateClassSchema } from '@/lib/schemas';
 
 export async function GET(
   request: NextRequest,
@@ -31,6 +31,14 @@ export async function GET(
   return respondOk(cls);
 }
 
+const ECONOMIC_FIELDS = [
+  'roomCost',
+  'minRate',
+  'targetRate',
+  'minStudents',
+  'maxStudents',
+] as const;
+
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -44,40 +52,30 @@ export async function PUT(
   if (!cls) return respondError('Class not found', 404);
   if (cls.teacherId !== session.userId) return respondError('Not your class', 403);
 
-  const body = await parseBody<Record<string, unknown>>(request);
-  if (!body) return respondError('Invalid request body', 400);
+  const parsed = await parseBody(request, updateClassSchema);
+  if ('error' in parsed) return parsed.error;
+  const body = parsed.data;
 
-  // Allowlist: only these fields can be updated
-  const ALWAYS_ALLOWED = [
-    'classType',
-    'description',
-    'date',
-    'startTime',
-    'durationMinutes',
-  ] as const;
-
-  const ECONOMIC_ALLOWED = [
-    'roomCost',
-    'minRate',
-    'targetRate',
-    'minStudents',
-    'maxStudents',
-  ] as const;
-
-  const allowedFields = pick(body, ALWAYS_ALLOWED);
-
-  // Only include economic fields if settings are NOT locked
-  if (!cls.settingsLocked) {
-    Object.assign(allowedFields, pick(body, ECONOMIC_ALLOWED));
+  // If settings are locked, reject economic fields with an error
+  if (cls.settingsLocked) {
+    const sentEconomicFields = ECONOMIC_FIELDS.filter(
+      (f) => body[f] !== undefined,
+    );
+    if (sentEconomicFields.length > 0) {
+      return respondError(
+        `Cannot update economic fields when settings are locked: ${sentEconomicFields.join(', ')}`,
+        409,
+      );
+    }
   }
 
-  if (Object.keys(allowedFields).length === 0) {
+  if (Object.keys(body).length === 0) {
     return respondError('No valid fields to update', 400);
   }
 
   const updated = await prisma.class.update({
     where: { id },
-    data: allowedFields,
+    data: body,
   });
 
   return respondOk(updated);

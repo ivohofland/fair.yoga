@@ -6,8 +6,8 @@ import {
   requireSession,
   parseBody,
   isErrorResponse,
-  pick,
 } from '@/lib/api-utils';
+import { updateStudentSchema } from '@/lib/schemas';
 
 export async function GET(
   request: NextRequest,
@@ -59,17 +59,6 @@ export async function GET(
   return respondError('Access denied', 403);
 }
 
-const STUDENT_ALLOWED_FIELDS = [
-  'firstName',
-  'lastName',
-  'phone',
-  'birthday',
-  'address',
-  'incomeTier',
-  'reminderPref',
-  'emailNotifications',
-] as const;
-
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -82,10 +71,9 @@ export async function PUT(
     return respondError('Access denied', 403);
   }
 
-  const body = await parseBody<Record<string, unknown>>(request);
-  if (!body) return respondError('Invalid request body', 400);
-
-  const updateData = pick(body, STUDENT_ALLOWED_FIELDS);
+  const parsed = await parseBody(request, updateStudentSchema);
+  if ('error' in parsed) return parsed.error;
+  const updateData = parsed.data;
 
   if (Object.keys(updateData).length === 0) {
     return respondError('No valid fields to update', 400);

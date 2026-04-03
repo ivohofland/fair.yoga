@@ -7,6 +7,7 @@ import {
   parseBody,
   isErrorResponse,
 } from '@/lib/api-utils';
+import { updatePrivacySchema } from '@/lib/schemas';
 
 export async function GET(
   request: NextRequest,
@@ -49,15 +50,6 @@ export async function GET(
   return respondOk(privacy);
 }
 
-interface UpdatePrivacyBody {
-  teacherId: string;
-  shareEmail?: boolean;
-  sharePhone?: boolean;
-  shareBirthday?: boolean;
-  shareAddress?: boolean;
-  receiveComms?: boolean;
-}
-
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -70,13 +62,9 @@ export async function PUT(
     return respondError('Access denied', 403);
   }
 
-  const body = await parseBody<UpdatePrivacyBody>(request);
-  if (!body) return respondError('Invalid request body', 400);
-
-  const { teacherId, ...privacyFields } = body;
-  if (!teacherId) {
-    return respondError('Missing teacherId in request body', 400);
-  }
+  const parsed = await parseBody(request, updatePrivacySchema);
+  if ('error' in parsed) return parsed.error;
+  const { teacherId, ...privacyFields } = parsed.data;
 
   const privacy = await prisma.studentPrivacy.upsert({
     where: {

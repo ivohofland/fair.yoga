@@ -9,11 +9,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { transitionClass } from '@/services/class-lifecycle';
-import type { ClassStatus } from '@prisma/client';
-
-interface TransitionBody {
-  status: ClassStatus;
-}
+import { transitionClassSchema } from '@/lib/schemas';
 
 export const POST = withErrorHandler(async (
   request: NextRequest,
@@ -28,10 +24,10 @@ export const POST = withErrorHandler(async (
   if (!cls) return respondError('Class not found', 404);
   if (cls.teacherId !== session.userId) return respondError('Not your class', 403);
 
-  const body = await parseBody<TransitionBody>(request);
-  if (!body?.status) return respondError('Missing status field', 400);
+  const parsed = await parseBody(request, transitionClassSchema);
+  if ('error' in parsed) return parsed.error;
 
-  const result = await transitionClass(prisma, id, body.status);
+  const result = await transitionClass(prisma, id, parsed.data.status);
   if (!result.ok) return respondError(result.error, 409);
 
   return respondOk(result);

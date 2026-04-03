@@ -7,6 +7,7 @@ import {
   parseBody,
   isErrorResponse,
 } from '@/lib/api-utils';
+import { createClassSchema } from '@/lib/schemas';
 
 export async function GET(request: NextRequest) {
   const session = await requireTeacher(request);
@@ -35,53 +36,16 @@ export async function GET(request: NextRequest) {
   return respondOk(classes);
 }
 
-interface CreateClassBody {
-  teacherRoomId: string;
-  classType: string;
-  description?: string;
-  date: string;
-  startTime: string;
-  durationMinutes: number;
-  roomCost: number;
-  minRate: number;
-  targetRate: number;
-  minStudents: number;
-  maxStudents: number;
-  cancelDeadline?: string;
-  autoCancelCheck?: string;
-  templateId?: string;
-}
-
 export async function POST(request: NextRequest) {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  const body = await parseBody<CreateClassBody>(request);
-  if (!body) return respondError('Invalid request body', 400);
-
-  const {
-    teacherRoomId,
-    classType,
-    description,
-    date,
-    startTime,
-    durationMinutes,
-    roomCost,
-    minRate,
-    targetRate,
-    minStudents,
-    maxStudents,
-    cancelDeadline,
-    autoCancelCheck,
-    templateId,
-  } = body;
-
-  if (!teacherRoomId || !classType || !date || !startTime || durationMinutes == null) {
-    return respondError('Missing required fields', 400);
-  }
+  const parsed = await parseBody(request, createClassSchema);
+  if ('error' in parsed) return parsed.error;
+  const body = parsed.data;
 
   // Verify teacherRoomId belongs to this teacher
-  const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id: teacherRoomId } });
+  const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id: body.teacherRoomId } });
   if (!teacherRoom || teacherRoom.teacherId !== session.userId) {
     return respondError('Invalid teacher room', 400);
   }
@@ -89,20 +53,20 @@ export async function POST(request: NextRequest) {
   const cls = await prisma.class.create({
     data: {
       teacherId: session.userId,
-      teacherRoomId,
-      classType,
-      description: description ?? null,
-      date: new Date(date),
-      startTime,
-      durationMinutes,
-      roomCost,
-      minRate,
-      targetRate,
-      minStudents,
-      maxStudents,
-      cancelDeadline: cancelDeadline as never ?? undefined,
-      autoCancelCheck: autoCancelCheck as never ?? undefined,
-      templateId: templateId ?? null,
+      teacherRoomId: body.teacherRoomId,
+      classType: body.classType,
+      description: body.description ?? null,
+      date: new Date(body.date),
+      startTime: body.startTime,
+      durationMinutes: body.durationMinutes,
+      roomCost: body.roomCost,
+      minRate: body.minRate,
+      targetRate: body.targetRate,
+      minStudents: body.minStudents,
+      maxStudents: body.maxStudents,
+      cancelDeadline: body.cancelDeadline as never ?? undefined,
+      autoCancelCheck: body.autoCancelCheck as never ?? undefined,
+      templateId: body.templateId ?? null,
       status: 'draft',
     },
   });

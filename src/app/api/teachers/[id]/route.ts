@@ -6,8 +6,8 @@ import {
   requireTeacher,
   parseBody,
   isErrorResponse,
-  pick,
 } from '@/lib/api-utils';
+import { updateTeacherSchema } from '@/lib/schemas';
 
 export async function GET(
   request: NextRequest,
@@ -27,19 +27,6 @@ export async function GET(
   return respondOk(teacher);
 }
 
-const TEACHER_ALLOWED_FIELDS = [
-  'firstName',
-  'lastName',
-  'photoUrl',
-  'bio',
-  'pageSlug',
-  'defaultCurrency',
-  'defaultTimezone',
-  'defaultReminder',
-  'bankIban',
-  'bankAccountName',
-] as const;
-
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -52,15 +39,14 @@ export async function PUT(
     return respondError('Access denied', 403);
   }
 
-  const body = await parseBody<Record<string, unknown>>(request);
-  if (!body) return respondError('Invalid request body', 400);
-
-  const updateData = pick(body, TEACHER_ALLOWED_FIELDS);
+  const parsed = await parseBody(request, updateTeacherSchema);
+  if ('error' in parsed) return parsed.error;
+  const updateData = parsed.data;
 
   // Check for pageSlug conflicts
-  if (typeof updateData.pageSlug === 'string') {
+  if (updateData.pageSlug) {
     const existing = await prisma.teacher.findUnique({
-      where: { pageSlug: updateData.pageSlug as string },
+      where: { pageSlug: updateData.pageSlug },
     });
     if (existing && existing.id !== id) {
       return respondError('Page slug already in use', 409, 'SLUG_TAKEN');

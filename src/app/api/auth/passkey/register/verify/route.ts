@@ -9,19 +9,14 @@ import {
 } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 import type { RegistrationResponseJSON } from '@simplewebauthn/types';
-
-interface VerifyBody {
-  response: RegistrationResponseJSON;
-}
+import { passkeyRegisterVerifySchema } from '@/lib/schemas';
 
 export async function POST(request: NextRequest) {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
-  const body = await parseBody<VerifyBody>(request);
-  if (!body?.response) {
-    return respondError('Response is required', 400);
-  }
+  const parsed = await parseBody(request, passkeyRegisterVerifySchema);
+  if ('error' in parsed) return parsed.error;
 
   const challenge = getAndDeleteChallenge(session.userId);
   if (!challenge) {
@@ -29,7 +24,7 @@ export async function POST(request: NextRequest) {
   }
 
   const result = await verifyPasskeyRegistration({
-    response: body.response,
+    response: parsed.data.response as unknown as RegistrationResponseJSON,
     expectedChallenge: challenge,
   });
 

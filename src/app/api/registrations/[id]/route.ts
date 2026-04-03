@@ -7,7 +7,7 @@ import {
   parseBody,
   isErrorResponse,
 } from '@/lib/api-utils';
-import type { RegistrationStatus } from '@prisma/client';
+import { updateRegistrationSchema } from '@/lib/schemas';
 
 export async function GET(
   request: NextRequest,
@@ -37,10 +37,6 @@ export async function GET(
   return respondOk(registration);
 }
 
-interface UpdateRegistrationBody {
-  status: 'attended' | 'no_show' | 'late_cancel';
-}
-
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -64,17 +60,12 @@ export async function PUT(
     return respondError('Not your class', 403);
   }
 
-  const body = await parseBody<UpdateRegistrationBody>(request);
-  if (!body?.status) return respondError('Missing status field', 400);
-
-  const validStatuses: RegistrationStatus[] = ['attended', 'no_show', 'late_cancel'];
-  if (!validStatuses.includes(body.status)) {
-    return respondError(`Invalid status. Must be one of: ${validStatuses.join(', ')}`, 400);
-  }
+  const parsed = await parseBody(request, updateRegistrationSchema);
+  if ('error' in parsed) return parsed.error;
 
   const updated = await prisma.registration.update({
     where: { id },
-    data: { status: body.status },
+    data: { status: parsed.data.status },
   });
 
   return respondOk(updated);

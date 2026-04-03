@@ -7,18 +7,14 @@ import {
 import { respondOk, respondError, parseBody } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 import type { RecipientType } from '@prisma/client';
-
-interface VerifyBody {
-  token: string;
-}
+import { magicLinkVerifySchema } from '@/lib/schemas';
 
 export async function POST(request: NextRequest) {
-  const body = await parseBody<VerifyBody>(request);
-  if (!body?.token) {
-    return respondError('Token is required', 400);
-  }
+  const parsed = await parseBody(request, magicLinkVerifySchema);
+  if ('error' in parsed) return parsed.error;
+  const { token } = parsed.data;
 
-  const result = await verifyMagicLinkToken(prisma, body.token);
+  const result = await verifyMagicLinkToken(prisma, token);
   if (!result) {
     return respondError('Invalid or expired magic link', 400);
   }

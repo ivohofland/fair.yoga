@@ -11,18 +11,15 @@ import {
   createBulkNotifications,
   type CreateNotificationInput,
 } from '@/services/notifications';
-
-interface AnnouncementBody {
-  classId?: string;
-  message: string;
-}
+import { createAnnouncementSchema } from '@/lib/schemas';
 
 export async function POST(request: NextRequest) {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  const body = await parseBody<AnnouncementBody>(request);
-  if (!body?.message) return respondError('Missing message', 400);
+  const parsed = await parseBody(request, createAnnouncementSchema);
+  if ('error' in parsed) return parsed.error;
+  const body = parsed.data;
 
   let studentIds: string[];
 

@@ -1,24 +1,12 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { respondOk, respondError, parseBody } from '@/lib/api-utils';
-
-interface CreateTeacherBody {
-  firstName: string;
-  lastName: string;
-  email: string;
-  bio: string;
-  pageSlug: string;
-}
+import { createTeacherSchema } from '@/lib/schemas';
 
 export async function POST(request: NextRequest) {
-  const body = await parseBody<CreateTeacherBody>(request);
-  if (!body) return respondError('Invalid request body', 400);
-
-  const { firstName, lastName, email, bio, pageSlug } = body;
-
-  if (!firstName || !lastName || !email || !bio || !pageSlug) {
-    return respondError('Missing required fields: firstName, lastName, email, bio, pageSlug', 400);
-  }
+  const parsed = await parseBody(request, createTeacherSchema);
+  if ('error' in parsed) return parsed.error;
+  const { firstName, lastName, email, bio, pageSlug } = parsed.data;
 
   const existingEmail = await prisma.teacher.findUnique({ where: { email } });
   if (existingEmail) {

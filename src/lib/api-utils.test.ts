@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import type { SessionUser } from './types';
 
 // Mock auth module before importing api-utils
@@ -78,27 +79,52 @@ describe('respondError', () => {
   });
 });
 
+const testSchema = z.object({
+  title: z.string(),
+  spots: z.number(),
+});
+
 describe('parseBody', () => {
-  it('returns parsed JSON', async () => {
+  it('returns { data } for valid JSON matching schema', async () => {
     const request = makeRequest('http://localhost/api/test', {
       method: 'POST',
       body: JSON.stringify({ title: 'Yoga Class', spots: 10 }),
       headers: { 'Content-Type': 'application/json' },
     });
 
-    const result = await parseBody<{ title: string; spots: number }>(request);
-    expect(result).toEqual({ title: 'Yoga Class', spots: 10 });
+    const result = await parseBody(request, testSchema);
+    expect('data' in result).toBe(true);
+    if ('data' in result) {
+      expect(result.data).toEqual({ title: 'Yoga Class', spots: 10 });
+    }
   });
 
-  it('returns null for invalid JSON', async () => {
+  it('returns { error } for invalid JSON', async () => {
     const request = makeRequest('http://localhost/api/test', {
       method: 'POST',
       body: 'not-json{{{',
       headers: { 'Content-Type': 'application/json' },
     });
 
-    const result = await parseBody(request);
-    expect(result).toBeNull();
+    const result = await parseBody(request, testSchema);
+    expect('error' in result).toBe(true);
+    if ('error' in result) {
+      expect(result.error.status).toBe(400);
+    }
+  });
+
+  it('returns { error } when JSON does not match schema', async () => {
+    const request = makeRequest('http://localhost/api/test', {
+      method: 'POST',
+      body: JSON.stringify({ title: 123, spots: 'not-a-number' }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const result = await parseBody(request, testSchema);
+    expect('error' in result).toBe(true);
+    if ('error' in result) {
+      expect(result.error.status).toBe(400);
+    }
   });
 });
 

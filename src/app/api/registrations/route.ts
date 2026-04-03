@@ -8,18 +8,15 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
-
-interface CreateRegistrationBody {
-  classId: string;
-  studentId?: string;
-}
+import { createRegistrationSchema } from '@/lib/schemas';
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
-  const body = await parseBody<CreateRegistrationBody>(request);
-  if (!body?.classId) return respondError('Missing classId', 400);
+  const parsed = await parseBody(request, createRegistrationSchema);
+  if ('error' in parsed) return parsed.error;
+  const body = parsed.data;
 
   const isTeacher = session.userType === 'teacher';
   const studentId = isTeacher ? body.studentId : session.userId;

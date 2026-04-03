@@ -9,10 +9,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { markPaymentPaid } from '@/services/payments';
-
-interface MarkPaidBody {
-  method: string;
-}
+import { markPaidSchema } from '@/lib/schemas';
 
 export const POST = withErrorHandler(async (
   request: NextRequest,
@@ -38,10 +35,10 @@ export const POST = withErrorHandler(async (
     return respondError('Access denied', 403);
   }
 
-  const body = await parseBody<MarkPaidBody>(request);
-  if (!body?.method) return respondError('Missing method field', 400);
+  const parsed = await parseBody(request, markPaidSchema);
+  if ('error' in parsed) return parsed.error;
 
-  const result = await markPaymentPaid(prisma, id, body.method);
+  const result = await markPaymentPaid(prisma, id, parsed.data.method);
   if (!result.ok) return respondError(result.error, 409);
   return respondOk(result.payment);
 });

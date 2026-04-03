@@ -7,6 +7,7 @@ import {
   parseBody,
   isErrorResponse,
 } from '@/lib/api-utils';
+import { createTeacherRoomSchema } from '@/lib/schemas';
 
 export async function GET(request: NextRequest) {
   const session = await requireTeacher(request);
@@ -21,25 +22,13 @@ export async function GET(request: NextRequest) {
   return respondOk(teacherRooms);
 }
 
-interface CreateTeacherRoomBody {
-  roomId: string;
-  capacityOverride: number;
-  rentalRate: number;
-  equipmentNotes?: string;
-}
-
 export async function POST(request: NextRequest) {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  const body = await parseBody<CreateTeacherRoomBody>(request);
-  if (!body) return respondError('Invalid request body', 400);
-
-  const { roomId, capacityOverride, rentalRate } = body;
-
-  if (!roomId || capacityOverride === undefined || rentalRate === undefined) {
-    return respondError('Missing required fields: roomId, capacityOverride, rentalRate', 400);
-  }
+  const parsed = await parseBody(request, createTeacherRoomSchema);
+  if ('error' in parsed) return parsed.error;
+  const { roomId, capacityOverride, rentalRate, equipmentNotes } = parsed.data;
 
   // Check for duplicate
   const existing = await prisma.teacherRoom.findUnique({
@@ -61,7 +50,7 @@ export async function POST(request: NextRequest) {
       roomId,
       capacityOverride,
       rentalRate,
-      equipmentNotes: body.equipmentNotes,
+      equipmentNotes: equipmentNotes ?? undefined,
     },
   });
 

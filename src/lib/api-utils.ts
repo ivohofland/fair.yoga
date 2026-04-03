@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { validateSession, getSessionToken } from './auth';
 import { prisma } from './db';
 import type { SessionUser } from './types';
@@ -45,12 +46,26 @@ export async function requireStudent(
   return result;
 }
 
-export async function parseBody<T>(request: NextRequest): Promise<T | null> {
+export async function parseBody<T>(
+  request: NextRequest,
+  schema: z.ZodType<T>,
+): Promise<{ data: T } | { error: NextResponse }> {
+  let raw: unknown;
   try {
-    return (await request.json()) as T;
+    raw = await request.json();
   } catch {
-    return null;
+    return { error: respondError('Invalid JSON', 400) };
   }
+
+  const result = schema.safeParse(raw);
+  if (!result.success) {
+    const message = result.error.issues
+      .map((i) => `${i.path.join('.')}: ${i.message}`)
+      .join(', ');
+    return { error: respondError(message, 400) };
+  }
+
+  return { data: result.data };
 }
 
 // Type guard helper for route handlers

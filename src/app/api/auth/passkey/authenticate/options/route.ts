@@ -6,17 +6,16 @@ import {
 } from '@/lib/auth';
 import { respondOk, parseBody } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
-
-interface OptionsBody {
-  email?: string;
-}
+import { passkeyAuthOptionsSchema } from '@/lib/schemas';
 
 export async function POST(request: NextRequest) {
-  const body = await parseBody<OptionsBody>(request);
+  const parsed = await parseBody(request, passkeyAuthOptionsSchema);
+  if ('error' in parsed) return parsed.error;
+  const body = parsed.data;
 
   let credentialIds: string[] | undefined;
 
-  if (body?.email) {
+  if (body.email) {
     // Look up user: Teacher first, then Student
     const teacher = await prisma.teacher.findUnique({
       where: { email: body.email },
