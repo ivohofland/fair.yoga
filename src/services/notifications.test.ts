@@ -247,7 +247,6 @@ describe('markAsRead', () => {
 describe('getUnreadForEmailFallback', () => {
   let teacherId: string;
   let oldNotificationId: string;
-  let recentNotificationId: string;
 
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
@@ -277,15 +276,14 @@ describe('getUnreadForEmailFallback', () => {
     });
     oldNotificationId = oldNotification.id;
 
-    // Create a recent notification (just now)
-    const recentNotification = await createNotification(prisma, {
+    // Create a recent notification (just now) — exists in DB for filtering tests
+    await createNotification(prisma, {
       recipientType: 'teacher',
       recipientId: teacherId,
       type: 'reminder',
       title: 'Recent notification',
       body: 'This notification is brand new.',
     });
-    recentNotificationId = recentNotification.id;
   });
 
   afterAll(async () => {

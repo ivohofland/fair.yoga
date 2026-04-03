@@ -43,7 +43,7 @@ export function getNextOccurrences(
 
   // Find the first occurrence on or after `start`
   const currentJsDay = start.getUTCDay();
-  let daysUntilTarget = (jsDayOfWeek - currentJsDay + 7) % 7;
+  const daysUntilTarget = (jsDayOfWeek - currentJsDay + 7) % 7;
   // daysUntilTarget === 0 means `from` is already the target day — include it
 
   const firstOccurrence = new Date(start);
