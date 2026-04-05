@@ -17,7 +17,10 @@ export async function GET(
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  const template = await prisma.classTemplate.findUnique({ where: { id } });
+  const template = await prisma.classTemplate.findUnique({
+    where: { id },
+    include: { teacherRoom: { include: { room: true } } },
+  });
   if (!template) return respondError('Class template not found', 404);
 
   if (template.teacherId !== session.userId) {
@@ -77,6 +80,29 @@ export async function DELETE(
   const updated = await prisma.classTemplate.update({
     where: { id },
     data: { isActive: false },
+  });
+
+  return respondOk(updated);
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const session = await requireTeacher(request);
+  if (isErrorResponse(session)) return session;
+
+  const template = await prisma.classTemplate.findUnique({ where: { id } });
+  if (!template) return respondError('Class template not found', 404);
+
+  if (template.teacherId !== session.userId) {
+    return respondError('Access denied', 403);
+  }
+
+  const updated = await prisma.classTemplate.update({
+    where: { id },
+    data: { isActive: !template.isActive },
   });
 
   return respondOk(updated);

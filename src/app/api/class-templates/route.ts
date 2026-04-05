@@ -15,6 +15,7 @@ export async function GET(request: NextRequest) {
 
   const templates = await prisma.classTemplate.findMany({
     where: { teacherId: session.userId },
+    include: { teacherRoom: { include: { room: true } } },
     orderBy: { createdAt: 'desc' },
   });
 
