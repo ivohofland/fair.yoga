@@ -116,6 +116,11 @@ export const updateRoomSchema = z.object({
   isPublic: z.boolean().optional(),
 }).strict();
 
+export const roomSearchQuerySchema = z.object({
+  postcode: z.string().optional(),
+  street: z.string().optional(),
+});
+
 // ============================================================================
 // TEACHER ROOMS
 // ============================================================================

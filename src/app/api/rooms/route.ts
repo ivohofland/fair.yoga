@@ -7,12 +7,29 @@ import {
   parseBody,
   isErrorResponse,
 } from '@/lib/api-utils';
-import { createRoomSchema } from '@/lib/schemas';
+import { createRoomSchema, roomSearchQuerySchema } from '@/lib/schemas';
 
 export async function GET(request: NextRequest) {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
+  const params = Object.fromEntries(request.nextUrl.searchParams);
+  const { postcode, street } = roomSearchQuerySchema.parse(params);
+
+  // When both postcode and street provided, search public rooms
+  if (postcode && street) {
+    const rooms = await prisma.room.findMany({
+      where: {
+        isPublic: true,
+        postcode: { equals: postcode, mode: 'insensitive' },
+        address: { contains: street, mode: 'insensitive' },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return respondOk(rooms);
+  }
+
+  // Default: all public rooms + teacher's private rooms
   const rooms = await prisma.room.findMany({
     where: {
       OR: [{ isPublic: true }, { createdById: session.userId }],
