@@ -22,7 +22,7 @@ export function RoomList({ teacherRooms }: RoomListProps) {
         >
           <div className="flex flex-col gap-1">
             <span className="text-dark text-sm font-medium">
-              {tr.room.roomName} at {tr.room.venueName}
+              {tr.room.roomName ? `${tr.room.roomName} at ${tr.room.venueName}` : tr.room.venueName}
             </span>
             <span className="text-brown text-xs">
               {tr.room.city} {tr.room.postcode}

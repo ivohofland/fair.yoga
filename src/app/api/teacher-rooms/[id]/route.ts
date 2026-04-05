@@ -62,6 +62,29 @@ export async function PUT(
   return respondOk(updated);
 }
 
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const session = await requireTeacher(request);
+  if (isErrorResponse(session)) return session;
+
+  const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id } });
+  if (!teacherRoom) return respondError('Teacher-room not found', 404);
+
+  if (teacherRoom.teacherId !== session.userId) {
+    return respondError('Access denied', 403);
+  }
+
+  const updated = await prisma.teacherRoom.update({
+    where: { id },
+    data: { isArchived: !teacherRoom.isArchived },
+  });
+
+  return respondOk({ isArchived: updated.isArchived });
+}
+
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -75,6 +98,12 @@ export async function DELETE(
 
   if (teacherRoom.teacherId !== session.userId) {
     return respondError('Access denied', 403);
+  }
+
+  // Only allow hard delete if no classes use this room
+  const classCount = await prisma.class.count({ where: { teacherRoomId: id } });
+  if (classCount > 0) {
+    return respondError('Cannot delete a room with class history. Archive it instead.', 409);
   }
 
   await prisma.teacherRoom.delete({ where: { id } });

@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Room" ALTER COLUMN "floor" SET DEFAULT '',
+ALTER COLUMN "roomName" SET DEFAULT '';

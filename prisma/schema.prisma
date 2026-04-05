@@ -190,8 +190,8 @@ model Room {
   address     String
   city        String
   postcode    String
-  floor       String
-  roomName    String
+  floor       String   @default("")
+  roomName    String   @default("")
   maxCapacity Int
   equipment   Json     @default("[]")
   notes       String?  @db.Text
@@ -203,7 +203,7 @@ model Room {
   createdBy    Teacher       @relation("RoomCreator", fields: [createdById], references: [id])
   teacherRooms TeacherRoom[]
 
-  @@unique([address, roomName])
+  @@index([address, floor, roomName])
 }
 
 model TeacherRoom {
@@ -213,6 +213,7 @@ model TeacherRoom {
   capacityOverride Int
   rentalRate       Decimal  @db.Decimal(10, 2)
   equipmentNotes   String?  @db.Text
+  isArchived       Boolean  @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

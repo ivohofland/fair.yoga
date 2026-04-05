@@ -26,6 +26,7 @@ export function AddRoomFlow() {
   const [street, setStreet] = useState('');
   const [results, setResults] = useState<RoomResult[] | null>(null);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState('');
 
   // Selected or newly created room
   const [selectedRoom, setSelectedRoom] = useState<RoomResult | null>(null);
@@ -36,7 +37,16 @@ export function AddRoomFlow() {
   const [floor, setFloor] = useState('');
   const [city, setCity] = useState('');
   const [maxCapacity, setMaxCapacity] = useState('');
-  const [equipment, setEquipment] = useState('');
+  const [equipmentChecks, setEquipmentChecks] = useState<Record<string, boolean>>({
+    mats: false,
+    blocks: false,
+    straps: false,
+    bolsters: false,
+    blankets: false,
+    cushions: false,
+  });
+  const [notes, setNotes] = useState('');
+  const [isPublic, setIsPublic] = useState(true);
   const [createError, setCreateError] = useState('');
   const [creating, setCreating] = useState(false);
 
@@ -57,15 +67,21 @@ export function AddRoomFlow() {
 
     setSearching(true);
     setResults(null);
+    setSearchError('');
     try {
       const params = new URLSearchParams({
         postcode: postcode.trim(),
         street: street.trim(),
       });
       const res = await fetch(`/api/rooms?${params}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        setSearchError('Search failed. Please try again.');
+        return;
+      }
       const json: { data: RoomResult[] } = await res.json();
       setResults(json.data);
+    } catch {
+      setSearchError('Network error. Please try again.');
     } finally {
       setSearching(false);
     }
@@ -85,8 +101,8 @@ export function AddRoomFlow() {
 
   async function handleCreateRoom(e: React.FormEvent) {
     e.preventDefault();
-    if (!venueName.trim() || !roomName.trim() || !floor.trim() || !city.trim()) {
-      setCreateError('All fields except equipment are required');
+    if (!venueName.trim() || !city.trim()) {
+      setCreateError('Venue name and city are required');
       return;
     }
     const cap = Number(maxCapacity);
@@ -99,9 +115,9 @@ export function AddRoomFlow() {
     setCreateError('');
 
     try {
-      const equipmentArray = equipment.trim()
-        ? equipment.split(',').map((s) => s.trim()).filter(Boolean)
-        : [];
+      const equipmentArray = Object.entries(equipmentChecks)
+        .filter(([, v]) => v)
+        .map(([k]) => k);
 
       const res = await fetch('/api/rooms', {
         method: 'POST',
@@ -115,6 +131,8 @@ export function AddRoomFlow() {
           roomName: roomName.trim(),
           maxCapacity: cap,
           equipment: equipmentArray,
+          notes: notes.trim() || null,
+          isPublic,
         }),
       });
 
@@ -211,6 +229,8 @@ export function AddRoomFlow() {
             </Button>
           </form>
 
+          {searchError && <p className="text-sm text-error mb-4">{searchError}</p>}
+
           {results !== null && (
             <div>
               {results.length > 0 ? (
@@ -225,7 +245,7 @@ export function AddRoomFlow() {
                         className="w-full text-left flex flex-col gap-1 py-3 border-b border-border"
                       >
                         <span className="text-dark text-sm font-medium">
-                          {room.roomName} at {room.venueName}
+                          {room.roomName ? `${room.roomName} at ${room.venueName}` : room.venueName}
                         </span>
                         <span className="text-brown text-xs">{room.address}, {room.city}</span>
                       </button>
@@ -266,7 +286,49 @@ export function AddRoomFlow() {
           <Input label="Floor" value={floor} onChange={(e) => setFloor(e.target.value)} placeholder="e.g. Ground, 1st" />
           <Input label="Room name" value={roomName} onChange={(e) => setRoomName(e.target.value)} placeholder="e.g. Main Studio" />
           <Input label="Max capacity" type="number" value={maxCapacity} onChange={(e) => setMaxCapacity(e.target.value)} />
-          <Input label="Equipment (comma-separated)" value={equipment} onChange={(e) => setEquipment(e.target.value)} placeholder="e.g. mats, blocks, straps" />
+          <fieldset className="flex flex-col gap-1">
+            <legend className="text-brown mb-2">Available props</legend>
+            {[
+              { key: 'mats', label: 'Mats' },
+              { key: 'blocks', label: 'Blocks' },
+              { key: 'straps', label: 'Straps' },
+              { key: 'bolsters', label: 'Bolsters' },
+              { key: 'blankets', label: 'Blankets' },
+              { key: 'cushions', label: 'Meditation cushions' },
+            ].map(({ key, label }) => (
+              <label key={key} className="flex items-center gap-3 min-h-[44px]">
+                <input
+                  type="checkbox"
+                  checked={equipmentChecks[key] ?? false}
+                  onChange={(e) => setEquipmentChecks((prev) => ({ ...prev, [key]: e.target.checked }))}
+                  className="w-5 h-5 accent-teal"
+                />
+                <span className="text-dark text-sm">{label}</span>
+              </label>
+            ))}
+          </fieldset>
+
+          <div className="flex flex-col gap-1">
+            <label htmlFor="room-notes" className="text-brown">Notes</label>
+            <textarea
+              id="room-notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              placeholder="e.g. key code for entrance, bring your own mat"
+              className="bg-cream border border-teal rounded-none px-4 py-3 min-h-[44px] text-dark focus:outline-none focus:shadow-[inset_0_0_0_1px_var(--color-teal)] w-full"
+            />
+          </div>
+
+          <label className="flex items-center gap-3 min-h-[44px]">
+            <input
+              type="checkbox"
+              checked={isPublic}
+              onChange={(e) => setIsPublic(e.target.checked)}
+              className="w-5 h-5 accent-teal"
+            />
+            <span className="text-brown text-sm">Make this room visible to other teachers</span>
+          </label>
 
           {createError && <p className="text-sm text-error">{createError}</p>}
 
@@ -306,7 +368,7 @@ export function AddRoomFlow() {
               onChange={(e) => setRentalRate(e.target.value)}
             />
             <Input
-              label="Equipment notes (optional)"
+              label="Notes (optional)"
               value={equipmentNotes}
               onChange={(e) => setEquipmentNotes(e.target.value)}
             />

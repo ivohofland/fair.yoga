@@ -92,7 +92,7 @@ export function EditTeacherRoomForm({
         onChange={(e) => { setRentalRate(e.target.value); setSuccess(''); }}
       />
       <div className="flex flex-col gap-1">
-        <label htmlFor="equipmentNotes" className="text-brown">Equipment notes</label>
+        <label htmlFor="equipmentNotes" className="text-brown">Notes</label>
         <textarea
           id="equipmentNotes"
           value={equipmentNotes}

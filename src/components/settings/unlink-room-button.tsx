@@ -13,14 +13,20 @@ export function UnlinkRoomButton({ teacherRoomId, roomName }: UnlinkRoomButtonPr
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState('');
 
   async function handleUnlink() {
     setRemoving(true);
+    setError('');
     try {
       const res = await fetch(`/api/teacher-rooms/${teacherRoomId}`, { method: 'DELETE' });
       if (res.ok) {
         router.push('/settings/rooms');
+      } else {
+        setError('Failed to unlink room. Please try again.');
       }
+    } catch {
+      setError('Network error. Please try again.');
     } finally {
       setRemoving(false);
     }
@@ -41,6 +47,7 @@ export function UnlinkRoomButton({ teacherRoomId, roomName }: UnlinkRoomButtonPr
   return (
     <div className="flex flex-col gap-2">
       <p className="text-sm text-brown">Unlink {roomName}? Classes using this room will also be removed.</p>
+      {error && <p className="text-sm text-error">{error}</p>}
       <div className="flex gap-3">
         <Button variant="destructive" onClick={handleUnlink} disabled={removing}>
           {removing ? 'Unlinking...' : 'Unlink'}

@@ -3,6 +3,7 @@ import { requireTeacherSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
 import { EditTeacherRoomForm } from '@/components/settings/edit-teacher-room-form';
+import { ArchiveRoomButton } from '@/components/settings/archive-room-button';
 import { UnlinkRoomButton } from '@/components/settings/unlink-room-button';
 
 export default async function EditRoomPage({
@@ -23,11 +24,23 @@ export default async function EditRoomPage({
   }
 
   const { room } = teacherRoom;
-  const equipment = Array.isArray(room.equipment) ? (room.equipment as string[]).join(', ') : '';
+  const classCount = await prisma.class.count({ where: { teacherRoomId: teacherRoom.id } });
+  const isArchived = teacherRoom.isArchived;
+  const equipmentLabels: Record<string, string> = {
+    mats: 'Mats',
+    blocks: 'Blocks',
+    straps: 'Straps',
+    bolsters: 'Bolsters',
+    blankets: 'Blankets',
+    cushions: 'Meditation cushions',
+  };
+  const equipment = Array.isArray(room.equipment)
+    ? (room.equipment as string[]).map((k) => equipmentLabels[k] ?? k)
+    : [];
 
   return (
     <>
-      <PageHeader title={room.roomName} backHref="/settings/rooms" />
+      <PageHeader title={room.roomName || room.venueName} backHref={isArchived ? '/settings/rooms/archived' : '/settings/rooms'} />
 
       {/* Room base info (read-only) */}
       <section className="mb-8">
@@ -49,10 +62,16 @@ export default async function EditRoomPage({
             <span className="text-sm text-brown">Max capacity</span>
             <p className="text-dark">{room.maxCapacity}</p>
           </div>
-          {equipment && (
+          {equipment.length > 0 && (
             <div>
-              <span className="text-sm text-brown">Equipment</span>
-              <p className="text-dark">{equipment}</p>
+              <span className="text-sm text-brown">Available props</span>
+              <p className="text-dark">{equipment.join(', ')}</p>
+            </div>
+          )}
+          {room.notes && (
+            <div>
+              <span className="text-sm text-brown">Notes</span>
+              <p className="text-dark">{room.notes}</p>
             </div>
           )}
         </div>
@@ -72,12 +91,15 @@ export default async function EditRoomPage({
         />
       </section>
 
-      {/* Unlink */}
-      <section className="pt-6 border-t border-border">
-        <UnlinkRoomButton
-          teacherRoomId={teacherRoom.id}
-          roomName={`${room.roomName} at ${room.venueName}`}
-        />
+      {/* Archive / Remove */}
+      <section className="pt-6 border-t border-border flex flex-col gap-4">
+        <ArchiveRoomButton teacherRoomId={teacherRoom.id} isArchived={isArchived} />
+        {classCount === 0 && (
+          <UnlinkRoomButton
+            teacherRoomId={teacherRoom.id}
+            roomName={room.roomName ? `${room.roomName} at ${room.venueName}` : room.venueName}
+          />
+        )}
       </section>
     </>
   );
