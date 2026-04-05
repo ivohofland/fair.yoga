@@ -39,6 +39,7 @@ async function main() {
   await prisma.teacherRoom.deleteMany();
   await prisma.room.deleteMany();
   await prisma.studentPrivacy.deleteMany();
+  await prisma.teacherStudent.deleteMany();
   await prisma.student.deleteMany();
   await prisma.teacher.deleteMany();
 
@@ -202,6 +203,31 @@ async function main() {
       }),
     ),
   );
+
+  // ==========================================================================
+  // TEACHER-STUDENT LINKS (CRM contacts)
+  // ==========================================================================
+  // All 10 students are in Ivo's contacts
+  await Promise.all(
+    students.map((student) =>
+      prisma.teacherStudent.create({
+        data: {
+          teacherId: ivo.id,
+          studentId: student.id,
+        },
+      }),
+    ),
+  );
+
+  // Sarah has 3 students in her contacts (Anna, Clara, Eva)
+  for (const idx of [0, 2, 4]) {
+    await prisma.teacherStudent.create({
+      data: {
+        teacherId: sarah.id,
+        studentId: students[idx]!.id,
+      },
+    });
+  }
 
   // ==========================================================================
   // ROOMS
@@ -695,6 +721,7 @@ async function main() {
   console.log('Seed data created successfully');
   console.log(`  Teachers: 2 (Ivo, Sarah)`);
   console.log(`  Students: 10 (tiers 1-5, 2 per tier)`);
+  console.log(`  TeacherStudents: 13 (10 for Ivo, 3 for Sarah)`);
   console.log(`  Rooms: 2, TeacherRooms: 3`);
   console.log(`  ClassTemplate: 1`);
   console.log(`  Classes: 6 (draft, open, full, in_progress, completed, cancelled)`);
