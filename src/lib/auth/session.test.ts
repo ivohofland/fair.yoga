@@ -13,6 +13,10 @@ import {
 } from './session';
 
 const db = new PrismaClient();
+const uniqueSuffix = Date.now();
+
+let testTeacherId: string;
+let testStudentId: string;
 
 function hashToken(token: string): string {
   const bytes = sha256(new TextEncoder().encode(token));
@@ -20,17 +24,42 @@ function hashToken(token: string): string {
 }
 
 beforeAll(async () => {
-  // Ensure DB is reachable
   await db.$connect();
+
+  const teacher = await db.teacher.create({
+    data: {
+      firstName: 'Session',
+      lastName: 'Teacher',
+      email: `session-teacher-${uniqueSuffix}@test.local`,
+      bio: 'Teacher for session tests',
+      pageSlug: `session-teacher-${uniqueSuffix}`,
+    },
+  });
+  testTeacherId = teacher.id;
+
+  const student = await db.student.create({
+    data: {
+      firstName: 'Session',
+      lastName: 'Student',
+      email: `session-student-${uniqueSuffix}@test.local`,
+    },
+  });
+  testStudentId = student.id;
 });
 
 afterAll(async () => {
+  await db.session.deleteMany({
+    where: { userId: { in: [testTeacherId, testStudentId] } },
+  });
+  await db.student.delete({ where: { id: testStudentId } });
+  await db.teacher.delete({ where: { id: testTeacherId } });
   await db.$disconnect();
 });
 
 afterEach(async () => {
-  // Clean up sessions created during tests
-  await db.session.deleteMany();
+  await db.session.deleteMany({
+    where: { userId: { in: [testTeacherId, testStudentId] } },
+  });
 });
 
 describe('SESSION_COOKIE_NAME', () => {
@@ -41,7 +70,7 @@ describe('SESSION_COOKIE_NAME', () => {
 
 describe('createSession', () => {
   it('creates a session in DB and returns a 64-char hex token', async () => {
-    const token = await createSession(db, 'user-123', 'teacher');
+    const token = await createSession(db, testTeacherId, 'teacher');
 
     // Token should be 64 hex characters (32 bytes)
     expect(token).toMatch(/^[0-9a-f]{64}$/);
@@ -50,13 +79,13 @@ describe('createSession', () => {
     const sessionHash = hashToken(token);
     const session = await db.session.findUnique({ where: { id: sessionHash } });
     expect(session).not.toBeNull();
-    expect(session!.userId).toBe('user-123');
+    expect(session!.userId).toBe(testTeacherId);
     expect(session!.userType).toBe('teacher');
     expect(session!.expiresAt.getTime()).toBeGreaterThan(Date.now());
   });
 
   it('stores a hash as the session ID, not the raw token', async () => {
-    const token = await createSession(db, 'user-hash-check', 'teacher');
+    const token = await createSession(db, testTeacherId, 'teacher');
 
     // The raw token should NOT be found as a session ID
     const byRawToken = await db.session.findUnique({ where: { id: token } });
@@ -71,18 +100,18 @@ describe('createSession', () => {
 
 describe('validateSession', () => {
   it('returns SessionUser for a valid session', async () => {
-    const token = await createSession(db, 'user-456', 'student');
+    const token = await createSession(db, testStudentId, 'student');
 
     const result = await validateSession(db, token);
 
     expect(result).not.toBeNull();
     expect(result!.sessionId).toBe(hashToken(token));
-    expect(result!.userId).toBe('user-456');
+    expect(result!.userId).toBe(testStudentId);
     expect(result!.userType).toBe('student');
   });
 
   it('returns null for an expired session and deletes it', async () => {
-    const token = await createSession(db, 'user-789', 'teacher');
+    const token = await createSession(db, testTeacherId, 'teacher');
     const sessionHash = hashToken(token);
 
     // Manually expire the session
@@ -105,7 +134,7 @@ describe('validateSession', () => {
   });
 
   it('extends session expiry when session is more than 15 days old', async () => {
-    const token = await createSession(db, 'user-extend', 'teacher');
+    const token = await createSession(db, testTeacherId, 'teacher');
     const sessionHash = hashToken(token);
 
     // Set createdAt to 16 days ago
@@ -131,7 +160,7 @@ describe('validateSession', () => {
   });
 
   it('does NOT extend session expiry when session is less than 15 days old', async () => {
-    const token = await createSession(db, 'user-no-extend', 'student');
+    const token = await createSession(db, testStudentId, 'student');
     const sessionHash = hashToken(token);
 
     // Session was just created (less than 15 days old)
@@ -148,7 +177,7 @@ describe('validateSession', () => {
 
 describe('invalidateSession', () => {
   it('deletes the session so subsequent validate returns null', async () => {
-    const token = await createSession(db, 'user-del', 'teacher');
+    const token = await createSession(db, testTeacherId, 'teacher');
 
     // Validate first to confirm it exists
     const before = await validateSession(db, token);

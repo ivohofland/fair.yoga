@@ -9,6 +9,8 @@ type ClassWithDetails = Class & {
 
 interface ClassListProps {
   classes: ClassWithDetails[];
+  emptyMessage?: string;
+  showAddLink?: boolean;
 }
 
 function formatDate(date: Date): string {
@@ -24,18 +26,20 @@ function formatDate(date: Date): string {
   return `${dayName}, ${monthName} ${dayNum}`;
 }
 
-export function ClassList({ classes }: ClassListProps) {
+export function ClassList({ classes, emptyMessage = 'No classes yet. Create your first class.', showAddLink = true }: ClassListProps) {
   return (
     <div>
-      <div className="mb-4">
-        <Link href="/class/new" className="text-teal text-sm font-medium">
-          + Add class
-        </Link>
-      </div>
+      {showAddLink && (
+        <div className="mb-4">
+          <Link href="/class/new" className="text-teal text-sm font-medium">
+            + Add class
+          </Link>
+        </div>
+      )}
 
       {classes.length === 0 ? (
         <p className="text-brown text-sm">
-          No classes yet. Create your first class.
+          {emptyMessage}
         </p>
       ) : (
         <div>

@@ -49,10 +49,13 @@ export default async function TeacherHome() {
     <div className="flex flex-col gap-8">
       {/* This week */}
       <section>
-        <h2 className="font-heading text-xl font-bold text-teal border-b border-border pb-4 mb-4">
-          This week
-        </h2>
-        <ClassList classes={classes} />
+        <div className="flex items-center justify-between border-b border-border pb-4 mb-4">
+          <h2 className="font-heading text-xl font-bold text-teal">
+            This week
+          </h2>
+          <Link href="/class/new" className="text-teal text-sm">+ Add class</Link>
+        </div>
+        <ClassList classes={classes} showAddLink={false} />
         <Link href="/schedule" className="text-teal text-sm mt-4 inline-block">
           See full schedule &rarr;
         </Link>
@@ -60,17 +63,15 @@ export default async function TeacherHome() {
 
       {/* Students */}
       <section>
-        <h2 className="font-heading text-xl font-bold text-teal border-b border-border pb-4 mb-4">
-          Students
-        </h2>
-        <div className="flex flex-col gap-3">
-          <Link href="/students/new" className="text-teal text-sm">
-            + Add student
-          </Link>
-          <Link href="/students" className="text-teal text-sm">
-            View all &rarr;
-          </Link>
+        <div className="flex items-center justify-between border-b border-border pb-4 mb-4">
+          <h2 className="font-heading text-xl font-bold text-teal">
+            Students
+          </h2>
+          <Link href="/students/new" className="text-teal text-sm">+ Add student</Link>
         </div>
+        <Link href="/students" className="text-teal text-sm">
+          View all &rarr;
+        </Link>
       </section>
 
       {/* Inbox */}

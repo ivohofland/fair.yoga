@@ -57,7 +57,7 @@ export default async function ClassDetailPage({
 
   return (
     <>
-      <PageHeader title={cls.classType} />
+      <PageHeader title={cls.classType} backHref="/schedule" />
       <ClassInfo
         cls={cls}
         registrationCount={cls.registrations.filter((r) => r.status !== 'cancelled').length}

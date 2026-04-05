@@ -64,7 +64,7 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [archived]);
 
   useEffect(() => {
     void fetchStudents(search, page);
