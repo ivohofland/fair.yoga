@@ -58,7 +58,6 @@ export const createStudentSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   email: z.string().email(),
-  incomeTier: z.number().int().min(1).max(5).optional().default(3),
 });
 
 export const updateStudentSchema = z.object({
@@ -79,6 +78,12 @@ export const updatePrivacySchema = z.object({
   shareBirthday: z.boolean().optional(),
   shareAddress: z.boolean().optional(),
   receiveComms: z.boolean().optional(),
+});
+
+export const studentListQuerySchema = z.object({
+  search: z.string().optional().default(''),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(50).optional().default(20),
 });
 
 // ============================================================================
