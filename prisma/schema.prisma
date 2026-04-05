@@ -118,13 +118,14 @@ model Teacher {
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
 
-  teacherRooms   TeacherRoom[]
-  classTemplates ClassTemplate[]
-  classes        Class[]
-  studioClasses  StudioClass[]
-  announcements  Announcement[]
-  studentPrivacy StudentPrivacy[]
-  createdRooms   Room[]           @relation("RoomCreator")
+  teacherRooms    TeacherRoom[]
+  classTemplates  ClassTemplate[]
+  classes         Class[]
+  studioClasses   StudioClass[]
+  announcements   Announcement[]
+  studentPrivacy  StudentPrivacy[]
+  createdRooms    Room[]           @relation("RoomCreator")
+  teacherStudents TeacherStudent[]
 }
 
 model Student {
@@ -138,12 +139,14 @@ model Student {
   address            String?
   reminderPref       StudentReminderPref @default(morning)
   emailNotifications Boolean             @default(true)
+  claimedAt          DateTime?
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
   registrations   Registration[]
   waitlistEntries WaitlistEntry[]
   studentPrivacy  StudentPrivacy[]
+  teacherStudents TeacherStudent[]
 }
 
 model StudentPrivacy {
@@ -162,6 +165,18 @@ model StudentPrivacy {
   teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, teacherId])
+}
+
+model TeacherStudent {
+  id        String   @id @default(uuid())
+  teacherId String
+  studentId String
+  createdAt DateTime @default(now())
+
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([teacherId, studentId])
 }
 
 // ============================================================================
