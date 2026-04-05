@@ -37,7 +37,7 @@ export function StudentDirectory() {
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const fetchStudents = useCallback(async (searchTerm: string, pageNum: number) => {
     setLoading(true);
