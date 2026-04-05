@@ -132,3 +132,117 @@ describe('GET /api/students', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('POST /api/students', () => {
+  let createdStudentId: string;
+
+  it('creates a new student and TeacherStudent link', async () => {
+    const res = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: sessionCookie },
+      body: JSON.stringify({
+        firstName: 'New',
+        lastName: 'Person',
+        email: `crm-new-${uniqueSuffix}@test.local`,
+      }),
+    });
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.data.firstName).toBe('New');
+    createdStudentId = json.data.id;
+
+    // Verify TeacherStudent link was created
+    const link = await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId, studentId: createdStudentId } },
+    });
+    expect(link).not.toBeNull();
+  });
+
+  it('returns 409 when student already in contacts', async () => {
+    const res = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: sessionCookie },
+      body: JSON.stringify({
+        firstName: 'New',
+        lastName: 'Person',
+        email: `crm-new-${uniqueSuffix}@test.local`,
+      }),
+    });
+    expect(res.status).toBe(409);
+    const json = await res.json();
+    expect(json.error.code).toBe('ALREADY_LINKED');
+  });
+
+  it('links existing student to teacher without creating duplicate', async () => {
+    // Create a second teacher
+    const teacher2 = await prisma.teacher.create({
+      data: {
+        firstName: 'Second',
+        lastName: 'Teacher',
+        email: `crm-teacher2-${uniqueSuffix}@test.local`,
+        bio: 'Second teacher',
+        pageSlug: `crm-teacher2-${uniqueSuffix}`,
+      },
+    });
+    const session2 = await prisma.session.create({
+      data: {
+        id: `crm-session2-${uniqueSuffix}`,
+        userId: teacher2.id,
+        userType: 'teacher',
+        expiresAt: new Date(Date.now() + 86400000),
+      },
+    });
+
+    // Teacher 2 adds the same student by email
+    const res = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `fair_yoga_session=${session2.id}`,
+      },
+      body: JSON.stringify({
+        firstName: 'New',
+        lastName: 'Person',
+        email: `crm-new-${uniqueSuffix}@test.local`,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data.id).toBe(createdStudentId); // Same student, no duplicate
+
+    // Cleanup teacher2
+    await prisma.teacherStudent.deleteMany({ where: { teacherId: teacher2.id } });
+    await prisma.session.delete({ where: { id: session2.id } });
+    await prisma.teacher.delete({ where: { id: teacher2.id } });
+  });
+
+  it('returns 400 for invalid input', async () => {
+    const res = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: sessionCookie },
+      body: JSON.stringify({ firstName: '', lastName: '', email: 'not-an-email' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 401 without session', async () => {
+    const res = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        firstName: 'No',
+        lastName: 'Auth',
+        email: 'noauth@test.local',
+      }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  // Cleanup the created student
+  afterAll(async () => {
+    if (createdStudentId) {
+      await prisma.teacherStudent.deleteMany({ where: { studentId: createdStudentId } });
+      await prisma.student.delete({ where: { id: createdStudentId } });
+    }
+  });
+});
