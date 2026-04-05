@@ -168,10 +168,11 @@ model StudentPrivacy {
 }
 
 model TeacherStudent {
-  id        String   @id @default(uuid())
-  teacherId String
-  studentId String
-  createdAt DateTime @default(now())
+  id         String   @id @default(uuid())
+  teacherId  String
+  studentId  String
+  isArchived Boolean  @default(false)
+  createdAt  DateTime @default(now())
 
   teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
   student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)

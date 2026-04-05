@@ -28,6 +28,7 @@ const nextWeek = daysFromNow(7);
 // ---------------------------------------------------------------------------
 async function main() {
   // Clear all data in reverse dependency order
+  await prisma.session.deleteMany();
   await prisma.announcement.deleteMany();
   await prisma.notification.deleteMany();
   await prisma.payment.deleteMany();
@@ -172,8 +173,28 @@ async function main() {
   ];
 
   const students = await Promise.all(
-    studentData.map((data) => prisma.student.create({ data })),
+    studentData.map((data) =>
+      prisma.student.create({ data: { ...data, claimedAt: daysAgo(30) } }),
+    ),
   );
+
+  // CRM-only students (teacher-created, no account yet)
+  const crmOnlyStudents = await Promise.all([
+    prisma.student.create({
+      data: {
+        firstName: 'Lena',
+        lastName: 'Visser',
+        email: 'lena@example.com',
+      },
+    }),
+    prisma.student.create({
+      data: {
+        firstName: 'Max',
+        lastName: 'Dekker',
+        email: 'max@example.com',
+      },
+    }),
+  ]);
 
   // ==========================================================================
   // STUDENT PRIVACY (per-teacher, for Ivo)
@@ -207,9 +228,9 @@ async function main() {
   // ==========================================================================
   // TEACHER-STUDENT LINKS (CRM contacts)
   // ==========================================================================
-  // All 10 students are in Ivo's contacts
+  // All 10 claimed students + 2 CRM-only students are in Ivo's contacts
   await Promise.all(
-    students.map((student) =>
+    [...students, ...crmOnlyStudents].map((student) =>
       prisma.teacherStudent.create({
         data: {
           teacherId: ivo.id,
@@ -720,8 +741,8 @@ async function main() {
 
   console.log('Seed data created successfully');
   console.log(`  Teachers: 2 (Ivo, Sarah)`);
-  console.log(`  Students: 10 (tiers 1-5, 2 per tier)`);
-  console.log(`  TeacherStudents: 13 (10 for Ivo, 3 for Sarah)`);
+  console.log(`  Students: 12 (10 claimed with classes, 2 CRM-only unlinked)`);
+  console.log(`  TeacherStudents: 15 (12 for Ivo, 3 for Sarah)`);
   console.log(`  Rooms: 2, TeacherRooms: 3`);
   console.log(`  ClassTemplate: 1`);
   console.log(`  Classes: 6 (draft, open, full, in_progress, completed, cancelled)`);

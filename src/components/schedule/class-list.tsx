@@ -29,7 +29,7 @@ export function ClassList({ classes }: ClassListProps) {
     <div>
       <div className="mb-4">
         <Link href="/class/new" className="text-teal text-sm font-medium">
-          + Create class
+          + Add class
         </Link>
       </div>
 

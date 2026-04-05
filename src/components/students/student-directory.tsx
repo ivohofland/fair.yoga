@@ -31,7 +31,11 @@ function formatName(firstName: string, lastName: string): string {
   return `${firstName} ${lastInitial ? lastInitial.toLowerCase() + '.' : ''}`.trim();
 }
 
-export function StudentDirectory() {
+interface StudentDirectoryProps {
+  archived?: boolean;
+}
+
+export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [students, setStudents] = useState<StudentRow[]>([]);
@@ -46,8 +50,13 @@ export function StudentDirectory() {
         search: searchTerm,
         page: String(pageNum),
         pageSize: String(PAGE_SIZE),
+        ...(archived ? { archived: 'true' } : {}),
       });
       const res = await fetch(`/api/students?${params}`);
+      if (res.status === 401) {
+        window.location.href = '/login';
+        return;
+      }
       if (!res.ok) return;
       const json: StudentListResponse = await res.json();
       setStudents(json.data.students);

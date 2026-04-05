@@ -7,7 +7,7 @@ import {
   parseBody,
   isErrorResponse,
 } from '@/lib/api-utils';
-import { updateStudentSchema } from '@/lib/schemas';
+import { updateStudentSchema, createStudentSchema } from '@/lib/schemas';
 
 export async function GET(
   request: NextRequest,
@@ -67,22 +67,118 @@ export async function PUT(
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
-  if (session.userType !== 'student' || session.userId !== id) {
+  // Students can edit their own profile
+  if (session.userType === 'student') {
+    if (session.userId !== id) {
+      return respondError('Access denied', 403);
+    }
+
+    const parsed = await parseBody(request, updateStudentSchema);
+    if ('error' in parsed) return parsed.error;
+    const updateData = parsed.data;
+
+    if (Object.keys(updateData).length === 0) {
+      return respondError('No valid fields to update', 400);
+    }
+
+    const student = await prisma.student.update({
+      where: { id },
+      data: updateData,
+    });
+
+    return respondOk(student);
+  }
+
+  // Teachers can edit unlinked students in their contacts
+  if (session.userType === 'teacher') {
+    const student = await prisma.student.findUnique({ where: { id } });
+    if (!student) return respondError('Student not found', 404);
+    if (student.claimedAt) {
+      return respondError('Cannot edit a student who has claimed their account', 403);
+    }
+
+    const link = await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId: session.userId, studentId: id } },
+    });
+    if (!link) return respondError('Student not in your contacts', 403);
+
+    const parsed = await parseBody(request, createStudentSchema);
+    if ('error' in parsed) return parsed.error;
+    const updateData = parsed.data;
+
+    if (Object.keys(updateData).length === 0) {
+      return respondError('No valid fields to update', 400);
+    }
+
+    const updated = await prisma.student.update({
+      where: { id },
+      data: updateData,
+    });
+
+    return respondOk(updated);
+  }
+
+  return respondError('Access denied', 403);
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const session = await requireSession(request);
+  if (isErrorResponse(session)) return session;
+
+  if (session.userType !== 'teacher') {
     return respondError('Access denied', 403);
   }
 
-  const parsed = await parseBody(request, updateStudentSchema);
-  if ('error' in parsed) return parsed.error;
-  const updateData = parsed.data;
-
-  if (Object.keys(updateData).length === 0) {
-    return respondError('No valid fields to update', 400);
+  const student = await prisma.student.findUnique({ where: { id } });
+  if (!student) return respondError('Student not found', 404);
+  if (student.claimedAt) {
+    return respondError('Cannot remove a student who has claimed their account', 403);
   }
 
-  const student = await prisma.student.update({
-    where: { id },
-    data: updateData,
+  const link = await prisma.teacherStudent.findUnique({
+    where: { teacherId_studentId: { teacherId: session.userId, studentId: id } },
+  });
+  if (!link) return respondError('Student not in your contacts', 403);
+
+  // Delete the link
+  await prisma.teacherStudent.delete({ where: { id: link.id } });
+
+  // If no other teacher has this student linked, delete the student record
+  const remainingLinks = await prisma.teacherStudent.count({
+    where: { studentId: id },
+  });
+  if (remainingLinks === 0) {
+    await prisma.student.delete({ where: { id } });
+  }
+
+  return respondOk({ removed: true });
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const session = await requireSession(request);
+  if (isErrorResponse(session)) return session;
+
+  if (session.userType !== 'teacher') {
+    return respondError('Access denied', 403);
+  }
+
+  const link = await prisma.teacherStudent.findUnique({
+    where: { teacherId_studentId: { teacherId: session.userId, studentId: id } },
+  });
+  if (!link) return respondError('Student not in your contacts', 403);
+
+  const updated = await prisma.teacherStudent.update({
+    where: { id: link.id },
+    data: { isArchived: !link.isArchived },
   });
 
-  return respondOk(student);
+  return respondOk({ isArchived: updated.isArchived });
 }

@@ -56,7 +56,7 @@ export const updateTeacherSchema = z.object({
 
 export const createStudentSchema = z.object({
   firstName: z.string().min(1),
-  lastName: z.string().min(1),
+  lastName: z.string().optional().default(''),
   email: z.string().email(),
 });
 

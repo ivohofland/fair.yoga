@@ -55,6 +55,17 @@ export async function validateSession(
     return null;
   }
 
+  // Verify the user still exists
+  const userExists =
+    session.userType === 'teacher'
+      ? await db.teacher.findUnique({ where: { id: session.userId }, select: { id: true } })
+      : await db.student.findUnique({ where: { id: session.userId }, select: { id: true } });
+
+  if (!userExists) {
+    await db.session.delete({ where: { id: sessionHash } }).catch(() => {});
+    return null;
+  }
+
   // Extend session if more than 15 days old
   const fifteenDaysAgo = new Date(Date.now() - FIFTEEN_DAYS_MS);
   if (session.createdAt < fifteenDaysAgo) {

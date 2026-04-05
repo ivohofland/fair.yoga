@@ -12,6 +12,11 @@ export default function StudentsPage() {
         </Link>
       </div>
       <StudentDirectory />
+      <div className="mt-6">
+        <Link href="/students/archived" className="text-brown text-sm opacity-60">
+          View archived students
+        </Link>
+      </div>
     </>
   );
 }

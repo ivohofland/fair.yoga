@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
 
   const userType: RecipientType = teacher ? 'teacher' : 'student';
   const sessionToken = await createSession(prisma, user.id, userType);
-  const redirectTo = userType === 'teacher' ? '/schedule' : '/bookings';
+  const redirectTo = userType === 'teacher' ? '/' : '/bookings';
 
   const response = respondOk({ userType, userId: user.id, redirectTo });
   setSessionCookie(response.headers, sessionToken);

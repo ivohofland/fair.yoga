@@ -23,7 +23,6 @@ export function CreateStudentForm() {
   function validate(): boolean {
     const errs: FormErrors = {};
     if (!firstName.trim()) errs.firstName = 'First name is required';
-    if (!lastName.trim()) errs.lastName = 'Last name is required';
     if (!email.trim()) {
       errs.email = 'Email is required';
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {

@@ -28,8 +28,8 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="mx-auto max-w-sm px-4 py-16">
-      <h1 className="font-heading text-2xl font-bold text-dark mb-8">Sign in</h1>
+    <div className="py-10">
+      <h1 className="font-heading text-2xl font-bold mb-8">Sign in</h1>
 
       {status === 'sent' ? (
         <p className="text-brown">Check your email for a magic link.</p>
@@ -41,6 +41,12 @@ export default function LoginPage() {
             name="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                e.currentTarget.form?.requestSubmit();
+              }
+            }}
             placeholder="you@example.com"
             required
           />

@@ -18,7 +18,6 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/schedule/:path*',
     '/students/:path*',
     '/inbox/:path*',
     '/settings/:path*',

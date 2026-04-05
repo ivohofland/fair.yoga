@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
     credential.userType
   );
   const redirectTo =
-    credential.userType === 'teacher' ? '/schedule' : '/bookings';
+    credential.userType === 'teacher' ? '/' : '/bookings';
 
   const apiResponse = respondOk({
     userType: credential.userType,

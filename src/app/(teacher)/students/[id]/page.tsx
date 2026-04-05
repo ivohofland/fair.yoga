@@ -2,6 +2,9 @@ import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
+import { EditStudentForm } from '@/components/students/edit-student-form';
+import { RemoveStudentButton } from '@/components/students/remove-student-button';
+import { ArchiveStudentButton } from '@/components/students/archive-student-button';
 
 export default async function StudentDetailPage({
   params,
@@ -11,10 +14,13 @@ export default async function StudentDetailPage({
   const session = await requireTeacherSession();
   const { id } = await params;
 
-  // Fetch student with their registrations for THIS teacher's classes
   const student = await prisma.student.findUnique({
     where: { id },
     include: {
+      teacherStudents: {
+        where: { teacherId: session.userId },
+        select: { id: true, isArchived: true },
+      },
       studentPrivacy: {
         where: { teacherId: session.userId },
       },
@@ -29,55 +35,77 @@ export default async function StudentDetailPage({
     },
   });
 
-  if (!student) redirect('/schedule');
+  if (!student || student.teacherStudents.length === 0) redirect('/students');
 
-  // Privacy filtering
-  const privacy = student.studentPrivacy[0]; // may be undefined (max privacy)
-  const showEmail = privacy?.shareEmail ?? false;
-  const showPhone = privacy?.sharePhone ?? false;
-  const showBirthday = privacy?.shareBirthday ?? false;
-  const showAddress = privacy?.shareAddress ?? false;
+  const isUnlinked = !student.claimedAt;
+  const isArchived = student.teacherStudents[0]?.isArchived ?? false;
+  const displayName = `${student.firstName}${student.lastName ? ` ${student.lastName.charAt(0)}.` : ''}`;
 
-  // Display name: first name + last initial (always visible)
-  const displayName = `${student.firstName} ${student.lastName.charAt(0)}.`;
+  // For claimed students, respect privacy settings
+  const privacy = student.studentPrivacy[0];
+  const showEmail = isUnlinked || (privacy?.shareEmail ?? false);
+  const showPhone = isUnlinked || (privacy?.sharePhone ?? false);
+  const showBirthday = isUnlinked || (privacy?.shareBirthday ?? false);
+  const showAddress = isUnlinked || (privacy?.shareAddress ?? false);
 
   return (
     <>
-      <PageHeader title={displayName} />
+      <PageHeader title={displayName} backHref={isArchived ? '/students/archived' : '/students'} />
 
-      {/* Contact info (privacy-filtered) */}
-      <section className="mb-8">
-        <h2 className="font-heading text-lg font-bold text-teal mb-3">Contact</h2>
-        <div className="flex flex-col gap-2">
-          {showEmail && student.email && (
-            <div>
-              <span className="text-sm text-brown">Email</span>
-              <p className="text-dark">{student.email}</p>
-            </div>
-          )}
-          {showPhone && student.phone && (
-            <div>
-              <span className="text-sm text-brown">Phone</span>
-              <p className="text-dark">{student.phone}</p>
-            </div>
-          )}
-          {showBirthday && student.birthday && (
-            <div>
-              <span className="text-sm text-brown">Birthday</span>
-              <p className="text-dark">{new Date(student.birthday).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}</p>
-            </div>
-          )}
-          {showAddress && student.address && (
-            <div>
-              <span className="text-sm text-brown">Address</span>
-              <p className="text-dark">{student.address}</p>
-            </div>
-          )}
-          {!showEmail && !showPhone && !showBirthday && !showAddress && (
-            <p className="text-sm text-brown">No contact information shared by this student.</p>
-          )}
-        </div>
-      </section>
+      {isUnlinked && (
+        <p className="text-xs text-brown opacity-60 mb-6">
+          This student hasn&apos;t created an account yet. You can edit their details.
+        </p>
+      )}
+
+      {/* Unlinked: editable form + remove */}
+      {isUnlinked ? (
+        <section className="mb-8">
+          <EditStudentForm
+            studentId={student.id}
+            initialFirstName={student.firstName}
+            initialLastName={student.lastName}
+            initialEmail={student.email}
+          />
+          <div className="mt-6 pt-6 border-t border-border">
+            <RemoveStudentButton studentId={student.id} studentName={displayName} />
+          </div>
+        </section>
+      ) : (
+        /* Claimed: read-only contact info (privacy-filtered) */
+        <section className="mb-8">
+          <h2 className="font-heading text-lg font-bold text-teal mb-3">Contact</h2>
+          <div className="flex flex-col gap-2">
+            {showEmail && student.email && (
+              <div>
+                <span className="text-sm text-brown">Email</span>
+                <p className="text-dark">{student.email}</p>
+              </div>
+            )}
+            {showPhone && student.phone && (
+              <div>
+                <span className="text-sm text-brown">Phone</span>
+                <p className="text-dark">{student.phone}</p>
+              </div>
+            )}
+            {showBirthday && student.birthday && (
+              <div>
+                <span className="text-sm text-brown">Birthday</span>
+                <p className="text-dark">{new Date(student.birthday).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}</p>
+              </div>
+            )}
+            {showAddress && student.address && (
+              <div>
+                <span className="text-sm text-brown">Address</span>
+                <p className="text-dark">{student.address}</p>
+              </div>
+            )}
+            {!showEmail && !showPhone && !showBirthday && !showAddress && (
+              <p className="text-sm text-brown">No contact information shared by this student.</p>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Attendance history */}
       <section className="mb-8">
@@ -105,7 +133,7 @@ export default async function StudentDetailPage({
       </section>
 
       {/* Payment history */}
-      <section>
+      <section className="mb-8">
         <h2 className="font-heading text-lg font-bold text-teal mb-3">Payments</h2>
         {student.registrations.filter(r => r.payment).length === 0 ? (
           <p className="text-sm text-brown">No payment history.</p>
@@ -132,6 +160,13 @@ export default async function StudentDetailPage({
           </div>
         )}
       </section>
+
+      {/* Archive (claimed students) */}
+      {!isUnlinked && (
+        <section className="pt-6 border-t border-border">
+          <ArchiveStudentButton studentId={student.id} isArchived={isArchived} />
+        </section>
+      )}
     </>
   );
 }

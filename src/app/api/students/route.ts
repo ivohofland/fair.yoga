@@ -14,9 +14,10 @@ export async function GET(request: NextRequest) {
   }
 
   const { search, page, pageSize } = parsed.data;
+  const archived = params.archived === 'true';
 
   const where = {
-    teacherStudents: { some: { teacherId: session.userId } },
+    teacherStudents: { some: { teacherId: session.userId, isArchived: archived } },
     ...(search
       ? {
           OR: [

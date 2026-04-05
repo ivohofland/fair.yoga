@@ -34,7 +34,7 @@ export default async function ClassDetailPage({
   });
 
   if (!cls || cls.teacherId !== session.userId) {
-    redirect('/schedule');
+    redirect('/');
   }
 
   // Serialize registrations for client components (Prisma Dates/Decimals are not serializable)
