@@ -162,7 +162,7 @@ export function ProfileForm({ teacherId, initial }: ProfileFormProps) {
             onChange={(e) => update('bio', e.target.value)}
             maxLength={250}
             rows={3}
-            className={selectClass}
+            className="bg-cream border border-teal rounded-none px-4 py-3 min-h-[44px] text-dark focus:outline-none focus:shadow-[inset_0_0_0_1px_var(--color-teal)] w-full"
           />
           <span className="text-xs text-brown opacity-60">{form.bio.length}/250</span>
         </div>

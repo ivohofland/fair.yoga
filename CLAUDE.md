@@ -32,10 +32,10 @@ The heart of the app. Income-based pricing with compressed tier spread and scali
 
 - 5 income tiers with compressed 2× spread. Tier ratios: `[0.65, 0.80, 1.00, 1.20, 1.35]`
 - Highest earner never pays more than ~2× the lowest
-- Effective teacher rate scales linearly: min_rate (at min_students) → target_rate (at max_students)
+- Effective teacher rate is a per-class total (not per-student), scales linearly: min_rate (at min_students) → target_rate (at max_students)
 - Setting min_rate = target_rate collapses to flat rate
 - Negative min_rate allowed (teacher subsidizes room cost)
-- Total class cost: `total = room_cost + (effective_teacher_rate × student_count)`
+- Total class cost: `total = room_cost + effective_teacher_rate`
 - Per-student price: `student_price = total / sum_of_tier_ratios × student_tier_ratio`
 - Post-class billing based on registrations (not attendance)
 - Prices are calculated after class ends, not during booking
@@ -90,16 +90,19 @@ Key design decisions:
 
 ## Information Architecture
 
-**Note:** The IA and screen designs are still in progress. Screen counts, tab structures, and navigation patterns documented here and in reference documents reflect the current thinking but may evolve as we move into implementation.
+**Accordion home base** — the teacher dashboard is a single page with four collapsible sections:
 
-4 tabs: **Schedule** (home), **Students** (CRM), **Inbox** (notifications), **Settings** (profile, rooms, payments).
+**Schedule** (home) · **Students** (CRM) · **Inbox** (notifications) · **Settings** (profile, rooms, payments)
 
-- Class detail is one adaptive screen that transforms based on lifecycle stage
+- One section open at a time, others collapse. Text-only headers, no icons.
+- **Detail views are separate pages** — tapping a class, student, or notification opens a full page. The accordion is the home base you return to.
+- Class detail is one adaptive page that transforms based on lifecycle stage (draft → open → full → in_progress → completed → cancelled)
 - Dashboard IS the schedule — no separate dashboard
 - Rooms are in Settings (set-up-once infrastructure)
-- Studio classes are a quick modal in the schedule timeline
+- Studio classes are a quick entry in the schedule list
 
-→ Full IA with user flows: `docs/information-architecture.md`
+→ Full IA reference: `docs/information-architecture.md`
+→ Navigation and component patterns: `docs/design-brief.md`
 
 ## Project Structure
 
@@ -120,15 +123,19 @@ tests/
 
 ## Design Philosophy
 
-Warm minimalism. Calm utility. Trust through transparency. Mobile first.
+E-reader meets dumb phone. The interface is a document you interact with, not an app you navigate.
 
-- Mobile-first responsive design — teachers use the app between and during classes, on their phone
-- No gamification: no streaks, no badges, no monthly summaries, no loyalty messaging
-- No attention economy patterns — this is a tool, not an engagement platform
+- **Mobile-first** — teachers use this on their phone between and during classes
+- **No animations, no transitions, no shadows, no depth** — screens just appear
+- **Lists over cards** — simple rows with dividers, not card-based layouts
+- **Text-only navigation** — no icons in nav, no tab bar. Accordion home base.
+- **No gamification** — no streaks, no badges, no monthly summaries, no loyalty messaging
+- **No attention economy patterns** — this is a tool, not an engagement platform
 - Typography: Georgia headings, Arial body
 - Colors: deep teal (#1A5653), warm sand (#E8DCC8), soft white (#F7F4EF), earth brown (#6B5B4E), muted gold (#C4A96A)
 
-→ Full design brief: `docs/stitch-design-brief.md`
+→ Working design brief: `docs/design-brief.md`
+→ Original visual reference: `docs/stitch-design-brief.md`
 
 ## Key Constraints
 

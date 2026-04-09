@@ -50,7 +50,7 @@ This is the most critical code in the system. The pricing engine is 100% pure �
 effective_teacher_rate = min_rate + (target_rate - min_rate) × (students - min_students) / (max_students - min_students)
   - Clamped: at or below min_students → min_rate; at or above max_students → target_rate
 
-total_class_cost = room_cost + (effective_teacher_rate × student_count)
+total_class_cost = room_cost + effective_teacher_rate
 
 base_unit = total_class_cost / sum_of_all_tier_ratios
 
@@ -407,7 +407,7 @@ export function calculateClassPricing(input: ClassPricingInput): PricingResult {
     targetRate,
   });
 
-  const totalCost = roomCost + effectiveTeacherRate * studentCount;
+  const totalCost = roomCost + effectiveTeacherRate;
 
   const studentTierRatios = studentTiers.map((tier) => {
     const ratio = TIER_RATIOS[tier];

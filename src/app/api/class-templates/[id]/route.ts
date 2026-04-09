@@ -53,6 +53,13 @@ export async function PUT(
     return respondError('No valid fields to update', 400);
   }
 
+  if (updateData.teacherRoomId) {
+    const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id: updateData.teacherRoomId } });
+    if (!teacherRoom || teacherRoom.teacherId !== session.userId) {
+      return respondError('Invalid teacher room', 400);
+    }
+  }
+
   const updated = await prisma.classTemplate.update({
     where: { id },
     data: updateData,
@@ -61,29 +68,6 @@ export async function PUT(
   return respondOk(updated);
 }
 
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
-  const { id } = await params;
-  const session = await requireTeacher(request);
-  if (isErrorResponse(session)) return session;
-
-  const template = await prisma.classTemplate.findUnique({ where: { id } });
-  if (!template) return respondError('Class template not found', 404);
-
-  if (template.teacherId !== session.userId) {
-    return respondError('Access denied', 403);
-  }
-
-  // Soft delete — set isActive to false
-  const updated = await prisma.classTemplate.update({
-    where: { id },
-    data: { isActive: false },
-  });
-
-  return respondOk(updated);
-}
 
 export async function PATCH(
   request: NextRequest,

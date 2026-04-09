@@ -5,11 +5,12 @@ type TeacherRoomWithRoom = TeacherRoom & { room: Room };
 
 interface RoomListProps {
   teacherRooms: TeacherRoomWithRoom[];
+  emptyMessage?: string;
 }
 
-export function RoomList({ teacherRooms }: RoomListProps) {
+export function RoomList({ teacherRooms, emptyMessage = 'No rooms yet. Add your first room.' }: RoomListProps) {
   if (teacherRooms.length === 0) {
-    return <p className="text-brown text-sm">No rooms yet. Add your first room.</p>;
+    return <p className="text-brown text-sm">{emptyMessage}</p>;
   }
 
   return (

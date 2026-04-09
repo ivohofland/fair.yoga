@@ -78,8 +78,8 @@ export function calculateEffectiveTeacherRate(
  * Calculate full class pricing — teacher rate, total cost, and per-student prices.
  *
  * Formulas:
- *   effective_teacher_rate = interpolated between min and target based on count
- *   total_class_cost = room_cost + (effective_teacher_rate × student_count)
+ *   effective_teacher_rate = interpolated between min and target based on count (per-class total, not per-student)
+ *   total_class_cost = room_cost + effective_teacher_rate
  *   base_unit = total_class_cost / sum_of_all_tier_ratios
  *   student_price = base_unit × student_tier_ratio
  */
@@ -116,8 +116,8 @@ export function calculateClassPricing(
     targetRate,
   });
 
-  // 2. Total class cost
-  const totalCost = roomCost + effectiveTeacherRate * studentCount;
+  // 2. Total class cost (teacher rate is per-class, not per-student)
+  const totalCost = roomCost + effectiveTeacherRate;
 
   // 3. Look up tier ratios for each student
   const studentTierRatios = studentTiers.map((tier) => {

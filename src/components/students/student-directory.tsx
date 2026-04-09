@@ -96,7 +96,7 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
           <p className="text-brown text-sm py-4">
             {search
               ? `No students matching '${search}'.`
-              : 'No students yet. Add your first student.'}
+              : archived ? 'No archived students.' : 'No students yet. Add your first student.'}
           </p>
         ) : (
           <div>

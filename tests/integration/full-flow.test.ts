@@ -282,8 +282,8 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
     expect(cls!.totalStudents).toBe(1);
 
     // With 1 student at minStudents=1:
-    //   effectiveTeacherRate = minRate = 15
-    //   total = roomCost + (effectiveTeacherRate * studentCount) = 35 + 15*1 = 50
+    //   effectiveTeacherRate = minRate = 15 (per-class total)
+    //   total = roomCost + effectiveTeacherRate = 35 + 15 = 50
     expect(Number(cls!.effectiveTeacherRate)).toBe(15);
     expect(Number(cls!.totalRevenue)).toBe(50);
   });

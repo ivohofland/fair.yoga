@@ -127,6 +127,10 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
       setError('Class type is required');
       return;
     }
+    if (form.minStudents > form.maxStudents) {
+      setError('Min students cannot exceed max students');
+      return;
+    }
 
     setSubmitting(true);
     setError('');
@@ -256,43 +260,44 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         onChange={(e) => update('durationMinutes', Number(e.target.value))}
       />
 
-      <Input
-        label="Room cost"
-        type="number"
-        step="0.01"
-        value={String(form.roomCost)}
-        onChange={(e) => update('roomCost', Number(e.target.value))}
-      />
+      <div className="grid grid-cols-3 gap-3">
+        <Input
+          label="Room cost"
+          type="number"
+          step="0.01"
+          value={String(form.roomCost)}
+          onChange={(e) => update('roomCost', Number(e.target.value))}
+        />
+        <Input
+          label="Min rate"
+          type="number"
+          step="0.01"
+          value={String(form.minRate)}
+          onChange={(e) => update('minRate', Number(e.target.value))}
+        />
+        <Input
+          label="Target rate"
+          type="number"
+          step="0.01"
+          value={String(form.targetRate)}
+          onChange={(e) => update('targetRate', Number(e.target.value))}
+        />
+      </div>
 
-      <Input
-        label="Min rate (at min students)"
-        type="number"
-        step="0.01"
-        value={String(form.minRate)}
-        onChange={(e) => update('minRate', Number(e.target.value))}
-      />
-
-      <Input
-        label="Target rate (at max students)"
-        type="number"
-        step="0.01"
-        value={String(form.targetRate)}
-        onChange={(e) => update('targetRate', Number(e.target.value))}
-      />
-
-      <Input
-        label="Min students"
-        type="number"
-        value={String(form.minStudents)}
-        onChange={(e) => update('minStudents', Number(e.target.value))}
-      />
-
-      <Input
-        label={`Max students (room capacity: ${roomCapacity})`}
-        type="number"
-        value={String(form.maxStudents)}
-        onChange={(e) => update('maxStudents', Math.min(Number(e.target.value), roomCapacity))}
-      />
+      <div className="grid grid-cols-2 gap-3">
+        <Input
+          label="Min students"
+          type="number"
+          value={String(form.minStudents)}
+          onChange={(e) => update('minStudents', Number(e.target.value))}
+        />
+        <Input
+          label="Max students"
+          type="number"
+          value={String(form.maxStudents)}
+          onChange={(e) => update('maxStudents', Math.min(Number(e.target.value), roomCapacity))}
+        />
+      </div>
 
       <PricingPreviewTable
         roomCost={form.roomCost}

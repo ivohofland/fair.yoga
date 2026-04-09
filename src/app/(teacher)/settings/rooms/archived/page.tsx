@@ -15,7 +15,7 @@ export default async function ArchivedRoomsPage() {
   return (
     <>
       <PageHeader title="Archived rooms" backHref="/settings/rooms" />
-      <RoomList teacherRooms={teacherRooms} />
+      <RoomList teacherRooms={teacherRooms} emptyMessage="No archived rooms." />
     </>
   );
 }

@@ -134,7 +134,7 @@ function calculatePricing(input: PricingInput): PricingOutput {
   //   based on registration count between minStudents and maxStudents
 
   // Step 2: Calculate total class cost
-  //   roomCost + (effectiveTeacherRate × studentCount)
+  //   roomCost + effectiveTeacherRate (teacher rate is per-class, not per-student)
 
   // Step 3: Distribute across tiers using compressed spread
   //   Tier ratios: [0.65, 0.80, 1.00, 1.20, 1.35]

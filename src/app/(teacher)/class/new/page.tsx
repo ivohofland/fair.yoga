@@ -347,53 +347,54 @@ export default function CreateClassPage() {
       {/* Step 2: Pricing */}
       {step === 2 && (
         <div className="flex flex-col gap-4">
-          <Input
-            id="roomCost"
-            label="Room cost"
-            type="number"
-            step="0.01"
-            value={String(form.roomCost)}
-            onChange={(e) => updateField('roomCost', Number(e.target.value))}
-            error={errors.roomCost}
-          />
+          <div className="grid grid-cols-3 gap-3">
+            <Input
+              id="roomCost"
+              label="Room cost"
+              type="number"
+              step="0.01"
+              value={String(form.roomCost)}
+              onChange={(e) => updateField('roomCost', Number(e.target.value))}
+              error={errors.roomCost}
+            />
+            <Input
+              id="minRate"
+              label="Min rate"
+              type="number"
+              step="0.01"
+              value={String(form.minRate)}
+              onChange={(e) => updateField('minRate', Number(e.target.value))}
+              error={errors.minRate}
+            />
+            <Input
+              id="targetRate"
+              label="Target rate"
+              type="number"
+              step="0.01"
+              value={String(form.targetRate)}
+              onChange={(e) => updateField('targetRate', Number(e.target.value))}
+              error={errors.targetRate}
+            />
+          </div>
 
-          <Input
-            id="minRate"
-            label="Min rate (at min students)"
-            type="number"
-            step="0.01"
-            value={String(form.minRate)}
-            onChange={(e) => updateField('minRate', Number(e.target.value))}
-            error={errors.minRate}
-          />
-
-          <Input
-            id="targetRate"
-            label="Target rate (at max students)"
-            type="number"
-            step="0.01"
-            value={String(form.targetRate)}
-            onChange={(e) => updateField('targetRate', Number(e.target.value))}
-            error={errors.targetRate}
-          />
-
-          <Input
-            id="minStudents"
-            label="Min students"
-            type="number"
-            value={String(form.minStudents)}
-            onChange={(e) => updateField('minStudents', Number(e.target.value))}
-            error={errors.minStudents}
-          />
-
-          <Input
-            id="maxStudents"
-            label={`Max students (room capacity: ${roomCapacity})`}
-            type="number"
-            value={String(form.maxStudents)}
-            onChange={(e) => updateField('maxStudents', Math.min(Number(e.target.value), roomCapacity))}
-            error={errors.maxStudents}
-          />
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              id="minStudents"
+              label="Min students"
+              type="number"
+              value={String(form.minStudents)}
+              onChange={(e) => updateField('minStudents', Number(e.target.value))}
+              error={errors.minStudents}
+            />
+            <Input
+              id="maxStudents"
+              label="Max students"
+              type="number"
+              value={String(form.maxStudents)}
+              onChange={(e) => updateField('maxStudents', Math.min(Number(e.target.value), roomCapacity))}
+              error={errors.maxStudents}
+            />
+          </div>
 
           <PricingPreviewTable
             roomCost={form.roomCost}

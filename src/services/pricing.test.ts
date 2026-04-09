@@ -137,18 +137,20 @@ describe('calculateClassPricing', () => {
 
     expect(result.studentCount).toBe(9);
     expect(result.effectiveTeacherRate).toBeCloseTo(21.25, 2);
-    expect(result.totalCost).toBeCloseTo(226.25, 2);
+    // total = room_cost + effective_teacher_rate = 35 + 21.25 = 56.25
+    expect(result.totalCost).toBeCloseTo(56.25, 2);
 
-    // Per-tier prices: T1=15.99, T2=19.67, T3=24.59, T4=29.51, T5=33.20
-    expect(result.studentPrices[0]).toBeCloseTo(15.99, 2); // T1
-    expect(result.studentPrices[1]).toBeCloseTo(15.99, 2); // T1
-    expect(result.studentPrices[2]).toBeCloseTo(19.67, 2); // T2
-    expect(result.studentPrices[3]).toBeCloseTo(24.59, 2); // T3
-    expect(result.studentPrices[4]).toBeCloseTo(24.59, 2); // T3
-    expect(result.studentPrices[5]).toBeCloseTo(29.51, 2); // T4
-    expect(result.studentPrices[6]).toBeCloseTo(29.51, 2); // T4
-    expect(result.studentPrices[7]).toBeCloseTo(33.20, 2); // T5
-    expect(result.studentPrices[8]).toBeCloseTo(33.20, 2); // T5
+    // base = 56.25 / 9.20 ≈ 6.114
+    // Per-tier prices: T1=3.97, T2=4.89, T3=6.11, T4=7.34, T5=8.25
+    expect(result.studentPrices[0]).toBeCloseTo(3.97, 2); // T1
+    expect(result.studentPrices[1]).toBeCloseTo(3.97, 2); // T1
+    expect(result.studentPrices[2]).toBeCloseTo(4.89, 2); // T2
+    expect(result.studentPrices[3]).toBeCloseTo(6.11, 2); // T3
+    expect(result.studentPrices[4]).toBeCloseTo(6.11, 2); // T3
+    expect(result.studentPrices[5]).toBeCloseTo(7.34, 2); // T4
+    expect(result.studentPrices[6]).toBeCloseTo(7.34, 2); // T4
+    expect(result.studentPrices[7]).toBeCloseTo(8.25, 2); // T5
+    expect(result.studentPrices[8]).toBeCloseTo(8.25, 2); // T5
 
     // Sum of prices should approximate totalCost
     const sum = result.studentPrices.reduce((a, b) => a + b, 0);
@@ -183,10 +185,11 @@ describe('calculateClassPricing', () => {
 
     expect(result.studentCount).toBe(5);
     expect(result.effectiveTeacherRate).toBeCloseTo(16.25, 2);
-    expect(result.totalCost).toBeCloseTo(116.25, 2);
-    // Each pays 116.25 / 5 = 23.25
+    // total = 35 + 16.25 = 51.25
+    expect(result.totalCost).toBeCloseTo(51.25, 2);
+    // Each pays 51.25 / 5 = 10.25 (all same tier, ratio 1.0)
     for (const price of result.studentPrices) {
-      expect(price).toBeCloseTo(23.25, 2);
+      expect(price).toBeCloseTo(10.25, 2);
     }
   });
 
@@ -216,7 +219,8 @@ describe('calculateClassPricing', () => {
 
     expect(result.studentCount).toBe(4);
     expect(result.effectiveTeacherRate).toBe(-10);
-    expect(result.totalCost).toBe(10);
+    // total = 50 + (-10) = 40
+    expect(result.totalCost).toBe(40);
   });
 
   it('handles flat rate', () => {
@@ -257,7 +261,8 @@ describe('calculateClassPricing', () => {
 
     expect(result.studentCount).toBe(10);
     expect(result.effectiveTeacherRate).toBeCloseTo(42.5, 2);
-    expect(result.totalCost).toBeCloseTo(475, 2);
+    // total = 50 + 42.5 = 92.5
+    expect(result.totalCost).toBeCloseTo(92.5, 2);
 
     // Sum of prices should approximate totalCost
     const sum = result.studentPrices.reduce((a, b) => a + b, 0);

@@ -433,14 +433,14 @@ async function main() {
   // 5. COMPLETED — last week, 10 registrations, pricing calculated
   //
   // Pricing calculation for 9 charged students (7 attended + 1 no_show + 1 late_cancel):
-  //   effective_teacher_rate = 15 + (25 - 15) * (9 - 4) / (12 - 4) = 21.25
-  //   total = 35 + (21.25 * 9) = 226.25
+  //   effective_teacher_rate = 15 + (25 - 15) * (9 - 4) / (12 - 4) = 21.25 (per-class total)
+  //   total = 35 + 21.25 = 56.25
   //   tier distribution: tiers [1,1,2,3,3,4,4,5,5] → ratios [0.65,0.65,0.80,1.00,1.00,1.20,1.20,1.35,1.35]
   //   sum of ratios = 9.20
-  //   base price = 226.25 / 9.20 = 24.592...
-  //   tier 1: 24.59 * 0.65 = 15.99, tier 2: 24.59 * 0.80 = 19.67
-  //   tier 3: 24.59 * 1.00 = 24.59, tier 4: 24.59 * 1.20 = 29.51
-  //   tier 5: 24.59 * 1.35 = 33.20
+  //   base price = 56.25 / 9.20 = 6.114...
+  //   tier 1: 6.11 * 0.65 = 3.97, tier 2: 6.11 * 0.80 = 4.89
+  //   tier 3: 6.11 * 1.00 = 6.11, tier 4: 6.11 * 1.20 = 7.34
+  //   tier 5: 6.11 * 1.35 = 8.25
   const completedClass = await prisma.class.create({
     data: {
       teacherId: ivo.id,
@@ -462,7 +462,7 @@ async function main() {
       settingsLocked: true,
       effectiveTeacherRate: new Prisma.Decimal('21.25'),
       totalStudents: 9,
-      totalRevenue: new Prisma.Decimal('226.25'),
+      totalRevenue: new Prisma.Decimal('56.25'),
     },
   });
 
@@ -550,7 +550,7 @@ async function main() {
   // -- COMPLETED class: 10 registrations with varied statuses and calculated prices
   // Tier distribution for 9 charged: [1, 1, 2, 3, 3, 4, 4, 5, 5]
   // Sum of ratios: 0.65 + 0.65 + 0.80 + 1.00 + 1.00 + 1.20 + 1.20 + 1.35 + 1.35 = 9.20
-  // Base price: 226.25 / 9.20 ≈ 24.5924
+  // Base price: 56.25 / 9.20 ≈ 6.1141
   const tierRatioMap: Record<number, string> = {
     1: '0.6500',
     2: '0.8000',
@@ -559,11 +559,11 @@ async function main() {
     5: '1.3500',
   };
   const tierPriceMap: Record<number, string> = {
-    1: '15.99',
-    2: '19.67',
-    3: '24.59',
-    4: '29.51',
-    5: '33.20',
+    1: '3.97',
+    2: '4.89',
+    3: '6.11',
+    4: '7.34',
+    5: '8.25',
   };
 
   const completedStatuses: Array<{

@@ -50,11 +50,11 @@ Step 1 — Calculate the effective teacher rate based on registrations:
 
 `teacher rate = min rate + (target rate − min rate) × (students − min students) / (max students − min students)`
 
-The rate scales linearly: at minimum students the teacher earns their min rate, at maximum students they earn their target rate. The rate is capped at the target rate for classes exceeding maximum.
+The rate is a per-class total (not per-student) that scales linearly: at minimum students the teacher earns their min rate, at maximum students they earn their target rate. The rate is capped at the target rate for classes exceeding maximum. As a class fills up, the same total cost gets divided among more people — students pay less while the teacher earns more.
 
 Step 2 — Calculate each student's price:
 
-`total class cost = room cost + (teacher rate × student count)`
+`total class cost = room cost + teacher rate`
 `student price = total class cost / sum of all student ratios × student's ratio`
 
 **Tier ratios (compressed 2× spread):**
