@@ -11,11 +11,15 @@
   --color-dark: #2D2D2D;
   --color-teal-light: #E8F0EF;
   --font-heading: Georgia, 'Times New Roman', serif;
-  --font-body: Arial, Helvetica, sans-serif;
+  --font-body: var(--font-atkinson), Arial, Helvetica, sans-serif;
 }
 
 body {
-  background-color: var(--color-cream);
+  background-color: var(--color-sand);
   color: var(--color-brown);
   font-family: var(--font-body);
+}
+
+h1 {
+  color: var(--color-teal);
 }

@@ -31,7 +31,7 @@ function VerifyContent() {
 
   return (
     <>
-      <h1 className="font-heading text-2xl font-bold text-dark mb-4">
+      <h1 className="font-heading text-2xl font-bold mb-4">
         {status === 'verifying' ? 'Verifying...' : 'Verification failed'}
       </h1>
       {status === 'error' && (
@@ -46,10 +46,10 @@ function VerifyContent() {
 
 export default function VerifyPage() {
   return (
-    <div className="mx-auto max-w-sm px-4 py-16">
+    <div className="py-10">
       <Suspense
         fallback={
-          <h1 className="font-heading text-2xl font-bold text-dark mb-4">
+          <h1 className="font-heading text-2xl font-bold mb-4">
             Verifying...
           </h1>
         }
