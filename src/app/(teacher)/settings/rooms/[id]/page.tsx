@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
+import { formatRoomLocation } from '@/lib/format';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
 import { EditTeacherRoomForm } from '@/components/settings/edit-teacher-room-form';
@@ -97,7 +98,7 @@ export default async function EditRoomPage({
         {classCount === 0 && (
           <UnlinkRoomButton
             teacherRoomId={teacherRoom.id}
-            roomName={room.roomName ? `${room.roomName} at ${room.venueName}` : room.venueName}
+            roomName={formatRoomLocation(room.roomName, room.venueName)}
           />
         )}
       </section>

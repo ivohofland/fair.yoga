@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import type { ClassTemplate, TeacherRoom, Room } from '@prisma/client';
+import { formatRoomLocation } from '@/lib/format';
 
 type TemplateWithRoom = ClassTemplate & {
   teacherRoom: TeacherRoom & { room: Room };
@@ -33,9 +34,7 @@ export function TemplateList({ templates }: TemplateListProps) {
               {DAY_LABELS[t.dayOfWeek]} {t.startTime} &middot; {t.durationMinutes} min
             </span>
             <span className="text-brown text-xs">
-              {t.teacherRoom.room.roomName
-                ? `${t.teacherRoom.room.roomName} at ${t.teacherRoom.room.venueName}`
-                : t.teacherRoom.room.venueName}
+              {formatRoomLocation(t.teacherRoom.room.roomName, t.teacherRoom.room.venueName)}
             </span>
           </div>
           <span className="text-teal text-xs pt-1">active</span>
@@ -57,9 +56,7 @@ export function TemplateList({ templates }: TemplateListProps) {
                   {DAY_LABELS[t.dayOfWeek]} {t.startTime} &middot; {t.durationMinutes} min
                 </span>
                 <span className="text-brown text-xs">
-                  {t.teacherRoom.room.roomName
-                    ? `${t.teacherRoom.room.roomName} at ${t.teacherRoom.room.venueName}`
-                    : t.teacherRoom.room.venueName}
+                  {formatRoomLocation(t.teacherRoom.room.roomName, t.teacherRoom.room.venueName)}
                 </span>
               </div>
               <span className="text-brown text-xs pt-1">paused</span>

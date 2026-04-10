@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { formatRoomLocation } from '@/lib/format';
 
 interface RoomResult {
   id: string;
@@ -245,7 +246,7 @@ export function AddRoomFlow() {
                         className="w-full text-left flex flex-col gap-1 py-3 border-b border-border"
                       >
                         <span className="text-dark text-sm font-medium">
-                          {room.roomName ? `${room.roomName} at ${room.venueName}` : room.venueName}
+                          {formatRoomLocation(room.roomName, room.venueName)}
                         </span>
                         <span className="text-brown text-xs">{room.address}, {room.city}</span>
                       </button>
@@ -348,7 +349,7 @@ export function AddRoomFlow() {
         <>
           <div className="mb-6 pb-4 border-b border-border">
             <p className="text-dark text-sm font-medium">
-              {selectedRoom.roomName} at {selectedRoom.venueName}
+              {formatRoomLocation(selectedRoom.roomName, selectedRoom.venueName)}
             </p>
             <p className="text-brown text-xs">{selectedRoom.address}, {selectedRoom.city}</p>
           </div>

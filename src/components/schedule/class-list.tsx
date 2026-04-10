@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { Class, TeacherRoom, Room } from '@prisma/client';
 import { StatusDot } from '@/components/ui/status-dot';
+import { formatRoomLocation } from '@/lib/format';
 
 type ClassWithDetails = Class & {
   _count: { registrations: number };
@@ -55,7 +56,7 @@ export function ClassList({ classes, emptyMessage = 'No classes yet. Create your
                 </span>
                 <span className="text-dark text-sm">{cls.classType}</span>
                 <span className="text-brown text-xs">
-                  {cls.teacherRoom.room.roomName}, {cls.teacherRoom.room.venueName}
+                  {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
                 </span>
               </div>
               <div className="flex items-center gap-2 pt-1">

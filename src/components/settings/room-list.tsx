@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import type { TeacherRoom, Room } from '@prisma/client';
+import { formatRoomLocation } from '@/lib/format';
 
 type TeacherRoomWithRoom = TeacherRoom & { room: Room };
 
@@ -23,7 +24,7 @@ export function RoomList({ teacherRooms, emptyMessage = 'No rooms yet. Add your 
         >
           <div className="flex flex-col gap-1">
             <span className="text-dark text-sm font-medium">
-              {tr.room.roomName ? `${tr.room.roomName} at ${tr.room.venueName}` : tr.room.venueName}
+              {formatRoomLocation(tr.room.roomName, tr.room.venueName)}
             </span>
             <span className="text-brown text-xs">
               {tr.room.city} {tr.room.postcode}

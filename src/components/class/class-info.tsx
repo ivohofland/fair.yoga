@@ -1,5 +1,6 @@
 import type { Class, ClassStatus, TeacherRoom, Room } from '@prisma/client';
 import { StatusDot } from '@/components/ui/status-dot';
+import { formatRoomLocation } from '@/lib/format';
 
 type ClassWithRoom = Class & {
   teacherRoom: TeacherRoom & { room: Room };
@@ -50,7 +51,7 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
       <div className="py-3 border-b border-border">
         <span className="text-sm text-brown">Room</span>
         <p className="text-dark">
-          {cls.teacherRoom.room.roomName} at {cls.teacherRoom.room.venueName}
+          {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
         </p>
       </div>
 
