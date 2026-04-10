@@ -131,7 +131,8 @@ E-reader meets dumb phone. The interface is a document you interact with, not an
 - **Text-only navigation** — no icons in nav, no tab bar. Accordion home base.
 - **No gamification** — no streaks, no badges, no monthly summaries, no loyalty messaging
 - **No attention economy patterns** — this is a tool, not an engagement platform
-- Typography: Georgia headings, Arial body
+- **Cursor pointer on all interactive elements** — all `<a>` and `<button>` elements get `cursor: pointer` globally via CSS. No need to add `cursor-pointer` class individually.
+- Typography: Georgia headings, Atkinson Hyperlegible body (fallback: Arial)
 - Colors: deep teal (#1A5653), warm sand (#E8DCC8), soft white (#F7F4EF), earth brown (#6B5B4E), muted gold (#C4A96A)
 
 → Working design brief: `docs/design-brief.md`
