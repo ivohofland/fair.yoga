@@ -7,13 +7,13 @@ import { formatStudentName } from '@/lib/format';
 
 function getWeekBounds(): { start: Date; end: Date } {
   const now = new Date();
-  const day = now.getDay();
+  const day = now.getUTCDay();
   const diffToMonday = day === 0 ? -6 : 1 - day;
   const start = new Date(now);
-  start.setDate(now.getDate() + diffToMonday);
-  start.setHours(0, 0, 0, 0);
+  start.setUTCDate(now.getUTCDate() + diffToMonday);
+  start.setUTCHours(0, 0, 0, 0);
   const end = new Date(start);
-  end.setDate(start.getDate() + 7);
+  end.setUTCDate(start.getUTCDate() + 7);
   return { start, end };
 }
 

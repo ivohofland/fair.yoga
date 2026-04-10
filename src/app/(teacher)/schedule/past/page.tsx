@@ -6,7 +6,7 @@ import { ClassList } from '@/components/schedule/class-list';
 export default async function PastClassesPage() {
   const session = await requireTeacherSession();
   const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  today.setUTCHours(0, 0, 0, 0);
 
   const classes = await prisma.class.findMany({
     where: { teacherId: session.userId, date: { lt: today } },

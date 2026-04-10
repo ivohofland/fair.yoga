@@ -54,12 +54,18 @@ function ClassRow({ cls, dimmed }: { cls: ClassWithDetails; dimmed?: boolean }) 
   );
 }
 
-export function ClassList({ classes, emptyMessage = 'No classes yet. Create your first class.', showAddLink = true, dimPast = false }: ClassListProps) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+function classDateTime(cls: ClassWithDetails): Date {
+  const d = new Date(cls.date);
+  const [hours, minutes] = cls.startTime.split(':').map(Number);
+  d.setUTCHours(hours!, minutes!, 0, 0);
+  return d;
+}
 
-  const past = dimPast ? classes.filter((cls) => new Date(cls.date) < today) : [];
-  const upcoming = dimPast ? classes.filter((cls) => new Date(cls.date) >= today) : classes;
+export function ClassList({ classes, emptyMessage = 'No classes yet. Create your first class.', showAddLink = true, dimPast = false }: ClassListProps) {
+  const now = new Date();
+
+  const past = dimPast ? classes.filter((cls) => classDateTime(cls) < now) : [];
+  const upcoming = dimPast ? classes.filter((cls) => classDateTime(cls) >= now) : classes;
 
   return (
     <div>
