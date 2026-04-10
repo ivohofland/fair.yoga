@@ -1,8 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import crypto from 'crypto';
+import { sha256 } from '@oslojs/crypto/sha2';
+import { encodeHexLowerCase } from '@oslojs/encoding';
+
+function hashToken(token: string): string {
+  const bytes = sha256(new TextEncoder().encode(token));
+  return encodeHexLowerCase(bytes);
+}
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
+const rawSessionToken = crypto.randomBytes(32).toString('hex');
 
 let teacherId: string;
 let studentIds: string[] = [];
@@ -49,7 +58,7 @@ beforeAll(async () => {
   // Create a session for the teacher
   await prisma.session.create({
     data: {
-      id: `crm-session-${uniqueSuffix}`,
+      id: hashToken(rawSessionToken),
       userId: teacherId,
       userType: 'teacher',
       expiresAt: new Date(Date.now() + 86400000),
@@ -62,7 +71,7 @@ afterAll(async () => {
     where: { teacherId },
   });
   await prisma.session.deleteMany({
-    where: { id: `crm-session-${uniqueSuffix}` },
+    where: { id: hashToken(rawSessionToken) },
   });
   await prisma.student.deleteMany({
     where: { id: { in: studentIds } },
@@ -72,7 +81,7 @@ afterAll(async () => {
 });
 
 const BASE_URL = 'http://localhost:3000';
-const sessionCookie = `fair_yoga_session=crm-session-${uniqueSuffix}`;
+const sessionCookie = `fair_yoga_session=${rawSessionToken}`;
 
 describe('GET /api/students', () => {
   it('returns paginated students for the teacher', async () => {
@@ -184,9 +193,10 @@ describe('POST /api/students', () => {
         pageSlug: `crm-teacher2-${uniqueSuffix}`,
       },
     });
-    const session2 = await prisma.session.create({
+    const rawToken2 = crypto.randomBytes(32).toString('hex');
+    await prisma.session.create({
       data: {
-        id: `crm-session2-${uniqueSuffix}`,
+        id: hashToken(rawToken2),
         userId: teacher2.id,
         userType: 'teacher',
         expiresAt: new Date(Date.now() + 86400000),
@@ -198,7 +208,7 @@ describe('POST /api/students', () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Cookie: `fair_yoga_session=${session2.id}`,
+        Cookie: `fair_yoga_session=${rawToken2}`,
       },
       body: JSON.stringify({
         firstName: 'New',
@@ -212,7 +222,7 @@ describe('POST /api/students', () => {
 
     // Cleanup teacher2
     await prisma.teacherStudent.deleteMany({ where: { teacherId: teacher2.id } });
-    await prisma.session.delete({ where: { id: session2.id } });
+    await prisma.session.delete({ where: { id: hashToken(rawToken2) } });
     await prisma.teacher.delete({ where: { id: teacher2.id } });
   });
 
