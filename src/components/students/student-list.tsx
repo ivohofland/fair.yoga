@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { formatStudentName } from '@/lib/format';
 import type { Student, Registration, Class } from '@prisma/client';
 
 type StudentWithDetails = Student & {
@@ -12,10 +13,6 @@ interface StudentListProps {
   students: StudentWithDetails[];
 }
 
-function formatName(firstName: string, lastName: string): string {
-  const lastInitial = lastName.length > 0 ? lastName[0] : '';
-  return `${firstName} ${lastInitial ? lastInitial.toLowerCase() + '.' : ''}`.trim();
-}
 
 function formatDate(date: Date): string {
   const d = new Date(date);
@@ -53,7 +50,7 @@ export function StudentList({ students }: StudentListProps) {
           >
             <div className="flex flex-col gap-1">
               <span className="text-dark text-sm font-medium">
-                {formatName(student.firstName, student.lastName)}
+                {formatStudentName(student.firstName, student.lastName)}
               </span>
               <span className="text-brown text-xs">
                 Last class: {lastClassDate}

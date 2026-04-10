@@ -24,6 +24,8 @@ A free, open-source toolkit for independent yoga teachers. Not a marketplace —
 
 **Services are framework-agnostic.** Business logic in `src/services/` takes typed inputs and returns typed outputs. No HTTP concerns, no framework imports. API routes are thin wrappers. This makes services independently testable and extractable if a separate API is ever needed.
 
+**Database changes require migrations.** When modifying `prisma/schema.prisma`, always create a migration with `npx prisma migrate dev --name <description>`. Never apply schema changes with raw SQL or `db push` alone — migrations must be tracked so other environments can reproduce the change.
+
 ## Core Business Logic
 
 ### Pricing Engine

@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
+import { formatStudentName } from '@/lib/format';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
 import { EditStudentForm } from '@/components/students/edit-student-form';
@@ -39,10 +40,10 @@ export default async function StudentDetailPage({
 
   const isUnlinked = !student.claimedAt;
   const isArchived = student.teacherStudents[0]?.isArchived ?? false;
-  const displayName = `${student.firstName}${student.lastName ? ` ${student.lastName.charAt(0)}.` : ''}`;
-
   // For claimed students, respect privacy settings
   const privacy = student.studentPrivacy[0];
+  const shareFullName = isUnlinked || (privacy?.shareFullName ?? false);
+  const displayName = formatStudentName(student.firstName, student.lastName, shareFullName);
   const showEmail = isUnlinked || (privacy?.shareEmail ?? false);
   const showPhone = isUnlinked || (privacy?.sharePhone ?? false);
   const showBirthday = isUnlinked || (privacy?.shareBirthday ?? false);

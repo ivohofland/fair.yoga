@@ -153,6 +153,7 @@ model StudentPrivacy {
   id            String   @id @default(uuid())
   studentId     String
   teacherId     String
+  shareFullName Boolean  @default(false)
   shareEmail    Boolean  @default(false)
   sharePhone    Boolean  @default(false)
   shareBirthday Boolean  @default(false)

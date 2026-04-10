@@ -12,6 +12,7 @@ interface ClassListProps {
   classes: ClassWithDetails[];
   emptyMessage?: string;
   showAddLink?: boolean;
+  dimPast?: boolean;
 }
 
 function formatDate(date: Date): string {
@@ -27,7 +28,39 @@ function formatDate(date: Date): string {
   return `${dayName}, ${monthName} ${dayNum}`;
 }
 
-export function ClassList({ classes, emptyMessage = 'No classes yet. Create your first class.', showAddLink = true }: ClassListProps) {
+function ClassRow({ cls, dimmed }: { cls: ClassWithDetails; dimmed?: boolean }) {
+  return (
+    <Link
+      key={cls.id}
+      href={`/class/${cls.id}`}
+      className={`flex items-start justify-between py-3 border-b border-border${dimmed ? ' opacity-50' : ''}`}
+    >
+      <div className="flex flex-col gap-1">
+        <span className="text-dark text-sm font-medium">
+          {formatDate(cls.date)} &middot; {cls.startTime}
+        </span>
+        <span className="text-dark text-sm">{cls.classType}</span>
+        <span className="text-brown text-xs">
+          {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
+        </span>
+      </div>
+      <div className="flex items-center gap-2 pt-1">
+        <span className="text-brown text-sm">
+          {cls._count.registrations}/{cls.maxStudents}
+        </span>
+        <StatusDot status={cls.status} label={cls.status.replace('_', ' ')} />
+      </div>
+    </Link>
+  );
+}
+
+export function ClassList({ classes, emptyMessage = 'No classes yet. Create your first class.', showAddLink = true, dimPast = false }: ClassListProps) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const past = dimPast ? classes.filter((cls) => new Date(cls.date) < today) : [];
+  const upcoming = dimPast ? classes.filter((cls) => new Date(cls.date) >= today) : classes;
+
   return (
     <div>
       {showAddLink && (
@@ -44,28 +77,11 @@ export function ClassList({ classes, emptyMessage = 'No classes yet. Create your
         </p>
       ) : (
         <div>
-          {classes.map((cls) => (
-            <Link
-              key={cls.id}
-              href={`/class/${cls.id}`}
-              className="flex items-start justify-between py-3 border-b border-border"
-            >
-              <div className="flex flex-col gap-1">
-                <span className="text-dark text-sm font-medium">
-                  {formatDate(cls.date)} &middot; {cls.startTime}
-                </span>
-                <span className="text-dark text-sm">{cls.classType}</span>
-                <span className="text-brown text-xs">
-                  {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 pt-1">
-                <span className="text-brown text-sm">
-                  {cls._count.registrations}/{cls.maxStudents}
-                </span>
-                <StatusDot status={cls.status} label={cls.status.replace('_', ' ')} />
-              </div>
-            </Link>
+          {past.map((cls) => (
+            <ClassRow key={cls.id} cls={cls} dimmed />
+          ))}
+          {upcoming.map((cls) => (
+            <ClassRow key={cls.id} cls={cls} />
           ))}
         </div>
       )}

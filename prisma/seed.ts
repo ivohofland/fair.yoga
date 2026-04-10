@@ -201,16 +201,16 @@ async function main() {
   // ==========================================================================
   // Varied sharing levels
   const privacySettings = [
-    { shareEmail: true, sharePhone: true, shareBirthday: false, shareAddress: false }, // Anna
-    { shareEmail: false, sharePhone: false, shareBirthday: false, shareAddress: false }, // Ben (max privacy)
-    { shareEmail: true, sharePhone: true, shareBirthday: true, shareAddress: false }, // Clara
-    { shareEmail: true, sharePhone: false, shareBirthday: false, shareAddress: false }, // David
-    { shareEmail: true, sharePhone: true, shareBirthday: false, shareAddress: true }, // Eva
-    { shareEmail: false, sharePhone: false, shareBirthday: true, shareAddress: false }, // Finn
-    { shareEmail: true, sharePhone: true, shareBirthday: true, shareAddress: true }, // Greta (shares all)
-    { shareEmail: true, sharePhone: false, shareBirthday: false, shareAddress: false }, // Hugo
-    { shareEmail: true, sharePhone: true, shareBirthday: true, shareAddress: true }, // Iris (shares all)
-    { shareEmail: true, sharePhone: false, shareBirthday: false, shareAddress: false }, // Jan
+    { shareFullName: true, shareEmail: true, sharePhone: true, shareBirthday: false, shareAddress: false }, // Anna — full name visible
+    { shareFullName: false, shareEmail: false, sharePhone: false, shareBirthday: false, shareAddress: false }, // Ben (max privacy)
+    { shareFullName: true, shareEmail: true, sharePhone: true, shareBirthday: true, shareAddress: false }, // Clara — full name visible
+    { shareFullName: false, shareEmail: true, sharePhone: false, shareBirthday: false, shareAddress: false }, // David — initial only
+    { shareFullName: true, shareEmail: true, sharePhone: true, shareBirthday: false, shareAddress: true }, // Eva — full name visible
+    { shareFullName: false, shareEmail: false, sharePhone: false, shareBirthday: true, shareAddress: false }, // Finn — initial only
+    { shareFullName: true, shareEmail: true, sharePhone: true, shareBirthday: true, shareAddress: true }, // Greta (shares all)
+    { shareFullName: false, shareEmail: true, sharePhone: false, shareBirthday: false, shareAddress: false }, // Hugo — initial only
+    { shareFullName: true, shareEmail: true, sharePhone: true, shareBirthday: true, shareAddress: true }, // Iris (shares all)
+    { shareFullName: false, shareEmail: true, sharePhone: false, shareBirthday: false, shareAddress: false }, // Jan — initial only
   ];
 
   await Promise.all(
@@ -283,6 +283,21 @@ async function main() {
     },
   });
 
+  const homeStudio = await prisma.room.create({
+    data: {
+      venueName: 'Thuis',
+      address: 'Hansenstraat 12A',
+      city: 'Leiden',
+      postcode: '2316BJ',
+      floor: '',
+      roomName: '',
+      maxCapacity: 1,
+      equipment: JSON.parse('["mats", "blocks", "straps"]'),
+      isPublic: false,
+      createdById: ivo.id,
+    },
+  });
+
   // ==========================================================================
   // TEACHER ROOMS
   // ==========================================================================
@@ -301,6 +316,15 @@ async function main() {
       roomId: communityCenter.id,
       capacityOverride: 10,
       rentalRate: new Prisma.Decimal('25.00'),
+    },
+  });
+
+  await prisma.teacherRoom.create({
+    data: {
+      teacherId: ivo.id,
+      roomId: homeStudio.id,
+      capacityOverride: 1,
+      rentalRate: new Prisma.Decimal('0.00'),
     },
   });
 

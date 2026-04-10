@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { Input } from '@/components/ui/input';
+import { formatStudentName } from '@/lib/format';
 import { Pagination } from '@/components/students/pagination';
 
 interface StudentRow {
@@ -11,6 +12,7 @@ interface StudentRow {
   lastName: string;
   email: string;
   claimedAt: string | null;
+  shareFullName: boolean;
   lastClassDate: string | null;
   classCount: number;
 }
@@ -26,10 +28,6 @@ interface StudentListResponse {
 
 const PAGE_SIZE = 20;
 
-function formatName(firstName: string, lastName: string): string {
-  const lastInitial = lastName.length > 0 ? lastName[0] : '';
-  return `${firstName} ${lastInitial ? lastInitial.toLowerCase() + '.' : ''}`.trim();
-}
 
 interface StudentDirectoryProps {
   archived?: boolean;
@@ -108,7 +106,7 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
               >
                 <div className="flex flex-col gap-1">
                   <span className="text-dark text-sm font-medium">
-                    {formatName(student.firstName, student.lastName)}
+                    {formatStudentName(student.firstName, student.lastName, student.shareFullName)}
                   </span>
                   <span className="text-brown text-xs">{student.email}</span>
                 </div>

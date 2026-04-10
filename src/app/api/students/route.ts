@@ -41,6 +41,10 @@ export async function GET(request: NextRequest) {
         lastName: true,
         email: true,
         claimedAt: true,
+        studentPrivacy: {
+          where: { teacherId: session.userId },
+          select: { shareFullName: true },
+        },
         registrations: {
           where: { class: { teacherId: session.userId } },
           orderBy: { registeredAt: 'desc' },
@@ -59,15 +63,19 @@ export async function GET(request: NextRequest) {
     prisma.student.count({ where }),
   ]);
 
-  const result = students.map((s) => ({
-    id: s.id,
-    firstName: s.firstName,
-    lastName: s.lastName,
-    email: s.email,
-    claimedAt: s.claimedAt,
-    lastClassDate: s.registrations[0]?.class.date ?? null,
-    classCount: s._count.registrations,
-  }));
+  const result = students.map((s) => {
+    const shareFullName = !s.claimedAt || (s.studentPrivacy[0]?.shareFullName ?? false);
+    return {
+      id: s.id,
+      firstName: s.firstName,
+      lastName: shareFullName ? s.lastName : (s.lastName.charAt(0) || ''),
+      email: s.email,
+      claimedAt: s.claimedAt,
+      shareFullName,
+      lastClassDate: s.registrations[0]?.class.date ?? null,
+      classCount: s._count.registrations,
+    };
+  });
 
   return respondOk({ students: result, total, page, pageSize });
 }

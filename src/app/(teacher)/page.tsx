@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { ClassList } from '@/components/schedule/class-list';
 import { InboxSection } from '@/components/layout/inbox-section';
+import { formatStudentName } from '@/lib/format';
 
 function getWeekBounds(): { start: Date; end: Date } {
   const now = new Date();
@@ -20,7 +21,9 @@ export default async function TeacherHome() {
   const session = await requireTeacherSession();
   const { start, end } = getWeekBounds();
 
-  const [classes, unreadNotifications] = await Promise.all([
+  const now = new Date();
+
+  const [classes, unreadNotifications, lastClass] = await Promise.all([
     prisma.class.findMany({
       where: {
         teacherId: session.userId,
@@ -41,6 +44,32 @@ export default async function TeacherHome() {
       orderBy: { createdAt: 'desc' },
       take: 10,
     }),
+    prisma.class.findFirst({
+      where: {
+        teacherId: session.userId,
+        date: { lt: now },
+      },
+      orderBy: { date: 'desc' },
+      include: {
+        registrations: {
+          where: { status: 'registered' },
+          include: {
+            student: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                claimedAt: true,
+                studentPrivacy: {
+                  where: { teacherId: session.userId },
+                  select: { shareFullName: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
   ]);
 
   const unreadCount = unreadNotifications.length;
@@ -55,7 +84,7 @@ export default async function TeacherHome() {
           </h2>
           <Link href="/class/new" className="text-teal text-sm">+ Add class</Link>
         </div>
-        <ClassList classes={classes} showAddLink={false} />
+        <ClassList classes={classes} showAddLink={false} dimPast />
         <Link href="/schedule" className="text-teal text-sm mt-4 inline-block">
           See full schedule &rarr;
         </Link>
@@ -65,11 +94,32 @@ export default async function TeacherHome() {
       <section>
         <div className="flex items-center justify-between border-b border-border pb-4 mb-4">
           <h2 className="font-heading text-xl font-bold text-teal">
-            Students
+            Recent students
           </h2>
           <Link href="/students/new" className="text-teal text-sm">+ Add student</Link>
         </div>
-        <Link href="/students" className="text-teal text-sm">
+        {lastClass && lastClass.registrations.length > 0 ? (
+          <div>
+              {lastClass.registrations.map((reg) => (
+                <Link
+                  key={reg.id}
+                  href={`/students/${reg.student.id}`}
+                  className="flex items-center py-2 border-b border-border"
+                >
+                  <span className="text-dark text-sm">
+                    {formatStudentName(
+                      reg.student.firstName,
+                      reg.student.lastName,
+                      !reg.student.claimedAt || (reg.student.studentPrivacy[0]?.shareFullName ?? false),
+                    )}
+                  </span>
+                </Link>
+              ))}
+          </div>
+        ) : (
+          <p className="text-brown text-sm">No recent classes with students.</p>
+        )}
+        <Link href="/students" className="text-teal text-sm mt-4 inline-block">
           View all &rarr;
         </Link>
       </section>

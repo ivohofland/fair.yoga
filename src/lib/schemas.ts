@@ -73,6 +73,7 @@ export const updateStudentSchema = z.object({
 
 export const updatePrivacySchema = z.object({
   teacherId: z.string().uuid(),
+  shareFullName: z.boolean().optional(),
   shareEmail: z.boolean().optional(),
   sharePhone: z.boolean().optional(),
   shareBirthday: z.boolean().optional(),
