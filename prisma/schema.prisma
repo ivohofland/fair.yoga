@@ -246,6 +246,7 @@ model ClassTemplate {
   cancelDeadline  CancelDeadline  @default(HOURS_24)
   autoCancelCheck AutoCancelCheck @default(HOURS_2)
   isActive        Boolean         @default(true)
+  isArchived      Boolean         @default(false)
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 

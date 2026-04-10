@@ -8,17 +8,19 @@ type TemplateWithRoom = ClassTemplate & {
 
 interface TemplateListProps {
   templates: TemplateWithRoom[];
+  emptyMessage?: string;
 }
 
 const DAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-export function TemplateList({ templates }: TemplateListProps) {
+export function TemplateList({ templates, emptyMessage = 'No recurring classes yet.' }: TemplateListProps) {
   if (templates.length === 0) {
-    return <p className="text-brown text-sm">No recurring classes yet.</p>;
+    return <p className="text-brown text-sm">{emptyMessage}</p>;
   }
 
-  const active = templates.filter((t) => t.isActive);
-  const paused = templates.filter((t) => !t.isActive);
+  const active = templates.filter((t) => t.isActive && !t.isArchived);
+  const paused = templates.filter((t) => !t.isActive && !t.isArchived);
+  const archived = templates.filter((t) => t.isArchived);
 
   return (
     <div>
@@ -60,6 +62,30 @@ export function TemplateList({ templates }: TemplateListProps) {
                 </span>
               </div>
               <span className="text-brown text-xs pt-1">paused</span>
+            </Link>
+          ))}
+        </>
+      )}
+
+      {archived.length > 0 && (
+        <>
+          {(active.length > 0 || paused.length > 0) && <div className="py-3" />}
+          {archived.map((t) => (
+            <Link
+              key={t.id}
+              href={`/settings/recurring/${t.id}`}
+              className="flex items-start justify-between py-3 border-b border-border opacity-40"
+            >
+              <div className="flex flex-col gap-1">
+                <span className="text-dark text-sm font-medium">{t.classType}</span>
+                <span className="text-brown text-xs">
+                  {DAY_LABELS[t.dayOfWeek]} {t.startTime} &middot; {t.durationMinutes} min
+                </span>
+                <span className="text-brown text-xs">
+                  {formatRoomLocation(t.teacherRoom.room.roomName, t.teacherRoom.room.venueName)}
+                </span>
+              </div>
+              <span className="text-brown text-xs pt-1">archived</span>
             </Link>
           ))}
         </>

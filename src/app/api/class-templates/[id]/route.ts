@@ -84,6 +84,18 @@ export async function PATCH(
     return respondError('Access denied', 403);
   }
 
+  const url = new URL(request.url);
+  const action = url.searchParams.get('action');
+
+  if (action === 'archive') {
+    const updated = await prisma.classTemplate.update({
+      where: { id },
+      data: { isArchived: !template.isArchived, isActive: false },
+    });
+    return respondOk(updated);
+  }
+
+  // Default: toggle active/paused
   const updated = await prisma.classTemplate.update({
     where: { id },
     data: { isActive: !template.isActive },
