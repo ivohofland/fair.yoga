@@ -18,7 +18,6 @@ describe('VALID_TRANSITIONS', () => {
     const allStatuses = [
       'draft',
       'open',
-      'full',
       'in_progress',
       'completed',
       'cancelled',
@@ -37,18 +36,11 @@ describe('VALID_TRANSITIONS', () => {
     expect(VALID_TRANSITIONS['draft']).toHaveLength(2);
   });
 
-  it('open can transition to full, in_progress, or cancelled', () => {
+  it('open can transition to in_progress or cancelled', () => {
     expect(VALID_TRANSITIONS['open']).toEqual(
-      expect.arrayContaining(['full', 'in_progress', 'cancelled']),
+      expect.arrayContaining(['in_progress', 'cancelled']),
     );
-    expect(VALID_TRANSITIONS['open']).toHaveLength(3);
-  });
-
-  it('full can transition to open, in_progress, or cancelled', () => {
-    expect(VALID_TRANSITIONS['full']).toEqual(
-      expect.arrayContaining(['open', 'in_progress', 'cancelled']),
-    );
-    expect(VALID_TRANSITIONS['full']).toHaveLength(3);
+    expect(VALID_TRANSITIONS['open']).toHaveLength(2);
   });
 
   it('in_progress can only transition to completed', () => {
@@ -68,23 +60,16 @@ describe('canTransition', () => {
   it('returns true for valid transitions', () => {
     expect(canTransition('draft', 'open')).toBe(true);
     expect(canTransition('draft', 'cancelled')).toBe(true);
-    expect(canTransition('open', 'full')).toBe(true);
     expect(canTransition('open', 'in_progress')).toBe(true);
     expect(canTransition('open', 'cancelled')).toBe(true);
-    expect(canTransition('full', 'open')).toBe(true);
-    expect(canTransition('full', 'in_progress')).toBe(true);
-    expect(canTransition('full', 'cancelled')).toBe(true);
     expect(canTransition('in_progress', 'completed')).toBe(true);
   });
 
   it('returns false for invalid transitions', () => {
     expect(canTransition('draft', 'completed')).toBe(false);
-    expect(canTransition('draft', 'full')).toBe(false);
     expect(canTransition('draft', 'in_progress')).toBe(false);
     expect(canTransition('open', 'draft')).toBe(false);
     expect(canTransition('open', 'completed')).toBe(false);
-    expect(canTransition('full', 'draft')).toBe(false);
-    expect(canTransition('full', 'completed')).toBe(false);
     expect(canTransition('in_progress', 'draft')).toBe(false);
     expect(canTransition('in_progress', 'open')).toBe(false);
     expect(canTransition('in_progress', 'cancelled')).toBe(false);
@@ -102,7 +87,6 @@ describe('canTransition', () => {
   it('returns false for self-transitions', () => {
     expect(canTransition('draft', 'draft')).toBe(false);
     expect(canTransition('open', 'open')).toBe(false);
-    expect(canTransition('full', 'full')).toBe(false);
     expect(canTransition('in_progress', 'in_progress')).toBe(false);
     expect(canTransition('completed', 'completed')).toBe(false);
     expect(canTransition('cancelled', 'cancelled')).toBe(false);
@@ -112,8 +96,7 @@ describe('canTransition', () => {
 describe('validateTransition', () => {
   it('returns { ok: true } for valid transitions', () => {
     expect(validateTransition('draft', 'open')).toEqual({ ok: true });
-    expect(validateTransition('open', 'full')).toEqual({ ok: true });
-    expect(validateTransition('full', 'in_progress')).toEqual({ ok: true });
+    expect(validateTransition('open', 'in_progress')).toEqual({ ok: true });
     expect(validateTransition('in_progress', 'completed')).toEqual({
       ok: true,
     });

@@ -175,7 +175,7 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
     });
     teacherRoomId = teacherRoom.id;
 
-    // Create a class with status 'full' (waitlist scenario)
+    // Create a class with status 'open' (waitlist scenario — full is derived from count)
     const cls = await prisma.class.create({
       data: {
         teacherId,
@@ -189,7 +189,7 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
         targetRate: 25,
         minStudents: 4,
         maxStudents: 12,
-        status: 'full',
+        status: 'open',
         settingsLocked: true,
       },
     });
@@ -303,7 +303,7 @@ describe('promoteNext (DB)', () => {
     });
     teacherRoomId = teacherRoom.id;
 
-    // Create a class with status 'full'
+    // Create a class with status 'open' (full is derived)
     const cls = await prisma.class.create({
       data: {
         teacherId,
@@ -317,7 +317,7 @@ describe('promoteNext (DB)', () => {
         targetRate: 20,
         minStudents: 3,
         maxStudents: 10,
-        status: 'full',
+        status: 'open',
         settingsLocked: true,
       },
     });

@@ -78,7 +78,7 @@ export default async function ClassDetailPage({
       />
 
       {/* Draft / Open / Full: Show pricing preview */}
-      {(cls.status === 'draft' || cls.status === 'open' || cls.status === 'full') && (
+      {(cls.status === 'draft' || cls.status === 'open') && (
         <PricingPreview cls={cls} />
       )}
 

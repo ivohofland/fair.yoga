@@ -2,8 +2,9 @@
  * Class Lifecycle State Machine — Pure logic, no side effects.
  *
  * Manages class status transitions with guards.
- * Classes move through: draft → open → full → in_progress → completed
+ * Classes move through: draft → open → in_progress → completed
  * with cancellation possible from most non-terminal states.
+ * "Full" is derived (registrations >= maxStudents), not a stored state.
  */
 
 import type { PrismaClient, ClassStatus, RegistrationStatus } from '@prisma/client';
@@ -19,8 +20,7 @@ import { calculateClassPricing } from './pricing';
  */
 export const VALID_TRANSITIONS: Record<ClassStatus, ClassStatus[]> = {
   draft: ['open', 'cancelled'],
-  open: ['full', 'in_progress', 'cancelled'],
-  full: ['open', 'in_progress', 'cancelled'],
+  open: ['in_progress', 'cancelled'],
   in_progress: ['completed'],
   completed: [],
   cancelled: [],

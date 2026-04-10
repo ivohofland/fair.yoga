@@ -30,7 +30,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if (!cls) return respondError('Class not found', 404);
 
   // Check class status
-  if (cls.status !== 'open' && cls.status !== 'full') {
+  if (cls.status !== 'open') {
     return respondError(`Cannot register for a class with status "${cls.status}"`, 409);
   }
 
@@ -42,7 +42,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const isWalkIn = isTeacher && cls.teacherId === session.userId;
 
   // If class is full and not a walk-in by the teacher, reject
-  if (cls.status === 'full' && !isWalkIn) {
+  if (registrationCount >= cls.maxStudents && !isWalkIn) {
     return respondError('Class is full', 409);
   }
 
@@ -66,15 +66,6 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     await prisma.class.update({
       where: { id: body.classId },
       data: { settingsLocked: true },
-    });
-  }
-
-  // If registration count reaches maxStudents, transition to 'full'
-  const newCount = registrationCount + 1;
-  if (newCount >= cls.maxStudents && cls.status === 'open') {
-    await prisma.class.update({
-      where: { id: body.classId },
-      data: { status: 'full' },
     });
   }
 

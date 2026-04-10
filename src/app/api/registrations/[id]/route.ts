@@ -99,19 +99,5 @@ export async function DELETE(
     data: { status: 'cancelled', cancelledAt: new Date() },
   });
 
-  // If class was 'full', check if it should go back to 'open'
-  if (registration.class.status === 'full') {
-    const activeCount = await prisma.registration.count({
-      where: { classId: registration.class.id, status: { not: 'cancelled' } },
-    });
-
-    if (activeCount < registration.class.maxStudents) {
-      await prisma.class.update({
-        where: { id: registration.class.id },
-        data: { status: 'open' },
-      });
-    }
-  }
-
   return respondOk(updated);
 }

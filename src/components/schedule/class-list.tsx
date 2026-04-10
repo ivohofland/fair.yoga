@@ -28,7 +28,16 @@ function formatDate(date: Date): string {
   return `${dayName}, ${monthName} ${dayNum}`;
 }
 
+function deriveDisplayStatus(cls: ClassWithDetails): string {
+  if (cls.status === 'open' && cls._count.registrations >= cls.maxStudents) {
+    return 'open_full';
+  }
+  return cls.status;
+}
+
 function ClassRow({ cls, dimmed }: { cls: ClassWithDetails; dimmed?: boolean }) {
+  const displayStatus = deriveDisplayStatus(cls);
+
   return (
     <Link
       key={cls.id}
@@ -48,7 +57,7 @@ function ClassRow({ cls, dimmed }: { cls: ClassWithDetails; dimmed?: boolean }) 
         <span className="text-brown text-sm">
           {cls._count.registrations}/{cls.maxStudents}
         </span>
-        <StatusDot status={cls.status} label={cls.status.replace('_', ' ')} />
+        <StatusDot status={displayStatus} label={displayStatus.replace('_', ' ')} />
       </div>
     </Link>
   );

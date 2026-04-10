@@ -175,7 +175,7 @@ export const updateClassSchema = z.object({
 }).strict();
 
 export const transitionClassSchema = z.object({
-  status: z.enum(['draft', 'open', 'full', 'in_progress', 'completed', 'cancelled']),
+  status: z.enum(['draft', 'open', 'in_progress', 'completed', 'cancelled']),
 });
 
 // ============================================================================

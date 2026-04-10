@@ -1,6 +1,6 @@
 type Status =
   | 'open'
-  | 'full'
+  | 'open_full'
   | 'in_progress'
   | 'completed'
   | 'cancelled'
@@ -17,10 +17,10 @@ interface StatusDotProps {
 
 const colorMap: Record<Status, string> = {
   open: 'bg-teal',
+  open_full: 'bg-gold',
   completed: 'bg-teal',
   paid: 'bg-teal',
   in_progress: 'bg-teal',
-  full: 'bg-gold',
   draft: 'bg-brown',
   unpaid: 'bg-brown',
   cancelled: 'bg-error',

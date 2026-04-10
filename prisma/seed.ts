@@ -408,7 +408,7 @@ async function main() {
     },
   });
 
-  // 3. FULL — this week, 12 registrations (all spots filled)
+  // 3. OPEN (full) — this week, 12 registrations (all spots filled, status stays open)
   const fullClass = await prisma.class.create({
     data: {
       teacherId: ivo.id,
@@ -426,7 +426,7 @@ async function main() {
       maxStudents: 12,
       cancelDeadline: 'HOURS_24',
       autoCancelCheck: 'HOURS_2',
-      status: 'full',
+      status: 'open',
       settingsLocked: true,
     },
   });
@@ -769,7 +769,7 @@ async function main() {
   console.log(`  TeacherStudents: 15 (12 for Ivo, 3 for Sarah)`);
   console.log(`  Rooms: 2, TeacherRooms: 3`);
   console.log(`  ClassTemplate: 1`);
-  console.log(`  Classes: 6 (draft, open, full, in_progress, completed, cancelled)`);
+  console.log(`  Classes: 6 (draft, open, open+full, in_progress, completed, cancelled)`);
   console.log(`  StudioClass: 1`);
   console.log(`  Registrations: 33`);
   console.log(`  Payments: 9 (5 paid, 3 pending, 1 overdue)`);

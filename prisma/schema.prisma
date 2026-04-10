@@ -50,7 +50,6 @@ enum AutoCancelCheck {
 enum ClassStatus {
   draft
   open
-  full
   in_progress
   completed
   cancelled
