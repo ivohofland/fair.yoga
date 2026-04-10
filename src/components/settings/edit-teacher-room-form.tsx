@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button';
 
 interface EditTeacherRoomFormProps {
   teacherRoomId: string;
-  maxCapacity: number;
   initial: {
     capacityOverride: number;
     rentalRate: number;
@@ -17,7 +16,6 @@ interface EditTeacherRoomFormProps {
 
 export function EditTeacherRoomForm({
   teacherRoomId,
-  maxCapacity,
   initial,
 }: EditTeacherRoomFormProps) {
   const router = useRouter();
@@ -35,10 +33,6 @@ export function EditTeacherRoomForm({
 
     if (!cap || cap <= 0) {
       setError('Capacity must be a positive number');
-      return;
-    }
-    if (cap > maxCapacity) {
-      setError(`Capacity cannot exceed room maximum (${maxCapacity})`);
       return;
     }
     if (isNaN(rate) || rate < 0) {
@@ -79,7 +73,7 @@ export function EditTeacherRoomForm({
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <Input
-        label={`Capacity override (max ${maxCapacity})`}
+        label="Capacity override"
         type="number"
         value={capacityOverride}
         onChange={(e) => { setCapacityOverride(e.target.value); setSuccess(''); }}
