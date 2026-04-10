@@ -3,8 +3,10 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
+import { formatRoomLocation } from '@/lib/format';
 
 interface TeacherRoomOption {
   id: string;
@@ -56,16 +58,13 @@ const AUTO_CANCEL_OPTIONS = [
   { value: 'HOURS_1', label: '1 hour before' },
 ];
 
-const selectClass =
-  'bg-cream border border-teal rounded-none px-4 pr-10 py-3 min-h-[44px] text-dark focus:outline-none focus:shadow-[inset_0_0_0_1px_var(--color-teal)] w-full appearance-none bg-[length:16px_16px] bg-[position:right_12px_center] bg-no-repeat bg-[url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%236B5B4E%27%20stroke-width%3D%272%27%3E%3Cpath%20d%3D%27M6%209l6%206%206-6%27/%3E%3C/svg%3E")]';
-
 const INITIAL_VALUES = {
   teacherRoomId: '',
   classType: '',
   description: '',
   dayOfWeek: 0,
   startTime: '09:00',
-  durationMinutes: 75,
+  durationMinutes: 60,
   roomCost: 0,
   minRate: 15,
   targetRate: 25,
@@ -108,12 +107,18 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
 
   function handleRoomChange(teacherRoomId: string) {
     const room = teacherRooms.find((tr) => tr.id === teacherRoomId);
-    setForm((prev) => ({
-      ...prev,
-      teacherRoomId,
-      roomCost: room ? Number(room.rentalRate) : prev.roomCost,
-      maxStudents: room ? Math.min(prev.maxStudents, room.capacityOverride) : prev.maxStudents,
-    }));
+    setForm((prev) => {
+      const maxStudents = room
+        ? Math.min(prev.maxStudents, room.capacityOverride)
+        : prev.maxStudents;
+      return {
+        ...prev,
+        teacherRoomId,
+        roomCost: room ? Number(room.rentalRate) : prev.roomCost,
+        maxStudents,
+        minStudents: Math.min(prev.minStudents, maxStudents),
+      };
+    });
     setSuccess('');
   }
 
@@ -215,36 +220,30 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         />
       </div>
 
-      <div className="flex flex-col gap-1">
-        <label htmlFor="room" className="text-brown">Room</label>
-        <select
-          id="room"
-          className={selectClass}
-          value={form.teacherRoomId}
-          onChange={(e) => handleRoomChange(e.target.value)}
-        >
-          <option value="">Select a room</option>
-          {teacherRooms.map((tr) => (
-            <option key={tr.id} value={tr.id}>
-              {tr.room.roomName ? `${tr.room.roomName} at ${tr.room.venueName}` : tr.room.venueName}
-            </option>
-          ))}
-        </select>
-      </div>
+      <Select
+        id="room"
+        label="Room"
+        value={form.teacherRoomId}
+        onChange={(e) => handleRoomChange(e.target.value)}
+      >
+        <option value="">Select a room</option>
+        {teacherRooms.map((tr) => (
+          <option key={tr.id} value={tr.id}>
+            {formatRoomLocation(tr.room.roomName, tr.room.venueName)}
+          </option>
+        ))}
+      </Select>
 
-      <div className="flex flex-col gap-1">
-        <label htmlFor="dayOfWeek" className="text-brown">Day</label>
-        <select
-          id="dayOfWeek"
-          className={selectClass}
-          value={form.dayOfWeek}
-          onChange={(e) => update('dayOfWeek', Number(e.target.value))}
-        >
-          {DAY_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
-      </div>
+      <Select
+        id="dayOfWeek"
+        label="Day"
+        value={form.dayOfWeek}
+        onChange={(e) => update('dayOfWeek', Number(e.target.value))}
+      >
+        {DAY_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>{opt.label}</option>
+        ))}
+      </Select>
 
       <Input
         label="Start time"
@@ -289,13 +288,24 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
           label="Min students"
           type="number"
           value={String(form.minStudents)}
-          onChange={(e) => update('minStudents', Number(e.target.value))}
+          onChange={(e) => {
+            const min = Math.min(Number(e.target.value), form.maxStudents);
+            update('minStudents', min);
+          }}
         />
         <Input
           label="Max students"
           type="number"
           value={String(form.maxStudents)}
-          onChange={(e) => update('maxStudents', Math.min(Number(e.target.value), roomCapacity))}
+          onChange={(e) => {
+            const max = Math.min(Number(e.target.value), roomCapacity);
+            setForm((prev) => ({
+              ...prev,
+              maxStudents: max,
+              minStudents: Math.min(prev.minStudents, max),
+            }));
+            setSuccess('');
+          }}
         />
       </div>
 
@@ -307,33 +317,27 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         maxStudents={form.maxStudents}
       />
 
-      <div className="flex flex-col gap-1">
-        <label htmlFor="cancelDeadline" className="text-brown">Cancellation deadline</label>
-        <select
-          id="cancelDeadline"
-          className={selectClass}
-          value={form.cancelDeadline}
-          onChange={(e) => update('cancelDeadline', e.target.value)}
-        >
-          {CANCEL_DEADLINE_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
-      </div>
+      <Select
+        id="cancelDeadline"
+        label="Cancellation deadline"
+        value={form.cancelDeadline}
+        onChange={(e) => update('cancelDeadline', e.target.value)}
+      >
+        {CANCEL_DEADLINE_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>{opt.label}</option>
+        ))}
+      </Select>
 
-      <div className="flex flex-col gap-1">
-        <label htmlFor="autoCancelCheck" className="text-brown">Auto-cancel check</label>
-        <select
-          id="autoCancelCheck"
-          className={selectClass}
-          value={form.autoCancelCheck}
-          onChange={(e) => update('autoCancelCheck', e.target.value)}
-        >
-          {AUTO_CANCEL_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
-      </div>
+      <Select
+        id="autoCancelCheck"
+        label="Auto-cancel check"
+        value={form.autoCancelCheck}
+        onChange={(e) => update('autoCancelCheck', e.target.value)}
+      >
+        {AUTO_CANCEL_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>{opt.label}</option>
+        ))}
+      </Select>
 
       {error && <p className="text-sm text-error">{error}</p>}
       {success && <p className="text-sm text-teal">{success}</p>}

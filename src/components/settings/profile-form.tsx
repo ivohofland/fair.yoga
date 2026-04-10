@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 
 interface ProfileFormProps {
@@ -68,9 +69,6 @@ const REMINDER_OPTIONS = [
   { value: 'evening_before', label: 'Evening before' },
   { value: 'one_hour_before', label: '1 hour before' },
 ];
-
-const selectClass =
-  'bg-cream border border-teal rounded-none px-4 pr-10 py-3 min-h-[44px] text-dark focus:outline-none focus:shadow-[inset_0_0_0_1px_var(--color-teal)] w-full appearance-none bg-[length:16px_16px] bg-[position:right_12px_center] bg-no-repeat bg-[url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%2024%2024%27%20fill%3D%27none%27%20stroke%3D%27%236B5B4E%27%20stroke-width%3D%272%27%3E%3Cpath%20d%3D%27M6%209l6%206%206-6%27/%3E%3C/svg%3E")]';
 
 export function ProfileForm({ teacherId, initial }: ProfileFormProps) {
   const router = useRouter();
@@ -184,45 +182,36 @@ export function ProfileForm({ teacherId, initial }: ProfileFormProps) {
       {/* Preferences */}
       <section className="flex flex-col gap-4">
         <h2 className="font-heading text-lg font-bold text-teal">Preferences</h2>
-        <div className="flex flex-col gap-1">
-          <label htmlFor="currency" className="text-brown">Currency</label>
-          <select
-            id="currency"
-            value={form.defaultCurrency}
-            onChange={(e) => update('defaultCurrency', e.target.value)}
-            className={selectClass}
-          >
-            {CURRENCY_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-        </div>
-        <div className="flex flex-col gap-1">
-          <label htmlFor="timezone" className="text-brown">Timezone</label>
-          <select
-            id="timezone"
-            value={form.defaultTimezone}
-            onChange={(e) => update('defaultTimezone', e.target.value)}
-            className={selectClass}
-          >
-            {TIMEZONE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-        </div>
-        <div className="flex flex-col gap-1">
-          <label htmlFor="reminder" className="text-brown">Default reminder</label>
-          <select
-            id="reminder"
-            value={form.defaultReminder}
-            onChange={(e) => update('defaultReminder', e.target.value)}
-            className={selectClass}
-          >
-            {REMINDER_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-        </div>
+        <Select
+          id="currency"
+          label="Currency"
+          value={form.defaultCurrency}
+          onChange={(e) => update('defaultCurrency', e.target.value)}
+        >
+          {CURRENCY_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </Select>
+        <Select
+          id="timezone"
+          label="Timezone"
+          value={form.defaultTimezone}
+          onChange={(e) => update('defaultTimezone', e.target.value)}
+        >
+          {TIMEZONE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </Select>
+        <Select
+          id="reminder"
+          label="Default reminder"
+          value={form.defaultReminder}
+          onChange={(e) => update('defaultReminder', e.target.value)}
+        >
+          {REMINDER_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </Select>
       </section>
 
       {/* Payment */}

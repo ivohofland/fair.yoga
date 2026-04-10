@@ -4,7 +4,9 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
+import { formatRoomLocation } from '@/lib/format';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -66,7 +68,7 @@ const INITIAL_FORM: FormData = {
   classType: '',
   date: '',
   startTime: '',
-  durationMinutes: 75,
+  durationMinutes: 60,
   roomCost: 0,
   minRate: 15,
   targetRate: 25,
@@ -79,9 +81,6 @@ const INITIAL_FORM: FormData = {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-const selectClass =
-  'bg-sand border border-border rounded-lg px-4 py-3 min-h-[44px] text-dark focus:border-teal focus:outline-none w-full';
 
 function formatDeadlineLabel(value: string): string {
   return CANCEL_DEADLINE_OPTIONS.find((o) => o.value === value)?.label ?? value;
@@ -144,14 +143,18 @@ export default function CreateClassPage() {
 
   function handleRoomChange(teacherRoomId: string) {
     const room = teacherRooms.find((tr) => tr.id === teacherRoomId);
-    setForm((prev) => ({
-      ...prev,
-      teacherRoomId,
-      roomCost: room ? Number(room.rentalRate) : prev.roomCost,
-      maxStudents: room
+    setForm((prev) => {
+      const maxStudents = room
         ? Math.min(prev.maxStudents, room.capacityOverride)
-        : prev.maxStudents,
-    }));
+        : prev.maxStudents;
+      return {
+        ...prev,
+        teacherRoomId,
+        roomCost: room ? Number(room.rentalRate) : prev.roomCost,
+        maxStudents,
+        minStudents: Math.min(prev.minStudents, maxStudents),
+      };
+    });
     setErrors((prev) => {
       const next = { ...prev };
       delete next.teacherRoomId;
@@ -284,27 +287,20 @@ export default function CreateClassPage() {
       {/* Step 1: Basics */}
       {step === 1 && (
         <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1">
-            <label htmlFor="room" className="text-sm text-brown">
-              Room
-            </label>
-            <select
-              id="room"
-              className={selectClass}
-              value={form.teacherRoomId}
-              onChange={(e) => handleRoomChange(e.target.value)}
-            >
-              <option value="">Select a room</option>
-              {teacherRooms.map((tr) => (
-                <option key={tr.id} value={tr.id}>
-                  {tr.room.roomName} at {tr.room.venueName}
-                </option>
-              ))}
-            </select>
-            {errors.teacherRoomId && (
-              <span className="text-sm text-error">{errors.teacherRoomId}</span>
-            )}
-          </div>
+          <Select
+            id="room"
+            label="Room"
+            value={form.teacherRoomId}
+            onChange={(e) => handleRoomChange(e.target.value)}
+            error={errors.teacherRoomId}
+          >
+            <option value="">Select a room</option>
+            {teacherRooms.map((tr) => (
+              <option key={tr.id} value={tr.id}>
+                {formatRoomLocation(tr.room.roomName, tr.room.venueName)}
+              </option>
+            ))}
+          </Select>
 
           <Input
             id="classType"
@@ -383,7 +379,10 @@ export default function CreateClassPage() {
               label="Min students"
               type="number"
               value={String(form.minStudents)}
-              onChange={(e) => updateField('minStudents', Number(e.target.value))}
+              onChange={(e) => {
+                const min = Math.min(Number(e.target.value), form.maxStudents);
+                updateField('minStudents', min);
+              }}
               error={errors.minStudents}
             />
             <Input
@@ -391,7 +390,20 @@ export default function CreateClassPage() {
               label="Max students"
               type="number"
               value={String(form.maxStudents)}
-              onChange={(e) => updateField('maxStudents', Math.min(Number(e.target.value), roomCapacity))}
+              onChange={(e) => {
+                const max = Math.min(Number(e.target.value), roomCapacity);
+                setForm((prev) => ({
+                  ...prev,
+                  maxStudents: max,
+                  minStudents: Math.min(prev.minStudents, max),
+                }));
+                setErrors((prev) => {
+                  const next = { ...prev };
+                  delete next.maxStudents;
+                  delete next.minStudents;
+                  return next;
+                });
+              }}
               error={errors.maxStudents}
             />
           </div>
@@ -409,41 +421,31 @@ export default function CreateClassPage() {
       {/* Step 3: Policies */}
       {step === 3 && (
         <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1">
-            <label htmlFor="cancelDeadline" className="text-sm text-brown">
-              Cancellation deadline
-            </label>
-            <select
-              id="cancelDeadline"
-              className={selectClass}
-              value={form.cancelDeadline}
-              onChange={(e) => updateField('cancelDeadline', e.target.value)}
-            >
-              {CANCEL_DEADLINE_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          <Select
+            id="cancelDeadline"
+            label="Cancellation deadline"
+            value={form.cancelDeadline}
+            onChange={(e) => updateField('cancelDeadline', e.target.value)}
+          >
+            {CANCEL_DEADLINE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </Select>
 
-          <div className="flex flex-col gap-1">
-            <label htmlFor="autoCancelCheck" className="text-sm text-brown">
-              Auto-cancel check
-            </label>
-            <select
-              id="autoCancelCheck"
-              className={selectClass}
-              value={form.autoCancelCheck}
-              onChange={(e) => updateField('autoCancelCheck', e.target.value)}
-            >
-              {AUTO_CANCEL_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          <Select
+            id="autoCancelCheck"
+            label="Auto-cancel check"
+            value={form.autoCancelCheck}
+            onChange={(e) => updateField('autoCancelCheck', e.target.value)}
+          >
+            {AUTO_CANCEL_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </Select>
         </div>
       )}
 
@@ -458,7 +460,7 @@ export default function CreateClassPage() {
             <span className="text-sm text-brown">Room</span>
             <p className="text-dark">
               {selectedRoom
-                ? `${selectedRoom.room.roomName} at ${selectedRoom.room.venueName}`
+                ? formatRoomLocation(selectedRoom.room.roomName, selectedRoom.room.venueName)
                 : '-'}
             </p>
           </div>
