@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
         claimedAt: true,
         studentPrivacy: {
           where: { teacherId: session.userId },
-          select: { shareFullName: true },
+          select: { shareFullName: true, shareEmail: true },
         },
         registrations: {
           where: { class: { teacherId: session.userId } },
@@ -64,12 +64,15 @@ export async function GET(request: NextRequest) {
   ]);
 
   const result = students.map((s) => {
-    const shareFullName = !s.claimedAt || (s.studentPrivacy[0]?.shareFullName ?? false);
+    const privacy = s.studentPrivacy[0];
+    const isUnclaimed = !s.claimedAt;
+    const shareFullName = isUnclaimed || (privacy?.shareFullName ?? false);
+    const shareEmail = isUnclaimed || (privacy?.shareEmail ?? false);
     return {
       id: s.id,
       firstName: s.firstName,
       lastName: shareFullName ? s.lastName : (s.lastName.charAt(0) || ''),
-      email: s.email,
+      email: shareEmail ? s.email : null,
       claimedAt: s.claimedAt,
       shareFullName,
       lastClassDate: s.registrations[0]?.class.date ?? null,

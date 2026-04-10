@@ -108,59 +108,63 @@ export default async function StudentDetailPage({
         </section>
       )}
 
-      {/* Attendance history */}
-      <section className="mb-8">
-        <h2 className="font-heading text-lg font-bold text-teal mb-3">Attendance</h2>
-        {student.registrations.length === 0 ? (
-          <p className="text-sm text-brown">No class history.</p>
-        ) : (
-          <div className="flex flex-col">
-            {student.registrations.map((reg) => (
-              <div key={reg.id} className="flex justify-between items-center py-3 border-b border-border">
-                <div>
-                  <p className="text-dark">{reg.class.classType}</p>
-                  <p className="text-sm text-brown">
-                    {new Date(reg.class.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-                    {' · '}{reg.class.startTime}
-                  </p>
-                </div>
-                <span className={`text-sm ${reg.status === 'attended' ? 'text-teal' : reg.status === 'cancelled' ? 'text-error' : 'text-brown'}`}>
-                  {reg.status.replace('_', ' ')}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Payment history */}
-      <section className="mb-8">
-        <h2 className="font-heading text-lg font-bold text-teal mb-3">Payments</h2>
-        {student.registrations.filter(r => r.payment).length === 0 ? (
-          <p className="text-sm text-brown">No payment history.</p>
-        ) : (
-          <div className="flex flex-col">
-            {student.registrations
-              .filter(r => r.payment)
-              .map((reg) => (
+      {/* Attendance history (claimed students only) */}
+      {!isUnlinked && (
+        <section className="mb-8">
+          <h2 className="font-heading text-lg font-bold text-teal mb-3">Attendance</h2>
+          {student.registrations.length === 0 ? (
+            <p className="text-sm text-brown">No class history.</p>
+          ) : (
+            <div className="flex flex-col">
+              {student.registrations.map((reg) => (
                 <div key={reg.id} className="flex justify-between items-center py-3 border-b border-border">
                   <div>
                     <p className="text-dark">{reg.class.classType}</p>
                     <p className="text-sm text-brown">
                       {new Date(reg.class.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      {' · '}{reg.class.startTime}
                     </p>
                   </div>
-                  <div className="text-right">
-                    <p className="font-semibold text-teal">&euro;{Number(reg.payment!.amount).toFixed(2)}</p>
-                    <p className={`text-sm ${reg.payment!.status === 'paid' ? 'text-teal' : 'text-brown'}`}>
-                      {reg.payment!.status}
-                    </p>
-                  </div>
+                  <span className={`text-sm ${reg.status === 'attended' ? 'text-teal' : reg.status === 'cancelled' ? 'text-error' : 'text-brown'}`}>
+                    {reg.status.replace('_', ' ')}
+                  </span>
                 </div>
               ))}
-          </div>
-        )}
-      </section>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Payment history (claimed students only) */}
+      {!isUnlinked && (
+        <section className="mb-8">
+          <h2 className="font-heading text-lg font-bold text-teal mb-3">Payments</h2>
+          {student.registrations.filter(r => r.payment).length === 0 ? (
+            <p className="text-sm text-brown">No payment history.</p>
+          ) : (
+            <div className="flex flex-col">
+              {student.registrations
+                .filter(r => r.payment)
+                .map((reg) => (
+                  <div key={reg.id} className="flex justify-between items-center py-3 border-b border-border">
+                    <div>
+                      <p className="text-dark">{reg.class.classType}</p>
+                      <p className="text-sm text-brown">
+                        {new Date(reg.class.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-semibold text-teal">&euro;{Number(reg.payment!.amount).toFixed(2)}</p>
+                      <p className={`text-sm ${reg.payment!.status === 'paid' ? 'text-teal' : 'text-brown'}`}>
+                        {reg.payment!.status}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Archive (claimed students) */}
       {!isUnlinked && (

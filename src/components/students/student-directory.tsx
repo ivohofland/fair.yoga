@@ -10,7 +10,7 @@ interface StudentRow {
   id: string;
   firstName: string;
   lastName: string;
-  email: string;
+  email: string | null;
   claimedAt: string | null;
   shareFullName: boolean;
   lastClassDate: string | null;
@@ -108,7 +108,7 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
                   <span className="text-dark text-sm font-medium">
                     {formatStudentName(student.firstName, student.lastName, student.shareFullName)}
                   </span>
-                  <span className="text-brown text-xs">{student.email}</span>
+                  {student.email && <span className="text-brown text-xs">{student.email}</span>}
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-brown text-sm">

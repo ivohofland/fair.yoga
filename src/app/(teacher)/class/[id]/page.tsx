@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
+import { formatStudentName } from '@/lib/format';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
 import { ClassInfo } from '@/components/class/class-info';
@@ -24,7 +25,14 @@ export default async function ClassDetailPage({
       teacherRoom: { include: { room: true } },
       registrations: {
         include: {
-          student: true,
+          student: {
+            include: {
+              studentPrivacy: {
+                where: { teacherId: session.userId },
+                select: { shareFullName: true },
+              },
+            },
+          },
           payment: true,
         },
         orderBy: { registeredAt: 'asc' },
@@ -38,11 +46,16 @@ export default async function ClassDetailPage({
   }
 
   // Serialize registrations for client components (Prisma Dates/Decimals are not serializable)
+  function getStudentDisplayName(student: { firstName: string; lastName: string; claimedAt: Date | null; studentPrivacy: { shareFullName: boolean }[] }): string {
+    const shareFullName = !student.claimedAt || (student.studentPrivacy[0]?.shareFullName ?? false);
+    return formatStudentName(student.firstName, student.lastName, shareFullName);
+  }
+
   const attendanceItems: AttendanceItem[] = cls.registrations
     .filter((r) => r.status !== 'cancelled')
     .map((r) => ({
       registrationId: r.id,
-      studentName: `${r.student.firstName} ${r.student.lastName.charAt(0)}.`,
+      studentName: getStudentDisplayName(r.student),
       status: r.status,
     }));
 
@@ -50,7 +63,7 @@ export default async function ClassDetailPage({
     .filter((r) => r.status !== 'cancelled' && r.payment)
     .map((r) => ({
       paymentId: r.payment!.id,
-      studentName: `${r.student.firstName} ${r.student.lastName.charAt(0)}.`,
+      studentName: getStudentDisplayName(r.student),
       amount: Number(r.payment!.amount),
       status: r.payment!.status,
     }));

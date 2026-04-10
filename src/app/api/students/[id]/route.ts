@@ -39,19 +39,23 @@ export async function GET(
       },
     });
 
+    // Unclaimed students (teacher-created) — no privacy restrictions
+    const isUnclaimed = !student.claimedAt;
+
     const filtered: Record<string, unknown> = {
       id: student.id,
       firstName: student.firstName,
-      lastName: student.lastName,
+      lastName: (isUnclaimed || privacy?.shareFullName) ? student.lastName : (student.lastName.charAt(0) || ''),
       incomeTier: student.incomeTier,
+      claimedAt: student.claimedAt,
       createdAt: student.createdAt,
       updatedAt: student.updatedAt,
     };
 
-    if (privacy?.shareEmail) filtered.email = student.email;
-    if (privacy?.sharePhone) filtered.phone = student.phone;
-    if (privacy?.shareBirthday) filtered.birthday = student.birthday;
-    if (privacy?.shareAddress) filtered.address = student.address;
+    if (isUnclaimed || privacy?.shareEmail) filtered.email = student.email;
+    if (isUnclaimed || privacy?.sharePhone) filtered.phone = student.phone;
+    if (isUnclaimed || privacy?.shareBirthday) filtered.birthday = student.birthday;
+    if (isUnclaimed || privacy?.shareAddress) filtered.address = student.address;
 
     return respondOk(filtered);
   }
