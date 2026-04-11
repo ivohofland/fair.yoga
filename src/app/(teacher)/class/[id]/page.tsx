@@ -10,6 +10,7 @@ import { AttendanceList } from '@/components/class/attendance-list';
 import { PricingBreakdown } from '@/components/class/pricing-breakdown';
 import { PaymentChecklist } from '@/components/class/payment-checklist';
 import { PublishClassButton } from '@/components/class/publish-class-button';
+import { CompleteClassButton } from '@/components/class/complete-class-button';
 import type { AttendanceItem } from '@/components/class/attendance-list';
 import type { PaymentItem } from '@/components/class/payment-checklist';
 
@@ -66,6 +67,7 @@ export default async function ClassDetailPage({
     .filter((r) => r.status !== 'cancelled' && r.payment)
     .map((r) => ({
       paymentId: r.payment!.id,
+      studentId: r.studentId,
       studentName: getStudentDisplayName(r.student),
       amount: Number(r.payment!.amount),
       status: r.payment!.status,
@@ -85,7 +87,17 @@ export default async function ClassDetailPage({
 
   return (
     <>
-      <PageHeader title={cls.classType} backHref="/schedule" />
+      <PageHeader
+        title={cls.classType}
+        backHref="/schedule"
+        action={
+          cls.status === 'draft'
+            ? <PublishClassButton classId={cls.id} />
+            : showCheckin
+              ? <CompleteClassButton classId={cls.id} />
+              : undefined
+        }
+      />
       <ClassInfo
         cls={cls}
         registrationCount={activeRegistrations.length}
@@ -116,12 +128,9 @@ export default async function ClassDetailPage({
         </div>
       )}
 
-      {/* Draft: pricing preview + publish button */}
+      {/* Draft: pricing preview */}
       {cls.status === 'draft' && (
-        <>
-          <PricingPreview cls={cls} />
-          <PublishClassButton classId={cls.id} />
-        </>
+        <PricingPreview cls={cls} />
       )}
 
       {/* Open (not check-in): pricing preview */}

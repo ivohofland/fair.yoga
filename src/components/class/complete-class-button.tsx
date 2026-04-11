@@ -3,21 +3,19 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-interface PublishClassButtonProps {
+interface CompleteClassButtonProps {
   classId: string;
 }
 
-export function PublishClassButton({ classId }: PublishClassButtonProps) {
+export function CompleteClassButton({ classId }: CompleteClassButtonProps) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
 
-  async function handlePublish() {
+  async function handleComplete() {
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/classes/${classId}/transition`, {
+      const res = await fetch(`/api/classes/${classId}/complete`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'open' }),
       });
       if (res.ok) {
         router.refresh();
@@ -30,11 +28,11 @@ export function PublishClassButton({ classId }: PublishClassButtonProps) {
   return (
     <button
       type="button"
-      onClick={handlePublish}
+      onClick={handleComplete}
       disabled={submitting}
       className="border border-teal text-teal rounded-none px-4 py-2 text-sm font-medium min-h-[44px]"
     >
-      {submitting ? 'Publishing...' : 'Publish'}
+      {submitting ? 'Completing...' : 'Complete class'}
     </button>
   );
 }

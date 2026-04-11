@@ -1,9 +1,11 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 
 export interface PaymentItem {
   paymentId: string;
+  studentId: string;
   studentName: string;
   amount: number;
   status: string; // 'pending' | 'paid' | 'overdue'
@@ -83,7 +85,7 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
               className="flex items-center justify-between py-3 border-b border-border"
             >
               <div className="flex flex-col">
-                <span className="text-dark text-sm">{item.studentName}</span>
+                <Link href={`/students/${item.studentId}`} className="text-dark text-sm">{item.studentName}</Link>
                 <span className="text-teal text-sm font-semibold">
                   &euro;{item.amount.toFixed(2)}
                 </span>

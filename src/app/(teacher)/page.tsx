@@ -23,7 +23,7 @@ export default async function TeacherHome() {
 
   const now = new Date();
 
-  const [classes, unreadNotifications, lastClass] = await Promise.all([
+  const [classes, unreadNotifications, recentRegistrations] = await Promise.all([
     prisma.class.findMany({
       where: {
         teacherId: session.userId,
@@ -44,27 +44,26 @@ export default async function TeacherHome() {
       orderBy: { createdAt: 'desc' },
       take: 10,
     }),
-    prisma.class.findFirst({
+    prisma.registration.findMany({
       where: {
-        teacherId: session.userId,
-        date: { lt: now },
+        class: { teacherId: session.userId, date: { lt: now } },
+        status: { in: ['registered', 'attended'] },
       },
-      orderBy: { date: 'desc' },
-      include: {
-        registrations: {
-          where: { status: 'registered' },
-          include: {
-            student: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                claimedAt: true,
-                studentPrivacy: {
-                  where: { teacherId: session.userId },
-                  select: { shareFullName: true },
-                },
-              },
+      orderBy: { registeredAt: 'desc' },
+      distinct: ['studentId'],
+      take: 10,
+      select: {
+        id: true,
+        studentId: true,
+        student: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            claimedAt: true,
+            studentPrivacy: {
+              where: { teacherId: session.userId },
+              select: { shareFullName: true },
             },
           },
         },
@@ -98,26 +97,26 @@ export default async function TeacherHome() {
           </h2>
           <Link href="/students/new" className="text-teal text-sm">+ Add student</Link>
         </div>
-        {lastClass && lastClass.registrations.length > 0 ? (
+        {recentRegistrations.length > 0 ? (
           <div>
-              {lastClass.registrations.map((reg) => (
-                <Link
-                  key={reg.id}
-                  href={`/students/${reg.student.id}`}
-                  className="flex items-center py-2 border-b border-border"
-                >
-                  <span className="text-dark text-sm">
-                    {formatStudentName(
-                      reg.student.firstName,
-                      reg.student.lastName,
-                      !reg.student.claimedAt || (reg.student.studentPrivacy[0]?.shareFullName ?? false),
-                    )}
-                  </span>
-                </Link>
-              ))}
+            {recentRegistrations.map((reg) => (
+              <Link
+                key={reg.id}
+                href={`/students/${reg.student.id}`}
+                className="flex items-center py-2 border-b border-border"
+              >
+                <span className="text-dark text-sm">
+                  {formatStudentName(
+                    reg.student.firstName,
+                    reg.student.lastName,
+                    !reg.student.claimedAt || (reg.student.studentPrivacy[0]?.shareFullName ?? false),
+                  )}
+                </span>
+              </Link>
+            ))}
           </div>
         ) : (
-          <p className="text-brown text-sm">No recent classes with students.</p>
+          <p className="text-brown text-sm">No recent students.</p>
         )}
         <Link href="/students" className="text-teal text-sm mt-4 inline-block">
           View all &rarr;

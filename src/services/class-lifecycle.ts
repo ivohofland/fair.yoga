@@ -139,8 +139,15 @@ export async function completeClass(
     });
     if (!cls) return { ok: false, error: `Class not found: ${classId}` };
 
-    const validation = validateTransition(cls.status, 'completed');
-    if (!validation.ok) return validation;
+    // If open, transition to in_progress first (teacher completing directly)
+    if (cls.status === 'open') {
+      const toInProgress = validateTransition('open', 'in_progress');
+      if (!toInProgress.ok) return toInProgress;
+      await tx.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
+    } else {
+      const validation = validateTransition(cls.status, 'completed');
+      if (!validation.ok) return validation;
+    }
 
     const chargedRegistrations = cls.registrations.filter((r) =>
       CHARGED_STATUSES.includes(r.status),
