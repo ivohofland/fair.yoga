@@ -310,17 +310,18 @@ model StudioClassTemplate {
 }
 
 model StudioClass {
-  id              String   @id @default(uuid())
+  id              String    @id @default(uuid())
   teacherId       String
   templateId      String?
-  date            DateTime @db.Date
+  date            DateTime  @db.Date
   startTime       String
   durationMinutes Int
   location        String
   studentCount    Int?
-  hourlyRate      Decimal  @db.Decimal(10, 2)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  hourlyRate      Decimal   @db.Decimal(10, 2)
+  cancelledAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   teacher  Teacher              @relation(fields: [teacherId], references: [id], onDelete: Cascade)
   template StudioClassTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)

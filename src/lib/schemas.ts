@@ -254,6 +254,7 @@ export const updateStudioClassSchema = z.object({
   startTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
   durationMinutes: z.number().int().positive().optional(),
   hourlyRate: z.number().nonnegative().optional(),
+  cancelledAt: z.string().datetime().nullable().optional(),
 }).strict();
 
 // ============================================================================

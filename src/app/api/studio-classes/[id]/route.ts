@@ -46,9 +46,15 @@ export async function PUT(
     return respondError('No valid fields to update', 400);
   }
 
+  const { cancelledAt, ...rest } = parsed.data;
+  const updateData: Record<string, unknown> = { ...rest };
+  if (cancelledAt !== undefined) {
+    updateData.cancelledAt = cancelledAt ? new Date(cancelledAt) : null;
+  }
+
   const updated = await prisma.studioClass.update({
     where: { id },
-    data: parsed.data,
+    data: updateData,
   });
 
   return respondOk(updated);

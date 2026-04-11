@@ -4,6 +4,7 @@ import { requireTeacherSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
 import { StudentCountEditor } from '@/components/studio-class/student-count-editor';
+import { CancelStudioClassButton } from '@/components/studio-class/cancel-studio-class-button';
 
 function formatDate(date: Date): string {
   const d = new Date(date);
@@ -64,12 +65,24 @@ export default async function StudioClassDetailPage({
         )}
       </div>
 
-      <section>
-        <StudentCountEditor
-          studioClassId={studioClass.id}
-          initialCount={studioClass.studentCount}
-        />
-      </section>
+      {studioClass.cancelledAt ? (
+        <div className="py-8 text-center text-brown">
+          This class was cancelled.
+        </div>
+      ) : (
+        <>
+          <section>
+            <StudentCountEditor
+              studioClassId={studioClass.id}
+              initialCount={studioClass.studentCount}
+            />
+          </section>
+
+          <section className="mt-8 pt-6 border-t border-border">
+            <CancelStudioClassButton studioClassId={studioClass.id} />
+          </section>
+        </>
+      )}
     </>
   );
 }

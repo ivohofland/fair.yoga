@@ -65,22 +65,24 @@ function ClassRow({ cls, dimmed }: { cls: ClassWithDetails; dimmed?: boolean }) 
 }
 
 function StudioClassRow({ sc, dimmed }: { sc: StudioClass; dimmed?: boolean }) {
+  const isCancelled = sc.cancelledAt !== null;
+
   return (
     <Link
       key={sc.id}
       href={`/studio-class/${sc.id}`}
-      className={`flex items-start justify-between py-3 border-b border-border${dimmed ? ' opacity-50' : ''}`}
+      className={`flex items-start justify-between py-3 border-b border-border${dimmed || isCancelled ? ' opacity-50' : ''}`}
     >
       <div className="flex flex-col gap-1">
         <span className="text-dark text-sm font-medium">
           {formatDate(sc.date)} &middot; {sc.startTime}
         </span>
         <span className="text-dark text-sm">{sc.location}</span>
-        <span className="text-brown text-xs">Studio class</span>
+        <span className="text-brown text-xs">{isCancelled ? 'Cancelled' : 'Studio class'}</span>
       </div>
       <div className="flex items-center gap-2 pt-1">
         <span className="text-brown text-sm">
-          {sc.studentCount !== null ? `${sc.studentCount} students` : '\u2014'}
+          {isCancelled ? '' : sc.studentCount !== null ? `${sc.studentCount} students` : '\u2014'}
         </span>
       </div>
     </Link>
