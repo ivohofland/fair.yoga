@@ -520,6 +520,7 @@ async function main() {
   const studioTemplate = await prisma.studioClassTemplate.create({
     data: {
       teacherId: ivo.id,
+      classType: 'Vinyasa',
       dayOfWeek: 3, // Thursday
       startTime: '11:00',
       durationMinutes: 60,
@@ -537,6 +538,7 @@ async function main() {
       date: lastWeek,
       startTime: '11:00',
       durationMinutes: 60,
+      classType: 'Vinyasa',
       location: 'Yoga Studio Centrum, Amsterdam',
       studentCount: 18,
       hourlyRate: new Prisma.Decimal('35.00'),
@@ -551,6 +553,7 @@ async function main() {
       date: thisWeekThursday,
       startTime: '11:00',
       durationMinutes: 60,
+      classType: 'Vinyasa',
       location: 'Yoga Studio Centrum, Amsterdam',
       studentCount: null,
       hourlyRate: new Prisma.Decimal('35.00'),
@@ -564,6 +567,7 @@ async function main() {
       date: nextWeek,
       startTime: '14:00',
       durationMinutes: 90,
+      classType: 'Bikram',
       location: 'Bikram Amsterdam, Keizersgracht',
       studentCount: null,
       hourlyRate: new Prisma.Decimal('45.00'),

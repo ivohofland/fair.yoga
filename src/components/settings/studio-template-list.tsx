@@ -26,12 +26,12 @@ export function StudioTemplateList({ templates, emptyMessage = 'No studio classe
           className="flex items-start justify-between py-3 border-b border-border"
         >
           <div className="flex flex-col gap-1">
-            <span className="text-dark text-sm font-medium">{t.location}</span>
+            <span className="text-dark text-sm font-medium">{t.classType || t.location}</span>
             <span className="text-brown text-xs">
               {DAY_LABELS[t.dayOfWeek]} {t.startTime} &middot; {t.durationMinutes} min
             </span>
             <span className="text-brown text-xs">
-              &euro;{Number(t.hourlyRate).toFixed(2)}/hr
+              {t.location} &middot; &euro;{Number(t.hourlyRate).toFixed(2)}/hr
             </span>
           </div>
           <span className="text-teal text-xs pt-1">active</span>

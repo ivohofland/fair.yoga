@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/layout/page-header';
 
 export default function NewStudioClassPage() {
   const router = useRouter();
+  const [classType, setClassType] = useState('');
   const [location, setLocation] = useState('');
   const [date, setDate] = useState('');
   const [startTime, setStartTime] = useState('09:00');
@@ -35,6 +36,7 @@ export default function NewStudioClassPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          classType: classType.trim(),
           location: location.trim(),
           date,
           startTime,
@@ -62,6 +64,7 @@ export default function NewStudioClassPage() {
     <>
       <PageHeader title="Log studio class" backHref="/schedule" />
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <Input label="Class type" value={classType} onChange={(e) => setClassType(e.target.value)} placeholder="e.g. Vinyasa, Hatha, Yin" />
         <Input label="Location" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Yoga Studio Centrum, Amsterdam" />
         <Input label="Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         <Input label="Start time" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />

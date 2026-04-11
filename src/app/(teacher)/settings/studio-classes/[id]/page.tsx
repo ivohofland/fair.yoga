@@ -30,6 +30,7 @@ export default async function EditStudioTemplatePage({
         mode="edit"
         templateId={template.id}
         initial={{
+          classType: template.classType,
           dayOfWeek: template.dayOfWeek,
           startTime: template.startTime,
           durationMinutes: template.durationMinutes,

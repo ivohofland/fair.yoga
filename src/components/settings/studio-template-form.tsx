@@ -10,6 +10,7 @@ interface StudioTemplateFormProps {
   mode: 'create' | 'edit';
   templateId?: string;
   initial?: {
+    classType: string;
     dayOfWeek: number;
     startTime: string;
     durationMinutes: number;
@@ -29,6 +30,7 @@ const DAY_OPTIONS = [
 ];
 
 const INITIAL_VALUES = {
+  classType: '',
   dayOfWeek: 0,
   startTime: '09:00',
   durationMinutes: 60,
@@ -69,6 +71,7 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          classType: form.classType.trim(),
           dayOfWeek: form.dayOfWeek,
           startTime: form.startTime,
           durationMinutes: form.durationMinutes,
@@ -98,6 +101,13 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <Input
+        label="Class type"
+        value={form.classType}
+        onChange={(e) => update('classType', e.target.value)}
+        placeholder="e.g. Vinyasa, Hatha, Yin"
+      />
+
       <Input
         label="Location"
         value={form.location}

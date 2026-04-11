@@ -219,6 +219,7 @@ export const updateClassTemplateSchema = z.object({
 // ============================================================================
 
 export const createStudioClassTemplateSchema = z.object({
+  classType: z.string().min(1),
   dayOfWeek: z.number().int().min(0).max(6),
   startTime: z.string().regex(/^\d{2}:\d{2}$/),
   durationMinutes: z.number().int().positive(),
@@ -227,6 +228,7 @@ export const createStudioClassTemplateSchema = z.object({
 });
 
 export const updateStudioClassTemplateSchema = z.object({
+  classType: z.string().min(1).optional(),
   dayOfWeek: z.number().int().min(0).max(6).optional(),
   startTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
   durationMinutes: z.number().int().positive().optional(),
@@ -239,6 +241,7 @@ export const updateStudioClassTemplateSchema = z.object({
 // ============================================================================
 
 export const createStudioClassSchema = z.object({
+  classType: z.string().min(1),
   date: z.string().min(1),
   startTime: z.string().regex(/^\d{2}:\d{2}$/),
   durationMinutes: z.number().int().positive(),

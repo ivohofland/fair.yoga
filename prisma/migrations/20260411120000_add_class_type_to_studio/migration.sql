@@ -1,0 +1,2 @@
+ALTER TABLE "StudioClassTemplate" ADD COLUMN "classType" TEXT NOT NULL DEFAULT '';
+ALTER TABLE "StudioClass" ADD COLUMN "classType" TEXT NOT NULL DEFAULT '';

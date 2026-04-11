@@ -65,7 +65,7 @@ function ClassRow({ cls, dimmed }: { cls: ClassWithDetails; dimmed?: boolean }) 
 }
 
 function StudioClassRow({ sc, dimmed }: { sc: StudioClass; dimmed?: boolean }) {
-  const isCancelled = sc.cancelledAt !== null;
+  const isCancelled = Boolean(sc.cancelledAt);
 
   return (
     <Link
@@ -77,8 +77,8 @@ function StudioClassRow({ sc, dimmed }: { sc: StudioClass; dimmed?: boolean }) {
         <span className="text-dark text-sm font-medium">
           {formatDate(sc.date)} &middot; {sc.startTime}
         </span>
-        <span className="text-dark text-sm">{sc.location}</span>
-        <span className="text-brown text-xs">{isCancelled ? 'Cancelled' : 'Studio class'}</span>
+        <span className="text-dark text-sm">{sc.classType || sc.location}</span>
+        <span className="text-brown text-xs">{isCancelled ? 'Cancelled' : `${sc.classType ? sc.location + ' \u00B7 ' : ''}Studio class`}</span>
       </div>
       <div className="flex items-center gap-2 pt-1">
         <span className="text-brown text-sm">

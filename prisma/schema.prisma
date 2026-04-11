@@ -295,6 +295,7 @@ model Class {
 model StudioClassTemplate {
   id              String   @id @default(uuid())
   teacherId       String
+  classType       String
   dayOfWeek       Int
   startTime       String
   durationMinutes Int
@@ -313,6 +314,7 @@ model StudioClass {
   id              String    @id @default(uuid())
   teacherId       String
   templateId      String?
+  classType       String    @default("")
   date            DateTime  @db.Date
   startTime       String
   durationMinutes Int
