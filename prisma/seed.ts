@@ -37,6 +37,7 @@ async function main() {
   await prisma.class.deleteMany();
   await prisma.classTemplate.deleteMany();
   await prisma.studioClass.deleteMany();
+  await prisma.studioClassTemplate.deleteMany();
   await prisma.teacherRoom.deleteMany();
   await prisma.room.deleteMany();
   await prisma.studentPrivacy.deleteMany();
@@ -514,17 +515,58 @@ async function main() {
   });
 
   // ==========================================================================
-  // STUDIO CLASS
+  // STUDIO CLASS TEMPLATE + INSTANCES
   // ==========================================================================
+  const studioTemplate = await prisma.studioClassTemplate.create({
+    data: {
+      teacherId: ivo.id,
+      dayOfWeek: 3, // Thursday
+      startTime: '11:00',
+      durationMinutes: 60,
+      location: 'Yoga Studio Centrum, Amsterdam',
+      hourlyRate: new Prisma.Decimal('35.00'),
+      isActive: true,
+    },
+  });
+
+  // Past studio class (with student count)
   await prisma.studioClass.create({
     data: {
       teacherId: ivo.id,
+      templateId: studioTemplate.id,
       date: lastWeek,
       startTime: '11:00',
       durationMinutes: 60,
       location: 'Yoga Studio Centrum, Amsterdam',
       studentCount: 18,
       hourlyRate: new Prisma.Decimal('35.00'),
+    },
+  });
+
+  // Upcoming studio class (no student count yet)
+  await prisma.studioClass.create({
+    data: {
+      teacherId: ivo.id,
+      templateId: studioTemplate.id,
+      date: thisWeekThursday,
+      startTime: '11:00',
+      durationMinutes: 60,
+      location: 'Yoga Studio Centrum, Amsterdam',
+      studentCount: null,
+      hourlyRate: new Prisma.Decimal('35.00'),
+    },
+  });
+
+  // One-off studio class at a different studio
+  await prisma.studioClass.create({
+    data: {
+      teacherId: ivo.id,
+      date: nextWeek,
+      startTime: '14:00',
+      durationMinutes: 90,
+      location: 'Bikram Amsterdam, Keizersgracht',
+      studentCount: null,
+      hourlyRate: new Prisma.Decimal('45.00'),
     },
   });
 
@@ -770,7 +812,8 @@ async function main() {
   console.log(`  Rooms: 2, TeacherRooms: 3`);
   console.log(`  ClassTemplate: 1`);
   console.log(`  Classes: 6 (draft, open, open+full, in_progress, completed, cancelled)`);
-  console.log(`  StudioClass: 1`);
+  console.log(`  StudioClassTemplate: 1`);
+  console.log(`  StudioClasses: 3 (1 past, 1 upcoming, 1 one-off)`);
   console.log(`  Registrations: 33`);
   console.log(`  Payments: 9 (5 paid, 3 pending, 1 overdue)`);
   console.log(`  Notifications: 5`);

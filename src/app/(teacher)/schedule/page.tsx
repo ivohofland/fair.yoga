@@ -9,19 +9,25 @@ export default async function SchedulePage() {
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
 
-  const classes = await prisma.class.findMany({
-    where: { teacherId: session.userId, date: { gte: today } },
-    orderBy: { date: 'asc' },
-    include: {
-      _count: { select: { registrations: true } },
-      teacherRoom: { include: { room: true } },
-    },
-  });
+  const [classes, studioClasses] = await Promise.all([
+    prisma.class.findMany({
+      where: { teacherId: session.userId, date: { gte: today } },
+      orderBy: { date: 'asc' },
+      include: {
+        _count: { select: { registrations: true } },
+        teacherRoom: { include: { room: true } },
+      },
+    }),
+    prisma.studioClass.findMany({
+      where: { teacherId: session.userId, date: { gte: today } },
+      orderBy: { date: 'asc' },
+    }),
+  ]);
 
   return (
     <>
       <PageHeader title="Schedule" action={<Link href="/class/new" className="text-teal text-sm">+ Add class</Link>} />
-      <ClassList classes={classes} emptyMessage="No upcoming classes." showAddLink={false} dimPast />
+      <ClassList classes={classes} studioClasses={studioClasses} emptyMessage="No upcoming classes." showAddLink={false} dimPast />
       <div className="mt-6">
         <Link href="/schedule/past" className="text-brown text-sm opacity-60">
           View past classes

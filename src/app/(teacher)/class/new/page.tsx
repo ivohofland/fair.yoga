@@ -282,6 +282,13 @@ export default function CreateClassPage() {
         </button>
         <h1 className="font-heading text-2xl font-bold">New class</h1>
         <p className="text-sm text-brown mt-1">Step {step} of 4</p>
+        <button
+          type="button"
+          onClick={() => router.push('/studio-class/new')}
+          className="text-brown text-sm opacity-60 mt-2 inline-block"
+        >
+          Or log a studio class
+        </button>
       </div>
 
       {/* Step 1: Basics */}

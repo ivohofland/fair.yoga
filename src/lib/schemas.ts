@@ -215,6 +215,48 @@ export const updateClassTemplateSchema = z.object({
 }).strict();
 
 // ============================================================================
+// STUDIO CLASS TEMPLATES
+// ============================================================================
+
+export const createStudioClassTemplateSchema = z.object({
+  dayOfWeek: z.number().int().min(0).max(6),
+  startTime: z.string().regex(/^\d{2}:\d{2}$/),
+  durationMinutes: z.number().int().positive(),
+  location: z.string().min(1),
+  hourlyRate: z.number().nonnegative(),
+});
+
+export const updateStudioClassTemplateSchema = z.object({
+  dayOfWeek: z.number().int().min(0).max(6).optional(),
+  startTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  durationMinutes: z.number().int().positive().optional(),
+  location: z.string().min(1).optional(),
+  hourlyRate: z.number().nonnegative().optional(),
+}).strict();
+
+// ============================================================================
+// STUDIO CLASSES
+// ============================================================================
+
+export const createStudioClassSchema = z.object({
+  date: z.string().min(1),
+  startTime: z.string().regex(/^\d{2}:\d{2}$/),
+  durationMinutes: z.number().int().positive(),
+  location: z.string().min(1),
+  hourlyRate: z.number().nonnegative(),
+  studentCount: z.number().int().nonnegative().nullable().optional(),
+  templateId: z.string().uuid().nullable().optional(),
+});
+
+export const updateStudioClassSchema = z.object({
+  studentCount: z.number().int().nonnegative().nullable().optional(),
+  location: z.string().min(1).optional(),
+  startTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  durationMinutes: z.number().int().positive().optional(),
+  hourlyRate: z.number().nonnegative().optional(),
+}).strict();
+
+// ============================================================================
 // REGISTRATIONS
 // ============================================================================
 

@@ -1,0 +1,29 @@
+import Link from 'next/link';
+import { prisma } from '@/lib/db';
+import { requireTeacherSession } from '@/lib/session';
+import { PageHeader } from '@/components/layout/page-header';
+import { StudioTemplateList } from '@/components/settings/studio-template-list';
+
+export default async function StudioClassesPage() {
+  const session = await requireTeacherSession();
+
+  const templates = await prisma.studioClassTemplate.findMany({
+    where: { teacherId: session.userId, isArchived: false },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return (
+    <>
+      <PageHeader
+        title="Studio classes"
+        action={<Link href="/settings/studio-classes/new" className="text-teal text-sm">+ Add</Link>}
+      />
+      <StudioTemplateList templates={templates} />
+      <div className="mt-6">
+        <Link href="/settings/studio-classes/archived" className="text-brown text-sm opacity-60">
+          View archived studio classes
+        </Link>
+      </div>
+    </>
+  );
+}

@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import type { Class, TeacherRoom, Room } from '@prisma/client';
+import type { Class, TeacherRoom, Room, StudioClass } from '@prisma/client';
 import { StatusDot, type Status } from '@/components/ui/status-dot';
 import { formatRoomLocation } from '@/lib/format';
 
@@ -10,6 +10,7 @@ type ClassWithDetails = Class & {
 
 interface ClassListProps {
   classes: ClassWithDetails[];
+  studioClasses?: StudioClass[];
   emptyMessage?: string;
   showAddLink?: boolean;
   dimPast?: boolean;
@@ -63,18 +64,50 @@ function ClassRow({ cls, dimmed }: { cls: ClassWithDetails; dimmed?: boolean }) 
   );
 }
 
-function classDateTime(cls: ClassWithDetails): Date {
-  const d = new Date(cls.date);
-  const [hours, minutes] = cls.startTime.split(':').map(Number);
+function StudioClassRow({ sc, dimmed }: { sc: StudioClass; dimmed?: boolean }) {
+  return (
+    <Link
+      key={sc.id}
+      href={`/studio-class/${sc.id}`}
+      className={`flex items-start justify-between py-3 border-b border-border${dimmed ? ' opacity-50' : ''}`}
+    >
+      <div className="flex flex-col gap-1">
+        <span className="text-dark text-sm font-medium">
+          {formatDate(sc.date)} &middot; {sc.startTime}
+        </span>
+        <span className="text-dark text-sm">{sc.location}</span>
+        <span className="text-brown text-xs">Studio class</span>
+      </div>
+      <div className="flex items-center gap-2 pt-1">
+        <span className="text-brown text-sm">
+          {sc.studentCount !== null ? `${sc.studentCount} students` : '\u2014'}
+        </span>
+      </div>
+    </Link>
+  );
+}
+
+type ScheduleItem =
+  | { type: 'class'; data: ClassWithDetails; dateTime: Date }
+  | { type: 'studio'; data: StudioClass; dateTime: Date };
+
+function itemDateTime(date: Date, startTime: string): Date {
+  const d = new Date(date);
+  const [hours, minutes] = startTime.split(':').map(Number);
   d.setUTCHours(hours!, minutes!, 0, 0);
   return d;
 }
 
-export function ClassList({ classes, emptyMessage = 'No classes yet. Create your first class.', showAddLink = true, dimPast = false }: ClassListProps) {
+export function ClassList({ classes, studioClasses = [], emptyMessage = 'No classes yet. Create your first class.', showAddLink = true, dimPast = false }: ClassListProps) {
   const now = new Date();
 
-  const past = dimPast ? classes.filter((cls) => classDateTime(cls) < now) : [];
-  const upcoming = dimPast ? classes.filter((cls) => classDateTime(cls) >= now) : classes;
+  // Merge into a single sorted timeline
+  const items: ScheduleItem[] = [
+    ...classes.map((c) => ({ type: 'class' as const, data: c, dateTime: itemDateTime(c.date, c.startTime) })),
+    ...studioClasses.map((sc) => ({ type: 'studio' as const, data: sc, dateTime: itemDateTime(sc.date, sc.startTime) })),
+  ].sort((a, b) => a.dateTime.getTime() - b.dateTime.getTime());
+
+  const totalCount = items.length;
 
   return (
     <div>
@@ -86,18 +119,19 @@ export function ClassList({ classes, emptyMessage = 'No classes yet. Create your
         </div>
       )}
 
-      {classes.length === 0 ? (
+      {totalCount === 0 ? (
         <p className="text-brown text-sm">
           {emptyMessage}
         </p>
       ) : (
         <div>
-          {past.map((cls) => (
-            <ClassRow key={cls.id} cls={cls} dimmed />
-          ))}
-          {upcoming.map((cls) => (
-            <ClassRow key={cls.id} cls={cls} />
-          ))}
+          {items.map((item) => {
+            const isPast = dimPast && item.dateTime < now;
+            if (item.type === 'class') {
+              return <ClassRow key={item.data.id} cls={item.data} dimmed={isPast} />;
+            }
+            return <StudioClassRow key={item.data.id} sc={item.data} dimmed={isPast} />;
+          })}
         </div>
       )}
     </div>

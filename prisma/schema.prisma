@@ -120,7 +120,8 @@ model Teacher {
   teacherRooms    TeacherRoom[]
   classTemplates  ClassTemplate[]
   classes         Class[]
-  studioClasses   StudioClass[]
+  studioClasses         StudioClass[]
+  studioClassTemplates  StudioClassTemplate[]
   announcements   Announcement[]
   studentPrivacy  StudentPrivacy[]
   createdRooms    Room[]           @relation("RoomCreator")
@@ -291,9 +292,27 @@ model Class {
   @@index([teacherId, date])
 }
 
+model StudioClassTemplate {
+  id              String   @id @default(uuid())
+  teacherId       String
+  dayOfWeek       Int
+  startTime       String
+  durationMinutes Int
+  location        String
+  hourlyRate      Decimal  @db.Decimal(10, 2)
+  isActive        Boolean  @default(true)
+  isArchived      Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  teacher       Teacher       @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  studioClasses StudioClass[]
+}
+
 model StudioClass {
   id              String   @id @default(uuid())
   teacherId       String
+  templateId      String?
   date            DateTime @db.Date
   startTime       String
   durationMinutes Int
@@ -303,7 +322,8 @@ model StudioClass {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  teacher  Teacher              @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  template StudioClassTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 }
 
 // ============================================================================

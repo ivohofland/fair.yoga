@@ -8,19 +8,25 @@ export default async function PastClassesPage() {
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
 
-  const classes = await prisma.class.findMany({
-    where: { teacherId: session.userId, date: { lt: today } },
-    orderBy: { date: 'desc' },
-    include: {
-      _count: { select: { registrations: true } },
-      teacherRoom: { include: { room: true } },
-    },
-  });
+  const [classes, studioClasses] = await Promise.all([
+    prisma.class.findMany({
+      where: { teacherId: session.userId, date: { lt: today } },
+      orderBy: { date: 'desc' },
+      include: {
+        _count: { select: { registrations: true } },
+        teacherRoom: { include: { room: true } },
+      },
+    }),
+    prisma.studioClass.findMany({
+      where: { teacherId: session.userId, date: { lt: today } },
+      orderBy: { date: 'desc' },
+    }),
+  ]);
 
   return (
     <>
       <PageHeader title="Past classes" backHref="/schedule" />
-      <ClassList classes={classes} emptyMessage="No past classes." showAddLink={false} />
+      <ClassList classes={classes} studioClasses={studioClasses} emptyMessage="No past classes." showAddLink={false} />
     </>
   );
 }

@@ -23,7 +23,7 @@ export default async function TeacherHome() {
 
   const now = new Date();
 
-  const [classes, unreadNotifications, recentRegistrations] = await Promise.all([
+  const [classes, studioClasses, unreadNotifications, recentRegistrations] = await Promise.all([
     prisma.class.findMany({
       where: {
         teacherId: session.userId,
@@ -34,6 +34,13 @@ export default async function TeacherHome() {
         _count: { select: { registrations: true } },
         teacherRoom: { include: { room: true } },
       },
+    }),
+    prisma.studioClass.findMany({
+      where: {
+        teacherId: session.userId,
+        date: { gte: start, lt: end },
+      },
+      orderBy: { date: 'asc' },
     }),
     prisma.notification.findMany({
       where: {
@@ -83,7 +90,7 @@ export default async function TeacherHome() {
           </h2>
           <Link href="/class/new" className="text-teal text-sm">+ Add class</Link>
         </div>
-        <ClassList classes={classes} showAddLink={false} dimPast />
+        <ClassList classes={classes} studioClasses={studioClasses} showAddLink={false} dimPast />
         <Link href="/schedule" className="text-teal text-sm mt-4 inline-block">
           See full schedule &rarr;
         </Link>
@@ -146,6 +153,9 @@ export default async function TeacherHome() {
         <div className="flex flex-col gap-3">
           <Link href="/settings/recurring" className="text-teal text-sm">
             Recurring classes &rarr;
+          </Link>
+          <Link href="/settings/studio-classes" className="text-teal text-sm">
+            Studio classes &rarr;
           </Link>
           <Link href="/settings/rooms" className="text-teal text-sm">
             Rooms &rarr;
