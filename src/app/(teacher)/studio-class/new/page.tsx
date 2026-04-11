@@ -62,7 +62,7 @@ export default function NewStudioClassPage() {
 
   return (
     <>
-      <PageHeader title="Log studio class" backHref="/schedule" />
+      <PageHeader title="Log studio class" backHref="/schedule" backLabel="Schedule" />
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <Input label="Class type" value={classType} onChange={(e) => setClassType(e.target.value)} placeholder="e.g. Vinyasa, Hatha, Yin" />
         <Input label="Location" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Yoga Studio Centrum, Amsterdam" />

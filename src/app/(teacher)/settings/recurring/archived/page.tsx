@@ -14,7 +14,7 @@ export default async function ArchivedTemplatesPage() {
 
   return (
     <>
-      <PageHeader title="Archived recurring classes" backHref="/settings/recurring" />
+      <PageHeader title="Archived recurring classes" backHref="/settings/recurring" backLabel="Recurring classes" />
       <TemplateList templates={templates} emptyMessage="No archived recurring classes." />
     </>
   );

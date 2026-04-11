@@ -25,7 +25,7 @@ export default async function EditTemplatePage({
 
   return (
     <>
-      <PageHeader title={template.classType} backHref="/settings/recurring" />
+      <PageHeader title={template.classType} backHref="/settings/recurring" backLabel="Recurring classes" />
 
       <TemplateForm
         mode="edit"

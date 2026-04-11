@@ -25,7 +25,7 @@ export default async function PastClassesPage() {
 
   return (
     <>
-      <PageHeader title="Past classes" backHref="/schedule" />
+      <PageHeader title="Past classes" backHref="/schedule" backLabel="Schedule" />
       <ClassList classes={classes} studioClasses={studioClasses} emptyMessage="No past classes." showAddLink={false} sortDesc />
     </>
   );

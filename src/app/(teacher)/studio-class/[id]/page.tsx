@@ -35,7 +35,7 @@ export default async function StudioClassDetailPage({
 
   return (
     <>
-      <PageHeader title={studioClass.location} backHref="/schedule" />
+      <PageHeader title={studioClass.location} backHref="/schedule" backLabel="Schedule" />
 
       <div className="mb-6">
         <div className="py-3 border-b border-border">

@@ -52,7 +52,7 @@ export default async function StudentDetailPage({
 
   return (
     <>
-      <PageHeader title={displayName} backHref={isArchived ? '/students/archived' : '/students'} />
+      <PageHeader title={displayName} backHref={isArchived ? '/students/archived' : '/students'} backLabel={isArchived ? 'Archived students' : 'All students'} />
 
       {isUnlinked && (
         <p className="text-xs text-brown opacity-60 mb-6">

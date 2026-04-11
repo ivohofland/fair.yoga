@@ -45,7 +45,7 @@ export default async function EditRoomPage({
 
   return (
     <>
-      <PageHeader title={room.roomName || room.venueName} backHref={isArchived ? '/settings/rooms/archived' : '/settings/rooms'} />
+      <PageHeader title={room.roomName || room.venueName} backHref={isArchived ? '/settings/rooms/archived' : '/settings/rooms'} backLabel={isArchived ? 'Archived rooms' : 'Rooms'} />
 
       {/* Room base info */}
       <section className="mb-8">

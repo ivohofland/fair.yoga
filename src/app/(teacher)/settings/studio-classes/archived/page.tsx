@@ -13,7 +13,7 @@ export default async function ArchivedStudioTemplatesPage() {
 
   return (
     <>
-      <PageHeader title="Archived studio classes" backHref="/settings/studio-classes" />
+      <PageHeader title="Archived studio classes" backHref="/settings/studio-classes" backLabel="Studio classes" />
       <StudioTemplateList templates={templates} emptyMessage="No archived studio classes." />
     </>
   );

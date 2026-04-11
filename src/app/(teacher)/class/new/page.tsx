@@ -278,7 +278,7 @@ export default function CreateClassPage() {
           onClick={() => router.push('/schedule')}
           className="text-teal text-sm mb-2 inline-block"
         >
-          &larr; Back
+          &larr; Schedule
         </button>
         <h1 className="font-heading text-2xl font-bold">New class</h1>
         <p className="text-sm text-brown mt-1">Step {step} of 4</p>
