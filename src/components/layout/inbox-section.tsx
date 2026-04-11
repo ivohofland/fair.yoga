@@ -36,28 +36,28 @@ export function InboxSection({ notifications }: InboxSectionProps) {
           key={notification.id}
           className="flex items-start justify-between py-3 border-b border-border"
         >
-          <div className="flex items-start gap-2 min-w-0">
+          <div className="flex flex-col gap-1 min-w-0">
+            <span
+              className={`text-sm ${notification.isRead ? 'text-dark' : 'text-dark font-medium'}`}
+            >
+              {notification.title}
+            </span>
+            <span className="text-brown text-xs">
+              {truncate(notification.body, 60)}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 ml-2 pt-0.5">
+            <span className="text-brown text-xs">
+              {timeAgo(notification.createdAt)}
+            </span>
             {!notification.isRead && (
               <span
-                className="mt-1.5 inline-block w-2 h-2 rounded-full bg-teal shrink-0"
+                className="inline-block w-2 h-2 rounded-full bg-teal"
                 role="img"
                 aria-label="Unread"
               />
             )}
-            <div className="flex flex-col gap-1 min-w-0">
-              <span
-                className={`text-sm ${notification.isRead ? 'text-dark' : 'text-dark font-medium'}`}
-              >
-                {notification.title}
-              </span>
-              <span className="text-brown text-xs">
-                {truncate(notification.body, 60)}
-              </span>
-            </div>
           </div>
-          <span className="text-brown text-xs shrink-0 ml-2 pt-0.5">
-            {timeAgo(notification.createdAt)}
-          </span>
         </div>
       ))}
     </div>

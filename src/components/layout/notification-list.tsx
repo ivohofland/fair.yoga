@@ -68,9 +68,8 @@ export function NotificationList({ notifications }: NotificationListProps) {
             <button
               type="button"
               onClick={() => handleNavigate(notification)}
-              className="flex items-start gap-2 min-w-0 text-left flex-1"
+              className="flex items-start min-w-0 text-left flex-1"
             >
-              <span className={`mt-1.5 inline-block w-2 h-2 shrink-0 rounded-full ${isRead ? '' : 'bg-teal'}`} />
               <div className="flex flex-col gap-1 min-w-0">
                 <span className={`text-sm ${isRead ? 'text-dark' : 'text-dark font-medium'}`}>
                   {notification.title}
@@ -85,16 +84,16 @@ export function NotificationList({ notifications }: NotificationListProps) {
               <span className="text-brown text-xs">
                 {timeAgo(notification.createdAt)}
               </span>
-              {!isRead && (
+              {!isRead ? (
                 <button
                   type="button"
                   onClick={() => markRead(notification.id)}
                   className="text-brown text-xs opacity-60 min-h-[44px] px-1"
-                  aria-label="Mark as read"
                 >
                   Mark read
                 </button>
-              )}
+              ) : null}
+              <span className={`inline-block w-2 h-2 shrink-0 rounded-full ${isRead ? '' : 'bg-teal'}`} />
             </div>
           </div>
         );
