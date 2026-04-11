@@ -1,5 +1,5 @@
 import type { Class, ClassStatus, TeacherRoom, Room } from '@prisma/client';
-import { StatusDot } from '@/components/ui/status-dot';
+import { StatusDot, type Status } from '@/components/ui/status-dot';
 import { formatRoomLocation } from '@/lib/format';
 
 type ClassWithRoom = Class & {
@@ -20,6 +20,13 @@ const STATUS_LABELS: Record<ClassStatus, string> = {
   cancelled: 'Cancelled',
 };
 
+function deriveDisplayStatus(status: ClassStatus, registrationCount: number, maxStudents: number): { dotStatus: Status; label: string } {
+  if (status === 'open' && registrationCount >= maxStudents) {
+    return { dotStatus: 'open_full', label: 'Full' };
+  }
+  return { dotStatus: status, label: STATUS_LABELS[status] };
+}
+
 function formatClassDate(date: Date): string {
   const d = new Date(date);
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -35,6 +42,8 @@ function formatClassDate(date: Date): string {
 }
 
 export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoProps) {
+  const { dotStatus, label } = deriveDisplayStatus(cls.status, registrationCount, cls.maxStudents);
+
   return (
     <div className="mb-6">
       <div className="py-3 border-b border-border">
@@ -60,7 +69,6 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
           <p className="text-dark">
             {registrationCount} / {cls.maxStudents}
           </p>
-          <StatusDot status={cls.status} label={STATUS_LABELS[cls.status]} />
         </div>
         {waitlistCount > 0 && (
           <p className="text-brown text-xs mt-1">
@@ -72,8 +80,8 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
       <div className="py-3 border-b border-border">
         <span className="text-sm text-brown">Status</span>
         <div className="flex items-center gap-2">
-          <StatusDot status={cls.status} label={STATUS_LABELS[cls.status]} />
-          <p className="text-dark">{STATUS_LABELS[cls.status]}</p>
+          <StatusDot status={dotStatus} label={label} />
+          <p className="text-dark">{label}</p>
         </div>
       </div>
     </div>

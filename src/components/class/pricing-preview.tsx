@@ -57,54 +57,52 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
     }
   }
 
+  const estimatedEarnings = pricing.totalCost - Number(cls.roomCost);
+
   return (
     <div className="py-6">
       <h2 className="font-heading text-lg font-bold text-dark mb-3">
-        Pricing Preview
+        Pricing Estimate
       </h2>
       <p className="text-brown text-xs mb-4">
         Based on {activeRegistrations.length} registered student{activeRegistrations.length !== 1 ? 's' : ''}
       </p>
 
-      <table className="w-full text-sm mb-4">
-        <thead>
-          <tr className="border-b border-border">
-            <th className="text-left text-brown py-2 font-normal">Tier</th>
-            <th className="text-left text-brown py-2 font-normal">Ratio</th>
-            <th className="text-right text-brown py-2 font-normal">Price</th>
-          </tr>
-        </thead>
-        <tbody>
-          {tierSummary.map((row) => (
-            <tr key={row.tier} className="border-b border-border">
-              <td className="py-2 text-dark">
-                Tier {row.tier}
-                {row.count > 1 && (
-                  <span className="text-brown text-xs ml-1">({row.count})</span>
-                )}
-              </td>
-              <td className="py-2 text-dark">{row.ratio.toFixed(2)}&times;</td>
-              <td className="py-2 text-right font-semibold text-teal">
-                &euro;{row.price.toFixed(2)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <div className="py-2 border-b border-border flex justify-between text-sm">
-        <span className="text-brown">Effective teacher rate</span>
-        <span className="text-dark font-semibold">
-          &euro;{pricing.effectiveTeacherRate.toFixed(2)}/student
-        </span>
+      {/* Estimated earnings — most prominent */}
+      <div className="py-4 border-b border-border">
+        <span className="text-sm text-brown">Estimated earnings</span>
+        <p className="font-heading text-3xl font-bold text-teal mt-1">
+          &euro;{estimatedEarnings.toFixed(2)}
+        </p>
       </div>
+
       <div className="py-2 border-b border-border flex justify-between text-sm">
         <span className="text-brown">Room cost</span>
         <span className="text-dark">&euro;{Number(cls.roomCost).toFixed(2)}</span>
       </div>
-      <div className="py-2 flex justify-between text-sm">
-        <span className="text-brown">Total class cost</span>
-        <span className="text-dark font-semibold">&euro;{pricing.totalCost.toFixed(2)}</span>
+      <div className="py-2 border-b border-border flex justify-between text-sm">
+        <span className="text-brown">Students</span>
+        <span className="text-dark">{cls.minStudents} min &middot; {cls.maxStudents} max</span>
+      </div>
+      <div className="py-2 border-b border-border flex justify-between text-sm">
+        <span className="text-brown">Rate</span>
+        <span className="text-dark">&euro;{Number(cls.minRate).toFixed(2)} &ndash; &euro;{Number(cls.targetRate).toFixed(2)}</span>
+      </div>
+
+      {/* Per-tier prices */}
+      <div className="mt-4">
+        <h3 className="text-sm text-brown mb-2">Price per tier</h3>
+        {tierSummary.map((row) => (
+          <div key={row.tier} className="flex justify-between py-2 border-b border-border text-sm">
+            <span className="text-dark">
+              Tier {row.tier}
+              <span className="text-brown text-xs ml-1">({row.count})</span>
+            </span>
+            <span className="font-semibold text-teal">
+              &euro;{row.price.toFixed(2)}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );

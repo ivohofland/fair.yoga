@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { formatStudentName } from '@/lib/format';
@@ -8,6 +9,7 @@ import { PricingPreview } from '@/components/class/pricing-preview';
 import { AttendanceList } from '@/components/class/attendance-list';
 import { PricingBreakdown } from '@/components/class/pricing-breakdown';
 import { PaymentChecklist } from '@/components/class/payment-checklist';
+import { PublishClassButton } from '@/components/class/publish-class-button';
 import type { AttendanceItem } from '@/components/class/attendance-list';
 import type { PaymentItem } from '@/components/class/payment-checklist';
 
@@ -51,8 +53,9 @@ export default async function ClassDetailPage({
     return formatStudentName(student.firstName, student.lastName, shareFullName);
   }
 
-  const attendanceItems: AttendanceItem[] = cls.registrations
-    .filter((r) => r.status !== 'cancelled')
+  const activeRegistrations = cls.registrations.filter((r) => r.status !== 'cancelled');
+
+  const attendanceItems: AttendanceItem[] = activeRegistrations
     .map((r) => ({
       registrationId: r.id,
       studentName: getStudentDisplayName(r.student),
@@ -68,39 +71,68 @@ export default async function ClassDetailPage({
       status: r.payment!.status,
     }));
 
-  // Augment registrations with display names for PricingBreakdown
-  const registrationsWithNames = cls.registrations.map((r) => ({
-    ...r,
-    displayName: getStudentDisplayName(r.student),
-  }));
-  const clsWithNames = { ...cls, registrations: registrationsWithNames };
+  // Actual tier prices for completed class pricing breakdown
+  const tierPrices = activeRegistrations
+    .filter((r) => r.price !== null)
+    .map((r) => ({ tier: r.tierAtBooking, price: Number(r.price) }));
+
+  // Check-in available: in_progress, or open within 15 min of start
+  const classStart = new Date(cls.date);
+  const [startH, startM] = cls.startTime.split(':').map(Number);
+  classStart.setUTCHours(startH!, startM!, 0, 0);
+  const minutesToStart = (classStart.getTime() - Date.now()) / 60_000;
+  const showCheckin = cls.status === 'in_progress' || (cls.status === 'open' && minutesToStart <= 15);
 
   return (
     <>
       <PageHeader title={cls.classType} backHref="/schedule" />
       <ClassInfo
         cls={cls}
-        registrationCount={cls.registrations.filter((r) => r.status !== 'cancelled').length}
+        registrationCount={activeRegistrations.length}
         waitlistCount={cls._count.waitlistEntries}
       />
 
-      {/* Draft / Open / Full: Show pricing preview */}
-      {(cls.status === 'draft' || cls.status === 'open') && (
-        <PricingPreview cls={cls} />
-      )}
-
-      {/* In Progress: Show attendance checklist + pricing estimate */}
-      {cls.status === 'in_progress' && (
+      {/* Check-in mode: attendance checklist + pricing estimate */}
+      {showCheckin && (
         <>
           <AttendanceList items={attendanceItems} />
           <PricingPreview cls={cls} />
         </>
       )}
 
+      {/* Open (not yet check-in): registered students + pricing preview */}
+      {cls.status === 'open' && !showCheckin && activeRegistrations.length > 0 && (
+        <div className="py-6">
+          <h2 className="font-heading text-lg font-bold text-dark mb-3">
+            Registered students
+          </h2>
+          <div>
+            {activeRegistrations.map((r) => (
+              <Link key={r.id} href={`/students/${r.studentId}`} className="block py-2 border-b border-border">
+                <span className="text-dark text-sm">{getStudentDisplayName(r.student)}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Draft: pricing preview + publish button */}
+      {cls.status === 'draft' && (
+        <>
+          <PricingPreview cls={cls} />
+          <PublishClassButton classId={cls.id} />
+        </>
+      )}
+
+      {/* Open (not check-in): pricing preview */}
+      {cls.status === 'open' && !showCheckin && (
+        <PricingPreview cls={cls} />
+      )}
+
       {/* Completed: Show pricing breakdown + payment checklist */}
       {cls.status === 'completed' && (
         <>
-          <PricingBreakdown cls={clsWithNames} />
+          <PricingBreakdown cls={cls} tierPrices={tierPrices} />
           <PaymentChecklist items={paymentItems} />
         </>
       )}

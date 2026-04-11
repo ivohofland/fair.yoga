@@ -82,7 +82,7 @@ export async function DELETE(
 
   const registration = await prisma.registration.findUnique({
     where: { id },
-    include: { class: { select: { teacherId: true, status: true, maxStudents: true, id: true } } },
+    include: { class: { select: { teacherId: true, status: true, maxStudents: true, id: true, date: true, startTime: true, cancelDeadline: true } } },
   });
 
   if (!registration) return respondError('Registration not found', 404);
@@ -93,7 +93,31 @@ export async function DELETE(
 
   if (!isStudent && !isTeacher) return respondError('Access denied', 403);
 
-  // Cancel the registration
+  // Enforce cancellation deadline for students (teachers can always cancel)
+  if (isStudent) {
+    const deadlineHours: Record<string, number> = {
+      HOURS_48: 48,
+      HOURS_24: 24,
+      HOURS_12: 12,
+      HOURS_6: 6,
+    };
+    const hours = deadlineHours[registration.class.cancelDeadline] ?? 24;
+    const classStart = new Date(registration.class.date);
+    const [h, m] = registration.class.startTime.split(':').map(Number);
+    classStart.setUTCHours(h!, m!, 0, 0);
+    const deadline = new Date(classStart.getTime() - hours * 60 * 60 * 1000);
+
+    if (new Date() > deadline) {
+      // Past deadline — mark as late_cancel (still charged)
+      const updated = await prisma.registration.update({
+        where: { id },
+        data: { status: 'late_cancel', cancelledAt: new Date() },
+      });
+      return respondOk(updated);
+    }
+  }
+
+  // Before deadline or teacher cancelling — full cancel (not charged)
   const updated = await prisma.registration.update({
     where: { id },
     data: { status: 'cancelled', cancelledAt: new Date() },

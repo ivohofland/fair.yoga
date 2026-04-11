@@ -34,9 +34,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return respondError(`Cannot register for a class with status "${cls.status}"`, 409);
   }
 
-  // Count current registrations (non-cancelled)
+  // Count active registrations (exclude cancelled and late_cancel — those freed their spot)
   const registrationCount = await prisma.registration.count({
-    where: { classId: body.classId, status: { not: 'cancelled' } },
+    where: { classId: body.classId, status: { in: ['registered', 'attended', 'no_show'] } },
   });
 
   const isWalkIn = isTeacher && cls.teacherId === session.userId;
