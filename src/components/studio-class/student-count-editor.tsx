@@ -40,6 +40,7 @@ export function StudentCountEditor({ studioClassId, initialCount }: StudentCount
         <Input
           label="Student count"
           type="number"
+          min="0"
           value={count}
           onChange={(e) => { setCount(e.target.value); setSuccess(''); }}
           placeholder="Enter after class"

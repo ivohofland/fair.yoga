@@ -14,7 +14,7 @@ const uniqueSuffix = Date.now();
 const rawSessionToken = crypto.randomBytes(32).toString('hex');
 
 let teacherId: string;
-let studentIds: string[] = [];
+const studentIds: string[] = [];
 
 beforeAll(async () => {
   await prisma.$connect();

@@ -21,6 +21,8 @@ export default async function ClassDetailPage({
 }) {
   const session = await requireTeacherSession();
   const { id } = await params;
+  // eslint-disable-next-line react-hooks/purity -- server component, Date.now() is fine
+  const now = Date.now();
 
   const cls = await prisma.class.findUnique({
     where: { id },
@@ -82,7 +84,7 @@ export default async function ClassDetailPage({
   const classStart = new Date(cls.date);
   const [startH, startM] = cls.startTime.split(':').map(Number);
   classStart.setUTCHours(startH!, startM!, 0, 0);
-  const minutesToStart = (classStart.getTime() - Date.now()) / 60_000;
+  const minutesToStart = (classStart.getTime() - now) / 60_000;
   const showCheckin = cls.status === 'in_progress' || (cls.status === 'open' && minutesToStart <= 15);
 
   return (

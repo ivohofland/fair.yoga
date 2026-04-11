@@ -14,19 +14,22 @@ interface ClassListProps {
   emptyMessage?: string;
   showAddLink?: boolean;
   dimPast?: boolean;
+  sortDesc?: boolean;
 }
 
-function formatDate(date: Date): string {
+function formatDayHeader(date: Date): string {
   const d = new Date(date);
-  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const months = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
   ];
-  const dayName = days[d.getUTCDay()];
-  const monthName = months[d.getUTCMonth()];
-  const dayNum = d.getUTCDate();
-  return `${dayName}, ${monthName} ${dayNum}`;
+  return `${days[d.getUTCDay()]}, ${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+function dateKey(date: Date): string {
+  const d = new Date(date);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth()).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 }
 
 function deriveDisplayStatus(cls: ClassWithDetails): Status {
@@ -46,10 +49,9 @@ function ClassRow({ cls, dimmed }: { cls: ClassWithDetails; dimmed?: boolean }) 
       className={`flex items-start justify-between py-3 border-b border-border${dimmed ? ' opacity-50' : ''}`}
     >
       <div className="flex flex-col gap-1">
-        <span className="text-dark text-sm font-medium">
-          {formatDate(cls.date)} &middot; {cls.startTime}
+        <span className="text-dark text-sm">
+          <span className="font-medium">{cls.startTime}</span> &ndash; {cls.classType}
         </span>
-        <span className="text-dark text-sm">{cls.classType}</span>
         <span className="text-brown text-xs">
           {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
         </span>
@@ -74,10 +76,9 @@ function StudioClassRow({ sc, dimmed }: { sc: StudioClass; dimmed?: boolean }) {
       className={`flex items-start justify-between py-3 border-b border-border${dimmed || isCancelled ? ' opacity-50' : ''}`}
     >
       <div className="flex flex-col gap-1">
-        <span className="text-dark text-sm font-medium">
-          {formatDate(sc.date)} &middot; {sc.startTime}
+        <span className="text-dark text-sm">
+          <span className="font-medium">{sc.startTime}</span> &ndash; {sc.classType || sc.location}
         </span>
-        <span className="text-dark text-sm">{sc.classType || sc.location}</span>
         <span className="text-brown text-xs">{isCancelled ? 'Cancelled' : `${sc.classType ? sc.location + ' \u00B7 ' : ''}Studio class`}</span>
       </div>
       <div className="flex items-center gap-2 pt-1">
@@ -100,14 +101,17 @@ function itemDateTime(date: Date, startTime: string): Date {
   return d;
 }
 
-export function ClassList({ classes, studioClasses = [], emptyMessage = 'No classes yet. Create your first class.', showAddLink = true, dimPast = false }: ClassListProps) {
+export function ClassList({ classes, studioClasses = [], emptyMessage = 'No classes yet. Create your first class.', showAddLink = true, dimPast = false, sortDesc = false }: ClassListProps) {
   const now = new Date();
 
   // Merge into a single sorted timeline
   const items: ScheduleItem[] = [
     ...classes.map((c) => ({ type: 'class' as const, data: c, dateTime: itemDateTime(c.date, c.startTime) })),
     ...studioClasses.map((sc) => ({ type: 'studio' as const, data: sc, dateTime: itemDateTime(sc.date, sc.startTime) })),
-  ].sort((a, b) => a.dateTime.getTime() - b.dateTime.getTime());
+  ].sort((a, b) => sortDesc
+    ? b.dateTime.getTime() - a.dateTime.getTime()
+    : a.dateTime.getTime() - b.dateTime.getTime(),
+  );
 
   const totalCount = items.length;
 
@@ -127,12 +131,27 @@ export function ClassList({ classes, studioClasses = [], emptyMessage = 'No clas
         </p>
       ) : (
         <div>
-          {items.map((item) => {
+          {items.map((item, i) => {
             const isPast = dimPast && item.dateTime < now;
-            if (item.type === 'class') {
-              return <ClassRow key={item.data.id} cls={item.data} dimmed={isPast} />;
-            }
-            return <StudioClassRow key={item.data.id} sc={item.data} dimmed={isPast} />;
+            const key = dateKey(item.type === 'class' ? item.data.date : item.data.date);
+            const prevKey = i > 0
+              ? dateKey(items[i - 1]!.type === 'class' ? items[i - 1]!.data.date : items[i - 1]!.data.date)
+              : null;
+            const showHeader = key !== prevKey;
+
+            return (
+              <div key={item.data.id}>
+                {showHeader && (
+                  <h3 className={`font-heading text-lg font-bold text-dark ${i > 0 ? 'mt-6' : ''} mb-2${isPast ? ' opacity-50' : ''}`}>
+                    {formatDayHeader(item.type === 'class' ? item.data.date : item.data.date)}
+                  </h3>
+                )}
+                {item.type === 'class'
+                  ? <ClassRow cls={item.data} dimmed={isPast} />
+                  : <StudioClassRow sc={item.data} dimmed={isPast} />
+                }
+              </div>
+            );
           })}
         </div>
       )}
