@@ -1,0 +1,164 @@
+/**
+ * Automated Class Transitions — Handles time-based class lifecycle changes.
+ *
+ * Three jobs run periodically:
+ * 1. Auto-transition: open → in_progress when start time is reached
+ * 2. Auto-cancel: cancel open classes below min_students at auto_cancel_check time
+ * 3. Auto-complete: in_progress → completed when class duration has elapsed
+ */
+
+import type { PrismaClient } from '@prisma/client';
+import { transitionClass, completeClass } from './class-lifecycle';
+import { createBulkNotifications, type CreateNotificationInput } from './notifications';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const CANCEL_CHECK_HOURS: Record<string, number> = {
+  HOURS_4: 4,
+  HOURS_2: 2,
+  HOURS_1: 1,
+};
+
+function classStartTime(date: Date, startTime: string): Date {
+  const d = new Date(date);
+  const [h, m] = startTime.split(':').map(Number);
+  d.setUTCHours(h!, m!, 0, 0);
+  return d;
+}
+
+// ---------------------------------------------------------------------------
+// Auto-transition: open → in_progress
+// ---------------------------------------------------------------------------
+
+/**
+ * Finds all open classes whose start time has passed and transitions
+ * them to in_progress.
+ */
+export async function autoTransitionToInProgress(
+  db: PrismaClient,
+  now?: Date,
+): Promise<number> {
+  const currentTime = now ?? new Date();
+
+  const openClasses = await db.class.findMany({
+    where: { status: 'open', date: { lte: currentTime } },
+  });
+
+  let transitioned = 0;
+
+  for (const cls of openClasses) {
+    const start = classStartTime(cls.date, cls.startTime);
+    if (start <= currentTime) {
+      const result = await transitionClass(db, cls.id, 'in_progress');
+      if (result.ok) transitioned++;
+    }
+  }
+
+  return transitioned;
+}
+
+// ---------------------------------------------------------------------------
+// Auto-cancel: open classes below min_students
+// ---------------------------------------------------------------------------
+
+/**
+ * Finds open classes within their auto-cancel check window and cancels
+ * them if registered students are below min_students.
+ * Creates notifications for affected students.
+ */
+export async function autoCancelClasses(
+  db: PrismaClient,
+  now?: Date,
+): Promise<number> {
+  const currentTime = now ?? new Date();
+
+  const openClasses = await db.class.findMany({
+    where: { status: 'open' },
+    include: {
+      registrations: {
+        where: { status: { in: ['registered', 'attended', 'no_show'] } },
+        select: { studentId: true },
+      },
+    },
+  });
+
+  let cancelled = 0;
+
+  for (const cls of openClasses) {
+    const start = classStartTime(cls.date, cls.startTime);
+    const checkHours = CANCEL_CHECK_HOURS[cls.autoCancelCheck] ?? 2;
+    const checkTime = new Date(start.getTime() - checkHours * 60 * 60 * 1000);
+
+    // Only cancel if we're past the check time but before the class starts
+    if (currentTime >= checkTime && currentTime < start) {
+      const activeCount = cls.registrations.length;
+
+      if (activeCount < cls.minStudents) {
+        const result = await transitionClass(db, cls.id, 'cancelled');
+        if (result.ok) {
+          cancelled++;
+
+          // Notify registered students
+          if (cls.registrations.length > 0) {
+            const notifications: CreateNotificationInput[] = cls.registrations.map((r) => ({
+              recipientType: 'student' as const,
+              recipientId: r.studentId,
+              type: 'class_cancelled' as const,
+              title: 'Class cancelled',
+              body: `${cls.classType} class has been cancelled due to insufficient registrations.`,
+              relatedClassId: cls.id,
+            }));
+            await createBulkNotifications(db, notifications);
+          }
+
+          // Notify teacher
+          await createBulkNotifications(db, [{
+            recipientType: 'teacher',
+            recipientId: cls.teacherId,
+            type: 'class_cancelled',
+            title: 'Class auto-cancelled',
+            body: `${cls.classType} was cancelled — only ${activeCount} of ${cls.minStudents} minimum students registered.`,
+            relatedClassId: cls.id,
+          }]);
+        }
+      }
+    }
+  }
+
+  return cancelled;
+}
+
+// ---------------------------------------------------------------------------
+// Auto-complete: in_progress → completed
+// ---------------------------------------------------------------------------
+
+/**
+ * Finds in_progress classes whose duration has elapsed and completes them.
+ * Triggers pricing calculation and payment creation via completeClass().
+ */
+export async function autoCompleteClasses(
+  db: PrismaClient,
+  now?: Date,
+): Promise<number> {
+  const currentTime = now ?? new Date();
+
+  const inProgressClasses = await db.class.findMany({
+    where: { status: 'in_progress' },
+  });
+
+  let completed = 0;
+
+  for (const cls of inProgressClasses) {
+    const start = classStartTime(cls.date, cls.startTime);
+    const endTime = new Date(start.getTime() + cls.durationMinutes * 60 * 1000);
+
+    if (currentTime >= endTime) {
+      const result = await completeClass(db, cls.id);
+      if (result.ok) completed++;
+    }
+  }
+
+  return completed;
+}
