@@ -1,4 +1,4 @@
-type Status =
+export type Status =
   | 'open'
   | 'open_full'
   | 'in_progress'

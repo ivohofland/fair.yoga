@@ -1,8 +1,9 @@
-import type { Class, Registration, Student, Payment } from '@prisma/client';
+import type { Class, Registration, Payment } from '@prisma/client';
 
 type RegistrationWithStudentAndPayment = Registration & {
-  student: Student;
+  student: { firstName: string; lastName: string };
   payment: Payment | null;
+  displayName?: string;
 };
 
 type ClassWithRegistrations = Class & {
@@ -78,7 +79,7 @@ export function PricingBreakdown({ cls }: PricingBreakdownProps) {
               {activeRegistrations.map((r) => (
                 <tr key={r.id} className="border-b border-border">
                   <td className="py-2 text-dark">
-                    {r.student.firstName} {r.student.lastName.charAt(0)}.
+                    {r.displayName ?? `${r.student.firstName} ${r.student.lastName.charAt(0)}.`}
                   </td>
                   <td className="py-2 text-dark">{r.tierAtBooking}</td>
                   <td className="py-2 text-dark">

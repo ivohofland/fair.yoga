@@ -68,6 +68,13 @@ export default async function ClassDetailPage({
       status: r.payment!.status,
     }));
 
+  // Augment registrations with display names for PricingBreakdown
+  const registrationsWithNames = cls.registrations.map((r) => ({
+    ...r,
+    displayName: getStudentDisplayName(r.student),
+  }));
+  const clsWithNames = { ...cls, registrations: registrationsWithNames };
+
   return (
     <>
       <PageHeader title={cls.classType} backHref="/schedule" />
@@ -82,15 +89,18 @@ export default async function ClassDetailPage({
         <PricingPreview cls={cls} />
       )}
 
-      {/* In Progress: Show attendance checklist */}
+      {/* In Progress: Show attendance checklist + pricing estimate */}
       {cls.status === 'in_progress' && (
-        <AttendanceList items={attendanceItems} />
+        <>
+          <AttendanceList items={attendanceItems} />
+          <PricingPreview cls={cls} />
+        </>
       )}
 
       {/* Completed: Show pricing breakdown + payment checklist */}
       {cls.status === 'completed' && (
         <>
-          <PricingBreakdown cls={cls} />
+          <PricingBreakdown cls={clsWithNames} />
           <PaymentChecklist items={paymentItems} />
         </>
       )}

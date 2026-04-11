@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/layout/page-header';
 import { EditStudentForm } from '@/components/students/edit-student-form';
 import { RemoveStudentButton } from '@/components/students/remove-student-button';
 import { ArchiveStudentButton } from '@/components/students/archive-student-button';
+import { StudentPaymentList } from '@/components/students/student-payment-list';
 
 export default async function StudentDetailPage({
   params,
@@ -139,30 +140,17 @@ export default async function StudentDetailPage({
       {!isUnlinked && (
         <section className="mb-8">
           <h2 className="font-heading text-lg font-bold text-teal mb-3">Payments</h2>
-          {student.registrations.filter(r => r.payment).length === 0 ? (
-            <p className="text-sm text-brown">No payment history.</p>
-          ) : (
-            <div className="flex flex-col">
-              {student.registrations
-                .filter(r => r.payment)
-                .map((reg) => (
-                  <div key={reg.id} className="flex justify-between items-center py-3 border-b border-border">
-                    <div>
-                      <p className="text-dark">{reg.class.classType}</p>
-                      <p className="text-sm text-brown">
-                        {new Date(reg.class.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-semibold text-teal">&euro;{Number(reg.payment!.amount).toFixed(2)}</p>
-                      <p className={`text-sm ${reg.payment!.status === 'paid' ? 'text-teal' : 'text-brown'}`}>
-                        {reg.payment!.status}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-            </div>
-          )}
+          <StudentPaymentList
+            items={student.registrations
+              .filter((r) => r.payment)
+              .map((reg) => ({
+                paymentId: reg.payment!.id,
+                classType: reg.class.classType,
+                classDate: new Date(reg.class.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+                amount: Number(reg.payment!.amount),
+                status: reg.payment!.status,
+              }))}
+          />
         </section>
       )}
 

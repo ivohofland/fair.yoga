@@ -15,7 +15,6 @@ interface ClassInfoProps {
 const STATUS_LABELS: Record<ClassStatus, string> = {
   draft: 'Draft',
   open: 'Open for registration',
-  full: 'Class full',
   in_progress: 'In progress',
   completed: 'Completed',
   cancelled: 'Cancelled',

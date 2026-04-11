@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import type { Class, TeacherRoom, Room } from '@prisma/client';
-import { StatusDot } from '@/components/ui/status-dot';
+import { StatusDot, type Status } from '@/components/ui/status-dot';
 import { formatRoomLocation } from '@/lib/format';
 
 type ClassWithDetails = Class & {
@@ -28,7 +28,7 @@ function formatDate(date: Date): string {
   return `${dayName}, ${monthName} ${dayNum}`;
 }
 
-function deriveDisplayStatus(cls: ClassWithDetails): string {
+function deriveDisplayStatus(cls: ClassWithDetails): Status {
   if (cls.status === 'open' && cls._count.registrations >= cls.maxStudents) {
     return 'open_full';
   }
