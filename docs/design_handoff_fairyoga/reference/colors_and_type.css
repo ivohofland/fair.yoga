@@ -1,0 +1,231 @@
+/* ============================================================
+   fair.yoga — Colors & Type
+   Sourced from src/app/globals.css + docs/design-brief.md
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap');
+
+:root {
+  /* ---------- Palette (raw tokens) ---------- */
+  --fy-teal: #1A5653;          /* Deep Teal  — primary */
+  --fy-sand: #E8DCC8;          /* Warm Sand  — surface / body bg */
+  --fy-cream: #F7F4EF;         /* Soft White — page / card bg */
+  --fy-brown: #6B5B4E;         /* Earth Brown — body text */
+  --fy-gold: #C4A96A;          /* Muted Gold  — rare accent */
+  --fy-dark: #2D2D2D;          /* Near black — high-contrast text */
+  --fy-border: #D4C9B8;        /* Light border / divider */
+  --fy-error: #B85C5C;         /* Muted warm red */
+  --fy-teal-light: #E8F0EF;    /* Selected tint */
+
+  /* ---------- Semantic color roles ---------- */
+  --fg1: var(--fy-dark);            /* primary text */
+  --fg2: var(--fy-brown);           /* secondary text, labels */
+  --fg-accent: var(--fy-teal);      /* links, headings, prices */
+  --fg-muted: #9A8C7E;              /* tertiary / hints */
+  --fg-error: var(--fy-error);
+  --fg-on-teal: var(--fy-cream);    /* text on teal fills */
+
+  --bg-page: var(--fy-sand);        /* body background per globals.css */
+  --bg-surface: var(--fy-cream);    /* cards, page containers */
+  --bg-input: var(--fy-cream);      /* form fields (see input.tsx) */
+  --bg-tint: var(--fy-teal-light);  /* selected / highlight */
+  --bg-teal-soft: rgba(26, 86, 83, 0.10);
+
+  --border-default: var(--fy-border);
+  --border-strong: var(--fy-teal);  /* input borders per codebase */
+
+  /* ---------- Type families ---------- */
+  --font-heading: Georgia, 'Times New Roman', serif;
+  --font-body: 'Atkinson Hyperlegible', Arial, Helvetica, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* ---------- Type scale (mobile-first, generous line-height) ---------- */
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 30px;
+  --text-4xl: 36px;
+
+  --lh-tight: 1.2;
+  --lh-normal: 1.5;
+  --lh-loose: 1.65;
+
+  /* ---------- Spacing (Tailwind-aligned) ---------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ---------- Borders / Radii ---------- */
+  --radius-none: 0;           /* default — flat, e-reader aesthetic */
+  --radius-sm: 4px;
+  --radius-md: 8px;           /* used by attendance + payment buttons */
+  --radius-lg: 12px;
+
+  /* ---------- Min touch target ---------- */
+  --tap: 44px;
+
+  /* ---------- No shadows (e-reader / dumb phone feel) ---------- */
+  --shadow-none: none;
+}
+
+/* ============================================================
+   Semantic element defaults
+   ============================================================ */
+
+html, body {
+  background: var(--bg-page);
+  color: var(--fg2);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: var(--lh-loose);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Headings — Georgia, warmth without decoration */
+h1, .fy-h1 {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: var(--text-2xl);       /* ~24px */
+  line-height: var(--lh-tight);
+  color: var(--fg1);                 /* Near Black — teal is reserved for money */
+}
+h2, .fy-h2 {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: var(--text-xl);         /* ~20px */
+  line-height: var(--lh-tight);
+  color: var(--fg1);
+}
+h3, .fy-h3 {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: var(--text-lg);
+  line-height: var(--lh-tight);
+  color: var(--fg1);
+}
+
+/* Accordion / section header — Near Black, Georgia, bold
+   (teal is reserved for prices; headings carry weight via type alone) */
+.fy-section-header {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: var(--text-xl);
+  color: var(--fg1);
+}
+
+/* Pull quote — class titles and other single-moment hero type */
+.fy-pullquote {
+  font-family: var(--font-heading);
+  font-weight: 400;
+  font-style: italic;
+  font-size: 40px;
+  line-height: 1.1;
+  color: var(--fg1);
+  letter-spacing: -0.01em;
+}
+
+/* Running header — the "page number" at the top of each screen */
+.fy-running-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  color: var(--fg2);
+  letter-spacing: 0.04em;
+  font-feature-settings: "onum" 1;
+}
+.fy-running-header .wordmark {
+  font-family: var(--font-heading);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--fg-accent);
+}
+
+/* Colophon — end-of-section italic, right-aligned */
+.fy-colophon {
+  text-align: right;
+  font-family: var(--font-heading);
+  font-style: italic;
+  font-size: 12px;
+  color: var(--fg2);
+  opacity: 0.75;
+  font-feature-settings: "onum" 1;
+}
+
+/* Small caps — for column headers, eyebrows, definition-list terms */
+.fy-smallcaps {
+  font-variant-caps: small-caps;
+  font-feature-settings: "smcp" 1;
+  letter-spacing: 0.08em;
+  font-size: 12px;
+  color: var(--fg2);
+}
+
+/* Old-style figures — dates, counts, running numbers */
+.fy-oldstyle {
+  font-feature-settings: "onum" 1;
+}
+
+/* Body */
+p, .fy-body {
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: var(--lh-loose);
+  color: var(--fg2);
+}
+
+/* Small / labels */
+.fy-label, .fy-caption {
+  font-size: var(--text-sm);
+  color: var(--fg2);
+}
+.fy-hint {
+  font-size: var(--text-xs);
+  color: var(--fg2);
+}
+
+/* Price / numbers — confident, teal, semibold */
+.fy-price {
+  font-family: var(--font-body);
+  font-weight: 600;
+  color: var(--fg-accent);
+  font-size: var(--text-lg);
+}
+.fy-price-hero {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  color: var(--fg-accent);
+  font-size: var(--text-3xl);
+  line-height: 1.1;
+}
+
+/* Links */
+a {
+  color: var(--fg2);
+  text-decoration: underline;
+  text-decoration-thickness: 0.5px;
+  text-underline-offset: 3px;
+}
+a:hover { opacity: 0.7; }
+
+/* Price link: the only place teal shows up as a foreground */
+a.fy-link-money, .fy-money {
+  color: var(--fg-accent);
+  text-decoration: none;
+  font-weight: 600;
+  font-feature-settings: "onum" 1;
+}
+
+/* Utility */
+.fy-divider {
+  border-bottom: 1px solid var(--border-default);
+}

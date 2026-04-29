@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Radii</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  :root { --oldstyle: "onum" 1, "kern" 1; }
+  html,body{margin:0;background:var(--bg-page);font-family:var(--font-body);color:var(--fy-dark);}
+  .wrap{padding:32px 24px;display:flex;gap:32px;align-items:flex-start;flex-wrap:wrap;max-width:680px;}
+  .col{display:flex;flex-direction:column;align-items:flex-start;gap:8px;}
+  .box{padding:14px 18px;border:1px solid var(--fy-border);background:var(--fy-cream);font-size:13px;color:var(--fy-dark);font-family:var(--font-heading);font-style:italic;font-feature-settings:var(--oldstyle);}
+  .colophon{font-family:var(--font-heading);font-style:italic;font-size:12px;color:var(--fy-brown);opacity:0.75;max-width:200px;line-height:1.5;font-feature-settings:var(--oldstyle);}
+  .rule{flex-basis:100%;margin-top:8px;border-top:1px solid var(--fy-border);padding-top:14px;font-family:var(--font-heading);font-style:italic;font-size:13px;color:var(--fy-brown);line-height:1.55;}
+  .rule b{font-style:normal;font-weight:400;color:var(--fy-dark);}
+</style></head>
+<body><div class="wrap">
+  <div class="col">
+    <div class="box" style="border-radius:0;">rounded-none</div>
+    <div class="colophon">0 px · default everywhere</div>
+  </div>
+  <div class="col">
+    <div class="box" style="border-radius:8px;">rounded-md</div>
+    <div class="colophon">8 px · attendance + payment buttons only</div>
+  </div>
+  <div class="col">
+    <div class="box" style="border-radius:12px;">rounded-lg</div>
+    <div class="colophon">12 px · reserved, rarely used</div>
+  </div>
+  <div class="rule"><b>Flat &gt; rounded.</b> Buttons, inputs, selects all sit at <em>rounded-none</em>. The 8 px exceptions exist so the few interactive checkboxes feel tappable without softening the rest of the surface.</div>
+</div></body></html>

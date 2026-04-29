@@ -1,29 +1,193 @@
 @import 'tailwindcss';
 
 @theme {
+  /* Palette */
   --color-teal: #1A5653;
   --color-sand: #E8DCC8;
   --color-cream: #F7F4EF;
   --color-brown: #6B5B4E;
   --color-gold: #C4A96A;
+  --color-dark: #2D2D2D;
   --color-border: #D4C9B8;
   --color-error: #B85C5C;
-  --color-dark: #2D2D2D;
   --color-teal-light: #E8F0EF;
+  --color-fg-muted: #9A8C7E;
+  --color-bg-teal-soft: rgba(26, 86, 83, 0.10);
+
+  /* Type families */
   --font-heading: Georgia, 'Times New Roman', serif;
   --font-body: var(--font-atkinson), Arial, Helvetica, sans-serif;
+
+  /* Type scale */
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 30px;
+  --text-4xl: 36px;
+  --text-pullquote: 40px;
+  --text-hero: 46px;
+
+  /* Radii — flat by default; 8px is the payment-button exception */
+  --radius-pay: 8px;
 }
 
-body {
+html, body {
   background-color: var(--color-sand);
   color: var(--color-brown);
   font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'kern' 1;
 }
 
 h1 {
-  color: var(--color-teal);
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 24px;
+  line-height: 1.2;
+  color: var(--color-dark);
+}
+h2 {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 1.2;
+  color: var(--color-dark);
+}
+h3 {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 18px;
+  line-height: 1.2;
+  color: var(--color-dark);
 }
 
 a, button {
   cursor: pointer;
+}
+
+a {
+  color: var(--color-brown);
+  text-decoration: underline;
+  text-decoration-thickness: 0.5px;
+  text-underline-offset: 3px;
+}
+a:hover {
+  opacity: 0.7;
+}
+
+/* ============================================================
+   fair.yoga utility classes — editorial moments + figure variants
+   ============================================================ */
+
+.fy-pullquote {
+  font-family: var(--font-heading);
+  font-weight: 400;
+  font-style: italic;
+  font-size: 40px;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: var(--color-dark);
+}
+
+.fy-eyebrow {
+  font-family: var(--font-heading);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--color-brown);
+  font-feature-settings: 'onum' 1, 'kern' 1;
+}
+
+.fy-lede {
+  font-family: var(--font-heading);
+  font-style: italic;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--color-brown);
+  font-feature-settings: 'onum' 1, 'kern' 1;
+}
+
+.fy-running-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--color-brown);
+  font-feature-settings: 'onum' 1, 'kern' 1;
+}
+.fy-running-header .wordmark {
+  font-family: var(--font-heading);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--color-teal);
+  letter-spacing: 0;
+}
+
+.fy-colophon {
+  text-align: right;
+  font-family: var(--font-heading);
+  font-style: italic;
+  font-size: 12px;
+  color: var(--color-brown);
+  opacity: 0.75;
+  font-feature-settings: 'onum' 1, 'kern' 1;
+}
+
+.fy-smallcaps {
+  font-variant-caps: small-caps;
+  font-feature-settings: 'smcp' 1;
+  letter-spacing: 0.08em;
+  font-size: 12px;
+  color: var(--color-brown);
+}
+
+.fy-oldstyle {
+  font-feature-settings: 'onum' 1, 'kern' 1;
+}
+.fy-tabular {
+  font-feature-settings: 'tnum' 1, 'lnum' 1, 'kern' 1;
+}
+
+.fy-money,
+a.fy-link-money {
+  color: var(--color-teal);
+  text-decoration: none;
+  font-weight: 600;
+  font-feature-settings: 'onum' 1, 'kern' 1;
+}
+
+.fy-price {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 18px;
+  color: var(--color-teal);
+  font-feature-settings: 'tnum' 1, 'lnum' 1, 'kern' 1;
+}
+
+.fy-price-hero {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 30px;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: var(--color-teal);
+  font-feature-settings: 'tnum' 1, 'lnum' 1, 'kern' 1;
+}
+
+.fy-divider {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.fy-wordmark-display {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 28px;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  color: var(--color-teal);
 }

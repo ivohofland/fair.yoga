@@ -10,18 +10,18 @@ export function Input({ label, error, id, className = '', ...props }: InputProps
   const inputId = id ?? generatedId;
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-2">
       {label && (
-        <label htmlFor={inputId} className="text-brown">
+        <label htmlFor={inputId} className="font-heading italic text-[13px] text-brown">
           {label}
         </label>
       )}
       <input
         id={inputId}
-        className={`bg-cream border border-teal rounded-none px-4 py-3 min-h-[44px] text-dark focus:outline-none focus:shadow-[inset_0_0_0_1px_var(--color-teal)] ${className}`.trim()}
+        className={`bg-cream border border-brown rounded-none px-4 py-3 min-h-[44px] text-dark text-base focus:outline-none focus:shadow-[inset_0_0_0_1px_var(--color-brown)] ${className}`.trim()}
         {...props}
       />
-      {error && <span className="text-sm text-error">{error}</span>}
+      {error && <span className="font-heading italic text-[12px] text-error">{error}</span>}
     </div>
   );
 }

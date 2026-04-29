@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>fair.yoga — Flows</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  :root {
+    --oldstyle: "onum" 1, "kern" 1;
+    --tabular: "tnum" 1, "lnum" 1, "kern" 1;
+  }
+  html, body {
+    margin: 0;
+    background: var(--fy-sand);
+    min-height: 100vh;
+    font-feature-settings: "kern" 1;
+    color: var(--fy-dark);
+  }
+
+  /* Stage — three phones across */
+  .stage {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding: 48px 32px 96px;
+  }
+  .stage h1.stage-title {
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-weight: 400;
+    font-size: 32px;
+    color: var(--fy-dark);
+    margin: 0 0 8px;
+    letter-spacing: -0.01em;
+  }
+  .stage p.stage-sub {
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 14px;
+    color: var(--fy-brown);
+    margin: 0 0 40px;
+    max-width: 720px;
+    line-height: 1.55;
+    font-feature-settings: var(--oldstyle);
+  }
+  .phones {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 48px;
+  }
+  @media (max-width: 1200px) {
+    .phones { grid-template-columns: 1fr; max-width: 520px; margin: 0 auto; }
+  }
+  .phone-wrap h2.phone-label {
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-weight: 400;
+    font-size: 14px;
+    color: var(--fy-brown);
+    margin: 0 0 12px 16px;
+    font-feature-settings: var(--oldstyle);
+  }
+  .phone {
+    background: var(--fy-sand);
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 32px 24px 48px;
+    min-height: 880px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Running header */
+  .fy-running-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 11px;
+    color: var(--fy-brown);
+    margin-bottom: 36px;
+    letter-spacing: 0.04em;
+    font-feature-settings: var(--oldstyle);
+  }
+  .fy-running-header .wordmark {
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 13px;
+    color: var(--fy-brown);
+    letter-spacing: 0;
+  }
+
+  /* Back link */
+  .back {
+    font-size: 13px;
+    color: var(--fy-brown);
+    text-decoration: underline;
+    text-decoration-thickness: 0.5px;
+    text-underline-offset: 3px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 18px;
+  }
+  .back svg { text-decoration: none; flex: 0 0 auto; }
+
+  /* Hero / heading block */
+  .hero {
+    padding-bottom: 24px;
+    margin-bottom: 28px;
+    border-bottom: 2px solid var(--fy-brown);
+  }
+  .eyebrow {
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 13px;
+    color: var(--fy-brown);
+    margin-bottom: 8px;
+    font-feature-settings: var(--oldstyle);
+  }
+  .pullquote {
+    font-family: var(--font-heading);
+    font-weight: 400;
+    font-style: italic;
+    font-size: 35px;
+    line-height: 1.1;
+    color: var(--fy-dark);
+    margin: 0 0 12px;
+    letter-spacing: -0.01em;
+  }
+  .lede {
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 14px;
+    color: var(--fy-brown);
+    line-height: 1.55;
+    font-feature-settings: var(--oldstyle);
+    max-width: 360px;
+  }
+
+  /* Form fields */
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+  .field label {
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 13px;
+    color: var(--fy-brown);
+    font-feature-settings: var(--oldstyle);
+  }
+  .field input,
+  .field select {
+    font-family: var(--font-body);
+    font-size: 16px;
+    padding: 12px 14px;
+    min-height: 44px;
+    background: var(--fy-cream);
+    border: 1px solid var(--fy-brown);
+    color: var(--fy-dark);
+    border-radius: 0;
+    box-sizing: border-box;
+    width: 100%;
+    outline: none;
+    font-feature-settings: var(--oldstyle);
+  }
+  .field select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236B5B4E' stroke-width='1.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    background-size: 16px 16px;
+    padding-right: 40px;
+  }
+  .field input:focus,
+  .field select:focus {
+    box-shadow: inset 0 0 0 1px var(--fy-brown);
+  }
+  .field .hint {
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--fy-brown);
+    margin-top: 2px;
+    font-feature-settings: var(--oldstyle);
+  }
+  .field-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+
+  /* Buttons */
+  .btn {
+    font-family: var(--font-body);
+    font-weight: 500;
+    font-size: 16px;
+    padding: 14px 24px;
+    min-height: 48px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-radius: 0;
+    box-sizing: border-box;
+  }
+  .btn-primary {
+    background: var(--fy-brown);
+    color: var(--fy-cream);
+    width: 100%;
+  }
+  .btn-secondary {
+    border: 1px solid var(--fy-brown);
+    color: var(--fy-brown);
+  }
+  .btn-ghost {
+    color: var(--fy-brown);
+    text-decoration: underline;
+    text-decoration-thickness: 0.5px;
+    text-underline-offset: 3px;
+    padding: 12px 8px;
+  }
+  .btn-pay {
+    border: 1px solid var(--fy-brown);
+    background: transparent;
+    color: var(--fy-brown);
+    border-radius: 8px;
+    padding: 8px 16px;
+    min-width: 44px;
+    min-height: 44px;
+    font-size: 14px;
+    font-weight: 500;
+    font-family: var(--font-body);
+  }
+  .btn-pay.paid {
+    background: var(--fy-brown);
+    color: var(--fy-cream);
+    border-color: var(--fy-brown);
+  }
+  .btn-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-top: 8px;
+  }
+
+  /* Section heading (smaller — within a screen, not page-level) */
+  .sub-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--fy-border);
+    margin: 24px 0 16px;
+  }
+  .sub-head h3 {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 16px;
+    color: var(--fy-dark);
+    margin: 0;
+  }
+  .sub-head .meta {
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--fy-brown);
+    font-feature-settings: var(--oldstyle), "tnum" 1;
+  }
+
+  /* Roster row */
+  .roster-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--fy-border);
+    gap: 12px;
+  }
+  .roster-row:last-of-type { border-bottom: none; }
+  .roster-row .who {
+    flex: 1;
+    min-width: 0;
+  }
+  .roster-row .name {
+    font-size: 15px;
+    color: var(--fy-dark);
+    font-weight: 500;
+  }
+  .roster-row .amt {
+    font-family: var(--font-heading);
+    font-weight: 600;
+    color: var(--fy-teal);
+    font-size: 14px;
+    font-feature-settings: var(--tabular);
+    margin-top: 2px;
+    display: block;
+  }
+  .roster-row.is-paid .name {
+    color: var(--fy-brown);
+  }
+  .roster-row.is-paid .amt {
+    opacity: 0.5;
+  }
+
+  /* Summary at bottom of payment */
+  .summary {
+    margin-top: 24px;
+    padding-top: 14px;
+    border-top: 2px solid var(--fy-brown);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 13px;
+    color: var(--fy-brown);
+    font-feature-settings: var(--oldstyle);
+  }
+  .summary b {
+    font-style: normal;
+    font-weight: 400;
+    color: var(--fy-dark);
+    font-feature-settings: var(--tabular);
+  }
+
+  /* Sign-in specific — empty state vibe */
+  .signin-card {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 40px 0;
+  }
+  .signin-card .pullquote {
+    font-size: 32px;
+    line-height: 1.15;
+    margin-bottom: 20px;
+  }
+  .signin-card .field { margin-top: 12px; }
+  .signin-fineprint {
+    margin-top: 24px;
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--fy-brown);
+    line-height: 1.55;
+    opacity: 0.85;
+    font-feature-settings: var(--oldstyle);
+  }
+  .wm-display {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-style: normal;
+    font-size: 28px;
+    color: var(--fy-teal);
+    letter-spacing: -0.01em;
+    margin-bottom: 56px;
+  }
+
+  /* Colophon */
+  .colophon {
+    margin-top: auto;
+    padding-top: 32px;
+    text-align: right;
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--fy-brown);
+    opacity: 0.7;
+    font-feature-settings: var(--oldstyle);
+  }
+
+  /* Floor / ceiling helper readout */
+  .range-readout {
+    margin-top: 4px;
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--fy-brown);
+    font-feature-settings: var(--oldstyle), "tnum" 1;
+  }
+
+  /* Avatar */
+  .ava {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--fy-cream);
+    border: 1px solid var(--fy-border);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--fy-brown);
+    flex: 0 0 auto;
+    font-feature-settings: var(--oldstyle);
+  }
+  .with-ava { display: flex; align-items: center; gap: 12px; }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <h1 class="stage-title">Three flows</h1>
+  <p class="stage-sub">Sign-in, new class, payment checklist — three screens that test the system in anger. Italic Georgia metadata throughout, brown ink for everything except money, the rounded buttons reserved for the payment exception.</p>
+
+  <div class="phones">
+
+    <!-- =====================================================
+         PHONE 1 — Sign-in
+         ===================================================== -->
+    <div class="phone-wrap">
+      <h2 class="phone-label">Sign in · passwordless</h2>
+      <div class="phone">
+
+        <div class="wm-display">fair.yoga</div>
+
+        <div class="signin-card">
+          <div class="eyebrow">No password to remember</div>
+          <h1 class="pullquote">Sign in with a link<br>sent to your inbox</h1>
+          <p class="lede">Enter the email you teach with — we'll send you a one-tap link. The link is valid for ten minutes.</p>
+
+          <div class="field" style="margin-top: 28px;">
+            <label>Email</label>
+            <input value="anika@laurel-yoga.nl" />
+          </div>
+
+          <div class="btn-row" style="flex-direction: column; align-items: stretch; gap: 10px;">
+            <button class="btn btn-primary">Send me the link</button>
+          </div>
+
+          <p class="signin-fineprint">By signing in you accept the four yamas — truthfulness, non-stealing, non-possessiveness, non-harm — as our shared way of working. No tracking, no ads, no upsells.</p>
+        </div>
+
+        <div class="colophon">Sign-in · empty-state hero · 32 px italic</div>
+      </div>
+    </div>
+
+    <!-- =====================================================
+         PHONE 2 — New class
+         ===================================================== -->
+    <div class="phone-wrap">
+      <h2 class="phone-label">New class · form</h2>
+      <div class="phone">
+
+        <div class="fy-running-header">
+          <span class="wordmark">fair.yoga</span>
+          <span>New class · draft</span>
+        </div>
+
+        <a class="back">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="back-icon"><path d="M19 12H5"/><path d="M11 6l-6 6 6 6"/></svg>
+          Schedule
+        </a>
+
+        <div class="hero">
+          <div class="eyebrow">A new offering</div>
+          <h1 class="pullquote">What are you teaching?</h1>
+        </div>
+
+        <div class="field">
+          <label>Class type</label>
+          <input value="Vinyasa" />
+        </div>
+
+        <div class="field-pair">
+          <div class="field">
+            <label>Day</label>
+            <select><option>Monday</option><option>Tuesday</option><option>Wednesday</option></select>
+          </div>
+          <div class="field">
+            <label>Start time</label>
+            <input value="09:00" />
+          </div>
+        </div>
+
+        <div class="field-pair">
+          <div class="field">
+            <label>Duration</label>
+            <select><option>60 min</option><option>75 min</option><option>90 min</option></select>
+          </div>
+          <div class="field">
+            <label>Capacity</label>
+            <input value="12" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Room</label>
+          <select><option>Studio A at Laurel St.</option><option>Loft at Northside</option></select>
+        </div>
+
+        <div class="sub-head">
+          <h3>Sliding scale</h3>
+          <span class="meta">€&nbsp;15 — €&nbsp;25 per student</span>
+        </div>
+
+        <div class="field-pair">
+          <div class="field">
+            <label>Floor</label>
+            <input value="€ 15.00" />
+            <span class="hint">below this, the class won't run</span>
+          </div>
+          <div class="field">
+            <label>Ceiling</label>
+            <input value="€ 25.00" />
+            <span class="hint">the most a student can choose</span>
+          </div>
+        </div>
+
+        <div class="btn-row" style="margin-top: 28px; justify-content: space-between;">
+          <button class="btn btn-ghost">Save as draft</button>
+          <button class="btn btn-primary" style="width: auto; padding: 14px 28px;">Publish class</button>
+        </div>
+
+        <div class="colophon">New class · cream fields · brown borders</div>
+      </div>
+    </div>
+
+    <!-- =====================================================
+         PHONE 3 — Payment checklist
+         ===================================================== -->
+    <div class="phone-wrap">
+      <h2 class="phone-label">Payment checklist · roster</h2>
+      <div class="phone">
+
+        <div class="fy-running-header">
+          <span class="wordmark">fair.yoga</span>
+          <span>Class of Mon, 22 April</span>
+        </div>
+
+        <a class="back">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="back-icon"><path d="M19 12H5"/><path d="M11 6l-6 6 6 6"/></svg>
+          Vinyasa, nine o'clock
+        </a>
+
+        <div class="hero">
+          <div class="eyebrow">7 students · 5 paid, 2 to go</div>
+          <h1 class="pullquote">Mark off who's settled</h1>
+        </div>
+
+        <div class="sub-head">
+          <h3>Awaiting</h3>
+          <span class="meta">€&nbsp;31.40 outstanding</span>
+        </div>
+
+        <div class="roster-row">
+          <div class="with-ava">
+            <span class="ava">BM</span>
+            <div class="who">
+              <div class="name">Ben M.</div>
+              <span class="amt">€&nbsp;17.50</span>
+            </div>
+          </div>
+          <button class="btn-pay">Mark paid</button>
+        </div>
+
+        <div class="roster-row">
+          <div class="with-ava">
+            <span class="ava">CV</span>
+            <div class="who">
+              <div class="name">Clara V.</div>
+              <span class="amt">€&nbsp;13.90</span>
+            </div>
+          </div>
+          <button class="btn-pay">Mark paid</button>
+        </div>
+
+        <div class="sub-head">
+          <h3>Settled</h3>
+          <span class="meta">€&nbsp;81.00 collected</span>
+        </div>
+
+        <div class="roster-row is-paid">
+          <div class="with-ava">
+            <span class="ava">AK</span>
+            <div class="who">
+              <div class="name">Anna K.</div>
+              <span class="amt">€&nbsp;14.00</span>
+            </div>
+          </div>
+          <button class="btn-pay paid">Paid</button>
+        </div>
+
+        <div class="roster-row is-paid">
+          <div class="with-ava">
+            <span class="ava">DW</span>
+            <div class="who">
+              <div class="name">Daan W.</div>
+              <span class="amt">€&nbsp;25.00</span>
+            </div>
+          </div>
+          <button class="btn-pay paid">Paid</button>
+        </div>
+
+        <div class="roster-row is-paid">
+          <div class="with-ava">
+            <span class="ava">EH</span>
+            <div class="who">
+              <div class="name">Elin H.</div>
+              <span class="amt">€&nbsp;15.00</span>
+            </div>
+          </div>
+          <button class="btn-pay paid">Paid</button>
+        </div>
+
+        <div class="roster-row is-paid">
+          <div class="with-ava">
+            <span class="ava">FT</span>
+            <div class="who">
+              <div class="name">Fenne T.</div>
+              <span class="amt">€&nbsp;12.00</span>
+            </div>
+          </div>
+          <button class="btn-pay paid">Paid</button>
+        </div>
+
+        <div class="roster-row is-paid">
+          <div class="with-ava">
+            <span class="ava">GS</span>
+            <div class="who">
+              <div class="name">Gus S.</div>
+              <span class="amt">€&nbsp;15.00</span>
+            </div>
+          </div>
+          <button class="btn-pay paid">Paid</button>
+        </div>
+
+        <div class="summary">
+          <span>Total collected so far</span>
+          <b>€&nbsp;81.00</b>
+        </div>
+
+        <div class="colophon">Payment checklist · rounded buttons · the only place 8 px lives</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>

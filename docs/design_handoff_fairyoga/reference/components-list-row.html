@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>List row</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  :root { --oldstyle: "onum" 1, "kern" 1; }
+  html,body{margin:0;background:var(--bg-page);font-family:var(--font-body);}
+  .wrap{padding:32px 24px;max-width:520px;}
+  .row{display:flex;justify-content:space-between;align-items:flex-start;padding:16px 0;border-bottom:1px solid var(--fy-border);font-size:14px;gap:16px;}
+  .left{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;}
+  .t{color:var(--fy-dark);font-size:15px;line-height:1.4;}
+  .t b{font-weight:600;}
+  .s{color:var(--fy-brown);font-size:12px;font-feature-settings:var(--oldstyle);}
+  .right{display:flex;flex-direction:column;align-items:flex-end;gap:4px;color:var(--fy-brown);font-feature-settings:var(--oldstyle);font-size:13px;flex-shrink:0;}
+  .state-line{display:inline-flex;align-items:baseline;gap:6px;font-family:var(--font-heading);font-style:italic;}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;transform:translateY(-1px);box-sizing:border-box;}
+  .dot.filled{background:var(--fy-brown);}
+  .dot.half{background:linear-gradient(to right,var(--fy-brown) 50%,transparent 50%);border:1px solid var(--fy-brown);}
+  .dot.ring{border:1.5px solid var(--fy-brown);background:transparent;}
+  .colophon{margin-top:14px;text-align:right;font-family:var(--font-heading);font-style:italic;font-size:12px;color:var(--fy-brown);opacity:0.75;}
+</style></head>
+<body><div class="wrap">
+  <div class="row"><div class="left"><span class="t"><b>09:00</b> · Vinyasa</span><span class="s">Studio A at Laurel St.</span></div><div class="right"><span>7&thinsp;/&thinsp;12</span><span class="state-line"><span class="dot half"></span>filling</span></div></div>
+  <div class="row"><div class="left"><span class="t"><b>12:00</b> · Hatha</span><span class="s">Loft at Northside</span></div><div class="right"><span>10&thinsp;/&thinsp;10</span><span class="state-line"><span class="dot filled"></span>full · 2 waiting</span></div></div>
+  <div class="row" style="border-bottom:none;"><div class="left"><span class="t"><b>18:30</b> · Yin</span><span class="s">Loft at Northside</span></div><div class="right"><span>3&thinsp;/&thinsp;8</span><span class="state-line"><span class="dot ring"></span>open</span></div></div>
+  <div class="colophon">List row · count + status stack right-aligned · italic state in earth brown</div>
+</div></body></html>

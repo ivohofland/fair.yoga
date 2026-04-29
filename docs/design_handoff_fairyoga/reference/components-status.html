@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>fair.yoga — Status system</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  :root {
+    --oldstyle: "onum" 1, "kern" 1;
+  }
+  html, body {
+    margin: 0;
+    background: var(--fy-sand);
+    min-height: 100vh;
+    color: var(--fy-dark);
+    font-feature-settings: "kern" 1;
+  }
+  .stage {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 56px 48px 96px;
+  }
+  /* Running header */
+  .running-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 11px;
+    color: var(--fy-brown);
+    margin-bottom: 40px;
+    font-feature-settings: var(--oldstyle);
+    letter-spacing: 0.04em;
+    border-bottom: 2px solid var(--fy-brown);
+    padding-bottom: 14px;
+  }
+  .running-header .wordmark {
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 13px;
+    color: var(--fy-brown);
+  }
+
+  h1.title {
+    font-family: var(--font-heading);
+    font-weight: 400;
+    font-style: italic;
+    font-size: 38px;
+    color: var(--fy-dark);
+    margin: 0 0 8px;
+    letter-spacing: -0.01em;
+  }
+  p.lede {
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 15px;
+    color: var(--fy-brown);
+    margin: 0 0 56px;
+    max-width: 560px;
+    line-height: 1.5;
+  }
+
+  /* Section heading */
+  .section { margin-bottom: 56px; }
+  .section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--fy-border);
+    margin-bottom: 24px;
+  }
+  .section-head h2 {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 22px;
+    color: var(--fy-dark);
+    margin: 0;
+  }
+  .section-head .kind {
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 13px;
+    color: var(--fy-brown);
+  }
+
+  /* Status reference table */
+  .status-table {
+    display: grid;
+    grid-template-columns: 140px 110px 1fr;
+    column-gap: 24px;
+    row-gap: 0;
+    font-size: 14px;
+    color: var(--fy-dark);
+  }
+  .status-table > div {
+    padding: 14px 0;
+    border-bottom: 1px solid var(--fy-border);
+    align-self: baseline;
+  }
+  .status-table .head {
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--fy-brown);
+    border-bottom: 1px solid var(--fy-border);
+    padding-bottom: 8px;
+    padding-top: 0;
+  }
+  .status-name {
+    font-family: var(--font-heading);
+    font-style: italic;
+    color: var(--fy-dark);
+    font-size: 15px;
+  }
+  .status-marker {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    color: var(--fy-brown);
+  }
+  .status-meaning {
+    color: var(--fy-brown);
+    font-size: 13px;
+    line-height: 1.5;
+    font-feature-settings: var(--oldstyle);
+  }
+
+  /* Dots — earth-brown only, vary by SHAPE */
+  .dot {
+    display: inline-block;
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    transform: translateY(-1px);
+  }
+  .dot.filled { background: var(--fy-brown); }
+  .dot.half {
+    background:
+      linear-gradient(to right, var(--fy-brown) 50%, transparent 50%);
+    border: 1px solid var(--fy-brown);
+    box-sizing: border-box;
+  }
+  .dot.ring {
+    border: 1.5px solid var(--fy-brown);
+    box-sizing: border-box;
+    background: transparent;
+  }
+  .dash {
+    display: inline-block;
+    width: 9px;
+    border-top: 1.5px solid var(--fy-brown);
+    transform: translateY(-4px);
+  }
+
+  /* In-context examples — list rows */
+  .examples {
+    display: grid;
+    gap: 0;
+  }
+  .ex-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--fy-border);
+    gap: 16px;
+  }
+  .ex-row:last-child { border-bottom: none; }
+  .ex-body { flex: 1; min-width: 0; }
+  .ex-title {
+    font-size: 15px;
+    color: var(--fy-dark);
+  }
+  .ex-title b { font-weight: 600; }
+  .ex-sub {
+    font-size: 12px;
+    color: var(--fy-brown);
+    margin-top: 2px;
+    font-feature-settings: var(--oldstyle);
+  }
+  .ex-meta {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--fy-brown);
+    font-feature-settings: var(--oldstyle);
+    flex-shrink: 0;
+  }
+  .ex-status {
+    font-family: var(--font-heading);
+    font-style: italic;
+    color: var(--fy-brown);
+    font-size: 13px;
+  }
+  .past .ex-title,
+  .past .ex-sub,
+  .past .ex-meta { opacity: 0.4; }
+  .cancelled .ex-title { text-decoration: line-through; text-decoration-color: var(--fy-brown); text-decoration-thickness: 0.5px; }
+
+  /* Hero examples — show the chip in a heading context */
+  .hero-ex {
+    padding: 20px 24px;
+    border-top: 1px solid var(--fy-border);
+    border-bottom: 1px solid var(--fy-border);
+    margin: 12px 0 0;
+  }
+  .hero-ex + .hero-ex { margin-top: -1px; }
+  .hero-ex .eyebrow {
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--fy-brown);
+    margin-bottom: 6px;
+  }
+  .hero-ex .title-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: baseline;
+    gap: 16px;
+  }
+  .hero-ex .title {
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 28px;
+    line-height: 1.1;
+    color: var(--fy-dark);
+    margin: 0;
+  }
+  .hero-ex .chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 14px;
+    color: var(--fy-brown);
+  }
+  .colophon {
+    margin-top: 16px;
+    text-align: right;
+    font-family: var(--font-heading);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--fy-brown);
+    opacity: 0.7;
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <div class="running-header">
+    <span class="wordmark">fair.yoga</span>
+    <span>Status system · proposal</span>
+  </div>
+
+  <h1 class="title">A class is in one of seven states</h1>
+  <p class="lede">Activity states describe how full the class is — marked with a small earth-brown shape. Meta states describe a different condition altogether (drafted, cancelled, past) and are written as italic words. No second color, no chromatic noise — teal stays reserved for money.</p>
+
+  <!-- ============================================ -->
+  <section class="section">
+    <div class="section-head">
+      <h2>Activity states</h2>
+      <span class="kind">Shape varies, color is constant</span>
+    </div>
+
+    <div class="status-table">
+      <div class="head">Name</div>
+      <div class="head">Marker</div>
+      <div class="head">When it applies</div>
+
+      <div class="status-name">open</div>
+      <div class="status-marker"><span class="dot ring"></span><i>open</i></div>
+      <div class="status-meaning">Accepting registrations, below the floor — needs at least one more student to break even.</div>
+
+      <div class="status-name">filling</div>
+      <div class="status-marker"><span class="dot half"></span><i>filling</i></div>
+      <div class="status-meaning">Between floor and ceiling — the teacher is paid; new registrations grow the bonus.</div>
+
+      <div class="status-name">full</div>
+      <div class="status-marker"><span class="dot filled"></span><i>full</i></div>
+      <div class="status-meaning">At capacity. New students go to the waitlist.</div>
+
+      <div class="status-name">waitlist</div>
+      <div class="status-marker"><span class="dot filled"></span><i>full · 2 waiting</i></div>
+      <div class="status-meaning">Same fill state as <i>full</i>, with the waitlist count appended in italic. Suffix is hidden when zero.</div>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <section class="section">
+    <div class="section-head">
+      <h2>Meta states</h2>
+      <span class="kind">Italic word, no marker</span>
+    </div>
+
+    <div class="status-table">
+      <div class="head">Name</div>
+      <div class="head">Marker</div>
+      <div class="head">When it applies</div>
+
+      <div class="status-name">draft</div>
+      <div class="status-marker"><i>draft</i></div>
+      <div class="status-meaning">Not yet published. Visible only to the teacher.</div>
+
+      <div class="status-name">cancelled</div>
+      <div class="status-marker"><i>cancelled</i></div>
+      <div class="status-meaning">Called off. Title gets a hairline strikethrough; row stays at full opacity so the cancellation is visible.</div>
+
+      <div class="status-name">past</div>
+      <div class="status-marker"><i>past</i></div>
+      <div class="status-meaning">Completed or archived. Whole row dims to 40 % — present but receded.</div>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <section class="section">
+    <div class="section-head">
+      <h2>In a list</h2>
+      <span class="kind">How states sit in the schedule</span>
+    </div>
+
+    <div class="examples">
+      <div class="ex-row">
+        <div class="ex-body">
+          <div class="ex-title"><b>Vinyasa</b> · 09:00</div>
+          <div class="ex-sub">Studio A at Laurel St.</div>
+        </div>
+        <div class="ex-meta">
+          7&thinsp;/&thinsp;12
+          <span class="dot half"></span>
+          <span class="ex-status">filling</span>
+        </div>
+      </div>
+      <div class="ex-row">
+        <div class="ex-body">
+          <div class="ex-title"><b>Hatha</b> · 12:00</div>
+          <div class="ex-sub">Loft at Northside</div>
+        </div>
+        <div class="ex-meta">
+          1&thinsp;/&thinsp;8
+          <span class="dot ring"></span>
+          <span class="ex-status">open</span>
+        </div>
+      </div>
+      <div class="ex-row">
+        <div class="ex-body">
+          <div class="ex-title"><b>Yin</b> · 18:30</div>
+          <div class="ex-sub">Loft at Northside</div>
+        </div>
+        <div class="ex-meta">
+          10&thinsp;/&thinsp;10
+          <span class="dot filled"></span>
+          <span class="ex-status">full · 2 waiting</span>
+        </div>
+      </div>
+      <div class="ex-row">
+        <div class="ex-body">
+          <div class="ex-title"><b>Pilates</b> · Wed 07:00</div>
+          <div class="ex-sub">Not yet published</div>
+        </div>
+        <div class="ex-meta">
+          <span class="ex-status">draft</span>
+        </div>
+      </div>
+      <div class="ex-row cancelled">
+        <div class="ex-body">
+          <div class="ex-title"><b>Hatha</b> · Thu 08:00</div>
+          <div class="ex-sub">Reason: teacher unavailable</div>
+        </div>
+        <div class="ex-meta">
+          <span class="ex-status">cancelled</span>
+        </div>
+      </div>
+      <div class="ex-row past">
+        <div class="ex-body">
+          <div class="ex-title"><b>Vinyasa</b> · Mon 09:00</div>
+          <div class="ex-sub">Last week</div>
+        </div>
+        <div class="ex-meta">
+          11&thinsp;/&thinsp;12
+          <span class="ex-status">past</span>
+        </div>
+      </div>
+    </div>
+    <div class="colophon">Six states, one color, three shapes</div>
+  </section>
+
+  <!-- ============================================ -->
+  <section class="section">
+    <div class="section-head">
+      <h2>In a heading</h2>
+      <span class="kind">Status next to the class title</span>
+    </div>
+
+    <div class="hero-ex">
+      <div class="eyebrow">Monday, 22 April</div>
+      <div class="title-row">
+        <h3 class="title">Vinyasa, nine o&rsquo;clock</h3>
+        <span class="chip"><span class="dot half"></span>filling</span>
+      </div>
+    </div>
+    <div class="hero-ex">
+      <div class="eyebrow">Monday, 18:30</div>
+      <div class="title-row">
+        <h3 class="title">Yin, six-thirty</h3>
+        <span class="chip"><span class="dot filled"></span>full · 2 waiting</span>
+      </div>
+    </div>
+    <div class="hero-ex">
+      <div class="eyebrow">Wednesday</div>
+      <div class="title-row">
+        <h3 class="title">Pilates, seven o&rsquo;clock</h3>
+        <span class="chip">draft</span>
+      </div>
+    </div>
+    <div class="hero-ex" style="opacity: 0.45;">
+      <div class="eyebrow">Last Tuesday</div>
+      <div class="title-row">
+        <h3 class="title">Vinyasa, nine o&rsquo;clock</h3>
+        <span class="chip">past</span>
+      </div>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>

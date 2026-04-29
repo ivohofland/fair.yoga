@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Heading type</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  :root { --oldstyle: "onum" 1, "kern" 1; }
+  html,body{margin:0;background:var(--bg-page);color:var(--fy-dark);}
+  .wrap{padding:32px 24px;display:grid;grid-template-columns:1fr 1fr;gap:32px;max-width:760px;}
+  .col h4{font-family:var(--font-heading);font-style:italic;font-weight:400;font-size:13px;color:var(--fy-brown);margin:0 0 18px;font-feature-settings:var(--oldstyle);border-bottom:1px solid var(--fy-border);padding-bottom:8px;}
+  .specimen{font-family:var(--font-heading);line-height:1.05;color:var(--fy-dark);}
+  .roman{font-weight:700;}
+  .italic{font-weight:400;font-style:italic;letter-spacing:-0.01em;}
+  .colophon{font-family:var(--font-heading);font-style:italic;font-size:12px;color:var(--fy-brown);opacity:0.75;margin-top:8px;font-feature-settings:var(--oldstyle);}
+  .s1{font-size:40px;} .s2{font-size:24px;} .s3{font-size:18px;}
+  .footnote{grid-column:1/-1;font-family:var(--font-heading);font-style:italic;font-size:13px;color:var(--fy-brown);line-height:1.55;border-top:1px solid var(--fy-border);padding-top:14px;margin-top:8px;font-feature-settings:var(--oldstyle);}
+</style></head>
+<body><div class="wrap">
+
+  <div class="col">
+    <h4>Roman — default</h4>
+    <div class="specimen roman s1">Pricing breakdown</div>
+    <div class="colophon">h1 · Georgia bold · 24–40 px · near black</div>
+    <div style="height:18px"></div>
+    <div class="specimen roman s2">This week</div>
+    <div class="colophon">h2 / section head · 20–24 px</div>
+    <div style="height:14px"></div>
+    <div class="specimen roman s3">Monday, 22 April</div>
+    <div class="colophon">h3 · 18 px</div>
+  </div>
+
+  <div class="col">
+    <h4>Italic — pull quote, one per screen</h4>
+    <div class="specimen italic s1">Vinyasa,<br>nine o'clock</div>
+    <div class="colophon">Hero / class title · Georgia italic 400 · 36–40 px · letter-spacing −0.01em</div>
+    <div style="height:18px"></div>
+    <div class="specimen italic" style="font-size:28px;">Sign in with a link<br>sent to your inbox</div>
+    <div class="colophon">Login / empty-state hero · 28–32 px</div>
+  </div>
+
+  <div class="footnote">Roman carries the structural work — section heads and stacked content. Italic is reserved for one editorial moment per screen: a class title, a flow opener, a sign-in. Never italicise a section header.</div>
+</div></body></html>

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Elevation</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  :root { --oldstyle: "onum" 1, "kern" 1; }
+  html,body{margin:0;background:var(--bg-page);font-family:var(--font-body);color:var(--fy-dark);}
+  .wrap{padding:32px 24px;display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap;max-width:760px;}
+  .col{display:flex;flex-direction:column;gap:8px;flex:1 1 200px;}
+  .box{padding:18px 22px;background:var(--fy-cream);border:1px solid var(--fy-border);font-family:var(--font-heading);font-style:italic;font-size:13px;color:var(--fy-dark);font-feature-settings:var(--oldstyle);}
+  .colophon{font-family:var(--font-heading);font-style:italic;font-size:12px;color:var(--fy-brown);opacity:0.75;max-width:280px;line-height:1.55;font-feature-settings:var(--oldstyle);}
+  .noshadow{box-shadow:none;}
+  .teal-tint{background:rgba(26,86,83,0.10);border:none;color:var(--fy-teal);}
+  .inset{box-shadow:inset 0 0 0 1px var(--fy-brown);border:none;}
+</style></head>
+<body><div class="wrap">
+  <div class="col">
+    <div class="box noshadow">No shadow</div>
+    <div class="colophon">Default. No drop shadow lives anywhere in the system — the page is paper, not glass.</div>
+  </div>
+  <div class="col">
+    <div class="box teal-tint">bg-teal / 10</div>
+    <div class="colophon">The earnings block — 10 % teal tint, no border. Used once per screen, paired with the hero amount.</div>
+  </div>
+  <div class="col">
+    <div class="box inset">focus · inset 1 px</div>
+    <div class="colophon">Inputs and buttons on focus — 1 px inset earth brown, no outline ring.</div>
+  </div>
+</div></body></html>

@@ -1,0 +1,182 @@
+/* ============================================================
+   fair.yoga — Design Tokens
+   Drop-in CSS custom properties for any framework.
+   For Next.js: import this from app/globals.css.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap');
+
+:root {
+  /* ---------- Palette (raw) ---------- */
+  --fy-teal:       #1A5653;
+  --fy-sand:       #E8DCC8;
+  --fy-cream:      #F7F4EF;
+  --fy-brown:      #6B5B4E;
+  --fy-gold:       #C4A96A;
+  --fy-dark:       #2D2D2D;
+  --fy-border:     #D4C9B8;
+  --fy-error:      #B85C5C;
+  --fy-teal-light: #E8F0EF;
+
+  /* ---------- Semantic ---------- */
+  --fg1:        var(--fy-dark);
+  --fg2:        var(--fy-brown);
+  --fg-accent:  var(--fy-teal);
+  --fg-muted:   #9A8C7E;
+  --fg-error:   var(--fy-error);
+  --fg-on-teal: var(--fy-cream);
+
+  --bg-page:      var(--fy-sand);
+  --bg-surface:   var(--fy-cream);
+  --bg-input:     var(--fy-cream);
+  --bg-tint:      var(--fy-teal-light);
+  --bg-teal-soft: rgba(26, 86, 83, 0.10);
+
+  --border-default: var(--fy-border);
+  --border-strong:  var(--fy-teal);
+
+  /* ---------- Type families ---------- */
+  --font-heading: Georgia, 'Times New Roman', serif;
+  --font-body:    'Atkinson Hyperlegible', Arial, Helvetica, sans-serif;
+  --font-mono:    ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* ---------- Type scale ---------- */
+  --text-xs:   12px;
+  --text-sm:   14px;
+  --text-base: 16px;
+  --text-lg:   18px;
+  --text-xl:   20px;
+  --text-2xl:  24px;
+  --text-3xl:  30px;
+  --text-4xl:  36px;
+
+  --lh-tight:  1.2;
+  --lh-normal: 1.5;
+  --lh-loose:  1.65;
+
+  /* ---------- Figure variants ---------- */
+  --feat-oldstyle: "onum" 1, "kern" 1;
+  --feat-tabular:  "tnum" 1, "lnum" 1, "kern" 1;
+
+  /* ---------- Spacing (4px grid) ---------- */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ---------- Radii ---------- */
+  --radius-none: 0;       /* default everywhere */
+  --radius-sm:   4px;
+  --radius-md:   8px;     /* attendance + payment buttons only */
+  --radius-lg:   12px;    /* reserved */
+
+  /* ---------- Touch target ---------- */
+  --tap: 44px;
+
+  /* ---------- Elevation ---------- */
+  --shadow-none: none;
+}
+
+/* ============================================================
+   Element defaults
+   ============================================================ */
+
+html, body {
+  background: var(--bg-page);
+  color: var(--fg2);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: var(--lh-loose);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "kern" 1;
+}
+
+h1 { font-family: var(--font-heading); font-weight: 700; font-size: var(--text-2xl); line-height: var(--lh-tight); color: var(--fg1); }
+h2 { font-family: var(--font-heading); font-weight: 700; font-size: var(--text-xl); line-height: var(--lh-tight); color: var(--fg1); }
+h3 { font-family: var(--font-heading); font-weight: 700; font-size: var(--text-lg); line-height: var(--lh-tight); color: var(--fg1); }
+
+p { font-family: var(--font-body); font-size: var(--text-base); line-height: var(--lh-loose); color: var(--fg2); }
+
+a {
+  color: var(--fg2);
+  text-decoration: underline;
+  text-decoration-thickness: 0.5px;
+  text-underline-offset: 3px;
+}
+a:hover { opacity: 0.7; }
+
+/* ============================================================
+   Utility classes
+   ============================================================ */
+
+.fy-pullquote {
+  font-family: var(--font-heading);
+  font-weight: 400;
+  font-style: italic;
+  font-size: 40px;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: var(--fg1);
+}
+.fy-running-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--fg2);
+  font-feature-settings: var(--feat-oldstyle);
+}
+.fy-running-header .wordmark {
+  font-family: var(--font-heading);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--fg-accent);
+}
+.fy-colophon {
+  text-align: right;
+  font-family: var(--font-heading);
+  font-style: italic;
+  font-size: 12px;
+  color: var(--fg2);
+  opacity: 0.75;
+  font-feature-settings: var(--feat-oldstyle);
+}
+.fy-smallcaps {
+  font-variant-caps: small-caps;
+  font-feature-settings: "smcp" 1;
+  letter-spacing: 0.08em;
+  font-size: 12px;
+  color: var(--fg2);
+}
+.fy-oldstyle { font-feature-settings: var(--feat-oldstyle); }
+.fy-tabular  { font-feature-settings: var(--feat-tabular); }
+
+.fy-money,
+a.fy-link-money {
+  color: var(--fg-accent);
+  text-decoration: none;
+  font-weight: 600;
+  font-feature-settings: var(--feat-oldstyle);
+}
+.fy-price {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--text-lg);
+  color: var(--fg-accent);
+  font-feature-settings: var(--feat-tabular);
+}
+.fy-price-hero {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: var(--text-3xl);
+  line-height: 1.1;
+  color: var(--fg-accent);
+  font-feature-settings: var(--feat-tabular);
+}
+.fy-divider { border-bottom: 1px solid var(--border-default); }

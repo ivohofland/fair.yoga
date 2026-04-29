@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Number type</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  :root { --oldstyle: "onum" 1, "kern" 1; --tabular: "tnum" 1, "lnum" 1, "kern" 1; }
+  html,body{margin:0;background:var(--bg-page);color:var(--fy-dark);}
+  .wrap{padding:32px 24px;font-family:var(--font-body);max-width:520px;}
+  .hero{font-family:var(--font-heading);font-weight:700;color:var(--fy-teal);font-size:46px;line-height:1;letter-spacing:-0.01em;font-feature-settings:var(--tabular);}
+  .hero .cents{font-size:22px;vertical-align:top;margin-left:2px;font-weight:400;}
+  .colophon{font-family:var(--font-heading);font-style:italic;font-size:12px;color:var(--fy-brown);opacity:0.75;margin-top:6px;font-feature-settings:var(--oldstyle);}
+  .row{display:flex;justify-content:space-between;align-items:baseline;padding:10px 0;border-bottom:1px solid var(--fy-border);max-width:380px;font-size:14px;color:var(--fy-brown);}
+  .row .v{color:var(--fy-dark);font-feature-settings:var(--tabular);font-weight:500;}
+  .row.money .v{color:var(--fy-teal);font-weight:600;}
+  .rule{margin-top:32px;border-top:1px solid var(--fy-border);padding-top:14px;font-family:var(--font-heading);font-style:italic;font-size:13px;color:var(--fy-brown);line-height:1.55;font-feature-settings:var(--oldstyle);max-width:480px;}
+  .rule b{font-weight:400;font-style:normal;color:var(--fy-dark);font-feature-settings:var(--oldstyle);}
+  .ex{display:flex;gap:24px;align-items:baseline;margin-top:14px;}
+  .ex span{font-family:var(--font-body);font-size:15px;color:var(--fy-dark);}
+  .ex .lining{font-feature-settings:var(--tabular);}
+  .ex .oldstyle{font-feature-settings:var(--oldstyle);}
+</style></head>
+<body><div class="wrap">
+  <div class="hero">€&nbsp;92<span class="cents">.40</span></div>
+  <div class="colophon">Hero price · Georgia bold 46 px · deep teal · tabular lining figures</div>
+
+  <div style="height:24px"></div>
+
+  <div class="row money"><span>Tier 3 (4 students)</span><span class="v">€&nbsp;14.00</span></div>
+  <div class="row money"><span>Total revenue</span><span class="v">€&nbsp;120.00</span></div>
+  <div class="row"><span>Registered</span><span class="v">7 / 12</span></div>
+  <div class="colophon">Inline · 14–18 px · two decimals · teal only when it's money</div>
+
+  <div class="rule">
+    <b>Lining vs. old-style.</b><br>
+    Money uses tabular lining figures so prices stack and align. Counts, dates, and running text use old-style figures, which sit comfortably inside body copy without shouting.
+    <div class="ex">
+      <span class="lining">€&nbsp;112.40</span>
+      <span class="oldstyle">7 students, Monday, 22 April</span>
+    </div>
+  </div>
+</div></body></html>

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Spacing scale</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  :root { --oldstyle: "onum" 1, "kern" 1; }
+  html,body{margin:0;background:var(--bg-page);font-family:var(--font-body);color:var(--fy-dark);}
+  .wrap{padding:32px 24px;max-width:560px;}
+  .row{display:grid;grid-template-columns:80px 60px 1fr;align-items:center;gap:14px;padding:10px 0;border-bottom:1px solid var(--fy-border);}
+  .row:last-child{border-bottom:none;}
+  .name{font-family:var(--font-heading);font-style:italic;font-size:13px;color:var(--fy-dark);font-feature-settings:var(--oldstyle);}
+  .px{font-size:13px;color:var(--fy-brown);font-feature-settings:var(--oldstyle),"tnum" 1;}
+  .bar-wrap{display:flex;align-items:center;gap:10px;}
+  .bar{background:var(--fy-brown);height:10px;flex:none;}
+  .use{font-size:13px;color:var(--fy-brown);font-feature-settings:var(--oldstyle);}
+  .colophon{margin-top:14px;text-align:right;font-family:var(--font-heading);font-style:italic;font-size:12px;color:var(--fy-brown);opacity:0.75;}
+</style></head>
+<body><div class="wrap">
+  <div class="row"><div class="name">space-1</div><div class="px">4 px</div><div class="bar-wrap"><div class="bar" style="width:4px"></div><div class="use">tight inset</div></div></div>
+  <div class="row"><div class="name">space-2</div><div class="px">8 px</div><div class="bar-wrap"><div class="bar" style="width:8px"></div><div class="use">small gap between siblings</div></div></div>
+  <div class="row"><div class="name">space-3</div><div class="px">12 px</div><div class="bar-wrap"><div class="bar" style="width:12px"></div><div class="use">inline gap, chip padding</div></div></div>
+  <div class="row"><div class="name">space-4</div><div class="px">16 px</div><div class="bar-wrap"><div class="bar" style="width:16px"></div><div class="use">screen side margin (mobile)</div></div></div>
+  <div class="row"><div class="name">space-6</div><div class="px">24 px</div><div class="bar-wrap"><div class="bar" style="width:24px"></div><div class="use">section spacing</div></div></div>
+  <div class="row"><div class="name">space-8</div><div class="px">32 px</div><div class="bar-wrap"><div class="bar" style="width:32px"></div><div class="use">between major sections</div></div></div>
+  <div class="colophon">Multiples of 4 · earth-brown bars · no in-between values</div>
+</div></body></html>
