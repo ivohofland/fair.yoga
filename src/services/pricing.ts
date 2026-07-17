@@ -131,11 +131,28 @@ export function calculateClassPricing(
   // 4. Sum of all tier ratios
   const sumOfTierRatios = studentTierRatios.reduce((sum, r) => sum + r, 0);
 
-  // 5. Base unit and per-student prices
+  // 5. Base unit and per-student prices.
+  // Largest-remainder allocation: naive per-student rounding lets the sum
+  // of prices drift a few cents from totalCost, so the teacher's books
+  // never reconcile with the sum of payments. Instead, floor every price
+  // to whole cents and hand the leftover cents to the students whose
+  // exact shares lost the most in flooring (ties broken by queue order).
   const baseUnit = totalCost / sumOfTierRatios;
-  const studentPrices = studentTierRatios.map(
-    (ratio) => Math.round(baseUnit * ratio * 100) / 100,
-  );
+  const exactCents = studentTierRatios.map((ratio) => baseUnit * ratio * 100);
+  const flooredCents = exactCents.map((c) => Math.floor(c + 1e-9));
+  const totalCents = Math.round(totalCost * 100);
+  let leftover = totalCents - flooredCents.reduce((sum, c) => sum + c, 0);
+
+  const byRemainder = exactCents
+    .map((c, i) => ({ i, remainder: c - flooredCents[i]! }))
+    .sort((a, b) => b.remainder - a.remainder || a.i - b.i);
+  for (const { i } of byRemainder) {
+    if (leftover <= 0) break;
+    flooredCents[i]!++;
+    leftover--;
+  }
+
+  const studentPrices = flooredCents.map((c) => c / 100);
 
   return {
     effectiveTeacherRate,

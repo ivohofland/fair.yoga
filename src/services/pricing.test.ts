@@ -140,21 +140,44 @@ describe('calculateClassPricing', () => {
     // total = room_cost + effective_teacher_rate = 35 + 21.25 = 56.25
     expect(result.totalCost).toBeCloseTo(56.25, 2);
 
-    // base = 56.25 / 9.20 ≈ 6.114
-    // Per-tier prices: T1=3.97, T2=4.89, T3=6.11, T4=7.34, T5=8.25
-    expect(result.studentPrices[0]).toBeCloseTo(3.97, 2); // T1
-    expect(result.studentPrices[1]).toBeCloseTo(3.97, 2); // T1
+    // base = 56.25 / 9.20 ≈ 6.114; exact shares floor to whole cents and
+    // the 4 leftover cents go to the largest remainders (T4 pair, T1 pair).
+    expect(result.studentPrices[0]).toBeCloseTo(3.98, 2); // T1 (+1c remainder)
+    expect(result.studentPrices[1]).toBeCloseTo(3.98, 2); // T1 (+1c remainder)
     expect(result.studentPrices[2]).toBeCloseTo(4.89, 2); // T2
     expect(result.studentPrices[3]).toBeCloseTo(6.11, 2); // T3
     expect(result.studentPrices[4]).toBeCloseTo(6.11, 2); // T3
-    expect(result.studentPrices[5]).toBeCloseTo(7.34, 2); // T4
-    expect(result.studentPrices[6]).toBeCloseTo(7.34, 2); // T4
+    expect(result.studentPrices[5]).toBeCloseTo(7.34, 2); // T4 (+1c remainder)
+    expect(result.studentPrices[6]).toBeCloseTo(7.34, 2); // T4 (+1c remainder)
     expect(result.studentPrices[7]).toBeCloseTo(8.25, 2); // T5
     expect(result.studentPrices[8]).toBeCloseTo(8.25, 2); // T5
 
-    // Sum of prices should approximate totalCost
-    const sum = result.studentPrices.reduce((a, b) => a + b, 0);
-    expect(Math.abs(sum - result.totalCost)).toBeLessThan(0.1);
+    // Prices must sum EXACTLY to totalCost — the teacher's books reconcile.
+    const sumCents = result.studentPrices.reduce((a, b) => a + Math.round(b * 100), 0);
+    expect(sumCents).toBe(Math.round(result.totalCost * 100));
+  });
+
+  it('prices always sum exactly to total cost (no penny drift)', () => {
+    const scenarios: number[][] = [
+      [1, 1, 2, 3, 3, 4, 4, 5, 5],
+      [1, 5],
+      [2, 2, 3],
+      [1, 1, 1, 1, 1, 1, 1],
+      [5, 5, 5, 4, 3, 2, 1, 1, 2, 3, 4, 5],
+      [3],
+    ];
+    for (const studentTiers of scenarios) {
+      const result = calculateClassPricing({
+        roomCost: 35,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 4,
+        maxStudents: 12,
+        studentTiers,
+      });
+      const sumCents = result.studentPrices.reduce((a, b) => a + Math.round(b * 100), 0);
+      expect(sumCents).toBe(Math.round(result.totalCost * 100));
+    }
   });
 
   it('handles single student', () => {
