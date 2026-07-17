@@ -31,6 +31,7 @@ jobs:
       PASSKEY_RP_NAME: fair.yoga
       CRON_SECRET: ci-cron-secret
       RESEND_API_KEY: re_test
+      EMAIL_DRY_RUN: '1'
       EMAIL_FROM: noreply@test.local
       NEXT_PUBLIC_APP_URL: http://localhost:3000
 

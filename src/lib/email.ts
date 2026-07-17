@@ -8,15 +8,25 @@ function emailConfigured(): boolean {
   );
 }
 
+/**
+ * Dry-run mode logs emails instead of sending them. Active when explicitly
+ * requested (EMAIL_DRY_RUN=1 — CI runs the production build without a real
+ * Resend key) or when no key is configured.
+ */
+export function emailDryRun(): boolean {
+  return process.env.EMAIL_DRY_RUN === '1' || !emailConfigured();
+}
+
 export async function sendMagicLinkEmail(
   to: string,
   magicLink: string
 ): Promise<void> {
-  if (!emailConfigured()) {
-    // In production a missing key must fail loudly: logging the raw sign-in
-    // link to stdout while telling the user "check your inbox" leaks auth
-    // tokens into logs and silently breaks login.
-    if (process.env.NODE_ENV === 'production') {
+  if (emailDryRun()) {
+    // In production an *unintentional* missing key must fail loudly:
+    // logging the raw sign-in link to stdout while telling the user
+    // "check your inbox" leaks auth tokens into logs and silently breaks
+    // login. Explicit EMAIL_DRY_RUN=1 is the sanctioned exception.
+    if (process.env.NODE_ENV === 'production' && process.env.EMAIL_DRY_RUN !== '1') {
       throw new Error('RESEND_API_KEY is not configured — cannot send magic-link email');
     }
     console.log(`\n[DEV] Magic link for ${to}: ${magicLink}\n`);
