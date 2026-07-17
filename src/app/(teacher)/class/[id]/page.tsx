@@ -14,6 +14,9 @@ import { CompleteClassButton } from '@/components/class/complete-class-button';
 import type { AttendanceItem } from '@/components/class/attendance-list';
 import type { PaymentItem } from '@/components/class/payment-checklist';
 import { classStartInstant } from '@/lib/timezone';
+import { CancelClassButton } from '@/components/class/cancel-class-button';
+import { ShareBookingLink } from '@/components/class/share-booking-link';
+import { AddWalkIn } from '@/components/class/add-walk-in';
 
 export default async function ClassDetailPage({
   params,
@@ -28,7 +31,7 @@ export default async function ClassDetailPage({
   const cls = await prisma.class.findUnique({
     where: { id },
     include: {
-      teacher: { select: { defaultTimezone: true } },
+      teacher: { select: { defaultTimezone: true, pageSlug: true } },
       teacherRoom: { include: { room: true } },
       registrations: {
         include: {
@@ -107,10 +110,16 @@ export default async function ClassDetailPage({
         waitlistCount={cls._count.waitlistEntries}
       />
 
-      {/* Check-in mode: attendance checklist + pricing estimate */}
+      {/* Check-in mode: attendance checklist + walk-ins + pricing estimate */}
       {showCheckin && (
         <>
           <AttendanceList items={attendanceItems} />
+          <div className="py-2">
+            <AddWalkIn
+              classId={cls.id}
+              registeredStudentIds={activeRegistrations.map((r) => r.studentId)}
+            />
+          </div>
           <PricingPreview cls={cls} />
         </>
       )}
@@ -155,6 +164,14 @@ export default async function ClassDetailPage({
       {cls.status === 'cancelled' && (
         <div className="py-8 text-center type-body">
           This class was cancelled.
+        </div>
+      )}
+
+      {/* Actions: share while bookable, cancel while upcoming */}
+      {(cls.status === 'draft' || cls.status === 'open') && (
+        <div className="mt-8 pt-6 border-t border-border flex flex-col items-start gap-5">
+          {cls.status === 'open' && <ShareBookingLink pageSlug={cls.teacher.pageSlug} />}
+          <CancelClassButton classId={cls.id} registrationCount={activeRegistrations.length} />
         </div>
       )}
     </>
