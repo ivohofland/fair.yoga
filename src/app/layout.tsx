@@ -21,7 +21,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`h-full antialiased ${atkinson.variable}`}>
       <body className="min-h-full flex flex-col">
-        <div className="mx-auto w-full max-w-lg px-4 pt-6 pb-24 flex-1 flex flex-col">
+        <div className="mx-auto w-full max-w-lg px-6 pt-8 pb-12 flex-1 flex flex-col">
           {children}
         </div>
       </body>

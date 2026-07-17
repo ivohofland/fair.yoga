@@ -26,7 +26,7 @@ function truncate(text: string, maxLength: number): string {
 
 export function InboxSection({ notifications }: InboxSectionProps) {
   if (notifications.length === 0) {
-    return <p className="text-brown text-sm">No notifications.</p>;
+    return <p className="fy-lede">No notifications.</p>;
   }
 
   return (
@@ -34,25 +34,25 @@ export function InboxSection({ notifications }: InboxSectionProps) {
       {notifications.map((notification) => (
         <div
           key={notification.id}
-          className="flex items-start justify-between py-3 border-b border-border"
+          className="flex items-start justify-between gap-4 py-4 border-b border-border last:border-b-0"
         >
-          <div className="flex flex-col gap-1 min-w-0">
+          <div className="flex-1 min-w-0 flex flex-col gap-0.5">
             <span
-              className={`text-sm ${notification.isRead ? 'text-dark' : 'text-dark font-medium'}`}
+              className={`text-[15px] text-dark leading-[1.4] ${notification.isRead ? '' : 'font-semibold'}`}
             >
               {notification.title}
             </span>
-            <span className="text-brown text-xs">
+            <span className="text-[12px] text-brown fy-oldstyle">
               {truncate(notification.body, 60)}
             </span>
           </div>
-          <div className="flex items-center gap-2 shrink-0 ml-2 pt-0.5">
-            <span className="text-brown text-xs">
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-[13px] text-brown fy-oldstyle">
               {timeAgo(notification.createdAt)}
             </span>
             {!notification.isRead && (
               <span
-                className="inline-block w-2 h-2 rounded-full bg-teal"
+                className="inline-block w-2 h-2 rounded-full bg-brown"
                 role="img"
                 aria-label="Unread"
               />

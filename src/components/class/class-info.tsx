@@ -1,5 +1,5 @@
 import type { Class, ClassStatus, TeacherRoom, Room } from '@prisma/client';
-import { StatusDot, type Status } from '@/components/ui/status-dot';
+import { StatusDot, deriveDotShape, type DotShape } from '@/components/ui/status-dot';
 import { formatRoomLocation } from '@/lib/format';
 
 type ClassWithRoom = Class & {
@@ -20,11 +20,19 @@ const STATUS_LABELS: Record<ClassStatus, string> = {
   cancelled: 'Cancelled',
 };
 
-function deriveDisplayStatus(status: ClassStatus, registrationCount: number, maxStudents: number): { dotStatus: Status; label: string } {
-  if (status === 'open' && registrationCount >= maxStudents) {
-    return { dotStatus: 'open_full', label: 'Full' };
+function deriveDisplayStatus(
+  status: ClassStatus,
+  registrationCount: number,
+  minStudents: number,
+  maxStudents: number,
+): { dotShape: DotShape | null; label: string } {
+  if (status === 'open') {
+    return {
+      dotShape: deriveDotShape(registrationCount, minStudents, maxStudents),
+      label: registrationCount >= maxStudents ? 'Full' : STATUS_LABELS.open,
+    };
   }
-  return { dotStatus: status, label: STATUS_LABELS[status] };
+  return { dotShape: null, label: STATUS_LABELS[status] };
 }
 
 function formatClassDate(date: Date): string {
@@ -42,7 +50,7 @@ function formatClassDate(date: Date): string {
 }
 
 export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoProps) {
-  const { dotStatus, label } = deriveDisplayStatus(cls.status, registrationCount, cls.maxStudents);
+  const { dotShape, label } = deriveDisplayStatus(cls.status, registrationCount, cls.minStudents, cls.maxStudents);
 
   return (
     <div className="mb-6">
@@ -80,7 +88,7 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
       <div className="py-3 border-b border-border">
         <span className="text-sm text-brown">Status</span>
         <div className="flex items-center gap-2">
-          <StatusDot status={dotStatus} label={label} />
+          {dotShape && <StatusDot shape={dotShape} label={label} />}
           <p className="text-dark">{label}</p>
         </div>
       </div>

@@ -34,50 +34,52 @@
   --radius-pay: 8px;
 }
 
-html, body {
-  background-color: var(--color-sand);
-  color: var(--color-brown);
-  font-family: var(--font-body);
-  font-size: 16px;
-  line-height: 1.65;
-  -webkit-font-smoothing: antialiased;
-  font-feature-settings: 'kern' 1;
-}
+@layer base {
+  html, body {
+    background-color: var(--color-sand);
+    color: var(--color-brown);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: 'kern' 1;
+  }
 
-h1 {
-  font-family: var(--font-heading);
-  font-weight: 700;
-  font-size: 24px;
-  line-height: 1.2;
-  color: var(--color-dark);
-}
-h2 {
-  font-family: var(--font-heading);
-  font-weight: 700;
-  font-size: 20px;
-  line-height: 1.2;
-  color: var(--color-dark);
-}
-h3 {
-  font-family: var(--font-heading);
-  font-weight: 700;
-  font-size: 18px;
-  line-height: 1.2;
-  color: var(--color-dark);
-}
+  h1 {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 24px;
+    line-height: 1.2;
+    color: var(--color-dark);
+  }
+  h2 {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 20px;
+    line-height: 1.2;
+    color: var(--color-dark);
+  }
+  h3 {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 18px;
+    line-height: 1.2;
+    color: var(--color-dark);
+  }
 
-a, button {
-  cursor: pointer;
-}
+  a, button {
+    cursor: pointer;
+  }
 
-a {
-  color: var(--color-brown);
-  text-decoration: underline;
-  text-decoration-thickness: 0.5px;
-  text-underline-offset: 3px;
-}
-a:hover {
-  opacity: 0.7;
+  a {
+    color: var(--color-brown);
+    text-decoration: underline;
+    text-decoration-thickness: 0.5px;
+    text-underline-offset: 3px;
+  }
+  a:hover {
+    opacity: 0.7;
+  }
 }
 
 /* ============================================================
@@ -124,7 +126,7 @@ a:hover {
   font-family: var(--font-heading);
   font-style: italic;
   font-size: 13px;
-  color: var(--color-teal);
+  color: var(--color-brown);
   letter-spacing: 0;
 }
 
@@ -151,6 +153,9 @@ a:hover {
 }
 .fy-tabular {
   font-feature-settings: 'tnum' 1, 'lnum' 1, 'kern' 1;
+}
+.fy-oldstyle-tabular {
+  font-feature-settings: 'onum' 1, 'tnum' 1, 'kern' 1;
 }
 
 .fy-money,

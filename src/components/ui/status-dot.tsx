@@ -1,39 +1,40 @@
-export type Status =
-  | 'open'
-  | 'open_full'
-  | 'in_progress'
-  | 'completed'
-  | 'cancelled'
-  | 'draft'
-  | 'below_min'
-  | 'paid'
-  | 'unpaid'
-  | 'overdue';
+export type DotShape = 'ring' | 'half' | 'filled';
 
 interface StatusDotProps {
-  status: Status;
+  shape: DotShape;
   label?: string;
 }
 
-const colorMap: Record<Status, string> = {
-  open: 'bg-teal',
-  open_full: 'bg-gold',
-  completed: 'bg-teal',
-  paid: 'bg-teal',
-  in_progress: 'bg-teal',
-  draft: 'bg-brown',
-  unpaid: 'bg-brown',
-  cancelled: 'bg-error',
-  below_min: 'bg-error',
-  overdue: 'bg-error',
-};
+export function StatusDot({ shape, label }: StatusDotProps) {
+  const base = 'inline-block w-[9px] h-[9px] rounded-full';
+  const shapeClass =
+    shape === 'ring'
+      ? 'border-[1.5px] border-brown bg-transparent'
+      : shape === 'half'
+        ? 'border border-brown'
+        : 'bg-brown';
 
-export function StatusDot({ status, label }: StatusDotProps) {
+  const halfFillStyle =
+    shape === 'half'
+      ? { background: 'linear-gradient(to right, var(--color-brown) 50%, transparent 50%)' }
+      : {};
+
   return (
     <span
-      className={`inline-block w-2 h-2 rounded-full ${colorMap[status]}`}
+      className={`${base} ${shapeClass}`}
+      style={{ transform: 'translateY(-1px)', ...halfFillStyle }}
       aria-label={label}
       role={label ? 'img' : undefined}
     />
   );
+}
+
+export function deriveDotShape(
+  registrations: number,
+  minStudents: number,
+  maxStudents: number,
+): DotShape {
+  if (registrations >= maxStudents) return 'filled';
+  if (registrations >= minStudents) return 'half';
+  return 'ring';
 }

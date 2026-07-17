@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { ClassList } from '@/components/schedule/class-list';
 import { InboxSection } from '@/components/layout/inbox-section';
+import { RunningHeader } from '@/components/layout/running-header';
 import { formatStudentName } from '@/lib/format';
 
 function getWeekBounds(): { start: Date; end: Date } {
@@ -15,6 +16,15 @@ function getWeekBounds(): { start: Date; end: Date } {
   const end = new Date(start);
   end.setUTCDate(start.getUTCDate() + 7);
   return { start, end };
+}
+
+function formatTodayLabel(date: Date): string {
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
+  return `${days[date.getUTCDay()]}, ${date.getUTCDate()} ${months[date.getUTCMonth()]}`;
 }
 
 export default async function TeacherHome() {
@@ -79,92 +89,130 @@ export default async function TeacherHome() {
   ]);
 
   const unreadCount = unreadNotifications.length;
+  const weekClassCount = classes.length + studioClasses.length;
 
   return (
-    <div className="flex flex-col gap-8">
-      {/* This week */}
-      <section>
-        <div className="flex items-center justify-between border-b border-border pb-4 mb-4">
-          <h2 className="font-heading text-xl font-bold text-teal">
-            This week
-          </h2>
-          <Link href="/class/new" className="text-teal text-sm">+ Add class</Link>
-        </div>
-        <ClassList classes={classes} studioClasses={studioClasses} showAddLink={false} dimPast />
-        <Link href="/schedule" className="text-teal text-sm mt-4 inline-block">
-          See full schedule &rarr;
-        </Link>
-      </section>
+    <div>
+      <RunningHeader pageLabel={formatTodayLabel(now)} />
 
-      {/* Students */}
-      <section>
-        <div className="flex items-center justify-between border-b border-border pb-4 mb-4">
-          <h2 className="font-heading text-xl font-bold text-teal">
-            Recent students
-          </h2>
-          <Link href="/students/new" className="text-teal text-sm">+ Add student</Link>
-        </div>
-        {recentRegistrations.length > 0 ? (
-          <div>
-            {recentRegistrations.map((reg) => (
-              <Link
-                key={reg.id}
-                href={`/students/${reg.student.id}`}
-                className="flex items-center py-2 border-b border-border"
-              >
-                <span className="text-dark text-sm">
-                  {formatStudentName(
-                    reg.student.firstName,
-                    reg.student.lastName,
-                    !reg.student.claimedAt || (reg.student.studentPrivacy[0]?.shareFullName ?? false),
-                  )}
-                </span>
-              </Link>
-            ))}
+      <div className="flex flex-col gap-12">
+        {/* Schedule */}
+        <section>
+          <SubHead title="Schedule" action={{ label: 'Add class', href: '/class/new' }} />
+          <ClassList classes={classes} studioClasses={studioClasses} showAddLink={false} dimPast />
+          {weekClassCount > 0 && (
+            <Colophon href="/schedule">
+              {weekClassCount} {weekClassCount === 1 ? 'class' : 'classes'} this week &middot; see full schedule
+            </Colophon>
+          )}
+        </section>
+
+        {/* Students */}
+        <section>
+          <SubHead title="Students" action={{ label: 'Add student', href: '/students/new' }} />
+          {recentRegistrations.length > 0 ? (
+            <div>
+              {recentRegistrations.map((reg, i) => (
+                <Link
+                  key={reg.id}
+                  href={`/students/${reg.student.id}`}
+                  className={`flex items-center py-4 border-b border-border no-underline${i === recentRegistrations.length - 1 ? ' border-b-0' : ''}`}
+                >
+                  <span className="text-[15px] text-dark font-semibold">
+                    {formatStudentName(
+                      reg.student.firstName,
+                      reg.student.lastName,
+                      !reg.student.claimedAt || (reg.student.studentPrivacy[0]?.shareFullName ?? false),
+                    )}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <p className="fy-lede">No recent students.</p>
+          )}
+          {recentRegistrations.length > 0 && (
+            <Colophon href="/students">View all students</Colophon>
+          )}
+        </section>
+
+        {/* Inbox */}
+        <section>
+          <SubHead title="Inbox" action={{ label: 'View all', href: '/inbox' }} />
+          {unreadCount > 0 ? (
+            <>
+              <InboxSection notifications={unreadNotifications} />
+              <Colophon>
+                {unreadCount} unread
+              </Colophon>
+            </>
+          ) : (
+            <p className="fy-lede">No unread messages.</p>
+          )}
+        </section>
+
+        {/* Settings */}
+        <section>
+          <SubHead title="Settings" />
+          <div className="flex flex-col">
+            <Link href="/settings/recurring" className="py-3 border-b border-border text-[15px] text-dark no-underline">
+              Recurring classes
+            </Link>
+            <Link href="/settings/studio-classes" className="py-3 border-b border-border text-[15px] text-dark no-underline">
+              Studio classes
+            </Link>
+            <Link href="/settings/rooms" className="py-3 border-b border-border text-[15px] text-dark no-underline">
+              Rooms
+            </Link>
+            <Link href="/settings/profile" className="py-3 text-[15px] text-dark no-underline">
+              Profile
+            </Link>
           </div>
-        ) : (
-          <p className="text-brown text-sm">No recent students.</p>
-        )}
-        <Link href="/students" className="text-teal text-sm mt-4 inline-block">
-          View all &rarr;
-        </Link>
-      </section>
-
-      {/* Inbox */}
-      <section>
-        <h2 className="font-heading text-xl font-bold text-teal border-b border-border pb-4 mb-4">
-          Inbox{unreadCount > 0 && ` (${unreadCount})`}
-        </h2>
-        {unreadCount > 0 ? (
-          <InboxSection notifications={unreadNotifications} />
-        ) : (
-          <p className="text-brown text-sm">No unread messages.</p>
-        )}
-        <Link href="/inbox" className="text-teal text-sm mt-4 inline-block">
-          View all &rarr;
-        </Link>
-      </section>
-
-      {/* Settings */}
-      <section>
-        <h2 className="font-heading text-xl font-bold text-teal border-b border-border pb-4 mb-4">
-          Settings
-        </h2>
-        <div className="flex flex-col gap-3">
-          <Link href="/settings/recurring" className="text-teal text-sm">
-            Recurring classes &rarr;
-          </Link>
-          <Link href="/settings/studio-classes" className="text-teal text-sm">
-            Studio classes &rarr;
-          </Link>
-          <Link href="/settings/rooms" className="text-teal text-sm">
-            Rooms &rarr;
-          </Link>
-          <Link href="/settings/profile" className="text-teal text-sm">
-            Profile &rarr;
-          </Link>
-        </div>
-      </section>
+        </section>
+      </div>
     </div>
   );
+}
+
+interface SubHeadProps {
+  title: string;
+  action?: { label: string; href: string };
+  meta?: string;
+}
+
+function SubHead({ title, action, meta }: SubHeadProps) {
+  return (
+    <div
+      className="flex items-baseline justify-between pb-[14px] mb-5"
+      style={{ borderBottom: '1px solid var(--color-brown)' }}
+    >
+      <h2 className="font-heading font-bold text-[22px] text-dark leading-[1.1]">{title}</h2>
+      {action && (
+        <Link
+          href={action.href}
+          className="text-[13px] text-brown"
+        >
+          {action.label}
+        </Link>
+      )}
+      {meta && (
+        <span className="text-[13px] text-brown fy-oldstyle">
+          {meta}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function Colophon({ children, href }: { children: React.ReactNode; href?: string }) {
+  const className =
+    'block text-right mt-[14px] font-heading italic text-[12px] text-brown opacity-75 fy-oldstyle';
+  if (href) {
+    return (
+      <Link href={href} className={`${className} no-underline`}>
+        {children}
+      </Link>
+    );
+  }
+  return <p className={className}>{children}</p>;
 }
