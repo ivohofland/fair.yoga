@@ -28,24 +28,27 @@ export async function markPaymentPaid(
   paymentId: string,
   method: string,
 ): Promise<PaymentResult> {
-  const payment = await db.payment.findUnique({ where: { id: paymentId } });
-  if (!payment) return { ok: false, error: `Payment not found: ${paymentId}` };
-
-  if (payment.status !== 'pending' && payment.status !== 'overdue') {
-    return {
-      ok: false,
-      error: `Cannot mark payment as paid: current status is "${payment.status}". Must be "pending" or "overdue".`,
-    };
-  }
-
-  const updated = await db.payment.update({
-    where: { id: paymentId },
+  // Conditional update: the status guard lives in the WHERE clause so a
+  // double submission cannot both pass a pre-check and clobber method/paidAt.
+  const result = await db.payment.updateMany({
+    where: { id: paymentId, status: { in: ['pending', 'overdue'] } },
     data: {
       status: 'paid',
       method,
       paidAt: new Date(),
     },
   });
+
+  if (result.count === 0) {
+    const payment = await db.payment.findUnique({ where: { id: paymentId } });
+    if (!payment) return { ok: false, error: `Payment not found: ${paymentId}` };
+    return {
+      ok: false,
+      error: `Cannot mark payment as paid: current status is "${payment.status}". Must be "pending" or "overdue".`,
+    };
+  }
+
+  const updated = await db.payment.findUniqueOrThrow({ where: { id: paymentId } });
   return { ok: true, payment: updated };
 }
 

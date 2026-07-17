@@ -291,6 +291,7 @@ model Class {
   announcements   Announcement[]
 
   @@index([teacherId, date])
+  @@unique([templateId, date])
 }
 
 model StudioClassTemplate {
@@ -328,6 +329,8 @@ model StudioClass {
 
   teacher  Teacher              @relation(fields: [teacherId], references: [id], onDelete: Cascade)
   template StudioClassTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@unique([templateId, date])
 }
 
 // ============================================================================

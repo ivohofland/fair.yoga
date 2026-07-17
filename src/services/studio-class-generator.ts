@@ -4,6 +4,7 @@
  * Same rolling 4-week pattern as class-generator.ts. Idempotent.
  */
 
+import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import { getNextOccurrences } from './class-generator';
 
@@ -34,7 +35,10 @@ export async function generateStudioClassInstances(
 
       if (existing) continue;
 
-      await db.studioClass.create({
+      // @@unique([templateId, date]) makes concurrent runs collide on
+      // P2002 instead of creating duplicate instances.
+      try {
+        await db.studioClass.create({
         data: {
           teacherId: template.teacherId,
           templateId: template.id,
@@ -45,7 +49,13 @@ export async function generateStudioClassInstances(
           location: template.location,
           hourlyRate: template.hourlyRate,
         },
-      });
+        });
+      } catch (err) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          continue; // a concurrent run created this instance first
+        }
+        throw err;
+      }
 
       totalCreated++;
     }

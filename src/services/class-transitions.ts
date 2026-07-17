@@ -95,33 +95,36 @@ export async function autoCancelClasses(
       const activeCount = cls.registrations.length;
 
       if (activeCount < cls.minStudents) {
-        const result = await transitionClass(db, cls.id, 'cancelled');
-        if (result.ok) {
-          cancelled++;
+        // Cancel + notify atomically: a cancelled class nobody was told
+        // about is worse than one that stays open one more sweep.
+        const didCancel = await db.$transaction(async (tx) => {
+          const updated = await tx.class.updateMany({
+            where: { id: cls.id, status: 'open' },
+            data: { status: 'cancelled' },
+          });
+          if (updated.count === 0) return false;
 
-          // Notify registered students
-          if (cls.registrations.length > 0) {
-            const notifications: CreateNotificationInput[] = cls.registrations.map((r) => ({
-              recipientType: 'student' as const,
-              recipientId: r.studentId,
-              type: 'class_cancelled' as const,
-              title: 'Class cancelled',
-              body: `${cls.classType} class has been cancelled due to insufficient registrations.`,
-              relatedClassId: cls.id,
-            }));
-            await createBulkNotifications(db, notifications);
-          }
-
-          // Notify teacher
-          await createBulkNotifications(db, [{
+          const notifications: CreateNotificationInput[] = cls.registrations.map((r) => ({
+            recipientType: 'student' as const,
+            recipientId: r.studentId,
+            type: 'class_cancelled' as const,
+            title: 'Class cancelled',
+            body: `${cls.classType} class has been cancelled due to insufficient registrations.`,
+            relatedClassId: cls.id,
+          }));
+          notifications.push({
             recipientType: 'teacher',
             recipientId: cls.teacherId,
             type: 'class_cancelled',
             title: 'Class auto-cancelled',
             body: `${cls.classType} was cancelled — only ${activeCount} of ${cls.minStudents} minimum students registered.`,
             relatedClassId: cls.id,
-          }]);
-        }
+          });
+          await createBulkNotifications(tx, notifications);
+          return true;
+        });
+
+        if (didCancel) cancelled++;
       }
     }
   }

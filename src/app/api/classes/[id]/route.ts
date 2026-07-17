@@ -56,27 +56,35 @@ export async function PUT(
   if ('error' in parsed) return parsed.error;
   const body = parsed.data;
 
-  // If settings are locked, reject economic fields with an error
-  if (cls.settingsLocked) {
-    const sentEconomicFields = ECONOMIC_FIELDS.filter(
-      (f) => body[f] !== undefined,
+  const sentEconomicFields = ECONOMIC_FIELDS.filter(
+    (f) => body[f] !== undefined,
+  );
+
+  // Friendly early rejection when we already know the lock is set
+  if (cls.settingsLocked && sentEconomicFields.length > 0) {
+    return respondError(
+      `Cannot update economic fields when settings are locked: ${sentEconomicFields.join(', ')}`,
+      409,
     );
-    if (sentEconomicFields.length > 0) {
-      return respondError(
-        `Cannot update economic fields when settings are locked: ${sentEconomicFields.join(', ')}`,
-        409,
-      );
-    }
   }
 
   if (Object.keys(body).length === 0) {
     return respondError('No valid fields to update', 400);
   }
 
-  const updated = await prisma.class.update({
-    where: { id },
+  // Enforce the lock in the update itself: a first registration landing
+  // between our read and this write must still block economic edits.
+  const result = await prisma.class.updateMany({
+    where: sentEconomicFields.length > 0 ? { id, settingsLocked: false } : { id },
     data: body,
   });
+  if (result.count === 0) {
+    return respondError(
+      `Cannot update economic fields when settings are locked: ${sentEconomicFields.join(', ')}`,
+      409,
+    );
+  }
 
+  const updated = await prisma.class.findUniqueOrThrow({ where: { id } });
   return respondOk(updated);
 }

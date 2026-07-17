@@ -5,6 +5,7 @@
  * for the same date range will not create duplicate classes.
  */
 
+import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 
 // ---------------------------------------------------------------------------
@@ -101,8 +102,11 @@ export async function generateClassInstances(
         continue;
       }
 
-      // 4. Create the class instance
-      await db.class.create({
+      // 4. Create the class instance. The @@unique([templateId, date])
+      // constraint is the real idempotency guard — overlapping cron runs
+      // both passing the findFirst check race into a P2002, not a duplicate.
+      try {
+        await db.class.create({
         data: {
           teacherId: template.teacherId,
           teacherRoomId: template.teacherRoomId,
@@ -121,7 +125,13 @@ export async function generateClassInstances(
           autoCancelCheck: template.autoCancelCheck,
           status: 'open',
         },
-      });
+        });
+      } catch (err) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          continue; // a concurrent run created this instance first
+        }
+        throw err;
+      }
 
       totalCreated++;
     }

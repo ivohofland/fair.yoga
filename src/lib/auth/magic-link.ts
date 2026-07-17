@@ -43,14 +43,16 @@ export async function verifyMagicLinkToken(
     return null;
   }
 
-  if (record.expiresAt <= new Date()) {
-    // Expired — clean it up and return null
-    await db.magicLinkToken.delete({ where: { id: record.id } });
+  // Atomic single-use: exactly one concurrent verification wins the delete;
+  // any other sees count 0 and fails. (find-then-delete was a race.)
+  const deleted = await db.magicLinkToken.deleteMany({ where: { id: record.id } });
+  if (deleted.count === 0) {
     return null;
   }
 
-  // One-time use: delete before returning
-  await db.magicLinkToken.delete({ where: { id: record.id } });
+  if (record.expiresAt <= new Date()) {
+    return null;
+  }
 
   return { email: record.email };
 }
