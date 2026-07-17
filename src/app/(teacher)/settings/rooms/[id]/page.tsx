@@ -71,30 +71,30 @@ export default async function EditRoomPage({
           <div className="flex flex-col gap-2">
             <div>
               <span className="text-sm text-brown">Venue</span>
-              <p className="text-dark">{room.venueName}</p>
+              <p className="text-ink">{room.venueName}</p>
             </div>
             <div>
               <span className="text-sm text-brown">Address</span>
-              <p className="text-dark">{room.address}, {room.city} {room.postcode}</p>
+              <p className="text-ink">{room.address}, {room.city} {room.postcode}</p>
             </div>
             <div>
               <span className="text-sm text-brown">Floor</span>
-              <p className="text-dark">{room.floor}</p>
+              <p className="text-ink">{room.floor}</p>
             </div>
             <div>
               <span className="text-sm text-brown">Max capacity</span>
-              <p className="text-dark">{room.maxCapacity}</p>
+              <p className="text-ink">{room.maxCapacity}</p>
             </div>
             {equipmentDisplay.length > 0 && (
               <div>
                 <span className="text-sm text-brown">Available props</span>
-                <p className="text-dark">{equipmentDisplay.join(', ')}</p>
+                <p className="text-ink">{equipmentDisplay.join(', ')}</p>
               </div>
             )}
             {room.notes && (
               <div>
                 <span className="text-sm text-brown">Notes</span>
-                <p className="text-dark">{room.notes}</p>
+                <p className="text-ink">{room.notes}</p>
               </div>
             )}
           </div>
