@@ -1,0 +1,48 @@
+# Nginx site config for fair.yoga on a single VPS.
+# Copy to /etc/nginx/sites-available/fairyoga, symlink into sites-enabled,
+# obtain certificates with: certbot --nginx -d yourdomain.example
+# (certbot rewrites the ssl_certificate lines for you).
+
+server {
+    listen 80;
+    server_name yourdomain.example;
+    # Certbot uses this for the HTTP-01 challenge; everything else → HTTPS.
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://$host$request_uri; }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name yourdomain.example;
+
+    # Managed by certbot:
+    # ssl_certificate     /etc/letsencrypt/live/yourdomain.example/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/yourdomain.example/privkey.pem;
+
+    # Security headers (the app itself sets none — nginx is the boundary)
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # The app's rate limiter keys on X-Forwarded-For — always set it.
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Server-sent events: no buffering, long timeouts.
+    location /api/notifications/stream {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 24h;
+    }
+}
