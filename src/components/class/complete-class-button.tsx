@@ -30,7 +30,7 @@ export function CompleteClassButton({ classId }: CompleteClassButtonProps) {
       type="button"
       onClick={handleComplete}
       disabled={submitting}
-      className="border border-teal text-teal rounded-none px-4 py-2 text-sm font-medium min-h-[44px]"
+      className="h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] border-teal text-teal hover:bg-teal-tint disabled:opacity-50"
     >
       {submitting ? 'Completing...' : 'Complete class'}
     </button>

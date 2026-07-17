@@ -174,8 +174,8 @@ export function PricingPreviewTable({
       {/* Slider */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-medium text-dark">Explore class size</span>
-          <span className="text-sm text-brown">{studentCount} students</span>
+          <span className="type-label text-ink">Explore class size</span>
+          <span className="type-caption tabular-nums">{studentCount} students</span>
         </div>
         <input
           type="range"
@@ -185,49 +185,49 @@ export function PricingPreviewTable({
           onChange={(e) => handleSliderChange(Number(e.target.value))}
           className="w-full accent-teal"
         />
-        <div className="flex justify-between text-xs text-brown mt-1">
+        <div className="flex justify-between type-caption mt-1">
           <span>{effectiveMin} min</span>
           <span>{effectiveMax} max</span>
         </div>
       </div>
 
       {/* You earn card */}
-      <div className="bg-teal/10 p-4">
+      <div className="bg-teal-tint rounded-card p-5">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <p className="text-xs text-brown">You earn</p>
-            <p className="text-xs text-brown">total for this class</p>
+            <p className="type-label">You earn</p>
+            <p className="type-caption">total for this class</p>
           </div>
-          <p className="text-2xl font-bold text-teal">{formatEuro(teacherRate)}</p>
+          <p className="type-number text-[28px] leading-[1.25]">{formatEuro(teacherRate)}</p>
         </div>
         <div className="flex gap-6">
           <div>
-            <p className="text-xs text-brown">Room cost</p>
-            <p className="text-sm font-medium text-dark">{formatEuro(roomCost)}</p>
+            <p className="type-caption">Room cost</p>
+            <p className="text-sm font-medium text-ink tabular-nums">{formatEuro(roomCost)}</p>
           </div>
           <div>
-            <p className="text-xs text-brown">Total class cost</p>
-            <p className="text-sm font-medium text-dark">{formatEuro(totalCost)}</p>
+            <p className="type-caption">Total class cost</p>
+            <p className="text-sm font-medium text-ink tabular-nums">{formatEuro(totalCost)}</p>
           </div>
           <div>
-            <p className="text-xs text-brown">Rate progress</p>
-            <p className="text-sm font-medium text-dark">{rateProgress}%</p>
+            <p className="type-caption">Rate progress</p>
+            <p className="text-sm font-medium text-ink tabular-nums">{rateProgress}%</p>
           </div>
         </div>
       </div>
 
       {/* What students pay */}
       <div>
-        <p className="text-sm font-medium text-dark mb-3">What students pay</p>
+        <p className="type-label text-ink mb-3">What students pay</p>
 
         {/* Mode toggle */}
         <div className="flex items-center gap-2 mb-4">
           <button
             type="button"
             onClick={() => handleModeChange('normal')}
-            className={`px-3 py-2 text-sm border ${
+            className={`h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] ${
               mode === 'normal'
-                ? 'border-teal text-teal'
+                ? 'border-teal text-teal bg-teal-tint'
                 : 'border-border text-brown'
             }`}
           >
@@ -236,9 +236,9 @@ export function PricingPreviewTable({
           <button
             type="button"
             onClick={() => handleModeChange('shuffle')}
-            className={`px-3 py-2 text-sm border ${
+            className={`h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] ${
               mode === 'shuffle'
-                ? 'border-teal text-teal'
+                ? 'border-teal text-teal bg-teal-tint'
                 : 'border-border text-brown'
             }`}
           >
@@ -246,9 +246,9 @@ export function PricingPreviewTable({
           </button>
         </div>
 
-        {/* Tier table */}
+        {/* Tier table — teal caption headers, tabular prices on the decimal */}
         <div className="flex flex-col">
-          <div className="flex items-center justify-between py-2 border-b border-border text-xs text-brown">
+          <div className="flex items-center justify-between py-2 border-b border-border text-[12px] font-medium text-teal">
             <span className="flex-1">TIER</span>
             <span className="w-20 text-right">STUDENTS</span>
             <span className="w-20 text-right">PRICE</span>
@@ -259,19 +259,13 @@ export function PricingPreviewTable({
             return (
               <div
                 key={label}
-                className={`flex items-center justify-between py-3 border-b border-border ${
+                className={`flex items-center justify-between min-h-12 py-2 border-b border-border last:border-b-0 ${
                   isActive ? '' : 'opacity-40'
                 }`}
               >
-                <span className="flex-1 flex items-center gap-2 text-sm text-dark">
-                  <span
-                    className="w-2 h-2 rounded-full"
-                    style={{ backgroundColor: isActive ? '#1A5653' : '#D4C9B8' }}
-                  />
-                  {label}
-                </span>
-                <span className="w-20 text-right text-sm text-brown">{count}</span>
-                <span className="w-20 text-right text-sm font-medium text-teal">
+                <span className="flex-1 text-base text-ink">{label}</span>
+                <span className="w-20 text-right text-sm text-brown tabular-nums">{count}</span>
+                <span className="w-20 text-right type-number text-sm">
                   {formatEuro(prices[i]!)}
                 </span>
               </div>
@@ -279,10 +273,10 @@ export function PricingPreviewTable({
           })}
         </div>
 
-        {/* Spread badge */}
+        {/* Spread line — show the math */}
         {spread && (
           <div className="mt-4 text-center">
-            <span className="text-sm text-brown">
+            <span className="type-caption">
               Highest pays {spread}&times; the lowest
             </span>
           </div>

@@ -1,5 +1,6 @@
-import type { Class, ClassStatus, TeacherRoom, Room } from '@prisma/client';
-import { StatusDot, deriveDotShape, type DotShape } from '@/components/ui/status-dot';
+import type { Class, TeacherRoom, Room } from '@prisma/client';
+import { StatusBadge, deriveBadgeVariant } from '@/components/ui/status-badge';
+import { RegistrationProgress } from '@/components/ui/registration-progress';
 import { formatRoomLocation } from '@/lib/format';
 
 type ClassWithRoom = Class & {
@@ -10,29 +11,6 @@ interface ClassInfoProps {
   cls: ClassWithRoom;
   registrationCount: number;
   waitlistCount: number;
-}
-
-const STATUS_LABELS: Record<ClassStatus, string> = {
-  draft: 'Draft',
-  open: 'Open for registration',
-  in_progress: 'In progress',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-};
-
-function deriveDisplayStatus(
-  status: ClassStatus,
-  registrationCount: number,
-  minStudents: number,
-  maxStudents: number,
-): { dotShape: DotShape | null; label: string } {
-  if (status === 'open') {
-    return {
-      dotShape: deriveDotShape(registrationCount, minStudents, maxStudents),
-      label: registrationCount >= maxStudents ? 'Full' : STATUS_LABELS.open,
-    };
-  }
-  return { dotShape: null, label: STATUS_LABELS[status] };
 }
 
 function formatClassDate(date: Date): string {
@@ -49,49 +27,35 @@ function formatClassDate(date: Date): string {
   return `${dayName ?? ''}, ${monthName ?? ''} ${dayNum}, ${year}`;
 }
 
+// Class header block: when/where, count, status badge, and the
+// registration progress bar while registrations still matter.
 export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoProps) {
-  const { dotShape, label } = deriveDisplayStatus(cls.status, registrationCount, cls.minStudents, cls.maxStudents);
+  const variant = deriveBadgeVariant(cls.status, registrationCount, cls.minStudents, cls.maxStudents);
+  const showProgress = cls.status === 'open' || cls.status === 'in_progress';
 
   return (
     <div className="mb-6">
-      <div className="py-3 border-b border-border">
-        <span className="text-sm text-brown">Date</span>
-        <p className="text-dark">{formatClassDate(cls.date)}</p>
+      <div className="mb-2">
+        <StatusBadge variant={variant} />
       </div>
-
-      <div className="py-3 border-b border-border">
-        <span className="text-sm text-brown">Time</span>
-        <p className="text-dark">{cls.startTime} &middot; {cls.durationMinutes} min</p>
-      </div>
-
-      <div className="py-3 border-b border-border">
-        <span className="text-sm text-brown">Room</span>
-        <p className="text-dark">
-          {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
-        </p>
-      </div>
-
-      <div className="py-3 border-b border-border">
-        <span className="text-sm text-brown">Registration</span>
-        <div className="flex items-center gap-2">
-          <p className="text-dark">
-            {registrationCount} / {cls.maxStudents}
-          </p>
-        </div>
-        {waitlistCount > 0 && (
-          <p className="text-brown text-xs mt-1">
-            {waitlistCount} on waitlist
-          </p>
-        )}
-      </div>
-
-      <div className="py-3 border-b border-border">
-        <span className="text-sm text-brown">Status</span>
-        <div className="flex items-center gap-2">
-          {dotShape && <StatusDot shape={dotShape} label={label} />}
-          <p className="text-dark">{label}</p>
-        </div>
-      </div>
+      <p className="type-body text-ink">
+        {formatClassDate(cls.date)} &middot; {cls.startTime} &middot; {cls.durationMinutes} min
+      </p>
+      <p className="type-body">
+        {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
+      </p>
+      <p className="type-caption mt-1">
+        {registrationCount} registered &middot; needs {cls.minStudents} to go ahead
+        {waitlistCount > 0 && <> &middot; {waitlistCount} on waitlist</>}
+      </p>
+      {showProgress && (
+        <RegistrationProgress
+          registered={registrationCount}
+          min={cls.minStudents}
+          max={cls.maxStudents}
+          className="mt-5"
+        />
+      )}
     </div>
   );
 }

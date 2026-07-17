@@ -53,22 +53,18 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
   if (items.length === 0) {
     return (
       <div className="py-6">
-        <h2 className="font-heading text-lg font-bold text-dark mb-3">
-          Payments
-        </h2>
-        <p className="text-brown text-sm">No payments to track.</p>
+        <h2 className="type-subtitle mb-3">Payments</h2>
+        <p className="type-body">No payments to track.</p>
       </div>
     );
   }
 
   return (
     <div className="py-6">
-      <h2 className="font-heading text-lg font-bold text-dark mb-3">
-        Payments
-      </h2>
+      <h2 className="type-subtitle mb-3">Payments</h2>
 
       {error && (
-        <p role="alert" className="text-error text-sm mb-3">
+        <p role="alert" className="text-danger text-sm mb-3">
           {error}
         </p>
       )}
@@ -82,33 +78,40 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
           return (
             <div
               key={item.paymentId}
-              className="flex items-center justify-between py-3 border-b border-border"
+              className="flex items-center justify-between gap-3 min-h-14 py-2 border-b border-border last:border-b-0"
             >
-              <div className="flex flex-col">
-                <Link href={`/students/${item.studentId}`} className="text-dark text-sm">{item.studentName}</Link>
-                <span className="text-teal text-sm font-semibold">
-                  &euro;{item.amount.toFixed(2)}
+              <div className="flex flex-col min-w-0">
+                <Link href={`/students/${item.studentId}`} className="text-base text-ink no-underline">
+                  {item.studentName}
+                </Link>
+                {/* Payment state is text, never a badge — unpaid stays calm brown */}
+                <span className={`type-caption ${isPaid ? 'text-teal' : ''}`}>
+                  {isPaid ? '✓ Paid' : '○ Unpaid'}
                 </span>
               </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  if (!isPaid) markPaid(item.paymentId);
-                }}
-                disabled={isPaid || isUpdating}
-                className={`
-                  min-w-[44px] min-h-[44px] rounded-lg px-4 py-2 text-sm font-medium
-                  ${isPaid
-                    ? 'bg-teal text-cream'
-                    : 'border-2 border-border text-brown'}
-                  ${isUpdating ? 'opacity-50' : ''}
-                  ${!isPaid && !isUpdating ? 'active:bg-sand' : ''}
-                `}
-                aria-label={`Mark ${item.studentName} payment as ${isPaid ? 'paid' : 'unpaid'}`}
-              >
-                {isPaid ? 'Paid' : 'Mark paid'}
-              </button>
+              <div className="flex items-center gap-3 shrink-0">
+                <span className={`type-number ${isPaid ? '' : 'text-brown'}`}>
+                  &euro;{item.amount.toFixed(2)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isPaid) markPaid(item.paymentId);
+                  }}
+                  disabled={isPaid || isUpdating}
+                  className={`
+                    h-9 px-4 rounded-pill text-[13px] font-medium
+                    ${isPaid
+                      ? 'border-[1.5px] border-transparent bg-teal text-cream'
+                      : 'border-[1.5px] border-teal text-teal hover:bg-teal-tint'}
+                    ${isUpdating ? 'opacity-50' : ''}
+                  `}
+                  aria-label={`Mark ${item.studentName} payment as ${isPaid ? 'paid' : 'unpaid'}`}
+                >
+                  {isPaid ? 'Paid' : 'Mark paid'}
+                </button>
+              </div>
             </div>
           );
         })}

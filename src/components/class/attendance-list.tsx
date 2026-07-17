@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Icon } from '@/components/ui/icon';
 
 export interface AttendanceItem {
   registrationId: string;
@@ -52,22 +53,18 @@ export function AttendanceList({ items }: AttendanceListProps) {
   if (items.length === 0) {
     return (
       <div className="py-6">
-        <h2 className="font-heading text-lg font-bold text-dark mb-3">
-          Attendance
-        </h2>
-        <p className="text-brown text-sm">No registered students.</p>
+        <h2 className="type-subtitle mb-3">Attendance</h2>
+        <p className="type-body">No registered students.</p>
       </div>
     );
   }
 
   return (
     <div className="py-6">
-      <h2 className="font-heading text-lg font-bold text-dark mb-3">
-        Attendance
-      </h2>
+      <h2 className="type-subtitle mb-3">Attendance</h2>
 
       {error && (
-        <p role="alert" className="text-error text-sm mb-3">
+        <p role="alert" className="text-danger text-sm mb-3">
           {error}
         </p>
       )}
@@ -81,12 +78,13 @@ export function AttendanceList({ items }: AttendanceListProps) {
           return (
             <div
               key={item.registrationId}
-              className="flex items-center justify-between py-3 border-b border-border"
+              className="flex items-center justify-between gap-4 min-h-16 py-2 border-b border-border last:border-b-0"
             >
-              <span className="text-dark text-sm">{item.studentName}</span>
+              {/* Large names + big checkboxes: one-handed use at the venue */}
+              <span className="text-[17px] text-ink">{item.studentName}</span>
 
               <div className="flex items-center gap-3">
-                <span className="text-xs text-brown">
+                <span className="type-caption">
                   {isAttended ? 'Present' : 'No-show'}
                 </span>
                 <button
@@ -94,31 +92,15 @@ export function AttendanceList({ items }: AttendanceListProps) {
                   onClick={() => toggleAttendance(item.registrationId)}
                   disabled={isUpdating}
                   className={`
-                    w-[44px] h-[44px] rounded-lg border-2 flex items-center justify-center
+                    w-11 h-11 rounded-field border-[1.5px] flex items-center justify-center
                     ${isAttended
                       ? 'bg-teal border-teal text-cream'
-                      : 'bg-transparent border-border text-transparent'}
+                      : 'bg-sand-soft border-border text-transparent'}
                     ${isUpdating ? 'opacity-50' : ''}
                   `}
                   aria-label={`Mark ${item.studentName} as ${isAttended ? 'no-show' : 'present'}`}
                 >
-                  {isAttended && (
-                    <svg
-                      width="20"
-                      height="20"
-                      viewBox="0 0 20 20"
-                      fill="none"
-                      xmlns="http://www.w3.org/2000/svg"
-                    >
-                      <path
-                        d="M4 10L8 14L16 6"
-                        stroke="currentColor"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  )}
+                  {isAttended && <Icon name="check" size={22} />}
                 </button>
               </div>
             </div>

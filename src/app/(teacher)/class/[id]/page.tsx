@@ -117,13 +117,15 @@ export default async function ClassDetailPage({
       {/* Open (not yet check-in): registered students + pricing preview */}
       {cls.status === 'open' && !showCheckin && activeRegistrations.length > 0 && (
         <div className="py-6">
-          <h2 className="font-heading text-lg font-bold text-dark mb-3">
-            Registered students
-          </h2>
+          <h2 className="type-subtitle mb-1">Registered students</h2>
           <div>
             {activeRegistrations.map((r) => (
-              <Link key={r.id} href={`/students/${r.studentId}`} className="block py-2 border-b border-border">
-                <span className="text-dark text-sm">{getStudentDisplayName(r.student)}</span>
+              <Link
+                key={r.id}
+                href={`/students/${r.studentId}`}
+                className="flex items-center min-h-14 py-2 border-b border-border last:border-b-0 no-underline"
+              >
+                <span className="text-base text-ink">{getStudentDisplayName(r.student)}</span>
               </Link>
             ))}
           </div>
@@ -150,7 +152,7 @@ export default async function ClassDetailPage({
 
       {/* Cancelled */}
       {cls.status === 'cancelled' && (
-        <div className="py-8 text-center text-brown">
+        <div className="py-8 text-center type-body">
           This class was cancelled.
         </div>
       )}
