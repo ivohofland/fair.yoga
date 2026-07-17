@@ -18,6 +18,8 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev',
     url: 'http://localhost:3000',
-    reuseExistingServer: !process.env.CI,
+    // CI pre-starts the production build on :3000 before the e2e step;
+    // locally this reuses the running dev server.
+    reuseExistingServer: true,
   },
 });

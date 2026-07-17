@@ -8,10 +8,11 @@ import {
   respondOk,
   requireSession,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 
-export async function GET(request: NextRequest) {
+export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
@@ -19,9 +20,9 @@ export async function GET(request: NextRequest) {
     userId: session.userId,
     userType: session.userType,
   });
-}
+});
 
-export async function DELETE(request: NextRequest) {
+export const DELETE = withErrorHandler(async (request: NextRequest) => {
   const token = getSessionToken(request);
 
   if (token) {
@@ -36,4 +37,4 @@ export async function DELETE(request: NextRequest) {
   clearSessionCookie(response.headers);
 
   return response;
-}
+});

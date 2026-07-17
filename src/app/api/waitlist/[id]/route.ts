@@ -5,13 +5,14 @@ import {
   respondError,
   requireSession,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { removeFromWaitlist } from '@/services/waitlist';
 
-export async function DELETE(
+export const DELETE = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
@@ -34,4 +35,4 @@ export async function DELETE(
 
   await removeFromWaitlist(prisma, entry.classId, entry.studentId);
   return respondOk({ message: 'Removed from waitlist' });
-}
+});

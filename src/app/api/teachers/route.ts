@@ -1,10 +1,10 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
-import { respondOk, respondError, parseBody } from '@/lib/api-utils';
+import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { createTeacherSchema } from '@/lib/schemas';
 import { checkRateLimit, clientIp } from '@/lib/rate-limit';
 
-export async function POST(request: NextRequest) {
+export const POST = withErrorHandler(async (request: NextRequest) => {
   // Unauthenticated endpoint: throttle per IP so it cannot be used to
   // mass-create accounts or squat email addresses in bulk. Only applies
   // when a proxy forwarded a real address — see magic-link/send.
@@ -44,4 +44,4 @@ export async function POST(request: NextRequest) {
   });
 
   return respondOk(teacher, 201);
-}
+});

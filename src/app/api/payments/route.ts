@@ -4,13 +4,14 @@ import {
   respondOk,
   requireTeacher,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { getOutstandingPayments } from '@/services/payments';
 
-export async function GET(request: NextRequest) {
+export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
   const payments = await getOutstandingPayments(prisma, session.userId);
   return respondOk(payments);
-}
+});

@@ -4,12 +4,12 @@ import {
   createSession,
   setSessionCookie,
 } from '@/lib/auth';
-import { respondOk, respondError, parseBody } from '@/lib/api-utils';
+import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 import type { RecipientType } from '@prisma/client';
 import { magicLinkVerifySchema } from '@/lib/schemas';
 
-export async function POST(request: NextRequest) {
+export const POST = withErrorHandler(async (request: NextRequest) => {
   const parsed = await parseBody(request, magicLinkVerifySchema);
   if ('error' in parsed) return parsed.error;
   const { token } = parsed.data;
@@ -40,4 +40,4 @@ export async function POST(request: NextRequest) {
   setSessionCookie(response.headers, sessionToken);
 
   return response;
-}
+});

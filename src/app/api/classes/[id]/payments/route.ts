@@ -5,13 +5,14 @@ import {
   respondError,
   requireTeacher,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { getPaymentsForClass } from '@/services/payments';
 
-export async function GET(
+export const GET = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
@@ -23,4 +24,4 @@ export async function GET(
 
   const payments = await getPaymentsForClass(prisma, id);
   return respondOk(payments);
-}
+});

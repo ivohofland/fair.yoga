@@ -7,13 +7,14 @@ import {
   requireTeacher,
   parseBody,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { updateRoomSchema } from '@/lib/schemas';
 
-export async function DELETE(
+export const DELETE = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { id } = await params;
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
@@ -42,12 +43,12 @@ export async function DELETE(
   await prisma.room.delete({ where: { id } });
 
   return respondOk({ deleted: true });
-}
+});
 
-export async function GET(
+export const GET = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { id } = await params;
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
@@ -60,12 +61,12 @@ export async function GET(
   }
 
   return respondOk(room);
-}
+});
 
-export async function PUT(
+export const PUT = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { id } = await params;
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
@@ -100,4 +101,4 @@ export async function PUT(
   });
 
   return respondOk(updated);
-}
+});

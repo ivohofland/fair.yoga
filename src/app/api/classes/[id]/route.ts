@@ -6,13 +6,14 @@ import {
   requireTeacher,
   parseBody,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { updateClassSchema } from '@/lib/schemas';
 
-export async function GET(
+export const GET = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
@@ -29,7 +30,7 @@ export async function GET(
   if (cls.teacherId !== session.userId) return respondError('Not your class', 403);
 
   return respondOk(cls);
-}
+});
 
 const ECONOMIC_FIELDS = [
   'roomCost',
@@ -39,10 +40,10 @@ const ECONOMIC_FIELDS = [
   'maxStudents',
 ] as const;
 
-export async function PUT(
+export const PUT = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
@@ -87,4 +88,4 @@ export async function PUT(
 
   const updated = await prisma.class.findUniqueOrThrow({ where: { id } });
   return respondOk(updated);
-}
+});

@@ -75,12 +75,13 @@ export function getNextOccurrences(
 export async function generateClassInstances(
   db: PrismaClient,
   from?: Date,
+  teacherId?: string,
 ): Promise<number> {
   const startDate = from ?? new Date();
 
-  // 1. Find all active templates
+  // 1. Find active templates — all of them (cron) or one teacher's
   const templates = await db.classTemplate.findMany({
-    where: { isActive: true },
+    where: { isActive: true, ...(teacherId ? { teacherId } : {}) },
   });
 
   let totalCreated = 0;

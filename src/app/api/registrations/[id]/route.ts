@@ -6,15 +6,16 @@ import {
   requireSession,
   parseBody,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { updateRegistrationSchema } from '@/lib/schemas';
 import { DEADLINE_HOURS, handleSpotFreed } from '@/services/waitlist';
 import { classStartInstant } from '@/lib/timezone';
 
-export async function GET(
+export const GET = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
@@ -37,12 +38,12 @@ export async function GET(
   if (!isStudent && !isTeacher) return respondError('Access denied', 403);
 
   return respondOk(registration);
-}
+});
 
-export async function PUT(
+export const PUT = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
@@ -71,12 +72,12 @@ export async function PUT(
   });
 
   return respondOk(updated);
-}
+});
 
-export async function DELETE(
+export const DELETE = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
@@ -149,4 +150,4 @@ export async function DELETE(
   await handleSpotFreed(prisma, registration.classId);
 
   return respondOk(updated);
-}
+});

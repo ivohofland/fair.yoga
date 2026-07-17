@@ -6,13 +6,14 @@ import {
   requireTeacher,
   parseBody,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { updateStudioClassTemplateSchema } from '@/lib/schemas';
 
-export async function GET(
+export const GET = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { id } = await params;
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
@@ -22,12 +23,12 @@ export async function GET(
   if (template.teacherId !== session.userId) return respondError('Access denied', 403);
 
   return respondOk(template);
-}
+});
 
-export async function PUT(
+export const PUT = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { id } = await params;
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
@@ -49,12 +50,12 @@ export async function PUT(
   });
 
   return respondOk(updated);
-}
+});
 
-export async function PATCH(
+export const PATCH = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { id } = await params;
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
@@ -80,4 +81,4 @@ export async function PATCH(
   });
 
   return respondOk(updated);
-}
+});

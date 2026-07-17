@@ -6,12 +6,13 @@ import {
   requireSession,
   isErrorResponse,
   parseBody,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 import type { RegistrationResponseJSON } from '@simplewebauthn/types';
 import { passkeyRegisterVerifySchema } from '@/lib/schemas';
 
-export async function POST(request: NextRequest) {
+export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
@@ -44,4 +45,4 @@ export async function POST(request: NextRequest) {
   });
 
   return respondOk({ credentialId: result.credentialId });
-}
+});

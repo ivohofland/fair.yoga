@@ -6,13 +6,14 @@ import {
   requireStudent,
   parseBody,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { updatePrivacySchema } from '@/lib/schemas';
 
-export async function GET(
+export const GET = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { id } = await params;
   const session = await requireStudent(request);
   if (isErrorResponse(session)) return session;
@@ -48,12 +49,12 @@ export async function GET(
   }
 
   return respondOk(privacy);
-}
+});
 
-export async function PUT(
+export const PUT = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { id } = await params;
   const session = await requireStudent(request);
   if (isErrorResponse(session)) return session;
@@ -86,4 +87,4 @@ export async function PUT(
   });
 
   return respondOk(privacy);
-}
+});

@@ -5,13 +5,14 @@ import {
   respondError,
   requireTeacher,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { sendPaymentReminder } from '@/services/payments';
 
-export async function POST(
+export const POST = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
@@ -34,4 +35,4 @@ export async function POST(
 
   const updated = await sendPaymentReminder(prisma, id);
   return respondOk(updated);
-}
+});

@@ -6,13 +6,14 @@ import {
   requireSession,
   parseBody,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { updateStudentSchema, createStudentSchema } from '@/lib/schemas';
 
-export async function GET(
+export const GET = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { id } = await params;
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
@@ -69,12 +70,12 @@ export async function GET(
   }
 
   return respondError('Access denied', 403);
-}
+});
 
-export async function PUT(
+export const PUT = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { id } = await params;
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
@@ -131,12 +132,12 @@ export async function PUT(
   }
 
   return respondError('Access denied', 403);
-}
+});
 
-export async function DELETE(
+export const DELETE = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { id } = await params;
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
@@ -168,12 +169,12 @@ export async function DELETE(
   }
 
   return respondOk({ removed: true });
-}
+});
 
-export async function PATCH(
+export const PATCH = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { id } = await params;
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
@@ -193,4 +194,4 @@ export async function PATCH(
   });
 
   return respondOk({ isArchived: updated.isArchived });
-}
+});

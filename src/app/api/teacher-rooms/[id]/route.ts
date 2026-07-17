@@ -6,13 +6,14 @@ import {
   requireTeacher,
   parseBody,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { updateTeacherRoomSchema } from '@/lib/schemas';
 
-export async function GET(
+export const GET = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { id } = await params;
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
@@ -29,12 +30,12 @@ export async function GET(
   }
 
   return respondOk(teacherRoom);
-}
+});
 
-export async function PUT(
+export const PUT = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { id } = await params;
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
@@ -60,12 +61,12 @@ export async function PUT(
   });
 
   return respondOk(updated);
-}
+});
 
-export async function PATCH(
+export const PATCH = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { id } = await params;
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
@@ -83,12 +84,12 @@ export async function PATCH(
   });
 
   return respondOk({ isArchived: updated.isArchived });
-}
+});
 
-export async function DELETE(
+export const DELETE = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { id } = await params;
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
@@ -109,4 +110,4 @@ export async function DELETE(
   await prisma.teacherRoom.delete({ where: { id } });
 
   return respondOk({ deleted: true });
-}
+});

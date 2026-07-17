@@ -5,13 +5,14 @@ import {
   respondError,
   requireSession,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { markAsRead } from '@/services/notifications';
 
-export async function POST(
+export const POST = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
@@ -30,4 +31,4 @@ export async function POST(
 
   await markAsRead(prisma, id);
   return respondOk({ message: 'Marked as read' });
-}
+});

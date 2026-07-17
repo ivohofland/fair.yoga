@@ -5,12 +5,12 @@ import {
   createSession,
   setSessionCookie,
 } from '@/lib/auth';
-import { respondOk, respondError, parseBody } from '@/lib/api-utils';
+import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 import type { AuthenticationResponseJSON } from '@simplewebauthn/types';
 import { passkeyAuthVerifySchema } from '@/lib/schemas';
 
-export async function POST(request: NextRequest) {
+export const POST = withErrorHandler(async (request: NextRequest) => {
   const parsed = await parseBody(request, passkeyAuthVerifySchema);
   if ('error' in parsed) return parsed.error;
   const body = parsed.data;
@@ -63,4 +63,4 @@ export async function POST(request: NextRequest) {
   setSessionCookie(apiResponse.headers, sessionToken);
 
   return apiResponse;
-}
+});

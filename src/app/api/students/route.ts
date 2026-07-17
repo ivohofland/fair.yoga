@@ -1,9 +1,9 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
-import { respondOk, respondError, requireTeacher, isErrorResponse, parseBody } from '@/lib/api-utils';
+import { respondOk, respondError, requireTeacher, isErrorResponse, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { createStudentSchema, studentListQuerySchema } from '@/lib/schemas';
 
-export async function GET(request: NextRequest) {
+export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
@@ -81,9 +81,9 @@ export async function GET(request: NextRequest) {
   });
 
   return respondOk({ students: result, total, page, pageSize });
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
@@ -117,4 +117,4 @@ export async function POST(request: NextRequest) {
   });
 
   return respondOk(student, 201);
-}
+});

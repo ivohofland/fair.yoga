@@ -6,6 +6,7 @@ import {
   requireTeacher,
   parseBody,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import {
   createBulkNotifications,
@@ -13,7 +14,7 @@ import {
 } from '@/services/notifications';
 import { createAnnouncementSchema } from '@/lib/schemas';
 
-export async function POST(request: NextRequest) {
+export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
@@ -50,6 +51,19 @@ export async function POST(request: NextRequest) {
     studentIds = registrations.map((r) => r.studentId);
   }
 
+  // Honor the per-teacher communication opt-out: students who set
+  // receiveComms=false for this teacher get no announcements at all.
+  const optOuts = await prisma.studentPrivacy.findMany({
+    where: {
+      teacherId: session.userId,
+      studentId: { in: studentIds },
+      receiveComms: false,
+    },
+    select: { studentId: true },
+  });
+  const optedOut = new Set(optOuts.map((o) => o.studentId));
+  studentIds = studentIds.filter((id) => !optedOut.has(id));
+
   if (studentIds.length === 0) {
     return respondError('No students to notify', 400);
   }
@@ -77,4 +91,4 @@ export async function POST(request: NextRequest) {
   });
 
   return respondOk(announcement, 201);
-}
+});

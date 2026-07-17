@@ -27,9 +27,9 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://yoga:test_password@localhost:5432/ethical_yoga
-      MAGIC_LINK_SECRET: ci-test-secret
       PASSKEY_RP_ID: localhost
       PASSKEY_RP_NAME: fair.yoga
+      CRON_SECRET: ci-cron-secret
       RESEND_API_KEY: re_test
       EMAIL_FROM: noreply@test.local
       NEXT_PUBLIC_APP_URL: http://localhost:3000
@@ -45,17 +45,32 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
       - name: Generate Prisma client
         run: npx prisma generate
 
       - name: Run migrations
         run: npx prisma migrate deploy
 
+      # Fails when schema.prisma and the migration history disagree —
+      # catches migrations amended after being applied, and schema edits
+      # committed without a migration.
+      - name: Check schema/migration drift
+        run: npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code
+
       - name: TypeScript type check
         run: npx tsc --noEmit
 
       - name: Lint
         run: npm run lint
+
+      # Visible but non-blocking: the current high advisories live in
+      # next/vite themselves with no compatible fix released yet.
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+        continue-on-error: true
 
       - name: Build
         run: npm run build
@@ -69,3 +84,11 @@ jobs:
             sleep 1
           done
           npm test
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      # The app from the test step is still listening; playwright.config
+      # reuses an existing server on :3000.
+      - name: End-to-end tests
+        run: npx playwright test

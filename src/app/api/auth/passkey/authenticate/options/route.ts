@@ -4,11 +4,11 @@ import {
   generatePasskeyAuthenticationOptions,
   storeChallenge,
 } from '@/lib/auth';
-import { respondOk, parseBody } from '@/lib/api-utils';
+import { respondOk, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 import { passkeyAuthOptionsSchema } from '@/lib/schemas';
 
-export async function POST(request: NextRequest) {
+export const POST = withErrorHandler(async (request: NextRequest) => {
   const parsed = await parseBody(request, passkeyAuthOptionsSchema);
   if ('error' in parsed) return parsed.error;
   const body = parsed.data;
@@ -42,4 +42,4 @@ export async function POST(request: NextRequest) {
   storeChallenge(challengeId, options.challenge);
 
   return respondOk({ options, challengeId });
-}
+});

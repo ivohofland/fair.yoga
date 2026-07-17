@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { validateSession, getSessionToken } from './auth';
@@ -103,6 +104,10 @@ export function withErrorHandler<Args extends unknown[]>(
     try {
       return await handler(...args);
     } catch (error) {
+      // Unique-constraint violations are client conflicts, not server bugs
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        return respondError('Resource already exists', 409);
+      }
       console.error('API error:', error);
       return respondError('Internal server error', 500);
     }

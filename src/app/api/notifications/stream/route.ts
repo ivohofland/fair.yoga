@@ -19,32 +19,50 @@ export async function GET(request: NextRequest) {
 
   const stream = new ReadableStream({
     start(controller) {
-      // Send initial keepalive comment
-      controller.enqueue(encoder.encode(': connected\n\n'));
+      let closed = false;
+
+      // enqueue can race the client closing the connection (a keepalive tick
+      // or bus event landing after close, before the abort listener runs) —
+      // never let that take down the process.
+      const send = (chunk: string) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(chunk));
+        } catch {
+          cleanup();
+        }
+      };
 
       const handler = (event: NotificationEvent) => {
         if (
           event.recipientId === session.userId &&
           event.recipientType === session.userType
         ) {
-          const data = JSON.stringify(event.notification);
-          controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+          send(`data: ${JSON.stringify(event.notification)}\n\n`);
         }
       };
 
-      notificationBus.onNotification(handler);
-
       // Send periodic keepalive to prevent proxy timeouts
-      const keepalive = setInterval(() => {
-        controller.enqueue(encoder.encode(': keepalive\n\n'));
-      }, 30000);
+      const keepalive = setInterval(() => send(': keepalive\n\n'), 30000);
 
-      // Cleanup on client disconnect
-      request.signal.addEventListener('abort', () => {
+      const cleanup = () => {
+        if (closed) return;
+        closed = true;
         clearInterval(keepalive);
         notificationBus.offNotification(handler);
-        controller.close();
-      });
+        try {
+          controller.close();
+        } catch {
+          // already closed by the runtime
+        }
+      };
+
+      // Send initial keepalive comment
+      send(': connected\n\n');
+      notificationBus.onNotification(handler);
+
+      // Cleanup on client disconnect
+      request.signal.addEventListener('abort', cleanup);
     },
   });
 

@@ -1,5 +1,21 @@
 import { z } from 'zod';
 
+// ---------------------------------------------------------------------------
+// Shared field validators
+// ---------------------------------------------------------------------------
+
+/** ISO calendar date (YYYY-MM-DD) that actually parses. */
+const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD')
+  .refine((s) => !Number.isNaN(new Date(s).getTime()), 'Invalid date');
+
+/** Wall-clock time, 00:00-23:59. */
+const timeHHmm = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Must be HH:mm (00:00-23:59)');
+
+
 // ============================================================================
 // AUTH
 // ============================================================================
@@ -147,8 +163,8 @@ export const createClassSchema = z.object({
   teacherRoomId: z.string().uuid(),
   classType: z.string().min(1),
   description: z.string().nullable().optional(),
-  date: z.string().min(1), // ISO date string
-  startTime: z.string().regex(/^\d{2}:\d{2}$/, 'Must be HH:mm format'),
+  date: isoDate,
+  startTime: timeHHmm,
   durationMinutes: z.number().int().positive(),
   roomCost: z.number().nonnegative(),
   minRate: z.number(), // can be negative (teacher subsidizes)
@@ -158,13 +174,25 @@ export const createClassSchema = z.object({
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
   autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
   templateId: z.string().uuid().nullable().optional(),
-});
+})
+  .refine((d) => d.minStudents <= d.maxStudents, {
+    message: 'minStudents cannot exceed maxStudents',
+    path: ['minStudents'],
+  })
+  .refine((d) => d.minRate <= d.targetRate, {
+    message: 'minRate cannot exceed targetRate',
+    path: ['minRate'],
+  })
+  .refine((d) => d.minRate >= -d.roomCost, {
+    message: 'minRate cannot subsidize more than the room cost — prices would go negative',
+    path: ['minRate'],
+  });
 
 export const updateClassSchema = z.object({
   classType: z.string().min(1).optional(),
   description: z.string().nullable().optional(),
-  date: z.string().optional(),
-  startTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  date: isoDate.optional(),
+  startTime: timeHHmm.optional(),
   durationMinutes: z.number().int().positive().optional(),
   // Economic fields — only accepted when settings not locked (checked in route)
   roomCost: z.number().nonnegative().optional(),
@@ -172,7 +200,15 @@ export const updateClassSchema = z.object({
   targetRate: z.number().optional(),
   minStudents: z.number().int().positive().optional(),
   maxStudents: z.number().int().positive().optional(),
-}).strict();
+}).strict()
+  .refine((d) => d.minStudents === undefined || d.maxStudents === undefined || d.minStudents <= d.maxStudents, {
+    message: 'minStudents cannot exceed maxStudents',
+    path: ['minStudents'],
+  })
+  .refine((d) => d.minRate === undefined || d.targetRate === undefined || d.minRate <= d.targetRate, {
+    message: 'minRate cannot exceed targetRate',
+    path: ['minRate'],
+  });
 
 // 'completed' is deliberately absent: completion must go through
 // POST /api/classes/[id]/complete so the pricing engine runs and
@@ -191,7 +227,7 @@ export const createClassTemplateSchema = z.object({
   classType: z.string().min(1),
   description: z.string().nullable().optional(),
   dayOfWeek: z.number().int().min(0).max(6),
-  startTime: z.string().regex(/^\d{2}:\d{2}$/),
+  startTime: timeHHmm,
   durationMinutes: z.number().int().positive(),
   roomCost: z.number().nonnegative(),
   minRate: z.number(),
@@ -200,14 +236,26 @@ export const createClassTemplateSchema = z.object({
   maxStudents: z.number().int().positive(),
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
   autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
-});
+})
+  .refine((d) => d.minStudents <= d.maxStudents, {
+    message: 'minStudents cannot exceed maxStudents',
+    path: ['minStudents'],
+  })
+  .refine((d) => d.minRate <= d.targetRate, {
+    message: 'minRate cannot exceed targetRate',
+    path: ['minRate'],
+  })
+  .refine((d) => d.minRate >= -d.roomCost, {
+    message: 'minRate cannot subsidize more than the room cost — prices would go negative',
+    path: ['minRate'],
+  });
 
 export const updateClassTemplateSchema = z.object({
   classType: z.string().min(1).optional(),
   description: z.string().nullable().optional(),
   teacherRoomId: z.string().uuid().optional(),
   dayOfWeek: z.number().int().min(0).max(6).optional(),
-  startTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  startTime: timeHHmm.optional(),
   durationMinutes: z.number().int().positive().optional(),
   roomCost: z.number().nonnegative().optional(),
   minRate: z.number().optional(),
@@ -216,7 +264,15 @@ export const updateClassTemplateSchema = z.object({
   maxStudents: z.number().int().positive().optional(),
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
   autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
-}).strict();
+}).strict()
+  .refine((d) => d.minStudents === undefined || d.maxStudents === undefined || d.minStudents <= d.maxStudents, {
+    message: 'minStudents cannot exceed maxStudents',
+    path: ['minStudents'],
+  })
+  .refine((d) => d.minRate === undefined || d.targetRate === undefined || d.minRate <= d.targetRate, {
+    message: 'minRate cannot exceed targetRate',
+    path: ['minRate'],
+  });
 
 // ============================================================================
 // STUDIO CLASS TEMPLATES
@@ -225,7 +281,7 @@ export const updateClassTemplateSchema = z.object({
 export const createStudioClassTemplateSchema = z.object({
   classType: z.string().min(1),
   dayOfWeek: z.number().int().min(0).max(6),
-  startTime: z.string().regex(/^\d{2}:\d{2}$/),
+  startTime: timeHHmm,
   durationMinutes: z.number().int().positive(),
   location: z.string().min(1),
   hourlyRate: z.number().nonnegative(),
@@ -234,7 +290,7 @@ export const createStudioClassTemplateSchema = z.object({
 export const updateStudioClassTemplateSchema = z.object({
   classType: z.string().min(1).optional(),
   dayOfWeek: z.number().int().min(0).max(6).optional(),
-  startTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  startTime: timeHHmm.optional(),
   durationMinutes: z.number().int().positive().optional(),
   location: z.string().min(1).optional(),
   hourlyRate: z.number().nonnegative().optional(),
@@ -246,8 +302,8 @@ export const updateStudioClassTemplateSchema = z.object({
 
 export const createStudioClassSchema = z.object({
   classType: z.string().min(1),
-  date: z.string().min(1),
-  startTime: z.string().regex(/^\d{2}:\d{2}$/),
+  date: isoDate,
+  startTime: timeHHmm,
   durationMinutes: z.number().int().positive(),
   location: z.string().min(1),
   hourlyRate: z.number().nonnegative(),
@@ -258,7 +314,7 @@ export const createStudioClassSchema = z.object({
 export const updateStudioClassSchema = z.object({
   studentCount: z.number().int().nonnegative().nullable().optional(),
   location: z.string().min(1).optional(),
-  startTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  startTime: timeHHmm.optional(),
   durationMinutes: z.number().int().positive().optional(),
   hourlyRate: z.number().nonnegative().optional(),
   cancelledAt: z.string().datetime().nullable().optional(),

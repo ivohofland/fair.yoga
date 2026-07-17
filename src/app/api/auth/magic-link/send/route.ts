@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { generateMagicLinkToken } from '@/lib/auth';
-import { respondOk, respondError, parseBody } from '@/lib/api-utils';
+import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 import { sendMagicLinkEmail } from '@/lib/email';
 import { magicLinkSendSchema } from '@/lib/schemas';
@@ -10,7 +10,7 @@ const WINDOW_MS = 15 * 60 * 1000;
 const PER_EMAIL_LIMIT = 3;
 const PER_IP_LIMIT = 10;
 
-export async function POST(request: NextRequest) {
+export const POST = withErrorHandler(async (request: NextRequest) => {
   const parsed = await parseBody(request, magicLinkSendSchema);
   if ('error' in parsed) return parsed.error;
   const { email } = parsed.data;
@@ -51,4 +51,4 @@ export async function POST(request: NextRequest) {
 
   // Always return 200 to prevent email enumeration
   return respondOk({ message: 'If an account exists, a magic link has been sent.' });
-}
+});

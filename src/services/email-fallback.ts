@@ -14,6 +14,15 @@ import { getUnreadForEmailFallback, markEmailSent } from './notifications';
 const resend = new Resend(process.env.RESEND_API_KEY);
 const isDev = !process.env.RESEND_API_KEY || process.env.RESEND_API_KEY === 're_placeholder';
 
+function escapeHtml(text: string): string {
+  return text
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 /**
  * Processes unread notifications eligible for email fallback.
  * Looks up recipient email, checks email preferences, sends email, marks as sent.
@@ -64,7 +73,9 @@ export async function processEmailFallback(
         from: process.env.EMAIL_FROM || 'noreply@fair.yoga',
         to: email,
         subject: notification.title,
-        html: `<p>${notification.body}</p>`,
+        // Body can contain teacher-authored announcement text — escape it
+        // so markup or phishing HTML never renders in a platform email.
+        html: `<p>${escapeHtml(notification.body)}</p>`,
       });
       sentIds.push(notification.id);
     } catch (err) {

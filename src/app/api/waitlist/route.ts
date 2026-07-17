@@ -5,11 +5,12 @@ import {
   requireStudent,
   parseBody,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { addToWaitlist } from '@/services/waitlist';
 import { createWaitlistSchema } from '@/lib/schemas';
 
-export async function POST(request: NextRequest) {
+export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireStudent(request);
   if (isErrorResponse(session)) return session;
 
@@ -18,4 +19,4 @@ export async function POST(request: NextRequest) {
 
   const entry = await addToWaitlist(prisma, parsed.data.classId, session.userId);
   return respondOk(entry, 201);
-}
+});

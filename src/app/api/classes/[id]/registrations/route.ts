@@ -5,12 +5,13 @@ import {
   respondError,
   requireTeacher,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 
-export async function GET(
+export const GET = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
@@ -31,4 +32,4 @@ export async function GET(
   });
 
   return respondOk(registrations);
-}
+});

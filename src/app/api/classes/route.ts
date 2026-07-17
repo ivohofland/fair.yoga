@@ -6,10 +6,11 @@ import {
   requireTeacher,
   parseBody,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
 import { createClassSchema } from '@/lib/schemas';
 
-export async function GET(request: NextRequest) {
+export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
@@ -20,8 +21,16 @@ export async function GET(request: NextRequest) {
   const where: Record<string, unknown> = { teacherId: session.userId };
   if (from || to) {
     const dateFilter: Record<string, Date> = {};
-    if (from) dateFilter.gte = new Date(from);
-    if (to) dateFilter.lte = new Date(to);
+    if (from) {
+      const fromDate = new Date(from);
+      if (Number.isNaN(fromDate.getTime())) return respondError('Invalid "from" date', 400);
+      dateFilter.gte = fromDate;
+    }
+    if (to) {
+      const toDate = new Date(to);
+      if (Number.isNaN(toDate.getTime())) return respondError('Invalid "to" date', 400);
+      dateFilter.lte = toDate;
+    }
     where.date = dateFilter;
   }
 
@@ -34,9 +43,9 @@ export async function GET(request: NextRequest) {
   });
 
   return respondOk(classes);
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
@@ -72,4 +81,4 @@ export async function POST(request: NextRequest) {
   });
 
   return respondOk(cls, 201);
-}
+});
