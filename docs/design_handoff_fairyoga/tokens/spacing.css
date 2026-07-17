@@ -1,0 +1,40 @@
+/* fair.yoga v2 — spacing, radii, elevation (brief §2) */
+:root {
+  /* 4px grid */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Layout */
+  --page-margin-mobile: 16px;
+  --page-margin-desktop: 24px;
+  --card-padding: 20px;
+  --card-gap: 12px;
+  --section-gap: 32px;
+  --content-max: 640px;
+
+  /* Radii */
+  --radius-button: 999px;  /* pill */
+  --radius-card: 16px;
+  --radius-input: 12px;
+  --radius-badge: 12px;
+  --radius-sheet: 20px;    /* top corners */
+
+  /* Control sizes */
+  --control-height: 48px;  /* buttons, inputs */
+  --row-height: 56px;      /* list rows, minimum */
+  --tabbar-height: 64px;
+  --progress-height: 8px;
+
+  /* Elevation — depth is sand-on-cream + 1px border. Sheets/modals only: */
+  --shadow-sheet: 0 8px 32px rgba(45, 45, 45, 0.18);
+
+  /* Focus ring */
+  --focus-ring: 0 0 0 3px var(--color-teal-tint), inset 0 0 0 1px var(--color-teal);
+}

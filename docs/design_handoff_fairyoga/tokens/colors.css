@@ -1,0 +1,62 @@
+/* fair.yoga v2 — colors (source: uploads/design-brief-claude-design.md §2) */
+:root {
+  /* Base palette */
+  --color-teal: #1A5653;
+  --color-teal-hover: #154744;
+  --color-teal-pressed: #103A37;
+  --color-teal-tint: #E8F0EF;
+  --color-cream: #F7F4EF;
+  --color-sand: #E8DCC8;
+  --color-sand-soft: #F0E9DC;
+  --color-sand-hover: #E0D2B9;
+  --color-brown: #6B5B4E;
+  --color-brown-light: #9C8F84;
+  --color-ink: #2D2D2D;
+  --color-gold: #C4A96A;
+  --color-gold-tint: #F3ECDC;
+  --color-gold-deep: #7D6A3D;
+  --color-border: #D4C9B8;
+  --color-danger: #B85C5C;
+  --color-danger-tint: #F5E9E9;
+
+  /* Semantic aliases */
+  --bg-page: var(--color-cream);
+  --surface-card: var(--color-sand-soft);
+  --surface-card-hover: var(--color-sand);
+  --surface-selected: var(--color-teal-tint);
+  --text-heading: var(--color-teal);
+  --text-body: var(--color-brown);
+  --text-muted: var(--color-brown-light);
+  --text-strong: var(--color-ink);
+  --text-price: var(--color-teal);
+  --border-default: var(--color-border);
+  --accent-gold: var(--color-gold);
+  --danger: var(--color-danger);
+  --danger-tint: var(--color-danger-tint);
+  --scrim: rgba(45, 45, 45, 0.4); /* ink 40% */
+
+  /* Status coding — "fill encodes time": outline = upcoming, tint = now, solid = done.
+     Payment is never a badge: glyph + word in text color (✓ paid · ○ unpaid · ! overdue). */
+  /* lifecycle */
+  --status-draft-fg: var(--color-brown);
+  --status-draft-border: var(--color-brown-light);
+  --status-open-fg: var(--color-teal);
+  --status-open-border: var(--color-teal);
+  --status-full-fg: var(--color-gold-deep);
+  --status-full-bg: var(--color-gold-tint);
+  --status-inprogress-fg: var(--color-teal);
+  --status-inprogress-bg: var(--color-teal-tint);
+  --status-completed-fg: var(--color-cream);
+  --status-completed-bg: var(--color-teal);
+  --status-cancelled-fg: var(--color-cream);
+  --status-cancelled-bg: var(--color-brown);
+  /* capacity */
+  --status-belowmin-fg: var(--color-danger);
+  --status-belowmin-bg: var(--color-danger-tint);
+  --status-waitlist-fg: var(--color-gold-deep);
+  --status-waitlist-bg: var(--color-gold-tint);
+  /* payment (text only) */
+  --status-paid-fg: var(--color-teal);
+  --status-unpaid-fg: var(--color-brown);
+  --status-overdue-fg: var(--color-danger);
+}

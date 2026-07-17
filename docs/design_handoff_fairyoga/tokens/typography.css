@@ -1,0 +1,39 @@
+/* fair.yoga v2 — typography (six styles only; brief §2) */
+:root {
+  --font-heading: Georgia, 'Times New Roman', serif;
+  --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, Helvetica, sans-serif;
+
+  /* Display — screen title, teacher earnings */
+  --type-display-size: 28px;   --type-display-lh: 1.25;
+  /* Title — card titles, sections */
+  --type-title-size: 22px;     --type-title-lh: 1.3;
+  /* Subtitle — sub-sections, modal titles */
+  --type-subtitle-size: 18px;  --type-subtitle-lh: 1.4;
+  /* Body — default text */
+  --type-body-size: 16px;      --type-body-lh: 1.55;
+  /* Label — input labels, metadata */
+  --type-label-size: 14px;     --type-label-lh: 1.4;
+  /* Caption — timestamps, helper text */
+  --type-caption-size: 13px;   --type-caption-lh: 1.4;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-page);
+  color: var(--text-body);
+  font-family: var(--font-body);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+}
+
+a, button { cursor: pointer; }
+
+/* Type styles — Georgia never at body sizes; sans never in heading slots */
+.type-display { font-family: var(--font-heading); font-weight: 700; font-size: var(--type-display-size); line-height: var(--type-display-lh); color: var(--text-heading); }
+.type-title   { font-family: var(--font-heading); font-weight: 700; font-size: var(--type-title-size);   line-height: var(--type-title-lh);   color: var(--text-heading); }
+.type-subtitle{ font-family: var(--font-heading); font-weight: 700; font-size: var(--type-subtitle-size);line-height: var(--type-subtitle-lh);color: var(--text-strong); }
+.type-body    { font-family: var(--font-body); font-weight: 400; font-size: var(--type-body-size);    line-height: var(--type-body-lh);    color: var(--text-body); }
+.type-label   { font-family: var(--font-body); font-weight: 500; font-size: var(--type-label-size);   line-height: var(--type-label-lh);   color: var(--text-body); }
+.type-caption { font-family: var(--font-body); font-weight: 400; font-size: var(--type-caption-size); line-height: var(--type-caption-lh); color: var(--text-muted); }
+/* Numbers & prices — sans semibold, tabular figures, teal */
+.type-number  { font-family: var(--font-body); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-price); }

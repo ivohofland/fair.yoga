@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<!-- @dsCard group="UI Kit — Teacher App" name="Teacher app — interactive" subtitle="Schedule → class detail → class day → summary → payments; students, inbox, tier selection" viewport="420x900" -->
+<!-- @startingPoint section="Screens" subtitle="fair.yoga teacher app, all lifecycle stages" viewport="420x900" -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>fair.yoga — Teacher app (v2)</title>
+<link rel="stylesheet" href="../../styles.css">
+<style>
+  html, body { margin: 0; background: var(--bg-page); min-height: 100vh; }
+  .phone { max-width: 420px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; position: relative; }
+  .content { flex: 1; padding: 24px 16px 32px; }
+  .tabbar-slot { position: sticky; bottom: 0; }
+  .switcher { background: var(--bg-page); border-bottom: 1px solid var(--border-default); padding: 8px 12px; display: flex; gap: 2px; flex-wrap: wrap; justify-content: center; }
+  .switcher button { font-family: var(--font-body); font-size: 11px; padding: 5px 8px; border: none; border-radius: 8px; background: transparent; color: var(--text-body); cursor: pointer; }
+  .switcher button.active { background: var(--color-teal); color: var(--color-cream); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+
+<script src="data.js"></script>
+<script type="text/babel" src="Fallback.jsx"></script>
+<script type="text/babel" src="Schedule.jsx"></script>
+<script type="text/babel" src="ClassDetail.jsx"></script>
+<script type="text/babel" src="NewClassFlow.jsx"></script>
+<script type="text/babel" src="ClassDay.jsx"></script>
+<script type="text/babel" src="PostClassSummary.jsx"></script>
+<script type="text/babel" src="PaymentChecklist.jsx"></script>
+<script type="text/babel" src="Students.jsx"></script>
+<script type="text/babel" src="Inbox.jsx"></script>
+<script type="text/babel" src="TierSelection.jsx"></script>
+
+<script type="text/babel">
+const { useState, useEffect } = React;
+const C = window.FYC;
+const S = window.S;
+
+function Settings() {
+  return (
+    <div>
+      <h1 className="type-display" style={{ margin: '0 0 24px' }}>Settings</h1>
+      {[['Profile', 'Ivo · ivo@fairyoga.dev'], ['Rooms', 'Studio A at Laurel St. · Loft at Northside'], ['Rates', 'Minimum €60.00 · target €95.00 per class'], ['Booking page', 'fair.yoga/ivo']].map(([t, d]) => (
+        <C.ListRow key={t} onClick={() => {}} chevron>
+          <div className="type-body" style={{ color: 'var(--text-strong)' }}>{t}</div>
+          <div className="type-caption">{d}</div>
+        </C.ListRow>
+      ))}
+    </div>
+  );
+}
+
+const TAB_SCREENS = { schedule: S.Schedule, students: S.Students, inbox: S.Inbox, settings: Settings };
+const DETAIL_SCREENS = { class: S.ClassDetail, new: S.NewClassFlow, classday: S.ClassDay, summary: S.PostClassSummary, payments: S.PaymentChecklist, tier: S.TierSelection };
+
+function App() {
+  const [screen, setScreen] = useState(() => localStorage.getItem('fy2-screen') || 'schedule');
+  const [classId, setClassId] = useState('c1');
+  useEffect(() => { localStorage.setItem('fy2-screen', screen); }, [screen]);
+
+  const nav = (to, arg) => { if (arg) setClassId(arg); setScreen(to); };
+  const isTab = !!TAB_SCREENS[screen];
+  const Screen = TAB_SCREENS[screen] || DETAIL_SCREENS[screen] || S.Schedule;
+  const unread = window.MOCK.inbox.some((n) => n.unread);
+
+  const all = [['schedule', 'Home'], ['class', 'Class'], ['new', 'Create'], ['classday', 'Class day'], ['summary', 'Summary'], ['payments', 'Payments'], ['tier', 'Tier (student)']];
+
+  return (
+    <>
+      <div className="phone">
+        <div className="switcher">
+          {all.map(([id, label]) => (
+            <button key={id} className={screen === id ? 'active' : ''} onClick={() => setScreen(id)}>{label}</button>
+          ))}
+        </div>
+        <div className="content">
+          <Screen nav={nav} classId={classId} />
+        </div>
+        {isTab && (
+          <div className="tabbar-slot">
+            <C.TabBar active={screen} onChange={(id) => setScreen(id)} badge={{ inbox: unread }} />
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

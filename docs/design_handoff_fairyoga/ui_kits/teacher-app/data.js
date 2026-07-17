@@ -1,0 +1,44 @@
+window.MOCK = {
+  teacher: { name: 'Ivo', email: 'ivo@fairyoga.dev' },
+  classes: [
+    { id: 'c1', day: 'Monday, Apr 22', time: '09:00', type: 'Vinyasa', where: 'Studio A at Laurel St.', reg: 8, min: 6, max: 14, status: 'registering' },
+    { id: 'c2', day: 'Monday, Apr 22', time: '18:30', type: 'Yin', where: 'Loft at Northside', reg: 10, min: 6, max: 10, status: 'full' },
+    { id: 'c3', day: 'Wednesday, Apr 24', time: '08:00', type: 'Hatha', where: 'Studio A at Laurel St.', reg: 3, min: 6, max: 8, status: 'below_min' },
+    { id: 'c4', day: 'Thursday, Apr 25', time: '19:00', type: 'Vinyasa', where: 'Loft at Northside', reg: 0, min: 6, max: 10, status: 'draft' },
+    { id: 'c5', day: 'Sunday, Apr 20', time: '10:00', type: 'Yin', where: 'Studio A at Laurel St.', reg: 6, min: 4, max: 8, status: 'completed', past: true, earnings: 92.40, roomCost: 20.00, total: 112.40 },
+    { id: 'c6', day: 'Tuesday, Apr 23', time: '12:15', type: 'Studio class — Hatha', where: 'Yogahuis Oost', studio: true, status: 'registering' },
+  ],
+  students: [
+    { id: 's1', name: 'Anna K.', last: 'Apr 20', total: 18 },
+    { id: 's2', name: 'Ben M.', last: 'Apr 18', total: 12 },
+    { id: 's3', name: 'Clara V.', last: 'Apr 15', total: 6 },
+    { id: 's4', name: 'Dara L.', last: 'Apr 12', total: 24 },
+    { id: 's5', name: 'Eli S.', last: 'Apr 10', total: 3 },
+  ],
+  inbox: [
+    { id: 'n1', title: 'New registration: Anna K.', body: 'Vinyasa, Monday 09:00', ago: '12m ago', unread: true },
+    { id: 'n2', title: 'Yin is now full', body: 'Monday 18:30 — waitlist opened', ago: '2h ago', unread: true },
+    { id: 'n3', title: 'Ben M. cancelled', body: 'Hatha, Wednesday 08:00', ago: '1d ago', unread: false },
+  ],
+  attendance: [
+    { id: 'a1', name: 'Anna K.', present: true },
+    { id: 'a2', name: 'Ben M.', present: true },
+    { id: 'a3', name: 'Clara V.', present: false },
+    { id: 'a4', name: 'Dara L.', present: true },
+    { id: 'a5', name: 'Eli S.', present: false },
+  ],
+  payments: [
+    { id: 'p1', name: 'Anna K.', amt: 14.0, paid: true },
+    { id: 'p2', name: 'Ben M.', amt: 17.5, paid: false },
+    { id: 'p3', name: 'Clara V.', amt: 10.0, paid: true },
+    { id: 'p4', name: 'Dara L.', amt: 10.0, paid: false },
+  ],
+  tiers: [
+    { tier: 1, label: 'Getting by', price: 8.0 },
+    { tier: 2, label: 'Managing', price: 10.0 },
+    { tier: 3, label: 'Comfortable', price: 12.5 },
+    { tier: 4, label: 'Doing well', price: 15.0 },
+    { tier: 5, label: 'Plenty to share', price: 17.0 },
+  ],
+  tierCounts: { 1: 1, 2: 2, 3: 3, 4: 1, 5: 1 },
+};

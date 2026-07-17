@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Components" name="Navigation — Tab bar, List row" subtitle="64px tab bar with teal-tint active pill; 56px rows" viewport="700x340" -->
+<html><head><meta charset="utf-8"><title>Navigation</title>
+<link rel="stylesheet" href="../../styles.css">
+<style>
+  html,body{margin:0;background:var(--bg-page);}
+  .wrap{padding:24px;display:flex;flex-direction:column;gap:20px;max-width:420px;}
+  .tabbar{height:64px;border-top:1px solid var(--border-default);display:grid;grid-template-columns:repeat(4,1fr);align-items:center;}
+  .tab{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--text-body);}
+  .tab .pill{display:flex;align-items:center;justify-content:center;padding:4px 14px;border-radius:999px;position:relative;}
+  .tab.active .pill{background:var(--color-teal-tint);color:var(--color-teal);}
+  .tab .lbl{font-size:11px;}
+  .tab.active .lbl{color:var(--color-teal);font-weight:600;}
+  .dot{position:absolute;top:0;right:4px;width:8px;height:8px;border-radius:50%;background:var(--color-gold);}
+  svg{stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;}
+  .row{min-height:56px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border-default);padding:8px 0;}
+  .row .main{flex:1;}
+</style></head>
+<body><div class="wrap">
+  <nav class="tabbar">
+    <div class="tab active"><span class="pill"><svg width="22" height="22" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></span><span class="lbl">Schedule</span></div>
+    <div class="tab"><span class="pill"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="lbl">Students</span></div>
+    <div class="tab"><span class="pill"><svg width="22" height="22" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg><span class="dot"></span></span><span class="lbl">Inbox</span></div>
+    <div class="tab"><span class="pill"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></span><span class="lbl">Settings</span></div>
+  </nav>
+  <div>
+    <div class="row"><div class="main"><div class="type-body" style="color:var(--text-strong);">Anna K.</div><div class="type-caption">18 classes · last Apr 20</div></div><span class="type-number">€14.00</span><svg width="20" height="20" viewBox="0 0 24 24" style="color:var(--text-muted);"><path d="m9 18 6-6-6-6"/></svg></div>
+    <div class="row"><div class="main"><div class="type-body" style="color:var(--text-strong);">Ben M.</div><div class="type-caption">12 classes · last Apr 18</div></div><span class="type-number">€17.50</span><svg width="20" height="20" viewBox="0 0 24 24" style="color:var(--text-muted);"><path d="m9 18 6-6-6-6"/></svg></div>
+    <div class="row" style="background:var(--surface-selected);"><div class="main" style="padding-left:8px;"><div class="type-body" style="color:var(--text-strong);">Clara V.</div><div class="type-caption">selected row — teal tint</div></div></div>
+  </div>
+</div></body></html>

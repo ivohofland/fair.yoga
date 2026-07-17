@@ -1,0 +1,39 @@
+// Schedule / week view — home screen. A chronological card list, not a calendar grid.
+(function () {
+  const C = window.FYC;
+
+  window.S = window.S || {};
+  window.S.Schedule = function Schedule({ nav }) {
+    const classes = window.MOCK.classes.filter((c) => !c.past);
+    return (
+      <div>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 24 }}>
+          <h1 className="type-display" style={{ margin: 0 }}>This week</h1>
+          <a onClick={() => nav('new')} style={{ color: 'var(--color-teal)', fontSize: 14, fontWeight: 500, textDecoration: 'none' }}>+ Add class</a>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {classes.map((c) =>
+            c.studio ? (
+              <div key={c.id} style={{ padding: '12px 20px', border: '1px dashed var(--border-default)', borderRadius: 16 }}>
+                <div className="type-label">{c.day} · {c.time}</div>
+                <div className="type-caption">{c.type} · {c.where}</div>
+              </div>
+            ) : (
+              <C.Card key={c.id} onClick={() => nav('class', c.id)} chevron>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <span className="type-label" style={{ color: 'var(--text-strong)' }}>{c.day} · {c.time}</span>
+                  <C.StatusBadge status={c.status} />
+                </div>
+                <div className="type-subtitle" style={{ margin: '4px 0 2px' }}>{c.type}</div>
+                <div className="type-caption">{c.where}</div>
+                {c.status !== 'draft' && (
+                  <C.RegistrationProgress registered={c.reg} min={c.min} max={c.max} style={{ marginTop: 12 }} />
+                )}
+              </C.Card>
+            )
+          )}
+        </div>
+      </div>
+    );
+  };
+})();

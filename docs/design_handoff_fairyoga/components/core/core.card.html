@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Components" name="Core — Button, Input, Card, Icon" subtitle="Pill buttons, sand inputs, radius-16 cards, line icons" viewport="700x400" -->
+<html><head><meta charset="utf-8"><title>Core</title>
+<link rel="stylesheet" href="../../styles.css">
+<style>
+  html,body{margin:0;background:var(--bg-page);}
+  .wrap{padding:24px;display:flex;flex-direction:column;gap:16px;}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;}
+  button{height:48px;padding:0 24px;border-radius:999px;font-family:var(--font-body);font-size:16px;font-weight:600;border:1.5px solid transparent;background:transparent;}
+  .p{background:var(--color-teal);color:var(--color-cream);}
+  .s{border-color:var(--color-teal);color:var(--color-teal);}
+  .d{border-color:var(--danger);color:var(--danger);}
+  .g{color:var(--color-teal);}
+  .dis{opacity:.5;cursor:not-allowed;}
+  .field{width:200px;}
+  .field label{display:block;font-size:14px;font-weight:500;color:var(--text-body);margin-bottom:8px;}
+  .field input{box-sizing:border-box;width:100%;height:48px;padding:0 16px;background:var(--surface-card);border:1px solid var(--border-default);border-radius:12px;font-family:var(--font-body);font-size:16px;color:var(--text-strong);}
+  .field.err input{border-color:var(--danger);background:var(--danger-tint);}
+  .field .msg{font-size:13px;color:var(--danger);margin-top:4px;}
+  .card{background:var(--surface-card);border:1px solid var(--border-default);border-radius:16px;padding:20px;display:flex;align-items:center;gap:12px;flex:1;min-width:240px;}
+  .card .body{flex:1;}
+  svg{stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;}
+</style></head>
+<body><div class="wrap">
+  <div class="row">
+    <button class="p">Create class</button>
+    <button class="s">Share booking link</button>
+    <button class="d">Cancel class</button>
+    <button class="g">Try again</button>
+    <button class="p dis">Sending…</button>
+  </div>
+  <div class="row" style="align-items:flex-start;">
+    <div class="field"><label>Class name</label><input value="Vinyasa"></div>
+    <div class="field err"><label>Email</label><input value="anna@"><div class="msg">Enter a valid email address</div></div>
+    <div class="card">
+      <div class="body">
+        <div class="type-subtitle">Vinyasa · 09:00</div>
+        <div class="type-caption">Studio A at Laurel St.</div>
+      </div>
+      <svg width="20" height="20" viewBox="0 0 24 24" style="color:var(--text-muted);"><path d="m9 18 6-6-6-6"/></svg>
+    </div>
+  </div>
+  <div class="row" style="color:var(--text-body);gap:16px;">
+    <svg width="22" height="22" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+    <svg width="22" height="22" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+    <svg width="22" height="22" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+    <svg width="22" height="22" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+    <svg width="22" height="22" viewBox="0 0 24 24"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
+    <svg width="22" height="22" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></svg>
+    <svg width="22" height="22" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+    <span class="type-caption">stroke 1.75 · currentColor · never filled</span>
+  </div>
+</div></body></html>
