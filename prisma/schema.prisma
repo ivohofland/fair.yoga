@@ -448,11 +448,12 @@ model Session {
 }
 
 model MagicLinkToken {
-  id        String   @id @default(uuid())
-  tokenHash String   @unique
-  email     String
-  expiresAt DateTime
-  createdAt DateTime @default(now())
+  id         String   @id @default(uuid())
+  tokenHash  String   @unique
+  email      String
+  redirectTo String?
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
 }
 
 model PasskeyCredential {

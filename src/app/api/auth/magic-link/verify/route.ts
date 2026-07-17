@@ -19,7 +19,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return respondError('Invalid or expired magic link', 400);
   }
 
-  const { email } = result;
+  const { email, redirectTo: tokenRedirect } = result;
 
   // Look up user: try Teacher first, then Student
   const teacher = await prisma.teacher.findUnique({ where: { email } });
@@ -34,7 +34,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const userType: RecipientType = teacher ? 'teacher' : 'student';
   const sessionToken = await createSession(prisma, user.id, userType);
-  const redirectTo = userType === 'teacher' ? '/' : '/bookings';
+  // Prefer the destination stored with the token (booking flow), but only
+  // relative paths — everything else falls back to the role default.
+  const fallback = userType === 'teacher' ? '/' : '/bookings';
+  const redirectTo =
+    tokenRedirect && tokenRedirect.startsWith('/') && !tokenRedirect.startsWith('//')
+      ? tokenRedirect
+      : fallback;
 
   const response = respondOk({ userType, userId: user.id, redirectTo });
   setSessionCookie(response.headers, sessionToken);

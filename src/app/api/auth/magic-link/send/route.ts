@@ -13,7 +13,7 @@ const PER_IP_LIMIT = 10;
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const parsed = await parseBody(request, magicLinkSendSchema);
   if ('error' in parsed) return parsed.error;
-  const { email } = parsed.data;
+  const { email, redirect } = parsed.data;
 
   // Throttle before doing any work: each accepted request can trigger a
   // real email send, so an unthrottled endpoint is an email-bombing and
@@ -43,7 +43,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const user = teacher ?? (await prisma.student.findUnique({ where: { email } }));
 
   if (user) {
-    const token = await generateMagicLinkToken(prisma, email);
+    const token = await generateMagicLinkToken(prisma, email, redirect);
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
     const magicLinkUrl = `${baseUrl}/verify?token=${token}`;
     await sendMagicLinkEmail(email, magicLinkUrl);

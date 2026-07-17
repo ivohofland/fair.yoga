@@ -10,6 +10,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { createRegistrationSchema } from '@/lib/schemas';
+import { createBulkNotifications } from '@/services/notifications';
 
 /** Thrown inside the registration transaction when the class is at capacity. */
 class ClassFullError extends Error {}
@@ -92,6 +93,37 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
           where: { id: body.classId },
           data: { settingsLocked: true },
         });
+      }
+
+      // A self-booking student joins the teacher's roster: this link is how
+      // the CRM sees them and how per-teacher privacy gets its scope.
+      if (!isTeacher) {
+        await tx.teacherStudent.upsert({
+          where: { teacherId_studentId: { teacherId: cls.teacherId, studentId } },
+          update: {},
+          create: { teacherId: cls.teacherId, studentId },
+        });
+
+        // Layer 1+2 of the comms model: confirmation for the student,
+        // heads-up for the teacher. Email fallback picks these up if unread.
+        await createBulkNotifications(tx, [
+          {
+            recipientType: 'student',
+            recipientId: studentId,
+            type: 'booking_confirmed',
+            title: 'Booking confirmed',
+            body: `You're booked for ${cls.classType}. The final price settles after class.`,
+            relatedClassId: cls.id,
+          },
+          {
+            recipientType: 'teacher',
+            recipientId: cls.teacherId,
+            type: 'booking_confirmed',
+            title: 'New booking',
+            body: `${student.firstName} booked ${cls.classType}.`,
+            relatedClassId: cls.id,
+          },
+        ]);
       }
 
       return reg;

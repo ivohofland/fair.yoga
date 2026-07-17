@@ -20,8 +20,19 @@ const timeHHmm = z
 // AUTH
 // ============================================================================
 
+// redirect must be a relative path — a full URL here would be an open redirect.
+const relativePath = z.string().max(200).regex(/^\/(?!\/)/, 'Must be a relative path');
+
 export const magicLinkSendSchema = z.object({
   email: z.string().email(),
+  redirect: relativePath.optional(),
+});
+
+export const studentSignupSchema = z.object({
+  firstName: z.string().min(1),
+  lastName: z.string().min(1),
+  email: z.string().email(),
+  redirect: relativePath.optional(),
 });
 
 export const magicLinkVerifySchema = z.object({
@@ -45,12 +56,22 @@ export const passkeyAuthVerifySchema = z.object({
 // TEACHERS
 // ============================================================================
 
+// App routes the public teacher page must never shadow.
+const RESERVED_SLUGS = new Set([
+  'login', 'verify', 'bookings', 'settings', 'schedule', 'students', 'inbox',
+  'class', 'studio-class', 'api', 'health', 'admin', 'account',
+]);
+
 export const createTeacherSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   email: z.string().email(),
   bio: z.string().max(250),
-  pageSlug: z.string().min(1).regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens'),
+  pageSlug: z
+    .string()
+    .min(1)
+    .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens')
+    .refine((s) => !RESERVED_SLUGS.has(s), 'This slug is reserved'),
 });
 
 export const updateTeacherSchema = z.object({

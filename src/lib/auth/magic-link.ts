@@ -12,7 +12,8 @@ function hashToken(token: string): string {
 
 export async function generateMagicLinkToken(
   db: PrismaClient,
-  email: string
+  email: string,
+  redirectTo?: string,
 ): Promise<string> {
   const rawToken = crypto.randomBytes(32).toString('hex');
   const tokenHash = hashToken(rawToken);
@@ -22,6 +23,7 @@ export async function generateMagicLinkToken(
     data: {
       tokenHash,
       email,
+      redirectTo: redirectTo ?? null,
       expiresAt,
     },
   });
@@ -32,7 +34,7 @@ export async function generateMagicLinkToken(
 export async function verifyMagicLinkToken(
   db: PrismaClient,
   token: string
-): Promise<{ email: string } | null> {
+): Promise<{ email: string; redirectTo: string | null } | null> {
   const tokenHash = hashToken(token);
 
   const record = await db.magicLinkToken.findUnique({
@@ -54,7 +56,7 @@ export async function verifyMagicLinkToken(
     return null;
   }
 
-  return { email: record.email };
+  return { email: record.email, redirectTo: record.redirectTo };
 }
 
 export async function cleanupExpiredTokens(

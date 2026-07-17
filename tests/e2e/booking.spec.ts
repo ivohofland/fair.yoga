@@ -1,0 +1,172 @@
+import { test, expect } from '@playwright/test';
+import { PrismaClient } from '@prisma/client';
+import crypto from 'crypto';
+import { sha256 } from '@oslojs/crypto/sha2';
+import { encodeHexLowerCase } from '@oslojs/encoding';
+
+const prisma = new PrismaClient();
+
+function hashToken(token: string): string {
+  const bytes = sha256(new TextEncoder().encode(token));
+  return encodeHexLowerCase(bytes);
+}
+
+const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+const slug = `e2e-booking-${uniqueSuffix}`;
+
+let teacherId: string;
+let roomId: string;
+let classId: string;
+let studentId: string;
+
+test.describe('Public booking flow', () => {
+  test.describe.configure({ mode: 'serial' });
+
+  test.beforeAll(async () => {
+    await prisma.$connect();
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Booking',
+        lastName: 'Teacher',
+        email: `e2e-booking-teacher-${uniqueSuffix}@test.local`,
+        bio: 'Vinyasa in the east of town.',
+        pageSlug: slug,
+      },
+    });
+    teacherId = teacher.id;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'E2E Studio',
+        address: `${uniqueSuffix} Booking St`,
+        city: 'Amsterdam',
+        postcode: '1234BK',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+    });
+
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId: teacherRoom.id,
+        classType: 'E2E Vinyasa',
+        date: new Date('2099-06-01'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 2,
+        maxStudents: 10,
+        status: 'open',
+      },
+    });
+    classId = cls.id;
+
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Booking',
+        lastName: 'Student',
+        email: `e2e-booking-student-${uniqueSuffix}@test.local`,
+        incomeTier: 3,
+        claimedAt: new Date(),
+      },
+    });
+    studentId = student.id;
+  });
+
+  test.afterAll(async () => {
+    await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    await prisma.registration.deleteMany({ where: { classId } });
+    await prisma.teacherStudent.deleteMany({ where: { teacherId } });
+    await prisma.session.deleteMany({ where: { userId: studentId } });
+    await prisma.magicLinkToken.deleteMany({ where: { email: { contains: uniqueSuffix } } });
+    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.delete({ where: { id: roomId } });
+    await prisma.student.delete({ where: { id: studentId } });
+    await prisma.teacher.delete({ where: { id: teacherId } });
+    await prisma.$disconnect();
+  });
+
+  test('public teacher page shows the open class with a price range', async ({ page }) => {
+    await page.goto(`/${slug}`);
+
+    await expect(page.getByRole('heading', { name: 'Booking Teacher' })).toBeVisible();
+    await expect(page.getByText('E2E Vinyasa')).toBeVisible();
+    await expect(page.getByText(/depending on your income tier/)).toBeVisible();
+  });
+
+  test('booking page asks for an account when signed out', async ({ page }) => {
+    await page.goto(`/${slug}/book/${classId}`);
+
+    await expect(page.getByText('First time here?')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Send me the link' })).toBeVisible();
+  });
+
+  test('magic link returns the student to the booking page and books with a chosen tier', async ({ page }) => {
+    // Simulate the emailed link: token with the booking page as redirect.
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    await prisma.magicLinkToken.create({
+      data: {
+        tokenHash: hashToken(rawToken),
+        email: `e2e-booking-student-${uniqueSuffix}@test.local`,
+        redirectTo: `/${slug}/book/${classId}`,
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      },
+    });
+
+    await page.goto(`/verify?token=${rawToken}`);
+    await page.waitForURL(`**/${slug}/book/${classId}`, { timeout: 10_000 });
+
+    // Tier selection is visible; pick tier 2 and book.
+    await expect(page.getByText('Your tier')).toBeVisible();
+    await page.getByRole('radio', { name: /Tier 2/ }).click();
+    await page.getByRole('button', { name: /^Book — around/ }).click();
+
+    await expect(page.getByText("You're in")).toBeVisible();
+
+    // The registration exists with the chosen tier, and the roster link too.
+    const registration = await prisma.registration.findFirst({
+      where: { classId, studentId },
+    });
+    expect(registration).not.toBeNull();
+    expect(registration!.tierAtBooking).toBe(2);
+
+    const link = await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId, studentId } },
+    });
+    expect(link).not.toBeNull();
+  });
+
+  test('the booking shows up under /bookings', async ({ page, context }) => {
+    // Reuse an authenticated session created directly.
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    await prisma.session.create({
+      data: {
+        id: hashToken(sessionToken),
+        userId: studentId,
+        userType: 'student',
+        expiresAt: new Date(Date.now() + 86400000),
+      },
+    });
+    await context.addCookies([
+      {
+        name: 'fair_yoga_session',
+        value: sessionToken,
+        url: 'http://localhost:3000',
+      },
+    ]);
+
+    await page.goto('/bookings');
+    await expect(page.getByRole('heading', { name: 'Your bookings' })).toBeVisible();
+    await expect(page.getByText('E2E Vinyasa')).toBeVisible();
+  });
+});
