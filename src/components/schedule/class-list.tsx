@@ -1,6 +1,9 @@
 import Link from 'next/link';
 import type { Class, TeacherRoom, Room, StudioClass } from '@prisma/client';
-import { StatusDot, deriveDotShape, type DotShape } from '@/components/ui/status-dot';
+import { StatusBadge, deriveBadgeVariant, type BadgeVariant } from '@/components/ui/status-badge';
+import { RegistrationProgress } from '@/components/ui/registration-progress';
+import { Icon } from '@/components/ui/icon';
+import { EmptyState } from '@/components/ui/empty-state';
 import { formatRoomLocation } from '@/lib/format';
 
 type ClassWithDetails = Class & {
@@ -27,97 +30,85 @@ function formatDayHeader(date: Date): string {
   return `${days[d.getUTCDay()]}, ${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
 }
 
-function dateKey(date: Date): string {
-  const d = new Date(date);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth()).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-}
-
 type RowState = {
-  dotShape: DotShape | null;
-  state: string;
+  variant: BadgeVariant;
   cancelled: boolean;
   past: boolean;
+  showProgress: boolean;
 };
 
 function deriveClassRowState(cls: ClassWithDetails, isPast: boolean): RowState {
-  if (cls.status === 'cancelled') return { dotShape: null, state: 'cancelled', cancelled: true, past: false };
-  if (cls.status === 'draft') return { dotShape: null, state: 'draft', cancelled: false, past: false };
-  if (cls.status === 'completed' || isPast) return { dotShape: null, state: 'past', cancelled: false, past: true };
-
   const reg = cls._count.registrations;
-  const dotShape = deriveDotShape(reg, cls.minStudents, cls.maxStudents);
-  const state = dotShape === 'filled' ? 'full' : dotShape === 'half' ? 'filling' : 'open';
-  return { dotShape, state, cancelled: false, past: false };
+  const variant = deriveBadgeVariant(cls.status, reg, cls.minStudents, cls.maxStudents);
+  const cancelled = cls.status === 'cancelled';
+  const past = !cancelled && (cls.status === 'completed' || isPast);
+  // The signature bar appears while registrations still matter.
+  const showProgress = !cancelled && !past && cls.status !== 'draft';
+  return { variant, cancelled, past, showProgress };
 }
 
-function RowMeta({ count, dotShape, state }: { count?: string; dotShape: DotShape | null; state: string }) {
-  return (
-    <div className="flex flex-col items-end gap-1 shrink-0 text-[13px] text-brown fy-oldstyle-tabular">
-      {count && <span className="leading-[1.4]">{count}</span>}
-      <span className="inline-flex items-baseline gap-[6px]">
-        {dotShape && <StatusDot shape={dotShape} label={state} />}
-        <span className="font-heading italic">{state}</span>
-      </span>
-    </div>
-  );
-}
-
-function ClassRow({ cls, isPast }: { cls: ClassWithDetails; isPast: boolean }) {
-  const { dotShape, state, cancelled, past } = deriveClassRowState(cls, isPast);
+// Class card: day/time + status badge, class type, room, and the
+// registration progress bar. Sand surface, radius 16, chevron.
+function ClassCard({ cls, isPast }: { cls: ClassWithDetails; isPast: boolean }) {
+  const { variant, cancelled, past, showProgress } = deriveClassRowState(cls, isPast);
   const reg = cls._count.registrations;
 
   return (
     <Link
-      key={cls.id}
       href={`/class/${cls.id}`}
-      className={`flex items-start justify-between gap-4 py-4 border-b border-border no-underline last:border-b-0${past ? ' opacity-40' : ''}`}
+      className={`block bg-sand-soft border border-border rounded-card p-5 no-underline hover:bg-sand${past || cancelled ? ' opacity-40' : ''}`}
     >
-      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-        <div
-          className={`text-[15px] text-dark leading-[1.4]${cancelled ? ' line-through decoration-[0.5px] decoration-brown' : ''}`}
-        >
-          <span className="font-semibold">{cls.classType}</span>
-          {' · '}
-          {cls.startTime}
-        </div>
-        <div className="text-[12px] text-brown fy-oldstyle">
-          {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
-        </div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="type-label text-ink">
+          {formatDayHeader(cls.date)} · {cls.startTime}
+        </span>
+        <StatusBadge variant={variant} />
       </div>
-      <RowMeta
-        count={`${reg} / ${cls.maxStudents}`}
-        dotShape={dotShape}
-        state={state}
-      />
+      <div className="flex items-center gap-3 mt-1">
+        <span
+          className={`type-subtitle flex-1 min-w-0${cancelled ? ' line-through decoration-brown decoration-[1.5px]' : ''}`}
+        >
+          {cls.classType}
+        </span>
+        <Icon name="chevron-right" size={20} className="text-brown-light" />
+      </div>
+      <p className="type-caption mt-0.5">
+        {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
+      </p>
+      {showProgress && (
+        <RegistrationProgress
+          registered={reg}
+          min={cls.minStudents}
+          max={cls.maxStudents}
+          className="mt-3"
+        />
+      )}
     </Link>
   );
 }
 
-function StudioClassRow({ sc, isPast }: { sc: StudioClass; isPast: boolean }) {
+// Studio classes are visually lighter: dashed border on cream, no bar.
+function StudioClassCard({ sc, isPast }: { sc: StudioClass; isPast: boolean }) {
   const cancelled = Boolean(sc.cancelledAt);
   const past = !cancelled && isPast;
-  const state = cancelled ? 'cancelled' : past ? 'past' : 'studio';
-  const count = sc.studentCount !== null ? `${sc.studentCount} students` : undefined;
+  const count = sc.studentCount !== null ? ` · ${sc.studentCount} students` : '';
 
   return (
     <Link
-      key={sc.id}
       href={`/studio-class/${sc.id}`}
-      className={`flex items-start justify-between gap-4 py-4 border-b border-border no-underline last:border-b-0${past || cancelled ? ' opacity-40' : ''}`}
+      className={`block border border-dashed border-border rounded-card px-5 py-3 no-underline hover:bg-sand-soft${past || cancelled ? ' opacity-40' : ''}`}
     >
-      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-        <div
-          className={`text-[15px] text-dark leading-[1.4]${cancelled ? ' line-through decoration-[0.5px] decoration-brown' : ''}`}
+      <div className="flex items-center justify-between gap-2">
+        <span
+          className={`type-label text-ink${cancelled ? ' line-through decoration-brown' : ''}`}
         >
-          <span className="font-semibold">{sc.classType || sc.location}</span>
-          {' · '}
-          {sc.startTime}
-        </div>
-        <div className="text-[12px] text-brown fy-oldstyle">
-          {sc.classType ? `${sc.location} · Studio class` : 'Studio class'}
-        </div>
+          {formatDayHeader(sc.date)} · {sc.startTime}
+        </span>
+        {cancelled && <StatusBadge variant="cancelled" />}
       </div>
-      <RowMeta count={count} dotShape={null} state={state} />
+      <p className="type-caption mt-0.5">
+        {sc.classType ? `${sc.classType} · ${sc.location}` : sc.location} · Studio class{count}
+      </p>
     </Link>
   );
 }
@@ -133,7 +124,7 @@ function itemDateTime(date: Date, startTime: string): Date {
   return d;
 }
 
-export function ClassList({ classes, studioClasses = [], emptyMessage = 'No classes yet. Create your first class.', showAddLink = true, dimPast = false, sortDesc = false }: ClassListProps) {
+export function ClassList({ classes, studioClasses = [], emptyMessage = 'No classes yet', showAddLink = true, dimPast = false, sortDesc = false }: ClassListProps) {
   const now = new Date();
 
   const items: ScheduleItem[] = [
@@ -150,35 +141,21 @@ export function ClassList({ classes, studioClasses = [], emptyMessage = 'No clas
     <div>
       {showAddLink && (
         <div className="mb-4">
-          <Link href="/class/new" className="text-[13px] text-brown">
-            Add class
+          <Link href="/class/new" className="type-label text-teal no-underline">
+            + Add class
           </Link>
         </div>
       )}
 
       {totalCount === 0 ? (
-        <p className="fy-lede">{emptyMessage}</p>
+        <EmptyState title={emptyMessage} body="Classes you create appear here." />
       ) : (
-        <div>
-          {items.map((item, i) => {
+        <div className="flex flex-col gap-3">
+          {items.map((item) => {
             const isPast = dimPast && item.dateTime < now;
-            const key = dateKey(item.data.date);
-            const prevKey = i > 0 ? dateKey(items[i - 1]!.data.date) : null;
-            const showHeader = key !== prevKey;
-
-            return (
-              <div key={item.data.id}>
-                {showHeader && (
-                  <h3 className={`font-heading text-lg font-bold text-dark ${i > 0 ? 'mt-6' : ''} mb-2${isPast ? ' opacity-40' : ''}`}>
-                    {formatDayHeader(item.data.date)}
-                  </h3>
-                )}
-                {item.type === 'class'
-                  ? <ClassRow cls={item.data} isPast={isPast} />
-                  : <StudioClassRow sc={item.data} isPast={isPast} />
-                }
-              </div>
-            );
+            return item.type === 'class'
+              ? <ClassCard key={item.data.id} cls={item.data} isPast={isPast} />
+              : <StudioClassCard key={item.data.id} sc={item.data} isPast={isPast} />;
           })}
         </div>
       )}

@@ -40,6 +40,8 @@ export function NotificationList({ notifications }: NotificationListProps) {
     if (readState[id]) return;
     setReadState((prev) => ({ ...prev, [id]: true }));
     await fetch(`/api/notifications/${id}/read`, { method: 'POST' });
+    // Re-runs the layout server component so the tab bar's unread dot updates.
+    router.refresh();
   }
 
   function handleNavigate(notification: Notification) {

@@ -1,5 +1,7 @@
 import { redirect } from 'next/navigation';
 import { getSession } from '@/lib/session';
+import { prisma } from '@/lib/db';
+import { TabBar } from '@/components/layout/tab-bar';
 
 export default async function TeacherLayout({
   children,
@@ -11,5 +13,19 @@ export default async function TeacherLayout({
     redirect('/login');
   }
 
-  return <>{children}</>;
+  // Unread dot on the Inbox tab. Indexed by [recipientType, recipientId, isRead].
+  const unreadCount = await prisma.notification.count({
+    where: {
+      recipientType: 'teacher',
+      recipientId: session.userId,
+      isRead: false,
+    },
+  });
+
+  return (
+    <>
+      {children}
+      <TabBar unreadCount={unreadCount} />
+    </>
+  );
 }

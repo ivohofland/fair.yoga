@@ -275,7 +275,7 @@ export default function CreateClassPage() {
       <div className="mb-6">
         <button
           type="button"
-          onClick={() => router.push('/schedule')}
+          onClick={() => router.push('/')}
           className="text-teal text-sm mb-2 inline-block"
         >
           &larr; Schedule

@@ -17,7 +17,7 @@ export default async function InboxPage() {
 
   return (
     <>
-      <PageHeader title="Inbox" backHref="/" backLabel="Dashboard" />
+      <PageHeader title="Inbox" backHref={null} variant="display" />
       <NotificationList notifications={notifications} />
     </>
   );

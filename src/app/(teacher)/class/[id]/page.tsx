@@ -91,7 +91,7 @@ export default async function ClassDetailPage({
     <>
       <PageHeader
         title={cls.classType}
-        backHref="/schedule" backLabel="Schedule"
+        backHref="/" backLabel="Schedule"
         action={
           cls.status === 'draft'
             ? <PublishClassButton classId={cls.id} />
