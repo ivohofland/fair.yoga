@@ -434,6 +434,25 @@ describe('completeClass (DB)', () => {
       expect(payment.status).toBe('pending');
       expect(Number(payment.amount)).toBeGreaterThan(0);
     }
+
+    // Verify each charged student received a payment-request notification
+    // carrying their exact price, and the teacher got a summary.
+    const studentNotes = await prisma.notification.findMany({
+      where: { relatedClassId: classId, recipientType: 'student', type: 'payment_request' },
+    });
+    expect(studentNotes).toHaveLength(4);
+    for (const reg of chargedRegs) {
+      const note = studentNotes.find((n) => n.recipientId === reg.studentId);
+      expect(note).toBeDefined();
+      expect(note!.body).toContain(`€${Number(reg.price).toFixed(2)}`);
+    }
+
+    const teacherNote = await prisma.notification.findFirst({
+      where: { relatedClassId: classId, recipientType: 'teacher', type: 'payment_request' },
+    });
+    expect(teacherNote).not.toBeNull();
+
+    await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
   });
 
   it('returns error for non-existent class', async () => {

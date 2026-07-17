@@ -10,10 +10,15 @@
 
 import type {
   PrismaClient,
+  Prisma,
   RecipientType,
   NotificationType,
   Notification,
 } from '@prisma/client';
+
+/** Accepts a plain client or a transaction client so notification creation
+ *  can participate in the caller's transaction. */
+type Db = PrismaClient | Prisma.TransactionClient;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -38,7 +43,7 @@ export interface CreateNotificationInput {
  * Defaults: isRead=false, emailSent=false.
  */
 export async function createNotification(
-  db: PrismaClient,
+  db: Db,
   input: CreateNotificationInput,
 ): Promise<Notification> {
   return db.notification.create({
@@ -61,7 +66,7 @@ export async function createNotification(
  * Uses Prisma's createMany for efficiency. Returns the count of created records.
  */
 export async function createBulkNotifications(
-  db: PrismaClient,
+  db: Db,
   inputs: CreateNotificationInput[],
 ): Promise<number> {
   const result = await db.notification.createMany({

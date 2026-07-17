@@ -86,6 +86,7 @@ enum NotificationType {
   booking_confirmed
   class_cancelled
   payment_received
+  payment_request
   waitlist_promoted
   spot_available
   reminder

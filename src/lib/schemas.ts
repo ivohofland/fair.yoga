@@ -174,8 +174,12 @@ export const updateClassSchema = z.object({
   maxStudents: z.number().int().positive().optional(),
 }).strict();
 
+// 'completed' is deliberately absent: completion must go through
+// POST /api/classes/[id]/complete so the pricing engine runs and
+// payments + notifications are created. A bare status flip would
+// silently skip billing.
 export const transitionClassSchema = z.object({
-  status: z.enum(['draft', 'open', 'in_progress', 'completed', 'cancelled']),
+  status: z.enum(['draft', 'open', 'in_progress', 'cancelled']),
 });
 
 // ============================================================================

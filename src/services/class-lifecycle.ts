@@ -9,6 +9,7 @@
 
 import type { PrismaClient, ClassStatus, RegistrationStatus } from '@prisma/client';
 import { calculateClassPricing } from './pricing';
+import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 
 // ---------------------------------------------------------------------------
 // State machine
@@ -190,6 +191,26 @@ export async function completeClass(
         data: { registrationId: reg.id, amount: pricing.studentPrices[i]!, status: 'pending' },
       });
     }
+
+    // Payments exist — now tell people about them, in the same transaction.
+    // In the Level 1 model this notification IS the payment request.
+    const notifications: CreateNotificationInput[] = chargedRegistrations.map((reg, i) => ({
+      recipientType: 'student' as const,
+      recipientId: reg.studentId,
+      type: 'payment_request' as const,
+      title: 'Payment requested',
+      body: `Your price for ${cls.classType} is €${pricing.studentPrices[i]!.toFixed(2)}. Pay your teacher directly.`,
+      relatedClassId: cls.id,
+    }));
+    notifications.push({
+      recipientType: 'teacher' as const,
+      recipientId: cls.teacherId,
+      type: 'payment_request' as const,
+      title: 'Class completed',
+      body: `${cls.classType} completed — €${(pricing.totalCost - Number(cls.roomCost)).toFixed(2)} earnings, ${chargedRegistrations.length} payment ${chargedRegistrations.length === 1 ? 'request' : 'requests'} sent.`,
+      relatedClassId: cls.id,
+    });
+    await createBulkNotifications(tx, notifications);
 
     return { ok: true, newStatus: 'completed' as ClassStatus };
   });
