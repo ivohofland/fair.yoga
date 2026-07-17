@@ -28,8 +28,16 @@ export async function GET(
     return respondOk(student);
   }
 
-  // Teacher accessing student profile — filter by privacy settings
+  // Teacher accessing student profile — must be linked to the student,
+  // then filtered by that student's per-teacher privacy settings.
+  // Without the link check any teacher with a UUID could read names and
+  // income tiers of students they have no relationship with.
   if (session.userType === 'teacher') {
+    const link = await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId: session.userId, studentId: id } },
+    });
+    if (!link) return respondError('Student not in your contacts', 403);
+
     const privacy = await prisma.studentPrivacy.findUnique({
       where: {
         studentId_teacherId: {
