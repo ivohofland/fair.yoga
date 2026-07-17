@@ -57,8 +57,15 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Run tests
-        run: npm test
-
       - name: Build
         run: npm run build
+
+      # Integration tests hit the HTTP API, so the built app must be running.
+      - name: Run tests
+        run: |
+          npm run start &
+          for i in {1..30}; do
+            curl -sf http://localhost:3000/login > /dev/null && break
+            sleep 1
+          done
+          npm test

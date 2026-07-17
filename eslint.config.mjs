@@ -13,7 +13,9 @@ const eslintConfig = defineConfig([
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
-  globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts']),
+  // docs/ holds the vendored design-system reference (prototype JSX, generated
+  // support.js) — documentation, not app code.
+  globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts', 'docs/**']),
 ]);
 
 export default eslintConfig;
