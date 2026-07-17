@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Notification } from '@prisma/client';
+import { EmptyState } from '@/components/ui/empty-state';
 
 interface NotificationListProps {
   notifications: Notification[];
@@ -53,7 +54,7 @@ export function NotificationList({ notifications }: NotificationListProps) {
   }
 
   if (notifications.length === 0) {
-    return <p className="text-brown text-sm">No notifications.</p>;
+    return <EmptyState title="No notifications." body="News about your classes appears here." />;
   }
 
   return (
@@ -65,37 +66,40 @@ export function NotificationList({ notifications }: NotificationListProps) {
         return (
           <div
             key={notification.id}
-            className="flex items-start justify-between py-3 border-b border-border"
+            // Unread rows sit on sand, read rows on cream. No hierarchy tricks.
+            className={`flex items-start justify-between gap-2 min-h-14 py-3 border-b border-border ${
+              isRead ? '' : 'bg-sand-soft -mx-3 px-3 rounded-field border-b-transparent'
+            }`}
           >
             <button
               type="button"
               onClick={() => handleNavigate(notification)}
               className="flex items-start min-w-0 text-left flex-1"
             >
-              <div className="flex flex-col gap-1 min-w-0">
-                <span className={`text-sm ${isRead ? 'text-dark' : 'text-dark font-medium'}`}>
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <span className={`text-[15px] text-ink ${isRead ? '' : 'font-medium'}`}>
                   {notification.title}
-                  {href && <span className="text-brown"> &rarr;</span>}
+                  {href && <span className="text-brown-light"> &rarr;</span>}
                 </span>
-                <span className="text-brown text-xs">
+                <span className="type-caption">
                   {notification.body}
                 </span>
               </div>
             </button>
             <div className="flex items-center gap-2 shrink-0 ml-2 pt-0.5">
-              <span className="text-brown text-xs">
+              <span className="type-caption">
                 {timeAgo(notification.createdAt)}
               </span>
               {!isRead ? (
                 <button
                   type="button"
                   onClick={() => markRead(notification.id)}
-                  className="text-brown text-xs opacity-60 min-h-[44px] px-1"
+                  className="type-caption text-teal min-h-[44px] px-1"
                 >
                   Mark read
                 </button>
               ) : null}
-              <span className={`inline-block w-2 h-2 shrink-0 rounded-full ${isRead ? '' : 'bg-teal'}`} />
+              <span className={`inline-block w-2 h-2 shrink-0 rounded-full ${isRead ? '' : 'bg-gold'}`} />
             </div>
           </div>
         );
