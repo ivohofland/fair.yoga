@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
+import { Icon } from '@/components/ui/icon';
+import { EmptyState } from '@/components/ui/empty-state';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
 import { formatRoomLocation } from '@/lib/format';
 
@@ -254,18 +256,16 @@ export default function CreateClassPage() {
 
   if (loading) {
     return (
-      <div className="py-12 text-center text-brown">Loading rooms...</div>
+      <div className="py-12 text-center type-caption">Loading rooms...</div>
     );
   }
 
   if (teacherRooms.length === 0) {
     return (
-      <div className="py-12 text-center">
-        <p className="text-brown mb-4">No rooms configured.</p>
-        <p className="text-sm text-brown">
-          Add a room in Settings before creating a class.
-        </p>
-      </div>
+      <EmptyState
+        title="No rooms configured"
+        body="Add a room in Settings before creating a class."
+      />
     );
   }
 
@@ -276,16 +276,17 @@ export default function CreateClassPage() {
         <button
           type="button"
           onClick={() => router.push('/')}
-          className="text-teal text-sm mb-2 inline-block"
+          className="inline-flex items-center gap-1.5 type-label text-teal no-underline mb-2"
         >
-          &larr; Schedule
+          <Icon name="arrow-left" size={18} />
+          Schedule
         </button>
-        <h1 className="font-heading text-2xl font-bold">New class</h1>
-        <p className="text-sm text-brown mt-1">Step {step} of 4</p>
+        <h1 className="type-display">New class</h1>
+        <p className="type-caption mt-1">Step {step} of 4</p>
         <button
           type="button"
           onClick={() => router.push('/studio-class/new')}
-          className="text-brown text-sm opacity-60 mt-2 inline-block"
+          className="type-caption mt-2 inline-block"
         >
           Or log a studio class
         </button>
@@ -459,13 +460,13 @@ export default function CreateClassPage() {
       {/* Step 4: Confirm */}
       {step === 4 && (
         <div className="flex flex-col gap-3">
-          <h2 className="font-heading text-lg font-bold text-dark mb-2">
+          <h2 className="type-subtitle mb-2">
             Review your class
           </h2>
 
           <div className="py-2 border-b border-border">
-            <span className="text-sm text-brown">Room</span>
-            <p className="text-dark">
+            <span className="type-label">Room</span>
+            <p className="text-base text-ink">
               {selectedRoom
                 ? formatRoomLocation(selectedRoom.room.roomName, selectedRoom.room.venueName)
                 : '-'}
@@ -473,44 +474,44 @@ export default function CreateClassPage() {
           </div>
 
           <div className="py-2 border-b border-border">
-            <span className="text-sm text-brown">Class type</span>
-            <p className="text-dark">{form.classType}</p>
+            <span className="type-label">Class type</span>
+            <p className="text-base text-ink">{form.classType}</p>
           </div>
 
           <div className="py-2 border-b border-border">
-            <span className="text-sm text-brown">Date &amp; time</span>
-            <p className="text-dark">
+            <span className="type-label">Date &amp; time</span>
+            <p className="text-base text-ink">
               {form.date} at {form.startTime} &middot; {form.durationMinutes} min
             </p>
           </div>
 
           <div className="py-2 border-b border-border">
-            <span className="text-sm text-brown">Pricing</span>
-            <p className="text-dark">
+            <span className="type-label">Pricing</span>
+            <p className="text-base text-ink">
               Room cost: &euro;{form.roomCost.toFixed(2)} &middot; Rate: &euro;
               {form.minRate.toFixed(2)} &ndash; &euro;{form.targetRate.toFixed(2)}
             </p>
           </div>
 
           <div className="py-2 border-b border-border">
-            <span className="text-sm text-brown">Students</span>
-            <p className="text-dark">
+            <span className="type-label">Students</span>
+            <p className="text-base text-ink">
               {form.minStudents} &ndash; {form.maxStudents}
             </p>
           </div>
 
           <div className="py-2 border-b border-border">
-            <span className="text-sm text-brown">Cancellation deadline</span>
-            <p className="text-dark">{formatDeadlineLabel(form.cancelDeadline)}</p>
+            <span className="type-label">Cancellation deadline</span>
+            <p className="text-base text-ink">{formatDeadlineLabel(form.cancelDeadline)}</p>
           </div>
 
           <div className="py-2 border-b border-border">
-            <span className="text-sm text-brown">Auto-cancel check</span>
-            <p className="text-dark">{formatAutoCancelLabel(form.autoCancelCheck)}</p>
+            <span className="type-label">Auto-cancel check</span>
+            <p className="text-base text-ink">{formatAutoCancelLabel(form.autoCancelCheck)}</p>
           </div>
 
           {submitError && (
-            <p className="text-sm text-error mt-2">{submitError}</p>
+            <p className="text-sm text-danger mt-2">{submitError}</p>
           )}
         </div>
       )}

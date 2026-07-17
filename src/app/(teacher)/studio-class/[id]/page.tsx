@@ -30,32 +30,32 @@ export default async function StudioClassDetailPage({
   });
 
   if (!studioClass || studioClass.teacherId !== session.userId) {
-    redirect('/schedule');
+    redirect('/');
   }
 
   return (
     <>
-      <PageHeader title={studioClass.location} backHref="/schedule" backLabel="Schedule" />
+      <PageHeader title={studioClass.location} backHref="/" backLabel="Schedule" />
 
       <div className="mb-6">
-        <div className="py-3 border-b border-border">
-          <span className="text-sm text-brown">Date</span>
-          <p className="text-dark">{formatDate(studioClass.date)}</p>
+        <div className="min-h-14 py-2 border-b border-border">
+          <span className="type-label">Date</span>
+          <p className="text-base text-ink">{formatDate(studioClass.date)}</p>
         </div>
 
-        <div className="py-3 border-b border-border">
-          <span className="text-sm text-brown">Time</span>
-          <p className="text-dark">{studioClass.startTime} &middot; {studioClass.durationMinutes} min</p>
+        <div className="min-h-14 py-2 border-b border-border">
+          <span className="type-label">Time</span>
+          <p className="text-base text-ink">{studioClass.startTime} &middot; {studioClass.durationMinutes} min</p>
         </div>
 
-        <div className="py-3 border-b border-border">
-          <span className="text-sm text-brown">Hourly rate</span>
-          <p className="text-dark">&euro;{Number(studioClass.hourlyRate).toFixed(2)}</p>
+        <div className="min-h-14 py-2 border-b border-border">
+          <span className="type-label">Hourly rate</span>
+          <p className="text-base text-ink">&euro;{Number(studioClass.hourlyRate).toFixed(2)}</p>
         </div>
 
         {studioClass.template && (
-          <div className="py-3 border-b border-border">
-            <span className="text-sm text-brown">Template</span>
+          <div className="min-h-14 py-2 border-b border-border">
+            <span className="type-label">Template</span>
             <p>
               <Link href={`/settings/studio-classes/${studioClass.template.id}`} className="text-teal text-sm">
                 {studioClass.template.location} &rarr;
@@ -66,7 +66,7 @@ export default async function StudioClassDetailPage({
       </div>
 
       {studioClass.cancelledAt ? (
-        <div className="py-8 text-center text-brown">
+        <div className="py-8 text-center type-body">
           This class was cancelled.
         </div>
       ) : (

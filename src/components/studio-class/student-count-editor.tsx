@@ -49,7 +49,7 @@ export function StudentCountEditor({ studioClassId, initialCount }: StudentCount
       <Button variant="secondary" onClick={handleSave} disabled={saving} className="mb-0">
         {saving ? 'Saving...' : 'Save'}
       </Button>
-      {success && <span className="text-sm text-teal mb-3">{success}</span>}
+      {success && <span className="type-caption text-teal mb-3.5">{success}</span>}
     </div>
   );
 }

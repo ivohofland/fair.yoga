@@ -34,7 +34,7 @@ export function CancelStudioClassButton({ studioClassId }: CancelStudioClassButt
       <button
         type="button"
         onClick={() => setConfirming(true)}
-        className="text-error text-sm"
+        className="type-label text-danger"
       >
         Cancel class
       </button>
@@ -43,7 +43,7 @@ export function CancelStudioClassButton({ studioClassId }: CancelStudioClassButt
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-sm text-brown">Cancel this studio class?</p>
+      <p className="type-body">Cancel this studio class?</p>
       <div className="flex gap-3">
         <Button variant="destructive" onClick={handleCancel} disabled={cancelling}>
           {cancelling ? 'Cancelling...' : 'Cancel'}

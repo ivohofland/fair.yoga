@@ -62,8 +62,8 @@ export default function NewStudioClassPage() {
 
   return (
     <>
-      <PageHeader title="Log studio class" backHref="/schedule" backLabel="Schedule" />
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <PageHeader title="Log studio class" backHref="/" backLabel="Schedule" />
+      <form onSubmit={handleSubmit} className="flex flex-col gap-5">
         <Input label="Class type" value={classType} onChange={(e) => setClassType(e.target.value)} placeholder="e.g. Vinyasa, Hatha, Yin" />
         <Input label="Location" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Yoga Studio Centrum, Amsterdam" />
         <Input label="Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
@@ -71,7 +71,7 @@ export default function NewStudioClassPage() {
         <Input label="Duration (minutes)" type="number" value={durationMinutes} onChange={(e) => setDurationMinutes(e.target.value)} />
         <Input label="Hourly rate" type="number" step="0.01" value={hourlyRate} onChange={(e) => setHourlyRate(e.target.value)} />
 
-        {error && <p className="text-sm text-error">{error}</p>}
+        {error && <p className="text-sm text-danger">{error}</p>}
 
         <Button type="submit" disabled={submitting}>
           {submitting ? 'Creating...' : 'Log class'}
