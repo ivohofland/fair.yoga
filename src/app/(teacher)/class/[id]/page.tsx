@@ -13,6 +13,7 @@ import { PublishClassButton } from '@/components/class/publish-class-button';
 import { CompleteClassButton } from '@/components/class/complete-class-button';
 import type { AttendanceItem } from '@/components/class/attendance-list';
 import type { PaymentItem } from '@/components/class/payment-checklist';
+import { classStartInstant } from '@/lib/timezone';
 
 export default async function ClassDetailPage({
   params,
@@ -27,6 +28,7 @@ export default async function ClassDetailPage({
   const cls = await prisma.class.findUnique({
     where: { id },
     include: {
+      teacher: { select: { defaultTimezone: true } },
       teacherRoom: { include: { room: true } },
       registrations: {
         include: {
@@ -81,9 +83,8 @@ export default async function ClassDetailPage({
     .map((r) => ({ tier: r.tierAtBooking, price: Number(r.price) }));
 
   // Check-in available: in_progress, or open within 15 min of start
-  const classStart = new Date(cls.date);
-  const [startH, startM] = cls.startTime.split(':').map(Number);
-  classStart.setUTCHours(startH!, startM!, 0, 0);
+  // (class start resolved in the teacher's timezone)
+  const classStart = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
   const minutesToStart = (classStart.getTime() - now) / 60_000;
   const showCheckin = cls.status === 'in_progress' || (cls.status === 'open' && minutesToStart <= 15);
 

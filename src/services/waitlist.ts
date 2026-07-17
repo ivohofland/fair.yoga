@@ -8,6 +8,7 @@
  */
 
 import type { PrismaClient, Prisma, CancelDeadline, WaitlistEntry } from '@prisma/client';
+import { classStartInstant } from '@/lib/timezone';
 
 /** A Prisma client or transaction client — used for helpers that run inside or outside transactions. */
 type PrismaTransactionClient = Prisma.TransactionClient;
@@ -23,7 +24,7 @@ export type WaitlistWindow = 'auto_promote' | 'first_come_first_claimed' | 'froz
 // ---------------------------------------------------------------------------
 
 /** Maps CancelDeadline enum to hours before class start. */
-const DEADLINE_HOURS: Record<CancelDeadline, number> = {
+export const DEADLINE_HOURS: Record<CancelDeadline, number> = {
   HOURS_48: 48,
   HOURS_24: 24,
   HOURS_12: 12,
@@ -37,8 +38,9 @@ const DEADLINE_HOURS: Record<CancelDeadline, number> = {
 /**
  * Determines which promotion window the waitlist is currently in.
  *
- * Given a class date, start time (HH:mm), and cancel deadline enum:
- * 1. Combine classDate + startTime into a class start datetime (UTC)
+ * Given a class date, start time (HH:mm, teacher-local), the teacher's
+ * timezone, and the cancel deadline enum:
+ * 1. Resolve classDate + startTime in the teacher's timezone → class start
  * 2. Subtract deadline hours → deadline time
  * 3. Subtract 1 more hour → cutoff time
  * 4. If now >= deadline → 'frozen'
@@ -49,16 +51,12 @@ export function getWaitlistWindow(
   classDate: Date,
   startTime: string,
   cancelDeadline: CancelDeadline,
+  timeZone: string,
   now?: Date,
 ): WaitlistWindow {
   const currentTime = now ?? new Date();
 
-  // Parse start time
-  const [hours, minutes] = startTime.split(':').map(Number) as [number, number];
-
-  // Combine classDate + startTime into a UTC datetime
-  const classStart = new Date(classDate);
-  classStart.setUTCHours(hours, minutes, 0, 0);
+  const classStart = classStartInstant(classDate, startTime, timeZone);
 
   // Calculate deadline and cutoff
   const deadlineHours = DEADLINE_HOURS[cancelDeadline];

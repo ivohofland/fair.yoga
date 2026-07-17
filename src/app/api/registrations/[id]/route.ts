@@ -8,6 +8,8 @@ import {
   isErrorResponse,
 } from '@/lib/api-utils';
 import { updateRegistrationSchema } from '@/lib/schemas';
+import { DEADLINE_HOURS } from '@/services/waitlist';
+import { classStartInstant } from '@/lib/timezone';
 
 export async function GET(
   request: NextRequest,
@@ -82,7 +84,15 @@ export async function DELETE(
 
   const registration = await prisma.registration.findUnique({
     where: { id },
-    include: { class: { select: { teacherId: true, status: true, maxStudents: true, id: true, date: true, startTime: true, cancelDeadline: true } } },
+    include: {
+      class: {
+        select: {
+          teacherId: true, status: true, maxStudents: true, id: true,
+          date: true, startTime: true, cancelDeadline: true,
+          teacher: { select: { defaultTimezone: true } },
+        },
+      },
+    },
   });
 
   if (!registration) return respondError('Registration not found', 404);
@@ -93,18 +103,15 @@ export async function DELETE(
 
   if (!isStudent && !isTeacher) return respondError('Access denied', 403);
 
-  // Enforce cancellation deadline for students (teachers can always cancel)
+  // Enforce cancellation deadline for students (teachers can always cancel).
+  // The deadline is computed from the class start in the teacher's timezone.
   if (isStudent) {
-    const deadlineHours: Record<string, number> = {
-      HOURS_48: 48,
-      HOURS_24: 24,
-      HOURS_12: 12,
-      HOURS_6: 6,
-    };
-    const hours = deadlineHours[registration.class.cancelDeadline] ?? 24;
-    const classStart = new Date(registration.class.date);
-    const [h, m] = registration.class.startTime.split(':').map(Number);
-    classStart.setUTCHours(h!, m!, 0, 0);
+    const hours = DEADLINE_HOURS[registration.class.cancelDeadline] ?? 24;
+    const classStart = classStartInstant(
+      registration.class.date,
+      registration.class.startTime,
+      registration.class.teacher.defaultTimezone,
+    );
     const deadline = new Date(classStart.getTime() - hours * 60 * 60 * 1000);
 
     if (new Date() > deadline) {

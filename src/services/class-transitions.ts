@@ -10,6 +10,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { transitionClass, completeClass } from './class-lifecycle';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
+import { classStartInstant } from '@/lib/timezone';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -20,13 +21,6 @@ const CANCEL_CHECK_HOURS: Record<string, number> = {
   HOURS_2: 2,
   HOURS_1: 1,
 };
-
-function classStartTime(date: Date, startTime: string): Date {
-  const d = new Date(date);
-  const [h, m] = startTime.split(':').map(Number);
-  d.setUTCHours(h!, m!, 0, 0);
-  return d;
-}
 
 // ---------------------------------------------------------------------------
 // Auto-transition: open → in_progress
@@ -42,14 +36,18 @@ export async function autoTransitionToInProgress(
 ): Promise<number> {
   const currentTime = now ?? new Date();
 
+  // A class early in the teacher's local morning can start *before* its
+  // stored UTC-midnight date, so include the next calendar day in the sweep.
+  const dateCeiling = new Date(currentTime.getTime() + 24 * 60 * 60 * 1000);
   const openClasses = await db.class.findMany({
-    where: { status: 'open', date: { lte: currentTime } },
+    where: { status: 'open', date: { lte: dateCeiling } },
+    include: { teacher: { select: { defaultTimezone: true } } },
   });
 
   let transitioned = 0;
 
   for (const cls of openClasses) {
-    const start = classStartTime(cls.date, cls.startTime);
+    const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
     if (start <= currentTime) {
       const result = await transitionClass(db, cls.id, 'in_progress');
       if (result.ok) transitioned++;
@@ -77,6 +75,7 @@ export async function autoCancelClasses(
   const openClasses = await db.class.findMany({
     where: { status: 'open' },
     include: {
+      teacher: { select: { defaultTimezone: true } },
       registrations: {
         where: { status: { in: ['registered', 'attended', 'no_show'] } },
         select: { studentId: true },
@@ -87,7 +86,7 @@ export async function autoCancelClasses(
   let cancelled = 0;
 
   for (const cls of openClasses) {
-    const start = classStartTime(cls.date, cls.startTime);
+    const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
     const checkHours = CANCEL_CHECK_HOURS[cls.autoCancelCheck] ?? 2;
     const checkTime = new Date(start.getTime() - checkHours * 60 * 60 * 1000);
 
@@ -146,12 +145,13 @@ export async function autoCompleteClasses(
 
   const inProgressClasses = await db.class.findMany({
     where: { status: 'in_progress' },
+    include: { teacher: { select: { defaultTimezone: true } } },
   });
 
   let completed = 0;
 
   for (const cls of inProgressClasses) {
-    const start = classStartTime(cls.date, cls.startTime);
+    const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
     const endTime = new Date(start.getTime() + cls.durationMinutes * 60 * 1000);
 
     if (currentTime >= endTime) {

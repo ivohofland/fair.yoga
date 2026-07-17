@@ -21,6 +21,7 @@ describe('getWaitlistWindow', () => {
       new Date('2026-04-10'),
       '09:00',
       'HOURS_24',
+      'UTC',
       new Date('2026-04-08T12:00:00Z'),
     );
     expect(result).toBe('auto_promote');
@@ -33,6 +34,7 @@ describe('getWaitlistWindow', () => {
       new Date('2026-04-10'),
       '09:00',
       'HOURS_24',
+      'UTC',
       new Date('2026-04-09T08:30:00Z'),
     );
     expect(result).toBe('first_come_first_claimed');
@@ -45,6 +47,7 @@ describe('getWaitlistWindow', () => {
       new Date('2026-04-10'),
       '09:00',
       'HOURS_24',
+      'UTC',
       new Date('2026-04-09T10:00:00Z'),
     );
     expect(result).toBe('frozen');
@@ -59,6 +62,7 @@ describe('getWaitlistWindow', () => {
       new Date('2026-04-10'),
       '09:00',
       'HOURS_6',
+      'UTC',
       new Date('2026-04-10T02:30:00Z'),
     );
     expect(result).toBe('first_come_first_claimed');
@@ -71,6 +75,7 @@ describe('getWaitlistWindow', () => {
       new Date('2026-04-10'),
       '09:00',
       'HOURS_24',
+      'UTC',
       new Date('2026-04-09T09:00:00Z'),
     );
     expect(result).toBe('frozen');
@@ -83,6 +88,7 @@ describe('getWaitlistWindow', () => {
       new Date('2026-04-10'),
       '09:00',
       'HOURS_24',
+      'UTC',
       new Date('2026-04-09T08:00:00Z'),
     );
     expect(result).toBe('first_come_first_claimed');
@@ -96,6 +102,7 @@ describe('getWaitlistWindow', () => {
       new Date('2026-04-10'),
       '09:00',
       'HOURS_48',
+      'UTC',
       new Date('2026-04-07T12:00:00Z'),
     );
     expect(result).toBe('auto_promote');
@@ -109,6 +116,7 @@ describe('getWaitlistWindow', () => {
       new Date('2026-04-10'),
       '09:00',
       'HOURS_12',
+      'UTC',
       new Date('2026-04-09T20:30:00Z'),
     );
     expect(result).toBe('first_come_first_claimed');
@@ -120,8 +128,24 @@ describe('getWaitlistWindow', () => {
       new Date('2099-12-31'),
       '09:00',
       'HOURS_24',
+      'UTC',
     );
     expect(result).toBe('auto_promote');
+  });
+
+  it('computes the window in the teacher timezone, not UTC', () => {
+    // Amsterdam summer (+2): class 2026-07-20 09:00 local = 07:00 UTC.
+    // HOURS_24 deadline = 2026-07-19 07:00 UTC.
+    // now = 2026-07-19 08:00 UTC — past the local deadline (frozen),
+    // but a UTC reading would still say first_come_first_claimed.
+    const result = getWaitlistWindow(
+      new Date('2026-07-20'),
+      '09:00',
+      'HOURS_24',
+      'Europe/Amsterdam',
+      new Date('2026-07-19T08:00:00Z'),
+    );
+    expect(result).toBe('frozen');
   });
 });
 
