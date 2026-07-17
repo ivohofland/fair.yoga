@@ -333,7 +333,7 @@ describe('promoteNext (DB)', () => {
         teacherId,
         teacherRoomId,
         classType: 'Yin',
-        date: new Date('2026-07-01'),
+        date: new Date('2099-07-01'),
         startTime: '18:00',
         durationMinutes: 75,
         roomCost: 40,

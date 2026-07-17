@@ -8,7 +8,7 @@ import {
   isErrorResponse,
 } from '@/lib/api-utils';
 import { updateRegistrationSchema } from '@/lib/schemas';
-import { DEADLINE_HOURS } from '@/services/waitlist';
+import { DEADLINE_HOURS, handleSpotFreed } from '@/services/waitlist';
 import { classStartInstant } from '@/lib/timezone';
 
 export async function GET(
@@ -103,6 +103,18 @@ export async function DELETE(
 
   if (!isStudent && !isTeacher) return respondError('Access denied', 403);
 
+  // A registration can only be cancelled while the class is still upcoming;
+  // cancelling on a completed class would orphan its payment.
+  if (registration.class.status === 'completed' || registration.class.status === 'cancelled') {
+    return respondError(
+      `Cannot cancel a registration on a ${registration.class.status} class`,
+      409,
+    );
+  }
+  if (registration.status === 'cancelled' || registration.status === 'late_cancel') {
+    return respondError('Registration is already cancelled', 409);
+  }
+
   // Enforce cancellation deadline for students (teachers can always cancel).
   // The deadline is computed from the class start in the teacher's timezone.
   if (isStudent) {
@@ -120,6 +132,8 @@ export async function DELETE(
         where: { id },
         data: { status: 'late_cancel', cancelledAt: new Date() },
       });
+      // The seat is free even though the canceller is still charged.
+      await handleSpotFreed(prisma, registration.classId);
       return respondOk(updated);
     }
   }
@@ -129,6 +143,10 @@ export async function DELETE(
     where: { id },
     data: { status: 'cancelled', cancelledAt: new Date() },
   });
+
+  // Hybrid waitlist promotion: auto-promote, broadcast, or stay frozen
+  // depending on how close to the deadline we are.
+  await handleSpotFreed(prisma, registration.classId);
 
   return respondOk(updated);
 }

@@ -9,6 +9,26 @@
 
 import type { PrismaClient, Prisma, CancelDeadline, WaitlistEntry } from '@prisma/client';
 import { classStartInstant } from '@/lib/timezone';
+import { createBulkNotifications } from './notifications';
+
+/** Raised when a promotion/claim is not allowed in the current class state. */
+export class WaitlistPromotionError extends Error {
+  constructor(
+    message: string,
+    public readonly reason:
+      | 'class_not_open'
+      | 'class_full'
+      | 'window_frozen'
+      | 'wrong_window'
+      | 'entry_not_waiting',
+  ) {
+    super(message);
+    this.name = 'WaitlistPromotionError';
+  }
+}
+
+/** Registration statuses that occupy a spot. */
+const ACTIVE_REGISTRATION_STATUSES = ['registered', 'attended', 'no_show'] as const;
 
 /** A Prisma client or transaction client — used for helpers that run inside or outside transactions. */
 type PrismaTransactionClient = Prisma.TransactionClient;
@@ -136,26 +156,77 @@ export async function removeFromWaitlist(
 }
 
 /**
- * Promotes the first waiting student: creates a Registration, links it
- * to the waitlist entry, and reorders remaining positions.
+ * Promotes a waiting student: creates a Registration, links it to the
+ * waitlist entry, notifies the student, and reorders remaining positions.
  *
- * Returns the updated waitlist entry, or null if no waiting students remain.
+ * Without `entryId`, the queue head is promoted; with `entryId`, that
+ * specific entry is promoted (teacher's explicit choice).
  *
- * Wrapped in a transaction so promotion, registration creation, and
- * reordering are atomic.
+ * Guards (all inside the transaction, serialized by a FOR UPDATE lock on
+ * the class row shared with the registration route):
+ * - the class must still be open
+ * - the promotion window must not be frozen (past the cancel deadline)
+ * - the class must have a free spot — promotions are not walk-ins
+ *
+ * Returns the updated waitlist entry, or null when the queue is empty.
+ * Throws WaitlistPromotionError when a guard rejects.
  */
 export async function promoteNext(
   db: PrismaClient,
   classId: string,
+  opts: { entryId?: string; now?: Date } = {},
 ): Promise<WaitlistEntry | null> {
   return db.$transaction(async (tx) => {
-    // Find first 'waiting' entry ordered by position
-    const nextEntry = await tx.waitlistEntry.findFirst({
-      where: { classId, status: 'waiting' },
-      orderBy: { position: 'asc' },
+    await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
+
+    const cls = await tx.class.findUniqueOrThrow({
+      where: { id: classId },
+      include: { teacher: { select: { defaultTimezone: true } } },
     });
 
-    if (!nextEntry) return null;
+    if (cls.status !== 'open') {
+      throw new WaitlistPromotionError(
+        `Cannot promote into a class with status "${cls.status}"`,
+        'class_not_open',
+      );
+    }
+
+    const window = getWaitlistWindow(
+      cls.date,
+      cls.startTime,
+      cls.cancelDeadline,
+      cls.teacher.defaultTimezone,
+      opts.now,
+    );
+    if (window === 'frozen') {
+      throw new WaitlistPromotionError(
+        'The waitlist is frozen — the cancellation deadline has passed',
+        'window_frozen',
+      );
+    }
+
+    const activeCount = await tx.registration.count({
+      where: { classId, status: { in: [...ACTIVE_REGISTRATION_STATUSES] } },
+    });
+    if (activeCount >= cls.maxStudents) {
+      throw new WaitlistPromotionError('Class is full', 'class_full');
+    }
+
+    const nextEntry = opts.entryId
+      ? await tx.waitlistEntry.findFirst({
+          where: { id: opts.entryId, classId, status: 'waiting' },
+        })
+      : await tx.waitlistEntry.findFirst({
+          where: { classId, status: 'waiting' },
+          orderBy: { position: 'asc' },
+        });
+
+    if (!nextEntry) {
+      if (opts.entryId) {
+        throw new WaitlistPromotionError('Waitlist entry is not waiting', 'entry_not_waiting');
+      }
+      return null;
+    }
 
     // Look up the student to get their incomeTier
     const student = await tx.student.findUniqueOrThrow({
@@ -183,11 +254,183 @@ export async function promoteNext(
       },
     });
 
+    await createBulkNotifications(tx, [
+      {
+        recipientType: 'student',
+        recipientId: nextEntry.studentId,
+        type: 'waitlist_promoted',
+        title: 'You are in',
+        body: `A spot opened in ${cls.classType} and you moved off the waitlist.`,
+        relatedClassId: classId,
+      },
+    ]);
+
     // Reorder remaining 'waiting' entries
     await reorderWaitingEntries(tx, classId);
 
     return updatedEntry;
   });
+}
+
+/**
+ * Claims an open spot from the waitlist during the first-come-first-claimed
+ * window (final hour before the cancel deadline). The first student whose
+ * claim lands gets the spot; everyone else keeps waiting.
+ */
+export async function claimSpot(
+  db: PrismaClient,
+  classId: string,
+  studentId: string,
+  now?: Date,
+): Promise<WaitlistEntry> {
+  return db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
+
+    const cls = await tx.class.findUniqueOrThrow({
+      where: { id: classId },
+      include: { teacher: { select: { defaultTimezone: true } } },
+    });
+
+    if (cls.status !== 'open') {
+      throw new WaitlistPromotionError(
+        `Cannot claim a spot in a class with status "${cls.status}"`,
+        'class_not_open',
+      );
+    }
+
+    const window = getWaitlistWindow(
+      cls.date,
+      cls.startTime,
+      cls.cancelDeadline,
+      cls.teacher.defaultTimezone,
+      now,
+    );
+    if (window === 'frozen') {
+      throw new WaitlistPromotionError(
+        'The waitlist is frozen — the cancellation deadline has passed',
+        'window_frozen',
+      );
+    }
+    if (window !== 'first_come_first_claimed') {
+      throw new WaitlistPromotionError(
+        'Spots can only be claimed in the final hour before the deadline — before that the queue promotes automatically',
+        'wrong_window',
+      );
+    }
+
+    const activeCount = await tx.registration.count({
+      where: { classId, status: { in: [...ACTIVE_REGISTRATION_STATUSES] } },
+    });
+    if (activeCount >= cls.maxStudents) {
+      throw new WaitlistPromotionError('The spot has already been claimed', 'class_full');
+    }
+
+    const entry = await tx.waitlistEntry.findFirst({
+      where: { classId, studentId, status: 'waiting' },
+    });
+    if (!entry) {
+      throw new WaitlistPromotionError('You are not on the waitlist for this class', 'entry_not_waiting');
+    }
+
+    const student = await tx.student.findUniqueOrThrow({
+      where: { id: studentId },
+      select: { incomeTier: true },
+    });
+
+    const registration = await tx.registration.create({
+      data: { classId, studentId, status: 'registered', tierAtBooking: student.incomeTier },
+    });
+
+    const updatedEntry = await tx.waitlistEntry.update({
+      where: { id: entry.id },
+      data: { status: 'promoted', promotedAt: new Date(), registrationId: registration.id },
+    });
+
+    await createBulkNotifications(tx, [
+      {
+        recipientType: 'student',
+        recipientId: studentId,
+        type: 'booking_confirmed',
+        title: 'Spot claimed',
+        body: `You claimed the open spot in ${cls.classType}.`,
+        relatedClassId: classId,
+      },
+    ]);
+
+    await reorderWaitingEntries(tx, classId);
+
+    return updatedEntry;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Spot-freed hook — the hybrid promotion entry point
+// ---------------------------------------------------------------------------
+
+export type SpotFreedResult =
+  | { action: 'promoted'; entry: WaitlistEntry }
+  | { action: 'broadcast'; notified: number }
+  | { action: 'frozen' }
+  | { action: 'none' };
+
+/**
+ * Called when a registration cancellation frees a spot in an open class.
+ * Implements the documented hybrid promotion:
+ * - before the final hour: auto-promote the queue head
+ * - final hour before the deadline: broadcast to all waiting students
+ *   (first to claim gets the spot)
+ * - after the deadline: frozen — nothing happens
+ */
+export async function handleSpotFreed(
+  db: PrismaClient,
+  classId: string,
+  now?: Date,
+): Promise<SpotFreedResult> {
+  const cls = await db.class.findUnique({
+    where: { id: classId },
+    include: { teacher: { select: { defaultTimezone: true } } },
+  });
+  if (!cls || cls.status !== 'open') return { action: 'none' };
+
+  const window = getWaitlistWindow(
+    cls.date,
+    cls.startTime,
+    cls.cancelDeadline,
+    cls.teacher.defaultTimezone,
+    now,
+  );
+
+  if (window === 'frozen') return { action: 'frozen' };
+
+  if (window === 'auto_promote') {
+    try {
+      const entry = await promoteNext(db, classId, { now });
+      return entry ? { action: 'promoted', entry } : { action: 'none' };
+    } catch (err) {
+      // A concurrent registration may have refilled the spot — that's fine.
+      if (err instanceof WaitlistPromotionError) return { action: 'none' };
+      throw err;
+    }
+  }
+
+  // first_come_first_claimed: notify everyone waiting; first claim wins.
+  const waiting = await db.waitlistEntry.findMany({
+    where: { classId, status: 'waiting' },
+  });
+  if (waiting.length === 0) return { action: 'none' };
+
+  await createBulkNotifications(
+    db,
+    waiting.map((w) => ({
+      recipientType: 'student' as const,
+      recipientId: w.studentId,
+      type: 'spot_available' as const,
+      title: 'A spot opened up',
+      body: `A spot opened in ${cls.classType}. The first to claim it gets it.`,
+      relatedClassId: classId,
+    })),
+  );
+  return { action: 'broadcast', notified: waiting.length };
 }
 
 // ---------------------------------------------------------------------------

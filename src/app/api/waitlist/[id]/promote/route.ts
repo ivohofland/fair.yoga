@@ -5,13 +5,14 @@ import {
   respondError,
   requireTeacher,
   isErrorResponse,
+  withErrorHandler,
 } from '@/lib/api-utils';
-import { promoteNext } from '@/services/waitlist';
+import { promoteNext, WaitlistPromotionError } from '@/services/waitlist';
 
-export async function POST(
+export const POST = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
@@ -26,8 +27,14 @@ export async function POST(
     return respondError('Not your class', 403);
   }
 
-  const promoted = await promoteNext(prisma, entry.classId);
-  if (!promoted) return respondOk(null);
-
-  return respondOk(promoted);
-}
+  try {
+    // Promote the entry the teacher actually chose — not the queue head.
+    const promoted = await promoteNext(prisma, entry.classId, { entryId: id });
+    return respondOk(promoted);
+  } catch (err) {
+    if (err instanceof WaitlistPromotionError) {
+      return respondError(err.message, 409);
+    }
+    throw err;
+  }
+});

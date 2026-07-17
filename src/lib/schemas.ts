@@ -285,6 +285,10 @@ export const createWaitlistSchema = z.object({
   classId: z.string().uuid(),
 });
 
+export const claimWaitlistSchema = z.object({
+  classId: z.string().uuid(),
+});
+
 // ============================================================================
 // PAYMENTS
 // ============================================================================
