@@ -3,6 +3,8 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { Input } from '@/components/ui/input';
+import { Icon } from '@/components/ui/icon';
+import { EmptyState } from '@/components/ui/empty-state';
 import { formatStudentName } from '@/lib/format';
 import { Pagination } from '@/components/students/pagination';
 
@@ -91,33 +93,36 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
 
       <div className={loading ? 'opacity-50' : ''}>
         {students.length === 0 && !loading ? (
-          <p className="text-brown text-sm py-4">
-            {search
-              ? `No students matching '${search}'.`
-              : archived ? 'No archived students.' : 'No students yet. Add your first student.'}
-          </p>
+          search ? (
+            <EmptyState title={`No students matching '${search}'.`} />
+          ) : archived ? (
+            <EmptyState title="No archived students." />
+          ) : (
+            <EmptyState title="No students yet." body="Add your first student." />
+          )
         ) : (
           <div>
             {students.map((student) => (
               <Link
                 key={student.id}
                 href={`/students/${student.id}`}
-                className="flex items-center justify-between py-3 border-b border-border"
+                className="flex items-center gap-3 min-h-14 py-2 border-b border-border last:border-b-0 no-underline"
               >
-                <div className="flex flex-col gap-1">
-                  <span className="text-dark text-sm font-medium">
+                <div className="flex-1 min-w-0 flex flex-col gap-1">
+                  <span className="text-base text-ink font-medium">
                     {formatStudentName(student.firstName, student.lastName, student.shareFullName)}
                   </span>
-                  {student.email && <span className="text-brown text-xs">{student.email}</span>}
+                  {student.email && <span className="type-caption">{student.email}</span>}
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-brown text-sm">
+                  <span className="type-caption">
                     {student.classCount} {student.classCount === 1 ? 'class' : 'classes'}
                   </span>
                   {!student.claimedAt && (
-                    <span className="text-xs text-brown opacity-60">unlinked</span>
+                    <span className="type-caption">unlinked</span>
                   )}
                 </div>
+                <Icon name="chevron-right" size={20} className="text-brown-light" />
               </Link>
             ))}
           </div>

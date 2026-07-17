@@ -3,6 +3,7 @@ import { requireTeacherSession } from '@/lib/session';
 import { formatStudentName } from '@/lib/format';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
+import { EmptyState } from '@/components/ui/empty-state';
 import { EditStudentForm } from '@/components/students/edit-student-form';
 import { RemoveStudentButton } from '@/components/students/remove-student-button';
 import { ArchiveStudentButton } from '@/components/students/archive-student-button';
@@ -55,7 +56,7 @@ export default async function StudentDetailPage({
       <PageHeader title={displayName} backHref={isArchived ? '/students/archived' : '/students'} backLabel={isArchived ? 'Archived students' : 'All students'} />
 
       {isUnlinked && (
-        <p className="text-xs text-brown opacity-60 mb-6">
+        <p className="type-caption mb-6">
           This student hasn&apos;t created an account yet. You can edit their details.
         </p>
       )}
@@ -76,34 +77,34 @@ export default async function StudentDetailPage({
       ) : (
         /* Claimed: read-only contact info (privacy-filtered) */
         <section className="mb-8">
-          <h2 className="font-heading text-lg font-bold text-teal mb-3">Contact</h2>
+          <h2 className="type-subtitle mb-3">Contact</h2>
           <div className="flex flex-col gap-2">
             {showEmail && student.email && (
               <div>
-                <span className="text-sm text-brown">Email</span>
-                <p className="text-dark">{student.email}</p>
+                <span className="type-label">Email</span>
+                <p className="text-base text-ink">{student.email}</p>
               </div>
             )}
             {showPhone && student.phone && (
               <div>
-                <span className="text-sm text-brown">Phone</span>
-                <p className="text-dark">{student.phone}</p>
+                <span className="type-label">Phone</span>
+                <p className="text-base text-ink">{student.phone}</p>
               </div>
             )}
             {showBirthday && student.birthday && (
               <div>
-                <span className="text-sm text-brown">Birthday</span>
-                <p className="text-dark">{new Date(student.birthday).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}</p>
+                <span className="type-label">Birthday</span>
+                <p className="text-base text-ink">{new Date(student.birthday).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}</p>
               </div>
             )}
             {showAddress && student.address && (
               <div>
-                <span className="text-sm text-brown">Address</span>
-                <p className="text-dark">{student.address}</p>
+                <span className="type-label">Address</span>
+                <p className="text-base text-ink">{student.address}</p>
               </div>
             )}
             {!showEmail && !showPhone && !showBirthday && !showAddress && (
-              <p className="text-sm text-brown">No contact information shared by this student.</p>
+              <EmptyState title="No contact information shared by this student." />
             )}
           </div>
         </section>
@@ -112,21 +113,21 @@ export default async function StudentDetailPage({
       {/* Attendance history (claimed students only) */}
       {!isUnlinked && (
         <section className="mb-8">
-          <h2 className="font-heading text-lg font-bold text-teal mb-3">Attendance</h2>
+          <h2 className="type-subtitle mb-3">Attendance</h2>
           {student.registrations.length === 0 ? (
-            <p className="text-sm text-brown">No class history.</p>
+            <EmptyState title="No class history." />
           ) : (
             <div className="flex flex-col">
               {student.registrations.map((reg) => (
-                <div key={reg.id} className="flex justify-between items-center py-3 border-b border-border">
+                <div key={reg.id} className="flex justify-between items-center py-3 border-b border-border last:border-b-0">
                   <div>
-                    <p className="text-dark">{reg.class.classType}</p>
-                    <p className="text-sm text-brown">
+                    <p className="text-base text-ink">{reg.class.classType}</p>
+                    <p className="type-caption">
                       {new Date(reg.class.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
                       {' · '}{reg.class.startTime}
                     </p>
                   </div>
-                  <span className={`text-sm ${reg.status === 'attended' ? 'text-teal' : reg.status === 'cancelled' ? 'text-error' : 'text-brown'}`}>
+                  <span className={`text-sm ${reg.status === 'attended' ? 'text-teal' : reg.status === 'cancelled' ? 'text-danger' : 'text-brown'}`}>
                     {reg.status.replace('_', ' ')}
                   </span>
                 </div>
@@ -139,7 +140,7 @@ export default async function StudentDetailPage({
       {/* Payment history (claimed students only) */}
       {!isUnlinked && (
         <section className="mb-8">
-          <h2 className="font-heading text-lg font-bold text-teal mb-3">Payments</h2>
+          <h2 className="type-subtitle mb-3">Payments</h2>
           <StudentPaymentList
             items={student.registrations
               .filter((r) => r.payment)

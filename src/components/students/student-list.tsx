@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import { Icon } from '@/components/ui/icon';
+import { EmptyState } from '@/components/ui/empty-state';
 import { formatStudentName } from '@/lib/format';
 import type { Student, Registration, Class } from '@prisma/client';
 
@@ -27,7 +29,7 @@ function formatDate(date: Date): string {
 
 export function StudentList({ students }: StudentListProps) {
   if (students.length === 0) {
-    return <p className="text-brown text-sm">No students yet.</p>;
+    return <EmptyState title="No students yet." />;
   }
 
   const sorted = [...students].sort((a, b) =>
@@ -46,19 +48,20 @@ export function StudentList({ students }: StudentListProps) {
           <Link
             key={student.id}
             href={`/students/${student.id}`}
-            className="flex items-center justify-between py-3 border-b border-border"
+            className="flex items-center gap-3 min-h-14 py-2 border-b border-border last:border-b-0 no-underline"
           >
-            <div className="flex flex-col gap-1">
-              <span className="text-dark text-sm font-medium">
+            <div className="flex-1 min-w-0 flex flex-col gap-1">
+              <span className="text-base text-ink font-medium">
                 {formatStudentName(student.firstName, student.lastName)}
               </span>
-              <span className="text-brown text-xs">
+              <span className="type-caption">
                 Last class: {lastClassDate}
               </span>
             </div>
-            <span className="text-brown text-sm">
+            <span className="type-caption">
               {student._count.registrations} {student._count.registrations === 1 ? 'class' : 'classes'}
             </span>
+            <Icon name="chevron-right" size={20} className="text-brown-light" />
           </Link>
         );
       })}

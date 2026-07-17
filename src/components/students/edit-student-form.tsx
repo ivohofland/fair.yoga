@@ -78,7 +78,7 @@ export function EditStudentForm({
         onChange={(e) => setEmail(e.target.value)}
       />
 
-      {error && <p className="text-sm text-error">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
 
       <div className="mt-2">
         <Button type="submit" disabled={submitting}>

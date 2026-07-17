@@ -92,7 +92,7 @@ export function CreateStudentForm() {
         error={errors.email}
       />
 
-      {submitError && <p className="text-sm text-error">{submitError}</p>}
+      {submitError && <p className="text-sm text-danger">{submitError}</p>}
 
       <div className="mt-4">
         <Button type="submit" disabled={submitting}>

@@ -45,14 +45,14 @@ export function Pagination({ currentPage, totalPages, onPageChange }: Pagination
         onClick={() => onPageChange(currentPage - 1)}
         disabled={currentPage <= 1}
         aria-label="Previous page"
-        className="min-w-[44px] min-h-[44px] flex items-center justify-center text-brown disabled:opacity-30"
+        className="min-w-[44px] min-h-[44px] flex items-center justify-center text-teal no-underline disabled:opacity-30"
       >
         &larr;
       </button>
 
       {pages.map((page, idx) =>
         page === 'ellipsis' ? (
-          <span key={`ellipsis-${idx}`} className="min-w-[44px] min-h-[44px] flex items-center justify-center text-brown">
+          <span key={`ellipsis-${idx}`} className="min-w-[44px] min-h-[44px] flex items-center justify-center text-brown-light">
             &hellip;
           </span>
         ) : (
@@ -61,10 +61,10 @@ export function Pagination({ currentPage, totalPages, onPageChange }: Pagination
             type="button"
             onClick={() => onPageChange(page)}
             aria-current={page === currentPage ? 'page' : undefined}
-            className={`min-w-[44px] min-h-[44px] flex items-center justify-center text-sm ${
+            className={`min-w-[44px] min-h-[44px] flex items-center justify-center text-sm no-underline ${
               page === currentPage
-                ? 'font-bold text-teal'
-                : 'text-brown'
+                ? 'font-semibold text-teal'
+                : 'text-teal'
             }`}
           >
             {page}
@@ -77,7 +77,7 @@ export function Pagination({ currentPage, totalPages, onPageChange }: Pagination
         onClick={() => onPageChange(currentPage + 1)}
         disabled={currentPage >= totalPages}
         aria-label="Next page"
-        className="min-w-[44px] min-h-[44px] flex items-center justify-center text-brown disabled:opacity-30"
+        className="min-w-[44px] min-h-[44px] flex items-center justify-center text-teal no-underline disabled:opacity-30"
       >
         &rarr;
       </button>

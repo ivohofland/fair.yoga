@@ -31,7 +31,7 @@ export function RemoveStudentButton({ studentId, studentName }: RemoveStudentBut
       <button
         type="button"
         onClick={() => setConfirming(true)}
-        className="text-error text-sm"
+        className="type-label text-danger"
       >
         Remove student
       </button>

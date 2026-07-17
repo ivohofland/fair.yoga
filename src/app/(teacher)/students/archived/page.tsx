@@ -4,7 +4,7 @@ import { StudentDirectory } from '@/components/students/student-directory';
 export default function ArchivedStudentsPage() {
   return (
     <>
-      <PageHeader title="Archived students" backHref="/students" backLabel="All students" />
+      <PageHeader title="Archived students" backHref="/students" backLabel="Students" />
       <StudentDirectory archived />
     </>
   );

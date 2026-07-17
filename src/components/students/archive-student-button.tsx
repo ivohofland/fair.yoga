@@ -29,7 +29,7 @@ export function ArchiveStudentButton({ studentId, isArchived }: ArchiveStudentBu
       type="button"
       onClick={handleToggle}
       disabled={loading}
-      className="text-brown text-sm opacity-60"
+      className="type-caption"
     >
       {loading
         ? (isArchived ? 'Unarchiving...' : 'Archiving...')
