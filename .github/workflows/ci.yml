@@ -30,6 +30,7 @@ jobs:
       PASSKEY_RP_ID: localhost
       PASSKEY_RP_NAME: fair.yoga
       CRON_SECRET: ci-cron-secret
+      CRON_SCHEDULER: 'off'
       RESEND_API_KEY: re_test
       EMAIL_DRY_RUN: '1'
       EMAIL_FROM: noreply@test.local
