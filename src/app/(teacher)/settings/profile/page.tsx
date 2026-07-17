@@ -12,7 +12,7 @@ export default async function ProfilePage() {
 
   return (
     <>
-      <PageHeader title="Profile" />
+      <PageHeader title="Profile" backHref="/settings" backLabel="Settings" />
       <ProfileForm
         teacherId={teacher.id}
         initial={{

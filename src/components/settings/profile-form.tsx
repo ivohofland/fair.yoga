@@ -137,7 +137,7 @@ export function ProfileForm({ teacherId, initial }: ProfileFormProps) {
     <form onSubmit={handleSubmit} className="flex flex-col gap-6">
       {/* Personal */}
       <section className="flex flex-col gap-4">
-        <h2 className="font-heading text-lg font-bold text-teal">Personal</h2>
+        <h2 className="type-subtitle">Personal</h2>
         <Input
           label="First name"
           value={form.firstName}
@@ -150,7 +150,7 @@ export function ProfileForm({ teacherId, initial }: ProfileFormProps) {
         />
         <div className="flex flex-col gap-1">
           <span className="text-brown">Email</span>
-          <p className="text-dark text-sm py-3">{initial.email}</p>
+          <p className="text-base text-ink py-3">{initial.email}</p>
         </div>
         <div className="flex flex-col gap-1">
           <label htmlFor="bio" className="text-brown">Bio (max 250 characters)</label>
@@ -160,28 +160,28 @@ export function ProfileForm({ teacherId, initial }: ProfileFormProps) {
             onChange={(e) => update('bio', e.target.value)}
             maxLength={250}
             rows={3}
-            className="bg-cream border border-teal rounded-none px-4 py-3 min-h-[44px] text-dark focus:outline-none focus:shadow-[inset_0_0_0_1px_var(--color-teal)] w-full"
+            className="bg-sand-soft border border-border rounded-field px-4 py-3 min-h-24 text-ink text-base focus:outline-none focus:shadow-focus w-full"
           />
-          <span className="text-xs text-brown opacity-60">{form.bio.length}/250</span>
+          <span className="type-caption">{form.bio.length}/250</span>
         </div>
       </section>
 
       {/* Public page */}
       <section className="flex flex-col gap-4">
-        <h2 className="font-heading text-lg font-bold text-teal">Public page</h2>
+        <h2 className="type-subtitle">Public page</h2>
         <Input
           label="Page slug"
           value={form.pageSlug}
           onChange={(e) => update('pageSlug', e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
         />
-        <p className="text-xs text-brown opacity-60">
+        <p className="type-caption">
           Your booking page: fair.yoga/{form.pageSlug}
         </p>
       </section>
 
       {/* Preferences */}
       <section className="flex flex-col gap-4">
-        <h2 className="font-heading text-lg font-bold text-teal">Preferences</h2>
+        <h2 className="type-subtitle">Preferences</h2>
         <Select
           id="currency"
           label="Currency"
@@ -216,7 +216,7 @@ export function ProfileForm({ teacherId, initial }: ProfileFormProps) {
 
       {/* Payment */}
       <section className="flex flex-col gap-4">
-        <h2 className="font-heading text-lg font-bold text-teal">Payment</h2>
+        <h2 className="type-subtitle">Payment</h2>
         <Input
           label="Bank IBAN"
           value={form.bankIban ?? ''}
@@ -229,7 +229,7 @@ export function ProfileForm({ teacherId, initial }: ProfileFormProps) {
         />
       </section>
 
-      {error && <p className="text-sm text-error">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
       {success && <p className="text-sm text-teal">{success}</p>}
 
       <Button type="submit" disabled={submitting}>

@@ -38,7 +38,7 @@ export function DeleteRoomButton({ roomId, roomName }: DeleteRoomButtonProps) {
       <button
         type="button"
         onClick={() => setConfirming(true)}
-        className="text-error text-sm"
+        className="text-danger text-sm"
       >
         Delete room
       </button>
@@ -48,7 +48,7 @@ export function DeleteRoomButton({ roomId, roomName }: DeleteRoomButtonProps) {
   return (
     <div className="flex flex-col gap-2">
       <p className="text-sm text-brown">Permanently delete {roomName}? This cannot be undone.</p>
-      {error && <p className="text-sm text-error">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
       <div className="flex gap-3">
         <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
           {deleting ? 'Deleting...' : 'Delete'}

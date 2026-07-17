@@ -38,13 +38,13 @@ export function ArchiveTemplateButton({ templateId, isArchived }: ArchiveTemplat
         type="button"
         onClick={handleToggle}
         disabled={loading}
-        className="text-brown text-sm opacity-60"
+        className="type-caption"
       >
         {loading
           ? (isArchived ? 'Unarchiving...' : 'Archiving...')
           : (isArchived ? 'Unarchive recurring class' : 'Archive recurring class')}
       </button>
-      {error && <p className="text-sm text-error mt-2">{error}</p>}
+      {error && <p className="text-sm text-danger mt-2">{error}</p>}
     </div>
   );
 }

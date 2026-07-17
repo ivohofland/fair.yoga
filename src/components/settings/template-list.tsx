@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { EmptyState } from '@/components/ui/empty-state';
 import type { ClassTemplate, TeacherRoom, Room } from '@prisma/client';
 import { formatRoomLocation } from '@/lib/format';
 
@@ -15,7 +16,7 @@ const DAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Sat
 
 export function TemplateList({ templates, emptyMessage = 'No recurring classes yet.' }: TemplateListProps) {
   if (templates.length === 0) {
-    return <p className="text-brown text-sm">{emptyMessage}</p>;
+    return <EmptyState title={emptyMessage} />;
   }
 
   const active = templates.filter((t) => t.isActive && !t.isArchived);
@@ -28,18 +29,18 @@ export function TemplateList({ templates, emptyMessage = 'No recurring classes y
         <Link
           key={t.id}
           href={`/settings/recurring/${t.id}`}
-          className="flex items-start justify-between py-3 border-b border-border"
+          className="flex items-start justify-between gap-3 min-h-14 py-2 border-b border-border no-underline"
         >
           <div className="flex flex-col gap-1">
-            <span className="text-dark text-sm font-medium">{t.classType}</span>
-            <span className="text-brown text-xs">
+            <span className="text-base text-ink">{t.classType}</span>
+            <span className="type-caption">
               {DAY_LABELS[t.dayOfWeek]} {t.startTime} &middot; {t.durationMinutes} min
             </span>
-            <span className="text-brown text-xs">
+            <span className="type-caption">
               {formatRoomLocation(t.teacherRoom.room.roomName, t.teacherRoom.room.venueName)}
             </span>
           </div>
-          <span className="text-teal text-xs pt-1">active</span>
+          <span className="text-[13px] text-teal pt-1">active</span>
         </Link>
       ))}
 
@@ -50,18 +51,18 @@ export function TemplateList({ templates, emptyMessage = 'No recurring classes y
             <Link
               key={t.id}
               href={`/settings/recurring/${t.id}`}
-              className="flex items-start justify-between py-3 border-b border-border opacity-60"
+              className="flex items-start justify-between gap-3 min-h-14 py-2 border-b border-border no-underline opacity-60"
             >
               <div className="flex flex-col gap-1">
-                <span className="text-dark text-sm font-medium">{t.classType}</span>
-                <span className="text-brown text-xs">
+                <span className="text-base text-ink">{t.classType}</span>
+                <span className="type-caption">
                   {DAY_LABELS[t.dayOfWeek]} {t.startTime} &middot; {t.durationMinutes} min
                 </span>
-                <span className="text-brown text-xs">
+                <span className="type-caption">
                   {formatRoomLocation(t.teacherRoom.room.roomName, t.teacherRoom.room.venueName)}
                 </span>
               </div>
-              <span className="text-brown text-xs pt-1">paused</span>
+              <span className="type-caption pt-1">paused</span>
             </Link>
           ))}
         </>
@@ -74,18 +75,18 @@ export function TemplateList({ templates, emptyMessage = 'No recurring classes y
             <Link
               key={t.id}
               href={`/settings/recurring/${t.id}`}
-              className="flex items-start justify-between py-3 border-b border-border opacity-40"
+              className="flex items-start justify-between gap-3 min-h-14 py-2 border-b border-border no-underline opacity-40"
             >
               <div className="flex flex-col gap-1">
-                <span className="text-dark text-sm font-medium">{t.classType}</span>
-                <span className="text-brown text-xs">
+                <span className="text-base text-ink">{t.classType}</span>
+                <span className="type-caption">
                   {DAY_LABELS[t.dayOfWeek]} {t.startTime} &middot; {t.durationMinutes} min
                 </span>
-                <span className="text-brown text-xs">
+                <span className="type-caption">
                   {formatRoomLocation(t.teacherRoom.room.roomName, t.teacherRoom.room.venueName)}
                 </span>
               </div>
-              <span className="text-brown text-xs pt-1">archived</span>
+              <span className="type-caption pt-1">archived</span>
             </Link>
           ))}
         </>

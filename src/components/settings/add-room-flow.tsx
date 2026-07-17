@@ -230,7 +230,7 @@ export function AddRoomFlow() {
             </Button>
           </form>
 
-          {searchError && <p className="text-sm text-error mb-4">{searchError}</p>}
+          {searchError && <p className="text-sm text-danger mb-4">{searchError}</p>}
 
           {results !== null && (
             <div>
@@ -245,10 +245,10 @@ export function AddRoomFlow() {
                         onClick={() => handleSelectRoom(room)}
                         className="w-full text-left flex flex-col gap-1 py-3 border-b border-border"
                       >
-                        <span className="text-dark text-sm font-medium">
+                        <span className="text-base text-ink">
                           {formatRoomLocation(room.roomName, room.venueName)}
                         </span>
-                        <span className="text-brown text-xs">{room.address}, {room.city}</span>
+                        <span className="type-caption">{room.address}, {room.city}</span>
                       </button>
                     ))}
                   </div>
@@ -304,7 +304,7 @@ export function AddRoomFlow() {
                   onChange={(e) => setEquipmentChecks((prev) => ({ ...prev, [key]: e.target.checked }))}
                   className="w-5 h-5 accent-teal"
                 />
-                <span className="text-dark text-sm">{label}</span>
+                <span className="text-base text-ink">{label}</span>
               </label>
             ))}
           </fieldset>
@@ -317,7 +317,7 @@ export function AddRoomFlow() {
               onChange={(e) => setNotes(e.target.value)}
               rows={3}
               placeholder="e.g. key code for entrance, bring your own mat"
-              className="bg-cream border border-teal rounded-none px-4 py-3 min-h-[44px] text-dark focus:outline-none focus:shadow-[inset_0_0_0_1px_var(--color-teal)] w-full"
+              className="bg-sand-soft border border-border rounded-field px-4 py-3 min-h-24 text-ink text-base focus:outline-none focus:shadow-focus w-full"
             />
           </div>
 
@@ -331,7 +331,7 @@ export function AddRoomFlow() {
             <span className="text-brown text-sm">Make this room visible to other teachers</span>
           </label>
 
-          {createError && <p className="text-sm text-error">{createError}</p>}
+          {createError && <p className="text-sm text-danger">{createError}</p>}
 
           <div className="flex justify-between mt-4">
             <Button variant="secondary" type="button" onClick={() => setStep('search')}>
@@ -348,10 +348,10 @@ export function AddRoomFlow() {
       {step === 'settings' && selectedRoom && (
         <>
           <div className="mb-6 pb-4 border-b border-border">
-            <p className="text-dark text-sm font-medium">
+            <p className="text-base text-ink">
               {formatRoomLocation(selectedRoom.roomName, selectedRoom.venueName)}
             </p>
-            <p className="text-brown text-xs">{selectedRoom.address}, {selectedRoom.city}</p>
+            <p className="type-caption">{selectedRoom.address}, {selectedRoom.city}</p>
           </div>
 
           <form onSubmit={handleSaveSettings} className="flex flex-col gap-4">
@@ -374,7 +374,7 @@ export function AddRoomFlow() {
               onChange={(e) => setEquipmentNotes(e.target.value)}
             />
 
-            {settingsError && <p className="text-sm text-error">{settingsError}</p>}
+            {settingsError && <p className="text-sm text-danger">{settingsError}</p>}
 
             <div className="flex justify-between mt-4">
               <Button variant="secondary" type="button" onClick={() => { setSelectedRoom(null); setStep('search'); }}>

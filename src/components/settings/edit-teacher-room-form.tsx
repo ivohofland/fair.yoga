@@ -92,11 +92,11 @@ export function EditTeacherRoomForm({
           value={equipmentNotes}
           onChange={(e) => { setEquipmentNotes(e.target.value); setSuccess(''); }}
           rows={3}
-          className="bg-cream border border-teal rounded-none px-4 py-3 min-h-[44px] text-dark focus:outline-none focus:shadow-[inset_0_0_0_1px_var(--color-teal)] w-full"
+          className="bg-sand-soft border border-border rounded-field px-4 py-3 min-h-24 text-ink text-base focus:outline-none focus:shadow-focus w-full"
         />
       </div>
 
-      {error && <p className="text-sm text-error">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
       {success && <p className="text-sm text-teal">{success}</p>}
 
       <Button type="submit" disabled={submitting}>

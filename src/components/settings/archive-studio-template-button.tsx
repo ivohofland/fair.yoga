@@ -38,13 +38,13 @@ export function ArchiveStudioTemplateButton({ templateId, isArchived }: ArchiveS
         type="button"
         onClick={handleToggle}
         disabled={loading}
-        className="text-brown text-sm opacity-60"
+        className="type-caption"
       >
         {loading
           ? (isArchived ? 'Unarchiving...' : 'Archiving...')
           : (isArchived ? 'Unarchive studio class' : 'Archive studio class')}
       </button>
-      {error && <p className="text-sm text-error mt-2">{error}</p>}
+      {error && <p className="text-sm text-danger mt-2">{error}</p>}
     </div>
   );
 }

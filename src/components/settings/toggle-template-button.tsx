@@ -36,13 +36,13 @@ export function ToggleTemplateButton({ templateId, isActive }: ToggleTemplateBut
         type="button"
         onClick={handleToggle}
         disabled={loading}
-        className="text-brown text-sm opacity-60"
+        className="type-caption"
       >
         {loading
           ? (isActive ? 'Pausing...' : 'Resuming...')
           : (isActive ? 'Pause recurring class' : 'Resume recurring class')}
       </button>
-      {error && <p className="text-sm text-error mt-2">{error}</p>}
+      {error && <p className="text-sm text-danger mt-2">{error}</p>}
     </div>
   );
 }

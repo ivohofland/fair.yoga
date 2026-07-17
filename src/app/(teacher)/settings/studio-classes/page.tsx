@@ -14,13 +14,13 @@ export default async function StudioClassesPage() {
 
   return (
     <>
-      <PageHeader
+      <PageHeader backHref="/settings" backLabel="Settings"
         title="Studio classes"
-        action={<Link href="/settings/studio-classes/new" className="text-teal text-sm">+ Add</Link>}
+        action={<Link href="/settings/studio-classes/new" className="type-label text-teal no-underline">+ Add</Link>}
       />
       <StudioTemplateList templates={templates} />
       <div className="mt-6">
-        <Link href="/settings/studio-classes/archived" className="text-brown text-sm opacity-60">
+        <Link href="/settings/studio-classes/archived" className="type-caption no-underline">
           View archived studio classes
         </Link>
       </div>

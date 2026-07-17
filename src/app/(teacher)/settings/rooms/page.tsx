@@ -15,13 +15,13 @@ export default async function RoomsPage() {
 
   return (
     <>
-      <PageHeader
+      <PageHeader backHref="/settings" backLabel="Settings"
         title="Rooms"
-        action={<Link href="/settings/rooms/new" className="text-teal text-sm">+ Add room</Link>}
+        action={<Link href="/settings/rooms/new" className="type-label text-teal no-underline">+ Add room</Link>}
       />
       <RoomList teacherRooms={teacherRooms} />
       <div className="mt-6">
-        <Link href="/settings/rooms/archived" className="text-brown text-sm opacity-60">
+        <Link href="/settings/rooms/archived" className="type-caption no-underline">
           View archived rooms
         </Link>
       </div>

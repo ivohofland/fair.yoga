@@ -148,7 +148,7 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         onChange={(e) => update('hourlyRate', Number(e.target.value))}
       />
 
-      {error && <p className="text-sm text-error">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
       {success && <p className="text-sm text-teal">{success}</p>}
 
       <Button type="submit" disabled={submitting}>

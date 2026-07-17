@@ -15,13 +15,13 @@ export default async function RecurringClassesPage() {
 
   return (
     <>
-      <PageHeader
+      <PageHeader backHref="/settings" backLabel="Settings"
         title="Recurring classes"
-        action={<Link href="/settings/recurring/new" className="text-teal text-sm">+ Add</Link>}
+        action={<Link href="/settings/recurring/new" className="type-label text-teal no-underline">+ Add</Link>}
       />
       <TemplateList templates={templates} />
       <div className="mt-6">
-        <Link href="/settings/recurring/archived" className="text-brown text-sm opacity-60">
+        <Link href="/settings/recurring/archived" className="type-caption no-underline">
           View archived recurring classes
         </Link>
       </div>
