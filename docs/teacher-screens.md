@@ -6,14 +6,13 @@ Every screen the teacher interacts with, organized by journey phase. Each screen
 
 ## Global Navigation
 
-The teacher has a persistent navigation that provides access to the main areas. Likely a bottom tab bar on mobile, sidebar on desktop.
+The teacher has a persistent bottom tab bar (64px, Lucide-style line icons) with exactly four items — Dashboard and Classes merged into Schedule, since the teacher's home *is* their schedule (see information-architecture.md).
 
 **Primary navigation items:**
-- Dashboard (home)
-- Classes (schedule)
+- Schedule (home — the week's classes)
 - Students (CRM)
 - Inbox (notifications & messages)
-- Settings (profile, payments, preferences)
+- Settings (index: recurring classes, studio classes, rooms, profile)
 
 ---
 

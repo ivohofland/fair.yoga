@@ -109,17 +109,17 @@ Built by Ivo + Claude Code. Technical foundation first, then layer on UI and fea
 
 ## Phase 4: Teacher Dashboard UI
 
-**Goal:** The teacher-facing screens — mobile-first, functional, using the design brief's warm minimalist aesthetic. This is where the app becomes usable.
+**Goal:** The teacher-facing screens — mobile-first, functional, using the v2 design system's calm-utility aesthetic. This is where the app becomes usable.
 
 **Tasks:**
 
-4.1 — Build base UI components following `stitch-design-brief.md`
+4.1 — Build base UI components following `design-brief.md` (v2 design system)
   - Buttons (primary, secondary, destructive)
-  - Cards (warm sand, rounded, no shadow)
+  - Cards (sand-soft, radius 16, border — no shadow)
   - Input fields, dropdowns, toggles
   - Bottom tab navigation (4 tabs)
   - Status badges, progress indicators
-  - Typography: Georgia headings, Arial body
+  - Typography: Georgia headings, system sans body (six type styles)
   - Color tokens from palette
 
 4.2 — Build layout shell

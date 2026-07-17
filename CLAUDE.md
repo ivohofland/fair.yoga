@@ -92,16 +92,16 @@ Key design decisions:
 
 ## Information Architecture
 
-**Accordion home base** — the teacher dashboard is a single page with four collapsible sections:
+**Bottom tab bar** — 64px, exactly 4 tabs with Lucide-style line icons:
 
-**Schedule** (home) · **Students** (CRM) · **Inbox** (notifications) · **Settings** (profile, rooms, payments)
+**Schedule** (home, `/`) · **Students** (CRM) · **Inbox** (notifications) · **Settings** (index page: recurring, studio classes, rooms, profile)
 
-- One section open at a time, others collapse. Text-only headers, no icons.
-- **Detail views are separate pages** — tapping a class, student, or notification opens a full page. The accordion is the home base you return to.
+- The tab bar renders only on the four tab roots; active tab = teal icon + label in a teal-tint pill, gold dot on Inbox when unread.
+- **Detail views are separate pages** — tapping a class, student, or notification opens a full page with a back link; the tab bar hides there.
 - Class detail is one adaptive page that transforms based on lifecycle stage (draft → open → full → in_progress → completed → cancelled)
-- Dashboard IS the schedule — no separate dashboard
+- Dashboard IS the schedule — the Schedule tab at `/` is the home base (`/schedule` redirects there)
 - Rooms are in Settings (set-up-once infrastructure)
-- Studio classes are a quick entry in the schedule list
+- Studio classes are a quick entry in the schedule list (visually lighter dashed cards)
 
 → Full IA reference: `docs/information-architecture.md`
 → Navigation and component patterns: `docs/design-brief.md`
@@ -125,20 +125,22 @@ tests/
 
 ## Design Philosophy
 
-E-reader meets dumb phone. The interface is a document you interact with, not an app you navigate.
+Calm utility, warm minimalism — a thoughtful yoga teacher who happens to be good with numbers. The v2 design system lives in `docs/design_handoff_fairyoga/`; tokens are in `src/app/globals.css` (Tailwind v4 `@theme`, no tailwind.config).
 
-- **Mobile-first** — teachers use this on their phone between and during classes
-- **No animations, no transitions, no shadows, no depth** — screens just appear
-- **Lists over cards** — simple rows with dividers, not card-based layouts
-- **Text-only navigation** — no icons in nav, no tab bar. Accordion home base.
-- **No gamification** — no streaks, no badges, no monthly summaries, no loyalty messaging
+- **Mobile-first** — teachers use this on their phone between and during classes; 640px content column
+- **Essentially no motion** — no transitions or hover lift; hover/press are defined color steps
+- **Depth without shadows** — sand-soft cards (radius 16) + 1px border on cream; the only shadow is reserved for sheets/modals
+- **Cards for classes, rows for directories** — class cards carry the signature registration progress bar (danger→teal fill, ink tick at minimum); directories use ≥56px chevron rows
+- **Status: fill encodes time** — outline badge = upcoming, tint = now, solid = done; payment states are text only (✓ Paid / ○ Unpaid), never badges
+- **Icons narrowly** — Lucide-style line icons (stroke 1.75, inlined, no dependency) in the tab bar, chevrons, and checkmarks; words come first everywhere else
+- **No gamification** — no streaks, no reward badges, no monthly summaries, no loyalty messaging
 - **No attention economy patterns** — this is a tool, not an engagement platform
 - **Cursor pointer on all interactive elements** — all `<a>` and `<button>` elements get `cursor: pointer` globally via CSS. No need to add `cursor-pointer` class individually.
-- Typography: Georgia headings, Atkinson Hyperlegible body (fallback: Arial)
-- Colors: deep teal (#1A5653), warm sand (#E8DCC8), soft white (#F7F4EF), earth brown (#6B5B4E), muted gold (#C4A96A)
+- Typography: six styles only (`type-display/title/subtitle/body/label/caption/number`) — Georgia bold headings (teal/ink), system sans body, tabular teal numbers
+- Colors: teal (#1A5653) primary + success, cream (#F7F4EF) page bg, sand-soft (#F0E9DC) surfaces, brown (#6B5B4E) text, gold (#C4A96A) attention, danger (#B85C5C) outlines/text only — never pure white, no gradients
 
 → Working design brief: `docs/design-brief.md`
-→ Original visual reference: `docs/stitch-design-brief.md`
+→ Vendored design system: `docs/design_handoff_fairyoga/`
 
 ## Key Constraints
 
@@ -165,7 +167,8 @@ E-reader meets dumb phone. The interface is a document you interact with, not an
 | `docs/technical-architecture.md` | Tech stack, project structure, services layer, auth flow, deployment |
 | `docs/information-architecture.md` | 4-tab IA, adaptive class detail, 5 user flows |
 | `docs/teacher-screens.md` | 36-screen teacher screen inventory by journey phase |
-| `docs/stitch-design-brief.md` | Visual design brief — colors, typography, components, spacing |
+| `docs/design-brief.md` | Working design brief — v2 tokens, navigation, components, screen patterns |
+| `docs/design_handoff_fairyoga/` | Vendored v2 design system — tokens, component reference, guidelines, UI kit |
 | `docs/implementation-plan.md` | 8-phase implementation plan with task breakdowns |
 | `docs/visual/teacher-journey.docx` | 8-phase teacher journey with user stories and acceptance criteria |
 | `docs/visual/student-journey.docx` | 4-phase student journey with user stories and acceptance criteria |
