@@ -1,16 +1,17 @@
-import type { Metadata } from 'next';
-import { Atkinson_Hyperlegible } from 'next/font/google';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
-
-const atkinson = Atkinson_Hyperlegible({
-  subsets: ['latin'],
-  weight: ['400', '700'],
-  variable: '--font-atkinson',
-});
 
 export const metadata: Metadata = {
   title: 'fair.yoga',
   description: 'Ethical pricing for independent yoga teachers',
+};
+
+// viewportFit: 'cover' is required for env(safe-area-inset-bottom) to be
+// non-zero on iOS — the bottom tab bar pads itself above the home indicator.
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
 };
 
 export default function RootLayout({
@@ -19,9 +20,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`h-full antialiased ${atkinson.variable}`}>
+    <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col">
-        <div className="mx-auto w-full max-w-lg px-6 pt-8 pb-12 flex-1 flex flex-col">
+        <div className="mx-auto w-full max-w-content px-4 sm:px-6 pt-6 pb-8 flex-1 flex flex-col">
           {children}
         </div>
       </body>
