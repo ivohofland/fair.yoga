@@ -113,3 +113,7 @@ npm run db:reset
 | Teacher | `ivo@fairyoga.dev` | EUR, Amsterdam, 2 rooms, classes in all lifecycle states |
 | Teacher | `sarah@fairyoga.dev` | GBP, London, 1 room |
 | Students | `anna@example.com` through `jan@example.com` | 10 students, tiers 1-5 (2 per tier) |
+
+## License
+
+fair.yoga is free software, licensed under the [GNU AGPL-3.0](LICENSE). You may use, study, modify, and share it; if you run a modified version as a service, you must offer its source to your users.
