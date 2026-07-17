@@ -3,27 +3,11 @@
 import Link from 'next/link';
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import { Icon } from '@/components/ui/icon';
 
 type Status = 'verifying' | 'success' | 'error';
 type StepState = 'done' | 'now' | 'pending';
 type RailStep = { num: string; text: string; when: string; state: StepState };
-
-function CheckIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="inline-block w-[14px] h-[14px] mr-1"
-      style={{ verticalAlign: '-2px' }}
-    >
-      <polyline points="4 12 10 18 20 6" />
-    </svg>
-  );
-}
 
 function Rail({ steps }: { steps: RailStep[] }) {
   return (
@@ -35,34 +19,31 @@ function Rail({ steps }: { steps: RailStep[] }) {
         return (
           <li
             key={s.num}
-            className={`grid grid-cols-[28px_1fr_auto] gap-x-3 items-baseline py-[14px] border-b border-border ${
-              isNow ? '-mx-2 px-2 bg-cream' : ''
+            className={`grid grid-cols-[24px_1fr_auto] gap-x-3 items-center min-h-14 py-2 border-b border-border ${
+              isNow ? '-mx-2 px-2 bg-teal-tint rounded-field border-b-transparent' : ''
             }`}
           >
-            <span
-              className={`font-heading italic text-[14px] text-right fy-oldstyle ${
-                isPending ? 'text-fg-muted' : 'text-brown'
-              }`}
-            >
-              {s.num}
+            <span className="flex items-center justify-center">
+              {isDone ? (
+                <Icon name="check" size={16} className="text-teal" />
+              ) : isNow ? (
+                <span className="block w-2 h-2 rounded-full bg-teal" />
+              ) : (
+                <span className="block w-2 h-2 rounded-full border border-brown-light" />
+              )}
             </span>
             <span
               className={`text-[15px] ${
                 isDone
-                  ? 'text-brown line-through decoration-[0.5px] decoration-brown'
+                  ? 'text-brown'
                   : isPending
-                    ? 'text-fg-muted'
-                    : 'text-dark font-medium'
+                    ? 'text-brown-light'
+                    : 'text-ink font-medium'
               }`}
             >
-              {isDone ? <CheckIcon /> : null}
               {s.text}
             </span>
-            <span
-              className={`font-heading italic text-[12px] fy-oldstyle ${
-                isPending ? 'text-fg-muted' : 'text-brown'
-              }`}
-            >
+            <span className={`type-caption ${isPending ? 'text-brown-light' : ''}`}>
               {s.when}
             </span>
           </li>
@@ -79,11 +60,11 @@ function StatusLine({
   variant?: 'default' | 'error' | 'done';
   children: React.ReactNode;
 }) {
-  const pipColor = variant === 'error' ? 'bg-error' : 'bg-teal';
+  const pipColor = variant === 'error' ? 'bg-danger' : 'bg-teal';
   return (
-    <div className="mt-[18px] font-heading italic text-[13px] text-brown leading-normal flex items-baseline gap-2 fy-oldstyle">
+    <div className="mt-[18px] type-caption flex items-baseline gap-2">
       <span
-        className={`block w-[6px] h-[6px] flex-none ${pipColor}`}
+        className={`block w-1.5 h-1.5 rounded-full flex-none ${pipColor}`}
         style={{ transform: 'translateY(-2px)' }}
       />
       <span>{children}</span>
@@ -92,21 +73,15 @@ function StatusLine({
 }
 
 function Fineprint({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="mt-6 font-heading italic text-[12px] text-brown leading-[1.55] opacity-85 fy-oldstyle">
-      {children}
-    </p>
-  );
+  return <p className="mt-6 type-caption leading-[1.55]">{children}</p>;
 }
 
 function VerifyingState() {
   return (
     <div className="flex-1 flex flex-col justify-center py-4">
-      <p className="fy-eyebrow mb-[10px]">One moment</p>
-      <h1 className="fy-pullquote mb-4" style={{ fontSize: '35px' }}>
-        Checking your link
-      </h1>
-      <p className="fy-lede max-w-[360px]">
+      <p className="type-label text-teal mb-[10px]">One moment</p>
+      <h1 className="type-display mb-4">Checking your link</h1>
+      <p className="type-body max-w-[360px]">
         You tapped a one-time link. We&apos;re confirming it&apos;s still valid and
         that it was meant for this device.
       </p>
@@ -132,11 +107,9 @@ function SuccessState({ redirectTo }: { redirectTo: string }) {
   const dest = redirectTo || '/';
   return (
     <div className="flex-1 flex flex-col justify-center py-4">
-      <p className="fy-eyebrow mb-[10px]">Welcome back</p>
-      <h1 className="fy-pullquote mb-4" style={{ fontSize: '35px' }}>
-        You&apos;re <span className="text-teal">signed in</span>.
-      </h1>
-      <p className="fy-lede max-w-[360px]">
+      <p className="type-label text-teal mb-[10px]">Welcome back</p>
+      <h1 className="type-display mb-4">You&apos;re signed in.</h1>
+      <p className="type-body max-w-[360px]">
         The link checked out. Taking you to your schedule now.
       </p>
       <Rail
@@ -148,11 +121,9 @@ function SuccessState({ redirectTo }: { redirectTo: string }) {
       />
       <StatusLine variant="done">
         Redirecting to{' '}
-        <span className="font-body not-italic font-semibold text-teal fy-oldstyle">
-          {dest}
-        </span>
+        <span className="type-number">{dest}</span>
         {' — if it doesn’t load, '}
-        <Link href={dest} className="text-brown">
+        <Link href={dest} className="text-teal">
           tap here
         </Link>
         .
@@ -176,13 +147,13 @@ function ErrorReason({ children }: { children: React.ReactNode }) {
 function ErrorState() {
   return (
     <div className="flex-1 flex flex-col justify-center py-4">
-      <p className="fy-eyebrow text-error mb-[10px]">Verification failed</p>
-      <h1 className="fy-pullquote mb-4" style={{ fontSize: '35px' }}>
+      <p className="type-label text-danger mb-[10px]">Verification failed</p>
+      <h1 className="type-display mb-4">
         This link can&apos;t
         <br />
         be used.
       </h1>
-      <p className="fy-lede max-w-[360px] mb-3">
+      <p className="type-body max-w-[360px] mb-3">
         It&apos;s either past its ten-minute window, already been used, or doesn&apos;t
         match what we sent. Nothing to worry about &mdash; ask for a fresh one.
       </p>
@@ -191,24 +162,23 @@ function ErrorState() {
         <ErrorReason>It&apos;s already been used to sign in once</ErrorReason>
         <ErrorReason>It was opened on a device that wasn&apos;t expecting it</ErrorReason>
       </ul>
-      <hr className="border-0 border-t border-border my-[22px]" />
-      <div className="flex flex-col gap-[10px] mt-2">
+      <div className="flex flex-col gap-3 mt-2">
         <Link
           href="/login"
-          className="block w-full text-center bg-brown text-cream rounded-none px-6 py-[14px] min-h-[48px] font-medium text-[16px] no-underline"
+          className="inline-flex items-center justify-center w-full text-center bg-teal text-cream hover:bg-teal-hover rounded-pill px-6 min-h-12 font-semibold text-base no-underline"
         >
           Send a new link
         </Link>
         <Link
           href="/login"
-          className="block w-full text-center border border-brown text-brown rounded-none px-6 py-[14px] min-h-[48px] font-medium text-[16px] no-underline"
+          className="inline-flex items-center justify-center w-full text-center border-[1.5px] border-teal text-teal hover:bg-teal-tint rounded-pill px-6 min-h-12 font-semibold text-base no-underline"
         >
           Use a different email
         </Link>
       </div>
       <StatusLine variant="error">
         If this keeps happening, write to{' '}
-        <a href="mailto:hello@fair.yoga" className="text-brown">
+        <a href="mailto:hello@fair.yoga" className="text-teal">
           hello@fair.yoga
         </a>{' '}
         &mdash; a real person will read it.

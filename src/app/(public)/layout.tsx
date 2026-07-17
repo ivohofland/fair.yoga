@@ -5,7 +5,10 @@ export default function PublicLayout({
 }) {
   return (
     <div className="flex flex-col flex-1">
-      <div className="fy-wordmark-display mb-14">fair.yoga</div>
+      {/* Wordmark: Georgia, ink, with the period at 125% in teal */}
+      <div className="font-heading text-[22px] leading-none text-ink mb-14">
+        fair<span className="text-teal text-[27px]">.</span>yoga
+      </div>
       {children}
     </div>
   );

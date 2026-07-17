@@ -30,15 +30,15 @@ export default function LoginPage() {
   return (
     <div className="flex-1 flex flex-col justify-center py-10">
       {status === 'sent' ? (
-        <p className="fy-lede">Check your inbox for the link.</p>
+        <p className="type-body">Check your inbox for the link.</p>
       ) : (
         <>
-          <h1 className="fy-pullquote mb-5" style={{ fontSize: '32px', lineHeight: 1.15 }}>
+          <h1 className="type-display mb-5">
             Sign in with a link
             <br />
             sent to your inbox
           </h1>
-          <p className="fy-lede max-w-[360px] mb-8">
+          <p className="type-body max-w-[360px] mb-8">
             Enter the email you teach with. We&apos;ll email a link that works for ten minutes.
           </p>
 
@@ -62,7 +62,7 @@ export default function LoginPage() {
               {status === 'sending' ? 'Sending...' : 'Send me the link'}
             </Button>
             {status === 'error' && (
-              <p className="font-heading italic text-[12px] text-error">
+              <p className="text-[13px] leading-[1.4] text-danger">
                 Something went wrong. Please try again.
               </p>
             )}
