@@ -28,7 +28,7 @@ async function createMagicLinkToken(email: string): Promise<string> {
   return rawToken;
 }
 
-const uniqueSuffix = Date.now();
+const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 const teacherEmail = `e2e-auth-${uniqueSuffix}@test.local`;
 
 let teacherId: string;
@@ -60,10 +60,10 @@ test.describe('Magic link authentication', () => {
   test('login page shows email form', async ({ page }) => {
     await page.goto('/login');
 
-    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Sign in with a link sent to your inbox' })).toBeVisible();
     await expect(page.getByLabel('Email')).toBeVisible();
     await expect(
-      page.getByRole('button', { name: 'Send magic link' })
+      page.getByRole('button', { name: 'Send me the link' })
     ).toBeVisible();
   });
 
@@ -71,10 +71,10 @@ test.describe('Magic link authentication', () => {
     await page.goto('/login');
 
     await page.getByLabel('Email').fill(teacherEmail);
-    await page.getByRole('button', { name: 'Send magic link' }).click();
+    await page.getByRole('button', { name: 'Send me the link' }).click();
 
     await expect(
-      page.getByText('Check your email for a magic link')
+      page.getByText('Check your inbox for the link.')
     ).toBeVisible();
   });
 
@@ -87,7 +87,7 @@ test.describe('Magic link authentication', () => {
 
     // Teacher home page should load (requireTeacherSession passes)
     await page.waitForURL('/', { timeout: 10_000 });
-    await expect(page.getByText('This week')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Schedule' })).toBeVisible();
   });
 
   test('invalid token shows error on verify page', async ({ page }) => {
@@ -95,9 +95,9 @@ test.describe('Magic link authentication', () => {
 
     await expect(page.getByText('Verification failed')).toBeVisible();
     await expect(
-      page.getByText('This link is invalid or has expired')
+      page.getByText(/This link can/)
     ).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Try again' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Send a new link' })).toBeVisible();
   });
 
   test('missing token shows error on verify page', async ({ page }) => {
@@ -105,7 +105,7 @@ test.describe('Magic link authentication', () => {
 
     await expect(page.getByText('Verification failed')).toBeVisible();
     await expect(
-      page.getByText('This link is invalid or has expired')
+      page.getByText(/This link can/)
     ).toBeVisible();
   });
 
@@ -132,7 +132,7 @@ test.describe('Magic link authentication', () => {
 
     // Reload — session cookie should keep us logged in
     await page.reload();
-    await expect(page.getByText('This week')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Schedule' })).toBeVisible();
   });
 
   test('authenticated user can access protected routes', async ({ page }) => {
