@@ -6,11 +6,14 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
 }
 
+// Pill buttons, 48px tall. One primary per screen; destructive is never filled.
 const variantClasses: Record<ButtonVariant, string> = {
-  primary: 'bg-brown text-cream hover:opacity-80 focus:bg-brown/50 focus:shadow-[inset_0_0_0_2px_var(--color-brown)]',
-  secondary: 'border border-brown text-brown bg-transparent hover:opacity-80 focus:shadow-[inset_0_0_0_2px_var(--color-brown)]',
-  ghost: 'text-brown bg-transparent hover:opacity-80 focus:shadow-[inset_0_0_0_2px_var(--color-brown)]',
-  destructive: 'border border-error text-error bg-transparent hover:opacity-80 focus:shadow-[inset_0_0_0_2px_var(--color-error)]',
+  primary:
+    'border-[1.5px] border-transparent bg-teal text-cream hover:bg-teal-hover active:bg-teal-pressed',
+  secondary: 'border-[1.5px] border-teal text-teal bg-transparent hover:bg-teal-tint',
+  ghost: 'border-[1.5px] border-transparent text-teal bg-transparent hover:bg-teal-tint',
+  destructive:
+    'border-[1.5px] border-danger text-danger bg-transparent hover:bg-danger-tint',
 };
 
 export function Button({
@@ -19,7 +22,8 @@ export function Button({
   disabled,
   ...props
 }: ButtonProps) {
-  const base = 'rounded-none px-6 py-3 font-medium min-h-[44px] w-full sm:w-auto cursor-pointer focus:outline-none';
+  const base =
+    'inline-flex items-center justify-center gap-2 rounded-pill px-6 min-h-12 text-base font-semibold w-full sm:w-auto focus:outline-none focus-visible:shadow-focus';
   const disabledClass = disabled ? 'opacity-50 cursor-not-allowed' : '';
 
   return (

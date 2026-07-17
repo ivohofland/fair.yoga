@@ -5,23 +5,28 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   error?: string;
 }
 
+// 48px field on sand, radius 12, label above with 8px gap.
+// Error = danger border + danger-tint background + 13px message below.
 export function Input({ label, error, id, className = '', ...props }: InputProps) {
   const generatedId = useId();
   const inputId = id ?? generatedId;
+  const fieldColors = error
+    ? 'border-danger bg-danger-tint'
+    : 'border-border bg-sand-soft';
 
   return (
     <div className="flex flex-col gap-2">
       {label && (
-        <label htmlFor={inputId} className="font-heading italic text-[13px] text-brown">
+        <label htmlFor={inputId} className="type-label">
           {label}
         </label>
       )}
       <input
         id={inputId}
-        className={`bg-cream border border-brown rounded-none px-4 py-3 min-h-[44px] text-dark text-base focus:outline-none focus:shadow-[inset_0_0_0_1px_var(--color-brown)] ${className}`.trim()}
+        className={`border rounded-field px-4 min-h-12 text-ink text-base ${fieldColors} focus:outline-none focus:shadow-focus ${className}`.trim()}
         {...props}
       />
-      {error && <span className="font-heading italic text-[12px] text-error">{error}</span>}
+      {error && <span className="text-[13px] leading-[1.4] text-danger">{error}</span>}
     </div>
   );
 }
