@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
@@ -9,6 +10,9 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { createRegistrationSchema } from '@/lib/schemas';
+
+/** Thrown inside the registration transaction when the class is at capacity. */
+class ClassFullError extends Error {}
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireSession(request);
@@ -29,45 +33,78 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const cls = await prisma.class.findUnique({ where: { id: body.classId } });
   if (!cls) return respondError('Class not found', 404);
 
+  // Teachers may only manage registrations for their own classes —
+  // registering also locks the class's economic settings.
+  if (isTeacher && cls.teacherId !== session.userId) {
+    return respondError('Not your class', 403);
+  }
+
   // Check class status
   if (cls.status !== 'open') {
     return respondError(`Cannot register for a class with status "${cls.status}"`, 409);
-  }
-
-  // Count active registrations (exclude cancelled and late_cancel — those freed their spot)
-  const registrationCount = await prisma.registration.count({
-    where: { classId: body.classId, status: { in: ['registered', 'attended', 'no_show'] } },
-  });
-
-  const isWalkIn = isTeacher && cls.teacherId === session.userId;
-
-  // If class is full and not a walk-in by the teacher, reject
-  if (registrationCount >= cls.maxStudents && !isWalkIn) {
-    return respondError('Class is full', 409);
   }
 
   // Look up the student to get incomeTier
   const student = await prisma.student.findUnique({ where: { id: studentId } });
   if (!student) return respondError('Student not found', 404);
 
-  // Create registration
-  const registration = await prisma.registration.create({
-    data: {
-      classId: body.classId,
-      studentId,
-      tierAtBooking: student.incomeTier,
-      isWalkIn,
-      status: 'registered',
-    },
-  });
-
-  // If this is the first registration, lock settings
-  if (!cls.settingsLocked) {
-    await prisma.class.update({
-      where: { id: body.classId },
-      data: { settingsLocked: true },
+  // A teacher can only register students in their own roster.
+  if (isTeacher) {
+    const link = await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId: session.userId, studentId } },
     });
+    if (!link) return respondError('Student is not in your roster', 403);
   }
 
-  return respondOk(registration, 201);
+  // Teacher-added registrations are walk-ins: they may exceed max_students
+  // (the teacher rate stays capped at target; extra students lower prices).
+  const isWalkIn = isTeacher;
+
+  try {
+    const registration = await prisma.$transaction(async (tx) => {
+      // Serialize concurrent registrations for this class: without the row
+      // lock, two simultaneous requests both count below max and both insert.
+      await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${body.classId} FOR UPDATE`;
+
+      // Count active registrations (cancelled and late_cancel freed their spot)
+      const registrationCount = await tx.registration.count({
+        where: { classId: body.classId, status: { in: ['registered', 'attended', 'no_show'] } },
+      });
+
+      if (registrationCount >= cls.maxStudents && !isWalkIn) {
+        throw new ClassFullError();
+      }
+
+      const reg = await tx.registration.create({
+        data: {
+          classId: body.classId,
+          studentId,
+          tierAtBooking: student.incomeTier,
+          isWalkIn,
+          status: 'registered',
+        },
+      });
+
+      // First registration locks economic settings — same transaction, so a
+      // concurrent settings edit cannot slip between create and lock.
+      if (!cls.settingsLocked) {
+        await tx.class.update({
+          where: { id: body.classId },
+          data: { settingsLocked: true },
+        });
+      }
+
+      return reg;
+    });
+
+    return respondOk(registration, 201);
+  } catch (err) {
+    if (err instanceof ClassFullError) {
+      return respondError('Class is full', 409);
+    }
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      return respondError('Student is already registered for this class', 409);
+    }
+    throw err;
+  }
 });
