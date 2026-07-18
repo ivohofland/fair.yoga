@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { readErrorMessage } from '@/lib/client-errors';
 
 interface StudentPaymentItem {
   paymentId: string;
@@ -34,7 +35,7 @@ export function StudentPaymentList({ items }: StudentPaymentListProps) {
       if (res.ok) {
         setPaymentState((prev) => ({ ...prev, [paymentId]: 'paid' }));
       } else {
-        setError('Failed to mark payment as paid.');
+        setError(await readErrorMessage(res, 'Failed to mark payment as paid.'));
       }
     } catch {
       setError('Network error. Please try again.');

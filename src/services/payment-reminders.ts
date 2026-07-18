@@ -45,6 +45,12 @@ export async function sendPaymentReminders(
     where: {
       status: 'overdue',
       OR: [{ reminderSentAt: null }, { reminderSentAt: { lt: remindCutoff } }],
+      // Erased accounts end the dunning: a deleted student reads nothing,
+      // and a deleted teacher has no account details left to pay into.
+      registration: {
+        student: { deletedAt: null },
+        class: { teacher: { deletedAt: null } },
+      },
     },
     include: {
       registration: {
@@ -60,30 +66,35 @@ export async function sendPaymentReminders(
 
   let reminded = 0;
   for (const payment of due) {
-    // Stamp first, conditionally — two overlapping cron runs must not
-    // both send a reminder for the same payment.
-    const stamped = await db.payment.updateMany({
-      where: {
-        id: payment.id,
-        status: 'overdue',
-        OR: [{ reminderSentAt: null }, { reminderSentAt: { lt: remindCutoff } }],
-      },
-      data: { reminderSentAt: now },
-    });
-    if (stamped.count === 0) continue;
+    // Stamp + notify in ONE transaction. The conditional stamp keeps two
+    // overlapping cron runs from double-sending; the transaction keeps a
+    // failed notification from stamping a reminder that never went out
+    // (which would silence dunning for that payment for a full cycle).
+    const didRemind = await db.$transaction(async (tx) => {
+      const stamped = await tx.payment.updateMany({
+        where: {
+          id: payment.id,
+          status: 'overdue',
+          OR: [{ reminderSentAt: null }, { reminderSentAt: { lt: remindCutoff } }],
+        },
+        data: { reminderSentAt: now },
+      });
+      if (stamped.count === 0) return false;
 
-    const notifications: CreateNotificationInput[] = [
-      {
-        recipientType: 'student',
-        recipientId: payment.registration.studentId,
-        type: 'reminder',
-        title: 'Payment outstanding',
-        body: `€${Number(payment.amount).toFixed(2)} for ${payment.registration.class.classType} is still open. Pay your teacher directly.`,
-        relatedClassId: payment.registration.class.id,
-      },
-    ];
-    await createBulkNotifications(db, notifications);
-    reminded++;
+      const notifications: CreateNotificationInput[] = [
+        {
+          recipientType: 'student',
+          recipientId: payment.registration.studentId,
+          type: 'reminder',
+          title: 'Payment outstanding',
+          body: `€${Number(payment.amount).toFixed(2)} for ${payment.registration.class.classType} is still open. Pay your teacher directly.`,
+          relatedClassId: payment.registration.class.id,
+        },
+      ];
+      await createBulkNotifications(tx, notifications);
+      return true;
+    });
+    if (didRemind) reminded++;
   }
 
   return reminded;

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import { readErrorMessage } from '@/lib/client-errors';
 
 interface WaitlistEntryActionsProps {
   entryId: string;
@@ -19,16 +20,6 @@ export function WaitlistEntryActions({ entryId, classId, canClaim }: WaitlistEnt
   const router = useRouter();
   const [busy, setBusy] = useState<'claim' | 'leave' | null>(null);
   const [error, setError] = useState('');
-
-  async function readErrorMessage(res: Response, fallback: string): Promise<string> {
-    try {
-      const json = (await res.json()) as { error?: { message?: string } | string };
-      const message = typeof json.error === 'string' ? json.error : json.error?.message;
-      return message ?? fallback;
-    } catch {
-      return fallback;
-    }
-  }
 
   async function handleClaim() {
     setBusy('claim');

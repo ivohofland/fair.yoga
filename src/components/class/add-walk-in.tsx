@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
 import { Icon } from '@/components/ui/icon';
+import { readErrorMessage } from '@/lib/client-errors';
 
 interface RosterStudent {
   id: string;
@@ -25,21 +26,30 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [students, setStudents] = useState<RosterStudent[]>([]);
+  const [rosterTotal, setRosterTotal] = useState(0);
   const [selected, setSelected] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
+  const PAGE_SIZE = 50;
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    fetch('/api/students?page=1&pageSize=50')
-      .then((res) => res.json())
-      .then((json: { data: { students: RosterStudent[] } }) => {
+    fetch(`/api/students?page=1&pageSize=${PAGE_SIZE}`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`students ${res.status}`);
+        return res.json();
+      })
+      .then((json: { data: { students: RosterStudent[]; total: number } }) => {
         if (cancelled) return;
         const registered = new Set(registeredStudentIds);
         setStudents(json.data.students.filter((s) => !registered.has(s.id)));
+        setRosterTotal(json.data.total);
       })
-      .catch(() => setError('Could not load your students.'));
+      .catch(() => {
+        if (!cancelled) setError('Could not load your students.');
+      });
     return () => {
       cancelled = true;
     };
@@ -60,9 +70,7 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
         setSelected('');
         router.refresh();
       } else {
-        const json = (await res.json()) as { error?: { message?: string } | string };
-        const message = typeof json.error === 'string' ? json.error : json.error?.message;
-        setError(message ?? 'Could not add the walk-in. Try again.');
+        setError(await readErrorMessage(res, 'Could not add the walk-in. Try again.'));
       }
     } catch {
       setError('Network error. Try again.');
@@ -96,6 +104,8 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
       </Select>
       <p className="type-caption">
         Not in your students yet? Add them under Students first.
+        {rosterTotal > PAGE_SIZE &&
+          ` Showing your first ${PAGE_SIZE} students — find the rest under Students.`}
       </p>
       <div className="flex gap-3">
         <Button variant="primary" onClick={handleAdd} disabled={!selected || submitting}>

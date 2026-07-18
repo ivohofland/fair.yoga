@@ -47,10 +47,20 @@ export async function autoTransitionToInProgress(
   let transitioned = 0;
 
   for (const cls of openClasses) {
-    const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
-    if (start <= currentTime) {
-      const result = await transitionClass(db, cls.id, 'in_progress');
-      if (result.ok) transitioned++;
+    // Per-class isolation: one bad class (corrupt timezone, failed
+    // transition) must not halt the sweep for every other class.
+    try {
+      const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
+      if (start <= currentTime) {
+        const result = await transitionClass(db, cls.id, 'in_progress');
+        if (result.ok) {
+          transitioned++;
+        } else {
+          console.error(`[transitions] class ${cls.id} → in_progress rejected: ${result.error}`);
+        }
+      }
+    } catch (err) {
+      console.error(`[transitions] class ${cls.id} → in_progress failed:`, err);
     }
   }
 
@@ -86,46 +96,51 @@ export async function autoCancelClasses(
   let cancelled = 0;
 
   for (const cls of openClasses) {
-    const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
-    const checkHours = CANCEL_CHECK_HOURS[cls.autoCancelCheck] ?? 2;
-    const checkTime = new Date(start.getTime() - checkHours * 60 * 60 * 1000);
+    try {
+      const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
+      const checkHours = CANCEL_CHECK_HOURS[cls.autoCancelCheck] ?? 2;
+      const checkTime = new Date(start.getTime() - checkHours * 60 * 60 * 1000);
 
-    // Only cancel if we're past the check time but before the class starts
-    if (currentTime >= checkTime && currentTime < start) {
-      const activeCount = cls.registrations.length;
+      // Only cancel if we're past the check time but before the class starts
+      if (currentTime >= checkTime && currentTime < start) {
+        const activeCount = cls.registrations.length;
 
-      if (activeCount < cls.minStudents) {
-        // Cancel + notify atomically: a cancelled class nobody was told
-        // about is worse than one that stays open one more sweep.
-        const didCancel = await db.$transaction(async (tx) => {
-          const updated = await tx.class.updateMany({
-            where: { id: cls.id, status: 'open' },
-            data: { status: 'cancelled' },
+        if (activeCount < cls.minStudents) {
+          // Cancel + notify atomically: a cancelled class nobody was told
+          // about is worse than one that stays open one more sweep.
+          const didCancel = await db.$transaction(async (tx) => {
+            const updated = await tx.class.updateMany({
+              where: { id: cls.id, status: 'open' },
+              data: { status: 'cancelled' },
+            });
+            if (updated.count === 0) return false;
+
+            const notifications: CreateNotificationInput[] = cls.registrations.map((r) => ({
+              recipientType: 'student' as const,
+              recipientId: r.studentId,
+              type: 'class_cancelled' as const,
+              title: 'Class cancelled',
+              body: `${cls.classType} class has been cancelled due to insufficient registrations.`,
+              relatedClassId: cls.id,
+            }));
+            notifications.push({
+              recipientType: 'teacher',
+              recipientId: cls.teacherId,
+              type: 'class_cancelled',
+              title: 'Class auto-cancelled',
+              body: `${cls.classType} was cancelled — only ${activeCount} of ${cls.minStudents} minimum students registered.`,
+              relatedClassId: cls.id,
+            });
+            await createBulkNotifications(tx, notifications);
+            return true;
           });
-          if (updated.count === 0) return false;
 
-          const notifications: CreateNotificationInput[] = cls.registrations.map((r) => ({
-            recipientType: 'student' as const,
-            recipientId: r.studentId,
-            type: 'class_cancelled' as const,
-            title: 'Class cancelled',
-            body: `${cls.classType} class has been cancelled due to insufficient registrations.`,
-            relatedClassId: cls.id,
-          }));
-          notifications.push({
-            recipientType: 'teacher',
-            recipientId: cls.teacherId,
-            type: 'class_cancelled',
-            title: 'Class auto-cancelled',
-            body: `${cls.classType} was cancelled — only ${activeCount} of ${cls.minStudents} minimum students registered.`,
-            relatedClassId: cls.id,
-          });
-          await createBulkNotifications(tx, notifications);
-          return true;
-        });
-
-        if (didCancel) cancelled++;
+          if (didCancel) cancelled++;
+        }
       }
+    } catch (err) {
+      // Per-class isolation — see autoTransitionToInProgress.
+      console.error(`[transitions] auto-cancel check for class ${cls.id} failed:`, err);
     }
   }
 
@@ -154,12 +169,22 @@ export async function autoCompleteClasses(
   let completed = 0;
 
   for (const cls of inProgressClasses) {
-    const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
-    const endTime = new Date(start.getTime() + cls.durationMinutes * 60 * 1000);
+    // Per-class isolation — see autoTransitionToInProgress. Completion also
+    // runs the pricing engine, which has more ways to fail per class.
+    try {
+      const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
+      const endTime = new Date(start.getTime() + cls.durationMinutes * 60 * 1000);
 
-    if (currentTime >= endTime) {
-      const result = await completeClass(db, cls.id);
-      if (result.ok) completed++;
+      if (currentTime >= endTime) {
+        const result = await completeClass(db, cls.id);
+        if (result.ok) {
+          completed++;
+        } else {
+          console.error(`[transitions] class ${cls.id} completion rejected: ${result.error}`);
+        }
+      }
+    } catch (err) {
+      console.error(`[transitions] class ${cls.id} completion failed:`, err);
     }
   }
 

@@ -12,6 +12,7 @@ interface ShareBookingLinkProps {
 // where available (the one-handed phone case), clipboard otherwise.
 export function ShareBookingLink({ pageSlug }: ShareBookingLinkProps) {
   const [copied, setCopied] = useState(false);
+  const [fallbackUrl, setFallbackUrl] = useState('');
 
   async function handleShare() {
     const url = `${window.location.origin}/${pageSlug}`;
@@ -23,15 +24,29 @@ export function ShareBookingLink({ pageSlug }: ShareBookingLinkProps) {
         // user dismissed the sheet — fall through to clipboard
       }
     }
-    await navigator.clipboard.writeText(url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard can be blocked (permissions, insecure context) — an
+      // unhandled rejection here would fail silently. Show the link so the
+      // teacher can copy it by hand.
+      setFallbackUrl(url);
+    }
   }
 
   return (
-    <Button variant="secondary" onClick={handleShare} className="w-full sm:w-auto">
-      <Icon name="share" size={18} />
-      {copied ? 'Link copied' : 'Share booking link'}
-    </Button>
+    <div className="flex flex-col gap-2 w-full sm:w-auto">
+      <Button variant="secondary" onClick={handleShare} className="w-full sm:w-auto">
+        <Icon name="share" size={18} />
+        {copied ? 'Link copied' : 'Share booking link'}
+      </Button>
+      {fallbackUrl && (
+        <p className="type-caption break-all select-all">
+          Copy it yourself: {fallbackUrl}
+        </p>
+      )}
+    </div>
   );
 }

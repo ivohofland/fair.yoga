@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import { readErrorMessage } from '@/lib/client-errors';
 
 const DEADLINE_LABELS: Record<string, string> = {
   HOURS_48: '48 hours',
@@ -30,9 +31,7 @@ export function CancelBookingButton({ registrationId, cancelDeadline }: CancelBo
       if (res.ok) {
         router.refresh();
       } else {
-        const json = (await res.json()) as { error?: { message?: string } | string };
-        const message = typeof json.error === 'string' ? json.error : json.error?.message;
-        setError(message ?? 'Could not cancel. Try again.');
+        setError(await readErrorMessage(res, 'Could not cancel. Try again.'));
       }
     } catch {
       setError('Network error. Try again.');

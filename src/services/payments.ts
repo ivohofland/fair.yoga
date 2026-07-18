@@ -6,6 +6,7 @@
  */
 
 import type { PrismaClient, Payment } from '@prisma/client';
+import { createBulkNotifications } from './notifications';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -86,18 +87,39 @@ export async function markPaymentOverdue(
 // ---------------------------------------------------------------------------
 
 /**
- * Record that a payment reminder was sent.
- * Sets reminderSentAt to the current timestamp.
+ * Send a payment reminder: creates the student's reminder notification and
+ * stamps reminderSentAt in one transaction. Stamping alone would *suppress*
+ * the next scheduled reminder without ever nudging the student.
  */
 export async function sendPaymentReminder(
   db: PrismaClient,
   paymentId: string,
 ): Promise<Payment> {
-  return db.payment.update({
-    where: { id: paymentId },
-    data: {
-      reminderSentAt: new Date(),
-    },
+  return db.$transaction(async (tx) => {
+    const payment = await tx.payment.findUniqueOrThrow({
+      where: { id: paymentId },
+      include: {
+        registration: {
+          select: { studentId: true, class: { select: { id: true, classType: true } } },
+        },
+      },
+    });
+
+    await createBulkNotifications(tx, [
+      {
+        recipientType: 'student',
+        recipientId: payment.registration.studentId,
+        type: 'reminder',
+        title: 'Payment outstanding',
+        body: `€${Number(payment.amount).toFixed(2)} for ${payment.registration.class.classType} is still open. Pay your teacher directly.`,
+        relatedClassId: payment.registration.class.id,
+      },
+    ]);
+
+    return tx.payment.update({
+      where: { id: paymentId },
+      data: { reminderSentAt: new Date() },
+    });
   });
 }
 

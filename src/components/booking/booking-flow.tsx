@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
+import { readErrorMessage } from '@/lib/client-errors';
 import { TIER_INFO, TIER_QUOTE } from '@/lib/tiers';
 
 interface BookingFlowProps {
@@ -46,7 +47,7 @@ export function BookingFlow({
           body: JSON.stringify({ incomeTier: tier }),
         });
         if (!tierRes.ok) {
-          setError('Could not save your tier. Try again.');
+          setError(await readErrorMessage(tierRes, 'Could not save your tier. Try again.'));
           return;
         }
       }
@@ -60,9 +61,7 @@ export function BookingFlow({
         if (res.ok) {
           setPhase('waitlisted');
         } else {
-          const json = (await res.json()) as { error?: { message?: string } | string };
-          const message = typeof json.error === 'string' ? json.error : json.error?.message;
-          setError(message ?? 'Could not join the waitlist. Try again.');
+          setError(await readErrorMessage(res, 'Could not join the waitlist. Try again.'));
         }
         return;
       }
@@ -75,9 +74,7 @@ export function BookingFlow({
       if (res.ok) {
         setPhase('booked');
       } else {
-        const json = (await res.json()) as { error?: { message?: string } | string };
-        const message = typeof json.error === 'string' ? json.error : json.error?.message;
-        setError(message ?? 'Could not book the class. Try again.');
+        setError(await readErrorMessage(res, 'Could not book the class. Try again.'));
       }
     } catch {
       setError('Network error. Try again.');

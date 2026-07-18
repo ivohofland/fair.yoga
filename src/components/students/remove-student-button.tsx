@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import { readErrorMessage } from '@/lib/client-errors';
 
 interface RemoveStudentButtonProps {
   studentId: string;
@@ -13,14 +14,20 @@ export function RemoveStudentButton({ studentId, studentName }: RemoveStudentBut
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState('');
 
   async function handleRemove() {
     setRemoving(true);
+    setError('');
     try {
       const res = await fetch(`/api/students/${studentId}`, { method: 'DELETE' });
       if (res.ok) {
         router.push('/students');
+      } else {
+        setError(await readErrorMessage(res, 'Could not remove the student. Try again.'));
       }
+    } catch {
+      setError('Network error. Try again.');
     } finally {
       setRemoving(false);
     }
@@ -49,6 +56,7 @@ export function RemoveStudentButton({ studentId, studentName }: RemoveStudentBut
           Cancel
         </Button>
       </div>
+      {error && <p className="text-sm text-danger">{error}</p>}
     </div>
   );
 }

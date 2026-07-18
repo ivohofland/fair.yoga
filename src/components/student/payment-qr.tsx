@@ -34,7 +34,11 @@ export function PaymentQr({ iban, beneficiary, amount, remittance }: PaymentQrPr
 
     QRCode.toDataURL(payload, { margin: 1, width: 160, color: { dark: '#2D2D2D', light: '#F7F4EF' } })
       .then(setDataUrl)
-      .catch(() => setDataUrl(null));
+      .catch((err: unknown) => {
+        // The QR is progressive enhancement — hide it, but say why.
+        console.error('[payment-qr] QR generation failed:', err);
+        setDataUrl(null);
+      });
   }, [iban, beneficiary, amount, remittance]);
 
   if (!dataUrl) return null;

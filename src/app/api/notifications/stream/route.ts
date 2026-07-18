@@ -5,6 +5,16 @@ import { notificationBus, type NotificationEvent } from '@/lib/event-bus';
 
 export const dynamic = 'force-dynamic';
 
+/** Open SSE streams per user — a runaway tab loop must not hold the server. */
+const MAX_STREAMS_PER_USER = 5;
+
+declare global {
+  // Global so every bundle context shares the same counters (mirrors the
+  // scheduler-health registry pattern).
+  var __fairYogaSseCounts: Map<string, number> | undefined;
+}
+const sseCounts = (globalThis.__fairYogaSseCounts ??= new Map<string, number>());
+
 export async function GET(request: NextRequest) {
   const token = getSessionToken(request);
   if (!token) {
@@ -13,6 +23,12 @@ export async function GET(request: NextRequest) {
   const session = await validateSession(prisma, token);
   if (!session) {
     return new Response('Session expired', { status: 401 });
+  }
+
+  const userKey = `${session.userType}:${session.userId}`;
+  if ((sseCounts.get(userKey) ?? 0) >= MAX_STREAMS_PER_USER) {
+    // The client's backoff reconnect retries once other tabs close.
+    return new Response('Too many open streams', { status: 429 });
   }
 
   const encoder = new TextEncoder();
@@ -50,6 +66,9 @@ export async function GET(request: NextRequest) {
         closed = true;
         clearInterval(keepalive);
         notificationBus.offNotification(handler);
+        const count = (sseCounts.get(userKey) ?? 1) - 1;
+        if (count <= 0) sseCounts.delete(userKey);
+        else sseCounts.set(userKey, count);
         try {
           controller.close();
         } catch {
@@ -58,6 +77,7 @@ export async function GET(request: NextRequest) {
       };
 
       // Send initial keepalive comment
+      sseCounts.set(userKey, (sseCounts.get(userKey) ?? 0) + 1);
       send(': connected\n\n');
       notificationBus.onNotification(handler);
 

@@ -61,7 +61,9 @@ export default async function TeacherHome() {
 
   // The checklist retires itself once the teacher has taught the basics
   // into place: bank details, a room, a first class.
-  const needsOnboarding = !teacher.bankIban || roomCount === 0 || classCount === 0;
+  // Bank details are optional (cash-only teachers exist) — the card retires
+  // on the two required steps, or it would pin itself forever.
+  const needsOnboarding = roomCount === 0 || classCount === 0;
 
   return (
     <div>

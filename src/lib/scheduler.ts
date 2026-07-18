@@ -24,9 +24,23 @@ interface Job {
 
 const MINUTE = 60 * 1000;
 
+/** Last-run bookkeeping per job, surfaced by /api/health. */
+export interface JobHealth {
+  lastRunAt: string | null;
+  lastSuccessAt: string | null;
+  lastError: string | null;
+}
+
 declare global {
   // Survives dev-server HMR: the scheduler must start at most once.
   var __fairYogaSchedulerStarted: boolean | undefined;
+  // Global so the health route reads the same registry regardless of
+  // which bundle context imported this module.
+  var __fairYogaJobHealth: Record<string, JobHealth> | undefined;
+}
+
+export function getJobHealth(): Record<string, JobHealth> {
+  return globalThis.__fairYogaJobHealth ?? {};
 }
 
 export async function startScheduler(): Promise<void> {
@@ -52,9 +66,19 @@ export async function startScheduler(): Promise<void> {
       name: 'class-transitions',
       intervalMs: 1 * MINUTE,
       run: async (db) => {
-        await autoTransitionToInProgress(db);
-        await autoCancelClasses(db);
-        await autoCompleteClasses(db);
+        // Each sweep isolated: a failure in one must not starve the others.
+        const sweeps = [autoTransitionToInProgress, autoCancelClasses, autoCompleteClasses];
+        const errors: unknown[] = [];
+        for (const sweep of sweeps) {
+          try {
+            await sweep(db);
+          } catch (err) {
+            console.error(`[scheduler] class-transitions sweep ${sweep.name} failed:`, err);
+            errors.push(err);
+          }
+        }
+        // Still surface the failure in job health.
+        if (errors.length > 0) throw errors[0];
       },
     },
     {
@@ -77,14 +101,21 @@ export async function startScheduler(): Promise<void> {
     },
   ];
 
+  const health = (globalThis.__fairYogaJobHealth ??= {});
   for (const job of jobs) {
+    health[job.name] = { lastRunAt: null, lastSuccessAt: null, lastError: null };
     const tick = async () => {
       if (job.running) return;
       job.running = true;
+      const jobHealth = health[job.name]!;
+      jobHealth.lastRunAt = new Date().toISOString();
       try {
         await job.run(prisma);
+        jobHealth.lastSuccessAt = new Date().toISOString();
+        jobHealth.lastError = null;
       } catch (err) {
         console.error(`[scheduler] ${job.name} failed:`, err);
+        jobHealth.lastError = err instanceof Error ? err.message : String(err);
       } finally {
         job.running = false;
       }

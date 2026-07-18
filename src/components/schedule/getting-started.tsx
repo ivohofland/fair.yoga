@@ -23,7 +23,7 @@ export function GettingStarted({ hasBankDetails, hasRoom, hasClass }: GettingSta
   const steps: Step[] = [
     {
       label: 'Add your bank details',
-      detail: 'Students see them when it’s time to pay',
+      detail: 'Students see them when it’s time to pay — skip if you take cash',
       href: '/settings/profile',
       done: hasBankDetails,
     },

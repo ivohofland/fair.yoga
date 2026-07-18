@@ -12,6 +12,7 @@ import {
 import { createRegistrationSchema } from '@/lib/schemas';
 import { createBulkNotifications } from '@/services/notifications';
 import { activateRegistration, reorderWaitingEntries } from '@/services/waitlist';
+import { classStartInstant } from '@/lib/timezone';
 
 /** Thrown inside the registration transaction when the class is at capacity. */
 class ClassFullError extends Error {}
@@ -35,7 +36,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
 
   // Look up the class
-  const cls = await prisma.class.findUnique({ where: { id: body.classId } });
+  const cls = await prisma.class.findUnique({
+    where: { id: body.classId },
+    include: { teacher: { select: { defaultTimezone: true } } },
+  });
   if (!cls) return respondError('Class not found', 404);
 
   // Teachers may only manage registrations for their own classes —
@@ -44,8 +48,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return respondError('Not your class', 403);
   }
 
-  // Check class status
-  if (cls.status !== 'open') {
+  // Check class status. Students book open classes; the teacher can also
+  // add someone who shows up while the class is in progress.
+  const allowedStatuses = isTeacher ? ['open', 'in_progress'] : ['open'];
+  if (!allowedStatuses.includes(cls.status)) {
     return respondError(`Cannot register for a class with status "${cls.status}"`, 409);
   }
 
@@ -61,9 +67,16 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     if (!link) return respondError('Student is not in your roster', 403);
   }
 
-  // Teacher-added registrations are walk-ins: they may exceed max_students
-  // (the teacher rate stays capped at target; extra students lower prices).
-  const isWalkIn = isTeacher;
+  // Walk-ins are a class-time phenomenon: someone shows up at the door and
+  // the teacher lets them in — those may exceed max_students (the teacher
+  // rate stays capped at target; extra students lower prices). A teacher
+  // adding a student well before class is a normal registration and
+  // respects capacity like everyone else.
+  const WALK_IN_WINDOW_MS = 15 * 60 * 1000;
+  const classStart = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
+  const isWalkIn =
+    isTeacher &&
+    (cls.status === 'in_progress' || Date.now() >= classStart.getTime() - WALK_IN_WINDOW_MS);
 
   try {
     const registration = await prisma.$transaction(async (tx) => {

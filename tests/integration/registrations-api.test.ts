@@ -218,16 +218,33 @@ describe('POST /api/registrations', () => {
     expect(dup.status).toBe(409);
   });
 
-  it('allows the owner to add a roster student as a walk-in beyond capacity', async () => {
+  it('teacher adds before class respect capacity — not walk-ins', async () => {
+    const classId = await makeClass(1); // class is in 2099, far before start
+    const fill = await post(studentTokens[0]!, { classId });
+    expect(fill.status).toBe(201);
+
+    // Full class + far from start: the owner's add is a normal registration
+    // and must NOT silently bypass capacity.
+    const add = await post(ownerToken, { classId, studentId: studentIds[1] });
+    expect(add.status).toBe(409);
+  });
+
+  it('allows the owner to add a walk-in beyond capacity during class', async () => {
     const classId = await makeClass(1);
     const fill = await post(studentTokens[0]!, { classId });
     expect(fill.status).toBe(201);
 
-    // Class is full; the owner adds a walk-in anyway
+    // The class starts: walk-ins happen at the door.
+    await prisma.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
+
     const walkIn = await post(ownerToken, { classId, studentId: studentIds[1] });
     expect(walkIn.status).toBe(201);
     const json = (await walkIn.json()) as { data: { isWalkIn: boolean } };
     expect(json.data.isWalkIn).toBe(true);
+
+    // Students still cannot register into a running class.
+    const student = await post(studentTokens[0]!, { classId });
+    expect(student.status).toBe(409);
   });
 
   it('rebooking after a cancellation reactivates the old registration row', async () => {

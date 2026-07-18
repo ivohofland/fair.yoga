@@ -37,8 +37,13 @@ export function wrapEmail(heading: string, bodyHtml: string): string {
 </html>`;
 }
 
-/** Per-type framing line shown above the notification body. */
-const TYPE_INTROS: Record<NotificationType, string> = {
+/**
+ * Per-type framing line shown above the notification body — keyed by who
+ * is reading. The same type reads differently across the counter:
+ * booking_confirmed is "your booking" to the student but "a student
+ * booked" to the teacher.
+ */
+const STUDENT_INTROS: Record<NotificationType, string> = {
   booking_confirmed: 'Your booking is confirmed.',
   class_cancelled: 'A class was cancelled.',
   payment_received: 'A payment was received.',
@@ -50,10 +55,20 @@ const TYPE_INTROS: Record<NotificationType, string> = {
   announcement: 'A message from your teacher.',
 };
 
+const TEACHER_INTROS: Partial<Record<NotificationType, string>> = {
+  booking_confirmed: 'A student booked your class.',
+  class_cancelled: 'One of your classes was cancelled.',
+  payment_received: 'A payment was received.',
+  payment_request: 'A class has been priced.',
+  reminder: 'A gentle reminder.',
+};
+
 export interface NotificationEmailInput {
   type: NotificationType;
   title: string;
   body: string;
+  /** Defaults to the student framing when absent. */
+  recipientType?: 'teacher' | 'student';
 }
 
 /** Renders the email for an unread notification (layer 3 fallback). */
@@ -61,7 +76,10 @@ export function renderNotificationEmail(notification: NotificationEmailInput): {
   subject: string;
   html: string;
 } {
-  const intro = TYPE_INTROS[notification.type];
+  const intro =
+    notification.recipientType === 'teacher'
+      ? (TEACHER_INTROS[notification.type] ?? STUDENT_INTROS[notification.type])
+      : STUDENT_INTROS[notification.type];
   const html = wrapEmail(
     escapeHtml(notification.title),
     `<p style="margin:0 0 8px;color:#9C8F84;font-size:13px;">${escapeHtml(intro)}</p>

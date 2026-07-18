@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { readErrorMessage } from '@/lib/client-errors';
 
 interface ArchiveStudioTemplateButtonProps {
   templateId: string;
@@ -23,7 +24,7 @@ export function ArchiveStudioTemplateButton({ templateId, isArchived }: ArchiveS
       if (res.ok) {
         router.push('/settings/studio-classes');
       } else {
-        setError('Failed to update. Please try again.');
+        setError(await readErrorMessage(res, 'Failed to update. Please try again.'));
       }
     } catch {
       setError('Network error. Please try again.');

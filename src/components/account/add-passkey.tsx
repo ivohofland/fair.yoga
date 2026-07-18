@@ -34,6 +34,12 @@ export function AddPasskey() {
         setState('idle');
         return;
       }
+      // InvalidStateError = this device already holds a passkey for the
+      // account — that's a success condition, not a broken device.
+      if (err instanceof Error && err.name === 'InvalidStateError') {
+        setState('done');
+        return;
+      }
       setState('error');
       setMessage('Could not add a passkey on this device.');
     }

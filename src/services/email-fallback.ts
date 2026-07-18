@@ -26,7 +26,18 @@ export async function processEmailFallback(
 
   if (notifications.length === 0) return 0;
 
-  const sentIds: string[] = [];
+  let sent = 0;
+
+  // Mark each notification immediately after its send: batching the marks
+  // at the end meant one failed batch-update re-emailed every recipient on
+  // every 5-minute sweep. Worst case now is a single duplicate.
+  const markOne = async (id: string) => {
+    try {
+      await markEmailSent(db, [id]);
+    } catch (err) {
+      console.error(`Failed to mark notification ${id} email-sent (may re-send once):`, err);
+    }
+  };
 
   for (const notification of notifications) {
     // Look up recipient email and preferences
@@ -50,13 +61,15 @@ export async function processEmailFallback(
 
     if (!email || !emailEnabled) {
       // Mark as sent to avoid retrying
-      sentIds.push(notification.id);
+      await markOne(notification.id);
+      sent++;
       continue;
     }
 
     if (emailDryRun()) {
       console.log(`[DEV] Email fallback for ${email}: ${notification.title} — ${notification.body}`);
-      sentIds.push(notification.id);
+      await markOne(notification.id);
+      sent++;
       continue;
     }
 
@@ -76,15 +89,12 @@ export async function processEmailFallback(
         console.error(`Failed to send email fallback for notification ${notification.id}:`, error.message);
         continue;
       }
-      sentIds.push(notification.id);
+      await markOne(notification.id);
+      sent++;
     } catch (err) {
       console.error(`Failed to send email fallback for notification ${notification.id}:`, err);
     }
   }
 
-  if (sentIds.length > 0) {
-    await markEmailSent(db, sentIds);
-  }
-
-  return sentIds.length;
+  return sent;
 }

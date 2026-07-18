@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import { readErrorMessage } from '@/lib/client-errors';
 
 interface DataAndDeletionProps {
   /** 'student' | 'teacher' — only changes the consequence copy. */
@@ -16,7 +17,34 @@ export function DataAndDeletion({ role }: DataAndDeletionProps) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
   const [error, setError] = useState('');
+
+  // Fetch-then-save instead of a bare <a download>: a failed export must
+  // show an error, not download an error payload as the user's "data".
+  async function handleExport() {
+    setExporting(true);
+    setExportError('');
+    try {
+      const res = await fetch('/api/account/export');
+      if (!res.ok) {
+        setExportError(await readErrorMessage(res, 'Could not build the export. Try again.'));
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `fair-yoga-export-${new Date().toISOString().slice(0, 10)}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setExportError('Network error. Try again.');
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function handleDelete() {
     setDeleting(true);
@@ -27,7 +55,7 @@ export function DataAndDeletion({ role }: DataAndDeletionProps) {
         router.push('/');
         router.refresh();
       } else {
-        setError('Could not delete the account. Try again.');
+        setError(await readErrorMessage(res, 'Could not delete the account. Try again.'));
       }
     } catch {
       setError('Network error. Try again.');
@@ -43,14 +71,16 @@ export function DataAndDeletion({ role }: DataAndDeletionProps) {
         Download everything fair.yoga holds about you, or delete your account.
       </p>
 
-      <div className="mt-4">
-        <a
-          href="/api/account/export"
-          className="type-label text-teal no-underline"
-          download
+      <div className="mt-4 flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={exporting}
+          className="type-label text-teal self-start disabled:opacity-50"
         >
-          Download your data (JSON)
-        </a>
+          {exporting ? 'Preparing download...' : 'Download your data (JSON)'}
+        </button>
+        {exportError && <p className="text-sm text-danger">{exportError}</p>}
       </div>
 
       <div className="mt-6">

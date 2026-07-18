@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { readErrorMessage } from '@/lib/client-errors';
 
 interface ToggleTemplateButtonProps {
   templateId: string;
@@ -21,7 +22,7 @@ export function ToggleTemplateButton({ templateId, isActive }: ToggleTemplateBut
       if (res.ok) {
         router.push('/settings/recurring');
       } else {
-        setError('Failed to update. Please try again.');
+        setError(await readErrorMessage(res, 'Failed to update. Please try again.'));
       }
     } catch {
       setError('Network error. Please try again.');

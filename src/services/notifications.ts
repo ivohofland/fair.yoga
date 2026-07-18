@@ -63,8 +63,10 @@ function emitToBus(input: CreateNotificationInput, id: string): void {
         createdAt: new Date().toISOString(),
       },
     });
-  } catch {
-    // never let live-update plumbing break notification creation
+  } catch (err) {
+    // never let live-update plumbing break notification creation — but a
+    // dead bus means silent SSE, so it must at least reach the log.
+    console.error('[notifications] event-bus emit failed:', err);
   }
 }
 

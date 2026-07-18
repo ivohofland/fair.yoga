@@ -29,6 +29,25 @@ describe('email templates', () => {
     expect(html).toContain('€12.50');
   });
 
+  it('frames the same type for the teacher audience', () => {
+    const teacher = renderNotificationEmail({
+      type: 'booking_confirmed',
+      title: 'New booking',
+      body: 'Anna booked Vinyasa.',
+      recipientType: 'teacher',
+    });
+    // Not "Your booking is confirmed" — the teacher didn't book anything.
+    expect(teacher.html).toContain('A student booked your class.');
+
+    const student = renderNotificationEmail({
+      type: 'booking_confirmed',
+      title: 'Booking confirmed',
+      body: "You're booked for Vinyasa.",
+      recipientType: 'student',
+    });
+    expect(student.html).toContain('Your booking is confirmed.');
+  });
+
   it('wraps everything in the branded shell', () => {
     const { html } = renderNotificationEmail({
       type: 'reminder',
