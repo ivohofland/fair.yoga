@@ -7,12 +7,9 @@ import { encodeHexLowerCase } from '@oslojs/encoding';
 
 /**
  * Accessibility sweep: axe-core over the key screens, failing on any
- * serious/critical violation.
- *
- * color-contrast is excluded from the hard gate: several design-system
- * pairings (brown-light captions on cream, gold accents) sit below
- * WCAG AA and changing tokens is a design decision, not a test fix.
- * Tracked separately — see the comment at the bottom of this file.
+ * serious/critical violation — color-contrast included: the palette's
+ * text tokens (brown-light, gold-deep, danger) were darkened to clear
+ * WCAG AA on every surface they sit on, so contrast is CI-enforced.
  */
 
 const prisma = new PrismaClient();
@@ -41,7 +38,6 @@ async function signIn(context: BrowserContext, token: string): Promise<void> {
 async function expectNoSeriousViolations(page: import('@playwright/test').Page): Promise<void> {
   const results = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa'])
-    .disableRules(['color-contrast'])
     .analyze();
   const serious = results.violations.filter(
     (v) => v.impact === 'serious' || v.impact === 'critical',
@@ -211,9 +207,3 @@ test.describe('Accessibility sweep', () => {
     await expectNoSeriousViolations(page);
   });
 });
-
-// Known, deliberately excluded finding: color-contrast. brown-light
-// (#9C8F84) captions on cream (#F7F4EF) measure ~2.9:1 against the 4.5:1
-// AA requirement, and gold accents sit similarly low. Fixing this means
-// darkening design tokens — a design-system decision to take with the
-// vendored v2 palette, not something to patch per-page.

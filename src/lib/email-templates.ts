@@ -28,7 +28,7 @@ export function wrapEmail(heading: string, bodyHtml: string): string {
       <h1 style="font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:20px;line-height:1.3;color:#1A5653;margin:0 0 12px;">${heading}</h1>
       <div style="font-size:16px;line-height:1.55;color:#6B5B4E;">${bodyHtml}</div>
     </div>
-    <p style="font-size:13px;line-height:1.4;color:#9C8F84;margin:24px 0 0;">
+    <p style="font-size:13px;line-height:1.4;color:#71645A;margin:24px 0 0;">
       fair.yoga — free, open tools for independent yoga teachers.<br>
       You get emails like this when an in-app message goes unread; turn them off in your settings.
     </p>
@@ -82,7 +82,7 @@ export function renderNotificationEmail(notification: NotificationEmailInput): {
       : STUDENT_INTROS[notification.type];
   const html = wrapEmail(
     escapeHtml(notification.title),
-    `<p style="margin:0 0 8px;color:#9C8F84;font-size:13px;">${escapeHtml(intro)}</p>
+    `<p style="margin:0 0 8px;color:#71645A;font-size:13px;">${escapeHtml(intro)}</p>
      <p style="margin:0;">${escapeHtml(notification.body)}</p>`,
   );
   return { subject: notification.title, html };
@@ -94,7 +94,7 @@ export function renderMagicLinkEmail(magicLink: string): { subject: string; html
     'Sign in to fair.yoga',
     `<p style="margin:0 0 16px;">Tap the button and you're in — no password.</p>
      <p style="margin:0 0 16px;"><a href="${magicLink}" style="display:inline-block;background-color:#1A5653;color:#F7F4EF;text-decoration:none;font-weight:600;font-size:16px;padding:14px 24px;border-radius:999px;">Sign in</a></p>
-     <p style="margin:0;font-size:13px;color:#9C8F84;">This link works once and expires in 15 minutes. If you didn't request it, you can ignore this email.</p>`,
+     <p style="margin:0;font-size:13px;color:#71645A;">This link works once and expires in 15 minutes. If you didn't request it, you can ignore this email.</p>`,
   );
   return { subject: 'Sign in to fair.yoga', html };
 }

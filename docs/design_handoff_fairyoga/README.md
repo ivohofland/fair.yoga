@@ -48,7 +48,7 @@ Voice is **warm, clear, grounded**. We do not sound like a tech company, a marke
 
 ## Visual foundations
 
-- **Colors:** Teal `#1A5653` primary (headings, primary buttons, active states, prices, **success** — no green exists). Cream `#F7F4EF` page background — never pure white. Sand `#E8DCC8` for cards, panels, inputs. Brown `#6B5B4E` body text; Brown light `#9C8F84` placeholders/captions. Ink `#2D2D2D` high-contrast. Gold `#C4A96A` = attention, decorative only — never as text on cream. Danger `#B85C5C` — outlines/text only, never filled; never alarming bright red. Border `#D4C9B8`. **No gradients, no other colors.**
+- **Colors:** Teal `#1A5653` primary (headings, primary buttons, active states, prices, **success** — no green exists). Cream `#F7F4EF` page background — never pure white. Sand `#E8DCC8` for cards, panels, inputs. Brown `#6B5B4E` body text; Brown light `#71645A` placeholders/captions. Ink `#2D2D2D` high-contrast. Gold `#C4A96A` = attention, decorative only — never as text on cream. Danger `#A24E4E` — outlines/text only, never filled; never alarming bright red. Border `#D4C9B8`. **No gradients, no other colors.**
 - **Type — six styles only:** Display 28, Title 22, Subtitle 18 (Georgia bold; Display/Title teal, Subtitle ink) · Body 16, Label 14, Caption 13 (system sans; brown / brown / brown-light). Georgia never at body sizes; sans never in heading slots. Numbers: sans semibold, tabular, teal.
 - **Spacing:** 4px grid (`4 8 12 16 20 24 32 40 48`). Page margins 16 mobile / 24 desktop. Card padding 20, cards 12 apart, sections 32 apart. When in doubt: more whitespace.
 - **Radii:** buttons pill · cards 16 · inputs/badges 12 · sheets 20 top.

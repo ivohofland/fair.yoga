@@ -30,11 +30,11 @@ A free toolkit for independent yoga teachers — scheduling, income-based pricin
 | Sand (surface) | `#E8DCC8` | Cards, panels, input fields |
 | Sand hover | `#E0D2B9` | Interactive card/row hover |
 | Brown (text) | `#6B5B4E` | Body text, secondary labels, inactive icons |
-| Brown light | `#9C8F84` | Placeholders, disabled text, captions |
+| Brown light | `#71645A` | Placeholders, disabled text, captions |
 | Ink | `#2D2D2D` | High-contrast headings, text on gold |
 | Gold (accent) | `#C4A96A` | Badges, progress, accents — decorative only, never as text on cream |
 | Border | `#D4C9B8` | Dividers, card borders, input outlines |
-| Danger | `#B85C5C` | Errors and destructive actions — outlines/text only, never filled |
+| Danger | `#A24E4E` | Errors and destructive actions — outlines/text only, never filled |
 | Danger tint | `#F5E9E9` | Error field backgrounds |
 
 Rules: success = teal (no green exists), attention = gold, error = danger. No gradients, no other colors. Text on cream/sand is always brown, teal, or ink.

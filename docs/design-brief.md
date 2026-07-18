@@ -32,11 +32,11 @@ Defined in `src/app/globals.css` (`@theme`, Tailwind v4 CSS-first — no tailwin
 | `sand` | `#E8DCC8` | Card/row hover |
 | `sand-hover` | `#E0D2B9` | Reserved deeper hover step |
 | `brown` | `#6B5B4E` | Body text, inactive icons |
-| `brown-light` | `#9C8F84` | Placeholders, captions, muted |
+| `brown-light` | `#71645A` | Placeholders, captions, muted |
 | `ink` | `#2D2D2D` | High-contrast text, row primaries |
-| `gold` / `gold-tint` / `gold-deep` | `#C4A96A` / `#F3ECDC` / `#7D6A3D` | Attention (unread dot, full/waitlist badges) — decorative, never body text on cream |
+| `gold` / `gold-tint` / `gold-deep` | `#C4A96A` / `#F3ECDC` / `#7A6739` | Attention (unread dot, full/waitlist badges) — decorative, never body text on cream |
 | `border` | `#D4C9B8` | Dividers, card borders, progress track |
-| `danger` / `danger-tint` | `#B85C5C` / `#F5E9E9` | Errors + destructive — **outlines/text only, never filled** |
+| `danger` / `danger-tint` | `#A24E4E` / `#F5E9E9` | Errors + destructive — **outlines/text only, never filled** |
 
 ### Typography — six styles only
 

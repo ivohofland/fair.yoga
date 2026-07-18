@@ -13,7 +13,7 @@ export function RegistrationProgress({ registered = 0, min = 0, max = 1, style }
   const met = registered >= min;
   return (
     <div style={style}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'baseline', gap: '5px', marginBottom: '4px' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'baseline', gap: '8px', marginBottom: '4px' }}>
         <span style={{ fontFamily: 'var(--font-body)', fontSize: '16px', fontWeight: 600, lineHeight: 1, fontVariantNumeric: 'tabular-nums', color: met ? 'var(--color-teal)' : 'var(--text-body)' }}>
           {registered}
         </span>
