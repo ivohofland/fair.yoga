@@ -5,7 +5,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Icon } from '@/components/ui/icon';
 
-type Status = 'verifying' | 'success' | 'error';
+type Status = 'verifying' | 'success' | 'error' | 'already-signed-in';
 type StepState = 'done' | 'now' | 'pending';
 type RailStep = { num: string; text: string; when: string; state: StepState };
 
@@ -187,12 +187,40 @@ function ErrorState() {
   );
 }
 
+function AlreadySignedInState({ home }: { home: string }) {
+  return (
+    <div className="flex-1 flex flex-col justify-center py-4">
+      <p className="type-label text-teal mb-[10px]">Already signed in</p>
+      <h1 className="type-display mb-4">
+        You&apos;re still
+        <br />
+        signed in.
+      </h1>
+      <p className="type-body max-w-[360px] mb-6">
+        That link is spent &mdash; one-time links only work once. But your
+        session on this device is active, so there&apos;s nothing to redo.
+      </p>
+      <Link
+        href={home}
+        className="inline-flex items-center justify-center w-full text-center bg-teal text-cream hover:bg-teal-hover rounded-pill px-6 min-h-12 font-semibold text-base no-underline"
+      >
+        {home === '/bookings' ? 'Continue to your bookings' : 'Continue to your schedule'}
+      </Link>
+      <Fineprint>
+        Meant to sign in as someone else? Sign out first &mdash; you&apos;ll find
+        it under Settings.
+      </Fineprint>
+    </div>
+  );
+}
+
 function VerifyContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const token = searchParams.get('token');
   const [status, setStatus] = useState<Status>(token ? 'verifying' : 'error');
   const [redirectTo, setRedirectTo] = useState<string>('');
+  const [home, setHome] = useState<string>('/');
 
   useEffect(() => {
     if (!token) return;
@@ -211,10 +239,28 @@ function VerifyContent() {
         setStatus('success');
         setTimeout(() => router.push(dest), 900);
       })
-      .catch(() => setStatus('error'));
+      .catch(async () => {
+        // A stale link is often re-clicked from the inbox AFTER a
+        // successful sign-in. Telling a signed-in user their sign-in
+        // "failed" is worse than the truth: the link is spent, the
+        // session is fine.
+        try {
+          const res = await fetch('/api/auth/session');
+          if (res.ok) {
+            const json = (await res.json()) as { data: { userType: string } };
+            setHome(json.data.userType === 'student' ? '/bookings' : '/');
+            setStatus('already-signed-in');
+            return;
+          }
+        } catch {
+          // fall through to the plain failure state
+        }
+        setStatus('error');
+      });
   }, [token, router]);
 
   if (status === 'error') return <ErrorState />;
+  if (status === 'already-signed-in') return <AlreadySignedInState home={home} />;
   if (status === 'success') return <SuccessState redirectTo={redirectTo} />;
   return <VerifyingState />;
 }

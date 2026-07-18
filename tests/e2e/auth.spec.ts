@@ -124,6 +124,24 @@ test.describe('Magic link authentication', () => {
     await expect(page.getByText('Verification failed')).toBeVisible();
   });
 
+  test('re-clicking a used link while signed in offers to continue, not a failure', async ({
+    page,
+  }) => {
+    const rawToken = await createMagicLinkToken(teacherEmail);
+
+    await page.goto(`/verify?token=${rawToken}`);
+    await page.waitForURL('/', { timeout: 10_000 });
+
+    // Back to the inbox, click the same link again — session still active.
+    await page.goto(`/verify?token=${rawToken}`);
+    await expect(page.getByText('Already signed in')).toBeVisible();
+    await expect(page.getByText('Verification failed')).not.toBeVisible();
+
+    await page.getByRole('link', { name: 'Continue to your schedule' }).click();
+    await page.waitForURL('/', { timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: 'Schedule' })).toBeVisible();
+  });
+
   test('session persists across page reloads', async ({ page }) => {
     const rawToken = await createMagicLinkToken(teacherEmail);
 
