@@ -8,7 +8,7 @@ import { CancelBookingButton } from '@/components/student/cancel-booking-button'
 import { UpdatesStrip } from '@/components/student/updates-strip';
 import { WaitlistEntryActions } from '@/components/student/waitlist-entry-actions';
 import { PaymentQr } from '@/components/student/payment-qr';
-import { formatRoomLocation } from '@/lib/format';
+import { formatRoomLocation, paymentStateText } from '@/lib/format';
 import { getWaitlistWindow } from '@/services/waitlist';
 
 export const dynamic = 'force-dynamic';
@@ -208,8 +208,8 @@ export default async function StudentBookingsPage() {
                         €{Number(payment.amount).toFixed(2)}
                       </p>
                       {/* Payment state is text, never a badge */}
-                      <p className={`type-caption ${isPaid ? 'text-teal' : ''}`}>
-                        {isPaid ? '✓ Paid' : '○ Unpaid'}
+                      <p className={`type-caption ${paymentStateText(payment.status).className}`}>
+                        {paymentStateText(payment.status).label}
                       </p>
                     </div>
                   )}

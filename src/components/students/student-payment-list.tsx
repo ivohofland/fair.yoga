@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { readErrorMessage } from '@/lib/client-errors';
+import { paymentStateText } from '@/lib/format';
 
 interface StudentPaymentItem {
   paymentId: string;
@@ -62,8 +63,8 @@ export function StudentPaymentList({ items }: StudentPaymentListProps) {
               <div className="min-w-0">
                 <p className="text-base text-ink">{item.classType}</p>
                 {/* Payment state is text, never a badge */}
-                <p className={`type-caption ${isPaid ? 'text-teal' : ''}`}>
-                  {item.classDate} &middot; {isPaid ? '✓ Paid' : '○ Unpaid'}
+                <p className={`type-caption ${paymentStateText(status).className}`}>
+                  {item.classDate} &middot; {paymentStateText(status).label}
                 </p>
               </div>
               <div className="flex items-center gap-3 shrink-0">

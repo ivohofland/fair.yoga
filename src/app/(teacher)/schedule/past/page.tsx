@@ -14,6 +14,11 @@ export default async function PastClassesPage() {
       orderBy: { date: 'desc' },
       include: {
         _count: { select: { registrations: true } },
+        // Payment statuses feed the completed-card rollup (✓ all paid …).
+        registrations: {
+          where: { status: { in: ['registered', 'attended', 'no_show', 'late_cancel'] } },
+          select: { payment: { select: { status: true } } },
+        },
         teacherRoom: { include: { room: true } },
       },
     }),

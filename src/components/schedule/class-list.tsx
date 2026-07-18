@@ -9,6 +9,8 @@ import { formatRoomLocation } from '@/lib/format';
 type ClassWithDetails = Class & {
   _count: { registrations: number };
   teacherRoom: TeacherRoom & { room: Room };
+  /** Charged registrations' payment states — powers the completed-card rollup. */
+  registrations?: { payment: { status: string } | null }[];
 };
 
 interface ClassListProps {
@@ -72,6 +74,27 @@ function deriveClassRowState(cls: ClassWithDetails, isPast: boolean): RowState {
   return { variant, cancelled, past, showProgress };
 }
 
+// Completed classes roll payment state up inline — text, never a badge
+// (see the status explorations, turn 2): ✓ all paid · ○ N unpaid ·
+// ! N overdue. Silent until the class completes and payments exist.
+function PaymentRollup({ cls }: { cls: ClassWithDetails }) {
+  if (cls.status !== 'completed' || !cls.registrations) return null;
+  const payments = cls.registrations
+    .map((r) => r.payment)
+    .filter((p): p is { status: string } => p !== null);
+  if (payments.length === 0) return null;
+
+  const overdue = payments.filter((p) => p.status === 'overdue').length;
+  const unpaid = payments.filter((p) => p.status === 'pending').length;
+  if (overdue > 0) {
+    return <span className="text-danger font-medium"> · ! {overdue} overdue</span>;
+  }
+  if (unpaid > 0) {
+    return <span className="text-brown"> · ○ {unpaid} unpaid</span>;
+  }
+  return <span className="text-teal font-medium"> · ✓ all paid</span>;
+}
+
 // Class card: day/time + status badge, class type, room, and the
 // registration progress bar. Sand surface, radius 16, chevron.
 function ClassCard({ cls, isPast }: { cls: ClassWithDetails; isPast: boolean }) {
@@ -99,6 +122,7 @@ function ClassCard({ cls, isPast }: { cls: ClassWithDetails; isPast: boolean }) 
       </div>
       <p className="type-caption mt-0.5">
         {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
+        <PaymentRollup cls={cls} />
       </p>
       {showProgress && (
         <RegistrationProgress

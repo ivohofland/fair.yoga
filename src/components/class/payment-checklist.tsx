@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { paymentStateText } from '@/lib/format';
 
 export interface PaymentItem {
   paymentId: string;
@@ -85,8 +86,8 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
                   {item.studentName}
                 </Link>
                 {/* Payment state is text, never a badge — unpaid stays calm brown */}
-                <span className={`type-caption ${isPaid ? 'text-teal' : ''}`}>
-                  {isPaid ? '✓ Paid' : '○ Unpaid'}
+                <span className={`type-caption ${paymentStateText(status).className}`}>
+                  {paymentStateText(status).label}
                 </span>
               </div>
 

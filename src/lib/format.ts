@@ -19,3 +19,13 @@ export function timeAgo(date: Date): string {
   if (diffHours < 24) return `${diffHours}h ago`;
   return `${Math.floor(diffHours / 24)}d ago`;
 }
+
+/**
+ * Payment state as text, never a badge: "\u2713 Paid" teal, "\u25cb Unpaid"
+ * brown, "! Overdue" danger. Returns label + the text-color class.
+ */
+export function paymentStateText(status: string): { label: string; className: string } {
+  if (status === 'paid') return { label: '\u2713 Paid', className: 'text-teal' };
+  if (status === 'overdue') return { label: '! Overdue', className: 'text-danger font-medium' };
+  return { label: '\u25cb Unpaid', className: '' };
+}
