@@ -64,6 +64,13 @@ export default async function ClassDetailPage({
 
   const activeRegistrations = cls.registrations.filter((r) => r.status !== 'cancelled');
 
+  // Seat occupancy excludes late_cancel: those students are still charged
+  // (they stay in activeRegistrations for attendance/payments) but their
+  // seat is free — the booking page sells it, so the count here must agree.
+  const seatCount = cls.registrations.filter((r) =>
+    ['registered', 'attended', 'no_show'].includes(r.status),
+  ).length;
+
   const attendanceItems: AttendanceItem[] = activeRegistrations
     .map((r) => ({
       registrationId: r.id,
@@ -107,7 +114,7 @@ export default async function ClassDetailPage({
       />
       <ClassInfo
         cls={cls}
-        registrationCount={activeRegistrations.length}
+        registrationCount={seatCount}
         waitlistCount={cls._count.waitlistEntries}
       />
 
