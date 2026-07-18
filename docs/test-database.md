@@ -1,6 +1,6 @@
 # Spec: dedicated test database for vitest
 
-Status: **proposed** · Owner: dev · Scope: local development (CI unchanged)
+Status: **implemented** · Owner: dev · Scope: local development (CI unchanged)
 
 ## 1. Problem
 

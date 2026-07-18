@@ -12,7 +12,7 @@
 | Email | Resend | Transactional email for magic links, payment reminders, notification fallback. Simple API, generous free tier. |
 | Payments | Mollie (EU) / Stripe (US) | Level 1 doesn't need these (manual tracking). Level 2 uses payment links — no card-on-file, no subscriptions. |
 | Styling | Tailwind CSS | Utility-first, matches the warm minimalist design brief. No custom CSS files to maintain. |
-| Testing | Vitest + Playwright | Vitest for unit/integration, Playwright for e2e. Test-first development — tests are written before implementation. |
+| Testing | Vitest + Playwright | Vitest for unit/integration, Playwright for e2e. Test-first development — tests are written before implementation. The vitest unit tier runs against a dedicated `ethical_yoga_test` database, auto-provisioned via `DATABASE_URL_TEST` (see `docs/test-database.md`). |
 | Deployment | Single VPS (Docker) | One container running Next.js. PostgreSQL alongside or managed. Nginx reverse proxy. SSL via Let's Encrypt. |
 
 ## Development Approach
