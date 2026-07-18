@@ -1,0 +1,21 @@
+# Keeps the workflow actions and npm dependencies from silently aging.
+# Monthly + grouped: one tidy PR per ecosystem, not a weekly drizzle.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    versioning-strategy: increase
+    groups:
+      npm-minor-patch:
+        update-types: ['minor', 'patch']
+    # Majors arrive as individual PRs so breaking changes get read alone.

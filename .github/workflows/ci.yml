@@ -3,12 +3,65 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'LICENSE'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'LICENSE'
+
+# A newer push supersedes the run for the previous one — don't spend
+# minutes finishing a result nobody will read. PRs get the same treatment
+# per branch; main itself never cancels (every main run is a release gate).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
 
 jobs:
-  ci:
+  # Fast static gates: no database, no build. Fails in ~2 minutes when the
+  # problem is a type error or lint offence, instead of after a full build.
+  checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # prisma validate resolves env("DATABASE_URL") even without connecting.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies # postinstall runs prisma generate
+        run: npm ci
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      # Visible but non-blocking: the current high advisories live in
+      # next/vite themselves with no compatible fix released yet.
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     services:
       postgres:
@@ -44,14 +97,8 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      - name: Install dependencies
+      - name: Install dependencies # postinstall runs prisma generate
         run: npm ci
-
-      - name: Validate Prisma schema
-        run: npx prisma validate
-
-      - name: Generate Prisma client
-        run: npx prisma generate
 
       - name: Run migrations
         run: npx prisma migrate deploy
@@ -62,35 +109,67 @@ jobs:
       - name: Check schema/migration drift
         run: npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code
 
-      - name: TypeScript type check
-        run: npx tsc --noEmit
-
-      - name: Lint
-        run: npm run lint
-
-      # Visible but non-blocking: the current high advisories live in
-      # next/vite themselves with no compatible fix released yet.
-      - name: Dependency audit
-        run: npm audit --audit-level=high
-        continue-on-error: true
+      # Next.js incremental compile cache — cuts repeat builds roughly in half.
+      - name: Cache Next.js build
+        uses: actions/cache@v4
+        with:
+          path: .next/cache
+          key: nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'prisma/schema.prisma') }}
+          restore-keys: |
+            nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
 
       - name: Build
         run: npm run build
 
-      # Integration tests hit the HTTP API, so the built app must be running.
-      - name: Run tests
+      # Integration tests hit the HTTP API, so the built app must be
+      # running. Fail HERE with the server log when it never comes up —
+      # not three steps later with a wall of ECONNREFUSED.
+      - name: Start app
         run: |
-          npm run start &
+          npm run start > server.log 2>&1 &
           for i in {1..30}; do
-            curl -sf http://localhost:3000/login > /dev/null && break
+            curl -sf http://localhost:3000/api/health > /dev/null && exit 0
             sleep 1
           done
-          npm test
+          echo "::error::App did not become healthy within 30s"
+          cat server.log
+          exit 1
 
+      - name: Run tests
+        run: npm test
+
+      - name: Get Playwright version
+        id: playwright-version
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+
+      # System deps still install every run (the runner is fresh); the
+      # browser download is what the cache skips.
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      # The app from the test step is still listening; playwright.config
+      # The app from the start step is still listening; playwright.config
       # reuses an existing server on :3000.
       - name: End-to-end tests
         run: npx playwright test
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+      - name: Upload server log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-log
+          path: server.log
+          retention-days: 7
