@@ -88,10 +88,12 @@ function ClassCard({ cls, isPast }: { cls: ClassWithDetails; isPast: boolean }) 
 }
 
 // Studio classes are visually lighter: dashed border on cream, no bar.
+// Their "done" state is text, not a badge (like payment states): a teal
+// ✓ once the student count is logged, a quiet nudge while it's missing.
 function StudioClassCard({ sc, isPast }: { sc: StudioClass; isPast: boolean }) {
   const cancelled = Boolean(sc.cancelledAt);
   const past = !cancelled && isPast;
-  const count = sc.studentCount !== null ? ` · ${sc.studentCount} students` : '';
+  const logged = sc.studentCount !== null;
 
   return (
     <Link
@@ -107,7 +109,15 @@ function StudioClassCard({ sc, isPast }: { sc: StudioClass; isPast: boolean }) {
         {cancelled && <StatusBadge variant="cancelled" />}
       </div>
       <p className="type-caption mt-0.5">
-        {sc.classType ? `${sc.classType} · ${sc.location}` : sc.location} · Studio class{count}
+        {sc.classType ? `${sc.classType} · ${sc.location}` : sc.location} · Studio class
+        {logged && (
+          <span className="text-teal">
+            {' '}· ✓ {sc.studentCount} {sc.studentCount === 1 ? 'student' : 'students'}
+          </span>
+        )}
+        {!logged && past && !cancelled && (
+          <span className="text-brown"> · ○ add student count</span>
+        )}
       </p>
     </Link>
   );
