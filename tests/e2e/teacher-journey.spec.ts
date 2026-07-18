@@ -223,7 +223,13 @@ test.describe('Teacher journey', () => {
     await expect(page.getByText('New booking').first()).toBeVisible();
     await expect(page.getByText('Journey booked Journey Flow.')).toBeVisible();
 
+    // The row flips instantly (client state); the tab-bar dot needs the
+    // layout re-render — reload instead of racing router.refresh.
     await page.getByRole('button', { name: 'Mark read' }).first().click();
+    await expect(page.getByRole('button', { name: 'Mark read' })).toBeHidden({
+      timeout: 10_000,
+    });
+    await page.reload();
     await expect(page.getByRole('link', { name: 'Inbox', exact: true })).toBeVisible({
       timeout: 10_000,
     });
@@ -245,6 +251,11 @@ test.describe('Teacher journey', () => {
     await page.getByRole('button', { name: 'Add walk-in' }).click();
     await page.getByLabel('Walk-in student').selectOption(walkInStudentId);
     await page.getByRole('button', { name: 'Add walk-in' }).click();
+    // The picker closes on success (the POST is done); a full reload then
+    // renders the roster server-side — immune to router.refresh timing on
+    // slow CI runners.
+    await expect(page.getByLabel('Walk-in student')).toBeHidden({ timeout: 10_000 });
+    await page.reload();
     await expect(page.getByText('Walkin Guest')).toBeVisible({ timeout: 10_000 });
 
     // Tick off the booked student as present.
