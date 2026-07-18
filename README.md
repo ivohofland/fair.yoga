@@ -1,4 +1,7 @@
-# fair.yoga
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/design_handoff_fairyoga/assets/logo-reversed-outline.svg">
+  <img src="docs/design_handoff_fairyoga/assets/logo-outline.svg" alt="fair.yoga" width="220">
+</picture>
 
 A free, open-source toolkit for independent yoga teachers. Handles scheduling, income-based pricing, simple CRM, payments, and communication. Not a marketplace — a utility.
 
