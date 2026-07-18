@@ -19,7 +19,7 @@ export function RegistrationProgress({ registered, min, max, className = '' }: R
 
   return (
     <div className={className}>
-      <div className="flex items-baseline justify-end gap-[7px] mb-1">
+      <div className="flex items-baseline justify-end gap-[5px] mb-1">
         <span
           className={`text-base leading-none font-semibold tabular-nums ${met ? 'text-teal' : 'text-brown'}`}
         >

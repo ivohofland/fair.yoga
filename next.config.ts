@@ -43,7 +43,16 @@ const nextConfig: NextConfig = {
   // silently serves stale pages until restarted (bit us repeatedly).
   distDir: process.env.NODE_ENV === "development" ? ".next" : ".next-build",
   async headers() {
-    return [{ source: "/(.*)", headers: securityHeaders }];
+    const rules = [{ source: "/(.*)", headers: securityHeaders }];
+    if (isDev) {
+      // Safari reuses cached dev chunks on plain reload despite
+      // no-cache+ETag — stale CSS made every design change look broken.
+      rules.push({
+        source: "/_next/static/:path*",
+        headers: [{ key: "Cache-Control", value: "no-store" }],
+      });
+    }
+    return rules;
   },
 };
 
