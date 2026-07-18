@@ -5,7 +5,7 @@ import React from 'react';
  * minimum is met, teal from min to max; ink tick at the min mark. The label
  * above right separates the live count from the configured range: the count
  * is the datum (16px, semibold, teal once viable), "/ min–max" recedes as
- * quiet 13px configuration — the bar already marks both ends spatially.
+ * quiet 12px configuration — the bar already marks both ends spatially.
  */
 export function RegistrationProgress({ registered = 0, min = 0, max = 1, style }) {
   const pct = Math.min(100, (registered / max) * 100);
@@ -17,7 +17,7 @@ export function RegistrationProgress({ registered = 0, min = 0, max = 1, style }
         <span style={{ fontFamily: 'var(--font-body)', fontSize: '16px', fontWeight: 600, lineHeight: 1, fontVariantNumeric: 'tabular-nums', color: met ? 'var(--color-teal)' : 'var(--text-body)' }}>
           {registered}
         </span>
-        <span style={{ fontFamily: 'var(--font-body)', fontSize: '13px', fontWeight: 400, fontVariantNumeric: 'tabular-nums', color: 'var(--text-body)' }}>
+        <span style={{ fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 400, fontVariantNumeric: 'tabular-nums', color: 'var(--text-body)' }}>
           / {min}–{max}
         </span>
       </div>

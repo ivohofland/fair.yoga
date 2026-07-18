@@ -9,7 +9,7 @@ interface RegistrationProgressProps {
  * The signature element on class cards. 8px track; fill is danger until the
  * minimum is met, teal from min to max; ink tick at the min mark. The label
  * separates the live count (the datum: 16px semibold, teal once viable)
- * from the configured "/ min–max" range (quiet 13px brown) — the bar
+ * from the configured "/ min–max" range (quiet 12px brown) — the bar
  * already marks both ends spatially.
  */
 export function RegistrationProgress({ registered, min, max, className = '' }: RegistrationProgressProps) {
@@ -25,7 +25,7 @@ export function RegistrationProgress({ registered, min, max, className = '' }: R
         >
           {registered}
         </span>
-        <span className="text-[13px] tabular-nums text-brown">
+        <span className="text-[12px] tabular-nums text-brown">
           / {min}–{max}
         </span>
       </div>
