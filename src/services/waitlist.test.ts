@@ -5,6 +5,7 @@ import {
   addToWaitlist,
   removeFromWaitlist,
   promoteNext,
+  WaitlistJoinError,
 } from './waitlist';
 
 // ===========================================================================
@@ -161,7 +162,10 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
   let roomId: string;
   let teacherRoomId: string;
   let classId: string;
+  let notFullClassId: string;
+  let draftClassId: string;
   const studentIds: string[] = [];
+  const fillerIds: string[] = [];
 
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
@@ -199,25 +203,46 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
     });
     teacherRoomId = teacherRoom.id;
 
-    // Create a class with status 'open' (waitlist scenario — full is derived from count)
-    const cls = await prisma.class.create({
-      data: {
-        teacherId,
-        teacherRoomId,
-        classType: 'Hatha',
-        date: new Date('2026-06-01'),
-        startTime: '09:00',
-        durationMinutes: 60,
-        roomCost: 35,
-        minRate: 15,
-        targetRate: 25,
-        minStudents: 4,
-        maxStudents: 12,
-        status: 'open',
-        settingsLocked: true,
-      },
-    });
-    classId = cls.id;
+    async function makeClass(status: 'open' | 'draft', maxStudents: number): Promise<string> {
+      const cls = await prisma.class.create({
+        data: {
+          teacherId,
+          teacherRoomId,
+          classType: 'Hatha',
+          date: new Date('2099-06-01'),
+          startTime: '09:00',
+          durationMinutes: 60,
+          roomCost: 35,
+          minRate: 15,
+          targetRate: 25,
+          minStudents: 1,
+          maxStudents,
+          status,
+          settingsLocked: true,
+        },
+      });
+      return cls.id;
+    }
+
+    // The waitlist class holds 2 and both spots are taken by fillers.
+    classId = await makeClass('open', 2);
+    notFullClassId = await makeClass('open', 12);
+    draftClassId = await makeClass('draft', 2);
+
+    for (let i = 1; i <= 2; i++) {
+      const filler = await prisma.student.create({
+        data: {
+          firstName: `WaitlistFiller${i}`,
+          lastName: 'Test',
+          email: `waitlist-filler-${i}-${uniqueSuffix}@test.local`,
+          incomeTier: 3,
+        },
+      });
+      fillerIds.push(filler.id);
+      await prisma.registration.create({
+        data: { classId, studentId: filler.id, status: 'registered', tierAtBooking: 3 },
+      });
+    }
 
     // Create 3 students
     for (let i = 1; i <= 3; i++) {
@@ -235,10 +260,11 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
 
   afterAll(async () => {
     // Clean up in dependency order
-    await prisma.waitlistEntry.deleteMany({ where: { classId } });
-    await prisma.registration.deleteMany({ where: { classId } });
-    await prisma.class.delete({ where: { id: classId } });
-    for (const sid of studentIds) {
+    const ids = [classId, notFullClassId, draftClassId];
+    await prisma.waitlistEntry.deleteMany({ where: { classId: { in: ids } } });
+    await prisma.registration.deleteMany({ where: { classId: { in: ids } } });
+    await prisma.class.deleteMany({ where: { id: { in: ids } } });
+    for (const sid of [...studentIds, ...fillerIds]) {
       await prisma.student.delete({ where: { id: sid } });
     }
     await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
@@ -259,6 +285,36 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
 
     const entry3 = await addToWaitlist(prisma, classId, studentIds[2]!);
     expect(entry3.position).toBe(3);
+  });
+
+  it('joining again while already waiting is a no-op', async () => {
+    const again = await addToWaitlist(prisma, classId, studentIds[0]!);
+    expect(again.position).toBe(1);
+    const entries = await prisma.waitlistEntry.findMany({
+      where: { classId, studentId: studentIds[0]! },
+    });
+    expect(entries).toHaveLength(1);
+  });
+
+  it('rejects joining when the class still has open spots', async () => {
+    await expect(addToWaitlist(prisma, notFullClassId, studentIds[0]!)).rejects.toThrowError(
+      WaitlistJoinError,
+    );
+    await expect(
+      addToWaitlist(prisma, notFullClassId, studentIds[0]!),
+    ).rejects.toMatchObject({ reason: 'class_not_full' });
+  });
+
+  it('rejects joining a class that is not open', async () => {
+    await expect(addToWaitlist(prisma, draftClassId, studentIds[0]!)).rejects.toMatchObject({
+      reason: 'class_not_open',
+    });
+  });
+
+  it('rejects joining when already actively registered', async () => {
+    await expect(addToWaitlist(prisma, classId, fillerIds[0]!)).rejects.toMatchObject({
+      reason: 'already_registered',
+    });
   });
 
   it('reorders remaining entries after removing a middle student', async () => {
@@ -282,6 +338,22 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
     expect(remaining[1]!.studentId).toBe(studentIds[2]);
     expect(remaining[1]!.position).toBe(2);
   });
+
+  it('rejoining reactivates the removed entry at the back of the queue', async () => {
+    const removed = await prisma.waitlistEntry.findUniqueOrThrow({
+      where: { classId_studentId: { classId, studentId: studentIds[1]! } },
+    });
+
+    const rejoined = await addToWaitlist(prisma, classId, studentIds[1]!);
+    expect(rejoined.id).toBe(removed.id); // same row, reactivated
+    expect(rejoined.status).toBe('waiting');
+    expect(rejoined.position).toBe(3); // back of the queue, not old position
+
+    const entries = await prisma.waitlistEntry.findMany({
+      where: { classId, studentId: studentIds[1]! },
+    });
+    expect(entries).toHaveLength(1);
+  });
 });
 
 describe('promoteNext (DB)', () => {
@@ -290,6 +362,14 @@ describe('promoteNext (DB)', () => {
   let teacherRoomId: string;
   let classId: string;
   const studentIds: string[] = [];
+  const fillerIds: string[] = [];
+
+  async function cancelRegistration(studentId: string): Promise<void> {
+    await prisma.registration.update({
+      where: { classId_studentId: { classId, studentId } },
+      data: { status: 'cancelled', cancelledAt: new Date() },
+    });
+  }
 
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
@@ -327,7 +407,7 @@ describe('promoteNext (DB)', () => {
     });
     teacherRoomId = teacherRoom.id;
 
-    // Create a class with status 'open' (full is derived)
+    // Two spots, both taken by fillers — students join a genuinely full class.
     const cls = await prisma.class.create({
       data: {
         teacherId,
@@ -339,28 +419,43 @@ describe('promoteNext (DB)', () => {
         roomCost: 40,
         minRate: 10,
         targetRate: 20,
-        minStudents: 3,
-        maxStudents: 10,
+        minStudents: 1,
+        maxStudents: 2,
         status: 'open',
         settingsLocked: true,
       },
     });
     classId = cls.id;
 
-    // Create 2 students
     for (let i = 1; i <= 2; i++) {
+      const filler = await prisma.student.create({
+        data: {
+          firstName: `PromoteFiller${i}`,
+          lastName: 'Test',
+          email: `promote-filler-${i}-${uniqueSuffix}@test.local`,
+          incomeTier: 3,
+        },
+      });
+      fillerIds.push(filler.id);
+      await prisma.registration.create({
+        data: { classId, studentId: filler.id, status: 'registered', tierAtBooking: 3 },
+      });
+    }
+
+    // Create 4 students (2 for plain promotion, 2 for the stale-head case)
+    for (let i = 1; i <= 4; i++) {
       const student = await prisma.student.create({
         data: {
           firstName: `PromoteStudent${i}`,
           lastName: 'Test',
           email: `promote-student-${i}-${uniqueSuffix}@test.local`,
-          incomeTier: i + 1, // tiers 2, 3
+          incomeTier: i + 1, // tiers 2, 3, 4, 5
         },
       });
       studentIds.push(student.id);
     }
 
-    // Add both students to the waitlist
+    // Add the first two students to the waitlist
     await addToWaitlist(prisma, classId, studentIds[0]!);
     await addToWaitlist(prisma, classId, studentIds[1]!);
   });
@@ -369,7 +464,7 @@ describe('promoteNext (DB)', () => {
     await prisma.waitlistEntry.deleteMany({ where: { classId } });
     await prisma.registration.deleteMany({ where: { classId } });
     await prisma.class.delete({ where: { id: classId } });
-    for (const sid of studentIds) {
+    for (const sid of [...studentIds, ...fillerIds]) {
       await prisma.student.delete({ where: { id: sid } });
     }
     await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
@@ -379,6 +474,8 @@ describe('promoteNext (DB)', () => {
   });
 
   it('promotes the first waiting student and creates a registration', async () => {
+    await cancelRegistration(fillerIds[0]!); // free one spot
+
     const promoted = await promoteNext(prisma, classId);
     expect(promoted).not.toBeNull();
     expect(promoted!.status).toBe('promoted');
@@ -406,7 +503,9 @@ describe('promoteNext (DB)', () => {
     expect(remaining[0]!.position).toBe(1);
   });
 
-  it('promotes the second student when called again', async () => {
+  it('promotes the second student when another spot frees', async () => {
+    await cancelRegistration(fillerIds[1]!);
+
     const promoted = await promoteNext(prisma, classId);
     expect(promoted).not.toBeNull();
     expect(promoted!.studentId).toBe(studentIds[1]);
@@ -414,7 +513,61 @@ describe('promoteNext (DB)', () => {
   });
 
   it('returns null when no waiting students remain', async () => {
+    await cancelRegistration(studentIds[0]!); // free a spot, queue is empty
     const result = await promoteNext(prisma, classId);
     expect(result).toBeNull();
+  });
+
+  it('skips and removes a stale head whose student already booked directly', async () => {
+    // Queue up two students (class is full again after this setup: the
+    // stale student's direct booking takes the spot freed in the previous
+    // test). studentIds[2] joins the waitlist, then books directly — the
+    // exact race that used to wedge the queue on the unique constraint.
+    await prisma.registration.create({
+      data: { classId, studentId: studentIds[2]!, status: 'registered', tierAtBooking: 4 },
+    });
+    await addToWaitlist(prisma, classId, studentIds[3]!);
+    // Manufacture the stale entry directly — the API resolves it on booking,
+    // but a claim/promotion race can still leave one behind.
+    const stale = await prisma.waitlistEntry.update({
+      where: { classId_studentId: { classId, studentId: studentIds[1]! } },
+      data: { status: 'waiting', position: 0, registrationId: null, promotedAt: null },
+    });
+    expect(stale.position).toBe(0); // head of the queue, already registered
+
+    await cancelRegistration(studentIds[2]!); // free a spot
+
+    const promoted = await promoteNext(prisma, classId);
+    expect(promoted).not.toBeNull();
+    expect(promoted!.studentId).toBe(studentIds[3]); // stale head skipped
+
+    const staleAfter = await prisma.waitlistEntry.findUniqueOrThrow({
+      where: { classId_studentId: { classId, studentId: studentIds[1]! } },
+    });
+    expect(staleAfter.status).toBe('removed');
+  });
+
+  it('reactivates a cancelled registration row instead of failing on the unique constraint', async () => {
+    // studentIds[2] cancelled in the previous test — their registration row
+    // still exists. Rejoin the waitlist and promote: the old row must be
+    // reused, not tripped over.
+    const oldRegistration = await prisma.registration.findUniqueOrThrow({
+      where: { classId_studentId: { classId, studentId: studentIds[2]! } },
+    });
+    expect(oldRegistration.status).toBe('cancelled');
+
+    await addToWaitlist(prisma, classId, studentIds[2]!);
+    await cancelRegistration(studentIds[3]!); // free a spot
+
+    const promoted = await promoteNext(prisma, classId);
+    expect(promoted).not.toBeNull();
+    expect(promoted!.studentId).toBe(studentIds[2]);
+    expect(promoted!.registrationId).toBe(oldRegistration.id); // same row, reactivated
+
+    const reactivated = await prisma.registration.findUniqueOrThrow({
+      where: { id: oldRegistration.id },
+    });
+    expect(reactivated.status).toBe('registered');
+    expect(reactivated.cancelledAt).toBeNull();
   });
 });

@@ -27,8 +27,54 @@ export class WaitlistPromotionError extends Error {
   }
 }
 
+/** Raised when joining the waitlist is not allowed. */
+export class WaitlistJoinError extends Error {
+  constructor(
+    message: string,
+    public readonly reason: 'class_not_open' | 'class_not_full' | 'already_registered',
+  ) {
+    super(message);
+    this.name = 'WaitlistJoinError';
+  }
+}
+
 /** Registration statuses that occupy a spot. */
 const ACTIVE_REGISTRATION_STATUSES = ['registered', 'attended', 'no_show'] as const;
+
+/**
+ * Creates or reactivates a registration row. Both Registration and
+ * WaitlistEntry are unique per (classId, studentId), and cancelled rows are
+ * kept — plain `create` locks a student out of a class forever after one
+ * cancellation. Reactivation resets the row instead.
+ */
+export async function activateRegistration(
+  tx: PrismaTransactionClient,
+  input: { classId: string; studentId: string; tierAtBooking: number; isWalkIn?: boolean },
+) {
+  const existing = await tx.registration.findUnique({
+    where: { classId_studentId: { classId: input.classId, studentId: input.studentId } },
+  });
+  if (existing) {
+    return tx.registration.update({
+      where: { id: existing.id },
+      data: {
+        status: 'registered',
+        cancelledAt: null,
+        tierAtBooking: input.tierAtBooking,
+        isWalkIn: input.isWalkIn ?? false,
+      },
+    });
+  }
+  return tx.registration.create({
+    data: {
+      classId: input.classId,
+      studentId: input.studentId,
+      status: 'registered',
+      tierAtBooking: input.tierAtBooking,
+      isWalkIn: input.isWalkIn ?? false,
+    },
+  });
+}
 
 /** A Prisma client or transaction client — used for helpers that run inside or outside transactions. */
 type PrismaTransactionClient = Prisma.TransactionClient;
@@ -99,10 +145,17 @@ export function getWaitlistWindow(
 /**
  * Adds a student to the waitlist at the next available position.
  *
- * Finds the current max position among 'waiting' entries for this class,
- * then creates a new entry at position = max + 1 (or 1 if none exist).
+ * Guards (under the shared FOR UPDATE class lock, so joins serialize with
+ * registrations and promotions):
+ * - the class must be open
+ * - the class must actually be full — otherwise the student should book
+ * - the student must not hold an active registration
  *
- * Wrapped in a transaction to prevent race conditions on position assignment.
+ * A student who left (or was promoted and then cancelled) has their old
+ * entry reactivated at the back of the queue — the unique
+ * (classId, studentId) constraint means the row must be reused.
+ *
+ * Throws WaitlistJoinError when a guard rejects.
  */
 export async function addToWaitlist(
   db: PrismaClient,
@@ -110,6 +163,36 @@ export async function addToWaitlist(
   studentId: string,
 ): Promise<WaitlistEntry> {
   return db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
+
+    const cls = await tx.class.findUniqueOrThrow({
+      where: { id: classId },
+      select: { status: true, maxStudents: true },
+    });
+    if (cls.status !== 'open') {
+      throw new WaitlistJoinError(
+        `Cannot join the waitlist for a class with status "${cls.status}"`,
+        'class_not_open',
+      );
+    }
+
+    const activeCount = await tx.registration.count({
+      where: { classId, status: { in: [...ACTIVE_REGISTRATION_STATUSES] } },
+    });
+    if (activeCount < cls.maxStudents) {
+      throw new WaitlistJoinError(
+        'The class still has open spots — book directly instead',
+        'class_not_full',
+      );
+    }
+
+    if (await hasActiveRegistration(tx, classId, studentId)) {
+      throw new WaitlistJoinError(
+        'You are already registered for this class',
+        'already_registered',
+      );
+    }
+
     // Find the current max position among 'waiting' entries
     const maxEntry = await tx.waitlistEntry.findFirst({
       where: { classId, status: 'waiting' },
@@ -118,6 +201,24 @@ export async function addToWaitlist(
     });
 
     const nextPosition = maxEntry ? maxEntry.position + 1 : 1;
+
+    const existingEntry = await tx.waitlistEntry.findUnique({
+      where: { classId_studentId: { classId, studentId } },
+    });
+    if (existingEntry) {
+      // Already waiting → joining again is a no-op.
+      if (existingEntry.status === 'waiting') return existingEntry;
+      // Rejoin: reactivate the old row at the back of the queue.
+      return tx.waitlistEntry.update({
+        where: { id: existingEntry.id },
+        data: {
+          status: 'waiting',
+          position: nextPosition,
+          promotedAt: null,
+          registrationId: null,
+        },
+      });
+    }
 
     return tx.waitlistEntry.create({
       data: {
@@ -212,14 +313,44 @@ export async function promoteNext(
       throw new WaitlistPromotionError('Class is full', 'class_full');
     }
 
-    const nextEntry = opts.entryId
-      ? await tx.waitlistEntry.findFirst({
-          where: { id: opts.entryId, classId, status: 'waiting' },
-        })
-      : await tx.waitlistEntry.findFirst({
+    // Find the entry to promote. Entries can go stale — a student books the
+    // class directly and their `waiting` row survives. A stale head must be
+    // dropped, not promoted: promoting it would violate the unique
+    // (classId, studentId) registration constraint and wedge the queue.
+    let nextEntry: WaitlistEntry | null = null;
+    if (opts.entryId) {
+      const candidate = await tx.waitlistEntry.findFirst({
+        where: { id: opts.entryId, classId, status: 'waiting' },
+      });
+      if (candidate && (await hasActiveRegistration(tx, classId, candidate.studentId))) {
+        await tx.waitlistEntry.update({
+          where: { id: candidate.id },
+          data: { status: 'removed' },
+        });
+        await reorderWaitingEntries(tx, classId);
+        throw new WaitlistPromotionError(
+          'This student already has a registration for the class',
+          'entry_not_waiting',
+        );
+      }
+      nextEntry = candidate;
+    } else {
+      for (;;) {
+        const candidate = await tx.waitlistEntry.findFirst({
           where: { classId, status: 'waiting' },
           orderBy: { position: 'asc' },
         });
+        if (!candidate) break;
+        if (!(await hasActiveRegistration(tx, classId, candidate.studentId))) {
+          nextEntry = candidate;
+          break;
+        }
+        await tx.waitlistEntry.update({
+          where: { id: candidate.id },
+          data: { status: 'removed' },
+        });
+      }
+    }
 
     if (!nextEntry) {
       if (opts.entryId) {
@@ -234,14 +365,10 @@ export async function promoteNext(
       select: { incomeTier: true },
     });
 
-    // Create a Registration
-    const registration = await tx.registration.create({
-      data: {
-        classId,
-        studentId: nextEntry.studentId,
-        status: 'registered',
-        tierAtBooking: student.incomeTier,
-      },
+    const registration = await activateRegistration(tx, {
+      classId,
+      studentId: nextEntry.studentId,
+      tierAtBooking: student.incomeTier,
     });
 
     // Update the waitlist entry: promoted status, promotedAt, link to registration
@@ -337,8 +464,10 @@ export async function claimSpot(
       select: { incomeTier: true },
     });
 
-    const registration = await tx.registration.create({
-      data: { classId, studentId, status: 'registered', tierAtBooking: student.incomeTier },
+    const registration = await activateRegistration(tx, {
+      classId,
+      studentId,
+      tierAtBooking: student.incomeTier,
     });
 
     const updatedEntry = await tx.waitlistEntry.update({
@@ -437,11 +566,27 @@ export async function handleSpotFreed(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+/** True when the student holds a spot-occupying registration for the class. */
+async function hasActiveRegistration(
+  db: PrismaTransactionClient,
+  classId: string,
+  studentId: string,
+): Promise<boolean> {
+  const registration = await db.registration.findUnique({
+    where: { classId_studentId: { classId, studentId } },
+    select: { status: true },
+  });
+  return (
+    registration !== null &&
+    (ACTIVE_REGISTRATION_STATUSES as readonly string[]).includes(registration.status)
+  );
+}
+
 /**
  * Reorders all 'waiting' entries for a class so positions are
  * sequential starting at 1 with no gaps.
  */
-async function reorderWaitingEntries(
+export async function reorderWaitingEntries(
   db: PrismaTransactionClient,
   classId: string,
 ): Promise<void> {

@@ -134,7 +134,7 @@ export const DELETE = withErrorHandler(async (
         data: { status: 'late_cancel', cancelledAt: new Date() },
       });
       // The seat is free even though the canceller is still charged.
-      await handleSpotFreed(prisma, registration.classId);
+      await promoteAfterCancel(registration.classId);
       return respondOk(updated);
     }
   }
@@ -147,7 +147,20 @@ export const DELETE = withErrorHandler(async (
 
   // Hybrid waitlist promotion: auto-promote, broadcast, or stay frozen
   // depending on how close to the deadline we are.
-  await handleSpotFreed(prisma, registration.classId);
+  await promoteAfterCancel(registration.classId);
 
   return respondOk(updated);
 });
+
+/**
+ * Runs the waitlist spot-freed hook after a cancel has committed. The cancel
+ * already succeeded — a promotion failure must not turn it into a 500, so
+ * errors are logged and swallowed here.
+ */
+async function promoteAfterCancel(classId: string): Promise<void> {
+  try {
+    await handleSpotFreed(prisma, classId);
+  } catch (err) {
+    console.error(`[waitlist] spot-freed hook failed for class ${classId}:`, err);
+  }
+}

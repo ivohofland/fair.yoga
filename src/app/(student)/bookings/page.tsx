@@ -5,8 +5,10 @@ import { redirect } from 'next/navigation';
 import { StatusBadge, deriveBadgeVariant } from '@/components/ui/status-badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { CancelBookingButton } from '@/components/student/cancel-booking-button';
+import { WaitlistEntryActions } from '@/components/student/waitlist-entry-actions';
 import { PaymentQr } from '@/components/student/payment-qr';
 import { formatRoomLocation } from '@/lib/format';
+import { getWaitlistWindow } from '@/services/waitlist';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,7 +47,16 @@ export default async function StudentBookingsPage() {
       include: {
         class: {
           include: {
-            teacher: { select: { firstName: true, lastName: true, pageSlug: true } },
+            teacher: {
+              select: { firstName: true, lastName: true, pageSlug: true, defaultTimezone: true },
+            },
+            _count: {
+              select: {
+                registrations: {
+                  where: { status: { in: ['registered', 'attended', 'no_show'] } },
+                },
+              },
+            },
           },
         },
       },
@@ -77,15 +88,30 @@ export default async function StudentBookingsPage() {
       {waitlistEntries.length > 0 && (
         <section className="mb-8">
           <h2 className="type-subtitle mb-1">Waitlist</h2>
-          {waitlistEntries.map((entry) => (
-            <div key={entry.id} className="min-h-14 py-2 border-b border-border last:border-b-0">
-              <p className="text-base text-ink">{entry.class.classType}</p>
-              <p className="type-caption">
-                {formatDayHeader(entry.class.date)} · {entry.class.startTime} · position {entry.position} ·{' '}
-                with {entry.class.teacher.firstName} {entry.class.teacher.lastName}
-              </p>
-            </div>
-          ))}
+          {waitlistEntries.map((entry) => {
+            const cls = entry.class;
+            // In the final hour before the deadline a freed spot goes to
+            // whoever claims it first — show the claim button then.
+            const canClaim =
+              cls.status === 'open' &&
+              cls._count.registrations < cls.maxStudents &&
+              getWaitlistWindow(
+                cls.date,
+                cls.startTime,
+                cls.cancelDeadline,
+                cls.teacher.defaultTimezone,
+              ) === 'first_come_first_claimed';
+            return (
+              <div key={entry.id} className="min-h-14 py-2 border-b border-border last:border-b-0">
+                <p className="text-base text-ink">{cls.classType}</p>
+                <p className="type-caption">
+                  {formatDayHeader(cls.date)} · {cls.startTime} · position {entry.position} ·{' '}
+                  with {cls.teacher.firstName} {cls.teacher.lastName}
+                </p>
+                <WaitlistEntryActions entryId={entry.id} classId={cls.id} canClaim={canClaim} />
+              </div>
+            );
+          })}
         </section>
       )}
 

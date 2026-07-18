@@ -11,9 +11,13 @@ import {
 } from '@/lib/api-utils';
 import { createRegistrationSchema } from '@/lib/schemas';
 import { createBulkNotifications } from '@/services/notifications';
+import { activateRegistration, reorderWaitingEntries } from '@/services/waitlist';
 
 /** Thrown inside the registration transaction when the class is at capacity. */
 class ClassFullError extends Error {}
+
+/** Thrown inside the transaction when the student already holds a spot. */
+class AlreadyRegisteredError extends Error {}
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireSession(request);
@@ -76,15 +80,35 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         throw new ClassFullError();
       }
 
-      const reg = await tx.registration.create({
-        data: {
-          classId: body.classId,
-          studentId,
-          tierAtBooking: student.incomeTier,
-          isWalkIn,
-          status: 'registered',
-        },
+      // A cancelled registration keeps its row (unique per class+student), so
+      // rebooking must reactivate it — a plain create would 409 forever.
+      const existing = await tx.registration.findUnique({
+        where: { classId_studentId: { classId: body.classId, studentId } },
+        select: { status: true },
       });
+      if (existing && ['registered', 'attended', 'no_show'].includes(existing.status)) {
+        throw new AlreadyRegisteredError();
+      }
+
+      const reg = await activateRegistration(tx, {
+        classId: body.classId,
+        studentId,
+        tierAtBooking: student.incomeTier,
+        isWalkIn,
+      });
+
+      // Booking directly while on the waitlist resolves the waiting entry —
+      // otherwise the stale entry poisons future promotions of this queue.
+      const waitingEntry = await tx.waitlistEntry.findFirst({
+        where: { classId: body.classId, studentId, status: 'waiting' },
+      });
+      if (waitingEntry) {
+        await tx.waitlistEntry.update({
+          where: { id: waitingEntry.id },
+          data: { status: 'claimed', promotedAt: new Date(), registrationId: reg.id },
+        });
+        await reorderWaitingEntries(tx, body.classId);
+      }
 
       // First registration locks economic settings — same transaction, so a
       // concurrent settings edit cannot slip between create and lock.
@@ -134,7 +158,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     if (err instanceof ClassFullError) {
       return respondError('Class is full', 409);
     }
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+    if (
+      err instanceof AlreadyRegisteredError ||
+      (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')
+    ) {
       return respondError('Student is already registered for this class', 409);
     }
     throw err;

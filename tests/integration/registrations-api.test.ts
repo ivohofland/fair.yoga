@@ -155,6 +155,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.class.deleteMany({ where: { id: { in: classIds } } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId: ownerId } });
@@ -227,5 +228,58 @@ describe('POST /api/registrations', () => {
     expect(walkIn.status).toBe(201);
     const json = (await walkIn.json()) as { data: { isWalkIn: boolean } };
     expect(json.data.isWalkIn).toBe(true);
+  });
+
+  it('rebooking after a cancellation reactivates the old registration row', async () => {
+    const classId = await makeClass(5);
+    const first = await post(studentTokens[0]!, { classId });
+    expect(first.status).toBe(201);
+    const firstJson = (await first.json()) as { data: { id: string } };
+
+    const cancel = await fetch(`${BASE_URL}/api/registrations/${firstJson.data.id}`, {
+      method: 'DELETE',
+      headers: { Cookie: `fair_yoga_session=${studentTokens[0]!}` },
+    });
+    expect(cancel.status).toBe(200);
+
+    // Booking the same class again must not 409 on the unique constraint.
+    const rebook = await post(studentTokens[0]!, { classId });
+    expect(rebook.status).toBe(201);
+    const rebookJson = (await rebook.json()) as { data: { id: string; status: string } };
+    expect(rebookJson.data.id).toBe(firstJson.data.id); // same row, reactivated
+    expect(rebookJson.data.status).toBe('registered');
+
+    const rows = await prisma.registration.count({
+      where: { classId, studentId: studentIds[0]! },
+    });
+    expect(rows).toBe(1);
+  });
+
+  it('booking directly resolves the caller\'s waiting waitlist entry', async () => {
+    const classId = await makeClass(1);
+    const fill = await post(studentTokens[0]!, { classId });
+    expect(fill.status).toBe(201);
+
+    // Student 1 waits on the full class.
+    await prisma.waitlistEntry.create({
+      data: { classId, studentId: studentIds[1]!, position: 1, status: 'waiting' },
+    });
+
+    // The spot frees without the waitlist hook running (e.g. GDPR erasure
+    // path before the fix, or a crashed hook) — student 1 books directly.
+    await prisma.registration.updateMany({
+      where: { classId, studentId: studentIds[0]! },
+      data: { status: 'cancelled', cancelledAt: new Date() },
+    });
+    const book = await post(studentTokens[1]!, { classId });
+    expect(book.status).toBe(201);
+    const bookJson = (await book.json()) as { data: { id: string } };
+
+    // The waiting entry must be resolved, not left to poison promotions.
+    const entry = await prisma.waitlistEntry.findUniqueOrThrow({
+      where: { classId_studentId: { classId, studentId: studentIds[1]! } },
+    });
+    expect(entry.status).toBe('claimed');
+    expect(entry.registrationId).toBe(bookJson.data.id);
   });
 });

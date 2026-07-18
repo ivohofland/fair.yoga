@@ -11,6 +11,8 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
+import { completeClass } from './class-lifecycle';
+import { handleSpotFreed, reorderWaitingEntries } from './waitlist';
 
 // ---------------------------------------------------------------------------
 // Export
@@ -184,7 +186,18 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     select: { email: true },
   });
 
-  await db.$transaction(async (tx) => {
+  const freedClassIds = await db.$transaction(async (tx) => {
+    // Record which open classes free a spot — the waitlist hook runs on
+    // them after the erasure commits.
+    const upcoming = await tx.registration.findMany({
+      where: {
+        studentId,
+        status: 'registered',
+        class: { status: { in: ['draft', 'open'] } },
+      },
+      select: { classId: true, class: { select: { status: true } } },
+    });
+
     // Cancel upcoming registrations so open classes free the spots.
     await tx.registration.updateMany({
       where: {
@@ -195,12 +208,25 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
       data: { status: 'cancelled', cancelledAt: new Date() },
     });
 
+    // Queues the student was waiting in need their positions closed up
+    // once the entries are gone.
+    const waitingClassIds = (
+      await tx.waitlistEntry.findMany({
+        where: { studentId, status: 'waiting' },
+        select: { classId: true },
+      })
+    ).map((w) => w.classId);
+
     await tx.studentPrivacy.deleteMany({ where: { studentId } });
     await tx.teacherStudent.deleteMany({ where: { studentId } });
     await tx.waitlistEntry.deleteMany({ where: { studentId } });
     await tx.notification.deleteMany({ where: { recipientType: 'student', recipientId: studentId } });
     await tx.session.deleteMany({ where: { userId: studentId, userType: 'student' } });
     await tx.magicLinkToken.deleteMany({ where: { email: student.email } });
+
+    for (const classId of waitingClassIds) {
+      await reorderWaitingEntries(tx, classId);
+    }
 
     await tx.student.update({
       where: { id: studentId },
@@ -216,7 +242,19 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
         deletedAt: new Date(),
       },
     });
+
+    return upcoming.filter((r) => r.class.status === 'open').map((r) => r.classId);
   });
+
+  // The seats are freed and the erasure is committed — a promotion failure
+  // must not undo either, so errors are logged and swallowed.
+  for (const classId of freedClassIds) {
+    try {
+      await handleSpotFreed(db, classId);
+    } catch (err) {
+      console.error(`[gdpr] spot-freed hook failed for class ${classId}:`, err);
+    }
+  }
 }
 
 /**
@@ -229,6 +267,23 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
     where: { id: teacherId },
     select: { email: true },
   });
+
+  // A class already underway has happened — complete it (pricing, payment
+  // records, notifications) instead of pretending it was cancelled
+  // mid-session. The billing is the students' payment history too.
+  const inProgress = await db.class.findMany({
+    where: { teacherId, status: 'in_progress' },
+    select: { id: true },
+  });
+  for (const cls of inProgress) {
+    const result = await completeClass(db, cls.id);
+    if (!result.ok) {
+      // Fall through: the cancel sweep below still picks the class up.
+      console.error(
+        `[gdpr] could not complete in-progress class ${cls.id} before erasure: ${result.error}`,
+      );
+    }
+  }
 
   await db.$transaction(async (tx) => {
     // Cancel every upcoming class and tell the people in them.
