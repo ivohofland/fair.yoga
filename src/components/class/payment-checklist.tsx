@@ -107,7 +107,11 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
                       : 'border-[1.5px] border-teal text-teal hover:bg-teal-tint'}
                     ${isUpdating ? 'opacity-50' : ''}
                   `}
-                  aria-label={`Mark ${item.studentName} payment as ${isPaid ? 'paid' : 'unpaid'}`}
+                  aria-label={
+                    isPaid
+                      ? `${item.studentName} payment is paid`
+                      : `Mark ${item.studentName} payment as paid`
+                  }
                 >
                   {isPaid ? 'Paid' : 'Mark paid'}
                 </button>
