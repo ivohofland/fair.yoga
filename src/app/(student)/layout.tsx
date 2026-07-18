@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getSession } from '@/lib/session';
+import { LiveUpdates } from '@/components/layout/live-updates';
 
 export default async function StudentLayout({
   children,
@@ -11,5 +12,10 @@ export default async function StudentLayout({
     redirect('/login');
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      <LiveUpdates />
+      {children}
+    </>
+  );
 }

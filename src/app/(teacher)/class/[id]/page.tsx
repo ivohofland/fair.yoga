@@ -17,6 +17,7 @@ import { classStartInstant } from '@/lib/timezone';
 import { CancelClassButton } from '@/components/class/cancel-class-button';
 import { ShareBookingLink } from '@/components/class/share-booking-link';
 import { AddWalkIn } from '@/components/class/add-walk-in';
+import { SendAnnouncement } from '@/components/class/send-announcement';
 
 export default async function ClassDetailPage({
   params,
@@ -167,11 +168,16 @@ export default async function ClassDetailPage({
         </div>
       )}
 
-      {/* Actions: share while bookable, cancel while upcoming */}
-      {(cls.status === 'draft' || cls.status === 'open') && (
+      {/* Actions: share while bookable, announce while it has students, cancel while upcoming */}
+      {cls.status !== 'cancelled' && (
         <div className="mt-8 pt-6 border-t border-border flex flex-col items-start gap-5">
           {cls.status === 'open' && <ShareBookingLink pageSlug={cls.teacher.pageSlug} />}
-          <CancelClassButton classId={cls.id} registrationCount={activeRegistrations.length} />
+          {activeRegistrations.length > 0 && (
+            <SendAnnouncement classId={cls.id} recipientHint="everyone in this class" />
+          )}
+          {(cls.status === 'draft' || cls.status === 'open') && (
+            <CancelClassButton classId={cls.id} registrationCount={activeRegistrations.length} />
+          )}
         </div>
       )}
     </>

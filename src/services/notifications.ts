@@ -15,6 +15,7 @@ import type {
   NotificationType,
   Notification,
 } from '@prisma/client';
+import { notificationBus } from '@/lib/event-bus';
 
 /** Accepts a plain client or a transaction client so notification creation
  *  can participate in the caller's transaction. */
@@ -42,11 +43,36 @@ export interface CreateNotificationInput {
  *
  * Defaults: isRead=false, emailSent=false.
  */
+/**
+ * Publishes to the in-process SSE bus. Fire-and-forget: events are only
+ * refresh hints for connected clients (server state stays the truth), so
+ * an emit for a transaction that later rolls back is harmless, and a bus
+ * failure must never break the write.
+ */
+function emitToBus(input: CreateNotificationInput, id: string): void {
+  try {
+    notificationBus.emitNotification({
+      recipientId: input.recipientId,
+      recipientType: input.recipientType,
+      notification: {
+        id,
+        type: input.type,
+        title: input.title,
+        body: input.body,
+        relatedClassId: input.relatedClassId,
+        createdAt: new Date().toISOString(),
+      },
+    });
+  } catch {
+    // never let live-update plumbing break notification creation
+  }
+}
+
 export async function createNotification(
   db: Db,
   input: CreateNotificationInput,
 ): Promise<Notification> {
-  return db.notification.create({
+  const notification = await db.notification.create({
     data: {
       recipientType: input.recipientType,
       recipientId: input.recipientId,
@@ -58,6 +84,8 @@ export async function createNotification(
       emailSent: false,
     },
   });
+  emitToBus(input, notification.id);
+  return notification;
 }
 
 /**
@@ -81,6 +109,12 @@ export async function createBulkNotifications(
       emailSent: false,
     })),
   });
+
+  // createMany returns no rows; the bus event is a refresh hint, so a
+  // synthetic id is fine — clients refetch, they don't render the payload.
+  for (const input of inputs) {
+    emitToBus(input, 'bulk');
+  }
 
   return result.count;
 }

@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { StatusBadge, deriveBadgeVariant } from '@/components/ui/status-badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { CancelBookingButton } from '@/components/student/cancel-booking-button';
+import { PaymentQr } from '@/components/student/payment-qr';
 import { formatRoomLocation } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
@@ -180,6 +181,15 @@ export default async function StudentBookingsPage() {
                               `${cls.teacher.firstName} ${cls.teacher.lastName}`}
                             {' · '}mention &ldquo;{cls.classType} {formatDayHeader(cls.date)}&rdquo;
                           </p>
+                          <PaymentQr
+                            iban={cls.teacher.bankIban}
+                            beneficiary={
+                              cls.teacher.bankAccountName ??
+                              `${cls.teacher.firstName} ${cls.teacher.lastName}`
+                            }
+                            amount={Number(payment.amount)}
+                            remittance={`${cls.classType} ${formatDayHeader(cls.date)}`}
+                          />
                         </>
                       ) : (
                         <p className="type-body">
