@@ -115,6 +115,7 @@ model Teacher {
   bankAccountName    String?
   processorType      ProcessorType?
   processorAccountId String?
+  deletedAt          DateTime?
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
 
@@ -141,6 +142,7 @@ model Student {
   reminderPref       StudentReminderPref @default(morning)
   emailNotifications Boolean             @default(true)
   claimedAt          DateTime?
+  deletedAt          DateTime?
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 

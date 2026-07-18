@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { PageHeader } from '@/components/layout/page-header';
 import { ProfileForm } from '@/components/settings/profile-form';
+import { DataAndDeletion } from '@/components/account/data-and-deletion';
 
 export default async function ProfilePage() {
   const session = await requireTeacherSession();
@@ -28,6 +29,8 @@ export default async function ProfilePage() {
           bankAccountName: teacher.bankAccountName,
         }}
       />
+
+      <DataAndDeletion role="teacher" />
     </>
   );
 }

@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { Icon } from '@/components/ui/icon';
 import { StudentSettingsForm } from '@/components/student/student-settings-form';
+import { DataAndDeletion } from '@/components/account/data-and-deletion';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +42,8 @@ export default async function StudentSettingsPage() {
         emailNotifications={student.emailNotifications}
         reminderPref={student.reminderPref}
       />
+
+      <DataAndDeletion role="student" />
     </div>
   );
 }
