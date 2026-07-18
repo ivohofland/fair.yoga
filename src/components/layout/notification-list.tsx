@@ -58,7 +58,8 @@ export function NotificationList({ notifications }: NotificationListProps) {
   }
 
   return (
-    <div>
+    // flex (not block) so the unread cards' margins stack instead of collapsing.
+    <div className="flex flex-col">
       {notifications.map((notification) => {
         const isRead = readState[notification.id] ?? notification.isRead;
         const href = notificationHref(notification);
@@ -68,7 +69,7 @@ export function NotificationList({ notifications }: NotificationListProps) {
             key={notification.id}
             // Unread rows sit on sand, read rows on cream. No hierarchy tricks.
             className={`flex items-start justify-between gap-2 min-h-14 py-3 border-b border-border ${
-              isRead ? '' : 'bg-sand-soft -mx-3 px-3 rounded-field border-b-transparent'
+              isRead ? '' : 'bg-sand-soft -mx-3 px-3 my-1 rounded-field border-b-transparent'
             }`}
           >
             <button
