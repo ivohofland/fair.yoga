@@ -176,7 +176,27 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
       if (mode === 'create') {
         router.push('/settings/recurring');
       } else {
-        setSuccess('Saved');
+        // Say honestly what the edit reached: mutable upcoming instances
+        // sync, booked ones keep their settings.
+        const json: {
+          data?: { sync?: { synced: number; regenerated: number; kept: number } };
+        } = await res.json();
+        const sync = json.data?.sync;
+        const parts: string[] = ['Saved.'];
+        if (sync) {
+          if (sync.synced > 0) {
+            parts.push(`Applied to ${sync.synced} upcoming ${sync.synced === 1 ? 'class' : 'classes'}.`);
+          }
+          if (sync.regenerated > 0) {
+            parts.push(`${sync.regenerated} rescheduled to the new day.`);
+          }
+          if (sync.kept > 0) {
+            parts.push(
+              `${sync.kept} ${sync.kept === 1 ? 'class' : 'classes'} with bookings ${sync.kept === 1 ? 'keeps' : 'keep'} current settings.`,
+            );
+          }
+        }
+        setSuccess(parts.join(' '));
         router.refresh();
       }
     } catch {

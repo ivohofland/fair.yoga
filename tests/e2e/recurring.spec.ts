@@ -155,4 +155,20 @@ test.describe('Recurring classes', () => {
     await expect(page.getByRole('heading', { name: 'Recurring Flow' })).toBeVisible();
     await expect(page.getByText('Open for registration')).toBeVisible();
   });
+
+  test('editing the template syncs unbooked instances and says so', async ({ page }) => {
+    await page.goto(`/settings/recurring/${templateId}`);
+    await page.getByLabel('Start time').fill('10:00');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+
+    await expect(page.getByText(/Applied to 4 upcoming classes\./)).toBeVisible({
+      timeout: 10_000,
+    });
+
+    const instances = await prisma.class.findMany({ where: { templateId } });
+    expect(instances.length).toBe(4);
+    for (const instance of instances) {
+      expect(instance.startTime).toBe('10:00');
+    }
+  });
 });

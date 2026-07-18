@@ -9,6 +9,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { updateClassTemplateSchema } from '@/lib/schemas';
+import { syncTemplateInstances } from '@/services/template-sync';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -66,7 +67,11 @@ export const PUT = withErrorHandler(async (
     data: updateData,
   });
 
-  return respondOk(updated);
+  // Propagate to still-mutable generated instances; anything with
+  // bookings keeps its settings (see template-sync service).
+  const sync = await syncTemplateInstances(prisma, id);
+
+  return respondOk({ ...updated, sync });
 });
 
 
