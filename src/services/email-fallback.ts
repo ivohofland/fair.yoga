@@ -14,7 +14,12 @@ import { renderNotificationEmail } from '@/lib/email-templates';
 import { emailDryRun } from '@/lib/email';
 import { log } from '@/lib/log';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Lazy for the same reason as lib/email: a keyless environment must be
+// able to import this module (the dry-run path never constructs).
+let resendClient: Resend | null = null;
+function resend(): Resend {
+  return (resendClient ??= new Resend(process.env.RESEND_API_KEY));
+}
 
 /**
  * Processes unread notifications eligible for email fallback.
@@ -78,7 +83,7 @@ export async function processEmailFallback(
       // Branded template; escapes teacher-authored bodies so markup or
       // phishing HTML never renders in a platform email.
       const { subject, html } = renderNotificationEmail(notification);
-      const { error } = await resend.emails.send({
+      const { error } = await resend().emails.send({
         from: process.env.EMAIL_FROM || 'noreply@fair.yoga',
         to: email,
         subject,

@@ -31,7 +31,7 @@ Then:
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build
-curl -s http://127.0.0.1:3000/api/health   # → {"status":"ok","db":"up"}
+curl -s http://127.0.0.1:3000/api/health   # → {"status":"ok","db":"up","jobs":{...}}
 ```
 
 The `migrate` service applies Prisma migrations before the app starts.
@@ -70,7 +70,7 @@ To drive it externally instead (e.g. from systemd timers), set
 
 ```bash
 curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://yourdomain.example/api/cron/transition-classes
-# also: /api/cron/generate-classes  /api/cron/email-fallback  /api/cron/payment-reminders
+# also: /api/cron/generate-classes  /api/cron/email-fallback  /api/cron/payment-reminders  /api/cron/auth-cleanup
 ```
 
 ## 6. Updates
@@ -85,7 +85,8 @@ Migrations run automatically via the `migrate` service on every deploy.
 
 ## 7. Monitoring
 
-- `GET /api/health` — liveness + DB reachability (503 when the DB is down);
-  point your uptime monitor here.
+- `GET /api/health` — liveness, DB reachability (503 when the DB is down),
+  and per-job scheduler state (`jobs.<name>.healthy` flips false when a
+  job errors); point your uptime monitor here.
 - `docker compose -f docker-compose.prod.yml logs -f app` — scheduler and
   request logs.

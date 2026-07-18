@@ -1,7 +1,13 @@
 import { Resend } from 'resend';
 import { renderMagicLinkEmail } from '@/lib/email-templates';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Lazy: constructing Resend without a key throws, which would crash any
+// import of this module in keyless environments (Docker image build,
+// dry-run dev). The dry-run guard means we only construct when a key exists.
+let resendClient: Resend | null = null;
+function resend(): Resend {
+  return (resendClient ??= new Resend(process.env.RESEND_API_KEY));
+}
 
 function emailConfigured(): boolean {
   return Boolean(
@@ -35,7 +41,7 @@ export async function sendMagicLinkEmail(
   }
 
   const { subject, html } = renderMagicLinkEmail(magicLink);
-  const { error } = await resend.emails.send({
+  const { error } = await resend().emails.send({
     from: process.env.EMAIL_FROM || 'noreply@fair.yoga',
     to,
     subject,

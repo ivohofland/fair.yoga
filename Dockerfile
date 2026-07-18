@@ -15,6 +15,10 @@ RUN npm ci
 FROM deps AS build
 WORKDIR /app
 COPY . .
+# Build-time page-data collection instantiates PrismaClient, which only
+# needs the env var to EXIST (no connection is made). Runtime env from
+# compose overrides this dummy completely.
+ENV DATABASE_URL="postgresql://build:build@localhost:5432/build"
 RUN npx prisma generate && npm run build
 
 # ---------------------------------------------------------------------------
