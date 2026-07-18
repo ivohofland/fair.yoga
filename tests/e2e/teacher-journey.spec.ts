@@ -292,4 +292,18 @@ test.describe('Teacher journey', () => {
       .click();
     await expect(page.getByText('✓ Paid')).toBeVisible();
   });
+
+  test('the payments overview offers the permanent correction', async ({ page, context }) => {
+    await signInTeacher(context);
+    await page.goto('/settings/payments');
+
+    // The payment marked paid in the previous test sits under Received.
+    await expect(page.getByRole('heading', { name: 'Received' })).toBeVisible();
+    await page.getByRole('button', { name: 'Mark unpaid' }).click();
+    await page.getByRole('button', { name: 'Confirm unpaid' }).click();
+
+    // The record moves back to Outstanding; Received empties.
+    await expect(page.getByText('Nothing received yet')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: 'Mark unpaid' })).not.toBeVisible();
+  });
 });

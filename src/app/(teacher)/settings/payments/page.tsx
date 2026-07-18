@@ -4,6 +4,7 @@ import { requireTeacherSession } from '@/lib/session';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { MarkPaidButton } from '@/components/class/mark-paid-button';
+import { MarkUnpaidButton } from '@/components/class/mark-unpaid-button';
 import { formatStudentName } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
@@ -127,7 +128,10 @@ export default async function PaymentsOverviewPage() {
                   {p.paidAt && <> · ✓ paid {formatDay(p.paidAt)}</>}
                 </p>
               </div>
-              <span className="type-number shrink-0">€{Number(p.amount).toFixed(2)}</span>
+              <div className="flex items-center gap-3 shrink-0">
+                <span className="type-number">€{Number(p.amount).toFixed(2)}</span>
+                <MarkUnpaidButton paymentId={p.id} />
+              </div>
             </div>
           ))
         )}
