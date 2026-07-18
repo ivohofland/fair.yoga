@@ -1,7 +1,6 @@
 # Plan: template-edit propagation & student-side updates
 
-Status: **planned, not implemented** · Two independent features; either
-can ship alone.
+Status: **implemented** (template sync: b5efe9a · updates strip: cfd8c88)
 
 ---
 
