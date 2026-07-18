@@ -115,21 +115,21 @@ export default async function ReportingPage() {
           {months.length > 0 && (
             <section className="mt-8">
               <h2 className="type-subtitle mb-1">By month</h2>
-              <div className="flex items-center justify-between py-2 border-b border-border text-[12px] font-medium text-teal">
+              <div className="flex items-center justify-between gap-2 py-2 border-b border-border text-[12px] font-medium text-teal">
                 <span className="flex-1">MONTH</span>
-                <span className="w-16 text-right">CLASSES</span>
-                <span className="w-16 text-right">STUDENTS</span>
-                <span className="w-20 text-right">EARNED</span>
+                <span className="w-20 text-right">CLASSES</span>
+                <span className="w-20 text-right">STUDENTS</span>
+                <span className="w-24 text-right">EARNED</span>
               </div>
               {months.map((m) => (
                 <div
                   key={m.label}
-                  className="flex items-center justify-between min-h-12 py-2 border-b border-border last:border-b-0"
+                  className="flex items-center justify-between gap-2 min-h-12 py-2 border-b border-border last:border-b-0"
                 >
                   <span className="flex-1 text-base text-ink">{m.label}</span>
-                  <span className="w-16 text-right text-sm text-brown tabular-nums">{m.classes}</span>
-                  <span className="w-16 text-right text-sm text-brown tabular-nums">{m.students}</span>
-                  <span className="w-20 text-right type-number text-sm">€{m.earnings.toFixed(2)}</span>
+                  <span className="w-20 text-right text-sm text-brown tabular-nums">{m.classes}</span>
+                  <span className="w-20 text-right text-sm text-brown tabular-nums">{m.students}</span>
+                  <span className="w-24 text-right type-number text-sm">€{m.earnings.toFixed(2)}</span>
                 </div>
               ))}
             </section>
