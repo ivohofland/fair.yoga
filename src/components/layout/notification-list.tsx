@@ -4,24 +4,10 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Notification } from '@prisma/client';
 import { EmptyState } from '@/components/ui/empty-state';
+import { timeAgo } from '@/lib/format';
 
 interface NotificationListProps {
   notifications: Notification[];
-}
-
-function timeAgo(date: Date): string {
-  const now = Date.now();
-  const diffMs = now - new Date(date).getTime();
-  const diffMinutes = Math.floor(diffMs / 60_000);
-
-  if (diffMinutes < 1) return 'just now';
-  if (diffMinutes < 60) return `${diffMinutes}m ago`;
-
-  const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}d ago`;
 }
 
 function notificationHref(notification: Notification): string | null {

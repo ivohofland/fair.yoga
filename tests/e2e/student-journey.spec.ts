@@ -146,12 +146,16 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
 
     await signIn(context, tokens.alice);
     await page.goto('/bookings');
-    await expect(page.getByText('One Seat Yin')).toBeVisible();
+    // .first(): the class name also appears in the unread-updates strip.
+    await expect(page.getByText('One Seat Yin').first()).toBeVisible();
 
     // Cancel: the inline confirm keeps the same button name.
     await page.getByRole('button', { name: 'Cancel booking' }).click();
     await page.getByRole('button', { name: 'Cancel booking' }).click();
-    await expect(page.getByText('One Seat Yin')).not.toBeVisible({ timeout: 10_000 });
+    // The card is gone (the strip may still mention the class).
+    await expect(page.getByRole('heading', { name: 'Upcoming' })).not.toBeVisible({
+      timeout: 10_000,
+    });
 
     // Rebook through the public page — must not 409 on the old row.
     await page.goto(`/${slug}/book/${classId}`);
@@ -201,19 +205,44 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     await page.goto('/bookings');
     await page.getByRole('button', { name: 'Cancel booking' }).click();
     await page.getByRole('button', { name: 'Cancel booking' }).click();
-    await expect(page.getByText('One Seat Yin')).not.toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: 'Upcoming' })).not.toBeVisible({
+      timeout: 10_000,
+    });
 
     // Bram now holds the seat: booked, no longer waitlisted.
     await context.clearCookies();
     await signIn(context, tokens.bram);
     await page.goto('/bookings');
     await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible();
-    await expect(page.getByText('One Seat Yin')).toBeVisible();
+    await expect(page.getByText('One Seat Yin').first()).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Waitlist' })).not.toBeVisible();
 
     const promoted = await prisma.registration.findFirst({
       where: { classId, studentId: bramId, status: 'registered' },
     });
     expect(promoted).not.toBeNull();
+  });
+
+  test('the promotion shows as an update on /bookings until marked read', async ({
+    page,
+    context,
+  }) => {
+    // The auto-promotion in the previous test created Bram's
+    // waitlist_promoted notification — previously invisible in the app.
+    await signIn(context, tokens.bram);
+    await page.goto('/bookings');
+
+    await expect(page.getByRole('heading', { name: 'Updates' })).toBeVisible();
+    await expect(page.getByText('You are in')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Mark read' }).click();
+    await expect(page.getByRole('heading', { name: 'Updates' })).not.toBeVisible({
+      timeout: 10_000,
+    });
+
+    const unread = await prisma.notification.count({
+      where: { recipientType: 'student', recipientId: bramId, isRead: false },
+    });
+    expect(unread).toBe(0);
   });
 });

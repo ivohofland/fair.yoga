@@ -167,6 +167,7 @@ test.describe('Public booking flow', () => {
 
     await page.goto('/bookings');
     await expect(page.getByRole('heading', { name: 'Your bookings' })).toBeVisible();
-    await expect(page.getByText('E2E Vinyasa')).toBeVisible();
+    // .first(): the class name also appears in the unread-updates strip.
+    await expect(page.getByText('E2E Vinyasa').first()).toBeVisible();
   });
 });

@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { StatusBadge, deriveBadgeVariant } from '@/components/ui/status-badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { CancelBookingButton } from '@/components/student/cancel-booking-button';
+import { UpdatesStrip } from '@/components/student/updates-strip';
 import { WaitlistEntryActions } from '@/components/student/waitlist-entry-actions';
 import { PaymentQr } from '@/components/student/payment-qr';
 import { formatRoomLocation } from '@/lib/format';
@@ -25,7 +26,7 @@ export default async function StudentBookingsPage() {
   const session = await getSession();
   if (!session || session.userType !== 'student') redirect('/login');
 
-  const [registrations, waitlistEntries] = await Promise.all([
+  const [registrations, waitlistEntries, unreadNotifications] = await Promise.all([
     prisma.registration.findMany({
       where: { studentId: session.userId, status: { not: 'cancelled' } },
       orderBy: { class: { date: 'desc' } },
@@ -61,7 +62,29 @@ export default async function StudentBookingsPage() {
         },
       },
     }),
+    prisma.notification.findMany({
+      where: { recipientType: 'student', recipientId: session.userId, isRead: false },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      include: {
+        relatedClass: {
+          select: { id: true, status: true, teacher: { select: { pageSlug: true } } },
+        },
+      },
+    }),
   ]);
+
+  // Link an update to its booking page only while booking still makes sense.
+  const updates = unreadNotifications.map((n) => ({
+    id: n.id,
+    title: n.title,
+    body: n.body,
+    createdAt: n.createdAt.toISOString(),
+    href:
+      n.relatedClass && n.relatedClass.status === 'open'
+        ? `/${n.relatedClass.teacher.pageSlug}/book/${n.relatedClass.id}`
+        : null,
+  }));
 
   const now = new Date();
   const upcoming = registrations.filter(
@@ -77,6 +100,8 @@ export default async function StudentBookingsPage() {
           Settings
         </Link>
       </div>
+
+      <UpdatesStrip updates={updates} />
 
       {upcoming.length === 0 && past.length === 0 && waitlistEntries.length === 0 && (
         <EmptyState
