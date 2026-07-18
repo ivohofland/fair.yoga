@@ -15,7 +15,7 @@ const eslintConfig = defineConfig([
   },
   // docs/ holds the vendored design-system reference (prototype JSX, generated
   // support.js) — documentation, not app code.
-  globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts', 'docs/**']),
+  globalIgnores(['.next/**', '.next-build/**', 'out/**', 'build/**', 'next-env.d.ts', 'docs/**']),
 ]);
 
 export default eslintConfig;

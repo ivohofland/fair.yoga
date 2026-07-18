@@ -34,8 +34,8 @@ ENV HOSTNAME=0.0.0.0
 RUN addgroup -S app && adduser -S app -G app
 USER app
 
-COPY --from=build --chown=app:app /app/.next/standalone ./
-COPY --from=build --chown=app:app /app/.next/static ./.next/static
+COPY --from=build --chown=app:app /app/.next-build/standalone ./
+COPY --from=build --chown=app:app /app/.next-build/static ./.next-build/static
 COPY --from=build --chown=app:app /app/public ./public
 
 EXPOSE 3000

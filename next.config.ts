@@ -38,6 +38,10 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   // Self-contained server bundle for the Docker image (see Dockerfile).
   output: "standalone",
+  // Production builds get their own directory: `next build` writing into
+  // the dev server's `.next` corrupts its compiler state, which then
+  // silently serves stale pages until restarted (bit us repeatedly).
+  distDir: process.env.NODE_ENV === "development" ? ".next" : ".next-build",
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },
