@@ -183,7 +183,7 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
 export async function deleteStudentAccount(db: PrismaClient, studentId: string): Promise<void> {
   const student = await db.student.findUniqueOrThrow({
     where: { id: studentId },
-    select: { email: true },
+    select: { email: true, firstName: true },
   });
 
   const freedClassIds = await db.$transaction(async (tx) => {
@@ -223,6 +223,28 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     await tx.notification.deleteMany({ where: { recipientType: 'student', recipientId: studentId } });
     await tx.session.deleteMany({ where: { userId: studentId, userType: 'student' } });
     await tx.magicLinkToken.deleteMany({ where: { email: student.email } });
+
+    // The teacher's "X booked …" notifications carry the student's first
+    // name — scrub them for the classes this student booked. Matching by
+    // body prefix can catch a same-named classmate; anonymizing that copy
+    // too is the safe direction to err in.
+    const bookedClassIds = (
+      await tx.registration.findMany({
+        where: { studentId },
+        select: { classId: true },
+      })
+    ).map((r) => r.classId);
+    if (bookedClassIds.length > 0) {
+      await tx.notification.updateMany({
+        where: {
+          recipientType: 'teacher',
+          type: 'booking_confirmed',
+          relatedClassId: { in: bookedClassIds },
+          body: { startsWith: `${student.firstName} booked ` },
+        },
+        data: { body: 'A student (account since deleted) booked this class.' },
+      });
+    }
 
     for (const classId of waitingClassIds) {
       await reorderWaitingEntries(tx, classId);

@@ -29,9 +29,10 @@ export default async function TeacherBookingPage({
 
   const teacher = await prisma.teacher.findUnique({
     where: { pageSlug: slug },
-    select: { id: true, firstName: true, lastName: true, bio: true },
+    select: { id: true, firstName: true, lastName: true, bio: true, deletedAt: true },
   });
-  if (!teacher) notFound();
+  // deletedAt: erasure renames the slug, but never rely on that alone.
+  if (!teacher || teacher.deletedAt) notFound();
 
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);

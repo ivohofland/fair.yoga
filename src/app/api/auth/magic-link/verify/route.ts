@@ -7,7 +7,7 @@ import {
 import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 import type { RecipientType } from '@prisma/client';
-import { magicLinkVerifySchema } from '@/lib/schemas';
+import { magicLinkVerifySchema, isSafeRelativePath } from '@/lib/schemas';
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const parsed = await parseBody(request, magicLinkVerifySchema);
@@ -38,9 +38,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // relative paths — everything else falls back to the role default.
   const fallback = userType === 'teacher' ? '/' : '/bookings';
   const redirectTo =
-    tokenRedirect && tokenRedirect.startsWith('/') && !tokenRedirect.startsWith('//')
-      ? tokenRedirect
-      : fallback;
+    tokenRedirect && isSafeRelativePath(tokenRedirect) ? tokenRedirect : fallback;
 
   const response = respondOk({ userType, userId: user.id, redirectTo });
   setSessionCookie(response.headers, sessionToken);

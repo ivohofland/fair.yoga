@@ -1,4 +1,5 @@
 import { calculateClassPricing } from '@/services/pricing';
+import { MAX_CLASS_SIZE } from '@/lib/schemas';
 
 export interface TierEstimateInput {
   roomCost: number;
@@ -19,10 +20,13 @@ export interface TierEstimateInput {
  * technically true and practically wrong.
  */
 export function estimateTierPrices(input: TierEstimateInput): number[] {
+  // The schema caps minStudents, but this runs on a public page — never
+  // trust a stored value enough to size an allocation loop with it.
+  const paddedMin = Math.min(input.minStudents, MAX_CLASS_SIZE);
   const prices: number[] = [];
   for (let tier = 1; tier <= 5; tier++) {
     const tiers = [...input.registeredTiers, tier];
-    while (tiers.length < input.minStudents) {
+    while (tiers.length < paddedMin) {
       tiers.push(3);
     }
     const pricing = calculateClassPricing({

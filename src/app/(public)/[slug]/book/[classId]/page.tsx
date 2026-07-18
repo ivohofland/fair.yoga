@@ -28,7 +28,9 @@ export default async function BookClassPage({
   const cls = await prisma.class.findUnique({
     where: { id: classId },
     include: {
-      teacher: { select: { id: true, firstName: true, lastName: true, pageSlug: true } },
+      teacher: {
+        select: { id: true, firstName: true, lastName: true, pageSlug: true, deletedAt: true },
+      },
       teacherRoom: { include: { room: true } },
       registrations: {
         where: { status: { in: ['registered', 'attended', 'no_show', 'late_cancel'] } },
@@ -37,7 +39,10 @@ export default async function BookClassPage({
     },
   });
 
-  if (!cls || cls.teacher.pageSlug !== slug || cls.status !== 'open') notFound();
+  // deletedAt: erasure renames the slug, but never rely on that alone.
+  if (!cls || cls.teacher.pageSlug !== slug || cls.teacher.deletedAt || cls.status !== 'open') {
+    notFound();
+  }
 
   const activeCount = cls.registrations.filter((r) => r.status !== 'late_cancel').length;
   const isFull = activeCount >= cls.maxStudents;

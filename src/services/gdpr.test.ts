@@ -108,6 +108,17 @@ describe('GDPR (DB)', () => {
         relatedClassId: openClassId,
       },
     });
+    // The teacher's copy carries the student's first name — must be scrubbed.
+    await prisma.notification.create({
+      data: {
+        recipientType: 'teacher',
+        recipientId: teacherId,
+        type: 'booking_confirmed',
+        title: 'New booking',
+        body: 'Gdpr booked GDPR open.',
+        relatedClassId: openClassId,
+      },
+    });
     await prisma.session.create({
       data: {
         id: crypto.randomBytes(32).toString('hex'),
@@ -174,6 +185,13 @@ describe('GDPR (DB)', () => {
     expect(charged?.status).toBe('attended');
     expect(charged?.payment?.status).toBe('pending');
     expect(Number(charged?.payment?.amount)).toBe(11.5);
+
+    // The teacher's "X booked" notification no longer names the student
+    const teacherCopy = await prisma.notification.findFirst({
+      where: { recipientType: 'teacher', recipientId: teacherId, relatedClassId: openClassId },
+    });
+    expect(teacherCopy?.body).not.toContain('Gdpr');
+    expect(teacherCopy?.body).toContain('deleted');
   });
 
   it('teacher deletion cancels upcoming classes, notifies, and anonymizes', async () => {

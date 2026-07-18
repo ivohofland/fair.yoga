@@ -15,13 +15,29 @@ const timeHHmm = z
   .string()
   .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Must be HH:mm (00:00-23:59)');
 
+/**
+ * Upper bound for min/max students. Generous for any real class, and a hard
+ * ceiling for the price-estimate tables the public booking page renders per
+ * seat — unbounded values would let anyone allocate absurd arrays there.
+ */
+export const MAX_CLASS_SIZE = 200;
+
 
 // ============================================================================
 // AUTH
 // ============================================================================
 
 // redirect must be a relative path — a full URL here would be an open redirect.
-const relativePath = z.string().max(200).regex(/^\/(?!\/)/, 'Must be a relative path');
+/**
+ * Shared by the schema below and the verify-route runtime guard. Rejects
+ * protocol-relative URLs (`//evil.com`) and their backslash variants
+ * (`/\evil.com` — browsers normalize `\` to `/` before resolving).
+ */
+export function isSafeRelativePath(path: string): boolean {
+  return path.startsWith('/') && !path.startsWith('//') && !path.includes('\\');
+}
+
+const relativePath = z.string().max(200).refine(isSafeRelativePath, 'Must be a relative path');
 
 export const magicLinkSendSchema = z.object({
   email: z.string().email(),
@@ -79,7 +95,12 @@ export const updateTeacherSchema = z.object({
   lastName: z.string().min(1).optional(),
   photoUrl: z.string().url().nullable().optional(),
   bio: z.string().max(250).optional(),
-  pageSlug: z.string().min(1).regex(/^[a-z0-9-]+$/).optional(),
+  pageSlug: z
+    .string()
+    .min(1)
+    .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens')
+    .refine((s) => !RESERVED_SLUGS.has(s), 'This slug is reserved')
+    .optional(),
   defaultCurrency: z.string().optional(),
   defaultTimezone: z.string().optional(),
   defaultReminder: z.enum(['morning_of', 'evening_before', 'one_hour_before']).optional(),
@@ -190,8 +211,8 @@ export const createClassSchema = z.object({
   roomCost: z.number().nonnegative(),
   minRate: z.number(), // can be negative (teacher subsidizes)
   targetRate: z.number(),
-  minStudents: z.number().int().positive(),
-  maxStudents: z.number().int().positive(),
+  minStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
+  maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
   autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
   templateId: z.string().uuid().nullable().optional(),
@@ -219,8 +240,8 @@ export const updateClassSchema = z.object({
   roomCost: z.number().nonnegative().optional(),
   minRate: z.number().optional(),
   targetRate: z.number().optional(),
-  minStudents: z.number().int().positive().optional(),
-  maxStudents: z.number().int().positive().optional(),
+  minStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
+  maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
 }).strict()
   .refine((d) => d.minStudents === undefined || d.maxStudents === undefined || d.minStudents <= d.maxStudents, {
     message: 'minStudents cannot exceed maxStudents',
@@ -253,8 +274,8 @@ export const createClassTemplateSchema = z.object({
   roomCost: z.number().nonnegative(),
   minRate: z.number(),
   targetRate: z.number(),
-  minStudents: z.number().int().positive(),
-  maxStudents: z.number().int().positive(),
+  minStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
+  maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
   autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
 })
@@ -281,8 +302,8 @@ export const updateClassTemplateSchema = z.object({
   roomCost: z.number().nonnegative().optional(),
   minRate: z.number().optional(),
   targetRate: z.number().optional(),
-  minStudents: z.number().int().positive().optional(),
-  maxStudents: z.number().int().positive().optional(),
+  minStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
+  maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
   autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
 }).strict()
