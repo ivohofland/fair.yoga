@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { ClassList } from '@/components/schedule/class-list';
+import { GettingStarted } from '@/components/schedule/getting-started';
 
 function getWeekBounds(): { start: Date; end: Date } {
   const now = new Date();
@@ -31,7 +32,7 @@ export default async function TeacherHome() {
   const { start, end } = getWeekBounds();
   const now = new Date();
 
-  const [classes, studioClasses] = await Promise.all([
+  const [classes, studioClasses, teacher, roomCount, classCount] = await Promise.all([
     prisma.class.findMany({
       where: {
         teacherId: session.userId,
@@ -50,7 +51,17 @@ export default async function TeacherHome() {
       },
       orderBy: { date: 'asc' },
     }),
+    prisma.teacher.findUniqueOrThrow({
+      where: { id: session.userId },
+      select: { bankIban: true },
+    }),
+    prisma.teacherRoom.count({ where: { teacherId: session.userId, isArchived: false } }),
+    prisma.class.count({ where: { teacherId: session.userId } }),
   ]);
+
+  // The checklist retires itself once the teacher has taught the basics
+  // into place: bank details, a room, a first class.
+  const needsOnboarding = !teacher.bankIban || roomCount === 0 || classCount === 0;
 
   return (
     <div>
@@ -63,6 +74,14 @@ export default async function TeacherHome() {
           + Add class
         </Link>
       </div>
+
+      {needsOnboarding && (
+        <GettingStarted
+          hasBankDetails={Boolean(teacher.bankIban)}
+          hasRoom={roomCount > 0}
+          hasClass={classCount > 0}
+        />
+      )}
 
       <ClassList
         classes={classes}

@@ -1,4 +1,5 @@
 import { Resend } from 'resend';
+import { renderMagicLinkEmail } from '@/lib/email-templates';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -33,11 +34,12 @@ export async function sendMagicLinkEmail(
     return;
   }
 
+  const { subject, html } = renderMagicLinkEmail(magicLink);
   const { error } = await resend.emails.send({
     from: process.env.EMAIL_FROM || 'noreply@fair.yoga',
     to,
-    subject: 'Sign in to fair.yoga',
-    html: `<p>Click <a href="${magicLink}">here</a> to sign in to fair.yoga.</p><p>This link expires in 15 minutes.</p>`,
+    subject,
+    html,
   });
 
   // The Resend SDK reports API failures via { error }, it does not throw.

@@ -3,6 +3,7 @@ import { requireTeacherSession } from '@/lib/session';
 import { PageHeader } from '@/components/layout/page-header';
 import { ProfileForm } from '@/components/settings/profile-form';
 import { DataAndDeletion } from '@/components/account/data-and-deletion';
+import { AddPasskey } from '@/components/account/add-passkey';
 
 export default async function ProfilePage() {
   const session = await requireTeacherSession();
@@ -29,6 +30,11 @@ export default async function ProfilePage() {
           bankAccountName: teacher.bankAccountName,
         }}
       />
+
+      <section className="mt-10 pt-6 border-t border-border">
+        <h2 className="type-subtitle mb-3">Sign-in</h2>
+        <AddPasskey />
+      </section>
 
       <DataAndDeletion role="teacher" />
     </>

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasskeySignIn } from '@/components/booking/passkey-sign-in';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -67,6 +68,10 @@ export default function LoginPage() {
               </p>
             )}
           </form>
+
+          <div className="mt-4">
+            <PasskeySignIn email={email || undefined} />
+          </div>
         </>
       )}
     </div>

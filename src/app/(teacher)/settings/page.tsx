@@ -4,6 +4,7 @@ import { Icon } from '@/components/ui/icon';
 
 const SETTINGS_ITEMS = [
   { href: '/settings/payments', label: 'Payments' },
+  { href: '/settings/reporting', label: 'Reporting' },
   { href: '/settings/recurring', label: 'Recurring classes' },
   { href: '/settings/studio-classes', label: 'Studio classes' },
   { href: '/settings/rooms', label: 'Rooms' },
