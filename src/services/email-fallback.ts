@@ -12,6 +12,7 @@ import { Resend } from 'resend';
 import { getUnreadForEmailFallback, markEmailSent } from './notifications';
 import { renderNotificationEmail } from '@/lib/email-templates';
 import { emailDryRun } from '@/lib/email';
+import { log } from '@/lib/log';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -35,7 +36,7 @@ export async function processEmailFallback(
     try {
       await markEmailSent(db, [id]);
     } catch (err) {
-      console.error(`Failed to mark notification ${id} email-sent (may re-send once):`, err);
+      log.error({ err, notificationId: id }, 'failed to mark email-sent (may re-send once)');
     }
   };
 
@@ -67,7 +68,7 @@ export async function processEmailFallback(
     }
 
     if (emailDryRun()) {
-      console.log(`[DEV] Email fallback for ${email}: ${notification.title} — ${notification.body}`);
+      log.info({ to: email, title: notification.title }, 'email fallback dry-run');
       await markOne(notification.id);
       sent++;
       continue;
@@ -86,13 +87,13 @@ export async function processEmailFallback(
       // The Resend SDK reports API failures via { error }, it does not throw —
       // an unchecked result would mark the notification sent when it wasn't.
       if (error) {
-        console.error(`Failed to send email fallback for notification ${notification.id}:`, error.message);
+        log.error({ notificationId: notification.id, reason: error.message }, 'email fallback send failed');
         continue;
       }
       await markOne(notification.id);
       sent++;
     } catch (err) {
-      console.error(`Failed to send email fallback for notification ${notification.id}:`, err);
+      log.error({ err, notificationId: notification.id }, 'email fallback send failed');
     }
   }
 

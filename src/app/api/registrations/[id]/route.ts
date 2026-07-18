@@ -11,6 +11,7 @@ import {
 import { updateRegistrationSchema } from '@/lib/schemas';
 import { DEADLINE_HOURS, handleSpotFreed } from '@/services/waitlist';
 import { classStartInstant } from '@/lib/timezone';
+import { log } from '@/lib/log';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -161,6 +162,6 @@ async function promoteAfterCancel(classId: string): Promise<void> {
   try {
     await handleSpotFreed(prisma, classId);
   } catch (err) {
-    console.error(`[waitlist] spot-freed hook failed for class ${classId}:`, err);
+    log.error({ err, classId }, 'waitlist spot-freed hook failed after cancel');
   }
 }

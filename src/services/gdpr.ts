@@ -13,6 +13,7 @@ import type { PrismaClient } from '@prisma/client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { completeClass } from './class-lifecycle';
 import { handleSpotFreed, reorderWaitingEntries } from './waitlist';
+import { log } from '@/lib/log';
 
 // ---------------------------------------------------------------------------
 // Export
@@ -274,7 +275,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     try {
       await handleSpotFreed(db, classId);
     } catch (err) {
-      console.error(`[gdpr] spot-freed hook failed for class ${classId}:`, err);
+      log.error({ err, classId }, 'gdpr: spot-freed hook failed after erasure');
     }
   }
 }

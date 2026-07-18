@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { validateSession, getSessionToken } from './auth';
 import { prisma } from './db';
 import type { SessionUser } from './types';
+import { log } from '@/lib/log';
 
 export function respondOk<T>(data: T, status = 200): NextResponse {
   return NextResponse.json({ data }, { status });
@@ -108,7 +109,7 @@ export function withErrorHandler<Args extends unknown[]>(
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         return respondError('Resource already exists', 409);
       }
-      console.error('API error:', error);
+      log.error({ err: error }, 'unhandled API error');
       return respondError('Internal server error', 500);
     }
   };

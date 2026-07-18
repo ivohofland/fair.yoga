@@ -16,6 +16,7 @@ import type {
   Notification,
 } from '@prisma/client';
 import { notificationBus } from '@/lib/event-bus';
+import { log } from '@/lib/log';
 
 /** Accepts a plain client or a transaction client so notification creation
  *  can participate in the caller's transaction. */
@@ -66,7 +67,7 @@ function emitToBus(input: CreateNotificationInput, id: string): void {
   } catch (err) {
     // never let live-update plumbing break notification creation — but a
     // dead bus means silent SSE, so it must at least reach the log.
-    console.error('[notifications] event-bus emit failed:', err);
+    log.error({ err }, 'notification event-bus emit failed');
   }
 }
 

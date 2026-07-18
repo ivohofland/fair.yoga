@@ -11,6 +11,7 @@ import type { PrismaClient } from '@prisma/client';
 import { transitionClass, completeClass } from './class-lifecycle';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { classStartInstant } from '@/lib/timezone';
+import { log } from '@/lib/log';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -56,11 +57,11 @@ export async function autoTransitionToInProgress(
         if (result.ok) {
           transitioned++;
         } else {
-          console.error(`[transitions] class ${cls.id} → in_progress rejected: ${result.error}`);
+          log.error({ classId: cls.id, reason: result.error }, 'transition to in_progress rejected');
         }
       }
     } catch (err) {
-      console.error(`[transitions] class ${cls.id} → in_progress failed:`, err);
+      log.error({ err, classId: cls.id }, 'transition to in_progress failed');
     }
   }
 
@@ -140,7 +141,7 @@ export async function autoCancelClasses(
       }
     } catch (err) {
       // Per-class isolation — see autoTransitionToInProgress.
-      console.error(`[transitions] auto-cancel check for class ${cls.id} failed:`, err);
+      log.error({ err, classId: cls.id }, 'auto-cancel check failed');
     }
   }
 
@@ -180,11 +181,11 @@ export async function autoCompleteClasses(
         if (result.ok) {
           completed++;
         } else {
-          console.error(`[transitions] class ${cls.id} completion rejected: ${result.error}`);
+          log.error({ classId: cls.id, reason: result.error }, 'class completion rejected');
         }
       }
     } catch (err) {
-      console.error(`[transitions] class ${cls.id} completion failed:`, err);
+      log.error({ err, classId: cls.id }, 'class completion failed');
     }
   }
 

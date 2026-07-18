@@ -14,6 +14,7 @@
  */
 
 import type { PrismaClient } from '@prisma/client';
+import { log } from '@/lib/log';
 
 interface Job {
   name: string;
@@ -45,7 +46,7 @@ export function getJobHealth(): Record<string, JobHealth> {
 
 export async function startScheduler(): Promise<void> {
   if (process.env.CRON_SCHEDULER === 'off') {
-    console.log('[scheduler] disabled via CRON_SCHEDULER=off');
+    log.info('scheduler disabled via CRON_SCHEDULER=off');
     return;
   }
   if (globalThis.__fairYogaSchedulerStarted) return;
@@ -60,6 +61,7 @@ export async function startScheduler(): Promise<void> {
   const { generateStudioClassInstances } = await import('@/services/studio-class-generator');
   const { processEmailFallback } = await import('@/services/email-fallback');
   const { processPaymentReminders } = await import('@/services/payment-reminders');
+  const { cleanupExpiredAuth } = await import('@/services/auth-cleanup');
 
   const jobs: Job[] = [
     {
@@ -73,7 +75,7 @@ export async function startScheduler(): Promise<void> {
           try {
             await sweep(db);
           } catch (err) {
-            console.error(`[scheduler] class-transitions sweep ${sweep.name} failed:`, err);
+            log.error({ err, sweep: sweep.name }, 'class-transitions sweep failed');
             errors.push(err);
           }
         }
@@ -99,6 +101,11 @@ export async function startScheduler(): Promise<void> {
       intervalMs: 60 * MINUTE,
       run: (db) => processPaymentReminders(db),
     },
+    {
+      name: 'auth-cleanup',
+      intervalMs: 24 * 60 * MINUTE,
+      run: (db) => cleanupExpiredAuth(db),
+    },
   ];
 
   const health = (globalThis.__fairYogaJobHealth ??= {});
@@ -114,7 +121,7 @@ export async function startScheduler(): Promise<void> {
         jobHealth.lastSuccessAt = new Date().toISOString();
         jobHealth.lastError = null;
       } catch (err) {
-        console.error(`[scheduler] ${job.name} failed:`, err);
+        log.error({ err, job: job.name }, 'scheduler job failed');
         jobHealth.lastError = err instanceof Error ? err.message : String(err);
       } finally {
         job.running = false;
@@ -127,5 +134,5 @@ export async function startScheduler(): Promise<void> {
     setInterval(tick, job.intervalMs).unref();
   }
 
-  console.log(`[scheduler] started ${jobs.length} jobs`);
+  log.info({ jobs: jobs.length }, 'scheduler started');
 }
