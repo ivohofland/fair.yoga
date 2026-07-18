@@ -223,12 +223,14 @@ test.describe('Teacher journey', () => {
     await expect(page.getByText('New booking').first()).toBeVisible();
     await expect(page.getByText('Journey booked Journey Flow.')).toBeVisible();
 
-    // The row flips instantly (client state); the tab-bar dot needs the
-    // layout re-render — reload instead of racing router.refresh.
+    // The row flips optimistically BEFORE the POST resolves — wait for the
+    // server response, then reload for the tab-bar dot (a reload during the
+    // in-flight request would cancel the mark-read).
+    const markedRead = page.waitForResponse(
+      (resp) => resp.url().includes('/read') && resp.ok(),
+    );
     await page.getByRole('button', { name: 'Mark read' }).first().click();
-    await expect(page.getByRole('button', { name: 'Mark read' })).toBeHidden({
-      timeout: 10_000,
-    });
+    await markedRead;
     await page.reload();
     await expect(page.getByRole('link', { name: 'Inbox', exact: true })).toBeVisible({
       timeout: 10_000,

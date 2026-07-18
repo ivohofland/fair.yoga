@@ -7,8 +7,10 @@ interface RegistrationProgressProps {
 
 /**
  * The signature element on class cards. 8px track; fill is danger until the
- * minimum is met, teal from min to max; ink tick at the min mark; tabular
- * fraction label above right ("8 / 6–14").
+ * minimum is met, teal from min to max; ink tick at the min mark. The label
+ * separates the live count (the datum: 16px semibold, teal once viable)
+ * from the configured "/ min–max" range (quiet 13px brown) — the bar
+ * already marks both ends spatially.
  */
 export function RegistrationProgress({ registered, min, max, className = '' }: RegistrationProgressProps) {
   const pct = Math.min(100, (registered / max) * 100);
@@ -17,11 +19,14 @@ export function RegistrationProgress({ registered, min, max, className = '' }: R
 
   return (
     <div className={className}>
-      <div className="flex justify-end mb-1">
+      <div className="flex items-baseline justify-end gap-[5px] mb-1">
         <span
-          className={`text-[13px] font-semibold tabular-nums ${met ? 'text-teal' : 'text-brown'}`}
+          className={`text-base leading-none font-semibold tabular-nums ${met ? 'text-teal' : 'text-brown'}`}
         >
-          {registered} / {min}–{max}
+          {registered}
+        </span>
+        <span className="text-[13px] tabular-nums text-brown">
+          / {min}–{max}
         </span>
       </div>
       <div className="relative h-2 bg-border rounded-[4px]">

@@ -80,7 +80,7 @@ Lucide-style line icons, stroke 1.75, `currentColor`, never filled — inlined i
 - **Input / Select / Textarea** — 48px, sand-soft field, `rounded-field`, `type-label` above (8px gap). Error = danger border + danger-tint bg + 13px message.
 - **Card / CardLink** — sand-soft, 1px border, `rounded-card`, `p-5`; tappable cards get sand hover + chevron.
 - **StatusBadge** — `rounded-field`, 13px medium. **Fill encodes time:** outline = upcoming (Draft brown-light, Open teal), tint = now (Full/Waitlist gold-tint, In progress teal-tint, Below minimum danger-tint), solid = done (Completed teal, Cancelled brown). `deriveBadgeVariant(status, reg, min, max)` maps lifecycle → variant. **Payment is never a badge:** glyph + word in text color — `✓ Paid` teal · `○ Unpaid` brown · `! Overdue` danger.
-- **RegistrationProgress** — *the signature element* on class cards: 8px border-color track, fill danger until min then teal, 2px ink tick at the min mark, tabular fraction ("8 / 6–14") above right.
+- **RegistrationProgress** — *the signature element* on class cards: 8px border-color track, fill danger until min then teal, 2px ink tick at the min mark. Label above right: live count 16px semibold (teal once min is met, brown before) + quiet 13px brown "/ 6–14" range — count is the datum, the range is configuration.
 - **EmptyState** — one subtitle + one body line + one action. No illustrations.
 - **Skeleton** — static sand blocks matching layout (used by `loading.tsx` files). No shimmer, no spinners.
 - **TabBar**, **PageHeader** — see Navigation.
