@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -63,6 +64,13 @@ export default function NewStudioClassPage() {
   return (
     <>
       <PageHeader title="Log studio class" backHref="/" backLabel="Schedule" />
+      <p className="type-caption -mt-4 mb-6">
+        Teach at this studio every week?{' '}
+        <Link href="/settings/studio-classes/new" className="text-teal no-underline">
+          Set up a recurring studio class
+        </Link>{' '}
+        and it logs itself.
+      </p>
       <form onSubmit={handleSubmit} className="flex flex-col gap-5">
         <Input label="Class type" value={classType} onChange={(e) => setClassType(e.target.value)} placeholder="e.g. Vinyasa, Hatha, Yin" />
         <Input label="Location" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Yoga Studio Centrum, Amsterdam" />
