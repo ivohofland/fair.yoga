@@ -6,6 +6,7 @@ import { Icon } from '@/components/ui/icon';
 import { StudentSettingsForm } from '@/components/student/student-settings-form';
 import { DataAndDeletion } from '@/components/account/data-and-deletion';
 import { AddPasskey } from '@/components/account/add-passkey';
+import { SignOutButton } from '@/components/account/sign-out-button';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,6 +48,9 @@ export default async function StudentSettingsPage() {
       <section className="mt-10 pt-6 border-t border-border">
         <h2 className="type-subtitle mb-3">Sign-in</h2>
         <AddPasskey />
+        <div className="mt-5">
+          <SignOutButton />
+        </div>
       </section>
 
       <DataAndDeletion role="student" />

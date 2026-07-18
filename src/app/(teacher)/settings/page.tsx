@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { PageHeader } from '@/components/layout/page-header';
 import { Icon } from '@/components/ui/icon';
+import { SignOutButton } from '@/components/account/sign-out-button';
 
 const SETTINGS_ITEMS = [
   { href: '/settings/payments', label: 'Payments' },
@@ -27,6 +28,9 @@ export default function SettingsPage() {
             <Icon name="chevron-right" size={20} className="text-brown-light" />
           </Link>
         ))}
+      </div>
+      <div className="mt-8">
+        <SignOutButton />
       </div>
     </div>
   );
