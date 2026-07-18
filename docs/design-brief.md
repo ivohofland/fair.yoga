@@ -92,7 +92,7 @@ Rows over card grids for directories and settings: `flex items-center gap-3 min-
 
 ## 6. Screen patterns
 
-- **Schedule (home).** Chronological card list of the current week plus the next four weeks (the recurring-generation horizon) — not a calendar grid. Each class card: day/time label + StatusBadge, `type-subtitle` class name + chevron, room caption, RegistrationProgress. Studio classes inline but lighter (dashed border, no bar). Past dimmed to 70% opacity (quiet but still readable), cancelled struck through.
+- **Schedule (home).** Chronological card list of the current week plus the next four weeks (the recurring-generation horizon) — not a calendar grid. The list breaks at week boundaries with a `type-subtitle` head ("This week" · "Next week" · "Week of 4 August"), the same section idiom as "By month". Each class card: day/time label + StatusBadge, `type-subtitle` class name + chevron, room caption, RegistrationProgress. Studio classes inline but lighter (dashed border, no bar). Past dimmed to 70% opacity (quiet but still readable), cancelled struck through.
 - **Class detail** — one adaptive page by lifecycle: badge + meta + progress always; then draft (pricing preview + publish), open (students + estimate), check-in (attendance checklist: large names, 44px teal check tiles), completed (earnings in a teal-tint card, Display-size tabular number, transparent breakdown + payment checklist), cancelled (quiet notice).
 - **Create class** — 4 steps; caption step indicator; live pricing preview table (teal caption headers, prices align on the decimal, pill mode toggles).
 - **Payments** — simple rows: name, text state, `type-number` amount, compact "Mark paid" pill. Unpaid is brown — never alarming.

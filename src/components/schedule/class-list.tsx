@@ -30,6 +30,31 @@ function formatDayHeader(date: Date): string {
   return `${days[d.getUTCDay()]}, ${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
 }
 
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const FULL_MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/** UTC-midnight Monday of the week containing `date`. */
+function mondayOf(date: Date): number {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = d.getUTCDay();
+  d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day));
+  return d.getTime();
+}
+
+/** "This week" / "Next week" / "Last week" / "Week of 4 August". */
+function weekLabel(itemDate: Date, now: Date): string {
+  const itemMonday = mondayOf(itemDate);
+  const thisMonday = mondayOf(now);
+  if (itemMonday === thisMonday) return 'This week';
+  if (itemMonday === thisMonday + WEEK_MS) return 'Next week';
+  if (itemMonday === thisMonday - WEEK_MS) return 'Last week';
+  const d = new Date(itemMonday);
+  return `Week of ${d.getUTCDate()} ${FULL_MONTHS[d.getUTCMonth()]}`;
+}
+
 type RowState = {
   variant: BadgeVariant;
   cancelled: boolean;
@@ -160,14 +185,30 @@ export function ClassList({ classes, studioClasses = [], emptyMessage = 'No clas
       {totalCount === 0 ? (
         <EmptyState title={emptyMessage} body="Classes you create appear here." />
       ) : (
-        <div className="flex flex-col gap-3">
-          {items.map((item) => {
-            const isPast = dimPast && item.dateTime < now;
-            return item.type === 'class'
-              ? <ClassCard key={item.data.id} cls={item.data} isPast={isPast} />
-              : <StudioClassCard key={item.data.id} sc={item.data} isPast={isPast} />;
-          })}
-        </div>
+        // The list breaks at week boundaries — a section head in the same
+        // idiom as "By month" or "Updates" (see the v2 kit's Schedule spec).
+        (() => {
+          const groups: { label: string; items: ScheduleItem[] }[] = [];
+          for (const item of items) {
+            const label = weekLabel(item.data.date, now);
+            const last = groups[groups.length - 1];
+            if (last && last.label === label) last.items.push(item);
+            else groups.push({ label, items: [item] });
+          }
+          return groups.map((group, gi) => (
+            <section key={group.label}>
+              <h2 className={`type-subtitle mb-3 ${gi === 0 ? '' : 'mt-8'}`}>{group.label}</h2>
+              <div className="flex flex-col gap-3">
+                {group.items.map((item) => {
+                  const isPast = dimPast && item.dateTime < now;
+                  return item.type === 'class'
+                    ? <ClassCard key={item.data.id} cls={item.data} isPast={isPast} />
+                    : <StudioClassCard key={item.data.id} sc={item.data} isPast={isPast} />;
+                })}
+              </div>
+            </section>
+          ));
+        })()
       )}
     </div>
   );

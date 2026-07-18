@@ -92,8 +92,12 @@ test.describe('Visual regression', () => {
       data: { teacherId, roomId, capacityOverride: 12, rentalRate: 30 },
     });
 
-    // Ten days out: inside the schedule window, date text masked anyway.
-    const soon = new Date(Date.now() + 10 * 24 * 3600 * 1000);
+    // Tuesday of next week: always inside the window, and the schedule's
+    // week header reads the stable "Next week" on any run day (a farther
+    // date would render a changing "Week of …" heading, which is not
+    // masked — headers share type-subtitle with card titles).
+    const soon = new Date();
+    soon.setUTCDate(soon.getUTCDate() + (8 - (soon.getUTCDay() || 7)) + 1);
     const cls = await prisma.class.create({
       data: {
         teacherId,

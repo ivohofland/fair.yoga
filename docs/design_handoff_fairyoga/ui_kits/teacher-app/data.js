@@ -1,12 +1,15 @@
 window.MOCK = {
   teacher: { name: 'Ivo', email: 'ivo@fairyoga.dev' },
   classes: [
-    { id: 'c1', day: 'Monday, Apr 22', time: '09:00', type: 'Vinyasa', where: 'Studio A at Laurel St.', reg: 8, min: 6, max: 14, status: 'registering' },
-    { id: 'c2', day: 'Monday, Apr 22', time: '18:30', type: 'Yin', where: 'Loft at Northside', reg: 10, min: 6, max: 10, status: 'full' },
-    { id: 'c3', day: 'Wednesday, Apr 24', time: '08:00', type: 'Hatha', where: 'Studio A at Laurel St.', reg: 3, min: 6, max: 8, status: 'below_min' },
-    { id: 'c4', day: 'Thursday, Apr 25', time: '19:00', type: 'Vinyasa', where: 'Loft at Northside', reg: 0, min: 6, max: 10, status: 'draft' },
+    { id: 'c1', day: 'Monday, Apr 22', time: '09:00', type: 'Vinyasa', where: 'Studio A at Laurel St.', reg: 8, min: 6, max: 14, status: 'registering', week: 'This week' },
+    { id: 'c2', day: 'Monday, Apr 22', time: '18:30', type: 'Yin', where: 'Loft at Northside', reg: 10, min: 6, max: 10, status: 'full', week: 'This week' },
+    { id: 'c6', day: 'Tuesday, Apr 23', time: '12:15', type: 'Studio class — Hatha', where: 'Yogahuis Oost', studio: true, status: 'registering', week: 'This week' },
+    { id: 'c3', day: 'Wednesday, Apr 24', time: '08:00', type: 'Hatha', where: 'Studio A at Laurel St.', reg: 3, min: 6, max: 8, status: 'below_min', week: 'This week' },
+    { id: 'c4', day: 'Thursday, Apr 25', time: '19:00', type: 'Vinyasa', where: 'Loft at Northside', reg: 0, min: 6, max: 10, status: 'draft', week: 'This week' },
+    { id: 'c7', day: 'Monday, Apr 29', time: '09:00', type: 'Vinyasa', where: 'Studio A at Laurel St.', reg: 2, min: 6, max: 14, status: 'registering', week: 'Next week' },
+    { id: 'c8', day: 'Wednesday, May 1', time: '08:00', type: 'Hatha', where: 'Studio A at Laurel St.', reg: 0, min: 6, max: 8, status: 'registering', week: 'Next week' },
+    { id: 'c9', day: 'Monday, May 6', time: '09:00', type: 'Vinyasa', where: 'Studio A at Laurel St.', reg: 0, min: 6, max: 14, status: 'registering', week: 'Week of 6 May' },
     { id: 'c5', day: 'Sunday, Apr 20', time: '10:00', type: 'Yin', where: 'Studio A at Laurel St.', reg: 6, min: 4, max: 8, status: 'completed', past: true, earnings: 92.40, roomCost: 20.00, total: 112.40 },
-    { id: 'c6', day: 'Tuesday, Apr 23', time: '12:15', type: 'Studio class — Hatha', where: 'Yogahuis Oost', studio: true, status: 'registering' },
   ],
   students: [
     { id: 's1', name: 'Anna K.', last: 'Apr 20', total: 18 },
