@@ -1,8 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { readErrorMessage } from '@/lib/client-errors';
 import { paymentStateText } from '@/lib/format';
+import { usePaymentActions } from '@/lib/use-payment-actions';
 
 interface StudentPaymentItem {
   paymentId: string;
@@ -17,33 +16,9 @@ interface StudentPaymentListProps {
 }
 
 export function StudentPaymentList({ items }: StudentPaymentListProps) {
-  const [paymentState, setPaymentState] = useState<Record<string, string>>(
+  const { paymentState, justMarked, updating, error, markPaid, undo } = usePaymentActions(
     Object.fromEntries(items.map((item) => [item.paymentId, item.status])),
   );
-  const [updating, setUpdating] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  async function markPaid(paymentId: string) {
-    setUpdating(paymentId);
-    setError(null);
-    try {
-      const res = await fetch(`/api/payments/${paymentId}/paid`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ method: 'manual' }),
-      });
-
-      if (res.ok) {
-        setPaymentState((prev) => ({ ...prev, [paymentId]: 'paid' }));
-      } else {
-        setError(await readErrorMessage(res, 'Failed to mark payment as paid.'));
-      }
-    } catch {
-      setError('Network error. Please try again.');
-    } finally {
-      setUpdating(null);
-    }
-  }
 
   if (items.length === 0) {
     return <p className="type-body">No payment history.</p>;
@@ -77,6 +52,16 @@ export function StudentPaymentList({ items }: StudentPaymentListProps) {
                     className={`h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] border-teal text-teal hover:bg-teal-tint ${isUpdating ? 'opacity-50' : ''}`}
                   >
                     Mark paid
+                  </button>
+                )}
+                {isPaid && justMarked.has(item.paymentId) && (
+                  <button
+                    type="button"
+                    onClick={() => undo(item.paymentId)}
+                    disabled={isUpdating}
+                    className="type-caption text-teal min-h-[44px] px-1"
+                  >
+                    Undo
                   </button>
                 )}
               </div>

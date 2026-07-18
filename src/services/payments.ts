@@ -82,6 +82,34 @@ export async function markPaymentOverdue(
   return { ok: true, payment: updated };
 }
 
+/**
+ * Undo a mistaken "mark paid": paid → pending, clearing method/paidAt.
+ * Returns to 'pending' (not 'overdue') deliberately — the daily dunning
+ * sweep re-derives overdue from the payment's age, so an old payment
+ * self-heals back to overdue within a day.
+ */
+export async function unmarkPaymentPaid(
+  db: PrismaClient,
+  paymentId: string,
+): Promise<PaymentResult> {
+  const result = await db.payment.updateMany({
+    where: { id: paymentId, status: 'paid' },
+    data: { status: 'pending', method: null, paidAt: null },
+  });
+
+  if (result.count === 0) {
+    const payment = await db.payment.findUnique({ where: { id: paymentId } });
+    if (!payment) return { ok: false, error: `Payment not found: ${paymentId}` };
+    return {
+      ok: false,
+      error: `Cannot undo: current status is "${payment.status}". Must be "paid".`,
+    };
+  }
+
+  const updated = await db.payment.findUniqueOrThrow({ where: { id: paymentId } });
+  return { ok: true, payment: updated };
+}
+
 // ---------------------------------------------------------------------------
 // Reminders
 // ---------------------------------------------------------------------------

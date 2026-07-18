@@ -283,5 +283,13 @@ test.describe('Teacher journey', () => {
       .click();
     await expect(page.getByText('✓ Paid')).toBeVisible();
     await expect(page.getByText('○ Unpaid')).toHaveCount(1);
+
+    // A mis-tap is recoverable: transient Undo restores the record.
+    await page.getByRole('button', { name: 'Undo marking Journey Student as paid' }).click();
+    await expect(page.getByText('○ Unpaid')).toHaveCount(2, { timeout: 10_000 });
+    await page
+      .getByRole('button', { name: 'Mark Journey Student payment as paid' })
+      .click();
+    await expect(page.getByText('✓ Paid')).toBeVisible();
   });
 });

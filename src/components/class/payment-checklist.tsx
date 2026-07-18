@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
 import Link from 'next/link';
 import { paymentStateText } from '@/lib/format';
+import { usePaymentActions } from '@/lib/use-payment-actions';
 
 export interface PaymentItem {
   paymentId: string;
@@ -17,39 +17,9 @@ interface PaymentChecklistProps {
 }
 
 export function PaymentChecklist({ items }: PaymentChecklistProps) {
-  const [paymentState, setPaymentState] = useState<Record<string, string>>(
+  const { paymentState, justMarked, updating, error, markPaid, undo } = usePaymentActions(
     Object.fromEntries(items.map((item) => [item.paymentId, item.status])),
   );
-  const [updating, setUpdating] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  async function markPaid(paymentId: string) {
-    setUpdating(paymentId);
-    setError(null);
-    try {
-      const response = await fetch(`/api/payments/${paymentId}/paid`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ method: 'manual' }),
-      });
-
-      if (response.ok) {
-        setPaymentState((prev) => ({
-          ...prev,
-          [paymentId]: 'paid',
-        }));
-      } else if (response.status === 409) {
-        const body = await response.json() as { error?: string };
-        setError(body.error ?? 'This payment cannot be marked as paid in its current state.');
-      } else {
-        setError('Failed to mark payment as paid. Please try again.');
-      }
-    } catch {
-      setError('Network error. Please check your connection and try again.');
-    } finally {
-      setUpdating(null);
-    }
-  }
 
   if (items.length === 0) {
     return (
@@ -116,6 +86,17 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
                 >
                   {isPaid ? 'Paid' : 'Mark paid'}
                 </button>
+                {isPaid && justMarked.has(item.paymentId) && (
+                  <button
+                    type="button"
+                    onClick={() => undo(item.paymentId)}
+                    disabled={isUpdating}
+                    className="type-caption text-teal min-h-[44px] px-1"
+                    aria-label={`Undo marking ${item.studentName} as paid`}
+                  >
+                    Undo
+                  </button>
+                )}
               </div>
             </div>
           );

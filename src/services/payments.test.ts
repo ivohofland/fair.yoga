@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import {
   markPaymentPaid,
   markPaymentOverdue,
+  unmarkPaymentPaid,
   sendPaymentReminder,
   getOutstandingPayments,
   getPaymentsForClass,
@@ -181,6 +182,29 @@ describe('Payment Service (DB)', () => {
       expect(result.payment.status).toBe('paid');
       expect(result.payment.method).toBe('cash');
     }
+  });
+
+  it('unmarkPaymentPaid undoes a mistaken mark: paid → pending, fields cleared', async () => {
+    // paymentId is 'paid' from the previous test
+    const result = await unmarkPaymentPaid(prisma, paymentId);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.payment.status).toBe('pending');
+      expect(result.payment.method).toBeNull();
+      expect(result.payment.paidAt).toBeNull();
+    }
+  });
+
+  it('unmarkPaymentPaid rejects when the payment is not paid', async () => {
+    // now 'pending' after the undo above
+    const result = await unmarkPaymentPaid(prisma, paymentId);
+    expect(result.ok).toBe(false);
+  });
+
+  it('re-marking paid after an undo works', async () => {
+    const result = await markPaymentPaid(prisma, paymentId, 'cash');
+    expect(result.ok).toBe(true);
   });
 
   it('sendPaymentReminder sets reminderSentAt', async () => {
