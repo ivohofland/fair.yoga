@@ -56,7 +56,7 @@ function ClassCard({ cls, isPast }: { cls: ClassWithDetails; isPast: boolean }) 
   return (
     <Link
       href={`/class/${cls.id}`}
-      className={`block bg-sand-soft border border-border rounded-card p-5 no-underline hover:bg-sand${past || cancelled ? ' opacity-40' : ''}`}
+      className={`block bg-sand-soft border border-border rounded-card p-5 no-underline hover:bg-sand${past || cancelled ? ' opacity-70' : ''}`}
     >
       <div className="flex items-center justify-between gap-2">
         <span className="type-label text-ink">
@@ -96,7 +96,7 @@ function StudioClassCard({ sc, isPast }: { sc: StudioClass; isPast: boolean }) {
   return (
     <Link
       href={`/studio-class/${sc.id}`}
-      className={`block border border-dashed border-border rounded-card px-5 py-3 no-underline hover:bg-sand-soft${past || cancelled ? ' opacity-40' : ''}`}
+      className={`block border border-dashed border-border rounded-card px-5 py-3 no-underline hover:bg-sand-soft${past || cancelled ? ' opacity-70' : ''}`}
     >
       <div className="flex items-center justify-between gap-2">
         <span
