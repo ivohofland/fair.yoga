@@ -4,15 +4,22 @@ import { requireTeacherSession } from '@/lib/session';
 import { ClassList } from '@/components/schedule/class-list';
 import { GettingStarted } from '@/components/schedule/getting-started';
 
-function getWeekBounds(): { start: Date; end: Date } {
+/**
+ * The home window: the current week so far (completed classes stay in
+ * view for payments) plus four weeks ahead — matching how far recurring
+ * templates generate. A strict this-week view hid every newly created
+ * class until its week arrived.
+ */
+function getScheduleWindow(): { start: Date; end: Date } {
   const now = new Date();
   const day = now.getUTCDay();
   const diffToMonday = day === 0 ? -6 : 1 - day;
   const start = new Date(now);
   start.setUTCDate(now.getUTCDate() + diffToMonday);
   start.setUTCHours(0, 0, 0, 0);
-  const end = new Date(start);
-  end.setUTCDate(start.getUTCDate() + 7);
+  const end = new Date(now);
+  end.setUTCDate(now.getUTCDate() + 28);
+  end.setUTCHours(23, 59, 59, 999);
   return { start, end };
 }
 
@@ -25,11 +32,11 @@ function formatTodayLabel(date: Date): string {
   return `${days[date.getUTCDay()]}, ${date.getUTCDate()} ${months[date.getUTCMonth()]}`;
 }
 
-// The Schedule tab is the home base: this week's classes as cards.
-// Students, Inbox, and Settings live in their own tabs.
+// The Schedule tab is the home base: this week plus the coming four
+// weeks as cards. Students, Inbox, and Settings live in their own tabs.
 export default async function TeacherHome() {
   const session = await requireTeacherSession();
-  const { start, end } = getWeekBounds();
+  const { start, end } = getScheduleWindow();
   const now = new Date();
 
   const [classes, studioClasses, teacher, roomCount, classCount] = await Promise.all([

@@ -90,7 +90,7 @@ Schedule
 
 ### Week view
 
-The default view is a chronological list of this week's classes (scrollable to past and future weeks). Not a calendar grid — a simple list, ordered by time, with enough context on each card to know the status at a glance.
+The default view is a chronological list of the current week plus the next four weeks — matching how far recurring templates generate ahead (past weeks live under “View past classes”). Not a calendar grid — a simple list, ordered by time, with enough context on each card to know the status at a glance.
 
 Each class card shows:
 - Day, time, duration
