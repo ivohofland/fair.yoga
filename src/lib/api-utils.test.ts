@@ -137,8 +137,9 @@ describe('isErrorResponse', () => {
   it('returns false for SessionUser', () => {
     const user: SessionUser = {
       sessionId: 'sess-1',
-      userId: 'user-1',
-      userType: 'teacher',
+      accountId: 'acct-tea',
+      teacherId: 'teacher-1',
+      studentId: null,
     };
     expect(isErrorResponse(user)).toBe(false);
   });
@@ -181,8 +182,9 @@ describe('requireSession', () => {
   it('returns SessionUser when session is valid', async () => {
     const sessionUser: SessionUser = {
       sessionId: 'sess-abc',
-      userId: 'user-abc',
-      userType: 'teacher',
+      accountId: 'acct-tea',
+      teacherId: 'teacher-1',
+      studentId: null,
     };
     mockedGetSessionToken.mockReturnValue('valid-token');
     mockedValidateSession.mockResolvedValue(sessionUser);
@@ -203,8 +205,9 @@ describe('requireTeacher', () => {
   it('returns 403 when user is not a teacher', async () => {
     const studentUser: SessionUser = {
       sessionId: 'sess-stu',
-      userId: 'user-stu',
-      userType: 'student',
+      accountId: 'acct-stu',
+      teacherId: null,
+      studentId: 'student-1',
     };
     mockedGetSessionToken.mockReturnValue('valid-token');
     mockedValidateSession.mockResolvedValue(studentUser);
@@ -223,8 +226,9 @@ describe('requireTeacher', () => {
   it('returns SessionUser when user is a teacher', async () => {
     const teacherUser: SessionUser = {
       sessionId: 'sess-tea',
-      userId: 'user-tea',
-      userType: 'teacher',
+      accountId: 'acct-tea',
+      teacherId: 'teacher-1',
+      studentId: null,
     };
     mockedGetSessionToken.mockReturnValue('valid-token');
     mockedValidateSession.mockResolvedValue(teacherUser);
@@ -245,8 +249,9 @@ describe('requireStudent', () => {
   it('returns 403 when user is not a student', async () => {
     const teacherUser: SessionUser = {
       sessionId: 'sess-tea',
-      userId: 'user-tea',
-      userType: 'teacher',
+      accountId: 'acct-tea',
+      teacherId: 'teacher-1',
+      studentId: null,
     };
     mockedGetSessionToken.mockReturnValue('valid-token');
     mockedValidateSession.mockResolvedValue(teacherUser);
@@ -265,8 +270,9 @@ describe('requireStudent', () => {
   it('returns SessionUser when user is a student', async () => {
     const studentUser: SessionUser = {
       sessionId: 'sess-stu',
-      userId: 'user-stu',
-      userType: 'student',
+      accountId: 'acct-stu',
+      teacherId: null,
+      studentId: 'student-1',
     };
     mockedGetSessionToken.mockReturnValue('valid-token');
     mockedValidateSession.mockResolvedValue(studentUser);

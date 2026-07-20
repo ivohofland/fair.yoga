@@ -15,8 +15,14 @@ import {
 const db = new PrismaClient();
 const uniqueSuffix = Date.now();
 
-let testTeacherId: string;
-let testStudentId: string;
+// Three account shapes: teacher-only, student-only, dual (both profiles).
+let teacherAccountId: string;
+let studentAccountId: string;
+let dualAccountId: string;
+let teacherId: string;
+let studentId: string;
+let dualTeacherId: string;
+let dualStudentId: string;
 
 function hashToken(token: string): string {
   const bytes = sha256(new TextEncoder().encode(token));
@@ -26,39 +32,76 @@ function hashToken(token: string): string {
 beforeAll(async () => {
   await db.$connect();
 
+  const teacherAccount = await db.account.create({
+    data: { email: `session-teacher-${uniqueSuffix}@test.local` },
+  });
+  teacherAccountId = teacherAccount.id;
   const teacher = await db.teacher.create({
     data: {
+      accountId: teacherAccountId,
       firstName: 'Session',
       lastName: 'Teacher',
-      email: `session-teacher-${uniqueSuffix}@test.local`,
+      email: teacherAccount.email,
       bio: 'Teacher for session tests',
       pageSlug: `session-teacher-${uniqueSuffix}`,
     },
   });
-  testTeacherId = teacher.id;
+  teacherId = teacher.id;
 
+  const studentAccount = await db.account.create({
+    data: { email: `session-student-${uniqueSuffix}@test.local` },
+  });
+  studentAccountId = studentAccount.id;
   const student = await db.student.create({
     data: {
+      accountId: studentAccountId,
       firstName: 'Session',
       lastName: 'Student',
-      email: `session-student-${uniqueSuffix}@test.local`,
+      email: studentAccount.email,
+      claimedAt: new Date(),
     },
   });
-  testStudentId = student.id;
+  studentId = student.id;
+
+  const dualAccount = await db.account.create({
+    data: { email: `session-dual-${uniqueSuffix}@test.local` },
+  });
+  dualAccountId = dualAccount.id;
+  const dualTeacher = await db.teacher.create({
+    data: {
+      accountId: dualAccountId,
+      firstName: 'Dual',
+      lastName: 'Hat',
+      email: dualAccount.email,
+      bio: 'Dual-role account for session tests',
+      pageSlug: `session-dual-${uniqueSuffix}`,
+    },
+  });
+  dualTeacherId = dualTeacher.id;
+  const dualStudent = await db.student.create({
+    data: {
+      accountId: dualAccountId,
+      firstName: 'Dual',
+      lastName: 'Hat',
+      email: `session-dual-student-${uniqueSuffix}@test.local`,
+      claimedAt: new Date(),
+    },
+  });
+  dualStudentId = dualStudent.id;
 });
 
 afterAll(async () => {
-  await db.session.deleteMany({
-    where: { userId: { in: [testTeacherId, testStudentId] } },
-  });
-  await db.student.delete({ where: { id: testStudentId } });
-  await db.teacher.delete({ where: { id: testTeacherId } });
+  const accountIds = [teacherAccountId, studentAccountId, dualAccountId];
+  await db.session.deleteMany({ where: { accountId: { in: accountIds } } });
+  await db.student.deleteMany({ where: { id: { in: [studentId, dualStudentId] } } });
+  await db.teacher.deleteMany({ where: { id: { in: [teacherId, dualTeacherId] } } });
+  await db.account.deleteMany({ where: { id: { in: accountIds } } });
   await db.$disconnect();
 });
 
 afterEach(async () => {
   await db.session.deleteMany({
-    where: { userId: { in: [testTeacherId, testStudentId] } },
+    where: { accountId: { in: [teacherAccountId, studentAccountId, dualAccountId] } },
   });
 });
 
@@ -69,155 +112,143 @@ describe('SESSION_COOKIE_NAME', () => {
 });
 
 describe('createSession', () => {
-  it('creates a session in DB and returns a 64-char hex token', async () => {
-    const token = await createSession(db, testTeacherId, 'teacher');
+  it('creates a session for an account and returns a 64-char hex token', async () => {
+    const token = await createSession(db, teacherAccountId);
 
-    // Token should be 64 hex characters (32 bytes)
     expect(token).toMatch(/^[0-9a-f]{64}$/);
 
-    // Session should exist in DB under the hashed token
-    const sessionHash = hashToken(token);
-    const session = await db.session.findUnique({ where: { id: sessionHash } });
+    const session = await db.session.findUnique({ where: { id: hashToken(token) } });
     expect(session).not.toBeNull();
-    expect(session!.userId).toBe(testTeacherId);
-    expect(session!.userType).toBe('teacher');
+    expect(session!.accountId).toBe(teacherAccountId);
     expect(session!.expiresAt.getTime()).toBeGreaterThan(Date.now());
   });
 
   it('stores a hash as the session ID, not the raw token', async () => {
-    const token = await createSession(db, testTeacherId, 'teacher');
+    const token = await createSession(db, teacherAccountId);
 
-    // The raw token should NOT be found as a session ID
-    const byRawToken = await db.session.findUnique({ where: { id: token } });
-    expect(byRawToken).toBeNull();
-
-    // The hashed token SHOULD be found
-    const sessionHash = hashToken(token);
-    const byHash = await db.session.findUnique({ where: { id: sessionHash } });
-    expect(byHash).not.toBeNull();
+    expect(await db.session.findUnique({ where: { id: token } })).toBeNull();
+    expect(await db.session.findUnique({ where: { id: hashToken(token) } })).not.toBeNull();
   });
 });
 
 describe('validateSession', () => {
-  it('returns SessionUser for a valid session', async () => {
-    const token = await createSession(db, testStudentId, 'student');
+  it('resolves a teacher-only account: teacherId set, studentId null', async () => {
+    const token = await createSession(db, teacherAccountId);
 
     const result = await validateSession(db, token);
 
     expect(result).not.toBeNull();
     expect(result!.sessionId).toBe(hashToken(token));
-    expect(result!.userId).toBe(testStudentId);
-    expect(result!.userType).toBe('student');
+    expect(result!.accountId).toBe(teacherAccountId);
+    expect(result!.teacherId).toBe(teacherId);
+    expect(result!.studentId).toBeNull();
+  });
+
+  it('resolves a student-only account: studentId set, teacherId null', async () => {
+    const token = await createSession(db, studentAccountId);
+
+    const result = await validateSession(db, token);
+
+    expect(result!.teacherId).toBeNull();
+    expect(result!.studentId).toBe(studentId);
+  });
+
+  it('resolves a dual account: both profile ids set', async () => {
+    const token = await createSession(db, dualAccountId);
+
+    const result = await validateSession(db, token);
+
+    expect(result!.teacherId).toBe(dualTeacherId);
+    expect(result!.studentId).toBe(dualStudentId);
+  });
+
+  it('invalidates a session whose account has no profiles left', async () => {
+    const bare = await db.account.create({
+      data: { email: `session-bare-${uniqueSuffix}@test.local` },
+    });
+    const token = await createSession(db, bare.id);
+
+    const result = await validateSession(db, token);
+
+    expect(result).toBeNull();
+    expect(await db.session.findUnique({ where: { id: hashToken(token) } })).toBeNull();
+    await db.account.delete({ where: { id: bare.id } });
   });
 
   it('returns null for an expired session and deletes it', async () => {
-    const token = await createSession(db, testTeacherId, 'teacher');
+    const token = await createSession(db, teacherAccountId);
     const sessionHash = hashToken(token);
 
-    // Manually expire the session
     await db.session.update({
       where: { id: sessionHash },
       data: { expiresAt: new Date(Date.now() - 1000) },
     });
 
-    const result = await validateSession(db, token);
-    expect(result).toBeNull();
-
-    // Expired session should have been cleaned up
-    const deleted = await db.session.findUnique({ where: { id: sessionHash } });
-    expect(deleted).toBeNull();
+    expect(await validateSession(db, token)).toBeNull();
+    expect(await db.session.findUnique({ where: { id: sessionHash } })).toBeNull();
   });
 
   it('returns null for a non-existent token', async () => {
-    const result = await validateSession(db, 'nonexistent-token-value');
-    expect(result).toBeNull();
+    expect(await validateSession(db, 'nonexistent-token-value')).toBeNull();
   });
 
   it('extends session expiry when session is more than 15 days old', async () => {
-    const token = await createSession(db, testTeacherId, 'teacher');
+    const token = await createSession(db, teacherAccountId);
     const sessionHash = hashToken(token);
 
-    // Set createdAt to 16 days ago
     const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
-    const originalExpiry = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000); // 14 days from now
+    const originalExpiry = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
     await db.session.update({
       where: { id: sessionHash },
       data: { createdAt: sixteenDaysAgo, expiresAt: originalExpiry },
     });
 
     const beforeValidate = Date.now();
-    const result = await validateSession(db, token);
-    expect(result).not.toBeNull();
+    expect(await validateSession(db, token)).not.toBeNull();
 
-    // Check that expiresAt was extended
     const session = await db.session.findUnique({ where: { id: sessionHash } });
-    expect(session).not.toBeNull();
-    // New expiry should be ~30 days from now, not the original 14
     const thirtyDaysFromNow = beforeValidate + 30 * 24 * 60 * 60 * 1000;
-    expect(session!.expiresAt.getTime()).toBeGreaterThan(
-      thirtyDaysFromNow - 5000
-    );
+    expect(session!.expiresAt.getTime()).toBeGreaterThan(thirtyDaysFromNow - 5000);
   });
 
   it('does NOT extend session expiry when session is less than 15 days old', async () => {
-    const token = await createSession(db, testStudentId, 'student');
+    const token = await createSession(db, studentAccountId);
     const sessionHash = hashToken(token);
 
-    // Session was just created (less than 15 days old)
-    const session = await db.session.findUnique({ where: { id: sessionHash } });
-    const originalExpiry = session!.expiresAt.getTime();
-
+    const original = (await db.session.findUnique({ where: { id: sessionHash } }))!.expiresAt;
     await validateSession(db, token);
-
-    const sessionAfter = await db.session.findUnique({ where: { id: sessionHash } });
-    // Expiry should be unchanged
-    expect(sessionAfter!.expiresAt.getTime()).toBe(originalExpiry);
+    const after = (await db.session.findUnique({ where: { id: sessionHash } }))!.expiresAt;
+    expect(after.getTime()).toBe(original.getTime());
   });
 });
 
 describe('invalidateSession', () => {
   it('deletes the session so subsequent validate returns null', async () => {
-    const token = await createSession(db, testTeacherId, 'teacher');
+    const token = await createSession(db, teacherAccountId);
 
-    // Validate first to confirm it exists
-    const before = await validateSession(db, token);
-    expect(before).not.toBeNull();
-
+    expect(await validateSession(db, token)).not.toBeNull();
     await invalidateSession(db, token);
-
-    const after = await validateSession(db, token);
-    expect(after).toBeNull();
+    expect(await validateSession(db, token)).toBeNull();
   });
 });
 
 describe('getSessionToken', () => {
   it('parses the session cookie from the Cookie header', () => {
     const request = new Request('http://localhost', {
-      headers: {
-        Cookie: 'fair_yoga_session=abc123; other=xyz',
-      },
+      headers: { Cookie: 'fair_yoga_session=abc123; other=xyz' },
     });
-
-    const token = getSessionToken(request);
-    expect(token).toBe('abc123');
+    expect(getSessionToken(request)).toBe('abc123');
   });
 
   it('returns null when the session cookie is not present', () => {
     const request = new Request('http://localhost', {
-      headers: {
-        Cookie: 'other=xyz',
-      },
+      headers: { Cookie: 'other=xyz' },
     });
-
-    const token = getSessionToken(request);
-    expect(token).toBeNull();
+    expect(getSessionToken(request)).toBeNull();
   });
 
   it('returns null when there is no Cookie header', () => {
-    const request = new Request('http://localhost');
-
-    const token = getSessionToken(request);
-    expect(token).toBeNull();
+    expect(getSessionToken(new Request('http://localhost'))).toBeNull();
   });
 });
 
@@ -227,7 +258,6 @@ describe('setSessionCookie', () => {
     setSessionCookie(headers, 'my-token-value');
 
     const cookie = headers.get('Set-Cookie');
-    expect(cookie).not.toBeNull();
     expect(cookie).toContain('fair_yoga_session=my-token-value');
     expect(cookie).toContain('HttpOnly');
     expect(cookie).toContain('SameSite=Lax');
@@ -242,7 +272,6 @@ describe('clearSessionCookie', () => {
     clearSessionCookie(headers);
 
     const cookie = headers.get('Set-Cookie');
-    expect(cookie).not.toBeNull();
     expect(cookie).toContain('fair_yoga_session=');
     expect(cookie).toContain('Max-Age=0');
   });
