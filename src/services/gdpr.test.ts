@@ -238,3 +238,79 @@ let studentAccountId: string;
     await prisma.student.delete({ where: { id: other.id } });
   });
 });
+
+describe('GDPR on dual-role accounts', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-dual-${Date.now()}`;
+  let accountId: string;
+  let teacherId: string;
+  let studentId: string;
+  let soloAccountId: string;
+  let soloStudentId: string;
+  let sessionId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Dual',
+        lastName: 'Gdpr',
+        email: `${suffix}@test.local`,
+        bio: 'Dual erasure fixtures',
+        pageSlug: suffix,
+        account: { create: { email: `${suffix}@test.local` } },
+      },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Dual',
+        lastName: 'Gdpr',
+        email: `${suffix}-s@test.local`,
+        claimedAt: new Date(),
+        account: { connect: { id: accountId } },
+      },
+    });
+    studentId = student.id;
+    sessionId = crypto.randomBytes(32).toString('hex');
+    await prisma.session.create({
+      data: { id: sessionId, accountId, expiresAt: new Date(Date.now() + 86400000) },
+    });
+
+    const solo = await prisma.student.create({
+      data: {
+        firstName: 'Solo',
+        lastName: 'Gdpr',
+        email: `${suffix}-solo@test.local`,
+        claimedAt: new Date(),
+        account: { create: { email: `${suffix}-solo@test.local` } },
+      },
+    });
+    soloStudentId = solo.id;
+    soloAccountId = solo.accountId!;
+  });
+
+  afterAll(async () => {
+    await prisma.session.deleteMany({ where: { accountId: { in: [accountId, soloAccountId] } } });
+    await prisma.student.deleteMany({ where: { id: { in: [studentId, soloStudentId] } } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: { in: [accountId, soloAccountId] } } });
+    await prisma.$disconnect();
+  });
+
+  it('erasing the student half of a dual account keeps sessions and the account email', async () => {
+    await deleteStudentAccount(prisma, studentId);
+
+    // The living teacher profile still uses this account.
+    expect(await prisma.session.count({ where: { accountId } })).toBe(1);
+    const account = await prisma.account.findUniqueOrThrow({ where: { id: accountId } });
+    expect(account.email).toBe(`${suffix}@test.local`);
+  });
+
+  it('erasing the last profile scrubs the account email too', async () => {
+    await deleteStudentAccount(prisma, soloStudentId);
+
+    const account = await prisma.account.findUniqueOrThrow({ where: { id: soloAccountId } });
+    expect(account.email).toBe(`deleted-${soloAccountId}@deleted.invalid`);
+  });
+});

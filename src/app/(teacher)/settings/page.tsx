@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { PageHeader } from '@/components/layout/page-header';
 import { Icon } from '@/components/ui/icon';
 import { SignOutButton } from '@/components/account/sign-out-button';
+import { getSession } from '@/lib/session';
 
 const SETTINGS_ITEMS = [
   { href: '/settings/payments', label: 'Payments' },
@@ -13,7 +14,8 @@ const SETTINGS_ITEMS = [
 ];
 
 // The Settings tab index: set-up-once infrastructure, one row per area.
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  const session = await getSession();
   return (
     <div>
       <PageHeader title="Settings" backHref={null} variant="display" />
@@ -28,6 +30,15 @@ export default function SettingsPage() {
             <Icon name="chevron-right" size={20} className="text-brown-light" />
           </Link>
         ))}
+        {session?.studentId && (
+          <Link
+            href="/bookings"
+            className="flex items-center gap-3 min-h-14 py-2 border-b border-border last:border-b-0 no-underline"
+          >
+            <span className="flex-1 text-base text-ink">Your bookings as a student</span>
+            <Icon name="chevron-right" size={20} className="text-brown-light" />
+          </Link>
+        )}
       </div>
       <div className="mt-8">
         <SignOutButton />

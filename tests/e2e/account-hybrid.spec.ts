@@ -153,5 +153,11 @@ test.describe('Account hybrid: teacher joins a class', () => {
     });
     expect(registration).not.toBeNull();
     expect(registration!.tierAtBooking).toBe(2);
+
+    // The two sides now link to each other.
+    await page.goto('/settings');
+    await expect(page.getByText('Your bookings as a student')).toBeVisible();
+    await page.goto('/account');
+    await expect(page.getByText('Your teaching side')).toBeVisible();
   });
 });
