@@ -54,12 +54,23 @@ function dynamicText(page: Page) {
 // The seeded class sits on "Tuesday of next week", so rendered dates drift
 // as real time advances — and even masked date labels drift, because a
 // mask's box follows the text's pixel width. Freeze every rendered date to
-// one synthetic constant before screenshotting. Covers both app formats:
-// "Tuesday, Jul 21" and "Tuesday, July 21, 2026".
+// one synthetic constant before screenshotting. Covers the three formats
+// the screenshotted screens render: "Tuesday, Jul 21" (formatDayHeader),
+// "Tuesday, July 21, 2026" (formatClassDate), and "Monday, 20 July" (the
+// schedule's today header). The schedule's "Week of …" week heading is
+// avoided by the seed date instead — see beforeAll.
 const DATE_PATTERN =
-  /(?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday), (?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}(?:, \d{4})?/;
+  /(?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday), (?:(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}(?:, \d{4})?|\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December))/;
 
-// Rewrites all date text; resolves true when it found something to rewrite.
+// Looser than DATE_PATTERN on purpose: any weekday/month token that
+// survives freezing — a format DATE_PATTERN doesn't know, a "Week of …"
+// header, a late revert — should fail the run, not drift the baseline.
+// ("May" is omitted: it's an ordinary English word.)
+const DATE_SMELL =
+  /\b(?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|January|February|March|April|June|July|August|September|October|November|December)\b|\b(?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d/;
+
+// Runs in the browser via page.evaluate (hence the pattern arriving as a
+// source string); returns true if it rewrote anything.
 function rewriteDates(source: string): boolean {
   const pattern = new RegExp(source, 'g');
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -85,9 +96,9 @@ async function freezeDates(page: Page): Promise<void> {
     stable = rewrote ? 0 : stable + 1;
     await page.waitForTimeout(150);
   }
-  // A date that escapes the freeze (e.g. a new format) would silently
-  // drift the baseline weeks from now — fail loudly today instead.
-  expect(await page.locator('body').innerText()).not.toMatch(DATE_PATTERN);
+  // Any date-shaped text that escapes the freeze would silently drift the
+  // baseline weeks from now — fail loudly today instead.
+  expect(await page.locator('body').innerText()).not.toMatch(DATE_SMELL);
 }
 
 /**
@@ -236,8 +247,10 @@ test.describe('Visual regression', () => {
 
   test('inbox with unread', async ({ page, context }) => {
     await signIn(context);
+    const hydrated = hydrationSignal(page);
     await page.goto('/inbox');
     await expect(page.getByText('New booking')).toBeVisible();
+    await hydrated;
     await freezeDates(page);
     await expect(page).toHaveScreenshot('inbox.png', {
       fullPage: true,
@@ -248,8 +261,10 @@ test.describe('Visual regression', () => {
 
   test('settings index', async ({ page, context }) => {
     await signIn(context);
+    const hydrated = hydrationSignal(page);
     await page.goto('/settings');
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+    await hydrated;
     await freezeDates(page);
     await expect(page).toHaveScreenshot('settings.png', { fullPage: true, stylePath: hideDevOverlay });
   });

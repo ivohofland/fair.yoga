@@ -1,4 +1,5 @@
-/* Applied only while capturing baselines: the Next.js dev-tools overlay
+/* Applied during visual screenshots only (stylePath), captures and
+   comparisons alike — never shipped: the Next.js dev-tools overlay
    (N badge / issue counter) is nondeterministic pixels, not our UI. */
 nextjs-portal {
   display: none !important;
