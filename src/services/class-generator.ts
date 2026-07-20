@@ -7,6 +7,7 @@
 
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
+import { classStartInstant } from '@/lib/timezone';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -82,13 +83,22 @@ export async function generateClassInstances(
   // 1. Find active templates — all of them (cron) or one teacher's
   const templates = await db.classTemplate.findMany({
     where: { isActive: true, ...(teacherId ? { teacherId } : {}) },
+    include: { teacher: { select: { defaultTimezone: true } } },
   });
 
   let totalCreated = 0;
 
   for (const template of templates) {
-    // 2. Get the next 4 occurrences for this template's day
-    const dates = getNextOccurrences(template.dayOfWeek, startDate, DEFAULT_WEEKS);
+    // 2. The next 4 occurrences whose start is still ahead of `startDate`.
+    // A run after today's start time must not create a class that already
+    // happened; the window slides one week further instead.
+    const dates = getNextOccurrences(template.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
+      .filter(
+        (date) =>
+          classStartInstant(date, template.startTime, template.teacher.defaultTimezone) >
+          startDate,
+      )
+      .slice(0, DEFAULT_WEEKS);
 
     for (const date of dates) {
       // 3. Check if a class already exists for this template + date

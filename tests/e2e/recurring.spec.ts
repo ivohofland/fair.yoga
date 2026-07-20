@@ -31,6 +31,18 @@ function cronSecret(): string {
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 const teacherToken = crypto.randomBytes(32).toString('hex');
 
+// Three days from now, so the template's weekday never lands on the run
+// day itself. On the run day the counts turn time-of-day-dependent: the
+// generator skips today's occurrence once its start time has passed, and
+// template sync never touches today's instance at all — a fixed weekday
+// made this suite fail every time CI ran on that weekday.
+const templateDate = new Date();
+templateDate.setUTCDate(templateDate.getUTCDate() + 3);
+const templateJsDay = templateDate.getUTCDay();
+const templateDayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][
+  templateJsDay
+]!;
+
 let teacherId: string;
 let roomId: string;
 let templateId: string;
@@ -98,7 +110,7 @@ test.describe('Recurring classes', () => {
 
     await page.getByLabel('Class type').fill('Recurring Flow');
     await page.getByLabel('Room', { exact: true }).selectOption({ index: 1 });
-    await page.getByLabel('Day').selectOption('Monday');
+    await page.getByLabel('Day').selectOption(templateDayName);
     await page.getByLabel('Start time').fill('08:15');
     await page.getByLabel('Min students').fill('1');
     await page.getByLabel('Max students').fill('8');
@@ -106,7 +118,7 @@ test.describe('Recurring classes', () => {
 
     await page.waitForURL('**/settings/recurring', { timeout: 10_000 });
     await expect(page.getByText('Recurring Flow')).toBeVisible();
-    await expect(page.getByText('Monday 08:15')).toBeVisible();
+    await expect(page.getByText(`${templateDayName} 08:15`)).toBeVisible();
 
     const template = await prisma.classTemplate.findFirstOrThrow({
       where: { teacherId, classType: 'Recurring Flow' },
@@ -133,7 +145,7 @@ test.describe('Recurring classes', () => {
     for (const instance of instances) {
       expect(instance.status).toBe('open');
       expect(instance.startTime).toBe('08:15');
-      expect(instance.date.getUTCDay()).toBe(1); // Monday
+      expect(instance.date.getUTCDay()).toBe(templateJsDay);
       expect(instance.date.getTime()).toBeGreaterThan(Date.now() - 24 * 3600 * 1000);
     }
 
