@@ -23,7 +23,6 @@ const hostSlug = `e2e-hybrid-host-${uniqueSuffix}`;
 const guestToken = crypto.randomBytes(32).toString('hex');
 
 let hostTeacherId: string;
-let guestTeacherId: string;
 let guestAccountId: string;
 let roomId: string;
 let classId: string;
@@ -95,7 +94,6 @@ test.describe('Account hybrid: teacher joins a class', () => {
         account: { create: { email: `e2e-hybrid-guest-${uniqueSuffix}@test.local` } },
       },
     });
-    guestTeacherId = guest.id;
     guestAccountId = guest.accountId;
     await prisma.session.create({
       data: {
