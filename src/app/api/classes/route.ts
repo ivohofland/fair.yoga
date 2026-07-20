@@ -18,7 +18,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const from = url.searchParams.get('from');
   const to = url.searchParams.get('to');
 
-  const where: Record<string, unknown> = { teacherId: session.userId };
+  const where: Record<string, unknown> = { teacherId: session.teacherId };
   if (from || to) {
     const dateFilter: Record<string, Date> = {};
     if (from) {
@@ -55,13 +55,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // Verify teacherRoomId belongs to this teacher
   const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id: body.teacherRoomId } });
-  if (!teacherRoom || teacherRoom.teacherId !== session.userId) {
+  if (!teacherRoom || teacherRoom.teacherId !== session.teacherId) {
     return respondError('Invalid teacher room', 400);
   }
 
   const cls = await prisma.class.create({
     data: {
-      teacherId: session.userId,
+      teacherId: session.teacherId,
       teacherRoomId: body.teacherRoomId,
       classType: body.classType,
       description: body.description ?? null,

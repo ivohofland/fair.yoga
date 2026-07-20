@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
+import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
 
 /**
  * Accessibility sweep: axe-core over the key screens, failing on any
@@ -57,6 +58,7 @@ test.describe('Accessibility sweep', () => {
         firstName: 'Axe',
         lastName: 'Teacher',
         email: `e2e-a11y-teacher-${uniqueSuffix}@test.local`,
+        account: { create: { email: `e2e-a11y-teacher-${uniqueSuffix}@test.local` } },
         bio: 'Accessibility sweep fixtures',
         pageSlug: slug,
       },
@@ -65,8 +67,7 @@ test.describe('Accessibility sweep', () => {
     await prisma.session.create({
       data: {
         id: hashToken(teacherToken),
-        userId: teacherId,
-        userType: 'teacher',
+        accountId: await accountIdOfTeacher(prisma, teacherId),
         expiresAt: new Date(Date.now() + 86400000),
       },
     });
@@ -111,6 +112,7 @@ test.describe('Accessibility sweep', () => {
         firstName: 'Axe',
         lastName: 'Student',
         email: `e2e-a11y-student-${uniqueSuffix}@test.local`,
+        account: { create: { email: `e2e-a11y-student-${uniqueSuffix}@test.local` } },
         incomeTier: 3,
         claimedAt: new Date(),
       },
@@ -119,8 +121,7 @@ test.describe('Accessibility sweep', () => {
     await prisma.session.create({
       data: {
         id: hashToken(studentToken),
-        userId: studentId,
-        userType: 'student',
+        accountId: await accountIdOfStudent(prisma, studentId),
         expiresAt: new Date(Date.now() + 86400000),
       },
     });
@@ -147,7 +148,12 @@ test.describe('Accessibility sweep', () => {
     await prisma.class.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
-    await prisma.session.deleteMany({ where: { userId: { in: [teacherId, studentId] } } });
+    await prisma.session.deleteMany({
+      where: { accountId: await accountIdOfTeacher(prisma, teacherId) },
+    });
+    await prisma.session.deleteMany({
+      where: { accountId: await accountIdOfStudent(prisma, studentId) },
+    });
     await prisma.student.delete({ where: { id: studentId } });
     await prisma.teacher.delete({ where: { id: teacherId } });
     await prisma.$disconnect();

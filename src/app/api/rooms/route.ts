@@ -38,7 +38,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   // Default: all public rooms + teacher's private rooms
   const rooms = await prisma.room.findMany({
     where: {
-      OR: [{ isPublic: true }, { createdById: session.userId }],
+      OR: [{ isPublic: true }, { createdById: session.teacherId }],
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -83,7 +83,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       equipment: body.equipment,
       notes: body.notes,
       isPublic,
-      createdById: session.userId,
+      createdById: session.teacherId,
     },
   });
 

@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
+import { accountIdOfStudent } from './account-helpers';
 
 /**
  * The passkey journey, on a real (virtual) authenticator: a student adds
@@ -42,6 +43,7 @@ test.describe('Passkey sign-in', () => {
         firstName: 'Passkey',
         lastName: 'Teacher',
         email: `e2e-passkey-teacher-${uniqueSuffix}@test.local`,
+        account: { create: { email: `e2e-passkey-teacher-${uniqueSuffix}@test.local` } },
         bio: 'Passkey e2e fixtures',
         pageSlug: slug,
       },
@@ -90,6 +92,7 @@ test.describe('Passkey sign-in', () => {
         firstName: 'Pass',
         lastName: 'Key',
         email: `e2e-passkey-student-${uniqueSuffix}@test.local`,
+        account: { create: { email: `e2e-passkey-student-${uniqueSuffix}@test.local` } },
         incomeTier: 3,
       },
     });
@@ -97,8 +100,7 @@ test.describe('Passkey sign-in', () => {
     await prisma.session.create({
       data: {
         id: hashToken(studentToken),
-        userId: studentId,
-        userType: 'student',
+        accountId: await accountIdOfStudent(prisma, studentId),
         expiresAt: new Date(Date.now() + 86400000),
       },
     });
@@ -108,8 +110,8 @@ test.describe('Passkey sign-in', () => {
     // Guarded per id: after a partial beforeAll an unset id must skip its
     // deletes — an `undefined` in a deleteMany filter matches everything.
     if (studentId) {
-      await prisma.passkeyCredential.deleteMany({ where: { userId: studentId } });
-      await prisma.session.deleteMany({ where: { userId: studentId } });
+      await prisma.passkeyCredential.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, studentId) } });
+      await prisma.session.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, studentId) } });
     }
     if (teacherId) {
       await prisma.class.deleteMany({ where: { teacherId } });
@@ -148,7 +150,11 @@ test.describe('Passkey sign-in', () => {
     await page.goto('/account');
     await page.getByRole('button', { name: 'Add a passkey' }).click();
     await expect(page.getByText(/Passkey added/)).toBeVisible();
-    expect(await prisma.passkeyCredential.count({ where: { userId: studentId } })).toBe(1);
+    expect(
+      await prisma.passkeyCredential.count({
+        where: { accountId: await accountIdOfStudent(prisma, studentId) },
+      }),
+    ).toBe(1);
 
     // Signed out again, they open the booking page for a class.
     await context.clearCookies();

@@ -8,7 +8,7 @@ export default async function RecurringClassesPage() {
   const session = await requireTeacherSession();
 
   const templates = await prisma.classTemplate.findMany({
-    where: { teacherId: session.userId, isArchived: false },
+    where: { teacherId: session.teacherId, isArchived: false },
     include: { teacherRoom: { include: { room: true } } },
     orderBy: { createdAt: 'desc' },
   });

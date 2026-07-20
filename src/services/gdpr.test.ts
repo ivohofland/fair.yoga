@@ -15,6 +15,7 @@ describe('GDPR (DB)', () => {
   let roomId: string;
   let teacherRoomId: string;
   let studentId: string;
+let studentAccountId: string;
   let completedClassId: string;
   let openClassId: string;
 
@@ -24,6 +25,7 @@ describe('GDPR (DB)', () => {
         firstName: 'Gdpr',
         lastName: 'Teacher',
         email: `gdpr-teacher-${uniqueSuffix}@test.local`,
+        account: { create: { email: `gdpr-teacher-${uniqueSuffix}@test.local` } },
         bio: 'GDPR tests',
         pageSlug: `gdpr-teacher-${uniqueSuffix}`,
         bankIban: 'NL00TEST0123456789',
@@ -57,9 +59,11 @@ describe('GDPR (DB)', () => {
         incomeTier: 2,
         phone: '+31600000000',
         claimedAt: new Date(),
+        account: { create: { email: `gdpr-student-${uniqueSuffix}@test.local` } },
       },
     });
     studentId = student.id;
+    studentAccountId = student.accountId!;
 
     await prisma.teacherStudent.create({ data: { teacherId, studentId } });
     await prisma.studentPrivacy.create({
@@ -122,8 +126,7 @@ describe('GDPR (DB)', () => {
     await prisma.session.create({
       data: {
         id: crypto.randomBytes(32).toString('hex'),
-        userId: studentId,
-        userType: 'student',
+        accountId: studentAccountId,
         expiresAt: new Date(Date.now() + 86400000),
       },
     });
@@ -169,7 +172,7 @@ describe('GDPR (DB)', () => {
       await prisma.notification.count({ where: { recipientType: 'student', recipientId: studentId } }),
     ).toBe(0);
     expect(
-      await prisma.session.count({ where: { userId: studentId, userType: 'student' } }),
+      await prisma.session.count({ where: { accountId: studentAccountId } }),
     ).toBe(0);
 
     // Upcoming booking cancelled; charged history intact

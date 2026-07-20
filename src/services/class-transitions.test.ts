@@ -27,6 +27,7 @@ describe('class transitions (DB, timezone-aware)', () => {
         firstName: 'Tz',
         lastName: 'Teacher',
         email: `tz-teacher-${uniqueSuffix}@test.local`,
+        account: { create: { email: `tz-teacher-${uniqueSuffix}@test.local` } },
         bio: 'Timezone transition tests',
         pageSlug: `tz-teacher-${uniqueSuffix}`,
         defaultTimezone: 'Europe/Amsterdam',

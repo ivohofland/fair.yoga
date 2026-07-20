@@ -13,28 +13,33 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
-  // Look up user to get name and email
-  const user =
-    session.userType === 'teacher'
-      ? await prisma.teacher.findUnique({ where: { id: session.userId } })
-      : await prisma.student.findUnique({ where: { id: session.userId } });
-
-  if (!user) {
-    // Session references a user that no longer exists
-    return respondError('User not found', 404);
+  // The passkey belongs to the account; name it after whichever profile
+  // exists (teacher first — the account email is the same either way).
+  const account = await prisma.account.findUnique({
+    where: { id: session.accountId },
+    select: {
+      email: true,
+      teacher: { select: { firstName: true, lastName: true } },
+      student: { select: { firstName: true, lastName: true } },
+    },
+  });
+  if (!account) {
+    return respondError('Account not found', 404);
+  }
+  const profile = account.teacher ?? account.student;
+  if (!profile) {
+    return respondError('Account has no profile', 404);
   }
 
-  // Get existing passkey credentials for this user
   const existingCreds = await prisma.passkeyCredential.findMany({
-    where: { userId: session.userId, userType: session.userType },
+    where: { accountId: session.accountId },
     select: { id: true },
   });
 
   const options = await generatePasskeyRegistrationOptions({
-    userId: session.userId,
-    userType: session.userType,
-    userName: user.email,
-    userDisplayName: `${user.firstName} ${user.lastName}`,
+    accountId: session.accountId,
+    userName: account.email,
+    userDisplayName: `${profile.firstName} ${profile.lastName}`,
     existingCredentialIds: existingCreds.map((c) => c.id),
   });
 

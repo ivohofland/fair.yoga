@@ -9,7 +9,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // Scoped to the calling teacher — the platform-wide sweep belongs to
   // the cron endpoint, not to any authenticated teacher.
-  const count = await generateClassInstances(prisma, undefined, session.userId);
+  const count = await generateClassInstances(prisma, undefined, session.teacherId);
 
   return respondOk({ created: count });
 });

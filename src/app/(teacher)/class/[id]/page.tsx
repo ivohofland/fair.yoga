@@ -39,7 +39,7 @@ export default async function ClassDetailPage({
           student: {
             include: {
               studentPrivacy: {
-                where: { teacherId: session.userId },
+                where: { teacherId: session.teacherId },
                 select: { shareFullName: true },
               },
             },
@@ -52,7 +52,7 @@ export default async function ClassDetailPage({
     },
   });
 
-  if (!cls || cls.teacherId !== session.userId) {
+  if (!cls || cls.teacherId !== session.teacherId) {
     redirect('/');
   }
 

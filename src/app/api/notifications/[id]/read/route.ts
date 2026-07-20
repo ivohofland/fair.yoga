@@ -21,11 +21,13 @@ export const POST = withErrorHandler(async (
   const notification = await prisma.notification.findUnique({ where: { id } });
   if (!notification) return respondError('Notification not found', 404);
 
-  // Verify the notification belongs to this user
-  if (
-    notification.recipientType !== session.userType ||
-    notification.recipientId !== session.userId
-  ) {
+  // Verify the notification belongs to one of this account's profiles
+  const owns =
+    (notification.recipientType === 'teacher' &&
+      notification.recipientId === session.teacherId) ||
+    (notification.recipientType === 'student' &&
+      notification.recipientId === session.studentId);
+  if (!owns) {
     return respondError('Access denied', 403);
   }
 

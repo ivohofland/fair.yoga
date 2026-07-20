@@ -3,10 +3,10 @@ import {
   verifyMagicLinkToken,
   createSession,
   setSessionCookie,
+  resolveOrClaimAccount,
 } from '@/lib/auth';
 import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
-import type { RecipientType } from '@prisma/client';
 import { magicLinkVerifySchema, isSafeRelativePath } from '@/lib/schemas';
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
@@ -21,26 +21,20 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const { email, redirectTo: tokenRedirect } = result;
 
-  // Look up user: try Teacher first, then Student
-  const teacher = await prisma.teacher.findUnique({ where: { email } });
-  const student = teacher
-    ? null
-    : await prisma.student.findUnique({ where: { email } });
-  const user = teacher ?? student;
-
-  if (!user) {
+  const resolved = await resolveOrClaimAccount(prisma, email);
+  if (!resolved) {
     return respondError('Account not found', 400);
   }
 
-  const userType: RecipientType = teacher ? 'teacher' : 'student';
-  const sessionToken = await createSession(prisma, user.id, userType);
+  const sessionToken = await createSession(prisma, resolved.accountId);
   // Prefer the destination stored with the token (booking flow), but only
-  // relative paths — everything else falls back to the role default.
-  const fallback = userType === 'teacher' ? '/' : '/bookings';
+  // relative paths — everything else falls back to the role default;
+  // dual-role accounts default to the teacher home.
+  const fallback = resolved.teacherId ? '/' : '/bookings';
   const redirectTo =
     tokenRedirect && isSafeRelativePath(tokenRedirect) ? tokenRedirect : fallback;
 
-  const response = respondOk({ userType, userId: user.id, redirectTo });
+  const response = respondOk({ accountId: resolved.accountId, redirectTo });
   setSessionCookie(response.headers, sessionToken);
 
   return response;

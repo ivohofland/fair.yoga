@@ -32,7 +32,7 @@ export const GET = withErrorHandler(async (
   if (!payment) return respondError('Payment not found', 404);
 
   // Verify teacher owns the class via registration chain
-  if (payment.registration.class.teacherId !== session.userId) {
+  if (payment.registration.class.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
   }
 

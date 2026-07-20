@@ -24,6 +24,7 @@ beforeAll(async () => {
       firstName: 'CRM',
       lastName: 'Teacher',
       email: `crm-teacher-${uniqueSuffix}@test.local`,
+      account: { create: { email: `crm-teacher-${uniqueSuffix}@test.local` } },
       bio: 'Teacher for CRM tests',
       pageSlug: `crm-teacher-${uniqueSuffix}`,
     },
@@ -56,11 +57,14 @@ beforeAll(async () => {
   studentIds.push(unlinked.id);
 
   // Create a session for the teacher
+  const teacherAccount = await prisma.teacher.findUniqueOrThrow({
+    where: { id: teacherId },
+    select: { accountId: true },
+  });
   await prisma.session.create({
     data: {
       id: hashToken(rawSessionToken),
-      userId: teacherId,
-      userType: 'teacher',
+      accountId: teacherAccount.accountId,
       expiresAt: new Date(Date.now() + 86400000),
     },
   });
@@ -189,6 +193,7 @@ describe('POST /api/students', () => {
         firstName: 'Second',
         lastName: 'Teacher',
         email: `crm-teacher2-${uniqueSuffix}@test.local`,
+        account: { create: { email: `crm-teacher2-${uniqueSuffix}@test.local` } },
         bio: 'Second teacher',
         pageSlug: `crm-teacher2-${uniqueSuffix}`,
       },
@@ -197,8 +202,7 @@ describe('POST /api/students', () => {
     await prisma.session.create({
       data: {
         id: hashToken(rawToken2),
-        userId: teacher2.id,
-        userType: 'teacher',
+        accountId: teacher2.accountId,
         expiresAt: new Date(Date.now() + 86400000),
       },
     });

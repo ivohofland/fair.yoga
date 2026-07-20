@@ -184,7 +184,7 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
 export async function deleteStudentAccount(db: PrismaClient, studentId: string): Promise<void> {
   const student = await db.student.findUniqueOrThrow({
     where: { id: studentId },
-    select: { email: true, firstName: true },
+    select: { email: true, firstName: true, accountId: true },
   });
 
   const freedClassIds = await db.$transaction(async (tx) => {
@@ -222,7 +222,18 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     await tx.teacherStudent.deleteMany({ where: { studentId } });
     await tx.waitlistEntry.deleteMany({ where: { studentId } });
     await tx.notification.deleteMany({ where: { recipientType: 'student', recipientId: studentId } });
-    await tx.session.deleteMany({ where: { userId: studentId, userType: 'student' } });
+    // Sessions and passkeys belong to the account. They die with the
+    // erased profile unless a live teacher profile still uses the account.
+    if (student.accountId) {
+      const teacherOnAccount = await tx.teacher.findFirst({
+        where: { accountId: student.accountId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!teacherOnAccount) {
+        await tx.session.deleteMany({ where: { accountId: student.accountId } });
+        await tx.passkeyCredential.deleteMany({ where: { accountId: student.accountId } });
+      }
+    }
     await tx.magicLinkToken.deleteMany({ where: { email: student.email } });
 
     // The teacher's "X booked …" notifications carry the student's first
@@ -288,7 +299,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
 export async function deleteTeacherAccount(db: PrismaClient, teacherId: string): Promise<void> {
   const teacher = await db.teacher.findUniqueOrThrow({
     where: { id: teacherId },
-    select: { email: true },
+    select: { email: true, accountId: true },
   });
 
   // A class already underway has happened — complete it (pricing, payment
@@ -344,7 +355,18 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
     await tx.studentPrivacy.deleteMany({ where: { teacherId } });
     await tx.teacherStudent.deleteMany({ where: { teacherId } });
     await tx.notification.deleteMany({ where: { recipientType: 'teacher', recipientId: teacherId } });
-    await tx.session.deleteMany({ where: { userId: teacherId, userType: 'teacher' } });
+    // Sessions and passkeys belong to the account. They die with the
+    // erased profile unless a live student profile still uses the account.
+    {
+      const studentOnAccount = await tx.student.findFirst({
+        where: { accountId: teacher.accountId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!studentOnAccount) {
+        await tx.session.deleteMany({ where: { accountId: teacher.accountId } });
+        await tx.passkeyCredential.deleteMany({ where: { accountId: teacher.accountId } });
+      }
+    }
     await tx.magicLinkToken.deleteMany({ where: { email: teacher.email } });
 
     await tx.teacher.update({

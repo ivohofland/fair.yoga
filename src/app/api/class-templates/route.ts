@@ -15,7 +15,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   if (isErrorResponse(session)) return session;
 
   const templates = await prisma.classTemplate.findMany({
-    where: { teacherId: session.userId },
+    where: { teacherId: session.teacherId },
     include: { teacherRoom: { include: { room: true } } },
     orderBy: { createdAt: 'desc' },
   });
@@ -33,13 +33,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // Verify teacherRoomId belongs to this teacher
   const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id: body.teacherRoomId } });
-  if (!teacherRoom || teacherRoom.teacherId !== session.userId) {
+  if (!teacherRoom || teacherRoom.teacherId !== session.teacherId) {
     return respondError('Invalid teacher room', 400);
   }
 
   const template = await prisma.classTemplate.create({
     data: {
-      teacherId: session.userId,
+      teacherId: session.teacherId,
       teacherRoomId: body.teacherRoomId,
       classType: body.classType,
       description: body.description,

@@ -21,11 +21,8 @@ export const GET = withErrorHandler(async (
   const student = await prisma.student.findUnique({ where: { id } });
   if (!student) return respondError('Student not found', 404);
 
-  // Student accessing own profile — return full data
-  if (session.userType === 'student') {
-    if (session.userId !== id) {
-      return respondError('Access denied', 403);
-    }
+  // Own student profile — return full data
+  if (session.studentId === id) {
     return respondOk(student);
   }
 
@@ -33,9 +30,9 @@ export const GET = withErrorHandler(async (
   // then filtered by that student's per-teacher privacy settings.
   // Without the link check any teacher with a UUID could read names and
   // income tiers of students they have no relationship with.
-  if (session.userType === 'teacher') {
+  if (session.teacherId) {
     const link = await prisma.teacherStudent.findUnique({
-      where: { teacherId_studentId: { teacherId: session.userId, studentId: id } },
+      where: { teacherId_studentId: { teacherId: session.teacherId, studentId: id } },
     });
     if (!link) return respondError('Student not in your contacts', 403);
 
@@ -43,7 +40,7 @@ export const GET = withErrorHandler(async (
       where: {
         studentId_teacherId: {
           studentId: id,
-          teacherId: session.userId,
+          teacherId: session.teacherId,
         },
       },
     });
@@ -80,11 +77,8 @@ export const PUT = withErrorHandler(async (
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
-  // Students can edit their own profile
-  if (session.userType === 'student') {
-    if (session.userId !== id) {
-      return respondError('Access denied', 403);
-    }
+  // Own student profile is self-editable
+  if (session.studentId === id) {
 
     const parsed = await parseBody(request, updateStudentSchema);
     if ('error' in parsed) return parsed.error;
@@ -103,7 +97,7 @@ export const PUT = withErrorHandler(async (
   }
 
   // Teachers can edit unlinked students in their contacts
-  if (session.userType === 'teacher') {
+  if (session.teacherId) {
     const student = await prisma.student.findUnique({ where: { id } });
     if (!student) return respondError('Student not found', 404);
     if (student.claimedAt) {
@@ -111,7 +105,7 @@ export const PUT = withErrorHandler(async (
     }
 
     const link = await prisma.teacherStudent.findUnique({
-      where: { teacherId_studentId: { teacherId: session.userId, studentId: id } },
+      where: { teacherId_studentId: { teacherId: session.teacherId, studentId: id } },
     });
     if (!link) return respondError('Student not in your contacts', 403);
 
@@ -142,7 +136,7 @@ export const DELETE = withErrorHandler(async (
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
-  if (session.userType !== 'teacher') {
+  if (!session.teacherId) {
     return respondError('Access denied', 403);
   }
 
@@ -153,7 +147,7 @@ export const DELETE = withErrorHandler(async (
   }
 
   const link = await prisma.teacherStudent.findUnique({
-    where: { teacherId_studentId: { teacherId: session.userId, studentId: id } },
+    where: { teacherId_studentId: { teacherId: session.teacherId, studentId: id } },
   });
   if (!link) return respondError('Student not in your contacts', 403);
 
@@ -179,12 +173,12 @@ export const PATCH = withErrorHandler(async (
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
-  if (session.userType !== 'teacher') {
+  if (!session.teacherId) {
     return respondError('Access denied', 403);
   }
 
   const link = await prisma.teacherStudent.findUnique({
-    where: { teacherId_studentId: { teacherId: session.userId, studentId: id } },
+    where: { teacherId_studentId: { teacherId: session.teacherId, studentId: id } },
   });
   if (!link) return respondError('Student not in your contacts', 403);
 

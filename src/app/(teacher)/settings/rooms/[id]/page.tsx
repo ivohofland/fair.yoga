@@ -22,14 +22,14 @@ export default async function EditRoomPage({
     include: { room: true },
   });
 
-  if (!teacherRoom || teacherRoom.teacherId !== session.userId) {
+  if (!teacherRoom || teacherRoom.teacherId !== session.teacherId) {
     redirect('/settings/rooms');
   }
 
   const { room } = teacherRoom;
   const classCount = await prisma.class.count({ where: { teacherRoomId: teacherRoom.id } });
   const isArchived = teacherRoom.isArchived;
-  const canEditRoom = !room.isPublic && room.createdById === session.userId;
+  const canEditRoom = !room.isPublic && room.createdById === session.teacherId;
   const equipmentLabels: Record<string, string> = {
     mats: 'Mats',
     blocks: 'Blocks',

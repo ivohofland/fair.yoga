@@ -43,11 +43,23 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
       await prisma.class.delete({ where: { id: classId } });
     }
     if (studentId) {
-      await prisma.session.deleteMany({ where: { userId: studentId } });
+      const st = await prisma.student.findUnique({
+        where: { id: studentId },
+        select: { accountId: true },
+      });
+      if (st?.accountId) {
+        await prisma.session.deleteMany({ where: { accountId: st.accountId } });
+      }
       await prisma.student.delete({ where: { id: studentId } });
     }
     if (teacherId) {
-      await prisma.session.deleteMany({ where: { userId: teacherId } });
+      const t = await prisma.teacher.findUnique({
+        where: { id: teacherId },
+        select: { accountId: true },
+      });
+      if (t) {
+        await prisma.session.deleteMany({ where: { accountId: t.accountId } });
+      }
     }
     if (teacherRoomId) {
       await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
@@ -70,6 +82,7 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
         firstName: 'Flow',
         lastName: 'Teacher',
         email: `flow-teacher-${uniqueSuffix}@test.local`,
+        account: { create: { email: `flow-teacher-${uniqueSuffix}@test.local` } },
         bio: 'Teacher for full flow integration test',
         pageSlug: `flow-teacher-${uniqueSuffix}`,
       },
@@ -84,7 +97,11 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
   // Step 2: Create session for teacher
   // -----------------------------------------------------------------------
   it('Step 2: creates a session for the teacher', async () => {
-    teacherSessionToken = await createSession(prisma, teacherId, 'teacher');
+    const teacher = await prisma.teacher.findUniqueOrThrow({
+      where: { id: teacherId },
+      select: { accountId: true },
+    });
+    teacherSessionToken = await createSession(prisma, teacher.accountId);
 
     expect(teacherSessionToken).toMatch(/^[0-9a-f]{64}$/);
   });
@@ -96,8 +113,8 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
     const sessionUser = await validateSession(prisma, teacherSessionToken);
 
     expect(sessionUser).not.toBeNull();
-    expect(sessionUser!.userId).toBe(teacherId);
-    expect(sessionUser!.userType).toBe('teacher');
+    expect(sessionUser!.teacherId).toBe(teacherId);
+    expect(sessionUser!.studentId).toBeNull();
   });
 
   // -----------------------------------------------------------------------
@@ -192,6 +209,8 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
         lastName: 'Student',
         email: `flow-student-${uniqueSuffix}@test.local`,
         incomeTier: 3,
+        claimedAt: new Date(),
+        account: { create: { email: `flow-student-${uniqueSuffix}@test.local` } },
       },
     });
     studentId = student.id;
@@ -204,13 +223,17 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
   // Step 9: Create session for student
   // -----------------------------------------------------------------------
   it('Step 9: creates a session for the student', async () => {
-    studentSessionToken = await createSession(prisma, studentId, 'student');
+    const flowStudent = await prisma.student.findUniqueOrThrow({
+      where: { id: studentId },
+      select: { accountId: true },
+    });
+    studentSessionToken = await createSession(prisma, flowStudent.accountId!);
 
     expect(studentSessionToken).toMatch(/^[0-9a-f]{64}$/);
 
     const sessionUser = await validateSession(prisma, studentSessionToken);
     expect(sessionUser).not.toBeNull();
-    expect(sessionUser!.userType).toBe('student');
+    expect(sessionUser!.studentId).toBe(studentId);
   });
 
   // -----------------------------------------------------------------------

@@ -25,7 +25,7 @@ export const GET = withErrorHandler(async (
 
   if (!teacherRoom) return respondError('Teacher-room not found', 404);
 
-  if (teacherRoom.teacherId !== session.userId) {
+  if (teacherRoom.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
   }
 
@@ -43,7 +43,7 @@ export const PUT = withErrorHandler(async (
   const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id } });
   if (!teacherRoom) return respondError('Teacher-room not found', 404);
 
-  if (teacherRoom.teacherId !== session.userId) {
+  if (teacherRoom.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
   }
 
@@ -74,7 +74,7 @@ export const PATCH = withErrorHandler(async (
   const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id } });
   if (!teacherRoom) return respondError('Teacher-room not found', 404);
 
-  if (teacherRoom.teacherId !== session.userId) {
+  if (teacherRoom.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
   }
 
@@ -97,7 +97,7 @@ export const DELETE = withErrorHandler(async (
   const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id } });
   if (!teacherRoom) return respondError('Teacher-room not found', 404);
 
-  if (teacherRoom.teacherId !== session.userId) {
+  if (teacherRoom.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
   }
 

@@ -18,7 +18,7 @@ export default async function EditStudioTemplatePage({
     where: { id },
   });
 
-  if (!template || template.teacherId !== session.userId) {
+  if (!template || template.teacherId !== session.teacherId) {
     redirect('/settings/studio-classes');
   }
 

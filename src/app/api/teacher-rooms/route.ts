@@ -15,7 +15,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   if (isErrorResponse(session)) return session;
 
   const teacherRooms = await prisma.teacherRoom.findMany({
-    where: { teacherId: session.userId },
+    where: { teacherId: session.teacherId },
     include: { room: true },
     orderBy: { createdAt: 'desc' },
   });
@@ -35,7 +35,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const existing = await prisma.teacherRoom.findUnique({
     where: {
       teacherId_roomId: {
-        teacherId: session.userId,
+        teacherId: session.teacherId,
         roomId,
       },
     },
@@ -47,7 +47,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const teacherRoom = await prisma.teacherRoom.create({
     data: {
-      teacherId: session.userId,
+      teacherId: session.teacherId,
       roomId,
       capacityOverride,
       rentalRate,

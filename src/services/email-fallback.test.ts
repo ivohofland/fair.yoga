@@ -43,6 +43,7 @@ describe('processEmailFallback (DB)', () => {
         firstName: 'Fallback',
         lastName: 'Teacher',
         email: `fallback-teacher-${uniqueSuffix}@test.local`,
+        account: { create: { email: `fallback-teacher-${uniqueSuffix}@test.local` } },
         bio: 'Email fallback tests',
         pageSlug: `fallback-teacher-${uniqueSuffix}`,
       },

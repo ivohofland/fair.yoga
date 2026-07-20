@@ -18,10 +18,12 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
-  if (session.userType === 'student') {
-    await deleteStudentAccount(prisma, session.userId);
-  } else {
-    await deleteTeacherAccount(prisma, session.userId);
+  // "Delete my account" erases every profile the account holds.
+  if (session.studentId) {
+    await deleteStudentAccount(prisma, session.studentId);
+  }
+  if (session.teacherId) {
+    await deleteTeacherAccount(prisma, session.teacherId);
   }
 
   const response = respondOk({ deleted: true });

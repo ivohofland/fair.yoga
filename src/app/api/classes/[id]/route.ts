@@ -27,7 +27,7 @@ export const GET = withErrorHandler(async (
   });
 
   if (!cls) return respondError('Class not found', 404);
-  if (cls.teacherId !== session.userId) return respondError('Not your class', 403);
+  if (cls.teacherId !== session.teacherId) return respondError('Not your class', 403);
 
   return respondOk(cls);
 });
@@ -51,7 +51,7 @@ export const PUT = withErrorHandler(async (
 
   const cls = await prisma.class.findUnique({ where: { id } });
   if (!cls) return respondError('Class not found', 404);
-  if (cls.teacherId !== session.userId) return respondError('Not your class', 403);
+  if (cls.teacherId !== session.teacherId) return respondError('Not your class', 403);
 
   const parsed = await parseBody(request, updateClassSchema);
   if ('error' in parsed) return parsed.error;

@@ -8,7 +8,7 @@ export default async function StudentLayout({
   children: React.ReactNode;
 }) {
   const session = await getSession();
-  if (!session || session.userType !== 'student') {
+  if (!session?.studentId) {
     redirect('/login');
   }
 

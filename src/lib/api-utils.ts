@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { validateSession, getSessionToken } from './auth';
 import { prisma } from './db';
-import type { SessionUser } from './types';
+import type { SessionUser, TeacherSession, StudentSession } from './types';
 import { log } from '@/lib/log';
 
 export function respondOk<T>(data: T, status = 200): NextResponse {
@@ -30,22 +30,22 @@ export async function requireSession(
 
 export async function requireTeacher(
   request: NextRequest
-): Promise<SessionUser | NextResponse> {
+): Promise<TeacherSession | NextResponse> {
   const result = await requireSession(request);
   if (result instanceof NextResponse) return result;
   if (!result.teacherId)
     return respondError('Teacher access required', 403);
-  return result;
+  return { ...result, teacherId: result.teacherId };
 }
 
 export async function requireStudent(
   request: NextRequest
-): Promise<SessionUser | NextResponse> {
+): Promise<StudentSession | NextResponse> {
   const result = await requireSession(request);
   if (result instanceof NextResponse) return result;
   if (!result.studentId)
     return respondError('Student access required', 403);
-  return result;
+  return { ...result, studentId: result.studentId };
 }
 
 export async function parseBody<T>(

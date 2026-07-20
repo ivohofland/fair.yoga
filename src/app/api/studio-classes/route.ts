@@ -8,7 +8,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   if (isErrorResponse(session)) return session;
 
   const studioClasses = await prisma.studioClass.findMany({
-    where: { teacherId: session.userId },
+    where: { teacherId: session.teacherId },
     orderBy: { date: 'desc' },
   });
 
@@ -25,7 +25,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const studioClass = await prisma.studioClass.create({
     data: {
-      teacherId: session.userId,
+      teacherId: session.teacherId,
       date: new Date(date),
       ...rest,
     },

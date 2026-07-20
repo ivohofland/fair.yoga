@@ -57,13 +57,12 @@ export default async function BookClassPage({
   });
 
   const session = await getSession();
-  const student =
-    session?.userType === 'student'
-      ? await prisma.student.findUnique({
-          where: { id: session.userId },
-          select: { id: true, firstName: true, incomeTier: true },
-        })
-      : null;
+  const student = session?.studentId
+    ? await prisma.student.findUnique({
+        where: { id: session.studentId },
+        select: { id: true, firstName: true, incomeTier: true },
+      })
+    : null;
   const alreadyBooked = student
     ? cls.registrations.some((r) => r.studentId === student.id && r.status !== 'late_cancel')
     : false;

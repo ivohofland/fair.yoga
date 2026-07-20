@@ -34,14 +34,15 @@ describe('POST /api/notifications/[id]/read — student recipients', () => {
           lastName: 'Test',
           email: `notifapi-${uniqueSuffix}-${i}@test.local`,
           incomeTier: 3,
+          claimedAt: new Date(),
+          account: { create: { email: `notifapi-${uniqueSuffix}-${i}@test.local` } },
         },
       });
       studentIds.push(student.id);
       await prisma.session.create({
         data: {
           id: hashToken(tokens[i]!),
-          userId: student.id,
-          userType: 'student',
+          accountId: student.accountId!,
           expiresAt: new Date(Date.now() + 86400000),
         },
       });
@@ -62,7 +63,13 @@ describe('POST /api/notifications/[id]/read — student recipients', () => {
     await prisma.notification.deleteMany({
       where: { recipientId: { in: studentIds } },
     });
-    await prisma.session.deleteMany({ where: { userId: { in: studentIds } } });
+    const accounts = await prisma.student.findMany({
+      where: { id: { in: studentIds } },
+      select: { accountId: true },
+    });
+    await prisma.session.deleteMany({
+      where: { accountId: { in: accounts.map((a) => a.accountId!) } },
+    });
     await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
     await prisma.$disconnect();
   });

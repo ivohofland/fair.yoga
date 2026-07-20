@@ -29,7 +29,7 @@ export const DELETE = withErrorHandler(async (
     return respondError('Public rooms cannot be deleted', 403);
   }
 
-  if (room.createdById !== session.userId) {
+  if (room.createdById !== session.teacherId) {
     return respondError('Only the room creator can delete this room', 403);
   }
 
@@ -56,7 +56,7 @@ export const GET = withErrorHandler(async (
   const room = await prisma.room.findUnique({ where: { id } });
   if (!room) return respondError('Room not found', 404);
 
-  if (!room.isPublic && room.createdById !== session.userId) {
+  if (!room.isPublic && room.createdById !== session.teacherId) {
     return respondError('Access denied', 403);
   }
 
@@ -78,7 +78,7 @@ export const PUT = withErrorHandler(async (
     return respondError('Public rooms cannot be edited', 403);
   }
 
-  if (room.createdById !== session.userId) {
+  if (room.createdById !== session.teacherId) {
     return respondError('Only the room creator can update this room', 403);
   }
 

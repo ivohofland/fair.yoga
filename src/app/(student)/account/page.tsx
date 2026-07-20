@@ -12,10 +12,10 @@ export const dynamic = 'force-dynamic';
 
 export default async function StudentSettingsPage() {
   const session = await getSession();
-  if (!session || session.userType !== 'student') redirect('/login');
+  if (!session?.studentId) redirect('/login');
 
   const student = await prisma.student.findUnique({
-    where: { id: session.userId },
+    where: { id: session.studentId },
     select: {
       id: true,
       firstName: true,

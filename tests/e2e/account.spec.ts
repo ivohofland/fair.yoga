@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import fs from 'fs/promises';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
+import { accountIdOfStudent } from './account-helpers';
 
 /**
  * GDPR through the UI: the data export downloads real JSON, and account
@@ -33,6 +34,7 @@ test.describe('Account — GDPR export and deletion', () => {
         firstName: 'Account',
         lastName: 'Student',
         email: studentEmail,
+        account: { create: { email: studentEmail } },
         incomeTier: 2,
         phone: '+31611111111',
         claimedAt: new Date(),
@@ -42,15 +44,14 @@ test.describe('Account — GDPR export and deletion', () => {
     await prisma.session.create({
       data: {
         id: hashToken(sessionToken),
-        userId: studentId,
-        userType: 'student',
+        accountId: await accountIdOfStudent(prisma, studentId),
         expiresAt: new Date(Date.now() + 86400000),
       },
     });
   });
 
   test.afterAll(async () => {
-    await prisma.session.deleteMany({ where: { userId: studentId } });
+    await prisma.session.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, studentId) } });
     await prisma.magicLinkToken.deleteMany({ where: { email: { contains: uniqueSuffix } } });
     await prisma.student.delete({ where: { id: studentId } });
     await prisma.$disconnect();

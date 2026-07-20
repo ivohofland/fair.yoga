@@ -7,7 +7,7 @@ export default async function ArchivedTemplatesPage() {
   const session = await requireTeacherSession();
 
   const templates = await prisma.classTemplate.findMany({
-    where: { teacherId: session.userId, isArchived: true },
+    where: { teacherId: session.teacherId, isArchived: true },
     include: { teacherRoom: { include: { room: true } } },
     orderBy: { createdAt: 'desc' },
   });

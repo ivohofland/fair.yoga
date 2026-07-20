@@ -28,7 +28,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // Verify teacher owns the class
     const cls = await prisma.class.findUnique({ where: { id: body.classId } });
     if (!cls) return respondError('Class not found', 404);
-    if (cls.teacherId !== session.userId) return respondError('Not your class', 403);
+    if (cls.teacherId !== session.teacherId) return respondError('Not your class', 403);
 
     // Get all non-cancelled registrations for this class
     const registrations = await prisma.registration.findMany({
@@ -41,7 +41,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // Get ALL students who have any registration with this teacher
     const registrations = await prisma.registration.findMany({
       where: {
-        class: { teacherId: session.userId },
+        class: { teacherId: session.teacherId },
         status: { not: 'cancelled' },
       },
       select: { studentId: true },
@@ -55,7 +55,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // receiveComms=false for this teacher get no announcements at all.
   const optOuts = await prisma.studentPrivacy.findMany({
     where: {
-      teacherId: session.userId,
+      teacherId: session.teacherId,
       studentId: { in: studentIds },
       receiveComms: false,
     },
@@ -83,7 +83,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // Create Announcement record
   const announcement = await prisma.announcement.create({
     data: {
-      teacherId: session.userId,
+      teacherId: session.teacherId,
       classId: body.classId ?? null,
       message: body.message,
       recipientCount: count,

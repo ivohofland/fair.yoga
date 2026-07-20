@@ -21,7 +21,7 @@ export default async function PaymentsOverviewPage() {
   const session = await requireTeacherSession();
 
   const payments = await prisma.payment.findMany({
-    where: { registration: { class: { teacherId: session.userId } } },
+    where: { registration: { class: { teacherId: session.teacherId } } },
     orderBy: { createdAt: 'desc' },
     include: {
       registration: {
@@ -33,7 +33,7 @@ export default async function PaymentsOverviewPage() {
               lastName: true,
               claimedAt: true,
               studentPrivacy: {
-                where: { teacherId: session.userId },
+                where: { teacherId: session.teacherId },
                 select: { shareFullName: true },
               },
             },

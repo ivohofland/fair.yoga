@@ -19,7 +19,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const parsed = await parseBody(request, passkeyRegisterVerifySchema);
   if ('error' in parsed) return parsed.error;
 
-  const challenge = getAndDeleteChallenge(session.userId);
+  const challenge = getAndDeleteChallenge(session.accountId);
   if (!challenge) {
     return respondError('No pending registration challenge', 400);
   }
@@ -36,8 +36,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   await prisma.passkeyCredential.create({
     data: {
       id: result.credentialId,
-      userId: session.userId,
-      userType: session.userType,
+      accountId: session.accountId,
       publicKey: Buffer.from(result.publicKey),
       counter: result.counter,
       transports: result.transports,

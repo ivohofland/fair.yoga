@@ -20,7 +20,7 @@ export const GET = withErrorHandler(async (
 
   const template = await prisma.studioClassTemplate.findUnique({ where: { id } });
   if (!template) return respondError('Studio class template not found', 404);
-  if (template.teacherId !== session.userId) return respondError('Access denied', 403);
+  if (template.teacherId !== session.teacherId) return respondError('Access denied', 403);
 
   return respondOk(template);
 });
@@ -35,7 +35,7 @@ export const PUT = withErrorHandler(async (
 
   const template = await prisma.studioClassTemplate.findUnique({ where: { id } });
   if (!template) return respondError('Studio class template not found', 404);
-  if (template.teacherId !== session.userId) return respondError('Access denied', 403);
+  if (template.teacherId !== session.teacherId) return respondError('Access denied', 403);
 
   const parsed = await parseBody(request, updateStudioClassTemplateSchema);
   if ('error' in parsed) return parsed.error;
@@ -62,7 +62,7 @@ export const PATCH = withErrorHandler(async (
 
   const template = await prisma.studioClassTemplate.findUnique({ where: { id } });
   if (!template) return respondError('Studio class template not found', 404);
-  if (template.teacherId !== session.userId) return respondError('Access denied', 403);
+  if (template.teacherId !== session.teacherId) return respondError('Access denied', 403);
 
   const url = new URL(request.url);
   const action = url.searchParams.get('action');

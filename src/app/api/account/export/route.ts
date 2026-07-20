@@ -14,9 +14,14 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   if (isErrorResponse(session)) return session;
 
   const data =
-    session.userType === 'student'
-      ? await exportStudentData(prisma, session.userId)
-      : await exportTeacherData(prisma, session.userId);
+    session.studentId && session.teacherId
+      ? {
+          student: await exportStudentData(prisma, session.studentId),
+          teacher: await exportTeacherData(prisma, session.teacherId),
+        }
+      : session.studentId
+        ? await exportStudentData(prisma, session.studentId)
+        : await exportTeacherData(prisma, session.teacherId!);
 
   return new NextResponse(JSON.stringify(data, null, 2), {
     headers: {

@@ -22,6 +22,8 @@ const studentTokens = [
 ];
 
 let ownerId: string;
+let ownerAccountIdForCleanup: string;
+let otherAccountIdForCleanup: string;
 let otherTeacherId: string;
 let teacherRoomId: string;
 let roomId: string;
@@ -69,6 +71,7 @@ beforeAll(async () => {
       firstName: 'Owner',
       lastName: 'Teacher',
       email: `regapi-owner-${uniqueSuffix}@test.local`,
+      account: { create: { email: `regapi-owner-${uniqueSuffix}@test.local` } },
       bio: 'Registration API tests',
       pageSlug: `regapi-owner-${uniqueSuffix}`,
     },
@@ -80,6 +83,7 @@ beforeAll(async () => {
       firstName: 'Other',
       lastName: 'Teacher',
       email: `regapi-other-${uniqueSuffix}@test.local`,
+      account: { create: { email: `regapi-other-${uniqueSuffix}@test.local` } },
       bio: 'Registration API tests',
       pageSlug: `regapi-other-${uniqueSuffix}`,
     },
@@ -112,6 +116,8 @@ beforeAll(async () => {
         firstName: `RegStudent${i}`,
         lastName: 'Test',
         email: `regapi-student-${uniqueSuffix}-${i}@test.local`,
+        claimedAt: new Date(),
+        account: { create: { email: `regapi-student-${uniqueSuffix}-${i}@test.local` } },
         incomeTier: 3,
       },
     });
@@ -120,8 +126,7 @@ beforeAll(async () => {
     await prisma.session.create({
       data: {
         id: hashToken(studentTokens[i]!),
-        userId: student.id,
-        userType: 'student',
+        accountId: student.accountId!,
         expiresAt: new Date(Date.now() + 86400000),
       },
     });
@@ -136,19 +141,27 @@ beforeAll(async () => {
   });
   unlinkedStudentId = unlinked.id;
 
+  const ownerAccount = await prisma.teacher.findUniqueOrThrow({
+    where: { id: ownerId },
+    select: { accountId: true },
+  });
+  ownerAccountIdForCleanup = ownerAccount.accountId;
   await prisma.session.create({
     data: {
       id: hashToken(ownerToken),
-      userId: ownerId,
-      userType: 'teacher',
+      accountId: ownerAccount.accountId,
       expiresAt: new Date(Date.now() + 86400000),
     },
   });
+  const otherAccount = await prisma.teacher.findUniqueOrThrow({
+    where: { id: otherTeacherId },
+    select: { accountId: true },
+  });
+  otherAccountIdForCleanup = otherAccount.accountId;
   await prisma.session.create({
     data: {
       id: hashToken(otherTeacherToken),
-      userId: otherTeacherId,
-      userType: 'teacher',
+      accountId: otherAccount.accountId,
       expiresAt: new Date(Date.now() + 86400000),
     },
   });
@@ -161,7 +174,21 @@ afterAll(async () => {
   await prisma.teacherRoom.deleteMany({ where: { teacherId: ownerId } });
   await prisma.room.delete({ where: { id: roomId } });
   await prisma.teacherStudent.deleteMany({ where: { teacherId: ownerId } });
-  await prisma.session.deleteMany({ where: { userId: { in: [ownerId, otherTeacherId, ...studentIds] } } });
+  const studentAccounts = await prisma.student.findMany({
+    where: { id: { in: studentIds } },
+    select: { accountId: true },
+  });
+  await prisma.session.deleteMany({
+    where: {
+      accountId: {
+        in: [
+          ownerAccountIdForCleanup,
+          otherAccountIdForCleanup,
+          ...studentAccounts.map((a) => a.accountId!),
+        ],
+      },
+    },
+  });
   await prisma.student.deleteMany({ where: { id: { in: [...studentIds, unlinkedStudentId] } } });
   await prisma.teacher.deleteMany({ where: { id: { in: [ownerId, otherTeacherId] } } });
   await prisma.$disconnect();

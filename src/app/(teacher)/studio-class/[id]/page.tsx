@@ -29,7 +29,7 @@ export default async function StudioClassDetailPage({
     include: { template: true },
   });
 
-  if (!studioClass || studioClass.teacherId !== session.userId) {
+  if (!studioClass || studioClass.teacherId !== session.teacherId) {
     redirect('/');
   }
 

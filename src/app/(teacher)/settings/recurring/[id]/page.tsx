@@ -19,7 +19,7 @@ export default async function EditTemplatePage({
     include: { teacherRoom: { include: { room: true } } },
   });
 
-  if (!template || template.teacherId !== session.userId) {
+  if (!template || template.teacherId !== session.teacherId) {
     redirect('/settings/recurring');
   }
 

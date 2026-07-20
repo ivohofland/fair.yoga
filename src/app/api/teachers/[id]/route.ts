@@ -18,7 +18,7 @@ export const GET = withErrorHandler(async (
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  if (session.userId !== id) {
+  if (session.teacherId !== id) {
     return respondError('Access denied', 403);
   }
 
@@ -36,7 +36,7 @@ export const PUT = withErrorHandler(async (
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  if (session.userId !== id) {
+  if (session.teacherId !== id) {
     return respondError('Access denied', 403);
   }
 

@@ -29,7 +29,7 @@ export const POST = withErrorHandler(async (
   });
 
   if (!payment) return respondError('Payment not found', 404);
-  if (payment.registration.class.teacherId !== session.userId) {
+  if (payment.registration.class.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
   }
 

@@ -19,7 +19,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
-  if (session.userType !== 'student') {
+  if (!session.studentId) {
     return respondError('Only students can claim waitlist spots', 403);
   }
 
@@ -27,7 +27,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if ('error' in parsed) return parsed.error;
 
   try {
-    const entry = await claimSpot(prisma, parsed.data.classId, session.userId);
+    const entry = await claimSpot(prisma, parsed.data.classId, session.studentId);
     return respondOk(entry, 201);
   } catch (err) {
     if (err instanceof WaitlistPromotionError) {

@@ -25,7 +25,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if (!cls) return respondError('Class not found', 404);
 
   try {
-    const entry = await addToWaitlist(prisma, parsed.data.classId, session.userId);
+    const entry = await addToWaitlist(prisma, parsed.data.classId, session.studentId);
     return respondOk(entry, 201);
   } catch (err) {
     if (err instanceof WaitlistJoinError) {

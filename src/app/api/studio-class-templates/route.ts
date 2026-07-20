@@ -8,7 +8,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   if (isErrorResponse(session)) return session;
 
   const templates = await prisma.studioClassTemplate.findMany({
-    where: { teacherId: session.userId },
+    where: { teacherId: session.teacherId },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -24,7 +24,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const template = await prisma.studioClassTemplate.create({
     data: {
-      teacherId: session.userId,
+      teacherId: session.teacherId,
       ...parsed.data,
     },
   });

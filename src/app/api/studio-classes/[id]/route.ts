@@ -23,7 +23,7 @@ export const GET = withErrorHandler(async (
     include: { template: true },
   });
   if (!studioClass) return respondError('Studio class not found', 404);
-  if (studioClass.teacherId !== session.userId) return respondError('Access denied', 403);
+  if (studioClass.teacherId !== session.teacherId) return respondError('Access denied', 403);
 
   return respondOk(studioClass);
 });
@@ -38,7 +38,7 @@ export const PUT = withErrorHandler(async (
 
   const studioClass = await prisma.studioClass.findUnique({ where: { id } });
   if (!studioClass) return respondError('Studio class not found', 404);
-  if (studioClass.teacherId !== session.userId) return respondError('Access denied', 403);
+  if (studioClass.teacherId !== session.teacherId) return respondError('Access denied', 403);
 
   const parsed = await parseBody(request, updateStudioClassSchema);
   if ('error' in parsed) return parsed.error;

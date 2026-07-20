@@ -26,6 +26,8 @@ const uniqueSuffix = Date.now();
 
 let teacherId: string;
 let studentId: string;
+let teacherAccountId: string;
+let studentAccountId: string;
 
 beforeAll(async () => {
   await prisma.$connect();
@@ -35,11 +37,13 @@ beforeAll(async () => {
       firstName: 'Auth',
       lastName: 'Teacher',
       email: `auth-teacher-${uniqueSuffix}@test.local`,
+      account: { create: { email: `auth-teacher-${uniqueSuffix}@test.local` } },
       bio: 'Teacher for auth integration tests',
       pageSlug: `auth-teacher-${uniqueSuffix}`,
     },
   });
   teacherId = teacher.id;
+  teacherAccountId = teacher.accountId;
 
   const student = await prisma.student.create({
     data: {
@@ -47,15 +51,18 @@ beforeAll(async () => {
       lastName: 'Student',
       email: `auth-student-${uniqueSuffix}@test.local`,
       incomeTier: 3,
+      claimedAt: new Date(),
+      account: { create: { email: `auth-student-${uniqueSuffix}@test.local` } },
     },
   });
   studentId = student.id;
+  studentAccountId = student.accountId!;
 });
 
 afterAll(async () => {
   // Clean up sessions and tokens first, then users
   await prisma.session.deleteMany({
-    where: { userId: { in: [teacherId, studentId] } },
+    where: { accountId: { in: [teacherAccountId, studentAccountId] } },
   });
   await prisma.magicLinkToken.deleteMany({
     where: {
@@ -91,14 +98,14 @@ describe('Magic link flow (teacher)', () => {
     expect(teacher!.id).toBe(teacherId);
 
     // Create session
-    const sessionToken = await createSession(prisma, teacherId, 'teacher');
+    const sessionToken = await createSession(prisma, teacherAccountId);
     expect(sessionToken).toMatch(/^[0-9a-f]{64}$/);
 
     // Validate session returns correct SessionUser
     const sessionUser = await validateSession(prisma, sessionToken);
     expect(sessionUser).not.toBeNull();
-    expect(sessionUser!.userId).toBe(teacherId);
-    expect(sessionUser!.userType).toBe('teacher');
+    expect(sessionUser!.accountId).toBe(teacherAccountId);
+    expect(sessionUser!.teacherId).toBe(teacherId);
     expect(sessionUser!.sessionId).toBe(hashToken(sessionToken));
   });
 });
@@ -122,14 +129,14 @@ describe('Magic link flow (student)', () => {
     expect(student!.id).toBe(studentId);
 
     // Create session with student type
-    const sessionToken = await createSession(prisma, studentId, 'student');
+    const sessionToken = await createSession(prisma, studentAccountId);
     expect(sessionToken).toMatch(/^[0-9a-f]{64}$/);
 
     // Validate session returns student type
     const sessionUser = await validateSession(prisma, sessionToken);
     expect(sessionUser).not.toBeNull();
-    expect(sessionUser!.userId).toBe(studentId);
-    expect(sessionUser!.userType).toBe('student');
+    expect(sessionUser!.accountId).toBe(studentAccountId);
+    expect(sessionUser!.studentId).toBe(studentId);
   });
 });
 
@@ -152,12 +159,12 @@ describe('Magic link token is one-time use', () => {
 
 describe('Session invalidation (logout)', () => {
   it('invalidated session returns null on validate', async () => {
-    const sessionToken = await createSession(prisma, teacherId, 'teacher');
+    const sessionToken = await createSession(prisma, teacherAccountId);
 
     // Session is valid
     const before = await validateSession(prisma, sessionToken);
     expect(before).not.toBeNull();
-    expect(before!.userId).toBe(teacherId);
+    expect(before!.teacherId).toBe(teacherId);
 
     // Invalidate (logout)
     await invalidateSession(prisma, sessionToken);
@@ -170,7 +177,7 @@ describe('Session invalidation (logout)', () => {
 
 describe('Session expiry', () => {
   it('expired session returns null on validate', async () => {
-    const sessionToken = await createSession(prisma, teacherId, 'teacher');
+    const sessionToken = await createSession(prisma, teacherAccountId);
 
     // Manually expire the session (use hash since that's what's stored in DB)
     await prisma.session.update({

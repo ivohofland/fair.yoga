@@ -45,6 +45,7 @@ describe('payment reminders (DB)', () => {
         firstName: 'PayRem',
         lastName: 'Teacher',
         email: `payrem-teacher-${uniqueSuffix}@test.local`,
+        account: { create: { email: `payrem-teacher-${uniqueSuffix}@test.local` } },
         bio: 'Payment reminder tests',
         pageSlug: `payrem-teacher-${uniqueSuffix}`,
       },

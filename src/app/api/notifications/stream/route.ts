@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
     return new Response('Session expired', { status: 401 });
   }
 
-  const userKey = `${session.userType}:${session.userId}`;
+  const userKey = session.accountId;
   if ((sseCounts.get(userKey) ?? 0) >= MAX_STREAMS_PER_USER) {
     // The client's backoff reconnect retries once other tabs close.
     return new Response('Too many open streams', { status: 429 });
@@ -50,10 +50,13 @@ export async function GET(request: NextRequest) {
       };
 
       const handler = (event: NotificationEvent) => {
-        if (
-          event.recipientId === session.userId &&
-          event.recipientType === session.userType
-        ) {
+        // A dual-role account hears both of its profiles' events.
+        const mine =
+          (event.recipientType === 'teacher' &&
+            event.recipientId === session.teacherId) ||
+          (event.recipientType === 'student' &&
+            event.recipientId === session.studentId);
+        if (mine) {
           send(`data: ${JSON.stringify(event.notification)}\n\n`);
         }
       };
