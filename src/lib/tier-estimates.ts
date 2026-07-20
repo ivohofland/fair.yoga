@@ -11,6 +11,9 @@ export interface TierEstimateInput {
   registeredTiers: number[];
 }
 
+/** One estimated price per income tier 1..5 — always exactly five. */
+export type TierPrices = [number, number, number, number, number];
+
 /**
  * "What would I pay?" — for each tier 1..5, the price if the class ran with
  * today's sign-ups plus you. The real formula on real registrations, with
@@ -19,12 +22,11 @@ export interface TierEstimateInput {
  * doesn't run — quoting the solo price of an empty class would be
  * technically true and practically wrong.
  */
-export function estimateTierPrices(input: TierEstimateInput): number[] {
+export function estimateTierPrices(input: TierEstimateInput): TierPrices {
   // The schema caps minStudents, but this runs on a public page — never
   // trust a stored value enough to size an allocation loop with it.
   const paddedMin = Math.min(input.minStudents, MAX_CLASS_SIZE);
-  const prices: number[] = [];
-  for (let tier = 1; tier <= 5; tier++) {
+  const priceForTier = (tier: number): number => {
     const tiers = [...input.registeredTiers, tier];
     while (tiers.length < paddedMin) {
       tiers.push(3);
@@ -38,7 +40,7 @@ export function estimateTierPrices(input: TierEstimateInput): number[] {
       studentTiers: tiers,
     });
     // The joining student is at index registeredTiers.length.
-    prices.push(pricing.studentPrices[input.registeredTiers.length]!);
-  }
-  return prices;
+    return pricing.studentPrices[input.registeredTiers.length]!;
+  };
+  return [priceForTier(1), priceForTier(2), priceForTier(3), priceForTier(4), priceForTier(5)];
 }
