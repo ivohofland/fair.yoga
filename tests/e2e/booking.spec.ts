@@ -101,7 +101,11 @@ test.describe('Public booking flow', () => {
 
     await expect(page.getByRole('heading', { name: 'Booking Teacher' })).toBeVisible();
     await expect(page.getByText('E2E Vinyasa')).toBeVisible();
-    await expect(page.getByText(/depending on your income tier/)).toBeVisible();
+    // Exact seeded range (room 20 + min rate 15 over the padded pair):
+    // a NaN, swapped, or misindexed price must fail here, not in production.
+    await expect(
+      page.getByText(/€13\.79 – €20\.11 depending on your income tier/).first(),
+    ).toBeVisible();
 
     // The pricing explainer sits above the class list, not in a footer.
     const explainer = page.getByText(/Prices are income-based/);
@@ -119,7 +123,9 @@ test.describe('Public booking flow', () => {
     await expect(page.getByText('First time here?')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Send me the link' })).toBeVisible();
     // The price range is visible before signing in.
-    await expect(page.getByText(/depending on your income tier/)).toBeVisible();
+    await expect(
+      page.getByText(/€13\.79 – €20\.11 depending on your income tier/).first(),
+    ).toBeVisible();
   });
 
   test('magic link returns the student to the booking page and books with a chosen tier', async ({ page }) => {
@@ -137,6 +143,8 @@ test.describe('Public booking flow', () => {
     await page.goto(`/verify?token=${rawToken}`);
     await page.waitForURL(`**/${slug}/book/${classId}`, { timeout: 10_000 });
 
+    // The range stays in the class header when signed in too.
+    await expect(page.getByText(/depending on your income tier/).first()).toBeVisible();
     // Tier selection is visible; pick tier 2 and book.
     await expect(page.getByText('Your tier')).toBeVisible();
     await page.getByRole('radio', { name: /Tier 2/ }).click();
