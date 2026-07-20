@@ -44,7 +44,6 @@ export function NotificationList({ notifications }: NotificationListProps) {
   }
 
   return (
-    // flex (not block) so the unread cards' margins stack instead of collapsing.
     <div className="flex flex-col">
       {notifications.map((notification) => {
         const isRead = readState[notification.id] ?? notification.isRead;
@@ -53,9 +52,11 @@ export function NotificationList({ notifications }: NotificationListProps) {
         return (
           <div
             key={notification.id}
-            // Unread rows sit on sand, read rows on cream. No hierarchy tricks.
-            className={`flex items-start justify-between gap-2 min-h-14 py-3 border-b border-border ${
-              isRead ? '' : 'bg-sand-soft -mx-3 px-3 my-1 rounded-field border-b-transparent'
+            // One row shape for both states: identical geometry, constant
+            // separator. Read/unread differ only in tint, title weight, dot,
+            // and Mark-read visibility — nothing moves on state change.
+            className={`flex items-start justify-between gap-2 min-h-14 py-3 -mx-3 px-3 border-b border-border ${
+              isRead ? '' : 'bg-sand-soft'
             }`}
           >
             <button
@@ -77,15 +78,16 @@ export function NotificationList({ notifications }: NotificationListProps) {
               <span className="type-caption">
                 {timeAgo(notification.createdAt)}
               </span>
-              {!isRead ? (
-                <button
-                  type="button"
-                  onClick={() => markRead(notification.id)}
-                  className="type-caption text-teal min-h-[44px] px-1"
-                >
-                  Mark read
-                </button>
-              ) : null}
+              {/* Rendered invisible (not removed) when read so its 44px tap
+                  target keeps holding the row height and the timestamp
+                  doesn't shift when the state changes. */}
+              <button
+                type="button"
+                onClick={() => markRead(notification.id)}
+                className={`type-caption text-teal min-h-[44px] px-1 ${isRead ? 'invisible' : ''}`}
+              >
+                Mark read
+              </button>
               <span className={`inline-block w-2 h-2 shrink-0 rounded-full ${isRead ? '' : 'bg-gold'}`} />
             </div>
           </div>

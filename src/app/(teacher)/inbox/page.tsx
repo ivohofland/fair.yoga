@@ -11,7 +11,9 @@ export default async function InboxPage() {
       recipientType: 'teacher',
       recipientId: session.userId,
     },
-    orderBy: { createdAt: 'desc' },
+    // id tie-breaker: rows created in the same instant (batch inserts) have
+    // equal createdAt, and without it their order shuffles on every refresh.
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: 50,
   });
 
