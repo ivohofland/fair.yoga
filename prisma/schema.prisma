@@ -98,8 +98,23 @@ enum NotificationType {
 // PEOPLE
 // ============================================================================
 
+// One account per human: owns the authenticated email identity, sessions,
+// and passkeys. Teacher/Student are profiles optionally hanging off it —
+// domain data never references Account directly (auth unifies, domain
+// doesn't). Profile email columns stay as denormalized contact data; the
+// auth layer keeps linked profiles' emails equal to the account's.
+model Account {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+
+  teacher Teacher?
+  student Student?
+}
+
 model Teacher {
   id                 String         @id @default(uuid())
+  accountId          String         @unique
   firstName          String
   lastName           String
   email              String         @unique
@@ -119,6 +134,7 @@ model Teacher {
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
 
+  account         Account          @relation(fields: [accountId], references: [id])
   teacherRooms    TeacherRoom[]
   classTemplates  ClassTemplate[]
   classes         Class[]
@@ -132,6 +148,9 @@ model Teacher {
 
 model Student {
   id                 String              @id @default(uuid())
+  // Nullable: CRM-created students stay unclaimed (claimedAt null) until
+  // the human authenticates — the claim moment links the account.
+  accountId          String?             @unique
   firstName          String
   lastName           String
   email              String              @unique
@@ -146,6 +165,7 @@ model Student {
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
+  account         Account?        @relation(fields: [accountId], references: [id])
   registrations   Registration[]
   waitlistEntries WaitlistEntry[]
   studentPrivacy  StudentPrivacy[]
@@ -440,13 +460,12 @@ model Announcement {
 // ============================================================================
 
 model Session {
-  id        String        @id
-  userId    String
-  userType  RecipientType
+  id        String   @id
+  accountId String
   expiresAt DateTime
-  createdAt DateTime      @default(now())
+  createdAt DateTime @default(now())
 
-  @@index([userId, userType])
+  @@index([accountId])
 }
 
 model MagicLinkToken {
@@ -459,13 +478,12 @@ model MagicLinkToken {
 }
 
 model PasskeyCredential {
-  id         String        @id
-  userId     String
-  userType   RecipientType
+  id         String   @id
+  accountId  String
   publicKey  Bytes
   counter    BigInt
   transports String[]
-  createdAt  DateTime      @default(now())
+  createdAt  DateTime @default(now())
 
-  @@index([userId, userType])
+  @@index([accountId])
 }
