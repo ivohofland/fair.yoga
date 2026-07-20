@@ -9,6 +9,11 @@ import { encodeHexLowerCase } from '@oslojs/encoding';
  * a passkey from the account page, signs out, and signs back in from a
  * teacher's booking page — landing back on the class they were booking,
  * not on a generic default.
+ *
+ * One long test on purpose: the virtual authenticator (and the private
+ * key it holds) lives in the per-test browser context. Split into
+ * sibling tests, the second one gets a fresh context with no credential
+ * and fails confusingly.
  */
 
 const prisma = new PrismaClient();
@@ -100,13 +105,19 @@ test.describe('Passkey sign-in', () => {
   });
 
   test.afterAll(async () => {
-    await prisma.passkeyCredential.deleteMany({ where: { userId: studentId } });
-    await prisma.session.deleteMany({ where: { userId: studentId } });
-    await prisma.class.deleteMany({ where: { teacherId } });
-    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
-    await prisma.room.delete({ where: { id: roomId } });
-    await prisma.student.delete({ where: { id: studentId } });
-    await prisma.teacher.delete({ where: { id: teacherId } });
+    // Guarded per id: after a partial beforeAll an unset id must skip its
+    // deletes — an `undefined` in a deleteMany filter matches everything.
+    if (studentId) {
+      await prisma.passkeyCredential.deleteMany({ where: { userId: studentId } });
+      await prisma.session.deleteMany({ where: { userId: studentId } });
+    }
+    if (teacherId) {
+      await prisma.class.deleteMany({ where: { teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    }
+    await prisma.room.deleteMany({ where: { address: { contains: uniqueSuffix } } });
+    await prisma.student.deleteMany({ where: { email: { contains: uniqueSuffix } } });
+    await prisma.teacher.deleteMany({ where: { email: { contains: uniqueSuffix } } });
     await prisma.$disconnect();
   });
 
@@ -114,7 +125,9 @@ test.describe('Passkey sign-in', () => {
     page,
     context,
   }) => {
-    // Virtual authenticator: resident key, user verified, no prompts.
+    // Virtual authenticator: resident key (required — sign-in happens
+    // without typing an email, so no allowCredentials narrowing), user
+    // verified, no prompts.
     const cdp = await context.newCDPSession(page);
     await cdp.send('WebAuthn.enable');
     await cdp.send('WebAuthn.addVirtualAuthenticator', {
@@ -141,6 +154,8 @@ test.describe('Passkey sign-in', () => {
     await context.clearCookies();
     await page.goto(`/${slug}/book/${classId}`);
     await expect(page.getByText('First time here?')).toBeVisible();
+    // First-timers can't have a passkey — no button on the new-account path.
+    await expect(page.getByRole('button', { name: 'Sign in with a passkey' })).toHaveCount(0);
 
     // The returning-account path offers the passkey next to the email link.
     await page.getByRole('button', { name: 'Already have an account?' }).click();
@@ -150,5 +165,12 @@ test.describe('Passkey sign-in', () => {
     // Signed in and back on the same class — tier selection, not /bookings.
     await expect(page.getByText('Your tier')).toBeVisible({ timeout: 10_000 });
     expect(new URL(page.url()).pathname).toBe(`/${slug}/book/${classId}`);
+
+    // Same passkey from /login, which passes no redirect: the role default
+    // applies and the student lands on their bookings.
+    await context.clearCookies();
+    await page.goto('/login');
+    await page.getByRole('button', { name: 'Sign in with a passkey' }).click();
+    await page.waitForURL('**/bookings', { timeout: 10_000 });
   });
 });

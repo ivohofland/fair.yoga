@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   transitionClassSchema,
   magicLinkSendSchema,
+  passkeyAuthVerifySchema,
   createClassSchema,
   updateTeacherSchema,
   isSafeRelativePath,
@@ -23,23 +24,45 @@ describe('transitionClassSchema', () => {
 });
 
 describe('redirect path validation', () => {
-  const parse = (redirect: string) =>
-    magicLinkSendSchema.safeParse({ email: 'a@b.test', redirect }).success;
+  // Every schema that carries a redirect must wire in the same relativePath
+  // guard — loosening any one of them reopens the open redirect after
+  // that flow's sign-in.
+  const parsers: Record<string, (redirect: string) => boolean> = {
+    magicLinkSendSchema: (redirect) =>
+      magicLinkSendSchema.safeParse({ email: 'a@b.test', redirect }).success,
+    passkeyAuthVerifySchema: (redirect) =>
+      passkeyAuthVerifySchema.safeParse({ response: {}, challengeId: 'x', redirect }).success,
+  };
 
-  it('accepts ordinary relative paths', () => {
-    expect(parse('/')).toBe(true);
-    expect(parse('/teacher-slug/book/abc?x=1')).toBe(true);
+  for (const [name, parse] of Object.entries(parsers)) {
+    describe(name, () => {
+      it('accepts ordinary relative paths', () => {
+        expect(parse('/')).toBe(true);
+        expect(parse('/teacher-slug/book/abc?x=1')).toBe(true);
+      });
+
+      it('rejects absolute and protocol-relative URLs', () => {
+        expect(parse('https://evil.com')).toBe(false);
+        expect(parse('//evil.com')).toBe(false);
+        expect(parse('')).toBe(false);
+      });
+
+      it('rejects backslash variants that browsers normalize to //', () => {
+        // `/\evil.com` becomes `//evil.com` in every major browser.
+        expect(parse('/\\evil.com')).toBe(false);
+        expect(parse('/foo\\bar')).toBe(false);
+      });
+    });
+  }
+
+  it('redirect is optional in both schemas', () => {
+    expect(magicLinkSendSchema.safeParse({ email: 'a@b.test' }).success).toBe(true);
+    expect(
+      passkeyAuthVerifySchema.safeParse({ response: {}, challengeId: 'x' }).success,
+    ).toBe(true);
   });
 
-  it('rejects absolute and protocol-relative URLs', () => {
-    expect(parse('https://evil.com')).toBe(false);
-    expect(parse('//evil.com')).toBe(false);
-  });
-
-  it('rejects backslash variants that browsers normalize to //', () => {
-    // `/\evil.com` becomes `//evil.com` in every major browser.
-    expect(parse('/\\evil.com')).toBe(false);
-    expect(parse('/foo\\bar')).toBe(false);
+  it('guards the raw helper against browser backslash normalization', () => {
     expect(isSafeRelativePath('/\\evil.com')).toBe(false);
     expect(isSafeRelativePath('\\/evil.com')).toBe(false);
   });
