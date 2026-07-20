@@ -206,4 +206,44 @@ describe('generateClassInstances (DB)', () => {
       data: { isActive: true },
     });
   });
+
+  it("skips today's occurrence when its start has already passed", async () => {
+    // Tuesday 2026-04-07 at 18:00 UTC — hours after the template's 09:00
+    // Amsterdam start. The run must not create a class earlier the same
+    // day; the window slides to the next four Tuesdays instead.
+    await prisma.class.deleteMany({ where: { templateId } });
+    const from = new Date('2026-04-07T18:00:00.000Z');
+    const count = await generateClassInstances(prisma, from);
+
+    expect(count).toBe(4);
+    const classes = await prisma.class.findMany({
+      where: { templateId },
+      orderBy: { date: 'asc' },
+    });
+    expect(classes.map((c) => c.date.toISOString())).toEqual([
+      '2026-04-14T00:00:00.000Z',
+      '2026-04-21T00:00:00.000Z',
+      '2026-04-28T00:00:00.000Z',
+      '2026-05-05T00:00:00.000Z',
+    ]);
+  });
+
+  it("includes today's occurrence while its start is still ahead", async () => {
+    // Tuesday 2026-04-07 at 05:00 UTC — before the 09:00 Amsterdam start.
+    await prisma.class.deleteMany({ where: { templateId } });
+    const from = new Date('2026-04-07T05:00:00.000Z');
+    const count = await generateClassInstances(prisma, from);
+
+    expect(count).toBe(4);
+    const classes = await prisma.class.findMany({
+      where: { templateId },
+      orderBy: { date: 'asc' },
+    });
+    expect(classes.map((c) => c.date.toISOString())).toEqual([
+      '2026-04-07T00:00:00.000Z',
+      '2026-04-14T00:00:00.000Z',
+      '2026-04-21T00:00:00.000Z',
+      '2026-04-28T00:00:00.000Z',
+    ]);
+  });
 });
