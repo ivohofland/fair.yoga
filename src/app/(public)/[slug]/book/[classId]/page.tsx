@@ -8,6 +8,7 @@ import { formatRoomLocation } from '@/lib/format';
 import { PriceRange } from '@/components/booking/price-range';
 import { BookingFlow } from '@/components/booking/booking-flow';
 import { BookingSignIn } from '@/components/booking/booking-sign-in';
+import { JoinAsStudent } from '@/components/booking/join-as-student';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,6 +67,15 @@ export default async function BookClassPage({
   const alreadyBooked = student
     ? cls.registrations.some((r) => r.studentId === student.id && r.status !== 'late_cancel')
     : false;
+  // A signed-in teacher without a student side gets the join panel, not a
+  // sign-in form they can't use.
+  const guestTeacher =
+    !student && session?.teacherId
+      ? await prisma.teacher.findUnique({
+          where: { id: session.teacherId },
+          select: { firstName: true },
+        })
+      : null;
 
   return (
     <div>
@@ -95,6 +105,8 @@ export default async function BookClassPage({
           studentId={student.id}
           tierPrices={estimates}
         />
+      ) : guestTeacher ? (
+        <JoinAsStudent firstName={guestTeacher.firstName} />
       ) : (
         <BookingSignIn redirect={`/${slug}/book/${cls.id}`} />
       )}

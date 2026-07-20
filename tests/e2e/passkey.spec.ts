@@ -178,5 +178,22 @@ test.describe('Passkey sign-in', () => {
     await page.goto('/login');
     await page.getByRole('button', { name: 'Sign in with a passkey' }).click();
     await page.waitForURL('**/bookings', { timeout: 10_000 });
+
+    // One credential, both hats: grow the account a teacher profile and the
+    // very same passkey now lands on the dual default — the teacher home.
+    await prisma.teacher.create({
+      data: {
+        firstName: 'Pass',
+        lastName: 'Key',
+        email: `e2e-passkey-student-${uniqueSuffix}@test.local`,
+        bio: 'Dual-role passkey fixtures',
+        pageSlug: `e2e-passkey-dual-${uniqueSuffix}`,
+        account: { connect: { id: await accountIdOfStudent(prisma, studentId) } },
+      },
+    });
+    await context.clearCookies();
+    await page.goto('/login');
+    await page.getByRole('button', { name: 'Sign in with a passkey' }).click();
+    await page.waitForURL((url) => url.pathname === '/', { timeout: 10_000 });
   });
 });
