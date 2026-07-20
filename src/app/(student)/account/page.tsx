@@ -45,6 +45,18 @@ export default async function StudentSettingsPage() {
         reminderPref={student.reminderPref}
       />
 
+      {session.teacherId && (
+        <section className="mt-10 pt-6 border-t border-border">
+          <Link
+            href="/"
+            className="flex items-center gap-3 min-h-14 py-2 no-underline"
+          >
+            <span className="flex-1 text-base text-ink">Your teaching side</span>
+            <Icon name="chevron-right" size={20} className="text-brown-light" />
+          </Link>
+        </section>
+      )}
+
       <section className="mt-10 pt-6 border-t border-border">
         <h2 className="type-subtitle mb-3">Sign-in</h2>
         <AddPasskey />

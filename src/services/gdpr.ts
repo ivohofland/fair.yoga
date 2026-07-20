@@ -232,6 +232,11 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
       if (!teacherOnAccount) {
         await tx.session.deleteMany({ where: { accountId: student.accountId } });
         await tx.passkeyCredential.deleteMany({ where: { accountId: student.accountId } });
+        // Last profile gone: the account email is PII too.
+        await tx.account.update({
+          where: { id: student.accountId },
+          data: { email: `deleted-${student.accountId}@deleted.invalid` },
+        });
       }
     }
     await tx.magicLinkToken.deleteMany({ where: { email: student.email } });
@@ -365,6 +370,11 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       if (!studentOnAccount) {
         await tx.session.deleteMany({ where: { accountId: teacher.accountId } });
         await tx.passkeyCredential.deleteMany({ where: { accountId: teacher.accountId } });
+        // Last profile gone: the account email is PII too.
+        await tx.account.update({
+          where: { id: teacher.accountId },
+          data: { email: `deleted-${teacher.accountId}@deleted.invalid` },
+        });
       }
     }
     await tx.magicLinkToken.deleteMany({ where: { email: teacher.email } });
