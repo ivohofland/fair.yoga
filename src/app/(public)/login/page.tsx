@@ -40,7 +40,8 @@ export default function LoginPage() {
             sent to your inbox
           </h1>
           <p className="type-body max-w-[360px] mb-8">
-            Enter the email you teach with. We&apos;ll email a link that works for ten minutes.
+            Enter your email address — teacher or student. We&apos;ll email a
+            link that works for ten minutes.
           </p>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">

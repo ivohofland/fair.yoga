@@ -52,8 +52,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     credential.userId,
     credential.userType
   );
-  const redirectTo =
-    credential.userType === 'teacher' ? '/' : '/bookings';
+  // Prefer the caller's destination (booking flow) — schema-validated to a
+  // relative path — over the role default, mirroring magic-link verify.
+  const fallback = credential.userType === 'teacher' ? '/' : '/bookings';
+  const redirectTo = body.redirect ?? fallback;
 
   const apiResponse = respondOk({
     userType: credential.userType,

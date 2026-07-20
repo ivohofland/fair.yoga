@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasskeySignIn } from '@/components/booking/passkey-sign-in';
 
 interface BookingSignInProps {
   /** Where the magic link should land the student — this booking page. */
@@ -99,6 +100,14 @@ export function BookingSignIn({ redirect }: BookingSignInProps) {
           </p>
         )}
       </form>
+
+      {/* First-timers have no passkey yet — the button only makes sense on
+          the returning path. Signs in and lands back on this class. */}
+      {mode === 'returning' && (
+        <div className="mt-4 max-w-[420px]">
+          <PasskeySignIn email={email || undefined} redirect={redirect} />
+        </div>
+      )}
 
       <button
         type="button"

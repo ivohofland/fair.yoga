@@ -66,6 +66,7 @@ export const passkeyAuthOptionsSchema = z.object({
 export const passkeyAuthVerifySchema = z.object({
   response: z.record(z.string(), z.unknown()),
   challengeId: z.string().min(1),
+  redirect: relativePath.optional(),
 });
 
 // ============================================================================
