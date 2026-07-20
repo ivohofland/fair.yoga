@@ -31,17 +31,23 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return respondError('Too many signup attempts. Try again later.', 429);
   }
 
-  const existingTeacher = await prisma.teacher.findUnique({ where: { email } });
+  const existingAccount = await prisma.account.findUnique({ where: { email } });
   const existingStudent = await prisma.student.findUnique({ where: { email } });
 
-  if (!existingTeacher && !existingStudent) {
+  // Fresh email: account + claimed student, atomically. Every other state
+  // just gets the link — an unclaimed CRM row claims at verify, and a
+  // profile never attaches to an existing account without its session.
+  if (!existingAccount && !existingStudent) {
     await prisma.student.create({
-      data: { firstName, lastName, email, claimedAt: new Date() },
+      data: {
+        firstName,
+        lastName,
+        email,
+        claimedAt: new Date(),
+        account: { create: { email } },
+      },
     });
   }
-
-  // Existing student (or teacher) simply gets a sign-in link — same outcome
-  // from the caller's perspective.
   const token = await generateMagicLinkToken(prisma, email, redirect);
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
   await sendMagicLinkEmail(email, `${baseUrl}/verify?token=${token}`);

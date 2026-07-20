@@ -21,8 +21,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if ('error' in parsed) return parsed.error;
   const { firstName, lastName, email, bio, pageSlug } = parsed.data;
 
-  const existingEmail = await prisma.teacher.findUnique({ where: { email } });
-  if (existingEmail) {
+  // Any existing account blocks unauthenticated signup — attaching a
+  // teacher profile to someone's account requires their session, and a
+  // silent shadowing teacher used to lock students out of their bookings.
+  const existingAccount = await prisma.account.findUnique({ where: { email } });
+  if (existingAccount) {
     return respondError('Email already in use', 409, 'EMAIL_TAKEN');
   }
 
