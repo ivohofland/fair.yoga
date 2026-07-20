@@ -40,13 +40,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return respondError('Authentication verification failed', 400);
   }
 
-  // Update credential counter
   await prisma.passkeyCredential.update({
     where: { id: credential.id },
     data: { counter: result.newCounter },
   });
 
-  // Create session
   const sessionToken = await createSession(
     prisma,
     credential.userId,

@@ -41,7 +41,7 @@ export default function LoginPage() {
           </h1>
           <p className="type-body max-w-[360px] mb-8">
             Enter your email address — teacher or student. We&apos;ll email a
-            link that works for ten minutes.
+            link that works for fifteen minutes.
           </p>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">

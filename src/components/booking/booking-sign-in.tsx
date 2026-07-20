@@ -6,14 +6,14 @@ import { Input } from '@/components/ui/input';
 import { PasskeySignIn } from '@/components/booking/passkey-sign-in';
 
 interface BookingSignInProps {
-  /** Where the magic link should land the student — this booking page. */
+  /** Where sign-in — magic link or passkey — lands the student: this booking page. */
   redirect: string;
 }
 
 type Mode = 'new' | 'returning';
 
-// Account step of the booking flow: one email, no passwords. The magic
-// link brings the student straight back to this class.
+// Account step of the booking flow: no passwords — an email link, or a
+// passkey on the returning path. Both routes land back on this class.
 export function BookingSignIn({ redirect }: BookingSignInProps) {
   const [mode, setMode] = useState<Mode>('new');
   const [firstName, setFirstName] = useState('');

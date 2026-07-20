@@ -154,11 +154,11 @@ function ErrorState() {
         be used.
       </h1>
       <p className="type-body max-w-[360px] mb-3">
-        It&apos;s either past its ten-minute window, already been used, or doesn&apos;t
+        It&apos;s either past its fifteen-minute window, already been used, or doesn&apos;t
         match what we sent. Nothing to worry about &mdash; ask for a fresh one.
       </p>
       <ul className="list-none pl-[18px] mt-3 mb-6">
-        <ErrorReason>The link is older than ten minutes</ErrorReason>
+        <ErrorReason>The link is older than fifteen minutes</ErrorReason>
         <ErrorReason>It&apos;s already been used to sign in once</ErrorReason>
         <ErrorReason>It was opened on a device that wasn&apos;t expecting it</ErrorReason>
       </ul>
