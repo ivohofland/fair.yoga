@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import type { PrismaClient, RecipientType } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
 import type { SessionUser } from '../types';
@@ -17,8 +17,7 @@ function hashToken(token: string): string {
 
 export async function createSession(
   db: PrismaClient,
-  userId: string,
-  userType: RecipientType
+  accountId: string
 ): Promise<string> {
   const token = crypto.randomBytes(32).toString('hex');
   const sessionHash = hashToken(token);
@@ -27,8 +26,7 @@ export async function createSession(
   await db.session.create({
     data: {
       id: sessionHash,
-      userId,
-      userType,
+      accountId,
       expiresAt,
     },
   });
@@ -55,13 +53,18 @@ export async function validateSession(
     return null;
   }
 
-  // Verify the user still exists
-  const userExists =
-    session.userType === 'teacher'
-      ? await db.teacher.findUnique({ where: { id: session.userId }, select: { id: true } })
-      : await db.student.findUnique({ where: { id: session.userId }, select: { id: true } });
+  // Resolve the account's profiles. An account with no profiles left
+  // (post-erasure) cannot use any surface — treat its session as dead.
+  const account = await db.account.findUnique({
+    where: { id: session.accountId },
+    select: {
+      id: true,
+      teacher: { select: { id: true } },
+      student: { select: { id: true } },
+    },
+  });
 
-  if (!userExists) {
+  if (!account || (!account.teacher && !account.student)) {
     await db.session.delete({ where: { id: sessionHash } }).catch(() => {});
     return null;
   }
@@ -77,8 +80,9 @@ export async function validateSession(
 
   return {
     sessionId: session.id,
-    userId: session.userId,
-    userType: session.userType,
+    accountId: account.id,
+    teacherId: account.teacher?.id ?? null,
+    studentId: account.student?.id ?? null,
   };
 }
 

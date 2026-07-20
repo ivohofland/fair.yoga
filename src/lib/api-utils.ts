@@ -33,7 +33,7 @@ export async function requireTeacher(
 ): Promise<SessionUser | NextResponse> {
   const result = await requireSession(request);
   if (result instanceof NextResponse) return result;
-  if (result.userType !== 'teacher')
+  if (!result.teacherId)
     return respondError('Teacher access required', 403);
   return result;
 }
@@ -43,7 +43,7 @@ export async function requireStudent(
 ): Promise<SessionUser | NextResponse> {
   const result = await requireSession(request);
   if (result instanceof NextResponse) return result;
-  if (result.userType !== 'student')
+  if (!result.studentId)
     return respondError('Student access required', 403);
   return result;
 }

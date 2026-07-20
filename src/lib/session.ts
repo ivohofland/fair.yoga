@@ -13,7 +13,7 @@ export async function getSession(): Promise<SessionUser | null> {
 
 export async function requireTeacherSession(): Promise<SessionUser> {
   const session = await getSession();
-  if (!session || session.userType !== 'teacher') {
+  if (!session?.teacherId) {
     redirect('/login');
   }
   return session;
