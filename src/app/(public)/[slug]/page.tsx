@@ -7,6 +7,7 @@ import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import { estimateTierPrices } from '@/lib/tier-estimates';
 import { formatRoomLocation } from '@/lib/format';
+import { PriceRange } from '@/components/booking/price-range';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,6 +57,15 @@ export default async function TeacherBookingPage({
       </h1>
       {teacher.bio && <p className="type-body mt-2 max-w-[480px]">{teacher.bio}</p>}
 
+      {/* Teal tint sets the pricing promise apart from the personal bio. */}
+      <div className="bg-teal-tint rounded-card p-5 mt-5 max-w-[480px]">
+        <p className="type-caption">
+          Prices are income-based: everyone in the room pays what fits their
+          situation, and the final price settles after class based on who came.
+          The highest tier never pays more than about twice the lowest.
+        </p>
+      </div>
+
       <h2 className="type-subtitle mt-8 mb-3">Upcoming classes</h2>
 
       {classes.length === 0 ? (
@@ -76,8 +86,6 @@ export default async function TeacherBookingPage({
               maxStudents: cls.maxStudents,
               registeredTiers: cls.registrations.map((r) => r.tierAtBooking),
             });
-            const low = Math.min(...estimates);
-            const high = Math.max(...estimates);
 
             return (
               <Link
@@ -107,24 +115,12 @@ export default async function TeacherBookingPage({
                   max={cls.maxStudents}
                   className="mt-3"
                 />
-                <p className="type-caption mt-2">
-                  Your price:{' '}
-                  <span className="type-number text-[13px]">
-                    €{low.toFixed(2)} – €{high.toFixed(2)}
-                  </span>{' '}
-                  depending on your income tier
-                </p>
+                <PriceRange estimates={estimates} className="mt-2" />
               </Link>
             );
           })}
         </div>
       )}
-
-      <p className="type-caption mt-8 max-w-[420px]">
-        Prices are income-based: everyone in the room pays what fits their
-        situation, and the final price settles after class based on who came.
-        The highest tier never pays more than about twice the lowest.
-      </p>
     </div>
   );
 }
