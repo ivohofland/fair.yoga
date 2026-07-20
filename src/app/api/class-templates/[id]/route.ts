@@ -25,7 +25,7 @@ export const GET = withErrorHandler(async (
   });
   if (!template) return respondError('Class template not found', 404);
 
-  if (template.teacherId !== session.userId) {
+  if (template.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
   }
 
@@ -43,7 +43,7 @@ export const PUT = withErrorHandler(async (
   const template = await prisma.classTemplate.findUnique({ where: { id } });
   if (!template) return respondError('Class template not found', 404);
 
-  if (template.teacherId !== session.userId) {
+  if (template.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
   }
 
@@ -57,7 +57,7 @@ export const PUT = withErrorHandler(async (
 
   if (updateData.teacherRoomId) {
     const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id: updateData.teacherRoomId } });
-    if (!teacherRoom || teacherRoom.teacherId !== session.userId) {
+    if (!teacherRoom || teacherRoom.teacherId !== session.teacherId) {
       return respondError('Invalid teacher room', 400);
     }
   }
@@ -86,7 +86,7 @@ export const PATCH = withErrorHandler(async (
   const template = await prisma.classTemplate.findUnique({ where: { id } });
   if (!template) return respondError('Class template not found', 404);
 
-  if (template.teacherId !== session.userId) {
+  if (template.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
   }
 

@@ -7,7 +7,7 @@ export default async function ArchivedRoomsPage() {
   const session = await requireTeacherSession();
 
   const teacherRooms = await prisma.teacherRoom.findMany({
-    where: { teacherId: session.userId, isArchived: true },
+    where: { teacherId: session.teacherId, isArchived: true },
     include: { room: true },
     orderBy: { createdAt: 'desc' },
   });

@@ -16,6 +16,7 @@ describe('generateStudioClassInstances (DB)', () => {
         firstName: 'StudioGen',
         lastName: 'Teacher',
         email: `studiogen-${uniqueSuffix}@test.local`,
+        account: { create: { email: `studiogen-${uniqueSuffix}@test.local` } },
         bio: 'Studio generator tests',
         pageSlug: `studiogen-${uniqueSuffix}`,
       },

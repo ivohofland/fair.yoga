@@ -21,14 +21,14 @@ export default async function StudentDetailPage({
     where: { id },
     include: {
       teacherStudents: {
-        where: { teacherId: session.userId },
+        where: { teacherId: session.teacherId },
         select: { id: true, isArchived: true },
       },
       studentPrivacy: {
-        where: { teacherId: session.userId },
+        where: { teacherId: session.teacherId },
       },
       registrations: {
-        where: { class: { teacherId: session.userId } },
+        where: { class: { teacherId: session.teacherId } },
         include: {
           class: { select: { classType: true, date: true, startTime: true } },
           payment: true,

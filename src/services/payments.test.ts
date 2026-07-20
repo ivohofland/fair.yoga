@@ -28,6 +28,7 @@ describe('Payment Service (DB)', () => {
         firstName: 'Payment',
         lastName: 'Teacher',
         email: `payment-teacher-${uniqueSuffix}@test.local`,
+        account: { create: { email: `payment-teacher-${uniqueSuffix}@test.local` } },
         bio: 'Test teacher for payment tests',
         pageSlug: `payment-teacher-${uniqueSuffix}`,
       },

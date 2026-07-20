@@ -16,19 +16,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   let credentialIds: string[] | undefined;
 
   if (body.email) {
-    // Look up user: Teacher first, then Student
-    const teacher = await prisma.teacher.findUnique({
-      where: { email: body.email },
-    });
-    const student = teacher
-      ? null
-      : await prisma.student.findUnique({ where: { email: body.email } });
-    const user = teacher ?? student;
-
-    if (user) {
-      const userType = teacher ? 'teacher' : 'student';
+    const account = await prisma.account.findUnique({ where: { email: body.email } });
+    if (account) {
       const creds = await prisma.passkeyCredential.findMany({
-        where: { userId: user.id, userType },
+        where: { accountId: account.id },
         select: { id: true },
       });
       credentialIds = creds.map((c) => c.id);

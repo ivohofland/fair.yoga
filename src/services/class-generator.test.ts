@@ -66,6 +66,7 @@ describe('generateClassInstances (DB)', () => {
         firstName: 'Generator',
         lastName: 'Teacher',
         email: `generator-teacher-${uniqueSuffix}@test.local`,
+        account: { create: { email: `generator-teacher-${uniqueSuffix}@test.local` } },
         bio: 'Test teacher for generator tests',
         pageSlug: `generator-teacher-${uniqueSuffix}`,
       },

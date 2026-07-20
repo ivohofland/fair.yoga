@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
+import { accountIdOfStudent } from './account-helpers';
 
 /**
  * The student's side of a contested class, end to end through the UI:
@@ -55,6 +56,7 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
         firstName: 'Contested',
         lastName: 'Teacher',
         email: `e2e-sjourney-teacher-${uniqueSuffix}@test.local`,
+        account: { create: { email: `e2e-sjourney-teacher-${uniqueSuffix}@test.local` } },
         bio: 'One-seat classes for waitlist e2e',
         pageSlug: slug,
       },
@@ -103,6 +105,7 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
           firstName: first,
           lastName: 'Student',
           email: `e2e-sjourney-${first.toLowerCase()}-${uniqueSuffix}@test.local`,
+          account: { create: { email: `e2e-sjourney-${first.toLowerCase()}-${uniqueSuffix}@test.local` } },
           incomeTier: 3,
           claimedAt: new Date(),
         },
@@ -110,8 +113,7 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
       await prisma.session.create({
         data: {
           id: hashToken(token),
-          userId: student.id,
-          userType: 'student',
+          accountId: await accountIdOfStudent(prisma, student.id),
           expiresAt: new Date(Date.now() + 86400000),
         },
       });
@@ -129,7 +131,11 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     await prisma.class.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
-    await prisma.session.deleteMany({ where: { userId: { in: [aliceId, bramId] } } });
+    for (const sid of [aliceId, bramId]) {
+      await prisma.session.deleteMany({
+        where: { accountId: await accountIdOfStudent(prisma, sid) },
+      });
+    }
     await prisma.student.deleteMany({ where: { id: { in: [aliceId, bramId] } } });
     await prisma.teacher.delete({ where: { id: teacherId } });
     await prisma.$disconnect();

@@ -22,13 +22,11 @@ export const DELETE = withErrorHandler(async (
   if (!entry) return respondError('Waitlist entry not found', 404);
 
   // Only the student themselves or the class teacher can remove
-  if (session.userType === 'student' && entry.studentId !== session.userId) {
-    return respondError('Access denied', 403);
-  }
-
-  if (session.userType === 'teacher') {
+  const isOwnEntry = entry.studentId === session.studentId;
+  if (!isOwnEntry) {
+    if (!session.teacherId) return respondError('Access denied', 403);
     const cls = await prisma.class.findUnique({ where: { id: entry.classId } });
-    if (!cls || cls.teacherId !== session.userId) {
+    if (!cls || cls.teacherId !== session.teacherId) {
       return respondError('Access denied', 403);
     }
   }

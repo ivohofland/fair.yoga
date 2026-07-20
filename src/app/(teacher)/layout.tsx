@@ -10,7 +10,7 @@ export default async function TeacherLayout({
   children: React.ReactNode;
 }) {
   const session = await getSession();
-  if (!session || session.userType !== 'teacher') {
+  if (!session?.teacherId) {
     redirect('/login');
   }
 
@@ -18,7 +18,7 @@ export default async function TeacherLayout({
   const unreadCount = await prisma.notification.count({
     where: {
       recipientType: 'teacher',
-      recipientId: session.userId,
+      recipientId: session.teacherId,
       isRead: false,
     },
   });

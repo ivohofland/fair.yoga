@@ -40,6 +40,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       pageSlug,
       defaultCurrency: 'EUR',
       defaultTimezone: 'Europe/Amsterdam',
+      account: { create: { email } },
     },
   });
 

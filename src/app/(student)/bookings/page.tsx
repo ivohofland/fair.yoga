@@ -24,11 +24,11 @@ function formatDayHeader(date: Date): string {
 // what to pay and where. No engagement tricks — a quiet ledger.
 export default async function StudentBookingsPage() {
   const session = await getSession();
-  if (!session || session.userType !== 'student') redirect('/login');
+  if (!session?.studentId) redirect('/login');
 
   const [registrations, waitlistEntries, unreadNotifications] = await Promise.all([
     prisma.registration.findMany({
-      where: { studentId: session.userId, status: { not: 'cancelled' } },
+      where: { studentId: session.studentId, status: { not: 'cancelled' } },
       orderBy: { class: { date: 'desc' } },
       include: {
         class: {
@@ -44,7 +44,7 @@ export default async function StudentBookingsPage() {
       },
     }),
     prisma.waitlistEntry.findMany({
-      where: { studentId: session.userId, status: 'waiting' },
+      where: { studentId: session.studentId, status: 'waiting' },
       include: {
         class: {
           include: {
@@ -63,7 +63,7 @@ export default async function StudentBookingsPage() {
       },
     }),
     prisma.notification.findMany({
-      where: { recipientType: 'student', recipientId: session.userId, isRead: false },
+      where: { recipientType: 'student', recipientId: session.studentId, isRead: false },
       orderBy: { createdAt: 'desc' },
       take: 5,
       include: {

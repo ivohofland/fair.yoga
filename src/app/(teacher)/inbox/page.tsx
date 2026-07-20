@@ -9,7 +9,7 @@ export default async function InboxPage() {
   const notifications = await prisma.notification.findMany({
     where: {
       recipientType: 'teacher',
-      recipientId: session.userId,
+      recipientId: session.teacherId,
     },
     // id tie-breaker: rows created in the same instant (batch inserts) have
     // equal createdAt, and without it their order shuffles on every refresh.

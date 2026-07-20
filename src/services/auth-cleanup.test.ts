@@ -20,24 +20,24 @@ describe('cleanupExpiredAuth', () => {
         firstName: 'Cleanup',
         lastName: 'Teacher',
         email: `cleanup-${uniqueSuffix}@test.local`,
+        account: { create: { email: `cleanup-${uniqueSuffix}@test.local` } },
         bio: 'auth cleanup test',
         pageSlug: `cleanup-${uniqueSuffix}`,
       },
     });
     teacherId = teacher.id;
+    const teacherAccountId = teacher.accountId;
 
     await prisma.session.createMany({
       data: [
         {
           id: liveSessionId,
-          userId: teacherId,
-          userType: 'teacher',
+          accountId: teacherAccountId,
           expiresAt: new Date(Date.now() + 86400000),
         },
         {
           id: deadSessionId,
-          userId: teacherId,
-          userType: 'teacher',
+          accountId: teacherAccountId,
           expiresAt: new Date(Date.now() - 1000),
         },
       ],
@@ -59,7 +59,7 @@ describe('cleanupExpiredAuth', () => {
   });
 
   afterAll(async () => {
-    await prisma.session.deleteMany({ where: { userId: teacherId } });
+    await prisma.session.deleteMany({ where: { id: { in: [liveSessionId, deadSessionId] } } });
     await prisma.magicLinkToken.deleteMany({ where: { email: { contains: uniqueSuffix } } });
     await prisma.teacher.delete({ where: { id: teacherId } });
     await prisma.$disconnect();

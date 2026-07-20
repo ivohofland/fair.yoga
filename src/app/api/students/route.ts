@@ -17,7 +17,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const archived = params.archived === 'true';
 
   const where = {
-    teacherStudents: { some: { teacherId: session.userId, isArchived: archived } },
+    teacherStudents: { some: { teacherId: session.teacherId, isArchived: archived } },
     ...(search
       ? {
           OR: [
@@ -42,11 +42,11 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
         email: true,
         claimedAt: true,
         studentPrivacy: {
-          where: { teacherId: session.userId },
+          where: { teacherId: session.teacherId },
           select: { shareFullName: true, shareEmail: true },
         },
         registrations: {
-          where: { class: { teacherId: session.userId } },
+          where: { class: { teacherId: session.teacherId } },
           orderBy: { registeredAt: 'desc' },
           take: 1,
           select: { class: { select: { date: true } } },
@@ -54,7 +54,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
         _count: {
           select: {
             registrations: {
-              where: { class: { teacherId: session.userId } },
+              where: { class: { teacherId: session.teacherId } },
             },
           },
         },
@@ -95,13 +95,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   if (existing) {
     const link = await prisma.teacherStudent.findUnique({
-      where: { teacherId_studentId: { teacherId: session.userId, studentId: existing.id } },
+      where: { teacherId_studentId: { teacherId: session.teacherId, studentId: existing.id } },
     });
     if (link) {
       return respondError('Student already in your contacts', 409, 'ALREADY_LINKED');
     }
     await prisma.teacherStudent.create({
-      data: { teacherId: session.userId, studentId: existing.id },
+      data: { teacherId: session.teacherId, studentId: existing.id },
     });
     return respondOk(existing, 200);
   }
@@ -111,7 +111,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       data: { firstName, lastName, email },
     });
     await tx.teacherStudent.create({
-      data: { teacherId: session.userId, studentId: created.id },
+      data: { teacherId: session.teacherId, studentId: created.id },
     });
     return created;
   });

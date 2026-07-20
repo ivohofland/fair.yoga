@@ -42,7 +42,7 @@ export default async function TeacherHome() {
   const [classes, studioClasses, teacher, roomCount, classCount] = await Promise.all([
     prisma.class.findMany({
       where: {
-        teacherId: session.userId,
+        teacherId: session.teacherId,
         date: { gte: start, lt: end },
       },
       orderBy: { date: 'asc' },
@@ -58,17 +58,17 @@ export default async function TeacherHome() {
     }),
     prisma.studioClass.findMany({
       where: {
-        teacherId: session.userId,
+        teacherId: session.teacherId,
         date: { gte: start, lt: end },
       },
       orderBy: { date: 'asc' },
     }),
     prisma.teacher.findUniqueOrThrow({
-      where: { id: session.userId },
+      where: { id: session.teacherId },
       select: { bankIban: true },
     }),
-    prisma.teacherRoom.count({ where: { teacherId: session.userId, isArchived: false } }),
-    prisma.class.count({ where: { teacherId: session.userId } }),
+    prisma.teacherRoom.count({ where: { teacherId: session.teacherId, isArchived: false } }),
+    prisma.class.count({ where: { teacherId: session.teacherId } }),
   ]);
 
   // The checklist retires itself once the teacher has taught the basics

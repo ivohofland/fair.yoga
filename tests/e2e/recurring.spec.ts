@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
+import { accountIdOfTeacher } from './account-helpers';
 
 /**
  * The recurring-class lifecycle, end to end: template created through
@@ -57,6 +58,7 @@ test.describe('Recurring classes', () => {
         firstName: 'Recurring',
         lastName: 'Teacher',
         email: `e2e-recurring-${uniqueSuffix}@test.local`,
+        account: { create: { email: `e2e-recurring-${uniqueSuffix}@test.local` } },
         bio: 'Recurring e2e fixtures',
         pageSlug: `e2e-recurring-${uniqueSuffix}`,
       },
@@ -65,8 +67,7 @@ test.describe('Recurring classes', () => {
     await prisma.session.create({
       data: {
         id: hashToken(teacherToken),
-        userId: teacherId,
-        userType: 'teacher',
+        accountId: await accountIdOfTeacher(prisma, teacherId),
         expiresAt: new Date(Date.now() + 86400000),
       },
     });
@@ -94,7 +95,7 @@ test.describe('Recurring classes', () => {
     await prisma.classTemplate.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
-    await prisma.session.deleteMany({ where: { userId: teacherId } });
+    await prisma.session.deleteMany({ where: { accountId: await accountIdOfTeacher(prisma, teacherId) } });
     await prisma.teacher.delete({ where: { id: teacherId } });
     await prisma.$disconnect();
   });

@@ -62,8 +62,7 @@ describe('passkey challenge store', () => {
 describe('generatePasskeyRegistrationOptions', () => {
   it('returns options with challenge, rp, and user fields', async () => {
     const options = await generatePasskeyRegistrationOptions({
-      userId: 'test-user-id',
-      userType: 'teacher',
+      accountId: 'test-user-id',
       userName: 'jane@example.com',
       userDisplayName: 'Jane Doe',
     });
@@ -81,8 +80,7 @@ describe('generatePasskeyRegistrationOptions', () => {
 
   it('stores the challenge for later retrieval', async () => {
     const options = await generatePasskeyRegistrationOptions({
-      userId: 'store-test-user',
-      userType: 'student',
+      accountId: 'store-test-user',
       userName: 'student@example.com',
       userDisplayName: 'Student',
     });
@@ -93,8 +91,7 @@ describe('generatePasskeyRegistrationOptions', () => {
 
   it('passes excludeCredentials when existingCredentialIds provided', async () => {
     const options = await generatePasskeyRegistrationOptions({
-      userId: 'exclude-test',
-      userType: 'teacher',
+      accountId: 'exclude-test',
       userName: 'teacher@example.com',
       userDisplayName: 'Teacher',
       existingCredentialIds: ['cred-1', 'cred-2'],

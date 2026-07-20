@@ -19,18 +19,18 @@ export default async function ReportingPage() {
 
   const [completedClasses, studioClasses, distinctStudents] = await Promise.all([
     prisma.class.findMany({
-      where: { teacherId: session.userId, status: 'completed' },
+      where: { teacherId: session.teacherId, status: 'completed' },
       select: { date: true, totalRevenue: true, roomCost: true, totalStudents: true },
       orderBy: { date: 'desc' },
     }),
     prisma.studioClass.findMany({
-      where: { teacherId: session.userId, cancelledAt: null, date: { lte: new Date() } },
+      where: { teacherId: session.teacherId, cancelledAt: null, date: { lte: new Date() } },
       select: { date: true, durationMinutes: true, hourlyRate: true, studentCount: true },
       orderBy: { date: 'desc' },
     }),
     prisma.registration.findMany({
       where: {
-        class: { teacherId: session.userId, status: 'completed' },
+        class: { teacherId: session.teacherId, status: 'completed' },
         status: { in: ['registered', 'attended', 'no_show', 'late_cancel'] },
       },
       distinct: ['studentId'],

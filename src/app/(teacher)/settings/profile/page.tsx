@@ -9,7 +9,7 @@ export default async function ProfilePage() {
   const session = await requireTeacherSession();
 
   const teacher = await prisma.teacher.findUniqueOrThrow({
-    where: { id: session.userId },
+    where: { id: session.teacherId },
   });
 
   return (

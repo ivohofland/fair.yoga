@@ -12,6 +12,6 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  const payments = await getOutstandingPayments(prisma, session.userId);
+  const payments = await getOutstandingPayments(prisma, session.teacherId);
   return respondOk(payments);
 });

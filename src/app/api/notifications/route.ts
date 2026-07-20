@@ -20,22 +20,23 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const limit = Number.isNaN(rawLimit) ? 20 : Math.min(100, Math.max(1, rawLimit));
   const skip = (page - 1) * limit;
 
+  // A dual-role account reads both of its profiles' notifications.
+  const recipients = [
+    ...(session.teacherId
+      ? [{ recipientType: 'teacher' as const, recipientId: session.teacherId }]
+      : []),
+    ...(session.studentId
+      ? [{ recipientType: 'student' as const, recipientId: session.studentId }]
+      : []),
+  ];
   const [notifications, total] = await Promise.all([
     prisma.notification.findMany({
-      where: {
-        recipientType: session.userType,
-        recipientId: session.userId,
-      },
+      where: { OR: recipients },
       orderBy: { createdAt: 'desc' },
       skip,
       take: limit,
     }),
-    prisma.notification.count({
-      where: {
-        recipientType: session.userType,
-        recipientId: session.userId,
-      },
-    }),
+    prisma.notification.count({ where: { OR: recipients } }),
   ]);
 
   return respondOk({ notifications, total, page, limit });

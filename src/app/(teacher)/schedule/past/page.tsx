@@ -10,7 +10,7 @@ export default async function PastClassesPage() {
 
   const [classes, studioClasses] = await Promise.all([
     prisma.class.findMany({
-      where: { teacherId: session.userId, date: { lt: today } },
+      where: { teacherId: session.teacherId, date: { lt: today } },
       orderBy: { date: 'desc' },
       include: {
         _count: { select: { registrations: true } },
@@ -23,7 +23,7 @@ export default async function PastClassesPage() {
       },
     }),
     prisma.studioClass.findMany({
-      where: { teacherId: session.userId, date: { lt: today } },
+      where: { teacherId: session.teacherId, date: { lt: today } },
       orderBy: { date: 'desc' },
     }),
   ]);

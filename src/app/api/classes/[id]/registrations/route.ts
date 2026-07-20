@@ -19,7 +19,7 @@ export const GET = withErrorHandler(async (
 
   const cls = await prisma.class.findUnique({ where: { id } });
   if (!cls) return respondError('Class not found', 404);
-  if (cls.teacherId !== session.userId) return respondError('Not your class', 403);
+  if (cls.teacherId !== session.teacherId) return respondError('Not your class', 403);
 
   const registrations = await prisma.registration.findMany({
     where: { classId: id },

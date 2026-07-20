@@ -45,19 +45,19 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     data: { counter: result.newCounter },
   });
 
-  const sessionToken = await createSession(
-    prisma,
-    credential.userId,
-    credential.userType
-  );
+  const sessionToken = await createSession(prisma, credential.accountId);
   // Prefer the caller's destination (booking flow) — schema-validated to a
   // relative path — over the role default, mirroring magic-link verify.
-  const fallback = credential.userType === 'teacher' ? '/' : '/bookings';
+  // Dual-role accounts default to the teacher home.
+  const account = await prisma.account.findUnique({
+    where: { id: credential.accountId },
+    select: { teacher: { select: { id: true } } },
+  });
+  const fallback = account?.teacher ? '/' : '/bookings';
   const redirectTo = body.redirect ?? fallback;
 
   const apiResponse = respondOk({
-    userType: credential.userType,
-    userId: credential.userId,
+    accountId: credential.accountId,
     redirectTo,
   });
   setSessionCookie(apiResponse.headers, sessionToken);

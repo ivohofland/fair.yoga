@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
+import { accountIdOfStudent } from './account-helpers';
 
 const prisma = new PrismaClient();
 
@@ -29,6 +30,7 @@ test.describe('Public booking flow', () => {
         firstName: 'Booking',
         lastName: 'Teacher',
         email: `e2e-booking-teacher-${uniqueSuffix}@test.local`,
+        account: { create: { email: `e2e-booking-teacher-${uniqueSuffix}@test.local` } },
         bio: 'Vinyasa in the east of town.',
         pageSlug: slug,
       },
@@ -75,6 +77,7 @@ test.describe('Public booking flow', () => {
         firstName: 'Booking',
         lastName: 'Student',
         email: `e2e-booking-student-${uniqueSuffix}@test.local`,
+        account: { create: { email: `e2e-booking-student-${uniqueSuffix}@test.local` } },
         incomeTier: 3,
         claimedAt: new Date(),
       },
@@ -86,7 +89,7 @@ test.describe('Public booking flow', () => {
     await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
     await prisma.registration.deleteMany({ where: { classId } });
     await prisma.teacherStudent.deleteMany({ where: { teacherId } });
-    await prisma.session.deleteMany({ where: { userId: studentId } });
+    await prisma.session.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, studentId) } });
     await prisma.magicLinkToken.deleteMany({ where: { email: { contains: uniqueSuffix } } });
     await prisma.class.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
@@ -171,8 +174,7 @@ test.describe('Public booking flow', () => {
     await prisma.session.create({
       data: {
         id: hashToken(sessionToken),
-        userId: studentId,
-        userType: 'student',
+        accountId: await accountIdOfStudent(prisma, studentId),
         expiresAt: new Date(Date.now() + 86400000),
       },
     });

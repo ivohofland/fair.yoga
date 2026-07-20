@@ -33,8 +33,8 @@ export const GET = withErrorHandler(async (
   if (!registration) return respondError('Registration not found', 404);
 
   // Allow access if the user is the student or the class teacher
-  const isStudent = session.userType === 'student' && registration.studentId === session.userId;
-  const isTeacher = session.userType === 'teacher' && registration.class.teacherId === session.userId;
+  const isStudent = registration.studentId === session.studentId;
+  const isTeacher = registration.class.teacherId === session.teacherId;
 
   if (!isStudent && !isTeacher) return respondError('Access denied', 403);
 
@@ -48,7 +48,7 @@ export const PUT = withErrorHandler(async (
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
 
-  if (session.userType !== 'teacher') {
+  if (!session.teacherId) {
     return respondError('Only teachers can update attendance', 403);
   }
 
@@ -60,7 +60,7 @@ export const PUT = withErrorHandler(async (
   });
 
   if (!registration) return respondError('Registration not found', 404);
-  if (registration.class.teacherId !== session.userId) {
+  if (registration.class.teacherId !== session.teacherId) {
     return respondError('Not your class', 403);
   }
 
@@ -100,8 +100,8 @@ export const DELETE = withErrorHandler(async (
   if (!registration) return respondError('Registration not found', 404);
 
   // Allow cancellation by the student themselves or the class teacher
-  const isStudent = session.userType === 'student' && registration.studentId === session.userId;
-  const isTeacher = session.userType === 'teacher' && registration.class.teacherId === session.userId;
+  const isStudent = registration.studentId === session.studentId;
+  const isTeacher = registration.class.teacherId === session.teacherId;
 
   if (!isStudent && !isTeacher) return respondError('Access denied', 403);
 

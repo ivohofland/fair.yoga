@@ -23,7 +23,7 @@ export const POST = withErrorHandler(async (
 
   // Verify teacher owns the class
   const cls = await prisma.class.findUnique({ where: { id: entry.classId } });
-  if (!cls || cls.teacherId !== session.userId) {
+  if (!cls || cls.teacherId !== session.teacherId) {
     return respondError('Not your class', 403);
   }
 

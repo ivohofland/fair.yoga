@@ -8,7 +8,7 @@ export default async function StudioClassesPage() {
   const session = await requireTeacherSession();
 
   const templates = await prisma.studioClassTemplate.findMany({
-    where: { teacherId: session.userId, isArchived: false },
+    where: { teacherId: session.teacherId, isArchived: false },
     orderBy: { createdAt: 'desc' },
   });
 

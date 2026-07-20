@@ -49,6 +49,7 @@ describe('syncTemplateInstances', () => {
         firstName: 'Sync',
         lastName: 'Teacher',
         email: `sync-${uniqueSuffix}@test.local`,
+        account: { create: { email: `sync-${uniqueSuffix}@test.local` } },
         bio: 'template sync tests',
         pageSlug: `sync-${uniqueSuffix}`,
       },

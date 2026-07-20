@@ -28,12 +28,19 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if ('error' in parsed) return parsed.error;
   const body = parsed.data;
 
-  const isTeacher = session.userType === 'teacher';
-  const studentId = isTeacher ? body.studentId : session.userId;
-
-  if (!studentId) {
-    return respondError('studentId is required when teacher adds a registration', 400);
+  // body.studentId marks a teacher acting on their roster; without it the
+  // caller registers themselves as a student. A dual-role account books
+  // itself through the student path like anyone else.
+  const rosterStudentId = body.studentId;
+  const actingTeacherId = rosterStudentId !== undefined ? session.teacherId : null;
+  if (rosterStudentId !== undefined && !actingTeacherId) {
+    return respondError('Teacher access required', 403);
   }
+  const studentId = rosterStudentId ?? session.studentId;
+  if (!studentId) {
+    return respondError('Student access required', 403);
+  }
+  const isTeacher = actingTeacherId !== null;
 
   // Look up the class
   const cls = await prisma.class.findUnique({
@@ -44,7 +51,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // Teachers may only manage registrations for their own classes —
   // registering also locks the class's economic settings.
-  if (isTeacher && cls.teacherId !== session.userId) {
+  if (actingTeacherId && cls.teacherId !== actingTeacherId) {
     return respondError('Not your class', 403);
   }
 
@@ -62,7 +69,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // A teacher can only register students in their own roster.
   if (isTeacher) {
     const link = await prisma.teacherStudent.findUnique({
-      where: { teacherId_studentId: { teacherId: session.userId, studentId } },
+      where: { teacherId_studentId: { teacherId: actingTeacherId!, studentId } },
     });
     if (!link) return respondError('Student is not in your roster', 403);
   }

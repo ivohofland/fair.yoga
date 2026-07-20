@@ -17,8 +17,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   if (isErrorResponse(session)) return session;
 
   return respondOk({
-    userId: session.userId,
-    userType: session.userType,
+    accountId: session.accountId,
+    teacherId: session.teacherId,
+    studentId: session.studentId,
   });
 });
 

@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
+import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
 
 /**
  * The core product loop, end to end through the UI:
@@ -50,6 +51,7 @@ test.describe('Teacher journey', () => {
         firstName: 'Journey',
         lastName: 'Teacher',
         email: `e2e-journey-teacher-${uniqueSuffix}@test.local`,
+        account: { create: { email: `e2e-journey-teacher-${uniqueSuffix}@test.local` } },
         bio: 'Teacher for the full-journey e2e test',
         pageSlug: `e2e-journey-${uniqueSuffix}`,
         defaultTimezone: 'UTC',
@@ -59,8 +61,7 @@ test.describe('Teacher journey', () => {
     await prisma.session.create({
       data: {
         id: hashToken(teacherToken),
-        userId: teacherId,
-        userType: 'teacher',
+        accountId: await accountIdOfTeacher(prisma, teacherId),
         expiresAt: new Date(Date.now() + 86400000),
       },
     });
@@ -71,6 +72,7 @@ test.describe('Teacher journey', () => {
         firstName: 'Journey',
         lastName: 'Student',
         email: `e2e-journey-student-${uniqueSuffix}@test.local`,
+        account: { create: { email: `e2e-journey-student-${uniqueSuffix}@test.local` } },
         incomeTier: 3,
       },
     });
@@ -78,8 +80,7 @@ test.describe('Teacher journey', () => {
     await prisma.session.create({
       data: {
         id: hashToken(bookingStudentToken),
-        userId: bookingStudentId,
-        userType: 'student',
+        accountId: await accountIdOfStudent(prisma, bookingStudentId),
         expiresAt: new Date(Date.now() + 86400000),
       },
     });
@@ -90,6 +91,7 @@ test.describe('Teacher journey', () => {
         firstName: 'Walkin',
         lastName: 'Guest',
         email: `e2e-journey-walkin-${uniqueSuffix}@test.local`,
+        account: { create: { email: `e2e-journey-walkin-${uniqueSuffix}@test.local` } },
         incomeTier: 2,
       },
     });
@@ -117,8 +119,17 @@ test.describe('Teacher journey', () => {
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.deleteMany({ where: { createdById: teacherId } });
     await prisma.session.deleteMany({
-      where: { userId: { in: [teacherId, bookingStudentId, walkInStudentId] } },
+      where: { accountId: await accountIdOfTeacher(prisma, teacherId) },
     });
+    for (const sid of [bookingStudentId, walkInStudentId]) {
+      const student = await prisma.student.findUnique({
+        where: { id: sid },
+        select: { accountId: true },
+      });
+      if (student?.accountId) {
+        await prisma.session.deleteMany({ where: { accountId: student.accountId } });
+      }
+    }
     await prisma.student.deleteMany({
       where: { id: { in: [bookingStudentId, walkInStudentId] } },
     });

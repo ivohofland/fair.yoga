@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
+import { accountIdOfTeacher } from './account-helpers';
 
 const prisma = new PrismaClient();
 
@@ -43,6 +44,7 @@ test.describe('Magic link authentication', () => {
         firstName: 'E2E',
         lastName: 'Auth',
         email: teacherEmail,
+        account: { create: { email: teacherEmail } },
         bio: 'Teacher for e2e auth tests',
         pageSlug: `e2e-auth-${uniqueSuffix}`,
       },
@@ -51,7 +53,7 @@ test.describe('Magic link authentication', () => {
   });
 
   test.afterAll(async () => {
-    await prisma.session.deleteMany({ where: { userId: teacherId } });
+    await prisma.session.deleteMany({ where: { accountId: await accountIdOfTeacher(prisma, teacherId) } });
     await prisma.magicLinkToken.deleteMany({ where: { email: teacherEmail } });
     await prisma.teacher.delete({ where: { id: teacherId } });
     await prisma.$disconnect();

@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
+import { accountIdOfTeacher } from './account-helpers';
 
 /**
  * Visual regression: screenshot baselines for the design system's key
@@ -122,6 +123,7 @@ test.describe('Visual regression', () => {
         firstName: 'Visual',
         lastName: 'Teacher',
         email: `e2e-visual-${uniqueSuffix}@test.local`,
+        account: { create: { email: `e2e-visual-${uniqueSuffix}@test.local` } },
         bio: 'Calm vinyasa in a warm room.',
         pageSlug: slug,
       },
@@ -130,8 +132,7 @@ test.describe('Visual regression', () => {
     await prisma.session.create({
       data: {
         id: hashToken(teacherToken),
-        userId: teacherId,
-        userType: 'teacher',
+        accountId: await accountIdOfTeacher(prisma, teacherId),
         expiresAt: new Date(Date.now() + 86400000),
       },
     });
@@ -194,7 +195,7 @@ test.describe('Visual regression', () => {
     await prisma.class.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
-    await prisma.session.deleteMany({ where: { userId: teacherId } });
+    await prisma.session.deleteMany({ where: { accountId: await accountIdOfTeacher(prisma, teacherId) } });
     await prisma.teacher.delete({ where: { id: teacherId } });
     await prisma.$disconnect();
   });

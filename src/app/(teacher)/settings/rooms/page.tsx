@@ -8,7 +8,7 @@ export default async function RoomsPage() {
   const session = await requireTeacherSession();
 
   const teacherRooms = await prisma.teacherRoom.findMany({
-    where: { teacherId: session.userId, isArchived: false },
+    where: { teacherId: session.teacherId, isArchived: false },
     include: { room: true },
     orderBy: { createdAt: 'desc' },
   });

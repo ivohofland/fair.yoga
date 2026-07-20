@@ -87,20 +87,19 @@ function getExpectedOrigin(): string {
 // ---------------------------------------------------------------------------
 
 export async function generatePasskeyRegistrationOptions(params: {
-  userId: string;
-  userType: 'teacher' | 'student';
+  accountId: string;
   userName: string;
   userDisplayName: string;
   existingCredentialIds?: string[];
 }): Promise<PublicKeyCredentialCreationOptionsJSON> {
-  const { userId, userName, userDisplayName, existingCredentialIds } = params;
+  const { accountId, userName, userDisplayName, existingCredentialIds } = params;
 
   const options = await generateRegistrationOptions({
     rpName: getRpName(),
     rpID: getRpId(),
     userName,
     userDisplayName,
-    userID: new TextEncoder().encode(userId),
+    userID: new TextEncoder().encode(accountId),
     excludeCredentials: (existingCredentialIds ?? []).map((id) => ({ id })),
     authenticatorSelection: {
       residentKey: 'preferred',
@@ -108,7 +107,7 @@ export async function generatePasskeyRegistrationOptions(params: {
     },
   });
 
-  storeChallenge(userId, options.challenge);
+  storeChallenge(accountId, options.challenge);
 
   return options;
 }
