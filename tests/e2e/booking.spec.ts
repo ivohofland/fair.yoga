@@ -102,6 +102,15 @@ test.describe('Public booking flow', () => {
     await expect(page.getByRole('heading', { name: 'Booking Teacher' })).toBeVisible();
     await expect(page.getByText('E2E Vinyasa')).toBeVisible();
     await expect(page.getByText(/depending on your income tier/)).toBeVisible();
+
+    // The pricing explainer sits above the class list, not in a footer.
+    const explainer = page.getByText(/Prices are income-based/);
+    await expect(explainer).toBeVisible();
+    const explainerBox = await explainer.boundingBox();
+    const listHeadingBox = await page
+      .getByRole('heading', { name: 'Upcoming classes' })
+      .boundingBox();
+    expect(explainerBox!.y).toBeLessThan(listHeadingBox!.y);
   });
 
   test('booking page asks for an account when signed out', async ({ page }) => {
@@ -109,6 +118,8 @@ test.describe('Public booking flow', () => {
 
     await expect(page.getByText('First time here?')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Send me the link' })).toBeVisible();
+    // The price range is visible before signing in.
+    await expect(page.getByText(/depending on your income tier/)).toBeVisible();
   });
 
   test('magic link returns the student to the booking page and books with a chosen tier', async ({ page }) => {
