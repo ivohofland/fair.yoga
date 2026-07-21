@@ -41,7 +41,9 @@ export function UpdatesStrip({ updates }: UpdatesStripProps) {
         {updates.map((update) => (
           <div
             key={update.id}
-            className="flex items-start justify-between gap-2 min-h-14 py-3 bg-sand-soft -mx-3 px-3 my-1 rounded-field"
+            // The inbox's stable unread row, verbatim: flat, constant
+            // separator, tint carries the unread state (008acbc).
+            className="flex items-start justify-between gap-2 min-h-14 py-3 -mx-3 px-3 border-b border-border bg-sand-soft"
           >
             <div className="flex flex-col gap-0.5 min-w-0">
               <span className="text-[15px] text-ink font-medium">
