@@ -36,14 +36,21 @@ the existing `classId` prop — no new props.
 - Trigger: `<button type="button">` with `aria-expanded`, classes
   `type-caption text-teal`, text `Who receives this?`, placed between
   the textarea and the Send/Close row.
-- Expanded: a `type-caption` paragraph, instant show/hide (no motion):
-  - Without `classId`: "Everyone with a booking in one of your
-    classes — contacts who've never booked won't receive it. It lands
-    in their inbox here; anyone who hasn't read it after 30 minutes
-    also gets it by email, unless they've opted out."
-  - With `classId`: "Everyone registered for this class. It lands in
-    their inbox here; anyone who hasn't read it after 30 minutes also
-    gets it by email, unless they've opted out."
+- Expanded: a `type-caption` paragraph, instant show/hide (no motion).
+  Copy revised after review fact-check (the per-teacher mute suppresses
+  inbox delivery too; students have an Updates strip, not an inbox;
+  late cancellations remain recipients):
+  - Without `classId`: "Students with a booking in any of your
+    classes, unless they've muted your messages — contacts who've
+    never booked (or only cancelled) aren't included. They'll see it
+    in the app on their next visit; anyone who hasn't read it within
+    30 minutes also gets it by email, unless they've turned email
+    off."
+  - With `classId`: "Everyone registered for this class (late
+    cancellations included), unless they've muted your messages.
+    They'll see it in the app on their next visit; anyone who hasn't
+    read it within 30 minutes also gets it by email, unless they've
+    turned email off."
 - `src/app/(teacher)/students/page.tsx`: `recipientHint="your booked
   students"`.
 

@@ -22,8 +22,8 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
   const [showRecipients, setShowRecipients] = useState(false);
 
   const recipientExplanation = classId
-    ? "Everyone registered for this class. It lands in their inbox here; anyone who hasn't read it after 30 minutes also gets it by email, unless they've opted out."
-    : "Everyone with a booking in one of your classes — contacts who've never booked won't receive it. It lands in their inbox here; anyone who hasn't read it after 30 minutes also gets it by email, unless they've opted out.";
+    ? "Everyone registered for this class (late cancellations included), unless they've muted your messages. They'll see it in the app on their next visit; anyone who hasn't read it within 30 minutes also gets it by email, unless they've turned email off."
+    : "Students with a booking in any of your classes, unless they've muted your messages — contacts who've never booked (or only cancelled) aren't included. They'll see it in the app on their next visit; anyone who hasn't read it within 30 minutes also gets it by email, unless they've turned email off.";
 
   async function handleSend() {
     if (!message.trim()) return;
@@ -96,7 +96,7 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
           Who receives this?
         </button>
         {showRecipients && (
-          <p className="type-caption max-w-[420px]">{recipientExplanation}</p>
+          <p className="type-caption">{recipientExplanation}</p>
         )}
       </div>
       <div className="flex gap-3">
