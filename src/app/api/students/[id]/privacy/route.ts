@@ -40,6 +40,7 @@ export const GET = withErrorHandler(async (
     return respondOk({
       studentId: id,
       teacherId,
+      shareFullName: false,
       shareEmail: false,
       sharePhone: false,
       shareBirthday: false,
@@ -78,6 +79,7 @@ export const PUT = withErrorHandler(async (
     create: {
       studentId: id,
       teacherId,
+      shareFullName: privacyFields.shareFullName ?? false,
       shareEmail: privacyFields.shareEmail ?? false,
       sharePhone: privacyFields.sharePhone ?? false,
       shareBirthday: privacyFields.shareBirthday ?? false,
