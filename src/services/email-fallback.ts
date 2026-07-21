@@ -10,6 +10,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { Resend } from 'resend';
 import { getUnreadForEmailFallback, markEmailSent } from './notifications';
+import { shouldEmailStudent } from './notification-policy';
 import { renderNotificationEmail } from '@/lib/email-templates';
 import { emailDryRun } from '@/lib/email';
 import { log } from '@/lib/log';
@@ -62,7 +63,10 @@ export async function processEmailFallback(
         select: { email: true, emailNotifications: true },
       });
       email = student?.email ?? null;
-      emailEnabled = student?.emailNotifications ?? true;
+      emailEnabled = shouldEmailStudent(
+        notification.type,
+        student?.emailNotifications ?? true,
+      );
     }
 
     if (!email || !emailEnabled) {

@@ -178,6 +178,20 @@ describe('processEmailFallback (DB)', () => {
     expect(after.emailSent).toBe(true);
   });
 
+  it('still emails essential notifications to opted-out students (decision pinned in policy tests)', async () => {
+    const essential = await makeNotification({
+      recipientType: 'student',
+      recipientId: optedOutStudentId,
+      createdAt: new Date(Date.now() - 45 * 60 * 1000),
+      type: 'class_cancelled',
+    });
+
+    await processEmailFallback(prisma);
+
+    const after = await prisma.notification.findUniqueOrThrow({ where: { id: essential.id } });
+    expect(after.emailSent).toBe(true);
+  });
+
   it('emails a fresh notification when its class starts within 2 hours', async () => {
     const urgent = await makeNotification({
       recipientType: 'teacher',
