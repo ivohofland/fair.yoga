@@ -15,6 +15,8 @@ interface BookingFlowProps {
   studentId: string;
   /** Estimated price per tier 1..5 if the class ran with today's sign-ups plus you. */
   tierPrices: number[];
+  /** Zero prior registrations: the documented income-selection moment. */
+  isFirstBooking: boolean;
 }
 
 type Phase = 'choose' | 'booked' | 'waitlisted';
@@ -29,6 +31,7 @@ export function BookingFlow({
   currentTier,
   studentId,
   tierPrices,
+  isFirstBooking,
 }: BookingFlowProps) {
   const [tier, setTier] = useState(currentTier);
   const [phase, setPhase] = useState<Phase>('choose');
@@ -128,43 +131,62 @@ export function BookingFlow({
   return (
     <div>
       <h2 className="type-subtitle mb-1">Your tier</h2>
-      <p className="type-body max-w-[420px]">
-        Your price is based on what you can comfortably contribute. Tiers are
-        self-reported — no proof needed, and you can change yours at any time.
-      </p>
-      <p className="type-caption font-heading italic mt-3 mb-4 max-w-[420px]">
-        &ldquo;{TIER_QUOTE.text}&rdquo; — {TIER_QUOTE.author}
-      </p>
+      {isFirstBooking ? (
+        <>
+          <p className="type-body max-w-[420px]">
+            Your price is based on what you can comfortably contribute. Tiers are
+            self-reported — no proof needed, and you can change yours at any time.
+          </p>
+          <p className="type-caption font-heading italic mt-3 mb-4 max-w-[420px]">
+            &ldquo;{TIER_QUOTE.text}&rdquo; — {TIER_QUOTE.author}
+          </p>
 
-      <div className="flex flex-col gap-3" role="radiogroup" aria-label="Income tier">
-        {TIER_INFO.map((t) => {
-          const selected = tier === t.tier;
-          return (
-            <button
-              key={t.tier}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              onClick={() => setTier(t.tier)}
-              className={`text-left border rounded-card p-5 ${
-                selected ? 'bg-teal-tint border-teal' : 'bg-sand-soft border-border hover:bg-sand'
-              }`}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="type-label text-ink font-semibold">
-                    Tier {t.tier} · {t.label}
+          <div className="flex flex-col gap-3" role="radiogroup" aria-label="Income tier">
+            {TIER_INFO.map((t) => {
+              const selected = tier === t.tier;
+              return (
+                <button
+                  key={t.tier}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => setTier(t.tier)}
+                  className={`text-left border rounded-card p-5 ${
+                    selected ? 'bg-teal-tint border-teal' : 'bg-sand-soft border-border hover:bg-sand'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="type-label text-ink font-semibold">
+                        Tier {t.tier} · {t.label}
+                      </div>
+                      <div className="type-caption mt-0.5">{t.caption}</div>
+                    </div>
+                    <span className="type-number text-[18px]">
+                      €{tierPrices[t.tier - 1]!.toFixed(2)}
+                    </span>
                   </div>
-                  <div className="type-caption mt-0.5">{t.caption}</div>
-                </div>
-                <span className="type-number text-[18px]">
-                  €{tierPrices[t.tier - 1]!.toFixed(2)}
-                </span>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        // Tier is global and lives in settings; returning students only get
+        // the tier-1/2 honesty nudge the product concept asks for.
+        <div className="mb-1">
+          <p className="type-body max-w-[420px]">
+            You&apos;re in Tier {tier} · {TIER_INFO[tier - 1]!.label}
+            {tier <= 2 ? ' — does this still reflect your situation?' : '.'}
+          </p>
+          <Link
+            href="/account"
+            className="inline-block mt-2 type-label text-teal no-underline"
+          >
+            Change your tier in settings
+          </Link>
+        </div>
+      )}
 
       <p className="type-caption mt-4 max-w-[420px]">
         Estimates assume the class at least reaches its minimum; the final price settles after
