@@ -100,6 +100,10 @@ export function StudentSettingsForm({
           />
           <span className="type-body">Email me when I miss an in-app notification</span>
         </label>
+        <p className="type-caption mt-1 max-w-[420px]">
+          Essential messages about your bookings — cancellations, waitlist
+          spots, payment requests — are always emailed.
+        </p>
         <div className="mt-3 max-w-[280px]">
           <Select
             label="Class reminder"
