@@ -100,6 +100,18 @@ describe('class size caps', () => {
   });
 });
 
+describe('updateTeacherSchema.defaultTimezone', () => {
+  it('accepts zones Intl can resolve', () => {
+    expect(updateTeacherSchema.safeParse({ defaultTimezone: 'Europe/Amsterdam' }).success).toBe(true);
+    expect(updateTeacherSchema.safeParse({ defaultTimezone: 'UTC' }).success).toBe(true);
+  });
+
+  it('rejects strings Intl cannot resolve', () => {
+    expect(updateTeacherSchema.safeParse({ defaultTimezone: 'Not/AZone' }).success).toBe(false);
+    expect(updateTeacherSchema.safeParse({ defaultTimezone: '' }).success).toBe(false);
+  });
+});
+
 describe('updateTeacherSchema.pageSlug', () => {
   it('rejects reserved slugs on update, not just on signup', () => {
     expect(updateTeacherSchema.safeParse({ pageSlug: 'settings' }).success).toBe(false);

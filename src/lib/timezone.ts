@@ -8,6 +8,8 @@
  * DST transitions.
  */
 
+import { log } from '@/lib/log';
+
 /** Milliseconds the zone's wall clock is ahead of UTC at the given instant. */
 function timeZoneOffsetMs(instant: Date, timeZone: string): number {
   const dtf = new Intl.DateTimeFormat('en-US', {
@@ -55,6 +57,7 @@ export function classStartInstant(classDate: Date, startTime: string, timeZone: 
     ts = wallUtc - timeZoneOffsetMs(new Date(ts), timeZone);
     return new Date(ts);
   } catch {
+    log.warn({ timeZone }, 'invalid timezone, falling back to UTC interpretation');
     return new Date(wallUtc);
   }
 }

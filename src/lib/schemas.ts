@@ -74,6 +74,17 @@ export const passkeyAuthVerifySchema = z.object({
 // ============================================================================
 
 // App routes the public teacher page must never shadow.
+// Construct-probe rather than Intl.supportedValuesOf: the probe accepts
+// exactly what classStartInstant can handle, aliases included.
+function isValidTimeZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const RESERVED_SLUGS = new Set([
   'login', 'verify', 'bookings', 'settings', 'schedule', 'students', 'inbox',
   'class', 'studio-class', 'api', 'health', 'admin', 'account',
@@ -103,7 +114,7 @@ export const updateTeacherSchema = z.object({
     .refine((s) => !RESERVED_SLUGS.has(s), 'This slug is reserved')
     .optional(),
   defaultCurrency: z.string().optional(),
-  defaultTimezone: z.string().optional(),
+  defaultTimezone: z.string().refine(isValidTimeZone, 'Unknown timezone').optional(),
   defaultReminder: z.enum(['morning_of', 'evening_before', 'one_hour_before']).optional(),
   bankIban: z.string().nullable().optional(),
   bankAccountName: z.string().nullable().optional(),
