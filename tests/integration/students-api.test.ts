@@ -473,11 +473,14 @@ describe('GET /api/students — overduePayments', () => {
 
     const clsA = await createCompletedClass(teacherId, teacherRoom.id, 9);
     const clsB = await createCompletedClass(teacherId, teacherRoom.id, 11);
+    const clsC = await createCompletedClass(teacherId, teacherRoom.id, 15);
     const clsOther = await createCompletedClass(otherTeacherId, otherTeacherRoom.id, 13);
 
-    // Student00: two overdue payments with the requesting teacher.
+    // Student00: two overdue payments with the requesting teacher, plus a
+    // paid one that must not widen the count.
     await createChargedRegistration(clsA.id, studentIds[0]!, 'overdue');
     await createChargedRegistration(clsB.id, studentIds[0]!, 'overdue');
+    await createChargedRegistration(clsC.id, studentIds[0]!, 'paid');
     // Student01: overdue payment with the OTHER teacher only.
     await createChargedRegistration(clsOther.id, studentIds[1]!, 'overdue');
     // Student02: pending (not overdue) with the requesting teacher.
@@ -485,8 +488,9 @@ describe('GET /api/students — overduePayments', () => {
   });
 
   afterAll(async () => {
-    // Guards: on a failed beforeAll these ids are undefined, and an
-    // undefined filter in deleteMany matches every row.
+    // Guards: on a failed beforeAll roomId/otherTeacherId are undefined —
+    // an undefined filter turns deleteMany into delete-all, and delete()
+    // throws. overdueClassIds is safe unguarded: `in: []` matches nothing.
     await prisma.class.deleteMany({ where: { id: { in: overdueClassIds } } });
     if (roomId) {
       await prisma.teacherRoom.deleteMany({ where: { roomId } });
@@ -523,5 +527,23 @@ describe('GET /api/students — overduePayments', () => {
   it('does not count pending payments', async () => {
     const student = await fetchSingleStudent('Student02');
     expect(student.overduePayments).toBe(0);
+  });
+
+  it('maps counts to the right rows across a full page', async () => {
+    const res = await fetch(`${BASE_URL}/api/students?page=1&pageSize=10`, {
+      headers: { Cookie: sessionCookie },
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    const byName = new Map<string, number>(
+      json.data.students.map(
+        (s: { firstName: string; overduePayments: number }) => [s.firstName, s.overduePayments],
+      ),
+    );
+    expect(byName.get('Student00')).toBe(2);
+    expect(byName.get('Student01')).toBe(0);
+    expect(byName.get('Student02')).toBe(0);
+    // Student03 has no registrations at all.
+    expect(byName.get('Student03')).toBe(0);
   });
 });
