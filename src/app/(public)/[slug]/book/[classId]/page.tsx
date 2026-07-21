@@ -61,7 +61,12 @@ export default async function BookClassPage({
   const student = session?.studentId
     ? await prisma.student.findUnique({
         where: { id: session.studentId },
-        select: { id: true, firstName: true, incomeTier: true },
+        select: {
+          id: true,
+          firstName: true,
+          incomeTier: true,
+          _count: { select: { registrations: true } },
+        },
       })
     : null;
   const alreadyBooked = student
@@ -104,6 +109,7 @@ export default async function BookClassPage({
           currentTier={student.incomeTier}
           studentId={student.id}
           tierPrices={estimates}
+          isFirstBooking={student._count.registrations === 0}
         />
       ) : guestTeacher ? (
         <JoinAsStudent firstName={guestTeacher.firstName} />

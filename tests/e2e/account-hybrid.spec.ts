@@ -176,7 +176,7 @@ test.describe('Account hybrid: teacher joins a class', () => {
     await expect(page.getByText('Your tier')).toBeVisible({ timeout: 10_000 });
     await page.getByRole('radio', { name: /Tier 2/ }).click();
     await page.getByRole('button', { name: /^Book — around/ }).click();
-    await expect(page.getByText("You're in")).toBeVisible();
+    await expect(page.getByText("You're in", { exact: true })).toBeVisible();
 
     // One human, one account, two profiles — and a real registration.
     const student = await prisma.student.findFirst({

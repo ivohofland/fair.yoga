@@ -166,7 +166,7 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     // Rebook through the public page — must not 409 on the old row.
     await page.goto(`/${slug}/book/${classId}`);
     await page.getByRole('button', { name: /^Book — around/ }).click();
-    await expect(page.getByText("You're in")).toBeVisible();
+    await expect(page.getByText("You're in", { exact: true })).toBeVisible();
 
     const rebooked = await prisma.registration.findFirstOrThrow({
       where: { classId, studentId: aliceId },

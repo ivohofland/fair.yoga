@@ -18,6 +18,7 @@ const slug = `e2e-booking-${uniqueSuffix}`;
 let teacherId: string;
 let roomId: string;
 let classId: string;
+let secondClassId: string;
 let studentId: string;
 
 test.describe('Public booking flow', () => {
@@ -71,6 +72,24 @@ test.describe('Public booking flow', () => {
       },
     });
     classId = cls.id;
+
+    const secondCls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId: teacherRoom.id,
+        classType: 'E2E Restorative',
+        date: new Date('2099-06-08'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 2,
+        maxStudents: 10,
+        status: 'open',
+      },
+    });
+    secondClassId = secondCls.id;
 
     const student = await prisma.student.create({
       data: {
@@ -165,7 +184,7 @@ test.describe('Public booking flow', () => {
     await page.getByRole('radio', { name: /Tier 2/ }).click();
     await page.getByRole('button', { name: /^Book — around/ }).click();
 
-    await expect(page.getByText("You're in")).toBeVisible();
+    await expect(page.getByText("You're in", { exact: true })).toBeVisible();
 
     // The registration exists with the chosen tier, and the roster link too.
     const registration = await prisma.registration.findFirst({
@@ -178,6 +197,37 @@ test.describe('Public booking flow', () => {
       where: { teacherId_studentId: { teacherId, studentId } },
     });
     expect(link).not.toBeNull();
+  });
+
+  test('a returning student sees their tier and the settings link, not the picker', async ({ page, context }) => {
+    // The previous test booked class 1 as tier 2 — this student is now a
+    // returning tier-1/2 student: summary + honesty nudge, no radiogroup.
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    await prisma.session.create({
+      data: {
+        id: hashToken(sessionToken),
+        accountId: await accountIdOfStudent(prisma, studentId),
+        expiresAt: new Date(Date.now() + 86400000),
+      },
+    });
+    await context.addCookies([
+      { name: 'fair_yoga_session', value: sessionToken, url: 'http://localhost:3000' },
+    ]);
+
+    await page.goto(`/${slug}/book/${secondClassId}`);
+    await expect(page.getByText(/You're in Tier 2/)).toBeVisible();
+    await expect(page.getByText('does this still reflect your situation?')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Change your tier in settings' })).toBeVisible();
+    await expect(page.getByRole('radio')).toHaveCount(0);
+
+    await page.getByRole('button', { name: /^Book — around/ }).click();
+    await expect(page.getByText("You're in", { exact: true })).toBeVisible();
+
+    const registration = await prisma.registration.findFirst({
+      where: { classId: secondClassId, studentId },
+    });
+    expect(registration).not.toBeNull();
+    expect(registration!.tierAtBooking).toBe(2);
   });
 
   test('the booking shows up under /bookings', async ({ page, context }) => {
