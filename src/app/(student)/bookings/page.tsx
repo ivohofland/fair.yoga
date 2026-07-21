@@ -64,7 +64,9 @@ export default async function StudentBookingsPage() {
     }),
     prisma.notification.findMany({
       where: { recipientType: 'student', recipientId: session.studentId, isRead: false },
-      orderBy: { createdAt: 'desc' },
+      // Id tie-breaker: announcements are batch-inserted with identical
+      // timestamps and would otherwise shuffle between refreshes (008acbc).
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: 5,
       include: {
         relatedClass: {
