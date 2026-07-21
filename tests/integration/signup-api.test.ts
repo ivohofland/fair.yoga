@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { generateMagicLinkToken } from '@/lib/auth';
 
 const BASE_URL = 'http://localhost:3000';
 const prisma = new PrismaClient();
@@ -12,6 +13,7 @@ const uniqueSuffix = `${Date.now()}`;
  */
 
 const takenEmail = `signup-taken-${uniqueSuffix}@test.local`;
+const teacherOnlyEmail = `signup-teacheronly-${uniqueSuffix}@test.local`;
 const unclaimedEmail = `signup-unclaimed-${uniqueSuffix}@test.local`;
 
 let takenStudentId: string;
@@ -34,6 +36,17 @@ beforeAll(async () => {
     data: { firstName: 'CRM', lastName: 'Contact', email: unclaimedEmail },
   });
   unclaimedStudentId = unclaimed.id;
+
+  await prisma.teacher.create({
+    data: {
+      firstName: 'Solo',
+      lastName: 'Teacher',
+      email: teacherOnlyEmail,
+      bio: 'Teacher-only fixtures',
+      pageSlug: `signup-teacheronly-${uniqueSuffix}`,
+      account: { create: { email: teacherOnlyEmail } },
+    },
+  });
 });
 
 afterAll(async () => {
@@ -121,6 +134,17 @@ describe('POST /api/auth/student-signup', () => {
     expect(student!.claimedAt).toBeNull();
   });
 
+  it('does not attach a student profile to a teacher-only account either', async () => {
+    const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ firstName: 'T', lastName: 'T', email: teacherOnlyEmail }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await prisma.student.count({ where: { email: teacherOnlyEmail } })).toBe(0);
+  });
+
   it('does not attach a student profile to an existing account', async () => {
     const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
       method: 'POST',
@@ -132,5 +156,29 @@ describe('POST /api/auth/student-signup', () => {
     expect(res.status).toBe(200);
     expect(await prisma.student.count({ where: { email: takenEmail } })).toBe(1);
     expect(await prisma.account.count({ where: { email: takenEmail } })).toBe(1);
+  });
+});
+
+
+describe('POST /api/auth/magic-link/verify — the claim moment over HTTP', () => {
+  it('claims an unclaimed CRM student: account, cookie, and /bookings landing', async () => {
+    const token = await generateMagicLinkToken(prisma, unclaimedEmail);
+
+    const res = await fetch(`${BASE_URL}/api/auth/magic-link/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('set-cookie')).toContain('fair_yoga_session=');
+    const body = (await res.json()) as { data: { redirectTo: string } };
+    expect(body.data.redirectTo).toBe('/bookings');
+
+    const student = await prisma.student.findUniqueOrThrow({
+      where: { id: unclaimedStudentId },
+    });
+    expect(student.claimedAt).not.toBeNull();
+    expect(student.accountId).not.toBeNull();
   });
 });

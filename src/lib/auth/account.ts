@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 
 export interface ResolvedAccount {
@@ -20,15 +21,16 @@ export async function resolveOrClaimAccount(
     where: { email },
     select: {
       id: true,
-      teacher: { select: { id: true } },
-      student: { select: { id: true } },
+      teacher: { select: { id: true, deletedAt: true } },
+      student: { select: { id: true, deletedAt: true } },
     },
   });
   if (account) {
+    // Erased (soft-deleted) profiles never resurface through sign-in.
     return {
       accountId: account.id,
-      teacherId: account.teacher?.id ?? null,
-      studentId: account.student?.id ?? null,
+      teacherId: account.teacher && !account.teacher.deletedAt ? account.teacher.id : null,
+      studentId: account.student && !account.student.deletedAt ? account.student.id : null,
     };
   }
 
@@ -38,14 +40,23 @@ export async function resolveOrClaimAccount(
   });
   if (!unclaimed) return null;
 
-  const claimed = await db.student.update({
-    where: { id: unclaimed.id },
-    data: {
-      claimedAt: new Date(),
-      account: { create: { email } },
-    },
-    select: { id: true, accountId: true },
-  });
-
-  return { accountId: claimed.accountId!, teacherId: null, studentId: claimed.id };
+  try {
+    // Account first, then one scalar update: the claim/link CHECK
+    // constraint requires claimedAt and accountId to change together,
+    // and Prisma splits nested relation writes into separate statements.
+    const created = await db.account.create({ data: { email } });
+    await db.student.update({
+      where: { id: unclaimed.id },
+      data: { claimedAt: new Date(), accountId: created.id },
+    });
+    return { accountId: created.id, teacherId: null, studentId: unclaimed.id };
+  } catch (err) {
+    // Two verifies racing the same claim: the loser's account create hits
+    // the unique email. The account exists now — resolve it and sign the
+    // person in instead of failing a legitimate sign-in.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      return resolveOrClaimAccount(db, email);
+    }
+    throw err;
+  }
 }

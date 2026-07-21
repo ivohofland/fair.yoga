@@ -53,18 +53,22 @@ export async function validateSession(
     return null;
   }
 
-  // Resolve the account's profiles. An account with no profiles left
-  // (post-erasure) cannot use any surface — treat its session as dead.
+  // Resolve the account's LIVE profiles. GDPR erasure soft-deletes
+  // (deletedAt) and keeps the link, so liveness must be checked here — an
+  // erased profile must not resurface through a surviving session. An
+  // account with no live profiles left cannot use any surface.
   const account = await db.account.findUnique({
     where: { id: session.accountId },
     select: {
       id: true,
-      teacher: { select: { id: true } },
-      student: { select: { id: true } },
+      teacher: { select: { id: true, deletedAt: true } },
+      student: { select: { id: true, deletedAt: true } },
     },
   });
 
-  if (!account || (!account.teacher && !account.student)) {
+  const liveTeacher = account?.teacher && !account.teacher.deletedAt ? account.teacher : null;
+  const liveStudent = account?.student && !account.student.deletedAt ? account.student : null;
+  if (!account || (!liveTeacher && !liveStudent)) {
     await db.session.delete({ where: { id: sessionHash } }).catch(() => {});
     return null;
   }
@@ -78,12 +82,15 @@ export async function validateSession(
     });
   }
 
-  return {
-    sessionId: session.id,
-    accountId: account.id,
-    teacherId: account.teacher?.id ?? null,
-    studentId: account.student?.id ?? null,
-  };
+  const base = { sessionId: session.id, accountId: account.id };
+  if (liveTeacher) {
+    return { ...base, teacherId: liveTeacher.id, studentId: liveStudent?.id ?? null };
+  }
+  if (liveStudent) {
+    return { ...base, teacherId: null, studentId: liveStudent.id };
+  }
+  // Unreachable: the guard above returned for the no-live-profile case.
+  return null;
 }
 
 export async function invalidateSession(

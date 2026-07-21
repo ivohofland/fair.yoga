@@ -79,14 +79,15 @@ Teacher sends message to all students of a specific class (or all their students
 
 ## Data Model
 
-11 entities across 6 domains: People (Teacher, Student, StudentPrivacy), Spaces (Room, TeacherRoom), Classes (ClassTemplate, Class, StudioClass), Bookings (Registration, WaitlistEntry), Payments (Payment), Communication (Notification, Announcement).
+12 entities across 6 domains: People (Account, Teacher, Student, StudentPrivacy), Spaces (Room, TeacherRoom), Classes (ClassTemplate, Class, StudioClass), Bookings (Registration, WaitlistEntry), Payments (Payment), Communication (Notification, Announcement).
 
 Key design decisions:
 - `tier_at_booking` on Registration captures income tier at booking time — serves as income history, no separate tracking needed
 - `StudentPrivacy` is per-teacher — students control what each teacher can see, default is maximum privacy
 - `TeacherRoom` holds private rental rate per teacher — never shared between teachers
 - `StudioClass` is disconnected from Room/Student — pure calendar + income tracking
-- Auth tables managed by auth layer, not in domain model
+- `Account` owns auth (email identity, sessions, passkeys); `Teacher`/`Student` are optionally-linked profiles — one login serves both hats, teacher pages require a teacher profile and student pages a student one, and CRM-created students claim their account on first sign-in
+- Session/passkey tables managed by auth layer, keyed by account
 
 → Full schema with all fields and types: `docs/data-model.md`
 

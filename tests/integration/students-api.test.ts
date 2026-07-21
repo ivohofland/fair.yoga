@@ -260,3 +260,128 @@ describe('POST /api/students', () => {
     }
   });
 });
+
+describe('GET/PUT /api/students/[id] — profile-presence authorization', () => {
+  const dualSuffix = `${Date.now()}-dual`;
+  const dualToken = crypto.randomBytes(32).toString('hex');
+  const rosterToken = crypto.randomBytes(32).toString('hex');
+
+  let dualTeacherId: string;
+  let dualOwnStudentId: string;
+  let dualAccountId: string;
+  let rosterStudentId: string;
+  let rosterAccountId: string;
+
+  const as = (token: string, path: string, init?: RequestInit) =>
+    fetch(`${BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        ...init?.headers,
+        Cookie: `fair_yoga_session=${token}`,
+      },
+    });
+
+  beforeAll(async () => {
+    const dualEmail = `stuapi-dual-${dualSuffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Dual',
+        lastName: 'Matrix',
+        email: dualEmail,
+        bio: 'Authorization matrix fixtures',
+        pageSlug: `stuapi-dual-${dualSuffix}`,
+        account: { create: { email: dualEmail } },
+      },
+    });
+    dualTeacherId = teacher.id;
+    dualAccountId = teacher.accountId;
+    const ownStudent = await prisma.student.create({
+      data: {
+        firstName: 'Dual',
+        lastName: 'Matrix',
+        email: dualEmail,
+        claimedAt: new Date(),
+        account: { connect: { id: dualAccountId } },
+      },
+    });
+    dualOwnStudentId = ownStudent.id;
+    await prisma.session.create({
+      data: {
+        id: hashToken(dualToken),
+        accountId: dualAccountId,
+        expiresAt: new Date(Date.now() + 86400000),
+      },
+    });
+
+    const rosterEmail = `stuapi-roster-${dualSuffix}@test.local`;
+    const roster = await prisma.student.create({
+      data: {
+        firstName: 'Rostered',
+        lastName: 'Privately',
+        email: rosterEmail,
+        claimedAt: new Date(),
+        account: { create: { email: rosterEmail } },
+      },
+    });
+    rosterStudentId = roster.id;
+    rosterAccountId = roster.accountId!;
+    await prisma.teacherStudent.create({
+      data: { teacherId: dualTeacherId, studentId: rosterStudentId },
+    });
+    await prisma.session.create({
+      data: {
+        id: hashToken(rosterToken),
+        accountId: rosterAccountId,
+        expiresAt: new Date(Date.now() + 86400000),
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.session.deleteMany({
+      where: { accountId: { in: [dualAccountId, rosterAccountId] } },
+    });
+    await prisma.teacherStudent.deleteMany({ where: { teacherId: dualTeacherId } });
+    await prisma.student.deleteMany({
+      where: { id: { in: [dualOwnStudentId, rosterStudentId] } },
+    });
+    await prisma.teacher.deleteMany({ where: { id: dualTeacherId } });
+    await prisma.account.deleteMany({
+      where: { id: { in: [dualAccountId, rosterAccountId] } },
+    });
+  });
+
+  it('a dual account reading its OWN student row takes the self path — full profile', async () => {
+    const res = await as(dualToken, `/api/students/${dualOwnStudentId}`);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { email?: string; lastName: string } };
+    // Full profile, not the privacy-filtered teacher view.
+    expect(body.data.email).toBeDefined();
+    expect(body.data.lastName).toBe('Matrix');
+  });
+
+  it('a dual account reading a roster student gets the privacy-filtered view', async () => {
+    const res = await as(dualToken, `/api/students/${rosterStudentId}`);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { lastName: string; email?: string } };
+    // Default privacy: last initial only, no email.
+    expect(body.data.lastName).toBe('P');
+    expect(body.data.email).toBeUndefined();
+  });
+
+  it('a student-only session reading another student is denied', async () => {
+    const res = await as(rosterToken, `/api/students/${dualOwnStudentId}`);
+    expect(res.status).toBe(403);
+  });
+
+  it('a teacher cannot edit a claimed student', async () => {
+    const res = await as(dualToken, `/api/students/${rosterStudentId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ firstName: 'Hijacked', lastName: 'Name', email: 'x@y.test' }),
+    });
+    expect(res.status).toBe(403);
+  });
+});

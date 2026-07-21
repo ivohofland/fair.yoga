@@ -10,8 +10,10 @@ export default async function TeacherLayout({
   children: React.ReactNode;
 }) {
   const session = await getSession();
+  // A signed-in student-only account belongs on its own home, not a
+  // sign-in form it cannot use.
   if (!session?.teacherId) {
-    redirect('/login');
+    redirect(session?.studentId ? '/bookings' : '/login');
   }
 
   // Unread dot on the Inbox tab. Indexed by [recipientType, recipientId, isRead].

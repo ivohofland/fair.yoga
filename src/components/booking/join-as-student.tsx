@@ -21,12 +21,17 @@ export function JoinAsStudent({ firstName }: JoinAsStudentProps) {
     setState('working');
     try {
       const res = await fetch('/api/account/student-profile', { method: 'POST' });
-      if (!res.ok) {
+      // 409 ALREADY_STUDENT means the profile exists (double tap, earlier
+      // half-finished attempt) — that is success from where the user sits.
+      if (!res.ok && res.status !== 409) {
         setMessage(await readErrorMessage(res, 'Could not set up your student side. Try again.'));
         setState('error');
         return;
       }
       router.refresh();
+      // The refreshed page unmounts this panel; if the refresh round-trip
+      // fails, don't leave a forever-disabled button behind.
+      setTimeout(() => setState('idle'), 4000);
     } catch {
       setMessage('Network error. Try again.');
       setState('error');

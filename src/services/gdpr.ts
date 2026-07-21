@@ -9,6 +9,7 @@
  * data falls outside the GDPR (Recital 26).
  */
 
+import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
 import type { PrismaClient } from '@prisma/client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { completeClass } from './class-lifecycle';
@@ -232,7 +233,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
       if (!teacherOnAccount) {
         await tx.session.deleteMany({ where: { accountId: student.accountId } });
         await tx.passkeyCredential.deleteMany({ where: { accountId: student.accountId } });
-        // Last profile gone: the account email is PII too.
+        // Last live profile erased: the account email is PII too.
         await tx.account.update({
           where: { id: student.accountId },
           data: { email: `deleted-${student.accountId}@deleted.invalid` },
@@ -276,7 +277,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
         phone: null,
         birthday: null,
         address: null,
-        incomeTier: 3,
+        incomeTier: DEFAULT_INCOME_TIER,
         emailNotifications: false,
         deletedAt: new Date(),
       },
@@ -370,7 +371,7 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       if (!studentOnAccount) {
         await tx.session.deleteMany({ where: { accountId: teacher.accountId } });
         await tx.passkeyCredential.deleteMany({ where: { accountId: teacher.accountId } });
-        // Last profile gone: the account email is PII too.
+        // Last live profile erased: the account email is PII too.
         await tx.account.update({
           where: { id: teacher.accountId },
           data: { email: `deleted-${teacher.accountId}@deleted.invalid` },

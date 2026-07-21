@@ -7,6 +7,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
+import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
 
 /**
  * Adds the student side to the signed-in account (the "join as a student"
@@ -18,10 +19,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if (isErrorResponse(session)) return session;
 
   if (session.studentId) {
-    return respondError('Account already has a student profile', 409);
+    return respondError('Account already has a student profile', 409, 'ALREADY_STUDENT');
   }
   if (!session.teacherId) {
-    return respondError('Account has no profile to copy from', 409);
+    return respondError('Account has no profile to copy from', 409, 'NO_PROFILE_SOURCE');
   }
 
   const account = await prisma.account.findUniqueOrThrow({
@@ -41,10 +42,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     select: { id: true },
   });
 
+  // Scalar accountId, not a relation connect: Prisma splits nested
+  // connects into two statements, and the claim/link CHECK constraint
+  // requires both fields to change in one.
   const student = unclaimed
     ? await prisma.student.update({
         where: { id: unclaimed.id },
-        data: { claimedAt: new Date(), account: { connect: { id: session.accountId } } },
+        data: { claimedAt: new Date(), accountId: session.accountId },
         select: { id: true },
       })
     : await prisma.student.create({
@@ -52,9 +56,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
           firstName: teacher.firstName,
           lastName: teacher.lastName,
           email: account.email,
-          incomeTier: 3,
+          incomeTier: DEFAULT_INCOME_TIER,
           claimedAt: new Date(),
-          account: { connect: { id: session.accountId } },
+          accountId: session.accountId,
         },
         select: { id: true },
       });

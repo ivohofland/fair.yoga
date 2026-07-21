@@ -83,7 +83,7 @@ beforeAll(async () => {
       accountId: dualAccountId,
       firstName: 'Dual',
       lastName: 'Hat',
-      email: `session-dual-student-${uniqueSuffix}@test.local`,
+      email: dualAccount.email,
       claimedAt: new Date(),
     },
   });
@@ -160,6 +160,32 @@ describe('validateSession', () => {
 
     expect(result!.teacherId).toBe(dualTeacherId);
     expect(result!.studentId).toBe(dualStudentId);
+  });
+
+  it('resolves only live profiles: a soft-deleted student side disappears', async () => {
+    const token = await createSession(db, dualAccountId);
+    await db.student.update({
+      where: { id: dualStudentId },
+      data: { deletedAt: new Date() },
+    });
+
+    const result = await validateSession(db, token);
+
+    expect(result).not.toBeNull();
+    expect(result!.teacherId).toBe(dualTeacherId);
+    expect(result!.studentId).toBeNull();
+    await db.student.update({ where: { id: dualStudentId }, data: { deletedAt: null } });
+  });
+
+  it('kills the session when every profile is soft-deleted', async () => {
+    const token = await createSession(db, teacherAccountId);
+    await db.teacher.update({ where: { id: teacherId }, data: { deletedAt: new Date() } });
+
+    const result = await validateSession(db, token);
+
+    expect(result).toBeNull();
+    expect(await db.session.findUnique({ where: { id: hashToken(token) } })).toBeNull();
+    await db.teacher.update({ where: { id: teacherId }, data: { deletedAt: null } });
   });
 
   it('invalidates a session whose account has no profiles left', async () => {

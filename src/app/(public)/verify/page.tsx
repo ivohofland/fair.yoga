@@ -247,8 +247,10 @@ function VerifyContent() {
         try {
           const res = await fetch('/api/auth/session');
           if (res.ok) {
-            const json = (await res.json()) as { data: { userType: string } };
-            setHome(json.data.userType === 'student' ? '/bookings' : '/');
+            const json = (await res.json()) as {
+              data: { teacherId: string | null; studentId: string | null };
+            };
+            setHome(json.data.teacherId ? '/' : '/bookings');
             setStatus('already-signed-in');
             return;
           }

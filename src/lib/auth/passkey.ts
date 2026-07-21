@@ -39,27 +39,28 @@ function cleanupExpired(): void {
 }
 
 /**
- * Store a WebAuthn challenge for a user with a 5-minute TTL.
+ * Store a WebAuthn challenge under a key (the accountId for registration,
+ * a random challengeId for authentication) with a 5-minute TTL.
  * Cleans up any expired entries on each call.
  */
-export function storeChallenge(userId: string, challenge: string): void {
+export function storeChallenge(key: string, challenge: string): void {
   cleanupExpired();
-  challengeStore.set(userId, {
+  challengeStore.set(key, {
     challenge,
     expiresAt: Date.now() + CHALLENGE_TTL_MS,
   });
 }
 
 /**
- * Retrieve and delete a challenge for a user (one-time use).
+ * Retrieve and delete a challenge by its key (one-time use).
  * Returns null if not found or expired.
  */
-export function getAndDeleteChallenge(userId: string): string | null {
-  const entry = challengeStore.get(userId);
+export function getAndDeleteChallenge(key: string): string | null {
+  const entry = challengeStore.get(key);
   if (!entry) {
     return null;
   }
-  challengeStore.delete(userId);
+  challengeStore.delete(key);
   if (entry.expiresAt <= Date.now()) {
     return null;
   }

@@ -313,4 +313,19 @@ describe('GDPR on dual-role accounts', () => {
     const account = await prisma.account.findUniqueOrThrow({ where: { id: soloAccountId } });
     expect(account.email).toBe(`deleted-${soloAccountId}@deleted.invalid`);
   });
+
+  it('composed route order (student half, then teacher half) leaves nothing behind', async () => {
+    // The student half was erased in the first test — now the teacher
+    // half goes, completing exactly what DELETE /api/account does for a
+    // dual account. Everything auth-related must be gone.
+    await deleteTeacherAccount(prisma, teacherId);
+
+    expect(await prisma.session.count({ where: { accountId } })).toBe(0);
+    expect(await prisma.passkeyCredential.count({ where: { accountId } })).toBe(0);
+    const account = await prisma.account.findUniqueOrThrow({ where: { id: accountId } });
+    expect(account.email).toBe(`deleted-${accountId}@deleted.invalid`);
+    const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
+    expect(teacher.deletedAt).not.toBeNull();
+    expect(teacher.firstName).toBe('Deleted');
+  });
 });

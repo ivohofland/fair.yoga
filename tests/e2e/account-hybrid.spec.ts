@@ -24,6 +24,7 @@ const guestToken = crypto.randomBytes(32).toString('hex');
 
 let hostTeacherId: string;
 let guestAccountId: string;
+const onlookerToken = crypto.randomBytes(32).toString('hex');
 let roomId: string;
 let classId: string;
 
@@ -102,6 +103,24 @@ test.describe('Account hybrid: teacher joins a class', () => {
         expiresAt: new Date(Date.now() + 86400000),
       },
     });
+
+    // A student-only account, for the mirror redirect assertion.
+    const onlooker = await prisma.student.create({
+      data: {
+        firstName: 'Onlooker',
+        lastName: 'Student',
+        email: `e2e-hybrid-onlooker-${uniqueSuffix}@test.local`,
+        claimedAt: new Date(),
+        account: { create: { email: `e2e-hybrid-onlooker-${uniqueSuffix}@test.local` } },
+      },
+    });
+    await prisma.session.create({
+      data: {
+        id: hashToken(onlookerToken),
+        accountId: onlooker.accountId!,
+        expiresAt: new Date(Date.now() + 86400000),
+      },
+    });
   });
 
   test.afterAll(async () => {
@@ -116,6 +135,26 @@ test.describe('Account hybrid: teacher joins a class', () => {
     await prisma.teacher.deleteMany({ where: { email: { contains: uniqueSuffix } } });
     await prisma.account.deleteMany({ where: { email: { contains: uniqueSuffix } } });
     await prisma.$disconnect();
+  });
+
+  test('wrong-profile navigation lands on the other home, not a sign-in form', async ({
+    page,
+    context,
+  }) => {
+    // Teacher-only session on a student surface → teacher home.
+    await context.addCookies([
+      { name: 'fair_yoga_session', value: guestToken, url: 'http://localhost:3000' },
+    ]);
+    await page.goto('/bookings');
+    await page.waitForURL((url) => url.pathname === '/', { timeout: 10_000 });
+
+    // Student-only session on a teacher surface → their bookings.
+    await context.clearCookies();
+    await context.addCookies([
+      { name: 'fair_yoga_session', value: onlookerToken, url: 'http://localhost:3000' },
+    ]);
+    await page.goto('/settings');
+    await page.waitForURL('**/bookings', { timeout: 10_000 });
   });
 
   test('a signed-in teacher joins as a student and books, in place', async ({

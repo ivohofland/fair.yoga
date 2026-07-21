@@ -306,10 +306,10 @@ export async function GET(request: Request) {
 
   const stream = new ReadableStream({
     start(controller) {
-      // Subscribe to notifications for this user
+      // Subscribe for whichever profiles the account holds — a dual-role
+      // account hears both its teacher and student notifications.
       const unsubscribe = subscribeToNotifications(
-        session.userId,
-        session.userType,
+        { teacherId: session.teacherId, studentId: session.studentId },
         (notification) => {
           controller.enqueue(`data: ${JSON.stringify(notification)}\n\n`);
         }
