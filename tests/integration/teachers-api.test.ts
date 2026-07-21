@@ -86,10 +86,16 @@ describe('PUT /api/teachers/[id]', () => {
     await prisma.$disconnect();
   });
 
-  it('updates and persists valid settings', async () => {
+  it('updates and persists valid settings — resubmitting the own slug is not a conflict', async () => {
     const res = await putTeacher(
       teacherId,
-      { bio: 'Updated bio', defaultTimezone: 'Europe/London' },
+      {
+        bio: 'Updated bio',
+        defaultTimezone: 'Europe/London',
+        // The unchanged own slug must pass the conflict check: losing the
+        // existing.id !== id exclusion would 409 every settings save.
+        pageSlug: `settings-teacher-${uniqueSuffix}`,
+      },
       sessionCookie,
     );
     expect(res.status).toBe(200);
@@ -105,11 +111,13 @@ describe('PUT /api/teachers/[id]', () => {
   });
 
   it('rejects a timezone Intl cannot resolve', async () => {
+    const before = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
+
     const res = await putTeacher(teacherId, { defaultTimezone: 'Not/AZone' }, sessionCookie);
     expect(res.status).toBe(400);
 
-    const persisted = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
-    expect(persisted.defaultTimezone).not.toBe('Not/AZone');
+    const after = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
+    expect(after).toEqual(before);
   });
 
   it("rejects updating another teacher's profile", async () => {
@@ -125,12 +133,24 @@ describe('PUT /api/teachers/[id]', () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects claiming another teacher's page slug", async () => {
+  it("rejects claiming another teacher's page slug with the SLUG_TAKEN code", async () => {
     const res = await putTeacher(
       teacherId,
       { pageSlug: `settings-other-${uniqueSuffix}` },
       sessionCookie,
     );
     expect(res.status).toBe(409);
+    // The code pins the deliberate pre-check: the P2002 fallback also
+    // returns 409, but without SLUG_TAKEN the settings form can't render
+    // its inline error.
+    const json = (await res.json()) as { error: { code?: string } };
+    expect(json.error.code).toBe('SLUG_TAKEN');
+  });
+
+  it("rejects reading another teacher's profile — the raw row carries bank details", async () => {
+    const res = await fetch(`${BASE_URL}/api/teachers/${otherTeacherId}`, {
+      headers: { Cookie: sessionCookie },
+    });
+    expect(res.status).toBe(403);
   });
 });
