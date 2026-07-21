@@ -104,9 +104,10 @@ function VerifyingState() {
 }
 
 /**
- * The sign-in serves three destinations — teacher schedule, student
- * bookings, or straight back to a class mid-booking — and the copy
- * should name the real one, not assume the teacher case.
+ * Three destinations the copy can name — teacher schedule, student
+ * bookings, straight back to a class mid-booking — plus whatever deep
+ * link a login redirect carried (any protected path): name the real one
+ * when we can, stay generic when we can't.
  */
 function destinationCopy(dest: string): string {
   if (dest.includes('/book/')) return 'Taking you back to your class now.';
