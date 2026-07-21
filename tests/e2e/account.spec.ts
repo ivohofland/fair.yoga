@@ -64,7 +64,7 @@ test.describe('Account — GDPR export and deletion', () => {
   });
 
   test('the data export downloads as real JSON', async ({ page }) => {
-    await page.goto('/account');
+    await page.goto('/account/data');
 
     const downloadPromise = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Download your data (JSON)' }).click();
@@ -82,7 +82,7 @@ test.describe('Account — GDPR export and deletion', () => {
   });
 
   test('deleting the account anonymizes and signs out', async ({ page }) => {
-    await page.goto('/account');
+    await page.goto('/account/data');
 
     await page.getByRole('button', { name: 'Delete account' }).click();
     await expect(page.getByText(/permanently removes your personal data/)).toBeVisible();
