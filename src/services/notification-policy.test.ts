@@ -43,6 +43,18 @@ describe('isEmailEligible', () => {
     expect(isEmailEligible({ createdAt: minutes(-5), classStart: minutes(180) }, now, 30)).toBe(false);
   });
 
+  it('includes a class starting exactly at the window boundary', () => {
+    expect(isEmailEligible({ createdAt: minutes(-5), classStart: minutes(120) }, now, 30)).toBe(true);
+  });
+
+  it('does not accelerate for a class starting right now', () => {
+    expect(isEmailEligible({ createdAt: minutes(-5), classStart: now }, now, 30)).toBe(false);
+  });
+
+  it('is not eligible at exactly the threshold age', () => {
+    expect(isEmailEligible({ createdAt: minutes(-30), classStart: null }, now, 30)).toBe(false);
+  });
+
   it('does not accelerate for a class that already started', () => {
     expect(isEmailEligible({ createdAt: minutes(-5), classStart: minutes(-10) }, now, 30)).toBe(false);
   });

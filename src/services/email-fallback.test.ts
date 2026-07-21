@@ -16,6 +16,8 @@ describe('processEmailFallback (DB)', () => {
   let roomId: string;
   let soonClassId: string;
   let laterClassId: string;
+  let amsTeacherId: string;
+  let amsClassId: string;
   const notificationIds: string[] = [];
   const classIds: string[] = [];
 
@@ -100,6 +102,57 @@ describe('processEmailFallback (DB)', () => {
     soonClassId = (await makeClassStartingIn(60)).id;
     laterClassId = (await makeClassStartingIn(180)).id;
 
+    // A non-UTC teacher pins the call-site wiring into classStartInstant:
+    // if the wall clock were misread as UTC, this class would compute
+    // hours away and the urgent test below would fail.
+    const amsTeacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Ams',
+        lastName: 'Teacher',
+        email: `fallback-ams-${uniqueSuffix}@test.local`,
+        account: { create: { email: `fallback-ams-${uniqueSuffix}@test.local` } },
+        bio: 'Timezone wiring fixture',
+        pageSlug: `fallback-ams-${uniqueSuffix}`,
+        defaultTimezone: 'Europe/Amsterdam',
+      },
+    });
+    amsTeacherId = amsTeacher.id;
+    const amsTeacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: amsTeacherId, roomId: room.id, capacityOverride: 10, rentalRate: 30 },
+    });
+
+    const amsStart = new Date(Date.now() + 60 * 60 * 1000);
+    const dtf = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Amsterdam',
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const parts = Object.fromEntries(
+      dtf.formatToParts(amsStart).filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]),
+    );
+    const amsClass = await prisma.class.create({
+      data: {
+        teacherId: amsTeacherId,
+        teacherRoomId: amsTeacherRoom.id,
+        classType: 'Vinyasa',
+        date: new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day))),
+        startTime: `${parts.hour}:${parts.minute}`,
+        durationMinutes: 60,
+        roomCost: 30,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 2,
+        maxStudents: 10,
+        status: 'open',
+      },
+    });
+    classIds.push(amsClass.id);
+    amsClassId = amsClass.id;
+
     const student = await prisma.student.create({
       data: {
         firstName: 'OptedOut',
@@ -120,6 +173,9 @@ describe('processEmailFallback (DB)', () => {
     }
     await prisma.student.delete({ where: { id: optedOutStudentId } });
     await prisma.teacher.delete({ where: { id: teacherId } });
+    if (amsTeacherId) {
+      await prisma.teacher.delete({ where: { id: amsTeacherId } });
+    }
     await prisma.$disconnect();
   });
 
@@ -172,13 +228,14 @@ describe('processEmailFallback (DB)', () => {
 
     await processEmailFallback(prisma);
 
-    // emailNotifications=false: no email goes out, but the row must be
-    // marked so the cron does not pick it up again every run.
+    // Type 'reminder' is optional, so emailNotifications=false wins: no
+    // email goes out, but the row must be marked so the cron does not pick
+    // it up again every run.
     const after = await prisma.notification.findUniqueOrThrow({ where: { id: optedOut.id } });
     expect(after.emailSent).toBe(true);
   });
 
-  it('still emails essential notifications to opted-out students (decision pinned in policy tests)', async () => {
+  it('essential notification to an opted-out student flows through the pipeline (send itself pinned in the consent tests)', async () => {
     const essential = await makeNotification({
       recipientType: 'student',
       recipientId: optedOutStudentId,
@@ -198,6 +255,20 @@ describe('processEmailFallback (DB)', () => {
       recipientId: teacherId,
       createdAt: new Date(Date.now() - 5 * 60 * 1000),
       relatedClassId: soonClassId,
+    });
+
+    await processEmailFallback(prisma);
+
+    const after = await prisma.notification.findUniqueOrThrow({ where: { id: urgent.id } });
+    expect(after.emailSent).toBe(true);
+  });
+
+  it('emails a fresh notification for a non-UTC teacher whose class starts within 2 hours', async () => {
+    const urgent = await makeNotification({
+      recipientType: 'teacher',
+      recipientId: amsTeacherId,
+      createdAt: new Date(Date.now() - 5 * 60 * 1000),
+      relatedClassId: amsClassId,
     });
 
     await processEmailFallback(prisma);

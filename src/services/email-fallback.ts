@@ -1,5 +1,7 @@
 /**
- * Email Fallback — Sends email for unread notifications older than 30 minutes.
+ * Email Fallback — Sends email for unread notifications past the threshold,
+ * or sooner when the linked class starts within the urgent window; essential
+ * types bypass the student email opt-out (see notification-policy.ts).
  *
  * Layer 3 of the communication system:
  * 1. In-app notification (real-time via SSE)
@@ -34,6 +36,7 @@ export async function processEmailFallback(
   if (notifications.length === 0) return 0;
 
   let sent = 0;
+  let failed = 0;
 
   // Mark each notification immediately after its send: batching the marks
   // at the end meant one failed batch-update re-emailed every recipient on
@@ -70,6 +73,16 @@ export async function processEmailFallback(
     }
 
     if (!email || !emailEnabled) {
+      // "recipient-missing" is data loss (the profile is gone); "opted-out"
+      // is correct consent behavior — the log line is what tells them apart.
+      log.info(
+        {
+          notificationId: notification.id,
+          recipientType: notification.recipientType,
+          reason: !email ? 'recipient-missing' : 'opted-out',
+        },
+        'email fallback skipped',
+      );
       // Mark as sent to avoid retrying
       await markOne(notification.id);
       sent++;
@@ -97,13 +110,21 @@ export async function processEmailFallback(
       // an unchecked result would mark the notification sent when it wasn't.
       if (error) {
         log.error({ notificationId: notification.id, reason: error.message }, 'email fallback send failed');
+        failed++;
         continue;
       }
       await markOne(notification.id);
       sent++;
     } catch (err) {
       log.error({ err, notificationId: notification.id }, 'email fallback send failed');
+      failed++;
     }
+  }
+
+  // Surface failures to the caller: the scheduler records this as
+  // lastError, so /api/health cannot show green through a send outage.
+  if (failed > 0) {
+    throw new Error(`email fallback: ${failed} of ${failed + sent} sends failed`);
   }
 
   return sent;
