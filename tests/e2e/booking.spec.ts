@@ -149,6 +149,10 @@ test.describe('Public booking flow', () => {
     await expect(page.getByText('Taking you back to your class now.')).toBeVisible({
       timeout: 10_000,
     });
+    // The success flash is minimal — no step rail to read in 900ms.
+    // Immediate count, not an auto-waiting assertion: the redirect would
+    // otherwise make a stale check pass vacuously.
+    expect(await page.getByText('Token confirmed').count()).toBe(0);
     await page.waitForURL(`**/${slug}/book/${classId}`, { timeout: 10_000 });
 
     // The range stays in the class header when signed in too.

@@ -175,3 +175,44 @@ test.describe('Magic link authentication', () => {
     await expect(page).toHaveURL(/\/login\?redirect=/);
   });
 });
+
+
+test.describe('Verify page — already signed in', () => {
+  test('a spent link tells you so and continues to your home', async ({ page, context }) => {
+    const suffix = `${Date.now()}-resign`;
+    const token = crypto.randomBytes(32).toString('hex');
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Resign',
+        lastName: 'Teacher',
+        email: `e2e-resign-${suffix}@test.local`,
+        bio: 'Already-signed-in fixtures',
+        pageSlug: `e2e-resign-${suffix}`,
+        account: { create: { email: `e2e-resign-${suffix}@test.local` } },
+      },
+    });
+    await prisma.session.create({
+      data: {
+        id: hashToken(token),
+        accountId: teacher.accountId,
+        expiresAt: new Date(Date.now() + 86400000),
+      },
+    });
+    await context.addCookies([
+      { name: 'fair_yoga_session', value: token, url: 'http://localhost:3000' },
+    ]);
+
+    try {
+      // A bogus/spent token while holding a valid session: the page must
+      // say the session is fine and route by the account's real profile.
+      await page.goto('/verify?token=deadbeef');
+      await expect(page.getByText(/That link is spent/)).toBeVisible({ timeout: 10_000 });
+      await page.getByRole('link', { name: 'Continue to your schedule' }).click();
+      await page.waitForURL((url) => url.pathname === '/', { timeout: 10_000 });
+    } finally {
+      await prisma.session.deleteMany({ where: { accountId: teacher.accountId } });
+      await prisma.teacher.delete({ where: { id: teacher.id } });
+      await prisma.account.delete({ where: { id: teacher.accountId } });
+    }
+  });
+});
