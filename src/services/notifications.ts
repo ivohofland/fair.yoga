@@ -17,6 +17,8 @@ import type {
 } from '@prisma/client';
 import { notificationBus } from '@/lib/event-bus';
 import { log } from '@/lib/log';
+import { isEmailEligible } from './notification-policy';
+import { classStartInstant } from '@/lib/timezone';
 
 /** Accepts a plain client or a transaction client so notification creation
  *  can participate in the caller's transaction. */
@@ -160,16 +162,45 @@ export async function getUnreadForEmailFallback(
   db: PrismaClient,
   thresholdMinutes = 30,
 ): Promise<Notification[]> {
-  const threshold = new Date(Date.now() - thresholdMinutes * 60 * 1000);
+  const now = new Date();
+  const threshold = new Date(now.getTime() - thresholdMinutes * 60 * 1000);
 
-  return db.notification.findMany({
+  // Class-linked rows are fetched regardless of age: a class starting
+  // within the urgent window makes them eligible before the threshold.
+  const candidates = await db.notification.findMany({
     where: {
       isRead: false,
       emailSent: false,
-      createdAt: { lt: threshold },
+      OR: [{ createdAt: { lt: threshold } }, { relatedClassId: { not: null } }],
+    },
+    include: {
+      relatedClass: {
+        select: {
+          date: true,
+          startTime: true,
+          teacher: { select: { defaultTimezone: true } },
+        },
+      },
     },
     orderBy: { createdAt: 'asc' },
   });
+
+  return candidates.filter((n) =>
+    isEmailEligible(
+      {
+        createdAt: n.createdAt,
+        classStart: n.relatedClass
+          ? classStartInstant(
+              n.relatedClass.date,
+              n.relatedClass.startTime,
+              n.relatedClass.teacher.defaultTimezone,
+            )
+          : null,
+      },
+      now,
+      thresholdMinutes,
+    ),
+  );
 }
 
 /**
