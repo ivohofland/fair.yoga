@@ -211,6 +211,19 @@ describe('POST /api/registrations', () => {
     expect(res.status).toBe(403);
   });
 
+  it('rejects a student session smuggling a studentId — no registering others by UUID', async () => {
+    const classId = await makeClass(5);
+    const victim = studentIds[1]!;
+    const res = await post(studentTokens[0]!, { classId, studentId: victim });
+
+    expect(res.status).toBe(403);
+    expect(
+      await prisma.registration.count({
+        where: { classId, studentId: victim },
+      }),
+    ).toBe(0);
+  });
+
   it('never exceeds capacity under concurrent registrations', async () => {
     const classId = await makeClass(1); // one spot, two students racing
 
@@ -325,5 +338,46 @@ describe('POST /api/registrations', () => {
     });
     expect(entry.status).toBe('claimed');
     expect(entry.registrationId).toBe(bookJson.data.id);
+  });
+});
+
+describe('DELETE /api/waitlist/[id] — profile-presence authorization', () => {
+  const del = (token: string, id: string) =>
+    fetch(`${BASE_URL}/api/waitlist/${id}`, {
+      method: 'DELETE',
+      headers: { Cookie: `fair_yoga_session=${token}` },
+    });
+
+  async function makeEntry(classId: string, studentId: string) {
+    return prisma.waitlistEntry.create({
+      data: { classId, studentId, position: 1, status: 'waiting' },
+    });
+  }
+
+  it('the class teacher can remove any entry', async () => {
+    const classId = await makeClass(1);
+    const entry = await makeEntry(classId, studentIds[0]!);
+
+    const res = await del(ownerToken, entry.id);
+
+    expect(res.status).toBe(200);
+    const gone = await prisma.waitlistEntry.findUnique({ where: { id: entry.id } });
+    expect(gone?.status ?? 'removed').not.toBe('waiting');
+  });
+
+  it('a different teacher is denied', async () => {
+    const classId = await makeClass(1);
+    const entry = await makeEntry(classId, studentIds[0]!);
+
+    const res = await del(otherTeacherToken, entry.id);
+    expect(res.status).toBe(403);
+  });
+
+  it('a student cannot remove someone else’s entry', async () => {
+    const classId = await makeClass(1);
+    const entry = await makeEntry(classId, studentIds[0]!);
+
+    const res = await del(studentTokens[1]!, entry.id);
+    expect(res.status).toBe(403);
   });
 });

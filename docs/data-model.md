@@ -13,7 +13,7 @@
 | **id** (PK) | uuid | |
 | first_name | string | |
 | last_name | string | |
-| email | string, unique | Used for magic link auth |
+| email | string, unique | Denormalized copy of the account email |
 | photo_url | string, nullable | |
 | bio | string(250) | |
 | page_slug | string, unique | Public booking page URL |
@@ -39,7 +39,7 @@
 | **id** (PK) | uuid | |
 | first_name | string | Required |
 | last_name | string | Required |
-| email | string, unique | Required. Used for magic link auth |
+| email | string, unique | Required. Contact email; copies the account email once claimed |
 | income_tier | int (1-5) | Global tier, can change anytime |
 | **Optional fields** | | |
 | phone | string, nullable | |
@@ -323,7 +323,7 @@ When sent, creates one Notification per recipient student. Class-scoped (specifi
 - **StudioClass** is intentionally disconnected from Room and Student entities. It's a simple log entry for the teacher's calendar and income reporting.
 - **Notification** uses a polymorphic recipient (teacher or student) so both user types share the same inbox infrastructure.
 - **rental_rate** on TeacherRoom is private to each teacher — never exposed to other teachers using the same room.
-- **Authentication** is handled outside this domain model (magic link + passkeys). The Teacher and Student email fields are the bridge to the auth layer.
+- **Authentication** hangs off the Account entity: one Account per human owns the authenticated email, sessions, and passkeys. Teacher and Student are profiles optionally linked to it via their unique `account_id` — a dual-role person (a teacher who attends classes) has one account with both profiles. Student.account_id is nullable: CRM-created students stay unclaimed until the human first authenticates (the claim moment links the account and stamps claimed_at). Profile email fields are denormalized copies set at link time.
 
 ## Open Questions
 

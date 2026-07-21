@@ -66,17 +66,23 @@ test.describe('Teacher journey', () => {
       },
     });
 
-    // Unclaimed students show their full name on the teacher side.
+    // This student signs in to book, so they are claimed — and they share
+    // their full name with this teacher so the roster reads "Journey
+    // Student" rather than the privacy-default initial.
     const bookingStudent = await prisma.student.create({
       data: {
         firstName: 'Journey',
         lastName: 'Student',
         email: `e2e-journey-student-${uniqueSuffix}@test.local`,
         account: { create: { email: `e2e-journey-student-${uniqueSuffix}@test.local` } },
+        claimedAt: new Date(),
         incomeTier: 3,
       },
     });
     bookingStudentId = bookingStudent.id;
+    await prisma.studentPrivacy.create({
+      data: { studentId: bookingStudentId, teacherId, shareFullName: true },
+    });
     await prisma.session.create({
       data: {
         id: hashToken(bookingStudentToken),
@@ -85,13 +91,13 @@ test.describe('Teacher journey', () => {
       },
     });
 
-    // The walk-in picker is roster-only.
+    // The walk-in picker is roster-only; this student never signs in and
+    // stays a genuinely unclaimed CRM row (full name by default).
     const walkIn = await prisma.student.create({
       data: {
         firstName: 'Walkin',
         lastName: 'Guest',
         email: `e2e-journey-walkin-${uniqueSuffix}@test.local`,
-        account: { create: { email: `e2e-journey-walkin-${uniqueSuffix}@test.local` } },
         incomeTier: 2,
       },
     });
@@ -102,6 +108,7 @@ test.describe('Teacher journey', () => {
   });
 
   test.afterAll(async () => {
+    await prisma.studentPrivacy.deleteMany({ where: { teacherId } });
     await prisma.notification.deleteMany({
       where: {
         OR: [

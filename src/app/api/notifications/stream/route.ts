@@ -50,7 +50,9 @@ export async function GET(request: NextRequest) {
       };
 
       const handler = (event: NotificationEvent) => {
-        // A dual-role account hears both of its profiles' events.
+        // A dual-role account hears both of its profiles' events. The
+        // profile ids are a connect-time snapshot: a profile added
+        // mid-stream (join-as-student) starts receiving on reconnect.
         const mine =
           (event.recipientType === 'teacher' &&
             event.recipientId === session.teacherId) ||

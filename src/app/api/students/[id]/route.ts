@@ -96,7 +96,7 @@ export const PUT = withErrorHandler(async (
     return respondOk(student);
   }
 
-  // Teachers can edit unlinked students in their contacts
+  // Teachers can edit unclaimed students in their contacts
   if (session.teacherId) {
     const student = await prisma.student.findUnique({ where: { id } });
     if (!student) return respondError('Student not found', 404);

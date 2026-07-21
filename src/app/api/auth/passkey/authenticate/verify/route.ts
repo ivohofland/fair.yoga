@@ -51,9 +51,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // Dual-role accounts default to the teacher home.
   const account = await prisma.account.findUnique({
     where: { id: credential.accountId },
-    select: { teacher: { select: { id: true } } },
+    select: { teacher: { select: { deletedAt: true } } },
   });
-  const fallback = account?.teacher ? '/' : '/bookings';
+  const fallback = account?.teacher && !account.teacher.deletedAt ? '/' : '/bookings';
   const redirectTo = body.redirect ?? fallback;
 
   const apiResponse = respondOk({

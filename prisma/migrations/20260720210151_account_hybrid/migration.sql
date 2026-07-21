@@ -1,7 +1,10 @@
 -- Account hybrid: auth unifies, domain doesn't.
 -- One Account per authenticated human; Teacher/Student become linked
 -- profiles. Sessions and passkeys move from (userId, userType) to
--- accountId WITH backfill — nobody is signed out, no credential is lost.
+-- accountId WITH backfill: teachers and claimed students keep every
+-- session and passkey. Never-claimed CRM students (the old model let
+-- them sign in without stamping claimedAt) lose theirs — they re-claim
+-- on their next magic-link sign-in.
 
 -- 1. The Account table.
 CREATE TABLE "Account" (

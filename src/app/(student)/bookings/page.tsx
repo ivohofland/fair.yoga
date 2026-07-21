@@ -24,7 +24,7 @@ function formatDayHeader(date: Date): string {
 // what to pay and where. No engagement tricks — a quiet ledger.
 export default async function StudentBookingsPage() {
   const session = await getSession();
-  if (!session?.studentId) redirect('/login');
+  if (!session?.studentId) redirect(session?.teacherId ? '/' : '/login');
 
   const [registrations, waitlistEntries, unreadNotifications] = await Promise.all([
     prisma.registration.findMany({

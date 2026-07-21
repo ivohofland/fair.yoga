@@ -100,9 +100,12 @@ enum NotificationType {
 
 // One account per human: owns the authenticated email identity, sessions,
 // and passkeys. Teacher/Student are profiles optionally hanging off it —
-// domain data never references Account directly (auth unifies, domain
-// doesn't). Profile email columns stay as denormalized contact data; the
-// auth layer keeps linked profiles' emails equal to the account's.
+// only the two profile-link columns reference Account; everything else in
+// the domain keys on teacherId/studentId (auth unifies, domain doesn't).
+// Profile email columns are denormalized copies set at link time; live
+// linked profiles match the account's email by construction, and there is
+// deliberately no email-change flow — adding one must update the account
+// and its live linked profiles together, through a single choke point.
 model Account {
   id        String   @id @default(uuid())
   email     String   @unique

@@ -67,9 +67,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if (!student) return respondError('Student not found', 404);
 
   // A teacher can only register students in their own roster.
-  if (isTeacher) {
+  if (actingTeacherId) {
     const link = await prisma.teacherStudent.findUnique({
-      where: { teacherId_studentId: { teacherId: actingTeacherId!, studentId } },
+      where: { teacherId_studentId: { teacherId: actingTeacherId, studentId } },
     });
     if (!link) return respondError('Student is not in your roster', 403);
   }

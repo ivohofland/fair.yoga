@@ -1,3 +1,7 @@
+// The middle tier: the default for new student profiles and the value
+// erased profiles are reset to.
+export const DEFAULT_INCOME_TIER = 3;
+
 /** Tier display copy — accessible language, inviting, never guilt-inducing. */
 export const TIER_INFO = [
   { tier: 1, label: 'Getting by', caption: 'Money is tight right now' },

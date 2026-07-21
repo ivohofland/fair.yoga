@@ -24,6 +24,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // Any existing account blocks unauthenticated signup — attaching a
   // teacher profile to someone's account requires their session, and a
   // silent shadowing teacher used to lock students out of their bookings.
+  // Known edge: an UNCLAIMED CRM student's email has no account and passes
+  // this check; the new teacher account then shadows the claim path for
+  // that row. Resolving that needs the email-ownership verification this
+  // route already tracks as follow-up work.
   const existingAccount = await prisma.account.findUnique({ where: { email } });
   if (existingAccount) {
     return respondError('Email already in use', 409, 'EMAIL_TAKEN');

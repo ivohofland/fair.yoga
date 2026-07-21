@@ -93,6 +93,7 @@ test.describe('Passkey sign-in', () => {
         lastName: 'Key',
         email: `e2e-passkey-student-${uniqueSuffix}@test.local`,
         account: { create: { email: `e2e-passkey-student-${uniqueSuffix}@test.local` } },
+        claimedAt: new Date(),
         incomeTier: 3,
       },
     });
@@ -120,6 +121,7 @@ test.describe('Passkey sign-in', () => {
     await prisma.room.deleteMany({ where: { address: { contains: uniqueSuffix } } });
     await prisma.student.deleteMany({ where: { email: { contains: uniqueSuffix } } });
     await prisma.teacher.deleteMany({ where: { email: { contains: uniqueSuffix } } });
+    await prisma.account.deleteMany({ where: { email: { contains: uniqueSuffix } } });
     await prisma.$disconnect();
   });
 
