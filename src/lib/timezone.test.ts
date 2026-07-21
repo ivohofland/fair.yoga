@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { classStartInstant } from './timezone';
+import { log } from '@/lib/log';
 
 // Class rows store a calendar date (UTC midnight) + HH:mm wall-clock startTime.
 // classStartInstant interprets that wall clock in the teacher's timezone.
@@ -44,5 +45,15 @@ describe('classStartInstant', () => {
   it('falls back to UTC interpretation for an unknown timezone', () => {
     const start = classStartInstant(day('2026-07-20'), '18:00', 'Not/AZone');
     expect(start.toISOString()).toBe('2026-07-20T18:00:00.000Z');
+  });
+
+  it('warns when falling back to UTC so the bad zone is observable', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    classStartInstant(day('2026-07-20'), '18:00', 'Not/AZone');
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ timeZone: 'Not/AZone' }),
+      expect.stringContaining('falling back to UTC'),
+    );
+    warn.mockRestore();
   });
 });
