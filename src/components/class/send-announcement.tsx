@@ -7,7 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 interface SendAnnouncementProps {
   /** Scope to one class; omit to message all the teacher's students. */
   classId?: string;
-  /** e.g. "everyone registered for this class" / "all your students". */
+  /** e.g. "everyone in this class" / "your booked students". */
   recipientHint: string;
 }
 

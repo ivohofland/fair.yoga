@@ -13,7 +13,7 @@ export default function StudentsPage() {
         action={<Link href="/students/new" className="type-label text-teal no-underline">+ Add student</Link>}
       />
       <div className="mb-5">
-        <SendAnnouncement recipientHint="all your students" />
+        <SendAnnouncement recipientHint="your booked students" />
       </div>
       <StudentDirectory />
       <div className="mt-6">
