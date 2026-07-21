@@ -5,7 +5,7 @@
  * Notifications are the first layer of the three-layer communication system:
  * 1. In-app notification (real-time via SSE)
  * 2. In-app inbox (persistent record — this service)
- * 3. Email fallback (for unread notifications after a threshold)
+ * 3. Email fallback (unread past a threshold — sooner when the linked class starts soon)
  */
 
 import type {
@@ -148,15 +148,15 @@ export async function markAsRead(
 /**
  * Finds unread notifications eligible for email fallback.
  *
- * Returns notifications where:
- * - isRead = false
- * - emailSent = false
- * - createdAt < (now - thresholdMinutes)
+ * Returns unread, unsent notifications that are either older than the
+ * threshold, or linked to a class starting within URGENT_WINDOW_MINUTES
+ * (see notification-policy.ts — urgency changes when, never whether).
  *
  * Ordered by createdAt ASC (oldest first).
  *
  * @param thresholdMinutes — minutes a notification must remain unread before
- *   email fallback kicks in. Defaults to 30.
+ *   email fallback kicks in, unless the linked class starts within the
+ *   urgent window. Defaults to 30.
  */
 export async function getUnreadForEmailFallback(
   db: PrismaClient,

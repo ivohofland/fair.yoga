@@ -102,7 +102,7 @@ export function StudentSettingsForm({
         </label>
         <p className="type-caption mt-1 max-w-[420px]">
           Essential messages about your bookings — cancellations, waitlist
-          spots, payment requests — are always emailed.
+          spots, payment requests — are still emailed even when this is off.
         </p>
         <div className="mt-3 max-w-[280px]">
           <Select
