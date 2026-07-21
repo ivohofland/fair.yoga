@@ -19,6 +19,11 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
   const [sending, setSending] = useState(false);
   const [sentCount, setSentCount] = useState<number | null>(null);
   const [error, setError] = useState('');
+  const [showRecipients, setShowRecipients] = useState(false);
+
+  const recipientExplanation = classId
+    ? "Everyone registered for this class. It lands in their inbox here; anyone who hasn't read it after 30 minutes also gets it by email, unless they've opted out."
+    : "Everyone with a booking in one of your classes — contacts who've never booked won't receive it. It lands in their inbox here; anyone who hasn't read it after 30 minutes also gets it by email, unless they've opted out.";
 
   async function handleSend() {
     if (!message.trim()) return;
@@ -81,6 +86,19 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
         rows={3}
         placeholder="Bring a blanket on Sunday — we'll end with a long savasana."
       />
+      <div className="flex flex-col items-start gap-1">
+        <button
+          type="button"
+          onClick={() => setShowRecipients((v) => !v)}
+          aria-expanded={showRecipients}
+          className="type-caption text-teal"
+        >
+          Who receives this?
+        </button>
+        {showRecipients && (
+          <p className="type-caption max-w-[420px]">{recipientExplanation}</p>
+        )}
+      </div>
       <div className="flex gap-3">
         <Button variant="primary" onClick={handleSend} disabled={sending || !message.trim()}>
           {sending ? 'Sending...' : 'Send'}
