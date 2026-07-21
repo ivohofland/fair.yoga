@@ -655,7 +655,7 @@ async function main() {
     { status: 'attended', charged: true }, // Anna (tier 1)
     { status: 'attended', charged: true }, // Ben (tier 1)
     { status: 'attended', charged: true }, // Clara (tier 2)
-    { status: 'attended', charged: true }, // David — cancelled (not charged)
+    { status: 'attended', charged: true }, // David (tier 2)
     { status: 'attended', charged: true }, // Eva (tier 3)
     { status: 'attended', charged: true }, // Finn (tier 3)
     { status: 'no_show', charged: true }, // Greta (tier 4)
@@ -712,7 +712,7 @@ async function main() {
   // for the full class since all 10 students are registered.
 
   // ==========================================================================
-  // PAYMENTS (for completed class — 9 charged registrations)
+  // PAYMENTS (first completed class — 9 charged registrations)
   // ==========================================================================
   const chargedRegistrations = completedRegistrations.filter(
     (_, i) => completedStatuses[i]!.charged,
@@ -754,8 +754,10 @@ async function main() {
   // OVERDUE GRADIENT (two more completed classes)
   // ==========================================================================
   // The students list shows per-student overdue counts; seed a visible
-  // gradient: Iris 3, Hugo 2, Greta 1. Dev-visual data — per-class totals
-  // are plausible, not recomputed by the pricing engine.
+  // gradient: Iris 3, Hugo 2, Greta 1 (Iris's third overdue is the
+  // pre-existing one from the first completed class above). Dev-visual
+  // data — per-class totals are plausible, not recomputed by the
+  // pricing engine.
   const overdueClassSpecs = [
     {
       date: daysAgo(12),
