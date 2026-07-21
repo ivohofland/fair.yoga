@@ -73,7 +73,6 @@ export const passkeyAuthVerifySchema = z.object({
 // TEACHERS
 // ============================================================================
 
-// App routes the public teacher page must never shadow.
 // Construct-probe rather than Intl.supportedValuesOf: the probe accepts
 // exactly what classStartInstant can handle, aliases included.
 function isValidTimeZone(tz: string): boolean {
@@ -85,6 +84,7 @@ function isValidTimeZone(tz: string): boolean {
   }
 }
 
+// App routes the public teacher page must never shadow.
 const RESERVED_SLUGS = new Set([
   'login', 'verify', 'bookings', 'settings', 'schedule', 'students', 'inbox',
   'class', 'studio-class', 'api', 'health', 'admin', 'account',

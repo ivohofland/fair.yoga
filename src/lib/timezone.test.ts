@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { classStartInstant } from './timezone';
 import { log } from '@/lib/log';
 
@@ -6,6 +6,10 @@ import { log } from '@/lib/log';
 // classStartInstant interprets that wall clock in the teacher's timezone.
 describe('classStartInstant', () => {
   const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it('converts Amsterdam summer time (CEST, +2) to UTC', () => {
     const start = classStartInstant(day('2026-07-20'), '18:00', 'Europe/Amsterdam');
@@ -54,6 +58,5 @@ describe('classStartInstant', () => {
       expect.objectContaining({ timeZone: 'Not/AZone' }),
       expect.stringContaining('falling back to UTC'),
     );
-    warn.mockRestore();
   });
 });

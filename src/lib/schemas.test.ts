@@ -106,6 +106,10 @@ describe('updateTeacherSchema.defaultTimezone', () => {
     expect(updateTeacherSchema.safeParse({ defaultTimezone: 'UTC' }).success).toBe(true);
   });
 
+  it('accepts legacy aliases — the reason for the construct-probe over supportedValuesOf', () => {
+    expect(updateTeacherSchema.safeParse({ defaultTimezone: 'Europe/Kiev' }).success).toBe(true);
+  });
+
   it('rejects strings Intl cannot resolve', () => {
     expect(updateTeacherSchema.safeParse({ defaultTimezone: 'Not/AZone' }).success).toBe(false);
     expect(updateTeacherSchema.safeParse({ defaultTimezone: '' }).success).toBe(false);
