@@ -143,16 +143,19 @@ test.describe('Public booking flow', () => {
       },
     });
 
+    // Freeze page timers so the 900ms redirect can't race the flash
+    // assertions — the success state holds until we advance the clock.
+    await page.clock.install();
     await page.goto(`/verify?token=${rawToken}`);
     // The interstitial names the actual destination — this sign-in goes
     // back to the class being booked, not to a generic "schedule".
     await expect(page.getByText('Taking you back to your class now.')).toBeVisible({
       timeout: 10_000,
     });
-    // The success flash is minimal — no step rail to read in 900ms.
-    // Immediate count, not an auto-waiting assertion: the redirect would
-    // otherwise make a stale check pass vacuously.
+    // The success flash is minimal — no step rail to read in its second.
     expect(await page.getByText('Token confirmed').count()).toBe(0);
+    // Release the redirect timer and land on the class.
+    await page.clock.runFor(900);
     await page.waitForURL(`**/${slug}/book/${classId}`, { timeout: 10_000 });
 
     // The range stays in the class header when signed in too.
