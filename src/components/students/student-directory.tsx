@@ -17,6 +17,7 @@ interface StudentRow {
   shareFullName: boolean;
   lastClassDate: string | null;
   classCount: number;
+  overduePayments: number;
 }
 
 interface StudentListResponse {
@@ -115,9 +116,16 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
                   {student.email && <span className="type-caption">{student.email}</span>}
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="type-caption">
-                    {student.classCount} {student.classCount === 1 ? 'class' : 'classes'}
-                  </span>
+                  <div className="flex flex-col items-end gap-0.5">
+                    <span className="type-caption">
+                      {student.classCount} {student.classCount === 1 ? 'class' : 'classes'}
+                    </span>
+                    {student.overduePayments > 0 && (
+                      <span className="type-caption text-danger">
+                        {student.overduePayments} overdue
+                      </span>
+                    )}
+                  </div>
                   {!student.claimedAt && (
                     <span className="type-caption">unlinked</span>
                   )}
