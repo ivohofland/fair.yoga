@@ -63,6 +63,22 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     prisma.student.count({ where }),
   ]);
 
+  const pageStudentIds = students.map((s) => s.id);
+  const overdueGroups = pageStudentIds.length
+    ? await prisma.registration.groupBy({
+        by: ['studentId'],
+        where: {
+          studentId: { in: pageStudentIds },
+          class: { teacherId: session.teacherId },
+          payment: { status: 'overdue' },
+        },
+        _count: { _all: true },
+      })
+    : [];
+  const overdueByStudent = new Map(
+    overdueGroups.map((g) => [g.studentId, g._count._all]),
+  );
+
   const result = students.map((s) => {
     const privacy = s.studentPrivacy[0];
     const isUnclaimed = !s.claimedAt;
@@ -77,6 +93,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       shareFullName,
       lastClassDate: s.registrations[0]?.class.date ?? null,
       classCount: s._count.registrations,
+      overduePayments: overdueByStudent.get(s.id) ?? 0,
     };
   });
 
