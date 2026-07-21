@@ -29,6 +29,8 @@ const nextWeek = daysFromNow(7);
 async function main() {
   // Clear all data in reverse dependency order
   await prisma.session.deleteMany();
+  await prisma.passkeyCredential.deleteMany();
+  await prisma.magicLinkToken.deleteMany();
   await prisma.announcement.deleteMany();
   await prisma.notification.deleteMany();
   await prisma.payment.deleteMany();
@@ -44,6 +46,8 @@ async function main() {
   await prisma.teacherStudent.deleteMany();
   await prisma.student.deleteMany();
   await prisma.teacher.deleteMany();
+  // Accounts last: Teacher.accountId RESTRICTs while a profile still points at one.
+  await prisma.account.deleteMany();
 
   // ==========================================================================
   // TEACHERS
@@ -177,7 +181,13 @@ async function main() {
 
   const students = await Promise.all(
     studentData.map((data) =>
-      prisma.student.create({ data: { ...data, claimedAt: daysAgo(30) } }),
+      prisma.student.create({
+        data: {
+          ...data,
+          claimedAt: daysAgo(30),
+          account: { create: { email: data.email } },
+        },
+      }),
     ),
   );
 
