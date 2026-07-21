@@ -751,6 +751,89 @@ async function main() {
   }
 
   // ==========================================================================
+  // OVERDUE GRADIENT (two more completed classes)
+  // ==========================================================================
+  // The students list shows per-student overdue counts; seed a visible
+  // gradient: Iris 3, Hugo 2, Greta 1. Dev-visual data — per-class totals
+  // are plausible, not recomputed by the pricing engine.
+  const overdueClassSpecs = [
+    {
+      date: daysAgo(12),
+      effectiveTeacherRate: '16.25',
+      totalRevenue: '51.25',
+      roster: [
+        { student: students[8]!, payment: 'overdue' as const }, // Iris
+        { student: students[7]!, payment: 'overdue' as const }, // Hugo
+        { student: students[6]!, payment: 'overdue' as const }, // Greta
+        { student: students[0]!, payment: 'paid' as const }, // Anna
+        { student: students[4]!, payment: 'paid' as const }, // Eva
+      ],
+    },
+    {
+      date: daysAgo(14),
+      effectiveTeacherRate: '15.00',
+      totalRevenue: '50.00',
+      roster: [
+        { student: students[8]!, payment: 'overdue' as const }, // Iris
+        { student: students[7]!, payment: 'overdue' as const }, // Hugo
+        { student: students[1]!, payment: 'paid' as const }, // Ben
+        { student: students[2]!, payment: 'paid' as const }, // Clara
+      ],
+    },
+  ];
+
+  for (const spec of overdueClassSpecs) {
+    const overdueClass = await prisma.class.create({
+      data: {
+        teacherId: ivo.id,
+        teacherRoomId: ivoYogaschool.id,
+        templateId: vinyasaTemplate.id,
+        classType: 'Vinyasa',
+        description: 'Dynamic flow class suitable for all levels.',
+        date: spec.date,
+        startTime: '09:00',
+        durationMinutes: 75,
+        roomCost: new Prisma.Decimal('35.00'),
+        minRate: new Prisma.Decimal('15.00'),
+        targetRate: new Prisma.Decimal('25.00'),
+        minStudents: 4,
+        maxStudents: 12,
+        cancelDeadline: 'HOURS_24',
+        autoCancelCheck: 'HOURS_2',
+        status: 'completed',
+        settingsLocked: true,
+        effectiveTeacherRate: new Prisma.Decimal(spec.effectiveTeacherRate),
+        totalStudents: spec.roster.length,
+        totalRevenue: new Prisma.Decimal(spec.totalRevenue),
+      },
+    });
+
+    for (const { student, payment } of spec.roster) {
+      const reg = await prisma.registration.create({
+        data: {
+          classId: overdueClass.id,
+          studentId: student.id,
+          status: 'attended',
+          tierAtBooking: student.incomeTier,
+          price: new Prisma.Decimal(tierPriceMap[student.incomeTier]!),
+          tierRatio: new Prisma.Decimal(tierRatioMap[student.incomeTier]!),
+          registeredAt: new Date(spec.date.getTime() - 3 * 86400_000),
+        },
+      });
+      await prisma.payment.create({
+        data: {
+          registrationId: reg.id,
+          amount: reg.price!,
+          status: payment,
+          method: payment === 'paid' ? 'bank_transfer' : null,
+          paidAt: payment === 'paid' ? spec.date : null,
+          reminderSentAt: payment === 'overdue' ? daysAgo(2) : null,
+        },
+      });
+    }
+  }
+
+  // ==========================================================================
   // NOTIFICATIONS
   // ==========================================================================
   await prisma.notification.createMany({
@@ -827,11 +910,11 @@ async function main() {
   console.log(`  TeacherStudents: 15 (12 for Ivo, 3 for Sarah)`);
   console.log(`  Rooms: 2, TeacherRooms: 3`);
   console.log(`  ClassTemplate: 1`);
-  console.log(`  Classes: 6 (draft, open, open+full, in_progress, completed, cancelled)`);
+  console.log(`  Classes: 8 (draft, open, open+full, in_progress, 3 completed, cancelled)`);
   console.log(`  StudioClassTemplate: 1`);
   console.log(`  StudioClasses: 3 (1 past, 1 upcoming, 1 one-off)`);
-  console.log(`  Registrations: 33`);
-  console.log(`  Payments: 9 (5 paid, 3 pending, 1 overdue)`);
+  console.log(`  Registrations: 42`);
+  console.log(`  Payments: 18 (9 paid, 3 pending, 6 overdue)`);
   console.log(`  Notifications: 5`);
   console.log(`  Announcements: 1`);
 }
