@@ -1,31 +1,23 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { Icon } from '@/components/ui/icon';
-import { StudentSettingsForm } from '@/components/student/student-settings-form';
-import { DataAndDeletion } from '@/components/account/data-and-deletion';
 import { AddPasskey } from '@/components/account/add-passkey';
 import { SignOutButton } from '@/components/account/sign-out-button';
 
 export const dynamic = 'force-dynamic';
 
+const SETTINGS_ITEMS = [
+  { href: '/account/tier', label: 'Your tier' },
+  { href: '/account/notifications', label: 'Notifications' },
+  { href: '/account/privacy', label: 'Privacy' },
+  { href: '/account/data', label: 'Data & deletion' },
+];
+
+// The student settings index: one row per area, teacher-settings pattern.
 export default async function StudentSettingsPage() {
   const session = await getSession();
   if (!session?.studentId) redirect(session?.teacherId ? '/' : '/login');
-
-  const student = await prisma.student.findUnique({
-    where: { id: session.studentId },
-    select: {
-      id: true,
-      firstName: true,
-      email: true,
-      incomeTier: true,
-      emailNotifications: true,
-      reminderPref: true,
-    },
-  });
-  if (!student) redirect('/login');
 
   return (
     <div>
@@ -38,12 +30,18 @@ export default async function StudentSettingsPage() {
       </Link>
       <h1 className="type-display mb-6">Settings</h1>
 
-      <StudentSettingsForm
-        studentId={student.id}
-        currentTier={student.incomeTier}
-        emailNotifications={student.emailNotifications}
-        reminderPref={student.reminderPref}
-      />
+      <div>
+        {SETTINGS_ITEMS.map((item) => (
+          <Link
+            key={item.href}
+            href={item.href}
+            className="flex items-center gap-3 min-h-14 py-2 border-b border-border last:border-b-0 no-underline"
+          >
+            <span className="flex-1 text-base text-ink">{item.label}</span>
+            <Icon name="chevron-right" size={20} className="text-brown-light" />
+          </Link>
+        ))}
+      </div>
 
       {session.teacherId && (
         <section className="mt-10 pt-6 border-t border-border">
@@ -64,8 +62,6 @@ export default async function StudentSettingsPage() {
           <SignOutButton />
         </div>
       </section>
-
-      <DataAndDeletion role="student" />
     </div>
   );
 }
