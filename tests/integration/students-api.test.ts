@@ -385,3 +385,143 @@ describe('GET/PUT /api/students/[id] — profile-presence authorization', () => 
     expect(res.status).toBe(403);
   });
 });
+
+describe('GET /api/students — overduePayments', () => {
+  let otherTeacherId: string;
+  let roomId: string;
+  const overdueClassIds: string[] = [];
+
+  beforeAll(async () => {
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Overdue Studio',
+        address: `${uniqueSuffix} Overdue St`,
+        city: 'Amsterdam',
+        postcode: '1111OD',
+        maxCapacity: 10,
+        createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId: room.id, capacityOverride: 10, rentalRate: 30 },
+    });
+
+    const otherTeacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Other',
+        lastName: 'Teacher',
+        email: `crm-other-${uniqueSuffix}@test.local`,
+        account: { create: { email: `crm-other-${uniqueSuffix}@test.local` } },
+        bio: 'Scoping fixture for overdue counts',
+        pageSlug: `crm-other-${uniqueSuffix}`,
+      },
+    });
+    otherTeacherId = otherTeacher.id;
+    const otherTeacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: otherTeacher.id, roomId: room.id, capacityOverride: 10, rentalRate: 30 },
+    });
+
+    async function createCompletedClass(
+      ownerTeacherId: string,
+      ownerTeacherRoomId: string,
+      daysBack: number,
+    ) {
+      const date = new Date();
+      date.setDate(date.getDate() - daysBack);
+      date.setHours(0, 0, 0, 0);
+      const cls = await prisma.class.create({
+        data: {
+          teacherId: ownerTeacherId,
+          teacherRoomId: ownerTeacherRoomId,
+          classType: 'Vinyasa',
+          date,
+          startTime: '09:00',
+          durationMinutes: 60,
+          roomCost: 30,
+          minRate: 15,
+          targetRate: 25,
+          minStudents: 2,
+          maxStudents: 10,
+          status: 'completed',
+          settingsLocked: true,
+        },
+      });
+      overdueClassIds.push(cls.id);
+      return cls;
+    }
+
+    async function createChargedRegistration(
+      classId: string,
+      studentId: string,
+      paymentStatus: 'overdue' | 'pending' | 'paid',
+    ) {
+      const reg = await prisma.registration.create({
+        data: {
+          classId,
+          studentId,
+          status: 'attended',
+          tierAtBooking: 3,
+          price: 6.11,
+          tierRatio: 1.0,
+        },
+      });
+      await prisma.payment.create({
+        data: { registrationId: reg.id, amount: 6.11, status: paymentStatus },
+      });
+    }
+
+    const clsA = await createCompletedClass(teacherId, teacherRoom.id, 9);
+    const clsB = await createCompletedClass(teacherId, teacherRoom.id, 11);
+    const clsOther = await createCompletedClass(otherTeacherId, otherTeacherRoom.id, 13);
+
+    // Student00: two overdue payments with the requesting teacher.
+    await createChargedRegistration(clsA.id, studentIds[0]!, 'overdue');
+    await createChargedRegistration(clsB.id, studentIds[0]!, 'overdue');
+    // Student01: overdue payment with the OTHER teacher only.
+    await createChargedRegistration(clsOther.id, studentIds[1]!, 'overdue');
+    // Student02: pending (not overdue) with the requesting teacher.
+    await createChargedRegistration(clsA.id, studentIds[2]!, 'pending');
+  });
+
+  afterAll(async () => {
+    // Guards: on a failed beforeAll these ids are undefined, and an
+    // undefined filter in deleteMany matches every row.
+    await prisma.class.deleteMany({ where: { id: { in: overdueClassIds } } });
+    if (roomId) {
+      await prisma.teacherRoom.deleteMany({ where: { roomId } });
+      await prisma.room.delete({ where: { id: roomId } });
+    }
+    if (otherTeacherId) {
+      await prisma.teacher.delete({ where: { id: otherTeacherId } });
+    }
+    await prisma.account.deleteMany({
+      where: { email: `crm-other-${uniqueSuffix}@test.local` },
+    });
+  });
+
+  async function fetchSingleStudent(search: string) {
+    const res = await fetch(`${BASE_URL}/api/students?search=${search}`, {
+      headers: { Cookie: sessionCookie },
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data.students).toHaveLength(1);
+    return json.data.students[0];
+  }
+
+  it('counts overdue payments for the requesting teacher', async () => {
+    const student = await fetchSingleStudent('Student00');
+    expect(student.overduePayments).toBe(2);
+  });
+
+  it('ignores overdue payments owed to other teachers', async () => {
+    const student = await fetchSingleStudent('Student01');
+    expect(student.overduePayments).toBe(0);
+  });
+
+  it('does not count pending payments', async () => {
+    const student = await fetchSingleStudent('Student02');
+    expect(student.overduePayments).toBe(0);
+  });
+});
