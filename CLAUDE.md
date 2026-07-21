@@ -69,7 +69,7 @@ Classes move through states: `draft → open → full → in_progress → comple
 
 1. In-app notification (real-time via SSE)
 2. In-app inbox (persistent record)
-3. Email fallback (for unread notifications, student can opt out)
+3. Email fallback (unread after 30 min — sooner when the linked class starts within 2 h; students can opt out of optional messages, essential booking messages always email)
 
 One-to-many only. No group chat. Teachers use external tools for community.
 
