@@ -144,6 +144,11 @@ test.describe('Public booking flow', () => {
     });
 
     await page.goto(`/verify?token=${rawToken}`);
+    // The interstitial names the actual destination — this sign-in goes
+    // back to the class being booked, not to a generic "schedule".
+    await expect(page.getByText('Taking you back to your class now.')).toBeVisible({
+      timeout: 10_000,
+    });
     await page.waitForURL(`**/${slug}/book/${classId}`, { timeout: 10_000 });
 
     // The range stays in the class header when signed in too.

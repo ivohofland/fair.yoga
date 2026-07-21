@@ -103,20 +103,39 @@ function VerifyingState() {
   );
 }
 
+/**
+ * The sign-in serves three destinations — teacher schedule, student
+ * bookings, or straight back to a class mid-booking — and the copy
+ * should name the real one, not assume the teacher case.
+ */
+function destinationCopy(dest: string): { body: string; rail: string } {
+  if (dest.includes('/book/')) {
+    return { body: 'Taking you back to your class now.', rail: 'Opening your class' };
+  }
+  if (dest.startsWith('/bookings')) {
+    return { body: 'Taking you to your bookings now.', rail: 'Opening your bookings' };
+  }
+  if (dest === '/') {
+    return { body: 'Taking you to your schedule now.', rail: 'Opening your schedule' };
+  }
+  return { body: 'Taking you back to where you left off.', rail: 'Opening your page' };
+}
+
 function SuccessState({ redirectTo }: { redirectTo: string }) {
   const dest = redirectTo || '/';
+  const copy = destinationCopy(dest);
   return (
     <div className="flex-1 flex flex-col justify-center py-4">
       <p className="type-label text-teal mb-[10px]">Welcome back</p>
       <h1 className="type-display mb-4">You&apos;re signed in.</h1>
       <p className="type-body max-w-[360px]">
-        The link checked out. Taking you to your schedule now.
+        The link checked out. {copy.body}
       </p>
       <Rail
         steps={[
           { num: 'i.', text: 'Link received', when: 'a moment ago', state: 'done' },
           { num: 'ii.', text: 'Token confirmed', when: 'a moment ago', state: 'done' },
-          { num: 'iii.', text: 'Opening your dashboard', when: 'now', state: 'now' },
+          { num: 'iii.', text: copy.rail, when: 'now', state: 'now' },
         ]}
       />
       <StatusLine variant="done">
