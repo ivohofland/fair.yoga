@@ -90,7 +90,13 @@ export const PUT = withErrorHandler(async (
 
     const student = await prisma.student.update({
       where: { id },
-      data: updateData,
+      data: {
+        ...updateData,
+        // A tier set by the student themself is a choice — the marker the
+        // booking flow reads to decide picker vs summary. Teacher edits
+        // never reach this branch.
+        ...(updateData.incomeTier !== undefined ? { tierSelectedAt: new Date() } : {}),
+      },
     });
 
     return respondOk(student);
