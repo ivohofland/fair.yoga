@@ -149,7 +149,7 @@ export const updatePrivacySchema = z.object({
   shareBirthday: z.boolean().optional(),
   shareAddress: z.boolean().optional(),
   receiveComms: z.boolean().optional(),
-});
+}).strict();
 
 export const studentListQuerySchema = z.object({
   search: z.string().optional().default(''),

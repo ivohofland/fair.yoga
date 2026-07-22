@@ -110,6 +110,39 @@ describe('students privacy API', () => {
     expect(row.receiveComms).toBe(false);
   });
 
+  it('a second PUT revokes a share without disturbing the others, and GET returns the row', async () => {
+    // The update arm is the revoke path: a regression here is a silent
+    // privacy leak (student revokes, teacher keeps seeing the data).
+    const res = await fetch(`${BASE_URL}/api/students/${studentId}/privacy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: sessionCookie },
+      body: JSON.stringify({ teacherId, shareEmail: false }),
+    });
+    expect(res.status).toBe(200);
+
+    const row = await prisma.studentPrivacy.findUniqueOrThrow({
+      where: { studentId_teacherId: { studentId, teacherId } },
+    });
+    expect(row.shareEmail).toBe(false);
+    expect(row.shareFullName).toBe(true); // untouched by the partial update
+
+    const get = await fetch(
+      `${BASE_URL}/api/students/${studentId}/privacy?teacherId=${teacherId}`,
+      { headers: { Cookie: sessionCookie } },
+    );
+    const { data } = await get.json();
+    expect(data.shareEmail).toBe(false);
+    expect(data.shareFullName).toBe(true);
+    expect(data.receiveComms).toBe(false); // persisted row, not the virtual default
+  });
+
+  it('rejects a GET without teacherId', async () => {
+    const res = await fetch(`${BASE_URL}/api/students/${studentId}/privacy`, {
+      headers: { Cookie: sessionCookie },
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("rejects touching another student's privacy", async () => {
     const res = await fetch(
       `${BASE_URL}/api/students/${otherStudentId}/privacy?teacherId=${teacherId}`,

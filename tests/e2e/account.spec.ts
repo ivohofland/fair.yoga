@@ -23,6 +23,7 @@ const studentEmail = `e2e-account-${uniqueSuffix}@test.local`;
 const sessionToken = crypto.randomBytes(32).toString('hex');
 
 let studentId: string;
+let teacherId: string;
 
 test.describe('Account — GDPR export and deletion', () => {
   test.describe.configure({ mode: 'serial' });
@@ -41,6 +42,18 @@ test.describe('Account — GDPR export and deletion', () => {
       },
     });
     studentId = student.id;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Privacy',
+        lastName: 'Teacher',
+        email: `e2e-account-teacher-${uniqueSuffix}@test.local`,
+        account: { create: { email: `e2e-account-teacher-${uniqueSuffix}@test.local` } },
+        bio: 'Privacy settings fixture',
+        pageSlug: `e2e-account-teacher-${uniqueSuffix}`,
+      },
+    });
+    teacherId = teacher.id;
+    await prisma.teacherStudent.create({ data: { teacherId, studentId } });
     await prisma.session.create({
       data: {
         id: hashToken(sessionToken),
@@ -53,7 +66,17 @@ test.describe('Account — GDPR export and deletion', () => {
   test.afterAll(async () => {
     await prisma.session.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, studentId) } });
     await prisma.magicLinkToken.deleteMany({ where: { email: { contains: uniqueSuffix } } });
+    if (studentId) {
+      await prisma.studentPrivacy.deleteMany({ where: { studentId } });
+    }
+    if (teacherId) {
+      await prisma.teacherStudent.deleteMany({ where: { teacherId } });
+      await prisma.teacher.delete({ where: { id: teacherId } });
+    }
     await prisma.student.delete({ where: { id: studentId } });
+    await prisma.account.deleteMany({
+      where: { email: `e2e-account-teacher-${uniqueSuffix}@test.local` },
+    });
     await prisma.$disconnect();
   });
 
@@ -79,6 +102,26 @@ test.describe('Account — GDPR export and deletion', () => {
     expect(parsed.format).toContain('student data export');
     expect(parsed.profile.email).toBe(studentEmail);
     expect(parsed.profile.phone).toBe('+31611111111');
+  });
+
+  test('the settings index walks to Privacy and a share persists', async ({ page }) => {
+    await page.goto('/account');
+    // The four rows exist and Privacy navigates.
+    for (const row of ['Your tier', 'Notifications', 'Privacy', 'Data & deletion']) {
+      await expect(page.getByRole('link', { name: row })).toBeVisible();
+    }
+    await page.getByRole('link', { name: 'Privacy' }).click();
+    await expect(page.getByText('Privacy Teacher')).toBeVisible();
+
+    await page.getByLabel('Full last name').check();
+    await page.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByText('Saved')).toBeVisible();
+
+    const row = await prisma.studentPrivacy.findUniqueOrThrow({
+      where: { studentId_teacherId: { studentId, teacherId } },
+    });
+    expect(row.shareFullName).toBe(true);
+    expect(row.receiveComms).toBe(true); // untouched default
   });
 
   test('deleting the account anonymizes and signs out', async ({ page }) => {
