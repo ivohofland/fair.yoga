@@ -199,6 +199,11 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     // even an empty header.
     await expect(page.getByRole('heading', { name: 'Updates' })).not.toBeVisible();
 
+    // The teacher page card says so too, instead of quoting a price.
+    await page.goto(`/${slug}`);
+    await expect(page.getByText('On the waitlist')).toBeVisible();
+    await page.goto('/bookings');
+
     // Leave — the section empties.
     await page.getByRole('button', { name: 'Leave waitlist' }).click();
     await expect(page.getByRole('heading', { name: 'Waitlist' })).not.toBeVisible({
