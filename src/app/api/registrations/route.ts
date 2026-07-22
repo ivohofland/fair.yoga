@@ -117,6 +117,16 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         isWalkIn,
       });
 
+      // Booking implies tier choice — but only the student's own booking.
+      // Roster adds and walk-ins must not consume the income-selection
+      // moment. Null-guarded: the marker records the first choice.
+      if (!rosterStudentId) {
+        await tx.student.updateMany({
+          where: { id: studentId, tierSelectedAt: null },
+          data: { tierSelectedAt: new Date() },
+        });
+      }
+
       // Booking directly while on the waitlist resolves the waiting entry —
       // otherwise the stale entry poisons future promotions of this queue.
       const waitingEntry = await tx.waitlistEntry.findFirst({
