@@ -165,6 +165,10 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
 
     // Rebook through the public page — must not 409 on the old row.
     await page.goto(`/${slug}/book/${classId}`);
+    // Alice is a returning tier-3 student: the honesty nudge is for
+    // tiers 1-2 only — never guilt-inducing for the rest.
+    await expect(page.getByText("You're in Tier 3")).toBeVisible();
+    await expect(page.getByText('does this still reflect your situation?')).toHaveCount(0);
     await page.getByRole('button', { name: /^Book — around/ }).click();
     await expect(page.getByText("You're in", { exact: true })).toBeVisible();
 
