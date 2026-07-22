@@ -247,7 +247,7 @@ test.describe('Teacher journey', () => {
     const markedRead = page.waitForResponse(
       (resp) => resp.url().includes('/read') && resp.ok(),
     );
-    await page.getByRole('button', { name: 'Mark read' }).first().click();
+    await page.getByRole('button', { name: 'Mark "New booking" read' }).first().click();
     await markedRead;
     await page.reload();
     await expect(page.getByRole('link', { name: 'Inbox', exact: true })).toBeVisible({
