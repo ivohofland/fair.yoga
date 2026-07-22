@@ -105,7 +105,9 @@ test.describe('Public booking flow', () => {
   });
 
   test.afterAll(async () => {
-    await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    await prisma.notification.deleteMany({
+      where: { relatedClassId: { in: [classId, secondClassId] } },
+    });
     await prisma.registration.deleteMany({ where: { classId } });
     await prisma.teacherStudent.deleteMany({ where: { teacherId } });
     await prisma.session.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, studentId) } });
@@ -228,6 +230,11 @@ test.describe('Public booking flow', () => {
     });
     expect(registration).not.toBeNull();
     expect(registration!.tierAtBooking).toBe(2);
+
+    // Revisiting the class hits the alreadyBooked branch, which takes
+    // precedence over the returning-student summary.
+    await page.goto(`/${slug}/book/${secondClassId}`);
+    await expect(page.getByText("You're booked for this class")).toBeVisible();
   });
 
   test('the booking shows up under /bookings', async ({ page, context }) => {
