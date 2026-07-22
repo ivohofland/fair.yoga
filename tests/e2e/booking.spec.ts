@@ -237,6 +237,60 @@ test.describe('Public booking flow', () => {
     await expect(page.getByText("You're booked for this class")).toBeVisible();
   });
 
+  test('a first booking with the default tier untouched still stamps the choice', async ({ page, context }) => {
+    // The server-side stamp is the load-bearing guard (integration-
+    // tested); this is the user-facing proof: book without touching a
+    // radio, and the picker never comes back.
+    const email = `e2e-booking-default-${uniqueSuffix}@test.local`;
+    const defaultStudent = await prisma.student.create({
+      data: {
+        firstName: 'Default',
+        lastName: 'Student',
+        email,
+        account: { create: { email } },
+        claimedAt: new Date(),
+      },
+    });
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    await prisma.session.create({
+      data: {
+        id: hashToken(sessionToken),
+        accountId: await accountIdOfStudent(prisma, defaultStudent.id),
+        expiresAt: new Date(Date.now() + 86400000),
+      },
+    });
+    await context.addCookies([
+      { name: 'fair_yoga_session', value: sessionToken, url: 'http://localhost:3000' },
+    ]);
+
+    await page.goto(`/${slug}/book/${classId}`);
+    await expect(page.getByRole('radiogroup')).toBeVisible();
+    await page.getByRole('button', { name: /^Book — around/ }).click();
+    await expect(page.getByText("You're in", { exact: true })).toBeVisible();
+
+    const reg = await prisma.registration.findFirst({
+      where: { classId, studentId: defaultStudent.id },
+    });
+    expect(reg).not.toBeNull();
+    expect(reg!.tierAtBooking).toBe(3);
+    const after = await prisma.student.findUniqueOrThrow({
+      where: { id: defaultStudent.id },
+    });
+    expect(after.tierSelectedAt).not.toBeNull();
+
+    // The picker never returns: a different class now shows the summary.
+    await page.goto(`/${slug}/book/${secondClassId}`);
+    await expect(page.getByText("You're in Tier 3")).toBeVisible();
+    await expect(page.getByRole('radio')).toHaveCount(0);
+
+    // This test's own rows: student delete cascades its registration;
+    // notifications are reaped by afterAll's relatedClassId cleanup.
+    await prisma.session.deleteMany({ where: { id: hashToken(sessionToken) } });
+    await prisma.teacherStudent.deleteMany({ where: { studentId: defaultStudent.id } });
+    await prisma.student.delete({ where: { id: defaultStudent.id } });
+    await prisma.account.deleteMany({ where: { email } });
+  });
+
   test('the booking shows up under /bookings', async ({ page, context }) => {
     // Reuse an authenticated session created directly.
     const sessionToken = crypto.randomBytes(32).toString('hex');
