@@ -219,7 +219,11 @@ test.describe('Public booking flow', () => {
     await page.goto(`/${slug}/book/${secondClassId}`);
     await expect(page.getByText(/You're in Tier 2/)).toBeVisible();
     await expect(page.getByText('does this still reflect your situation?')).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Change your tier in settings' })).toBeVisible();
+    // Deep-links straight to the tier page, not the settings index.
+    await expect(page.getByRole('link', { name: 'Change your tier in settings' })).toHaveAttribute(
+      'href',
+      '/account/tier',
+    );
     await expect(page.getByRole('radio')).toHaveCount(0);
 
     await page.getByRole('button', { name: /^Book — around/ }).click();
@@ -282,6 +286,12 @@ test.describe('Public booking flow', () => {
     await page.goto(`/${slug}/book/${secondClassId}`);
     await expect(page.getByText("You're in Tier 3")).toBeVisible();
     await expect(page.getByRole('radio')).toHaveCount(0);
+
+    // The teacher page tells this student what they already did: the
+    // booked card says so, the unbooked card still quotes the range.
+    await page.goto(`/${slug}`);
+    await expect(page.getByText('✓ Booked')).toHaveCount(1);
+    await expect(page.getByText(/depending on your income tier/)).toHaveCount(1);
 
     // This test's own rows: student delete cascades its registration;
     // notifications are reaped by afterAll's relatedClassId cleanup.

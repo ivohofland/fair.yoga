@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
+import { getSession } from '@/lib/session';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { RegistrationProgress } from '@/components/ui/registration-progress';
 import { Icon } from '@/components/ui/icon';
@@ -49,6 +50,27 @@ export default async function TeacherBookingPage({
       },
     },
   });
+
+  // A signed-in student's own state on these classes — everyone else
+  // sees the cards unchanged.
+  const session = await getSession();
+  let bookedClassIds = new Set<string>();
+  let waitingClassIds = new Set<string>();
+  if (session?.studentId && classes.length > 0) {
+    const classIds = classes.map((c) => c.id);
+    const [own, waiting] = await Promise.all([
+      prisma.registration.findMany({
+        where: { studentId: session.studentId, classId: { in: classIds }, status: 'registered' },
+        select: { classId: true },
+      }),
+      prisma.waitlistEntry.findMany({
+        where: { studentId: session.studentId, classId: { in: classIds }, status: 'waiting' },
+        select: { classId: true },
+      }),
+    ]);
+    bookedClassIds = new Set(own.map((r) => r.classId));
+    waitingClassIds = new Set(waiting.map((w) => w.classId));
+  }
 
   return (
     <div>
@@ -115,7 +137,13 @@ export default async function TeacherBookingPage({
                   max={cls.maxStudents}
                   className="mt-3"
                 />
-                <PriceRange estimates={estimates} className="mt-2" />
+                {bookedClassIds.has(cls.id) ? (
+                  <p className="type-label text-teal mt-2">✓ Booked</p>
+                ) : waitingClassIds.has(cls.id) ? (
+                  <p className="type-label text-teal mt-2">On the waitlist</p>
+                ) : (
+                  <PriceRange estimates={estimates} className="mt-2" />
+                )}
               </Link>
             );
           })}

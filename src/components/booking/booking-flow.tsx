@@ -182,7 +182,7 @@ export function BookingFlow({
             {tier <= 2 ? ' — does this still reflect your situation?' : '.'}
           </p>
           <Link
-            href="/account"
+            href="/account/tier"
             className="inline-block mt-2 type-label text-teal no-underline"
           >
             Change your tier in settings
