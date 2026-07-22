@@ -87,7 +87,7 @@ function isValidTimeZone(tz: string): boolean {
 // App routes the public teacher page must never shadow.
 const RESERVED_SLUGS = new Set([
   'login', 'verify', 'bookings', 'settings', 'schedule', 'students', 'inbox',
-  'class', 'studio-class', 'api', 'health', 'admin', 'account',
+  'class', 'studio-class', 'api', 'health', 'admin', 'account', 'updates',
 ]);
 
 export const createTeacherSchema = z.object({
