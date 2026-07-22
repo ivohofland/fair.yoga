@@ -26,6 +26,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   try {
     const entry = await addToWaitlist(prisma, parsed.data.classId, session.studentId);
+    // Joining a waitlist implies tier choice (the route is self-only);
+    // promotions and claims are covered transitively — nobody reaches
+    // them without joining first. Null-guarded: first choice only.
+    await prisma.student.updateMany({
+      where: { id: session.studentId, tierSelectedAt: null },
+      data: { tierSelectedAt: new Date() },
+    });
     return respondOk(entry, 201);
   } catch (err) {
     if (err instanceof WaitlistJoinError) {
