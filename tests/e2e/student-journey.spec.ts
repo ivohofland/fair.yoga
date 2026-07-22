@@ -248,14 +248,51 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     await expect(page.getByRole('heading', { name: 'Updates' })).toBeVisible();
     await expect(page.getByText('You are in')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Mark read' }).click();
-    await expect(page.getByRole('heading', { name: 'Updates' })).not.toBeVisible({
-      timeout: 10_000,
+    // A second unread lets us pin both mark-read behaviors: strip rows
+    // disappear, /updates rows stay.
+    const extra = await prisma.notification.create({
+      data: {
+        recipientType: 'student',
+        recipientId: bramId,
+        type: 'announcement',
+        title: 'New announcement',
+        body: 'Bring a mat strap on Sunday.',
+        relatedClassId: classId,
+        isRead: false,
+        emailSent: true,
+      },
     });
+    await page.reload();
+
+    // Strip mark-read: the promotion row goes, the section stays (history).
+    await page
+      .locator('div', { hasText: 'You are in' })
+      .getByRole('button', { name: 'Mark read' })
+      .last()
+      .click();
+    await expect(page.getByText('You are in')).not.toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: 'Updates' })).toBeVisible();
+
+    // The record: both rows on /updates, read and unread alike.
+    await page.getByRole('link', { name: 'All updates' }).click();
+    await page.waitForURL('**/updates');
+    await expect(page.getByText('You are in')).toBeVisible();
+    await expect(page.getByText('Bring a mat strap on Sunday.')).toBeVisible();
+
+    // /updates mark-read keeps the row in place, restyled.
+    await page.getByRole('button', { name: 'Mark read' }).click();
+    await expect(page.getByText('Bring a mat strap on Sunday.')).toBeVisible();
+
+    // Back home: zero unread, but the section header + link remain.
+    await page.goto('/bookings');
+    await expect(page.getByRole('heading', { name: 'Updates' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'All updates' })).toBeVisible();
+    await expect(page.getByText('Bring a mat strap on Sunday.')).not.toBeVisible();
 
     const unread = await prisma.notification.count({
       where: { recipientType: 'student', recipientId: bramId, isRead: false },
     });
     expect(unread).toBe(0);
+    await prisma.notification.delete({ where: { id: extra.id } });
   });
 });
