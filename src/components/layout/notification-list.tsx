@@ -92,6 +92,7 @@ export function NotificationList({ notifications, hrefById }: NotificationListPr
               <button
                 type="button"
                 onClick={() => markRead(notification.id)}
+                aria-label={`Mark "${notification.title}" read`}
                 className={`type-caption text-teal min-h-[44px] px-1 ${isRead ? 'invisible' : ''}`}
               >
                 Mark read
