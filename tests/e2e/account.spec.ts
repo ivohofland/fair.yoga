@@ -104,6 +104,12 @@ test.describe('Account — GDPR export and deletion', () => {
     expect(parsed.profile.phone).toBe('+31611111111');
   });
 
+  test('a student typing /settings lands on their own settings', async ({ page }) => {
+    await page.goto('/settings');
+    await page.waitForURL('**/account');
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+  });
+
   test('the settings index walks to Privacy and a share persists', async ({ page }) => {
     await page.goto('/account');
     // The four rows exist and Privacy navigates.
