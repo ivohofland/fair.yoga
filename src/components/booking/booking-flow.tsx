@@ -42,11 +42,10 @@ export function BookingFlow({
     setSubmitting(true);
     setError('');
     try {
-      // Persist the tier first — tierAtBooking reads from the profile.
-      // On a first booking this runs even when the default is accepted
-      // untouched: booking past the picker IS the choice, and the PUT
-      // stamps tierSelectedAt so the picker doesn't reappear forever.
-      if (isFirstBooking || tier !== currentTier) {
+      // Persist a changed tier first — tierAtBooking reads from the profile.
+      // Accepting the default needs no client cooperation: the booking and
+      // waitlist routes stamp tierSelectedAt server-side on self-bookings.
+      if (tier !== currentTier) {
         const tierRes = await fetch(`/api/students/${studentId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },

@@ -16,10 +16,14 @@ themselves?
 - **Schema:** nullable `Student.tierSelectedAt DateTime?`, added via
   `prisma migrate dev` (per CLAUDE.md — no db push).
 - **Backfill (in the same migration):** claimed students get
-  `tierSelectedAt = claimedAt`. Under pre-PR-#23 behavior every booking
-  showed the picker, so anyone who ever signed in has had the choice.
-  Unclaimed CRM students stay `NULL` — their tier is the teacher-created
-  default, never a choice.
+  `tierSelectedAt = claimedAt` — a one-time heuristic: anyone who
+  claimed is *assumed* to have chosen (a claimed-but-never-booked
+  student never saw a picker, but the neutral default plus the settings
+  link make this an acceptable approximation for pre-existing rows;
+  going forward such students correctly stay unstamped). Unclaimed CRM
+  students stay `NULL` — their tier is the teacher-created default,
+  never a choice. The applied migration file itself keeps its original
+  comment: editing an applied migration recreates checksum drift.
 - **Stamp rule:** the students PUT route stamps `tierSelectedAt = now()`
   only in the **self-edit branch** when `incomeTier` is present in the
   update. The teacher-edit branch cannot set `incomeTier` at all
