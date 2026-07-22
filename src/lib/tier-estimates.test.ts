@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { estimateTierPrices, type TierEstimateInput } from './tier-estimates';
+import { estimateTierPrices, estimateAttendanceSpread, type TierEstimateInput } from './tier-estimates';
 import { calculateClassPricing } from '@/services/pricing';
 
 // The layer between the pricing engine and the public price quote: the
@@ -88,6 +88,53 @@ describe('estimateTierPrices', () => {
     for (const price of prices) {
       expect(Number.isFinite(price)).toBe(true);
       expect(price).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('estimateAttendanceSpread', () => {
+  const base = {
+    roomCost: 20,
+    minRate: 15,
+    targetRate: 25,
+    minStudents: 2,
+    maxStudents: 10,
+  };
+
+  it('spreads the canonical empty class exactly (viewer tier 3)', () => {
+    const spread = estimateAttendanceSpread({ ...base, registeredTiers: [], viewerTier: 3 });
+    // Floor: max(2, 0+1) = 2 → [3,3]: rate 15, total 35, tier-3 pays 17.50.
+    // Ceiling: 10 → rate 25, total 45, tier-3 pays 4.50.
+    expect(spread.high).toBeCloseTo(17.5, 2);
+    expect(spread.low).toBeCloseTo(4.5, 2);
+  });
+
+  it('accounts for who is already registered', () => {
+    const spread = estimateAttendanceSpread({
+      ...base,
+      registeredTiers: [1, 5],
+      viewerTier: 3,
+    });
+    // Floor: max(2, 2+1) = 3 → [1,5,3]: rate 15+10*(3-2)/8 = 16.25,
+    // total 36.25, sum ratios 3.0 → viewer pays 12.0833.
+    expect(spread.high).toBeCloseTo(12.08, 2);
+    expect(spread.low).toBeLessThan(spread.high);
+  });
+
+  it('collapses to a point when the class is already at capacity', () => {
+    const spread = estimateAttendanceSpread({
+      ...base,
+      maxStudents: 2,
+      registeredTiers: [3, 3],
+      viewerTier: 3,
+    });
+    expect(spread.low).toBeCloseTo(spread.high, 5);
+  });
+
+  it('never inverts', () => {
+    for (const viewerTier of [1, 3, 5]) {
+      const spread = estimateAttendanceSpread({ ...base, registeredTiers: [2, 4], viewerTier });
+      expect(spread.low).toBeLessThanOrEqual(spread.high);
     }
   });
 });

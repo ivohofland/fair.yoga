@@ -44,3 +44,48 @@ export function estimateTierPrices(input: TierEstimateInput): TierPrices {
   };
   return [priceForTier(1), priceForTier(2), priceForTier(3), priceForTier(4), priceForTier(5)];
 }
+
+export interface AttendanceSpreadInput extends TierEstimateInput {
+  /** The signed-in student's own (already chosen) tier. */
+  viewerTier: number;
+}
+
+export interface AttendanceSpread {
+  low: number;
+  high: number;
+}
+
+/**
+ * "What will I actually pay?" — for a student whose tier is settled, the
+ * remaining uncertainty is turnout. The viewer's own price at the
+ * minimum-viable attendance (you're joining: max(minStudents,
+ * registered + 1)) and at a full class, with the same honest median-tier
+ * padding as estimateTierPrices. Walk-ins can push the real price below
+ * `low`; the settle-after-class disclaimer carries that.
+ */
+export function estimateAttendanceSpread(input: AttendanceSpreadInput): AttendanceSpread {
+  const priceAt = (attendance: number): number => {
+    const tiers = [...input.registeredTiers, input.viewerTier];
+    while (tiers.length < attendance) {
+      tiers.push(3);
+    }
+    const pricing = calculateClassPricing({
+      roomCost: input.roomCost,
+      minRate: input.minRate,
+      targetRate: input.targetRate,
+      minStudents: input.minStudents,
+      maxStudents: input.maxStudents,
+      studentTiers: tiers,
+    });
+    return pricing.studentPrices[input.registeredTiers.length]!;
+  };
+
+  const floor = Math.min(
+    Math.max(input.minStudents, input.registeredTiers.length + 1),
+    MAX_CLASS_SIZE,
+  );
+  const ceiling = Math.min(Math.max(input.maxStudents, floor), MAX_CLASS_SIZE);
+  const a = priceAt(floor);
+  const b = priceAt(ceiling);
+  return { low: Math.min(a, b), high: Math.max(a, b) };
+}

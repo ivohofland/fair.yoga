@@ -192,7 +192,7 @@ export function BookingFlow({
 
       <p className="type-caption mt-4 max-w-[420px]">
         Estimates assume the class at least reaches its minimum; the final price settles after
-        class. The highest tier pays about twice the lowest.{' '}
+        class.{isFirstBooking && ' The highest tier pays about twice the lowest.'}{' '}
         <Link href={`/${slug}`} className="text-teal">
           Learn more
         </Link>
