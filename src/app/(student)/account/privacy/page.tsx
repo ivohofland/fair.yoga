@@ -46,12 +46,13 @@ export default async function PrivacySettingsPage() {
         <Icon name="arrow-left" size={18} />
         Settings
       </Link>
-      <h1 className="type-display mb-2">Privacy</h1>
+      <h1 className="type-title mb-2">Privacy</h1>
       <p className="type-caption mb-6 max-w-[420px]">
-        Teachers only ever see what you share here — new teachers start with
-        everything off. Turning announcements off mutes that teacher
-        completely, in-app and email; the email switch under Notifications
-        is global.
+        Each teacher sees only the details you switch on here — new teachers
+        start with nothing shared. Turning announcements off stops that
+        teacher&apos;s announcements, in-app and email; essential messages
+        about your bookings still come through, and the email switch under
+        Notifications is global.
       </p>
 
       {links.length === 0 ? (

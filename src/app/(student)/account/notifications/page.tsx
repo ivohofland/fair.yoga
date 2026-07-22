@@ -26,7 +26,7 @@ export default async function NotificationSettingsPage() {
         <Icon name="arrow-left" size={18} />
         Settings
       </Link>
-      <h1 className="type-display mb-6">Notifications</h1>
+      <h1 className="type-title mb-6">Notifications</h1>
       <NotificationsForm
         studentId={student.id}
         emailNotifications={student.emailNotifications}
