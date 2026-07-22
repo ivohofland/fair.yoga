@@ -185,6 +185,14 @@ describe('POST /api/announcements', () => {
     const rows = await announcementNotifications({ relatedClassId: class1Id });
     expect(rows).toHaveLength(1);
     expect(rows[0]!.recipientId).toBe(s1Id);
+    // The user-visible payload, not just the row count.
+    expect(rows[0]!.title).toBe('New announcement');
+    expect(rows[0]!.body).toBe('Bring a blanket.');
+  });
+
+  it('rejects a send without a message', async () => {
+    const res = await sendAnnouncement({ classId: class1Id });
+    expect(res.status).toBe(400);
   });
 
   it('all-students send deduplicates across classes and honors the mute', async () => {
