@@ -153,8 +153,12 @@ test.describe('Account hybrid: teacher joins a class', () => {
     await context.addCookies([
       { name: 'fair_yoga_session', value: onlookerToken, url: 'http://localhost:3000' },
     ]);
-    await page.goto('/settings');
+    await page.goto('/inbox');
     await page.waitForURL('**/bookings', { timeout: 10_000 });
+
+    // /settings is the courteous exception: it maps to their own settings.
+    await page.goto('/settings');
+    await page.waitForURL('**/account', { timeout: 10_000 });
   });
 
   test('a signed-in teacher joins as a student and books, in place', async ({
