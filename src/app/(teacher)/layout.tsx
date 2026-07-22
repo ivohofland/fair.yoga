@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
 import { getSession } from '@/lib/session';
 import { prisma } from '@/lib/db';
 import { TabBar } from '@/components/layout/tab-bar';
@@ -11,9 +12,14 @@ export default async function TeacherLayout({
 }) {
   const session = await getSession();
   // A signed-in student-only account belongs on its own home, not a
-  // sign-in form it cannot use.
+  // sign-in form it cannot use — except /settings, which courteously
+  // maps to their own settings (x-pathname stamped by the middleware).
   if (!session?.teacherId) {
-    redirect(session?.studentId ? '/bookings' : '/login');
+    if (session?.studentId) {
+      const pathname = (await headers()).get('x-pathname') ?? '';
+      redirect(pathname.startsWith('/settings') ? '/account' : '/bookings');
+    }
+    redirect('/login');
   }
 
   // Unread dot on the Inbox tab. Indexed by [recipientType, recipientId, isRead].
