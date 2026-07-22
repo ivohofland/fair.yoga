@@ -32,3 +32,25 @@
 ### Task 4: Verify + PR
 
 Full e2e (booking, journey, hybrid at minimum — expect green: fresh fixtures null → picker; stamped → summary), full vitest, tsc, lint; push; `gh pr create` (Closes #26).
+
+---
+
+## Revision: server-side stamping (after PR #28 review)
+
+### Task 5: Booking routes stamp (TDD)
+
+- `tier-selected-at.test.ts` gains class/room fixtures (open class + a full class, `maxStudents: 1` with one registration) and three tests, each on a dedicated student: self registration POST → stamped (red first); teacher roster-add POST for the CRM student → registration exists, not stamped; self waitlist POST on the full class → entry created, stamped (red first). Existing three tests get dedicated students (order-independent).
+- `src/app/api/registrations/route.ts`: inside the transaction after `activateRegistration`, when `!rosterStudentId`: `tx.student.updateMany({ where: { id: studentId, tierSelectedAt: null }, data: { tierSelectedAt: new Date() } })`.
+- `src/app/api/waitlist/route.ts`: after `addToWaitlist` succeeds: same null-guarded `updateMany` on `session.studentId`.
+- Commit.
+
+### Task 6: Client reverts to changed-only persist
+
+- `booking-flow.tsx` handleBook: back to `if (tier !== currentTier)`; comment explains the server owns the first-choice stamp.
+- Soften the overstated backfill rationale in `prisma/seed.ts` and the spec ("assumed to have chosen") — the applied migration file stays untouched (editing it would recreate today's checksum drift).
+- Commit.
+
+### Task 7: E2e proof + gates + push
+
+- `booking.spec.ts`: seeded-session test — claimed-but-unstamped student books with the default untouched (no radio click); DB: `tierAtBooking === 3`, `tierSelectedAt` stamped; reload → `You're in Tier 3` summary, zero radios.
+- Full playwright + vitest + tsc + lint; push to the same PR; update the PR body.

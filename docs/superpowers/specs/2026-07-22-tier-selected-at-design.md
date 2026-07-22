@@ -28,10 +28,25 @@ themselves?
 - **Booking flow:** `isFirstBooking` becomes
   `student.tierSelectedAt === null` (replacing the claim-aware
   registration heuristic from PR #23; that spec's residual edge is now
-  closed). `handleBook` persists the tier when
-  `isFirstBooking || tier !== currentTier` — accepting the default
-  tier without touching the picker is still a choice and must stamp,
-  else the picker would reappear forever.
+  closed).
+- **Server-side stamping (revised after review):** "booking implies
+  choice" is an invariant, so it is enforced where bookings happen, not
+  in a client component only e2e can reach:
+  - `POST /api/registrations` stamps inside the booking transaction —
+    **self-bookings only** (`body.studentId` absent; roster adds and
+    walk-ins never stamp), null-guarded
+    (`updateMany where tierSelectedAt: null`) so the timestamp records
+    the first choice and repeat bookings are no-ops.
+  - `POST /api/waitlist` stamps the same way (the route is self-only by
+    construction). Waitlist promotion and claim create registrations
+    through the service, bypassing the route — transitively covered:
+    nobody is promoted or claims without having joined, and joining
+    stamps.
+  - The client persist reverts to its original condition
+    (`tier !== currentTier`): accepting the default needs no client
+    cooperation, and any future booking surface inherits the invariant
+    for free. The PUT-route stamp remains for explicit tier saves
+    (settings page, changed tier at booking).
 - **Fixtures:** the seed's claimed students get
   `tierSelectedAt: daysAgo(30)` (same instant as their claim);
   `student-journey.spec.ts`'s `mkStudent` stamps its established
@@ -39,12 +54,15 @@ themselves?
 
 ## Testing
 
-- Integration (TDD, new `tests/integration/tier-selected-at.test.ts`):
-  self PUT with `incomeTier` → stamped; self PUT without `incomeTier`
-  (e.g. reminder change) → not stamped; teacher PUT on an unclaimed
-  CRM student → not stamped (route rejects `incomeTier` for teachers —
-  asserted via the field being ignored/rejected and the marker staying
-  NULL).
+- Integration (TDD, `tests/integration/tier-selected-at.test.ts`, one
+  dedicated student per case — order-independent): self PUT with
+  `incomeTier` → stamped; self PUT without `incomeTier` → not stamped;
+  teacher PUT on an unclaimed CRM student → neither sets tier nor
+  stamps; self booking POST → stamped (red first); teacher roster-add
+  POST → not stamped; self waitlist join on a full class → stamped
+  (red first).
+- One thin e2e as user-facing proof: first booking with the default
+  tier untouched → books, reload shows the returning summary.
 - E2e: existing booking suites re-run — first-booking flows still show
   the picker (fresh fixtures have `tierSelectedAt: null`), the
   returning flow still shows the summary (the picker booking stamps
