@@ -108,6 +108,9 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
           account: { create: { email: `e2e-sjourney-${first.toLowerCase()}-${uniqueSuffix}@test.local` } },
           incomeTier: 3,
           claimedAt: new Date(),
+          // Established students: they book via API in these fixtures and
+          // must land on the returning summary, not the picker.
+          tierSelectedAt: new Date(),
         },
       });
       await prisma.session.create({

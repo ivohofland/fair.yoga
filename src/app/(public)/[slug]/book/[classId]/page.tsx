@@ -65,8 +65,7 @@ export default async function BookClassPage({
           id: true,
           firstName: true,
           incomeTier: true,
-          claimedAt: true,
-          registrations: { select: { registeredAt: true } },
+          tierSelectedAt: true,
         },
       })
     : null;
@@ -110,16 +109,10 @@ export default async function BookClassPage({
           currentTier={student.incomeTier}
           studentId={student.id}
           tierPrices={estimates}
-          // First booking = no registration from after the account claim.
-          // Pre-claim rows are teacher-created by construction (booking
-          // needs a session, a session needs a claimed account), so a
-          // roster add must not consume the income-selection moment.
-          isFirstBooking={
-            !student.claimedAt ||
-            student.registrations.every(
-              (r) => r.registeredAt < student.claimedAt!,
-            )
-          }
+          // The income-selection moment belongs to the student: the picker
+          // shows until they have chosen a tier themselves, no matter what
+          // registrations teachers created on their behalf.
+          isFirstBooking={student.tierSelectedAt === null}
         />
       ) : guestTeacher ? (
         <JoinAsStudent firstName={guestTeacher.firstName} />
