@@ -15,6 +15,8 @@ export interface StudentUpdate {
 
 interface UpdatesStripProps {
   updates: StudentUpdate[];
+  /** Any notifications ever — read ones live on /updates. */
+  hasHistory: boolean;
 }
 
 /**
@@ -23,7 +25,7 @@ interface UpdatesStripProps {
  * fallback remains the push channel; this closes the missed-email gap
  * (a waitlist promotion was previously invisible in the app).
  */
-export function UpdatesStrip({ updates }: UpdatesStripProps) {
+export function UpdatesStrip({ updates, hasHistory }: UpdatesStripProps) {
   const router = useRouter();
 
   async function markRead(id: string) {
@@ -32,18 +34,25 @@ export function UpdatesStrip({ updates }: UpdatesStripProps) {
     router.refresh();
   }
 
-  if (updates.length === 0) return null;
+  if (updates.length === 0 && !hasHistory) return null;
 
   return (
     <section className="mb-8">
-      <h2 className="type-subtitle mb-1">Updates</h2>
+      <div className="flex items-baseline justify-between gap-3 mb-1">
+        <h2 className="type-subtitle">Updates</h2>
+        <Link href="/updates" className="type-label text-teal no-underline shrink-0">
+          All updates
+        </Link>
+      </div>
       <div className="flex flex-col">
         {updates.map((update) => (
           <div
             key={update.id}
-            // The inbox's stable unread row, verbatim: flat, constant
-            // separator, tint carries the unread state (008acbc).
-            className="flex items-start justify-between gap-2 min-h-14 py-3 -mx-3 px-3 border-b border-border bg-sand-soft"
+            // The page's own row idiom (waitlist/past sections): column-
+            // aligned, untinted — the gold dot already says "unread" in an
+            // all-unread strip. The tinted inbox idiom lives on /updates,
+            // where read and unread coexist.
+            className="flex items-start justify-between gap-2 min-h-14 py-3 border-b border-border last:border-b-0"
           >
             <div className="flex flex-col gap-0.5 min-w-0">
               <span className="text-[15px] text-ink font-medium">

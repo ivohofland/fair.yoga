@@ -8,6 +8,9 @@ import { timeAgo } from '@/lib/format';
 
 interface NotificationListProps {
   notifications: Notification[];
+  /** Per-row link overrides. Without it, rows link to the teacher class
+   *  detail — student pages must pass their own targets. */
+  hrefById?: Record<string, string | null>;
 }
 
 function notificationHref(notification: Notification): string | null {
@@ -17,7 +20,7 @@ function notificationHref(notification: Notification): string | null {
   return null;
 }
 
-export function NotificationList({ notifications }: NotificationListProps) {
+export function NotificationList({ notifications, hrefById }: NotificationListProps) {
   const router = useRouter();
   const [readState, setReadState] = useState<Record<string, boolean>>(
     Object.fromEntries(notifications.map((n) => [n.id, n.isRead])),
@@ -31,9 +34,14 @@ export function NotificationList({ notifications }: NotificationListProps) {
     router.refresh();
   }
 
+  function resolveHref(notification: Notification): string | null {
+    if (hrefById) return hrefById[notification.id] ?? null;
+    return notificationHref(notification);
+  }
+
   function handleNavigate(notification: Notification) {
     markRead(notification.id);
-    const href = notificationHref(notification);
+    const href = resolveHref(notification);
     if (href) {
       router.push(href);
     }
@@ -47,7 +55,7 @@ export function NotificationList({ notifications }: NotificationListProps) {
     <div className="flex flex-col">
       {notifications.map((notification) => {
         const isRead = readState[notification.id] ?? notification.isRead;
-        const href = notificationHref(notification);
+        const href = resolveHref(notification);
 
         return (
           <div

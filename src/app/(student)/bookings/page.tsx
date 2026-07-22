@@ -26,7 +26,7 @@ export default async function StudentBookingsPage() {
   const session = await getSession();
   if (!session?.studentId) redirect(session?.teacherId ? '/' : '/login');
 
-  const [registrations, waitlistEntries, unreadNotifications] = await Promise.all([
+  const [registrations, waitlistEntries, unreadNotifications, notificationCount] = await Promise.all([
     prisma.registration.findMany({
       where: { studentId: session.studentId, status: { not: 'cancelled' } },
       orderBy: { class: { date: 'desc' } },
@@ -74,6 +74,9 @@ export default async function StudentBookingsPage() {
         },
       },
     }),
+    prisma.notification.count({
+      where: { recipientType: 'student', recipientId: session.studentId },
+    }),
   ]);
 
   // Link an update to its booking page only while booking still makes sense.
@@ -103,7 +106,7 @@ export default async function StudentBookingsPage() {
         </Link>
       </div>
 
-      <UpdatesStrip updates={updates} />
+      <UpdatesStrip updates={updates} hasHistory={notificationCount > 0} />
 
       {upcoming.length === 0 && past.length === 0 && waitlistEntries.length === 0 && (
         <EmptyState

@@ -120,6 +120,7 @@ describe('updateTeacherSchema.pageSlug', () => {
   it('rejects reserved slugs on update, not just on signup', () => {
     expect(updateTeacherSchema.safeParse({ pageSlug: 'settings' }).success).toBe(false);
     expect(updateTeacherSchema.safeParse({ pageSlug: 'api' }).success).toBe(false);
+    expect(updateTeacherSchema.safeParse({ pageSlug: 'updates' }).success).toBe(false);
     expect(updateTeacherSchema.safeParse({ pageSlug: 'my-yoga' }).success).toBe(true);
   });
 });
