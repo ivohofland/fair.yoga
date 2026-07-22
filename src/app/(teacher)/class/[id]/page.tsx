@@ -183,7 +183,15 @@ export default async function ClassDetailPage({
             <SendAnnouncement classId={cls.id} recipientHint="everyone in this class" />
           )}
           {(cls.status === 'draft' || cls.status === 'open') && (
-            <CancelClassButton classId={cls.id} registrationCount={activeRegistrations.length} />
+            <>
+              <Link
+                href={`/class/${cls.id}/edit`}
+                className="type-label text-teal no-underline"
+              >
+                Edit class
+              </Link>
+              <CancelClassButton classId={cls.id} registrationCount={activeRegistrations.length} />
+            </>
           )}
         </div>
       )}
