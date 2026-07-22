@@ -3,9 +3,9 @@ import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { Icon } from '@/components/ui/icon';
-import { estimateTierPrices } from '@/lib/tier-estimates';
+import { estimateTierPrices, estimateAttendanceSpread } from '@/lib/tier-estimates';
 import { formatRoomLocation } from '@/lib/format';
-import { PriceRange } from '@/components/booking/price-range';
+import { PriceRange, PersonalPriceRange } from '@/components/booking/price-range';
 import { BookingFlow } from '@/components/booking/booking-flow';
 import { BookingSignIn } from '@/components/booking/booking-sign-in';
 import { JoinAsStudent } from '@/components/booking/join-as-student';
@@ -98,7 +98,23 @@ export default async function BookClassPage({
       <p className="type-caption mt-0.5">
         {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
       </p>
-      <PriceRange estimates={estimates} className="mt-2 mb-6" />
+      {student && student.tierSelectedAt ? (
+        // Their tier is settled — turnout is the remaining uncertainty.
+        <PersonalPriceRange
+          spread={estimateAttendanceSpread({
+            roomCost: Number(cls.roomCost),
+            minRate: Number(cls.minRate),
+            targetRate: Number(cls.targetRate),
+            minStudents: cls.minStudents,
+            maxStudents: cls.maxStudents,
+            registeredTiers: cls.registrations.map((r) => r.tierAtBooking),
+            viewerTier: student.incomeTier,
+          })}
+          className="mt-2 mb-6"
+        />
+      ) : (
+        <PriceRange estimates={estimates} className="mt-2 mb-6" />
+      )}
 
       {student ? (
         <BookingFlow

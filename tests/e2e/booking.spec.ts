@@ -219,6 +219,10 @@ test.describe('Public booking flow', () => {
     await page.goto(`/${slug}/book/${secondClassId}`);
     await expect(page.getByText(/You're in Tier 2/)).toBeVisible();
     await expect(page.getByText('does this still reflect your situation?')).toBeVisible();
+    // Their tier is settled: the header quotes the turnout spread, not
+    // the tier spread.
+    await expect(page.getByText(/depending on how many join/)).toBeVisible();
+    await expect(page.getByText(/depending on your income tier/)).toHaveCount(0);
     // Deep-links straight to the tier page, not the settings index.
     await expect(page.getByRole('link', { name: 'Change your tier in settings' })).toHaveAttribute(
       'href',
