@@ -164,6 +164,7 @@ model Student {
   reminderPref       StudentReminderPref @default(morning)
   emailNotifications Boolean             @default(true)
   claimedAt          DateTime?
+  tierSelectedAt     DateTime?
   deletedAt          DateTime?
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
