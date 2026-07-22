@@ -55,7 +55,14 @@ export const PUT = withErrorHandler(async (
 
   const parsed = await parseBody(request, updateClassSchema);
   if ('error' in parsed) return parsed.error;
-  const body = parsed.data;
+  // The schema validates date as a YYYY-MM-DD string; Prisma needs a Date
+  // (UTC midnight, same as class creation). Latent until the edit UI —
+  // nothing ever PUT a date before.
+  const { date: dateString, ...rest } = parsed.data;
+  const body = {
+    ...rest,
+    ...(dateString !== undefined ? { date: new Date(dateString) } : {}),
+  };
 
   const sentEconomicFields = ECONOMIC_FIELDS.filter(
     (f) => body[f] !== undefined,
