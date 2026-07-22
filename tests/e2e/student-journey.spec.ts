@@ -195,6 +195,9 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     await page.goto('/bookings');
     await expect(page.getByRole('heading', { name: 'Waitlist' })).toBeVisible();
     await expect(page.getByText(/position 1/)).toBeVisible();
+    // Bram has no notifications yet: no Updates section at all — not
+    // even an empty header.
+    await expect(page.getByRole('heading', { name: 'Updates' })).not.toBeVisible();
 
     // Leave — the section empties.
     await page.getByRole('button', { name: 'Leave waitlist' }).click();
@@ -249,8 +252,9 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     await expect(page.getByText('You are in')).toBeVisible();
 
     // A second unread lets us pin both mark-read behaviors: strip rows
-    // disappear, /updates rows stay.
-    const extra = await prisma.notification.create({
+    // disappear, /updates rows stay. Cleanup rides afterAll's
+    // relatedClassId sweep — keep that field set.
+    await prisma.notification.create({
       data: {
         recipientType: 'student',
         recipientId: bramId,
@@ -264,13 +268,11 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     });
     await page.reload();
 
-    // Strip mark-read: the promotion row goes, the section stays (history).
-    await page
-      .locator('div', { hasText: 'You are in' })
-      .getByRole('button', { name: 'Mark read' })
-      .last()
-      .click();
-    await expect(page.getByText('You are in')).not.toBeVisible({ timeout: 10_000 });
+    // Strip mark-read: the announcement row goes, the section stays.
+    await page.getByRole('button', { name: 'Mark "New announcement" read' }).click();
+    await expect(page.getByText('Bring a mat strap on Sunday.')).not.toBeVisible({
+      timeout: 10_000,
+    });
     await expect(page.getByRole('heading', { name: 'Updates' })).toBeVisible();
 
     // The record: both rows on /updates, read and unread alike.
@@ -279,9 +281,20 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     await expect(page.getByText('You are in')).toBeVisible();
     await expect(page.getByText('Bring a mat strap on Sunday.')).toBeVisible();
 
-    // /updates mark-read keeps the row in place, restyled.
-    await page.getByRole('button', { name: 'Mark read' }).click();
-    await expect(page.getByText('Bring a mat strap on Sunday.')).toBeVisible();
+    // /updates mark-read keeps the row in place, restyled. Wait for the
+    // write to land — navigating away can abort the optimistic POST.
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/read') && r.ok()),
+      page.getByRole('button', { name: 'Mark "You are in" read' }).click(),
+    ]);
+    // Restyle first (the button hides), then the row text still there.
+    await expect(page.getByRole('button', { name: 'Mark "You are in" read' })).toBeHidden();
+    await expect(page.getByText('You are in')).toBeVisible();
+
+    // A linked row navigates to the public booking page — never a
+    // teacher route (the hrefById override at work).
+    await page.getByText('You are in').click();
+    await page.waitForURL(`**/${slug}/book/${classId}`);
 
     // Back home: zero unread, but the section header + link remain.
     await page.goto('/bookings');
@@ -293,6 +306,5 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
       where: { recipientType: 'student', recipientId: bramId, isRead: false },
     });
     expect(unread).toBe(0);
-    await prisma.notification.delete({ where: { id: extra.id } });
   });
 });

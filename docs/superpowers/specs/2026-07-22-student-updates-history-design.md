@@ -33,7 +33,7 @@ home: once marked read they vanish, despite the docs' layer-2
   beside the heading; when there are zero unread but history exists,
   the heading + link alone (one calm line); nothing at all for a
   student with no notifications ever.
-- **History page** (`/bookings/updates`): all of the student's
+- **History page** (`/updates`): all of the student's
   notifications, read and unread, `createdAt desc` + `id` tie-breaker,
   `take: 50` (the inbox's bound). Reuses `NotificationList` — true
   parity by sharing code: tint on unread, stable geometry, Mark-read

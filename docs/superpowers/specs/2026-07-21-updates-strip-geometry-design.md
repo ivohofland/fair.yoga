@@ -2,6 +2,10 @@
 
 **Date:** 2026-07-21
 **Status:** Approved (issue #20; autonomous run — decisions recorded here)
+**Superseded (2026-07-22):** the verbatim-tint row idiom below was
+revised by `2026-07-22-student-updates-history-design.md` (issue #29) —
+strip rows are now untinted, matching their page; the tinted idiom
+lives on `/updates`.
 
 ## Problem
 

@@ -75,6 +75,8 @@ export function UpdatesStrip({ updates, hasHistory }: UpdatesStripProps) {
               <button
                 type="button"
                 onClick={() => markRead(update.id)}
+                // Adjacent rows must not present identical button names.
+                aria-label={`Mark "${update.title}" read`}
                 className="type-caption text-teal min-h-[44px] px-1"
               >
                 Mark read
