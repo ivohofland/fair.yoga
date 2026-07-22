@@ -185,6 +185,9 @@ async function main() {
         data: {
           ...data,
           claimedAt: daysAgo(30),
+          // Claimed students chose their tier when they claimed (matches
+          // the migration backfill).
+          tierSelectedAt: daysAgo(30),
           account: { create: { email: data.email } },
         },
       }),

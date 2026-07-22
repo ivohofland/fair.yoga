@@ -24,7 +24,8 @@ each booking, and tiers 3–5 get no prompt at all.
   student's first self-booking does consume the moment — rare, and
   mitigated by the neutral default plus the always-present settings
   link. The fully-correct model is a `tierSelectedAt` marker set on
-  self-selection — tracked as a follow-up issue.
+  self-selection — implemented by issue #26, which supersedes this
+  heuristic entirely and closes the residual edge.
 - **First booking (and the teacher-joins-as-student flow, whose fresh
   profile always has zero registrations):** the current picker,
   unchanged.

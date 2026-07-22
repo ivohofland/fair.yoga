@@ -42,8 +42,11 @@ export function BookingFlow({
     setSubmitting(true);
     setError('');
     try {
-      // Persist a changed tier first — tierAtBooking reads from the profile.
-      if (tier !== currentTier) {
+      // Persist the tier first — tierAtBooking reads from the profile.
+      // On a first booking this runs even when the default is accepted
+      // untouched: booking past the picker IS the choice, and the PUT
+      // stamps tierSelectedAt so the picker doesn't reappear forever.
+      if (isFirstBooking || tier !== currentTier) {
         const tierRes = await fetch(`/api/students/${studentId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
