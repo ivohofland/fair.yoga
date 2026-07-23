@@ -15,7 +15,11 @@ interface BookingFlowProps {
   studentId: string;
   /** Estimated price per tier 1..5 if the class ran with today's sign-ups plus you. */
   tierPrices: number[];
-  /** Zero prior registrations: the documented income-selection moment. */
+  /**
+   * The student has never chosen a tier themselves (tierSelectedAt is
+   * null) — the documented income-selection moment. CRM-created
+   * registrations don't count as choosing.
+   */
   isFirstBooking: boolean;
 }
 

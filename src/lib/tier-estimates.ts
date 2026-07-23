@@ -59,9 +59,16 @@ export interface AttendanceSpread {
  * "What will I actually pay?" — for a student whose tier is settled, the
  * remaining uncertainty is turnout. The viewer's own price at the
  * minimum-viable attendance (you're joining: max(minStudents,
- * registered + 1)) and at a full class, with the same honest median-tier
- * padding as estimateTierPrices. Walk-ins can push the real price below
- * `low`; the settle-after-class disclaimer carries that.
+ * registered + 1)) and at a full class; an already-overfull class
+ * collapses to a single point, and both bounds clamp to MAX_CLASS_SIZE.
+ * Unknown attendees are padded with the median tier 3, as
+ * estimateTierPrices does below the class minimum — the ceiling extends
+ * that same assumption up to a full room. `low` is not a hard floor:
+ * walk-ins beyond capacity can still dilute the price below it.
+ *
+ * The viewer must NOT already be in `registeredTiers` — this function
+ * appends them. A call site quoting an already-registered student
+ * excludes their own row and passes that row's tier as `viewerTier`.
  */
 export function estimateAttendanceSpread(input: AttendanceSpreadInput): AttendanceSpread {
   const priceAt = (attendance: number): number => {

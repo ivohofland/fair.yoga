@@ -69,9 +69,15 @@ export default async function BookClassPage({
         },
       })
     : null;
-  const alreadyBooked = student
-    ? cls.registrations.some((r) => r.studentId === student.id && r.status !== 'late_cancel')
-    : false;
+  // The viewer's own charged row, if any. They are already in the pool,
+  // so the personal spread must quote them from that row — not append a
+  // second copy of them ("+1 joining"). A late_cancel row also stays
+  // out of the pool here: rebooking reactivates that same row, so the
+  // viewer re-enters as themselves, not as an extra body.
+  const ownRegistration = student
+    ? (cls.registrations.find((r) => r.studentId === student.id) ?? null)
+    : null;
+  const alreadyBooked = ownRegistration !== null && ownRegistration.status !== 'late_cancel';
   // A signed-in teacher without a student side gets the join panel, not a
   // sign-in form they can't use.
   const guestTeacher =
@@ -107,8 +113,14 @@ export default async function BookClassPage({
             targetRate: Number(cls.targetRate),
             minStudents: cls.minStudents,
             maxStudents: cls.maxStudents,
-            registeredTiers: cls.registrations.map((r) => r.tierAtBooking),
-            viewerTier: student.incomeTier,
+            registeredTiers: cls.registrations
+              .filter((r) => r !== ownRegistration)
+              .map((r) => r.tierAtBooking),
+            // A booked viewer is billed at the tier stamped on their
+            // registration; everyone else would join at their current one.
+            viewerTier: alreadyBooked && ownRegistration
+              ? ownRegistration.tierAtBooking
+              : student.incomeTier,
           })}
           className="mt-2 mb-6"
         />

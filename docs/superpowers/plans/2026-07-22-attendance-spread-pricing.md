@@ -11,7 +11,7 @@
 ### Task 2: Surfaces
 - `price-range.tsx`: add `PersonalPriceRange({ spread })` — same typography, "depending on how many join".
 - Booking page: `student && student.tierSelectedAt` → `PersonalPriceRange` with `viewerTier: student.incomeTier`; else `PriceRange`.
-- `booking-flow.tsx` footnote: the highest-tier sentence renders only in the first-booking branch.
+- `booking-flow.tsx` footnote: the highest-tier sentence gated on `isFirstBooking` (inline `&&` in the shared footnote).
 
 ### Task 3: E2e + gates + PR
-- Returning test: assert the new line, assert zero "income tier" text on that page. Full gates; push; `gh pr create` (Closes #33; note the #37 merge-order).
+- Returning test: assert the new line, assert the tier-spread price line absent on that page. Full gates; push; `gh pr create` (Closes #33; note the #37 merge-order).

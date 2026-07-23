@@ -219,10 +219,15 @@ test.describe('Public booking flow', () => {
     await page.goto(`/${slug}/book/${secondClassId}`);
     await expect(page.getByText(/You're in Tier 2/)).toBeVisible();
     await expect(page.getByText('does this still reflect your situation?')).toBeVisible();
-    // Their tier is settled: the header quotes the turnout spread, not
-    // the tier spread.
-    await expect(page.getByText(/depending on how many join/)).toBeVisible();
+    // Their tier is settled: the header quotes the turnout spread at
+    // their tier-2 numbers (a wiring bug quoting the median would show
+    // €4.50 – €17.50), and the tier-spread line is gone.
+    await expect(
+      page.getByText(/€3\.68 – €15\.56 depending on how many join/),
+    ).toBeVisible();
     await expect(page.getByText(/depending on your income tier/)).toHaveCount(0);
+    // So is the footnote's tier-spread sentence — first-bookers only.
+    await expect(page.getByText('The highest tier pays about twice the lowest.')).toHaveCount(0);
     // Deep-links straight to the tier page, not the settings index.
     await expect(page.getByRole('link', { name: 'Change your tier in settings' })).toHaveAttribute(
       'href',
@@ -243,6 +248,12 @@ test.describe('Public booking flow', () => {
     // precedence over the returning-student summary.
     await page.goto(`/${slug}/book/${secondClassId}`);
     await expect(page.getByText("You're booked for this class")).toBeVisible();
+    // Booked: the header quote counts them once, at the tier stamped on
+    // their registration. Appending them as a second joining body on top
+    // of their own row would show €3.75 – €17.50.
+    await expect(
+      page.getByText(/€3\.68 – €15\.56 depending on how many join/),
+    ).toBeVisible();
   });
 
   test('a first booking with the default tier untouched still stamps the choice', async ({ page, context, browser }) => {
@@ -273,6 +284,9 @@ test.describe('Public booking flow', () => {
 
     await page.goto(`/${slug}/book/${classId}`);
     await expect(page.getByRole('radiogroup')).toBeVisible();
+    // The tier-spread sentence belongs to this picker moment — the
+    // returning test pins its absence on the other branch.
+    await expect(page.getByText('The highest tier pays about twice the lowest.')).toBeVisible();
     await page.getByRole('button', { name: /^Book — around/ }).click();
     await expect(page.getByText("You're in", { exact: true })).toBeVisible();
 
