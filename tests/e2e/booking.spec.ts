@@ -241,7 +241,7 @@ test.describe('Public booking flow', () => {
     await expect(page.getByText("You're booked for this class")).toBeVisible();
   });
 
-  test('a first booking with the default tier untouched still stamps the choice', async ({ page, context }) => {
+  test('a first booking with the default tier untouched still stamps the choice', async ({ page, context, browser }) => {
     // The server-side stamp is the load-bearing guard (integration-
     // tested); this is the user-facing proof: book without touching a
     // radio, and the picker never comes back.
@@ -292,6 +292,15 @@ test.describe('Public booking flow', () => {
     await page.goto(`/${slug}`);
     await expect(page.getByText('✓ Booked')).toHaveCount(1);
     await expect(page.getByText(/depending on your income tier/)).toHaveCount(1);
+
+    // A fresh signed-out visitor while these bookings exist: nobody's
+    // booked state leaks into the anonymous view.
+    const anon = await browser.newContext();
+    const anonPage = await anon.newPage();
+    await anonPage.goto(`/${slug}`);
+    await expect(anonPage.getByText('✓ Booked')).toHaveCount(0);
+    await expect(anonPage.getByText(/depending on your income tier/)).toHaveCount(2);
+    await anon.close();
 
     // This test's own rows: student delete cascades its registration;
     // notifications are reaped by afterAll's relatedClassId cleanup.

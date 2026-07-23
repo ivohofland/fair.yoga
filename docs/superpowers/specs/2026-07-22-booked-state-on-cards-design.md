@@ -15,6 +15,10 @@
   Everyone else sees the price range unchanged.
 - `late_cancel` shows nothing special: the seat is free and rebooking
   is real — the price range is the honest line there.
+- Only `waiting` entries render the waitlist line. `promoted` and
+  `claimed` entries always carry a live registration (both promotion
+  paths create one), so those cards read `✓ Booked` through that row;
+  `removed` (and the reserved `expired`) fall back to the price range.
 - Cards keep linking through to the booking page.
 - **Rider:** the booking summary's tier link deep-links to
   `/account/tier` (the `/account` target was a build-time hedge while
@@ -24,7 +28,13 @@
 
 - `booking.spec.ts`: inside the accept-default test (its student books
   exactly one of two classes): the teacher page shows `✓ Booked` once
-  and the price range on the other card; the signed-out public-page
-  test pins the unchanged anonymous view. Returning-student test pins
-  the deep-link href. `student-journey.spec.ts`: Bram waiting → the
-  card says `On the waitlist`.
+  and the price range on the other card, and a fresh signed-out
+  context revisits the page while those bookings exist — no booked
+  state leaks into the anonymous view. (The pre-existing signed-out
+  test runs before any bookings and only pins the base rendering.)
+  Returning-student test pins the deep-link href.
+- `student-journey.spec.ts`: Bram waiting → the card says `On the
+  waitlist` and quotes no price; after he leaves the waitlist the
+  price range is back; after auto-promotion his card reads `✓ Booked`
+  with no waitlist line, and Alice's cancelled registration drops the
+  booked line for the honest price range.

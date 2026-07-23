@@ -202,6 +202,7 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     // The teacher page card says so too, instead of quoting a price.
     await page.goto(`/${slug}`);
     await expect(page.getByText('On the waitlist')).toBeVisible();
+    await expect(page.getByText(/depending on your income tier/)).toHaveCount(0);
     await page.goto('/bookings');
 
     // Leave — the section empties.
@@ -209,6 +210,12 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     await expect(page.getByRole('heading', { name: 'Waitlist' })).not.toBeVisible({
       timeout: 10_000,
     });
+
+    // A removed entry is not "on the waitlist" — the card quotes the
+    // price again.
+    await page.goto(`/${slug}`);
+    await expect(page.getByText('On the waitlist')).toHaveCount(0);
+    await expect(page.getByText(/depending on your income tier/)).toBeVisible();
 
     // Rejoin — the removed entry reactivates instead of hitting the
     // unique constraint.
@@ -230,6 +237,12 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
       timeout: 10_000,
     });
 
+    // Her card drops the booked line the moment the registration is
+    // cancelled — the price range is the honest state again.
+    await page.goto(`/${slug}`);
+    await expect(page.getByText('✓ Booked')).toHaveCount(0);
+    await expect(page.getByText(/depending on your income tier/)).toBeVisible();
+
     // Bram now holds the seat: booked, no longer waitlisted.
     await context.clearCookies();
     await signIn(context, tokens.bram);
@@ -242,6 +255,12 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
       where: { classId, studentId: bramId, status: 'registered' },
     });
     expect(promoted).not.toBeNull();
+
+    // His public card reads booked; the promoted waitlist entry does
+    // not linger as a waitlist line.
+    await page.goto(`/${slug}`);
+    await expect(page.getByText('✓ Booked')).toBeVisible();
+    await expect(page.getByText('On the waitlist')).toHaveCount(0);
   });
 
   test('the promotion shows as an update on /bookings until marked read', async ({
