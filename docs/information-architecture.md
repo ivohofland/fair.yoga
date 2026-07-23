@@ -81,12 +81,11 @@ Schedule
 │   ├── Step 3: Policies (cancellation, auto-cancel)
 │   └── Confirmation
 │
-├── Log studio class (quick entry — modal or half-sheet)
-│   └── Date, time, location, students, hourly rate
-│
-└── Payment overview (cross-class)
-    └── All outstanding payments, filterable
+└── Log studio class (quick entry — modal or half-sheet)
+    └── Date, time, location, students, hourly rate
 ```
+
+The cross-class payment overview lives under Settings (see Tab 4), not here — completed class detail links to it for the per-class view.
 
 ### Week view
 
@@ -127,7 +126,7 @@ The pricing step is the most important — it includes the live preview table sh
 
 ### Payment overview
 
-Accessible from the Schedule tab (e.g., a "Payments" button in the header or a summary card). Cross-class view of all outstanding and received payments. Filterable by date range, class, or student. This is where the teacher goes to answer "who still owes me money?"
+Accessible from **Settings → Payments** (`/settings/payments`). Cross-class view split into Outstanding and Received, each row carrying a per-payment "Send reminder" action. This is where the teacher goes to answer "who still owes me money?" Filtering by date range, class, or student is planned but not yet built.
 
 ---
 
@@ -204,9 +203,10 @@ Settings
 │   └── Edit room overrides
 │
 ├── Payments
-│   ├── Bank details (Level 1: IBAN, account name)
-│   ├── Payment processor (Level 2: connect Mollie/Stripe)
-│   └── Payment level toggle
+│   ├── Payment overview (cross-class: Outstanding / Received, per-row reminders)
+│   ├── Bank details (Level 1: IBAN, account name) — planned
+│   ├── Payment processor (Level 2: connect Mollie/Stripe) — planned
+│   └── Payment level toggle — planned
 │
 ├── Notifications
 │   └── Per-event email on/off toggles
@@ -315,7 +315,7 @@ The IA consolidates 36 screens into a leaner structure:
 2. **Class detail is one adaptive screen,** not separate pre-class / class day / post-class screens. It transforms based on lifecycle stage.
 3. **Rooms moved to Settings.** They're infrastructure, not daily-use. Reduces primary nav from 5 tabs to 4.
 4. **Studio class entry is a quick modal,** not a separate screen. It appears in the schedule timeline alongside regular classes.
-5. **Payment overview is part of Schedule,** not a standalone section. It's about "who owes me for which class."
+5. **Payment overview lives in Settings,** alongside the other set-up-once infrastructure (rooms, processor). Completed class detail links to it for the per-class view; it answers "who owes me for which class."
 6. **Reporting is part of Students,** not a standalone section. It's about understanding your community and income over time.
 7. **Personal page preview is part of Settings,** accessible when editing profile or custom domain.
 
@@ -326,12 +326,12 @@ The IA consolidates 36 screens into a leaner structure:
 | Area | Screens | Notes |
 |------|---------|-------|
 | Auth & onboarding | 2 | Sign up, profile setup (onboarding is overlay) |
-| Schedule tab | 4 | Week view, class detail (adaptive), create class (stepped), payment overview |
+| Schedule tab | 3 | Week view, class detail (adaptive), create class (stepped) |
 | Students tab | 3 | Student list, student detail, send announcement |
 | Inbox tab | 1 | Notification list |
-| Settings tab | 4 | Profile, rooms (list + create + edit), payments, notifications |
+| Settings tab | 4 | Profile, rooms (list + create + edit), payment overview, notifications |
 | Modals / overlays | 4 | Studio class entry, add walk-in, share sheet, cancel confirmation (reminders are inline, not a modal) |
-| **Total** | **18** | Down from 36 by merging and adapting |
+| **Total** | **17** | Down from 36 by merging and adapting |
 
 ---
 
