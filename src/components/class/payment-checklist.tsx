@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { paymentStateText } from '@/lib/format';
 import { usePaymentActions } from '@/lib/use-payment-actions';
+import { SendReminderButton } from '@/components/class/send-reminder-button';
 
 export interface PaymentItem {
   paymentId: string;
@@ -10,6 +11,7 @@ export interface PaymentItem {
   studentName: string;
   amount: number;
   status: string; // 'pending' | 'paid' | 'overdue'
+  reminderSentAt: Date | null;
 }
 
 interface PaymentChecklistProps {
@@ -65,6 +67,13 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
                 <span className={`type-number ${isPaid ? '' : 'text-brown'}`}>
                   &euro;{item.amount.toFixed(2)}
                 </span>
+                {!isPaid && (
+                  <SendReminderButton
+                    paymentId={item.paymentId}
+                    studentName={item.studentName}
+                    reminderSentAt={item.reminderSentAt}
+                  />
+                )}
                 <button
                   type="button"
                   onClick={() => {

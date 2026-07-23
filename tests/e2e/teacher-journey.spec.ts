@@ -330,12 +330,41 @@ test.describe('Teacher journey', () => {
     await expect(page.getByText('✓ Paid')).toBeVisible();
   });
 
+  test('an unpaid row sends a reminder the student will hear about', async ({
+    page,
+    context,
+  }) => {
+    await signInTeacher(context);
+    await page.goto(`/class/${classId}`);
+
+    // The walk-in's payment is the unpaid row; paid rows offer nothing.
+    await page.getByRole('button', { name: 'Send reminder to Walkin Guest' }).click();
+    await expect(page.getByText(/Reminded just now/)).toBeVisible();
+
+    const reminded = await prisma.payment.findFirst({
+      where: { registration: { classId, studentId: walkInStudentId } },
+    });
+    expect(reminded?.reminderSentAt).not.toBeNull();
+    // The walk-in never signs in, so the notification is pinned in the
+    // DB; /updates rendering is covered by the updates e2e.
+    const notification = await prisma.notification.findFirst({
+      where: { recipientType: 'student', recipientId: walkInStudentId, type: 'reminder' },
+    });
+    expect(notification).not.toBeNull();
+  });
+
   test('the payments overview offers the permanent correction', async ({ page, context }) => {
     await signInTeacher(context);
     await page.goto('/settings/payments');
 
     // The payment marked paid in the previous test sits under Received.
     await expect(page.getByRole('heading', { name: 'Received' })).toBeVisible();
+    // The Outstanding row carries the reminder action, and the caption
+    // from the class-page send above survives server-side.
+    await expect(
+      page.getByRole('button', { name: 'Send reminder to Walkin Guest' }),
+    ).toBeVisible();
+    await expect(page.getByText(/Reminded /)).toBeVisible();
     await page.getByRole('button', { name: 'Mark unpaid' }).click();
     // Wait for the POST, then reload (see the publish test): the row's
     // "Updating..." state clears only via the refresh the router can drop.

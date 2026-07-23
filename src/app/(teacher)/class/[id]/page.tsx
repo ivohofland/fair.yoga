@@ -86,6 +86,7 @@ export default async function ClassDetailPage({
       studentName: getStudentDisplayName(r.student),
       amount: Number(r.payment!.amount),
       status: r.payment!.status,
+      reminderSentAt: r.payment!.reminderSentAt,
     }));
 
   // Actual tier prices for completed class pricing breakdown
