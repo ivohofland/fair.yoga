@@ -291,11 +291,12 @@ describe('generateClassInstances (per-template isolation)', () => {
     const created: string[] = [];
     const from = new Date('2099-01-05T00:00:00Z'); // deterministic future window
     const stub = {
-      classTemplate: { findMany: async () => [tmpl('A', 't1'), tmpl('B', 't1')] },
+      classTemplate: { findMany: async () => [tmpl('A', 't1'), tmpl('B', 't1'), tmpl('C', 't1')] },
       class: {
         findFirst: async () => null,
         create: async ({ data }: { data: { templateId: string } }) => {
           if (data.templateId === 'A') throw new Error('boom-A');
+          if (data.templateId === 'C') throw new Error('boom-C');
           created.push(data.templateId);
           return {};
         },
@@ -303,6 +304,6 @@ describe('generateClassInstances (per-template isolation)', () => {
     } as unknown as import('@prisma/client').PrismaClient;
 
     await expect(generateClassInstances(stub, from)).rejects.toThrow('boom-A');
-    expect(created).toContain('B'); // B generated despite A failing first
+    expect(created).toContain('B'); // B generated despite A failing before and C failing after
   });
 });

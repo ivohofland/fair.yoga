@@ -83,6 +83,9 @@ export async function generateInstancesForTemplate(
   const startDate = from ?? new Date();
   let created = 0;
 
+  // The next 4 occurrences whose start is still ahead of startDate. A run
+  // after today's start time must not create a class that already happened;
+  // the window slides one week further instead.
   const dates = getNextOccurrences(template.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
     .filter(
       (date) =>
@@ -141,6 +144,9 @@ export async function generateClassInstances(
 ): Promise<number> {
   const startDate = from ?? new Date();
 
+  // isArchived is defense in depth: the routes keep archived templates
+  // inactive, but if that invariant ever slips, the generator must not
+  // materialize classes for something the teacher shelved.
   const templates = await db.classTemplate.findMany({
     where: { isActive: true, isArchived: false, ...(teacherId ? { teacherId } : {}) },
     include: { teacher: { select: { defaultTimezone: true } } },
