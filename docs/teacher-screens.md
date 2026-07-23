@@ -216,7 +216,7 @@ The teacher has a persistent bottom tab bar (64px, Lucide-style line icons) with
 ### 7.2 — Payment Checklist (Level 1)
 - List of students with amount owed per student
 - Paid / unpaid toggle per student (manual marking)
-- "Send Payment Reminder" button (sends to all unpaid students)
+- "Send reminder" per unpaid row (individual, with "Reminded …" history — no bulk send)
 - Total received vs. total outstanding
 - *Leads to:* 7.3 Payment Overview
 

@@ -302,7 +302,7 @@ Not everything needs a full page. These actions work as modals, half-sheets, or 
 | Log studio class | Half-sheet (quick entry) |
 | Add walk-in | Half-sheet (search + confirm) |
 | Share class link | Bottom sheet (URL + share buttons) |
-| Send payment reminder | Confirmation dialog |
+| Send payment reminder | One tap, per payment — the visible "Reminded …" history replaces a confirm |
 | Cancel class | Confirmation dialog with explanation |
 | Add student to CRM | Half-sheet or full page depending on bulk import |
 
