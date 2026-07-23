@@ -271,3 +271,38 @@ describe('generateClassInstances (DB)', () => {
     ]);
   });
 });
+
+// ===========================================================================
+// Per-template isolation — stubbed db, no real DB
+// ===========================================================================
+
+describe('generateClassInstances (per-template isolation)', () => {
+  function tmpl(id: string, teacherId: string) {
+    return {
+      id, teacherId, teacherRoomId: 'tr', dayOfWeek: 0, startTime: '09:00',
+      classType: 'Flow', description: null, durationMinutes: 60,
+      roomCost: 10, minRate: 10, targetRate: 20, minStudents: 1, maxStudents: 8,
+      cancelDeadline: 120, autoCancelCheck: 120,
+      teacher: { defaultTimezone: 'UTC' },
+    };
+  }
+
+  it('a failing template does not abort the others, and the error is rethrown', async () => {
+    const created: string[] = [];
+    const from = new Date('2099-01-05T00:00:00Z'); // deterministic future window
+    const stub = {
+      classTemplate: { findMany: async () => [tmpl('A', 't1'), tmpl('B', 't1')] },
+      class: {
+        findFirst: async () => null,
+        create: async ({ data }: { data: { templateId: string } }) => {
+          if (data.templateId === 'A') throw new Error('boom-A');
+          created.push(data.templateId);
+          return {};
+        },
+      },
+    } as unknown as import('@prisma/client').PrismaClient;
+
+    await expect(generateClassInstances(stub, from)).rejects.toThrow('boom-A');
+    expect(created).toContain('B'); // B generated despite A failing first
+  });
+});
