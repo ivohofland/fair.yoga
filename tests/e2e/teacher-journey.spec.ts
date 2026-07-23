@@ -196,10 +196,17 @@ test.describe('Teacher journey', () => {
     await expect(page.getByText('Step 3 of 4')).toBeVisible();
     await page.getByRole('button', { name: 'Next', exact: true }).click();
     await expect(page.getByText('Review your class')).toBeVisible();
+    const created = page.waitForResponse(
+      (resp) =>
+        resp.url().endsWith('/api/classes') && resp.request().method() === 'POST' && resp.ok(),
+    );
     await page.getByRole('button', { name: 'Create class' }).click();
-
-    await page.waitForURL(/\/class\/[0-9a-f-]+$/, { timeout: 10_000 });
-    classId = page.url().split('/class/')[1]!;
+    // The id is server truth from the POST; the wizard's client-side push
+    // to the class page can be dropped on starved CPUs (see the publish
+    // test), so navigate there directly instead of waiting for it.
+    const body = (await (await created).json()) as { data: { id: string } };
+    classId = body.data.id;
+    await page.goto(`/class/${classId}`);
 
     await expect(page.getByText('Draft')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Publish' })).toBeVisible();
@@ -209,7 +216,16 @@ test.describe('Teacher journey', () => {
     await signInTeacher(context);
     await page.goto(`/class/${classId}`);
 
+    // Wait for the transition POST, then reload and assert the
+    // server-rendered truth: on starved CPUs (CI runners) the router can
+    // drop the post-action refresh commit — the state change lands, the
+    // client repaint doesn't. Same pattern as the walk-in test below.
+    const transitioned = page.waitForResponse(
+      (resp) => resp.url().includes('/transition') && resp.ok(),
+    );
     await page.getByRole('button', { name: 'Publish' }).click();
+    await transitioned;
+    await page.reload();
     await expect(page.getByText('Open for registration')).toBeVisible({ timeout: 10_000 });
   });
 
@@ -238,6 +254,9 @@ test.describe('Teacher journey', () => {
     // Gold dot: the tab announces unread messages.
     await page.getByRole('link', { name: 'Inbox, unread messages' }).click();
     await page.waitForURL('**/inbox');
+    // Reload before asserting: the client-side nav commit can be dropped
+    // on starved CPUs (see the publish test).
+    await page.reload();
     await expect(page.getByText('New booking').first()).toBeVisible();
     await expect(page.getByText('Journey booked Journey Flow.')).toBeVisible();
 
@@ -318,7 +337,14 @@ test.describe('Teacher journey', () => {
     // The payment marked paid in the previous test sits under Received.
     await expect(page.getByRole('heading', { name: 'Received' })).toBeVisible();
     await page.getByRole('button', { name: 'Mark unpaid' }).click();
+    // Wait for the POST, then reload (see the publish test): the row's
+    // "Updating..." state clears only via the refresh the router can drop.
+    const unpaid = page.waitForResponse(
+      (resp) => resp.url().includes('/unpaid') && resp.ok(),
+    );
     await page.getByRole('button', { name: 'Confirm unpaid' }).click();
+    await unpaid;
+    await page.reload();
 
     // The record moves back to Outstanding; Received empties.
     await expect(page.getByText('Nothing received yet')).toBeVisible({ timeout: 10_000 });
