@@ -85,7 +85,7 @@ Schedule
     └── Date, time, location, students, hourly rate
 ```
 
-The cross-class payment overview lives under Settings (see Tab 4), not here — completed class detail links to it for the per-class view.
+The cross-class payment overview lives under Settings (see Tab 4), not here — each overview row links out to its class's detail for the per-class view.
 
 ### Week view
 
@@ -315,7 +315,7 @@ The IA consolidates 36 screens into a leaner structure:
 2. **Class detail is one adaptive screen,** not separate pre-class / class day / post-class screens. It transforms based on lifecycle stage.
 3. **Rooms moved to Settings.** They're infrastructure, not daily-use. Reduces primary nav from 5 tabs to 4.
 4. **Studio class entry is a quick modal,** not a separate screen. It appears in the schedule timeline alongside regular classes.
-5. **Payment overview lives in Settings,** alongside the other set-up-once infrastructure (rooms, processor). Completed class detail links to it for the per-class view; it answers "who owes me for which class."
+5. **Payment overview lives in Settings,** alongside the other set-up-once infrastructure (rooms, processor). Each overview row links out to its class's detail for the per-class view; it answers "who owes me for which class."
 6. **Reporting is part of Students,** not a standalone section. It's about understanding your community and income over time.
 7. **Personal page preview is part of Settings,** accessible when editing profile or custom domain.
 
@@ -337,4 +337,4 @@ The IA consolidates 36 screens into a leaner structure:
 
 ## Key design principle
 
-**One object, one place.** A class lives on the Schedule tab. A student lives on the Students tab. Payments live on the class they belong to. There are no duplicate paths to the same information. The teacher always knows where to find something because everything has exactly one home.
+**One object, one place.** A class lives on the Schedule tab. A student lives on the Students tab. Payments live on the class they belong to; the Settings overview is a cross-class roll-up of that same state, not a second home for it. There are no duplicate paths to the same information. The teacher always knows where to find something because everything has exactly one home.

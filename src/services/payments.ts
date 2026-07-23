@@ -115,21 +115,40 @@ export async function unmarkPaymentPaid(
 // ---------------------------------------------------------------------------
 
 /**
- * Send a payment reminder: creates the student's reminder notification and
- * stamps reminderSentAt in one transaction. Stamping alone would *suppress*
- * the next scheduled reminder without ever nudging the student.
+ * Send a payment reminder: stamps reminderSentAt and creates the student's
+ * reminder notification in one transaction.
  *
- * Only valid on an outstanding ('pending' or 'overdue') payment. The guard is
- * fail-closed and lives here, not just in the UI: dunning a student who has
- * already paid is the one failure this feature must never produce, and the
- * check inside the transaction can't be raced past by a stale second tab.
+ * Only valid on an outstanding ('pending' or 'overdue') payment, and the guard
+ * is fail-closed in the DB, not just the UI: dunning a student who has already
+ * paid is the one failure this feature must never produce. The status check is
+ * a conditional updateMany (compare-and-swap in the WHERE), the same idiom as
+ * markPaymentPaid and the automatic sweep — so a concurrent mark-paid that
+ * commits between a plain read and the write genuinely can't be raced past.
+ * The notification and the stamp share the transaction, so a failed send rolls
+ * the stamp back rather than silencing the next scheduled reminder.
  */
 export async function sendPaymentReminder(
   db: PrismaClient,
   paymentId: string,
 ): Promise<PaymentResult> {
   return db.$transaction(async (tx): Promise<PaymentResult> => {
-    const payment = await tx.payment.findUnique({
+    // Compare-and-swap: the status guard lives in the WHERE clause, so a count
+    // of 0 means the payment is no longer outstanding (paid, or gone) and
+    // nothing is sent.
+    const stamped = await tx.payment.updateMany({
+      where: { id: paymentId, status: { in: ['pending', 'overdue'] } },
+      data: { reminderSentAt: new Date() },
+    });
+    if (stamped.count === 0) {
+      const payment = await tx.payment.findUnique({ where: { id: paymentId } });
+      if (!payment) return { ok: false, error: `Payment not found: ${paymentId}` };
+      return {
+        ok: false,
+        error: `Cannot send a reminder: current status is "${payment.status}". Must be "pending" or "overdue".`,
+      };
+    }
+
+    const { registration, ...payment } = await tx.payment.findUniqueOrThrow({
       where: { id: paymentId },
       include: {
         registration: {
@@ -138,30 +157,18 @@ export async function sendPaymentReminder(
       },
     });
 
-    if (!payment) return { ok: false, error: `Payment not found: ${paymentId}` };
-    if (payment.status !== 'pending' && payment.status !== 'overdue') {
-      return {
-        ok: false,
-        error: `Cannot send a reminder: current status is "${payment.status}". Must be "pending" or "overdue".`,
-      };
-    }
-
     await createBulkNotifications(tx, [
       {
         recipientType: 'student',
-        recipientId: payment.registration.studentId,
+        recipientId: registration.studentId,
         type: 'reminder',
         title: 'Payment outstanding',
-        body: `€${Number(payment.amount).toFixed(2)} for ${payment.registration.class.classType} is still open. Pay your teacher directly.`,
-        relatedClassId: payment.registration.class.id,
+        body: `€${Number(payment.amount).toFixed(2)} for ${registration.class.classType} is still open. Pay your teacher directly.`,
+        relatedClassId: registration.class.id,
       },
     ]);
 
-    const updated = await tx.payment.update({
-      where: { id: paymentId },
-      data: { reminderSentAt: new Date() },
-    });
-    return { ok: true, payment: updated };
+    return { ok: true, payment };
   });
 }
 

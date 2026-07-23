@@ -17,81 +17,85 @@ interface SendReminderButtonProps {
   context: string | null;
   /** Reports the fresh stamp so the parent can render the "Reminded …" caption. */
   onSent: (remindedAt: Date) => void;
+  /**
+   * Reports send failures ('' clears). The parent renders them in the row's
+   * text column, not the fixed action cluster, so a long message can't
+   * overflow the row on a phone.
+   */
+  onError: (message: string) => void;
 }
 
 /**
  * The manual nudge for an outstanding payment (teacher-screens 7.2, IA
  * Flow 4). A send stamps `Payment.reminderSentAt`, which the parent renders
  * as the calm "Reminded …" caption — the only pressure against nagging,
- * since no cooldown is enforced. Once a payment is *overdue* that same stamp
- * also defers the automatic dunning sweep by `REMIND_EVERY_DAYS`
- * (`services/payment-reminders.ts`); a manual send on a still-`pending`
- * payment stamps it too but buys no spacing, as the sweep only looks at
- * overdue rows.
+ * since no cooldown is enforced. The stamp also defers the automatic dunning
+ * sweep by `REMIND_EVERY_DAYS` (`services/payment-reminders.ts`): a send on a
+ * `pending` payment stamps it too, and because `markOverduePayments` never
+ * clears the stamp, that deferral carries through when the payment later flips
+ * to overdue — so a manual send resets the weekly clock rather than adding to
+ * it.
  *
  * A controlled trigger: the parent owns the reminded state (so it survives a
- * mark-paid → undo remount) and renders the caption in the row's text column,
- * where it can't overflow the action cluster on a phone.
+ * mark-paid → undo remount) and both the caption and any error render in the
+ * row's text column, where they can't overflow the action cluster on a phone.
  */
 export function SendReminderButton({
   paymentId,
   studentName,
   context,
   onSent,
+  onError,
 }: SendReminderButtonProps) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
 
   async function handleSend() {
     setBusy(true);
-    setError('');
+    onError('');
 
     let res: Response;
     try {
       res = await fetch(`/api/payments/${paymentId}/remind`, { method: 'POST' });
     } catch (err) {
       console.error('[send-reminder] request failed', { paymentId, err });
-      setError('Network error. Try again.');
+      onError('Network error. Try again.');
       setBusy(false);
       return;
     }
 
     if (!res.ok) {
-      setError(await readErrorMessage(res, 'Could not send. Try again.'));
+      onError(await readErrorMessage(res, 'Could not send. Try again.'));
       setBusy(false);
       return;
     }
 
     // The server commits the notification + stamp before it responds, so past
-    // this point the reminder HAS been sent. A parse failure here must not be
-    // dressed up as a failure — that would provoke a second, duplicate nudge.
+    // this point the reminder HAS been sent. A malformed or field-less body
+    // must not be dressed up as a failure — that would provoke a second,
+    // duplicate nudge.
     try {
       const json = (await res.json()) as { data: { reminderSentAt: string } };
+      if (typeof json?.data?.reminderSentAt !== 'string') {
+        throw new Error('missing reminderSentAt');
+      }
       onSent(new Date(json.data.reminderSentAt));
     } catch (err) {
       console.error('[send-reminder] sent, but the response was unreadable', { paymentId, err });
-      setError('Reminder sent — reload to confirm before sending again.');
+      onError('Reminder sent — reload to confirm before sending again.');
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <span className="inline-flex items-center gap-2">
-      <button
-        type="button"
-        onClick={handleSend}
-        disabled={busy}
-        aria-label={`Send reminder to ${studentName}${context ? ` for ${context}` : ''}`}
-        className="type-caption text-teal min-h-[44px] px-1"
-      >
-        {busy ? 'Sending...' : 'Send reminder'}
-      </button>
-      {error && (
-        <span role="alert" className="type-caption text-danger">
-          {error}
-        </span>
-      )}
-    </span>
+    <button
+      type="button"
+      onClick={handleSend}
+      disabled={busy}
+      aria-label={`Send reminder to ${studentName}${context ? ` for ${context}` : ''}`}
+      className="type-caption text-teal min-h-[44px] px-1"
+    >
+      {busy ? 'Sending...' : 'Send reminder'}
+    </button>
   );
 }
