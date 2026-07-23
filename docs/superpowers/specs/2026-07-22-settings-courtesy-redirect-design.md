@@ -22,5 +22,7 @@ forgiving.
 
 ## Testing
 
-One e2e in `account.spec.ts`: student session, `goto('/settings')`,
-expect the `/account` URL (Settings heading visible). Full suites green.
+Two e2e pins: `account.spec.ts` — student session, `goto('/settings')`,
+lands on `/account` (Settings heading visible); `account-hybrid.spec.ts` —
+both wrong-profile targets pinned separately (`/inbox` → `/bookings`
+generic rule, `/settings` → `/account` exception). Full suites green.

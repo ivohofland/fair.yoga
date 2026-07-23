@@ -16,6 +16,10 @@ export function middleware(request: NextRequest) {
   // Layouts can't see the pathname; stamp it so the (teacher) layout can
   // send a student-only session from /settings to their own settings.
   const requestHeaders = new Headers(request.headers);
+  // Belt and suspenders: set() replaces, but never let a client-supplied
+  // value even transit (unmatched teacher routes skip this middleware, so
+  // the layout treats the header as advisory with hardcoded targets only).
+  requestHeaders.delete('x-pathname');
   requestHeaders.set('x-pathname', request.nextUrl.pathname);
   return NextResponse.next({ request: { headers: requestHeaders } });
 }
