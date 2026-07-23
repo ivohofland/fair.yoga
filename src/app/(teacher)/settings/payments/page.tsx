@@ -109,6 +109,7 @@ export default async function PaymentsOverviewPage() {
                   paymentId={p.id}
                   studentName={studentName(p)}
                   reminderSentAt={p.reminderSentAt}
+                  context={`${p.registration.class.classType} · ${formatDay(p.registration.class.date)}`}
                 />
                 <MarkPaidButton paymentId={p.id} />
               </div>

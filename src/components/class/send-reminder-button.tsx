@@ -8,6 +8,7 @@ interface SendReminderButtonProps {
   paymentId: string;
   studentName: string;
   reminderSentAt: Date | null;
+  context?: string;
 }
 
 /**
@@ -21,6 +22,7 @@ export function SendReminderButton({
   paymentId,
   studentName,
   reminderSentAt,
+  context,
 }: SendReminderButtonProps) {
   const [remindedAt, setRemindedAt] = useState<Date | null>(reminderSentAt);
   const [busy, setBusy] = useState(false);
@@ -51,7 +53,7 @@ export function SendReminderButton({
         type="button"
         onClick={handleSend}
         disabled={busy}
-        aria-label={`Send reminder to ${studentName}`}
+        aria-label={`Send reminder to ${studentName}${context ? ` for ${context}` : ''}`}
         className="type-caption text-teal min-h-[44px] px-1"
       >
         {busy ? 'Sending...' : 'Send reminder'}
