@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { MarkPaidButton } from '@/components/class/mark-paid-button';
 import { MarkUnpaidButton } from '@/components/class/mark-unpaid-button';
+import { SendReminderButton } from '@/components/class/send-reminder-button';
 import { formatStudentName } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
@@ -104,6 +105,11 @@ export default async function PaymentsOverviewPage() {
               </div>
               <div className="flex items-center gap-3 shrink-0">
                 <span className="type-number text-brown">€{Number(p.amount).toFixed(2)}</span>
+                <SendReminderButton
+                  paymentId={p.id}
+                  studentName={studentName(p)}
+                  reminderSentAt={p.reminderSentAt}
+                />
                 <MarkPaidButton paymentId={p.id} />
               </div>
             </div>
