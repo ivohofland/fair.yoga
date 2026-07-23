@@ -80,9 +80,12 @@ export async function generateClassInstances(
 ): Promise<number> {
   const startDate = from ?? new Date();
 
-  // 1. Find active templates — all of them (cron) or one teacher's
+  // 1. Find active templates — all of them (cron) or one teacher's.
+  // isArchived is defense in depth: the routes keep archived templates
+  // inactive, but if that invariant ever slips, the generator must not
+  // materialize classes for something the teacher shelved.
   const templates = await db.classTemplate.findMany({
-    where: { isActive: true, ...(teacherId ? { teacherId } : {}) },
+    where: { isActive: true, isArchived: false, ...(teacherId ? { teacherId } : {}) },
     include: { teacher: { select: { defaultTimezone: true } } },
   });
 

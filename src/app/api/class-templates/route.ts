@@ -62,10 +62,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // the cron only tops the rolling window up later. Failure is logged,
   // not returned: generation is guaranteed eventually by the cron, and
   // a 500 here would invite retrying a create that already succeeded.
+  // The catch is deliberately untestable at HTTP level and load-bearing:
+  // do not "simplify" it away.
   try {
     await generateClassInstances(prisma, undefined, session.teacherId);
   } catch (err) {
-    log.error({ err, templateId: template.id }, 'instance generation after template create failed');
+    // Generation is teacher-wide; templateId names the trigger, not
+    // necessarily the failing template.
+    log.error(
+      { err, teacherId: session.teacherId, templateId: template.id },
+      'instance generation after template create failed',
+    );
   }
 
   return respondOk(template, 201);

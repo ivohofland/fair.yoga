@@ -17,7 +17,6 @@ const teacherEmail = `tmpl-teacher-${uniqueSuffix}@test.local`;
 let teacherId: string;
 let roomId: string;
 let teacherRoomId: string;
-const createdTemplateIds: string[] = [];
 
 const BASE_URL = 'http://localhost:3000';
 const sessionCookie = `fair_yoga_session=${rawSessionToken}`;
@@ -92,7 +91,10 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma.class.deleteMany({ where: { templateId: { in: createdTemplateIds } } });
+  // By teacherId, not tracked ids: a test that dies between the POST
+  // and its bookkeeping must not leak rows that abort the rest of the
+  // cleanup chain (same pattern as the e2e suite).
+  await prisma.class.deleteMany({ where: { teacherId } });
   await prisma.classTemplate.deleteMany({ where: { teacherId } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId } });
   await prisma.room.delete({ where: { id: roomId } });
@@ -111,7 +113,6 @@ describe('POST /api/class-templates', () => {
     });
     expect(res.status).toBe(201);
     const { data: template } = (await res.json()) as { data: { id: string } };
-    createdTemplateIds.push(template.id);
 
     // The whole point: no cron ran, yet the schedule is populated.
     const instances = await prisma.class.findMany({
@@ -136,7 +137,6 @@ describe('PATCH /api/class-templates/[id]', () => {
     });
     expect(create.status).toBe(201);
     const { data: template } = (await create.json()) as { data: { id: string } };
-    createdTemplateIds.push(template.id);
     expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(4);
 
     // Simulate window drift: one instance vanishes (e.g. teacher-cancelled
@@ -183,5 +183,35 @@ describe('PATCH /api/class-templates/[id]', () => {
     // Explicit activation after un-archive is the "goes live" moment.
     expect((await toggle()).status).toBe(200);
     expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(4);
+  });
+
+  it('refuses to toggle an archived template — no instant classes for shelved things', async () => {
+    const create = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: sessionCookie },
+      body: JSON.stringify(templateBody('Shelved Flow')),
+    });
+    expect(create.status).toBe(201);
+    const { data: template } = (await create.json()) as { data: { id: string } };
+
+    const archive = await fetch(
+      `${BASE_URL}/api/class-templates/${template.id}?action=archive`,
+      { method: 'PATCH', headers: { Cookie: sessionCookie } },
+    );
+    expect(archive.status).toBe(200);
+    await prisma.class.deleteMany({ where: { templateId: template.id } });
+
+    const toggle = await fetch(`${BASE_URL}/api/class-templates/${template.id}`, {
+      method: 'PATCH',
+      headers: { Cookie: sessionCookie },
+    });
+    expect(toggle.status).toBe(409);
+
+    const after = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id: template.id },
+    });
+    expect(after.isActive).toBe(false);
+    expect(after.isArchived).toBe(true);
+    expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(0);
   });
 });

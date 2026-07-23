@@ -103,19 +103,32 @@ export const PATCH = withErrorHandler(async (
     return respondOk(updated);
   }
 
-  // Default: toggle active/paused
+  // Default: toggle active/paused. An archived template has no live
+  // half to toggle to — activating one would instantly materialize
+  // bookable classes for something the teacher shelved.
+  if (template.isArchived) {
+    return respondError('Unarchive the template before activating it', 409);
+  }
+
   const updated = await prisma.classTemplate.update({
     where: { id },
     data: { isActive: !template.isActive },
   });
 
   if (updated.isActive) {
-    // Re-activation is a "goes live" moment: top the window up now
-    // rather than waiting for the cron — same contract as create.
+    // Re-activation is a "goes live" moment: top the teacher's windows
+    // up now rather than waiting for the cron — same contract as
+    // create. The catch is deliberately untestable at HTTP level and
+    // load-bearing: do not "simplify" it away.
     try {
       await generateClassInstances(prisma, undefined, session.teacherId);
     } catch (err) {
-      log.error({ err, templateId: id }, 'instance generation after template activation failed');
+      // Generation is teacher-wide; templateId names the trigger, not
+      // necessarily the failing template.
+      log.error(
+        { err, teacherId: session.teacherId, templateId: id },
+        'instance generation after template activation failed',
+      );
     }
   }
 
