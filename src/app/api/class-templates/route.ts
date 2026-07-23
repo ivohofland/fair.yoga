@@ -9,6 +9,8 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { createClassTemplateSchema } from '@/lib/schemas';
+import { generateClassInstances } from '@/services/class-generator';
+import { log } from '@/lib/log';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -55,6 +57,16 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       autoCancelCheck: body.autoCancelCheck,
     },
   });
+
+  // The schedule must show the class the moment the template exists —
+  // the cron only tops the rolling window up later. Failure is logged,
+  // not returned: generation is guaranteed eventually by the cron, and
+  // a 500 here would invite retrying a create that already succeeded.
+  try {
+    await generateClassInstances(prisma, undefined, session.teacherId);
+  } catch (err) {
+    log.error({ err, templateId: template.id }, 'instance generation after template create failed');
+  }
 
   return respondOk(template, 201);
 });
