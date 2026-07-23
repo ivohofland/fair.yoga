@@ -10,8 +10,7 @@ import {
 } from '@/lib/api-utils';
 import { updateClassTemplateSchema } from '@/lib/schemas';
 import { syncTemplateInstances } from '@/services/template-sync';
-import { generateClassInstances } from '@/services/class-generator';
-import { log } from '@/lib/log';
+import { generateInstancesForTemplate } from '@/services/class-generator';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -110,27 +109,15 @@ export const PATCH = withErrorHandler(async (
     return respondError('Unarchive the template before activating it', 409);
   }
 
-  const updated = await prisma.classTemplate.update({
-    where: { id },
-    data: { isActive: !template.isActive },
+  const updated = await prisma.$transaction(async (tx) => {
+    const t = await tx.classTemplate.update({
+      where: { id },
+      data: { isActive: !template.isActive },
+      include: { teacher: { select: { defaultTimezone: true } } },
+    });
+    if (t.isActive) await generateInstancesForTemplate(tx, t);
+    return t;
   });
-
-  if (updated.isActive) {
-    // Re-activation is a "goes live" moment: top the teacher's windows
-    // up now rather than waiting for the cron — same contract as
-    // create. The catch is deliberately untestable at HTTP level and
-    // load-bearing: do not "simplify" it away.
-    try {
-      await generateClassInstances(prisma, undefined, session.teacherId);
-    } catch (err) {
-      // Generation is teacher-wide; templateId names the trigger, not
-      // necessarily the failing template.
-      log.error(
-        { err, teacherId: session.teacherId, templateId: id },
-        'instance generation after template activation failed',
-      );
-    }
-  }
 
   return respondOk(updated);
 });
