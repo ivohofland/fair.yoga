@@ -27,7 +27,7 @@ Yoga teachers who want to teach independently without relying on studios or larg
 People who attend yoga classes. They create one account (during their first booking), register for classes, and are charged a fair price based on their self-reported income tier. They control their own privacy settings. One account works across all teachers on the platform.
 
 ### Teacher's Personal Page
-Each teacher has a personal page (e.g., app.com/teachername) showing their profile and class schedule. This is the primary entry point for students. Teachers can optionally connect a custom domain. Students book directly from this page.
+Each teacher has a personal page (e.g., app.com/teachername) showing their profile and class schedule. This is the primary entry point for students. Students book directly from this page. (Connecting a custom domain on top of this page is a [non-goal](non-goals.md).)
 
 ---
 
@@ -164,7 +164,7 @@ Each teacher can customize room settings for their own practice:
 
 **Room creation flow:** When a teacher starts creating a room and enters an address, the system immediately searches the existing library and shows matches. The teacher can adopt an existing public room (with their own overrides) or create a new one. If a clear duplicate exists, the "Add to public library" option is not available — they can only use the existing room or keep theirs private.
 
-**Room base property management:** After creation, room base properties (capacity, equipment, amenities) are read-only. Teachers can suggest changes, which are reviewed and applied by an admin. Teacher-specific overrides (capacity, rate, equipment notes) are always freely editable by each teacher.
+**Room base property management:** Once a room is public, its base properties (address, capacity, equipment, amenities) are read-only for *everyone* — including the room's original creator, who may have left the platform or stopped maintaining it. Teachers can suggest changes, which a platform admin reviews and applies. Teacher-specific overrides (capacity, rate, equipment notes) are always freely editable by each teacher. *(The suggestion channel and admin room management are **deferred** — they need an admin surface that doesn't exist yet, the same dependency as duplicate merging below. The read-only lock itself is enforced today.)*
 
 **Room search:** The library is searchable by city or address. No map view needed for v1.
 
