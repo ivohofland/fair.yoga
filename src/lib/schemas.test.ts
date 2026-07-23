@@ -4,6 +4,7 @@ import {
   magicLinkSendSchema,
   passkeyAuthVerifySchema,
   createClassSchema,
+  updateClassSchema,
   updateTeacherSchema,
   isSafeRelativePath,
   MAX_CLASS_SIZE,
@@ -97,6 +98,24 @@ describe('class size caps', () => {
       maxStudents: 100_000_000,
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('updateClassSchema', () => {
+  it('accepts partial payloads — the undefined guards on refinements are load-bearing', () => {
+    // A locked-class save omits all economic fields; dropping the
+    // `=== undefined` guards would fail every such save.
+    expect(updateClassSchema.safeParse({ description: 'Bring a mat.' }).success).toBe(true);
+    expect(updateClassSchema.safeParse({ minRate: 30 }).success).toBe(true);
+  });
+
+  it('rejects economic inversions when both sides are present', () => {
+    expect(updateClassSchema.safeParse({ minRate: 30, targetRate: 20 }).success).toBe(false);
+    expect(updateClassSchema.safeParse({ minStudents: 8, maxStudents: 4 }).success).toBe(false);
+  });
+
+  it('rejects unknown fields — the schema is strict', () => {
+    expect(updateClassSchema.safeParse({ status: 'completed' }).success).toBe(false);
   });
 });
 
