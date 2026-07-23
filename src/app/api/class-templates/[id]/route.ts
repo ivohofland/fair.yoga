@@ -10,6 +10,8 @@ import {
 } from '@/lib/api-utils';
 import { updateClassTemplateSchema } from '@/lib/schemas';
 import { syncTemplateInstances } from '@/services/template-sync';
+import { generateClassInstances } from '@/services/class-generator';
+import { log } from '@/lib/log';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -106,6 +108,16 @@ export const PATCH = withErrorHandler(async (
     where: { id },
     data: { isActive: !template.isActive },
   });
+
+  if (updated.isActive) {
+    // Re-activation is a "goes live" moment: top the window up now
+    // rather than waiting for the cron — same contract as create.
+    try {
+      await generateClassInstances(prisma, undefined, session.teacherId);
+    } catch (err) {
+      log.error({ err, templateId: id }, 'instance generation after template activation failed');
+    }
+  }
 
   return respondOk(updated);
 });

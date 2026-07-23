@@ -126,3 +126,62 @@ describe('POST /api/class-templates', () => {
     }
   });
 });
+
+describe('PATCH /api/class-templates/[id]', () => {
+  it('re-activation tops the window back up; archive and pause do not generate', async () => {
+    const create = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: sessionCookie },
+      body: JSON.stringify(templateBody('Toggle Flow')),
+    });
+    expect(create.status).toBe(201);
+    const { data: template } = (await create.json()) as { data: { id: string } };
+    createdTemplateIds.push(template.id);
+    expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(4);
+
+    // Simulate window drift: one instance vanishes (e.g. teacher-cancelled
+    // long ago and pruned). Regeneration is what heals it.
+    const first = await prisma.class.findFirstOrThrow({
+      where: { templateId: template.id },
+      orderBy: { date: 'asc' },
+    });
+    await prisma.class.delete({ where: { id: first.id } });
+
+    const toggle = () =>
+      fetch(`${BASE_URL}/api/class-templates/${template.id}`, {
+        method: 'PATCH',
+        headers: { Cookie: sessionCookie },
+      });
+
+    // active → paused: no generation.
+    const pause = await toggle();
+    expect(pause.status).toBe(200);
+    expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(3);
+
+    // paused → active: the missing instance comes back.
+    const activate = await toggle();
+    expect(activate.status).toBe(200);
+    expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(4);
+
+    // Archive (forces inactive) after removing another instance: no generation,
+    // and un-archive leaves the template paused — still no generation.
+    const next = await prisma.class.findFirstOrThrow({
+      where: { templateId: template.id },
+      orderBy: { date: 'asc' },
+    });
+    await prisma.class.delete({ where: { id: next.id } });
+    const archive = () =>
+      fetch(`${BASE_URL}/api/class-templates/${template.id}?action=archive`, {
+        method: 'PATCH',
+        headers: { Cookie: sessionCookie },
+      });
+    expect((await archive()).status).toBe(200);
+    expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(3);
+    expect((await archive()).status).toBe(200); // un-archive
+    expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(3);
+
+    // Explicit activation after un-archive is the "goes live" moment.
+    expect((await toggle()).status).toBe(200);
+    expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(4);
+  });
+});
