@@ -8,6 +8,7 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import { classStartInstant } from '@/lib/timezone';
+import { log } from '@/lib/log';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -65,62 +66,37 @@ export function getNextOccurrences(
 // generateClassInstances
 // ---------------------------------------------------------------------------
 
+type TemplateWithTimezone = Prisma.ClassTemplateGetPayload<{
+  include: { teacher: { select: { defaultTimezone: true } } };
+}>;
+
 /**
- * Generates class instances for all active templates on a rolling 4-week
- * basis from `from` (defaults to today).
- *
- * Idempotent: skips dates that already have a class for the same template.
- *
- * @returns Total number of newly created class instances
+ * Generates the rolling 4-week window for ONE template, idempotently
+ * (`@@unique([templateId, date])` + P2002-skip). Accepts a transaction
+ * client so a route can create the template and its window atomically.
  */
-export async function generateClassInstances(
-  db: PrismaClient,
+export async function generateInstancesForTemplate(
+  db: PrismaClient | Prisma.TransactionClient,
+  template: TemplateWithTimezone,
   from?: Date,
-  teacherId?: string,
 ): Promise<number> {
   const startDate = from ?? new Date();
+  let created = 0;
 
-  // 1. Find active templates — all of them (cron) or one teacher's.
-  // isArchived is defense in depth: the routes keep archived templates
-  // inactive, but if that invariant ever slips, the generator must not
-  // materialize classes for something the teacher shelved.
-  const templates = await db.classTemplate.findMany({
-    where: { isActive: true, isArchived: false, ...(teacherId ? { teacherId } : {}) },
-    include: { teacher: { select: { defaultTimezone: true } } },
-  });
+  const dates = getNextOccurrences(template.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
+    .filter(
+      (date) =>
+        classStartInstant(date, template.startTime, template.teacher.defaultTimezone) >
+        startDate,
+    )
+    .slice(0, DEFAULT_WEEKS);
 
-  let totalCreated = 0;
+  for (const date of dates) {
+    const existing = await db.class.findFirst({ where: { templateId: template.id, date } });
+    if (existing) continue;
 
-  for (const template of templates) {
-    // 2. The next 4 occurrences whose start is still ahead of `startDate`.
-    // A run after today's start time must not create a class that already
-    // happened; the window slides one week further instead.
-    const dates = getNextOccurrences(template.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
-      .filter(
-        (date) =>
-          classStartInstant(date, template.startTime, template.teacher.defaultTimezone) >
-          startDate,
-      )
-      .slice(0, DEFAULT_WEEKS);
-
-    for (const date of dates) {
-      // 3. Check if a class already exists for this template + date
-      const existing = await db.class.findFirst({
-        where: {
-          templateId: template.id,
-          date,
-        },
-      });
-
-      if (existing) {
-        continue;
-      }
-
-      // 4. Create the class instance. The @@unique([templateId, date])
-      // constraint is the real idempotency guard — overlapping cron runs
-      // both passing the findFirst check race into a P2002, not a duplicate.
-      try {
-        await db.class.create({
+    try {
+      await db.class.create({
         data: {
           teacherId: template.teacherId,
           teacherRoomId: template.teacherRoomId,
@@ -139,17 +115,52 @@ export async function generateClassInstances(
           autoCancelCheck: template.autoCancelCheck,
           status: 'open',
         },
-        });
-      } catch (err) {
-        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-          continue; // a concurrent run created this instance first
-        }
-        throw err;
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        continue; // a concurrent run created this instance first
       }
+      throw err;
+    }
+    created++;
+  }
 
-      totalCreated++;
+  return created;
+}
+
+/**
+ * Cron entry point: tops up the rolling window for all active templates
+ * (or one teacher's). Each template is isolated — one template whose
+ * generation throws is logged and skipped, the rest still generate, and
+ * the first error is rethrown at the end for job-health visibility.
+ */
+export async function generateClassInstances(
+  db: PrismaClient | Prisma.TransactionClient,
+  from?: Date,
+  teacherId?: string,
+): Promise<number> {
+  const startDate = from ?? new Date();
+
+  const templates = await db.classTemplate.findMany({
+    where: { isActive: true, isArchived: false, ...(teacherId ? { teacherId } : {}) },
+    include: { teacher: { select: { defaultTimezone: true } } },
+  });
+
+  let totalCreated = 0;
+  const errors: unknown[] = [];
+
+  for (const template of templates) {
+    try {
+      totalCreated += await generateInstancesForTemplate(db, template, startDate);
+    } catch (err) {
+      log.error(
+        { err, templateId: template.id, teacherId: template.teacherId },
+        'class generation failed for template',
+      );
+      errors.push(err);
     }
   }
 
+  if (errors.length > 0) throw errors[0];
   return totalCreated;
 }
