@@ -208,6 +208,29 @@ describe('generateClassInstances (DB)', () => {
     });
   });
 
+  it('skips archived templates even when isActive is stale-true', async () => {
+    // Defense in depth: the routes keep archived templates inactive, but
+    // a slipped invariant must not let the sweep materialize classes for
+    // something the teacher shelved.
+    await prisma.classTemplate.update({
+      where: { id: templateId },
+      data: { isActive: true, isArchived: true },
+    });
+    await prisma.class.deleteMany({ where: { templateId } });
+
+    const from = new Date('2026-04-06T00:00:00.000Z');
+    const count = await generateClassInstances(prisma, from);
+
+    expect(count).toBe(0);
+    expect(await prisma.class.count({ where: { templateId } })).toBe(0);
+
+    // Restore for the tests that follow
+    await prisma.classTemplate.update({
+      where: { id: templateId },
+      data: { isActive: true, isArchived: false },
+    });
+  });
+
   it("skips today's occurrence when its start has already passed", async () => {
     // Tuesday 2026-04-07 at 18:00 UTC — hours after the template's 09:00
     // Amsterdam start. The run must not create a class earlier the same

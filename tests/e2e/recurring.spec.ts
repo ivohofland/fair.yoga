@@ -10,7 +10,7 @@ import { accountIdOfTeacher } from './account-helpers';
  * The recurring-class lifecycle, end to end: template created through
  * the settings UI → creation itself fills the rolling four-week window
  * → instances are real open classes on the schedule. Also pins cron
- * idempotency: re-firing tops up later weeks without duplicating.
+ * idempotency: re-firing over the already-filled window creates nothing.
  */
 
 const prisma = new PrismaClient();

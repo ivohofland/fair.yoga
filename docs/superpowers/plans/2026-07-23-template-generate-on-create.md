@@ -469,3 +469,25 @@ Spec: \`docs/superpowers/specs/2026-07-23-template-generate-on-create-design.md\
 ```
 
 - [ ] **Step 3: Report the PR URL**
+
+---
+
+## Revision (2026-07-23, post-review)
+
+Reality diverged from this plan in three places; the shipped code is right,
+the plan text above is not:
+
+- **Task 1's test code is wrong about weekdays.** The schema convention is
+  0=Monday (`docs/data-model.md`), so `DAY_OF_WEEK = 3` is Thursday, not
+  Wednesday, and `getUTCDay()` (0=Sunday) returns 4 for it — the plan's
+  assertion would fail against a correct implementation. The shipped test
+  derives `EXPECTED_JS_DAY = (DAY_OF_WEEK + 1) % 7`, the same conversion
+  `class-generator.ts` uses.
+- **Task 3's grep also matches** the untracked historical audit
+  `docs/audits/2026-07-17-security-setup.md` in a working tree; that hit is
+  expected and fine (the deletion resolves that audit's open item 11).
+- **The review round added hardening beyond this plan:** the PATCH toggle
+  refuses archived templates (409), the generator's sweep filters
+  `isArchived: false` as defense in depth (with a service test), the
+  failure logs carry `teacherId`, and the integration `afterAll` cleans by
+  `teacherId` rather than tracked ids.
