@@ -116,9 +116,36 @@ describe('estimateAttendanceSpread', () => {
       viewerTier: 3,
     });
     // Floor: max(2, 2+1) = 3 → [1,5,3]: rate 15+10*(3-2)/8 = 16.25,
-    // total 36.25, sum ratios 3.0 → viewer pays 12.0833.
+    // total 36.25, sum ratios 3.0 → base share 12.0833; largest-remainder
+    // flooring pays the viewer exactly 12.08 (the spare cent goes to the
+    // tier-1 student, whose remainder is larger).
     expect(spread.high).toBeCloseTo(12.08, 2);
     expect(spread.low).toBeLessThan(spread.high);
+  });
+
+  it('quotes the viewer, not a padded attendee (viewer tier 1, exact)', () => {
+    const spread = estimateAttendanceSpread({ ...base, registeredTiers: [], viewerTier: 1 });
+    // Floor [1,3]: total 35, ratios 1.65 → tier 1 pays 13.79. Ceiling
+    // [1, 3×9]: total 45, ratios 9.65 → 3.03. A viewer-indexing bug pays
+    // them a padded tier-3 share instead (4.50–17.50) — the tier-3-viewer
+    // tests above can't see that, their price equals the padding's.
+    expect(spread.high).toBeCloseTo(13.79, 2);
+    expect(spread.low).toBeCloseTo(3.03, 2);
+  });
+
+  it('clamps a pathological stored min/max to MAX_CLASS_SIZE', () => {
+    // Same guard as estimateTierPrices: a corrupt row must not size the
+    // padding loop on a public page.
+    const spread = estimateAttendanceSpread({
+      ...base,
+      minStudents: 100_000,
+      maxStudents: 100_000,
+      registeredTiers: [],
+      viewerTier: 3,
+    });
+    expect(Number.isFinite(spread.low)).toBe(true);
+    expect(Number.isFinite(spread.high)).toBe(true);
+    expect(spread.low).toBeLessThanOrEqual(spread.high);
   });
 
   it('collapses to a point when the class is already at capacity', () => {
