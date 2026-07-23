@@ -136,13 +136,12 @@ The teacher has a persistent bottom tab bar (64px, Lucide-style line icons) with
 - Each class shows: date, time, location, available spots (or "waitlist")
 - Copy page URL button (app.com/teachername)
 - Share buttons for social media
-- *Leads to:* 4.2 Custom Domain Settings, 4.3 Class Share
+- *Leads to:* 4.3 Class Share
 
-### 4.2 — Custom Domain Settings
-- Enter custom domain (e.g., yoga.janedoe.nl)
-- DNS instructions displayed
-- Status indicator: connected / pending / not configured
-- *Accessible from:* Settings
+### 4.2 — Custom Domain Settings — **non-goal**
+Not built and not planned: per-teacher custom domains need perpetual TLS
+automation on a single VPS, which doesn't fit this project. Teachers get a
+public page at their `pageSlug`. See [Non-Goals](non-goals.md).
 
 ### 4.3 — Class Share
 - Specific class URL to copy
@@ -284,7 +283,7 @@ The teacher has a persistent bottom tab bar (64px, Lucide-style line icons) with
 ### 9.1 — Profile Settings
 - Edit name, photo, bio (max 250 chars)
 - Personal page URL display
-- Custom domain configuration (→ 4.2)
+- ~~Custom domain configuration~~ — non-goal (see [Non-Goals](non-goals.md))
 
 ### 9.2 — Bank Details (Level 1)
 - IBAN and account holder name
