@@ -126,9 +126,17 @@ test.describe('Recurring classes', () => {
     });
     templateId = template.id;
     expect(template.isActive).toBe(true);
+
+    // No cron has fired: creation itself filled the four-week window,
+    // and the schedule shows it immediately.
+    expect(await prisma.class.count({ where: { templateId } })).toBe(4);
+    await page.goto('/');
+    await expect(page.getByText('Recurring Flow').first()).toBeVisible();
   });
 
-  test('the generation cron fills the four-week window, idempotently', async () => {
+  // Creation already filled the window; the cron's job is topping up
+  // later weeks and never duplicating what exists.
+  test('the generation cron is idempotent over the already-filled window', async () => {
     const fire = () =>
       fetch('http://localhost:3000/api/cron/generate-classes', {
         method: 'POST',
