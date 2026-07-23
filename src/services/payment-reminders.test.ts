@@ -150,6 +150,21 @@ describe('payment reminders (DB)', () => {
     expect(reReminded.reminderSentAt?.getTime()).toBe(eightDaysLater.getTime());
   });
 
+  it('leaves an overdue payment a recent manual send already stamped', async () => {
+    // A manual reminder stamps reminderSentAt regardless of who sent it; a
+    // recent stamp (inside the 7-day window) must defer the automatic sweep,
+    // the cross-service coupling the Send-reminder button relies on. Stamped a
+    // day ago so "skipped" (stamp unchanged) is distinguishable from "re-sent"
+    // (stamp becomes `now`).
+    const manualStamp = new Date(now.getTime() - 1 * DAY);
+    const payment = await makePayment(new Date(now.getTime() - 10 * DAY), 'overdue', manualStamp);
+
+    await sendPaymentReminders(prisma, now);
+
+    const after = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+    expect(after.reminderSentAt?.getTime()).toBe(manualStamp.getTime());
+  });
+
   it('creates a calm reminder notification with the amount', async () => {
     const payment = await makePayment(new Date(now.getTime() - 9 * DAY), 'overdue');
     await sendPaymentReminders(prisma, now);

@@ -39,7 +39,10 @@ export function usePaymentActions(initial: Record<string, string>) {
     }
   }
 
-  async function undo(paymentId: string) {
+  // Returns whether the undo succeeded, so a caller that refreshes on success
+  // (the payments overview) can keep a failed undo's error on screen instead
+  // of refreshing the row — and its error — away.
+  async function undo(paymentId: string): Promise<boolean> {
     setUpdating(paymentId);
     setError('');
     try {
@@ -52,11 +55,13 @@ export function usePaymentActions(initial: Record<string, string>) {
           next.delete(paymentId);
           return next;
         });
-      } else {
-        setError(await readErrorMessage(res, 'Could not undo. Try again.'));
+        return true;
       }
+      setError(await readErrorMessage(res, 'Could not undo. Try again.'));
+      return false;
     } catch {
       setError('Network error. Try again.');
+      return false;
     } finally {
       setUpdating(null);
     }

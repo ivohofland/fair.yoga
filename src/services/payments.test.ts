@@ -210,8 +210,9 @@ describe('Payment Service (DB)', () => {
   });
 
   it('sendPaymentReminder refuses a paid payment and sends nothing', async () => {
-    // The payment is 'paid' here (re-marked just above). A settled payment
-    // has nothing to chase — the guard must reject it without notifying.
+    // A settled payment has nothing to chase — the guard must reject it
+    // without notifying. Set paid here rather than leaning on a prior test.
+    await prisma.payment.update({ where: { id: paymentId }, data: { status: 'paid' } });
     const before = await prisma.notification.count({
       where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
     });

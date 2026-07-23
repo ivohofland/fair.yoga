@@ -30,6 +30,9 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
   const [remindedAt, setRemindedAt] = useState<Record<string, Date | null>>(() =>
     Object.fromEntries(items.map((item) => [item.paymentId, item.reminderSentAt])),
   );
+  // Reminder failures surface in the shared top region (below), never in the
+  // action cluster where a long message would overflow the row on a phone.
+  const [reminderError, setReminderError] = useState('');
 
   if (items.length === 0) {
     return (
@@ -44,9 +47,9 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
     <div className="py-6">
       <h2 className="type-subtitle mb-3">Payments</h2>
 
-      {error && (
+      {(error || reminderError) && (
         <p role="alert" className="text-danger text-sm mb-3">
-          {error}
+          {error || reminderError}
         </p>
       )}
 
@@ -57,6 +60,7 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
           const isOutstanding = status === 'pending' || status === 'overdue';
           const isUpdating = updating === item.paymentId;
           const reminded = remindedAt[item.paymentId];
+          const stateText = paymentStateText(status);
 
           return (
             <div
@@ -68,9 +72,7 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
                   {item.studentName}
                 </Link>
                 {/* Payment state is text, never a badge — unpaid stays calm brown */}
-                <span className={`type-caption ${paymentStateText(status).className}`}>
-                  {paymentStateText(status).label}
-                </span>
+                <span className={`type-caption ${stateText.className}`}>{stateText.label}</span>
                 {reminded && <span className="type-caption">Reminded {timeAgo(reminded)}</span>}
               </div>
 
@@ -86,6 +88,7 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
                     onSent={(date) =>
                       setRemindedAt((prev) => ({ ...prev, [item.paymentId]: date }))
                     }
+                    onError={setReminderError}
                   />
                 )}
                 <button
