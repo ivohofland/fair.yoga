@@ -92,8 +92,17 @@ export async function startScheduler(): Promise<void> {
       name: 'class-generation',
       intervalMs: 60 * MINUTE,
       run: async (db) => {
-        await generateClassInstances(db);
-        await generateStudioClassInstances(db);
+        const sweeps = [generateClassInstances, generateStudioClassInstances];
+        const errors: unknown[] = [];
+        for (const sweep of sweeps) {
+          try {
+            await sweep(db);
+          } catch (err) {
+            log.error({ err, sweep: sweep.name }, 'class-generation sweep failed');
+            errors.push(err);
+          }
+        }
+        if (errors.length > 0) throw errors[0];
       },
     },
     {
