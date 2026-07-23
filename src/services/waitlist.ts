@@ -257,11 +257,10 @@ export async function removeFromWaitlist(
 }
 
 /**
- * Promotes a waiting student: creates a Registration, links it to the
- * waitlist entry, notifies the student, and reorders remaining positions.
- *
- * Without `entryId`, the queue head is promoted; with `entryId`, that
- * specific entry is promoted (teacher's explicit choice).
+ * Promotes the head of the waitlist queue: creates a Registration, links it
+ * to the waitlist entry, notifies the student, and reorders remaining
+ * positions. Stale heads (a student who booked directly but whose `waiting`
+ * row survives) are dropped and skipped rather than promoted.
  *
  * Guards (all inside the transaction, serialized by a FOR UPDATE lock on
  * the class row shared with the registration route):
@@ -275,7 +274,7 @@ export async function removeFromWaitlist(
 export async function promoteNext(
   db: PrismaClient,
   classId: string,
-  opts: { entryId?: string; now?: Date } = {},
+  opts: { now?: Date } = {},
 ): Promise<WaitlistEntry | null> {
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
@@ -313,51 +312,28 @@ export async function promoteNext(
       throw new WaitlistPromotionError('Class is full', 'class_full');
     }
 
-    // Find the entry to promote. Entries can go stale — a student books the
-    // class directly and their `waiting` row survives. A stale head must be
-    // dropped, not promoted: promoting it would violate the unique
+    // Find the queue head to promote. Entries can go stale — a student books
+    // the class directly and their `waiting` row survives. A stale head must
+    // be dropped, not promoted: promoting it would violate the unique
     // (classId, studentId) registration constraint and wedge the queue.
     let nextEntry: WaitlistEntry | null = null;
-    if (opts.entryId) {
+    for (;;) {
       const candidate = await tx.waitlistEntry.findFirst({
-        where: { id: opts.entryId, classId, status: 'waiting' },
+        where: { classId, status: 'waiting' },
+        orderBy: { position: 'asc' },
       });
-      if (candidate && (await hasActiveRegistration(tx, classId, candidate.studentId))) {
-        await tx.waitlistEntry.update({
-          where: { id: candidate.id },
-          data: { status: 'removed' },
-        });
-        await reorderWaitingEntries(tx, classId);
-        throw new WaitlistPromotionError(
-          'This student already has a registration for the class',
-          'entry_not_waiting',
-        );
+      if (!candidate) break;
+      if (!(await hasActiveRegistration(tx, classId, candidate.studentId))) {
+        nextEntry = candidate;
+        break;
       }
-      nextEntry = candidate;
-    } else {
-      for (;;) {
-        const candidate = await tx.waitlistEntry.findFirst({
-          where: { classId, status: 'waiting' },
-          orderBy: { position: 'asc' },
-        });
-        if (!candidate) break;
-        if (!(await hasActiveRegistration(tx, classId, candidate.studentId))) {
-          nextEntry = candidate;
-          break;
-        }
-        await tx.waitlistEntry.update({
-          where: { id: candidate.id },
-          data: { status: 'removed' },
-        });
-      }
+      await tx.waitlistEntry.update({
+        where: { id: candidate.id },
+        data: { status: 'removed' },
+      });
     }
 
-    if (!nextEntry) {
-      if (opts.entryId) {
-        throw new WaitlistPromotionError('Waitlist entry is not waiting', 'entry_not_waiting');
-      }
-      return null;
-    }
+    if (!nextEntry) return null;
 
     // Look up the student to get their incomeTier
     const student = await tx.student.findUniqueOrThrow({
