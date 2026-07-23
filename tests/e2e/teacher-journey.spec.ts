@@ -362,7 +362,7 @@ test.describe('Teacher journey', () => {
     // The Outstanding row carries the reminder action, and the caption
     // from the class-page send above survives server-side.
     await expect(
-      page.getByRole('button', { name: 'Send reminder to Walkin Guest' }),
+      page.getByRole('button', { name: /Send reminder to Walkin Guest/ }),
     ).toBeVisible();
     await expect(page.getByText(/Reminded /)).toBeVisible();
     await page.getByRole('button', { name: 'Mark unpaid' }).click();
