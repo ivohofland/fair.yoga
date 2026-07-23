@@ -216,16 +216,17 @@ The teacher has a persistent bottom tab bar (64px, Lucide-style line icons) with
 ### 7.2 — Payment Checklist (Level 1)
 - List of students with amount owed per student
 - Paid / unpaid toggle per student (manual marking)
-- "Send reminder" per unpaid row (individual, with "Reminded …" history — no bulk send)
+- "Send reminder" per unpaid row (individual; shows when it was last reminded — no bulk send)
 - Total received vs. total outstanding
 - *Leads to:* 7.3 Payment Overview
 
 ### 7.3 — Payment Overview
-- Cross-class view of all outstanding payments
-- Filter by class, date range, or student
-- Total outstanding, total received, total earned
-- Per-student outstanding balance
-- *Accessible from:* Dashboard, Settings
+- Cross-class view, split into Outstanding and Received
+- Per-row "Send reminder" on outstanding payments (same control as 7.2)
+- Total outstanding, total received
+- Filter by class, date range, or student *(not yet built)*
+- Per-student outstanding balance *(not yet built)*
+- *Accessible from:* Settings → Payments
 
 ### 7.4 — Payment Processor Settings (Level 2)
 - Connect Mollie or Stripe account

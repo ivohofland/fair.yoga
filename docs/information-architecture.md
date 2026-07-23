@@ -264,7 +264,7 @@ Open app → Schedule tab (see this week)
   → Tap yesterday's class → Class detail (completed)
     → Check pricing breakdown
       → Mark payments received
-        → Send reminder to unpaid students
+        → Send a reminder on any still-unpaid row (one tap, per payment)
 ```
 
 ### Flow 3: Adding a walk-in
@@ -278,10 +278,9 @@ Class detail (today) → "Add walk-in" button
 ### Flow 4: Checking payments
 
 ```
-Schedule tab → "Payments" button
-  → Payment overview (all outstanding)
-    → Filter by class or student
-      → Tap student → Send individual reminder
+Settings tab → "Payments"
+  → Payment overview (Outstanding / Received)
+    → Tap "Send reminder" on an outstanding row (per-payment, inline)
 ```
 
 ### Flow 5: Sending an announcement
@@ -302,7 +301,7 @@ Not everything needs a full page. These actions work as modals, half-sheets, or 
 | Log studio class | Half-sheet (quick entry) |
 | Add walk-in | Half-sheet (search + confirm) |
 | Share class link | Bottom sheet (URL + share buttons) |
-| Send payment reminder | One tap, per payment — the visible "Reminded …" history replaces a confirm |
+| Send payment reminder | One tap, per payment (inline, not a modal) — the visible "Reminded …" stamp replaces a confirm |
 | Cancel class | Confirmation dialog with explanation |
 | Add student to CRM | Half-sheet or full page depending on bulk import |
 
@@ -331,8 +330,8 @@ The IA consolidates 36 screens into a leaner structure:
 | Students tab | 3 | Student list, student detail, send announcement |
 | Inbox tab | 1 | Notification list |
 | Settings tab | 4 | Profile, rooms (list + create + edit), payments, notifications |
-| Modals / overlays | 5 | Studio class entry, add walk-in, share sheet, reminders, cancel confirmation |
-| **Total** | **19** | Down from 36 by merging and adapting |
+| Modals / overlays | 4 | Studio class entry, add walk-in, share sheet, cancel confirmation (reminders are inline, not a modal) |
+| **Total** | **18** | Down from 36 by merging and adapting |
 
 ---
 

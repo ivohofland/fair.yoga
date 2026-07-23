@@ -118,13 +118,18 @@ export async function unmarkPaymentPaid(
  * Send a payment reminder: creates the student's reminder notification and
  * stamps reminderSentAt in one transaction. Stamping alone would *suppress*
  * the next scheduled reminder without ever nudging the student.
+ *
+ * Only valid on an outstanding ('pending' or 'overdue') payment. The guard is
+ * fail-closed and lives here, not just in the UI: dunning a student who has
+ * already paid is the one failure this feature must never produce, and the
+ * check inside the transaction can't be raced past by a stale second tab.
  */
 export async function sendPaymentReminder(
   db: PrismaClient,
   paymentId: string,
-): Promise<Payment> {
-  return db.$transaction(async (tx) => {
-    const payment = await tx.payment.findUniqueOrThrow({
+): Promise<PaymentResult> {
+  return db.$transaction(async (tx): Promise<PaymentResult> => {
+    const payment = await tx.payment.findUnique({
       where: { id: paymentId },
       include: {
         registration: {
@@ -132,6 +137,14 @@ export async function sendPaymentReminder(
         },
       },
     });
+
+    if (!payment) return { ok: false, error: `Payment not found: ${paymentId}` };
+    if (payment.status !== 'pending' && payment.status !== 'overdue') {
+      return {
+        ok: false,
+        error: `Cannot send a reminder: current status is "${payment.status}". Must be "pending" or "overdue".`,
+      };
+    }
 
     await createBulkNotifications(tx, [
       {
@@ -144,10 +157,11 @@ export async function sendPaymentReminder(
       },
     ]);
 
-    return tx.payment.update({
+    const updated = await tx.payment.update({
       where: { id: paymentId },
       data: { reminderSentAt: new Date() },
     });
+    return { ok: true, payment: updated };
   });
 }
 

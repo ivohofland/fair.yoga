@@ -153,7 +153,7 @@ describe('POST /api/payments/[id]/remind', () => {
     expect(res.status).toBe(403);
     expect(
       await prisma.notification.count({
-        where: { recipientType: 'student', recipientId: studentId },
+        where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
       }),
     ).toBe(0);
   });
@@ -175,5 +175,26 @@ describe('POST /api/payments/[id]/remind', () => {
 
     const stamped = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(stamped.reminderSentAt).not.toBeNull();
+  });
+
+  it('409s a payment that is already paid, sending nothing', async () => {
+    await prisma.payment.update({ where: { id: paymentId }, data: { status: 'paid' } });
+    const before = await prisma.notification.count({
+      where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
+    });
+
+    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/remind`, {
+      method: 'POST',
+      headers: cookie(teacherToken),
+    });
+    expect(res.status).toBe(409);
+
+    const after = await prisma.notification.count({
+      where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
+    });
+    expect(after).toBe(before);
+
+    // Leave the fixture pending for cleanup symmetry.
+    await prisma.payment.update({ where: { id: paymentId }, data: { status: 'pending' } });
   });
 });
