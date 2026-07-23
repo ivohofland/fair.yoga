@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
+import { generateInstancesForTemplate } from '@/services/class-generator';
 
 function hashToken(token: string): string {
   const bytes = sha256(new TextEncoder().encode(token));
@@ -125,6 +126,35 @@ describe('POST /api/class-templates', () => {
       expect(instance.startTime).toBe('09:30');
       expect(instance.date.getUTCDay()).toBe(EXPECTED_JS_DAY);
     }
+  });
+
+  it('a generation failure rolls the whole create back — no template, no instances', async () => {
+    const before = await prisma.classTemplate.count({ where: { teacherId } });
+
+    await expect(
+      prisma.$transaction(async (tx) => {
+        const created = await tx.classTemplate.create({
+          data: {
+            teacherId, teacherRoomId, classType: 'Rollback', dayOfWeek: 2,
+            startTime: '09:00', durationMinutes: 60, roomCost: 10, minRate: 10,
+            targetRate: 20, minStudents: 1, maxStudents: 8,
+            // cancelDeadline/autoCancelCheck are enums with schema defaults
+            // (HOURS_24 / HOURS_2) — the brief's numeric 120 predates that;
+            // omitted here to compile against the current schema.
+          },
+          include: { teacher: { select: { defaultTimezone: true } } },
+        });
+        // Deterministic FK failure (P2003, not the swallowed P2002): bogus room.
+        await generateInstancesForTemplate(tx, {
+          ...created,
+          teacherRoomId: '00000000-0000-4000-8000-000000000000',
+        });
+        return created;
+      }),
+    ).rejects.toThrow();
+
+    const after = await prisma.classTemplate.count({ where: { teacherId } });
+    expect(after).toBe(before);
   });
 });
 

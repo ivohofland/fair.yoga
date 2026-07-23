@@ -9,8 +9,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { createClassTemplateSchema } from '@/lib/schemas';
-import { generateClassInstances } from '@/services/class-generator';
-import { log } from '@/lib/log';
+import { generateInstancesForTemplate } from '@/services/class-generator';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -39,41 +38,29 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return respondError('Invalid teacher room', 400);
   }
 
-  const template = await prisma.classTemplate.create({
-    data: {
-      teacherId: session.teacherId,
-      teacherRoomId: body.teacherRoomId,
-      classType: body.classType,
-      description: body.description,
-      dayOfWeek: body.dayOfWeek,
-      startTime: body.startTime,
-      durationMinutes: body.durationMinutes,
-      roomCost: body.roomCost,
-      minRate: body.minRate,
-      targetRate: body.targetRate,
-      minStudents: body.minStudents,
-      maxStudents: body.maxStudents,
-      cancelDeadline: body.cancelDeadline,
-      autoCancelCheck: body.autoCancelCheck,
-    },
+  const template = await prisma.$transaction(async (tx) => {
+    const created = await tx.classTemplate.create({
+      data: {
+        teacherId: session.teacherId,
+        teacherRoomId: body.teacherRoomId,
+        classType: body.classType,
+        description: body.description,
+        dayOfWeek: body.dayOfWeek,
+        startTime: body.startTime,
+        durationMinutes: body.durationMinutes,
+        roomCost: body.roomCost,
+        minRate: body.minRate,
+        targetRate: body.targetRate,
+        minStudents: body.minStudents,
+        maxStudents: body.maxStudents,
+        cancelDeadline: body.cancelDeadline,
+        autoCancelCheck: body.autoCancelCheck,
+      },
+      include: { teacher: { select: { defaultTimezone: true } } },
+    });
+    await generateInstancesForTemplate(tx, created);
+    return created;
   });
-
-  // The schedule must show the class the moment the template exists —
-  // the cron only tops the rolling window up later. Failure is logged,
-  // not returned: generation is guaranteed eventually by the cron, and
-  // a 500 here would invite retrying a create that already succeeded.
-  // The catch is deliberately untestable at HTTP level and load-bearing:
-  // do not "simplify" it away.
-  try {
-    await generateClassInstances(prisma, undefined, session.teacherId);
-  } catch (err) {
-    // Generation is teacher-wide; templateId names the trigger, not
-    // necessarily the failing template.
-    log.error(
-      { err, teacherId: session.teacherId, templateId: template.id },
-      'instance generation after template create failed',
-    );
-  }
 
   return respondOk(template, 201);
 });
