@@ -329,14 +329,15 @@ export async function GET(request: Request) {
 
 ## Cron Jobs
 
-Two scheduled tasks running within the Next.js process (via `node-cron` or triggered by an external cron hitting an API endpoint):
+Five idempotent jobs run in-process on `setInterval`, started once when the Node server boots (`src/lib/scheduler.ts`, wired from `instrumentation.ts`). The `/api/cron/*` endpoints remain for manual runs and external schedulers.
 
 | Job | Schedule | What it does |
 |---|---|---|
-| Class generator | Daily at 02:00 | Creates class instances for the next 4 weeks from active templates |
-| Auto-cancel check | Every 15 minutes | Checks classes approaching their auto_cancel_check time, cancels if below min_students |
+| Class transitions | Every minute | Advances open → in_progress, auto-cancels classes below min_students, auto-completes finished ones |
 | Email fallback | Every 5 minutes | Sends email for unread notifications older than 30 minutes |
-| Payment reminders | Daily at 10:00 | Sends reminder for pending payments older than 48 hours |
+| Class generation | Every hour | Extends recurring class and studio-class instances on the rolling 4-week window |
+| Payment reminders | Every hour | Flips pending payments to overdue after 7 days, then reminds on overdue payments not reminded in the last 7 days |
+| Auth cleanup | Daily | Purges expired sessions and auth tokens |
 
 ---
 

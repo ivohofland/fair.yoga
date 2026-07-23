@@ -239,7 +239,7 @@ The teacher owns the payment account and the relationship with the processor. Th
 
 **Open payments:** Students with unpaid classes are not blocked from booking. Instead, they see a friendly reminder during the booking flow ("You have 2 open payments"). No blocking in v1 — visibility is enough.
 
-**Payment reminders:** Level 1 teachers can send a payment reminder through the system. The teacher triggers it manually — no automated nagging.
+**Payment reminders:** Level 1 teachers can send a payment reminder manually at any time, one tap per outstanding payment. The system also sends a single gentle reminder once a payment goes overdue, repeated at most once a week — a quiet nudge, never a barrage. A manual send resets that weekly clock, so frequent manual reminders replace the automatic one rather than stacking on top of it.
 
 **Open questions:**
 - How to handle failed payments in Level 2? Retry policy? (parked — v1 Level 2 is payment links, not automated charging)

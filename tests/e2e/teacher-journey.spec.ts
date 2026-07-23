@@ -8,7 +8,8 @@ import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
 /**
  * The core product loop, end to end through the UI:
  * room → class wizard → publish → booking arrives (inbox) → check-in with a
- * walk-in → complete → pricing + payments → mark paid.
+ * walk-in → complete → pricing + payments → mark paid → remind an unpaid row
+ * → correct a payment on the overview.
  */
 
 const prisma = new PrismaClient();
@@ -337,7 +338,11 @@ test.describe('Teacher journey', () => {
     await signInTeacher(context);
     await page.goto(`/class/${classId}`);
 
-    // The walk-in's payment is the unpaid row; paid rows offer nothing.
+    // The walk-in's payment is the unpaid row; the paid row (Journey Student)
+    // offers no reminder — you can't dun someone you've marked as paid.
+    await expect(
+      page.getByRole('button', { name: /Send reminder to Journey Student/ }),
+    ).toHaveCount(0);
     await page.getByRole('button', { name: 'Send reminder to Walkin Guest' }).click();
     await expect(page.getByText(/Reminded just now/)).toBeVisible();
 
@@ -345,8 +350,9 @@ test.describe('Teacher journey', () => {
       where: { registration: { classId, studentId: walkInStudentId } },
     });
     expect(reminded?.reminderSentAt).not.toBeNull();
-    // The walk-in never signs in, so the notification is pinned in the
-    // DB; /updates rendering is covered by the updates e2e.
+    // The walk-in never signs in, so the notification is pinned in the DB.
+    // The /updates row rendering is type-agnostic and pinned in
+    // student-journey.spec.ts (promotion/announcement notifications).
     const notification = await prisma.notification.findFirst({
       where: { recipientType: 'student', recipientId: walkInStudentId, type: 'reminder' },
     });
@@ -359,11 +365,13 @@ test.describe('Teacher journey', () => {
 
     // The payment marked paid in the previous test sits under Received.
     await expect(page.getByRole('heading', { name: 'Received' })).toBeVisible();
-    // The Outstanding row carries the reminder action, and the caption
-    // from the class-page send above survives server-side.
+    // The Outstanding row carries the reminder action. On this cross-class
+    // surface the aria-label appends the class context ("… for {class} · {day}")
+    // so two rows for one student stay tellable apart; the "for " pins that.
     await expect(
-      page.getByRole('button', { name: /Send reminder to Walkin Guest/ }),
+      page.getByRole('button', { name: /Send reminder to Walkin Guest for / }),
     ).toBeVisible();
+    // The caption from the class-page send above survives the server read.
     await expect(page.getByText(/Reminded /)).toBeVisible();
     await page.getByRole('button', { name: 'Mark unpaid' }).click();
     // Wait for the POST, then reload (see the publish test): the row's

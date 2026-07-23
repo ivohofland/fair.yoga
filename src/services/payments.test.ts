@@ -118,6 +118,7 @@ describe('Payment Service (DB)', () => {
 
   afterAll(async () => {
     // Clean up in dependency order
+    await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
     await prisma.payment.deleteMany({ where: { registrationId } });
     await prisma.registration.deleteMany({ where: { classId } });
     await prisma.class.delete({ where: { id: classId } });
@@ -208,10 +209,37 @@ describe('Payment Service (DB)', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('sendPaymentReminder sets reminderSentAt', async () => {
-    const payment = await sendPaymentReminder(prisma, paymentId);
+  it('sendPaymentReminder refuses a paid payment and sends nothing', async () => {
+    // The payment is 'paid' here (re-marked just above). A settled payment
+    // has nothing to chase — the guard must reject it without notifying.
+    const before = await prisma.notification.count({
+      where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
+    });
 
-    expect(payment.reminderSentAt).not.toBeNull();
+    const result = await sendPaymentReminder(prisma, paymentId);
+    expect(result.ok).toBe(false);
+
+    const after = await prisma.notification.count({
+      where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
+    });
+    expect(after).toBe(before);
+  });
+
+  it('sendPaymentReminder stamps and notifies an outstanding payment', async () => {
+    await prisma.payment.update({
+      where: { id: paymentId },
+      data: { status: 'pending', method: null, paidAt: null },
+    });
+
+    const result = await sendPaymentReminder(prisma, paymentId);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected the reminder to send');
+    expect(result.payment.reminderSentAt).not.toBeNull();
+
+    const notification = await prisma.notification.findFirst({
+      where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
+    });
+    expect(notification).not.toBeNull();
   });
 
   it('getOutstandingPayments returns pending/overdue payments for teacher', async () => {

@@ -33,6 +33,7 @@ export const POST = withErrorHandler(async (
     return respondError('Access denied', 403);
   }
 
-  const updated = await sendPaymentReminder(prisma, id);
-  return respondOk(updated);
+  const result = await sendPaymentReminder(prisma, id);
+  if (!result.ok) return respondError(result.error, 409);
+  return respondOk(result.payment);
 });

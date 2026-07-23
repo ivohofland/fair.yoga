@@ -240,7 +240,7 @@ Built by Ivo + Claude Code. Technical foundation first, then layer on UI and fea
   - Class generator (daily, rolling 4-week)
   - Auto-cancel check (every 15 min)
   - Email fallback (every 5 min)
-  - Payment reminders (daily)
+  - Payment reminders (hourly)
 
 6.5 — Email templates
   - Magic link

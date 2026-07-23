@@ -1,7 +1,9 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
-import { paymentStateText } from '@/lib/format';
+import type { PaymentStatus } from '@prisma/client';
+import { paymentStateText, timeAgo } from '@/lib/format';
 import { usePaymentActions } from '@/lib/use-payment-actions';
 import { SendReminderButton } from '@/components/class/send-reminder-button';
 
@@ -10,7 +12,7 @@ export interface PaymentItem {
   studentId: string;
   studentName: string;
   amount: number;
-  status: string; // 'pending' | 'paid' | 'overdue'
+  status: PaymentStatus;
   reminderSentAt: Date | null;
 }
 
@@ -21,6 +23,12 @@ interface PaymentChecklistProps {
 export function PaymentChecklist({ items }: PaymentChecklistProps) {
   const { paymentState, justMarked, updating, error, markPaid, undo } = usePaymentActions(
     Object.fromEntries(items.map((item) => [item.paymentId, item.status])),
+  );
+  // Reminded stamps live here, not inside each button: the button unmounts
+  // when a row is marked paid, so the "Reminded …" caption would otherwise
+  // vanish on a paid → undo bounce and take the anti-nag guardrail with it.
+  const [remindedAt, setRemindedAt] = useState<Record<string, Date | null>>(() =>
+    Object.fromEntries(items.map((item) => [item.paymentId, item.reminderSentAt])),
   );
 
   if (items.length === 0) {
@@ -46,7 +54,9 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
         {items.map((item) => {
           const status = paymentState[item.paymentId] ?? 'pending';
           const isPaid = status === 'paid';
+          const isOutstanding = status === 'pending' || status === 'overdue';
           const isUpdating = updating === item.paymentId;
+          const reminded = remindedAt[item.paymentId];
 
           return (
             <div
@@ -61,17 +71,21 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
                 <span className={`type-caption ${paymentStateText(status).className}`}>
                   {paymentStateText(status).label}
                 </span>
+                {reminded && <span className="type-caption">Reminded {timeAgo(reminded)}</span>}
               </div>
 
               <div className="flex items-center gap-3 shrink-0">
                 <span className={`type-number ${isPaid ? '' : 'text-brown'}`}>
                   &euro;{item.amount.toFixed(2)}
                 </span>
-                {!isPaid && (
+                {isOutstanding && (
                   <SendReminderButton
                     paymentId={item.paymentId}
                     studentName={item.studentName}
-                    reminderSentAt={item.reminderSentAt}
+                    context={null}
+                    onSent={(date) =>
+                      setRemindedAt((prev) => ({ ...prev, [item.paymentId]: date }))
+                    }
                   />
                 )}
                 <button

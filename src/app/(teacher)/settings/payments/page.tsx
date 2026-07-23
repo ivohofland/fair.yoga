@@ -1,11 +1,9 @@
-import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
-import { MarkPaidButton } from '@/components/class/mark-paid-button';
 import { MarkUnpaidButton } from '@/components/class/mark-unpaid-button';
-import { SendReminderButton } from '@/components/class/send-reminder-button';
+import { OutstandingPaymentRow } from '@/components/class/outstanding-payment-row';
 import { formatStudentName } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
@@ -90,30 +88,16 @@ export default async function PaymentsOverviewPage() {
           <EmptyState title="Nothing outstanding" body="All payments are settled." />
         ) : (
           outstanding.map((p) => (
-            <div
+            <OutstandingPaymentRow
               key={p.id}
-              className="flex items-center justify-between gap-3 min-h-14 py-2 border-b border-border last:border-b-0"
-            >
-              <div className="min-w-0">
-                <p className="text-base text-ink">{studentName(p)}</p>
-                <p className="type-caption">
-                  <Link href={`/class/${p.registration.class.id}`} className="no-underline text-brown-light">
-                    {p.registration.class.classType} · {formatDay(p.registration.class.date)}
-                  </Link>
-                  {p.status === 'overdue' && <span className="text-danger"> · ! overdue</span>}
-                </p>
-              </div>
-              <div className="flex items-center gap-3 shrink-0">
-                <span className="type-number text-brown">€{Number(p.amount).toFixed(2)}</span>
-                <SendReminderButton
-                  paymentId={p.id}
-                  studentName={studentName(p)}
-                  reminderSentAt={p.reminderSentAt}
-                  context={`${p.registration.class.classType} · ${formatDay(p.registration.class.date)}`}
-                />
-                <MarkPaidButton paymentId={p.id} />
-              </div>
-            </div>
+              paymentId={p.id}
+              studentName={studentName(p)}
+              classId={p.registration.class.id}
+              classContext={`${p.registration.class.classType} · ${formatDay(p.registration.class.date)}`}
+              amount={Number(p.amount)}
+              status={p.status}
+              reminderSentAt={p.reminderSentAt}
+            />
           ))
         )}
       </section>
