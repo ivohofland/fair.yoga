@@ -198,3 +198,108 @@ describe('POST /api/payments/[id]/remind', () => {
     await prisma.payment.update({ where: { id: paymentId }, data: { status: 'pending' } });
   });
 });
+
+describe('POST /api/payments/[id]/paid', () => {
+  it('rejects a signed-out caller', async () => {
+    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/paid`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method: 'cash' }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('404s an unknown payment', async () => {
+    const res = await fetch(
+      `${BASE_URL}/api/payments/00000000-0000-4000-8000-000000000000/paid`,
+      {
+        method: 'POST',
+        headers: { ...cookie(teacherToken), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ method: 'cash' }),
+      },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("403s another teacher's payment", async () => {
+    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/paid`, {
+      method: 'POST',
+      headers: { ...cookie(otherTeacherToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method: 'cash' }),
+    });
+    expect(res.status).toBe(403);
+
+    const unchanged = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(unchanged.status).toBe('pending');
+  });
+
+  it('400s a body missing method', async () => {
+    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/paid`, {
+      method: 'POST',
+      headers: { ...cookie(teacherToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('marks the pending payment paid', async () => {
+    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/paid`, {
+      method: 'POST',
+      headers: { ...cookie(teacherToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method: 'cash' }),
+    });
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as { data: { status: string } };
+    expect(data.status).toBe('paid');
+
+    const stamped = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(stamped.status).toBe('paid');
+  });
+});
+
+describe('POST /api/payments/[id]/unpaid', () => {
+  it('rejects a signed-out caller', async () => {
+    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/unpaid`, {
+      method: 'POST',
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("403s another teacher's payment", async () => {
+    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/unpaid`, {
+      method: 'POST',
+      headers: cookie(otherTeacherToken),
+    });
+    expect(res.status).toBe(403);
+
+    const unchanged = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(unchanged.status).toBe('paid');
+  });
+
+  it('undoes the paid payment back to pending', async () => {
+    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/unpaid`, {
+      method: 'POST',
+      headers: cookie(teacherToken),
+    });
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as { data: { status: string } };
+    expect(data.status).toBe('pending');
+
+    const reverted = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(reverted.status).toBe('pending');
+  });
+
+  it('409s a payment that is already pending', async () => {
+    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/unpaid`, {
+      method: 'POST',
+      headers: cookie(teacherToken),
+    });
+    expect(res.status).toBe(409);
+
+    // Fixture is already pending, but restore explicitly so the file's
+    // afterAll cleanup is unaffected regardless of test order.
+    await prisma.payment.update({ where: { id: paymentId }, data: { status: 'pending' } });
+    const restored = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(restored.status).toBe('pending');
+  });
+});
