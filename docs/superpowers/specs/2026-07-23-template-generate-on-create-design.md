@@ -35,6 +35,12 @@ this hole but no front-end ever called it.
   it and still return success — a 500 here would leave the teacher
   retrying a create that already succeeded (duplicate templates), which
   is worse than a schedule that heals on the next cron tick.
+  **Accepted edge** (review adjudication): the cron never creates an
+  occurrence whose start already passed, so if generation fails during a
+  re-activation moments before the template's next class, that single
+  occurrence is lost rather than healed. The conjunction — transient
+  failure AND an imminent occurrence AND the hourly sweep missing the
+  window — is rare enough that retry machinery isn't warranted.
 - **Delete `/api/class-templates/generate`.** With generation wired into
   the lifecycle routes it has no caller and no reason to exist.
 
