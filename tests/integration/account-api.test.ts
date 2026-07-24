@@ -1,17 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
+import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
 
-const BASE_URL = 'http://localhost:3000';
 const prisma = new PrismaClient();
-const uniqueSuffix = `${Date.now()}`;
-
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
+const suffix = uniqueSuffix();
 
 /**
  * The account-scoped routes on a teacher account that becomes dual:
@@ -20,17 +12,17 @@ function hashToken(token: string): string {
  * notifications feed.
  */
 
-const email = `accapi-teacher-${uniqueSuffix}@test.local`;
-const rawToken = crypto.randomBytes(32).toString('hex');
+const email = `accapi-teacher-${suffix}@test.local`;
 
 let accountId: string;
 let teacherId: string;
 let unclaimedStudentId: string;
+let rawToken: string;
 
 const authed = (path: string, init?: RequestInit) =>
   fetch(`${BASE_URL}${path}`, {
     ...init,
-    headers: { ...init?.headers, Cookie: `fair_yoga_session=${rawToken}` },
+    headers: { ...init?.headers, ...cookie(rawToken) },
   });
 
 beforeAll(async () => {
@@ -41,19 +33,13 @@ beforeAll(async () => {
       lastName: 'Teacher',
       email,
       bio: 'Account API fixtures',
-      pageSlug: `accapi-${uniqueSuffix}`,
+      pageSlug: `accapi-${suffix}`,
       account: { create: { email } },
     },
   });
   teacherId = teacher.id;
   accountId = teacher.accountId;
-  await prisma.session.create({
-    data: {
-      id: hashToken(rawToken),
-      accountId,
-      expiresAt: new Date(Date.now() + 86400000),
-    },
-  });
+  rawToken = await createSession(prisma, accountId);
 
   // The teacher already sits in someone's CRM as an unclaimed contact
   // under the same email — the join must claim this row, not collide.
@@ -68,7 +54,7 @@ afterAll(async () => {
     where: { recipientId: { in: [teacherId, unclaimedStudentId] } },
   });
   await prisma.session.deleteMany({ where: { accountId } });
-  await prisma.student.deleteMany({ where: { email: { contains: uniqueSuffix } } });
+  await prisma.student.deleteMany({ where: { email: { contains: suffix } } });
   await prisma.teacher.deleteMany({ where: { id: teacherId } });
   await prisma.account.deleteMany({ where: { id: accountId } });
   await prisma.$disconnect();

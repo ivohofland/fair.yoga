@@ -1,20 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
-
-function hashToken(token: string): string {
-  return encodeHexLowerCase(sha256(new TextEncoder().encode(token)));
-}
+import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
 
 const prisma = new PrismaClient();
-const uniqueSuffix = Date.now();
-const rawSessionToken = crypto.randomBytes(32).toString('hex');
-const BASE_URL = 'http://localhost:3000';
-const sessionCookie = `fair_yoga_session=${rawSessionToken}`;
+const suffix = uniqueSuffix();
 
 let teacherId: string;
+let teacherAccountId: string;
+let teacherToken: string;
 let otherTeacherId: string;
 let roomId: string;
 let class1Id: string;
@@ -28,7 +21,7 @@ let s3Id: string;
 async function sendAnnouncement(body: Record<string, unknown>): Promise<Response> {
   return fetch(`${BASE_URL}/api/announcements`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Cookie: sessionCookie },
+    headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
     body: JSON.stringify(body),
   });
 }
@@ -49,21 +42,22 @@ describe('POST /api/announcements', () => {
       data: {
         firstName: 'Announce',
         lastName: 'Teacher',
-        email: `announce-teacher-${uniqueSuffix}@test.local`,
-        account: { create: { email: `announce-teacher-${uniqueSuffix}@test.local` } },
+        email: `announce-teacher-${suffix}@test.local`,
+        account: { create: { email: `announce-teacher-${suffix}@test.local` } },
         bio: 'Announcement fixtures',
-        pageSlug: `announce-teacher-${uniqueSuffix}`,
+        pageSlug: `announce-teacher-${suffix}`,
       },
     });
     teacherId = teacher.id;
+    teacherAccountId = teacher.accountId;
     const other = await prisma.teacher.create({
       data: {
         firstName: 'Foreign',
         lastName: 'Teacher',
-        email: `announce-other-${uniqueSuffix}@test.local`,
-        account: { create: { email: `announce-other-${uniqueSuffix}@test.local` } },
+        email: `announce-other-${suffix}@test.local`,
+        account: { create: { email: `announce-other-${suffix}@test.local` } },
         bio: 'Ownership fixture',
-        pageSlug: `announce-other-${uniqueSuffix}`,
+        pageSlug: `announce-other-${suffix}`,
       },
     });
     otherTeacherId = other.id;
@@ -71,7 +65,7 @@ describe('POST /api/announcements', () => {
     const room = await prisma.room.create({
       data: {
         venueName: 'Announce Studio',
-        address: `${uniqueSuffix} Announce St`,
+        address: `${suffix} Announce St`,
         city: 'Amsterdam',
         postcode: '1111AN',
         maxCapacity: 10,
@@ -117,7 +111,7 @@ describe('POST /api/announcements', () => {
         data: {
           firstName: name,
           lastName: 'Student',
-          email: `announce-${name.toLowerCase()}-${uniqueSuffix}@test.local`,
+          email: `announce-${name.toLowerCase()}-${suffix}@test.local`,
           incomeTier: 3,
         },
       });
@@ -144,17 +138,11 @@ describe('POST /api/announcements', () => {
     // S3: cancelled in class 1 only.
     await register(class1Id, s3Id, 'cancelled');
 
-    await prisma.session.create({
-      data: {
-        id: hashToken(rawSessionToken),
-        accountId: teacher.accountId,
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    teacherToken = await createSession(prisma, teacherAccountId);
   });
 
   afterAll(async () => {
-    await prisma.session.deleteMany({ where: { id: hashToken(rawSessionToken) } });
+    await prisma.session.deleteMany({ where: { accountId: teacherAccountId } });
     const studentIds = [s1Id, s2Id, s3Id].filter(Boolean);
     if (studentIds.length) {
       await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
@@ -171,7 +159,7 @@ describe('POST /api/announcements', () => {
     if (teacherId) await prisma.teacher.delete({ where: { id: teacherId } });
     if (otherTeacherId) await prisma.teacher.delete({ where: { id: otherTeacherId } });
     await prisma.account.deleteMany({
-      where: { email: { contains: `-${uniqueSuffix}@test.local` } },
+      where: { email: { contains: `-${suffix}@test.local` } },
     });
     await prisma.$disconnect();
   });

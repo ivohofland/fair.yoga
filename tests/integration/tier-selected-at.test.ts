@@ -1,16 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
-
-function hashToken(token: string): string {
-  return encodeHexLowerCase(sha256(new TextEncoder().encode(token)));
-}
+import { BASE_URL, cookie, uniqueSuffix, createSession, hashToken } from './helpers';
 
 const prisma = new PrismaClient();
-const uniqueSuffix = Date.now();
-const BASE_URL = 'http://localhost:3000';
+const suffix = uniqueSuffix();
 
 // One dedicated student per case keeps every test order-independent.
 type Fixture = { id: string; token: string };
@@ -19,7 +12,7 @@ let sChooser: Fixture;
 let sBooker: Fixture;
 let sWaitlister: Fixture;
 let sFiller: Fixture;
-const teacherToken = crypto.randomBytes(32).toString('hex');
+let teacherToken: string;
 
 let teacherId: string;
 let crmStudentId: string;
@@ -37,7 +30,7 @@ async function api(
     method,
     headers: {
       'Content-Type': 'application/json',
-      Cookie: `fair_yoga_session=${token}`,
+      ...cookie(token),
     },
     body: JSON.stringify(body),
   });
@@ -54,7 +47,7 @@ async function tierSelectedAt(studentId: string): Promise<Date | null> {
 describe('tierSelectedAt stamping', () => {
   beforeAll(async () => {
     async function mkStudent(name: string): Promise<Fixture> {
-      const email = `tiersel-${name}-${uniqueSuffix}@test.local`;
+      const email = `tiersel-${name}-${suffix}@test.local`;
       const student = await prisma.student.create({
         data: {
           firstName: name,
@@ -67,14 +60,7 @@ describe('tierSelectedAt stamping', () => {
           tierSelectedAt: null,
         },
       });
-      const token = crypto.randomBytes(32).toString('hex');
-      await prisma.session.create({
-        data: {
-          id: hashToken(token),
-          accountId: student.accountId!,
-          expiresAt: new Date(Date.now() + 86400000),
-        },
-      });
+      const token = await createSession(prisma, student.accountId!);
       return { id: student.id, token };
     }
 
@@ -88,26 +74,20 @@ describe('tierSelectedAt stamping', () => {
       data: {
         firstName: 'Tiersel',
         lastName: 'Teacher',
-        email: `tiersel-teacher-${uniqueSuffix}@test.local`,
-        account: { create: { email: `tiersel-teacher-${uniqueSuffix}@test.local` } },
+        email: `tiersel-teacher-${suffix}@test.local`,
+        account: { create: { email: `tiersel-teacher-${suffix}@test.local` } },
         bio: 'tierSelectedAt fixtures',
-        pageSlug: `tiersel-teacher-${uniqueSuffix}`,
+        pageSlug: `tiersel-teacher-${suffix}`,
       },
     });
     teacherId = teacher.id;
-    await prisma.session.create({
-      data: {
-        id: hashToken(teacherToken),
-        accountId: teacher.accountId,
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    teacherToken = await createSession(prisma, teacher.accountId);
 
     const crm = await prisma.student.create({
       data: {
         firstName: 'Roster',
         lastName: 'Student',
-        email: `tiersel-crm-${uniqueSuffix}@test.local`,
+        email: `tiersel-crm-${suffix}@test.local`,
       },
     });
     crmStudentId = crm.id;
@@ -116,7 +96,7 @@ describe('tierSelectedAt stamping', () => {
     const room = await prisma.room.create({
       data: {
         venueName: 'Tiersel Studio',
-        address: `${uniqueSuffix} Tiersel St`,
+        address: `${suffix} Tiersel St`,
         city: 'Amsterdam',
         postcode: '1111TS',
         maxCapacity: 10,
@@ -185,7 +165,7 @@ describe('tierSelectedAt stamping', () => {
     if (studentIds.length) await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
     if (teacherId) await prisma.teacher.delete({ where: { id: teacherId } });
     await prisma.account.deleteMany({
-      where: { email: { contains: `-${uniqueSuffix}@test.local` } },
+      where: { email: { contains: `-${suffix}@test.local` } },
     });
     await prisma.$disconnect();
   });
@@ -209,7 +189,7 @@ describe('tierSelectedAt stamping', () => {
       {
         firstName: 'Renamed',
         lastName: 'Student',
-        email: `tiersel-crm-${uniqueSuffix}@test.local`,
+        email: `tiersel-crm-${suffix}@test.local`,
         incomeTier: 5,
       },
       teacherToken,

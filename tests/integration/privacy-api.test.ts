@@ -1,20 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
-
-function hashToken(token: string): string {
-  return encodeHexLowerCase(sha256(new TextEncoder().encode(token)));
-}
+import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
 
 const prisma = new PrismaClient();
-const uniqueSuffix = Date.now();
-const rawSessionToken = crypto.randomBytes(32).toString('hex');
-const BASE_URL = 'http://localhost:3000';
-const sessionCookie = `fair_yoga_session=${rawSessionToken}`;
+const suffix = uniqueSuffix();
 
 let studentId: string;
+let studentAccountId: string;
+let studentToken: string;
 let otherStudentId: string;
 let teacherId: string;
 
@@ -24,17 +17,18 @@ describe('students privacy API', () => {
       data: {
         firstName: 'Privacy',
         lastName: 'Student',
-        email: `privacy-student-${uniqueSuffix}@test.local`,
-        account: { create: { email: `privacy-student-${uniqueSuffix}@test.local` } },
+        email: `privacy-student-${suffix}@test.local`,
+        account: { create: { email: `privacy-student-${suffix}@test.local` } },
         claimedAt: new Date(),
       },
     });
     studentId = student.id;
+    studentAccountId = student.accountId!;
     const other = await prisma.student.create({
       data: {
         firstName: 'Other',
         lastName: 'Student',
-        email: `privacy-other-${uniqueSuffix}@test.local`,
+        email: `privacy-other-${suffix}@test.local`,
       },
     });
     otherStudentId = other.id;
@@ -42,24 +36,18 @@ describe('students privacy API', () => {
       data: {
         firstName: 'Privacy',
         lastName: 'Teacher',
-        email: `privacy-teacher-${uniqueSuffix}@test.local`,
-        account: { create: { email: `privacy-teacher-${uniqueSuffix}@test.local` } },
+        email: `privacy-teacher-${suffix}@test.local`,
+        account: { create: { email: `privacy-teacher-${suffix}@test.local` } },
         bio: 'Privacy fixture',
-        pageSlug: `privacy-teacher-${uniqueSuffix}`,
+        pageSlug: `privacy-teacher-${suffix}`,
       },
     });
     teacherId = teacher.id;
-    await prisma.session.create({
-      data: {
-        id: hashToken(rawSessionToken),
-        accountId: student.accountId!,
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    studentToken = await createSession(prisma, studentAccountId);
   });
 
   afterAll(async () => {
-    await prisma.session.deleteMany({ where: { id: hashToken(rawSessionToken) } });
+    await prisma.session.deleteMany({ where: { accountId: studentAccountId } });
     if (studentId) {
       await prisma.studentPrivacy.deleteMany({ where: { studentId } });
       await prisma.student.delete({ where: { id: studentId } });
@@ -67,7 +55,7 @@ describe('students privacy API', () => {
     if (otherStudentId) await prisma.student.delete({ where: { id: otherStudentId } });
     if (teacherId) await prisma.teacher.delete({ where: { id: teacherId } });
     await prisma.account.deleteMany({
-      where: { email: { contains: `-${uniqueSuffix}@test.local` } },
+      where: { email: { contains: `-${suffix}@test.local` } },
     });
     await prisma.$disconnect();
   });
@@ -75,7 +63,7 @@ describe('students privacy API', () => {
   it('virtual default carries all six fields, maximum privacy', async () => {
     const res = await fetch(
       `${BASE_URL}/api/students/${studentId}/privacy?teacherId=${teacherId}`,
-      { headers: { Cookie: sessionCookie } },
+      { headers: cookie(studentToken) },
     );
     expect(res.status).toBe(200);
     const { data } = await res.json();
@@ -90,7 +78,7 @@ describe('students privacy API', () => {
   it('first PUT persists all six fields — including shareFullName', async () => {
     const res = await fetch(`${BASE_URL}/api/students/${studentId}/privacy`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Cookie: sessionCookie },
+      headers: { 'Content-Type': 'application/json', ...cookie(studentToken) },
       body: JSON.stringify({
         teacherId,
         shareFullName: true,
@@ -115,7 +103,7 @@ describe('students privacy API', () => {
     // privacy leak (student revokes, teacher keeps seeing the data).
     const res = await fetch(`${BASE_URL}/api/students/${studentId}/privacy`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Cookie: sessionCookie },
+      headers: { 'Content-Type': 'application/json', ...cookie(studentToken) },
       body: JSON.stringify({ teacherId, shareEmail: false }),
     });
     expect(res.status).toBe(200);
@@ -128,7 +116,7 @@ describe('students privacy API', () => {
 
     const get = await fetch(
       `${BASE_URL}/api/students/${studentId}/privacy?teacherId=${teacherId}`,
-      { headers: { Cookie: sessionCookie } },
+      { headers: cookie(studentToken) },
     );
     const { data } = await get.json();
     expect(data.shareEmail).toBe(false);
@@ -138,7 +126,7 @@ describe('students privacy API', () => {
 
   it('rejects a GET without teacherId', async () => {
     const res = await fetch(`${BASE_URL}/api/students/${studentId}/privacy`, {
-      headers: { Cookie: sessionCookie },
+      headers: cookie(studentToken),
     });
     expect(res.status).toBe(400);
   });
@@ -146,7 +134,7 @@ describe('students privacy API', () => {
   it("rejects touching another student's privacy", async () => {
     const res = await fetch(
       `${BASE_URL}/api/students/${otherStudentId}/privacy?teacherId=${teacherId}`,
-      { headers: { Cookie: sessionCookie } },
+      { headers: cookie(studentToken) },
     );
     expect(res.status).toBe(403);
   });

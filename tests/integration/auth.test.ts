@@ -6,8 +6,6 @@
  */
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
 import {
   createSession,
   validateSession,
@@ -15,14 +13,10 @@ import {
   generateMagicLinkToken,
   verifyMagicLinkToken,
 } from '@/lib/auth';
-
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
+import { hashToken, uniqueSuffix } from './helpers';
 
 const prisma = new PrismaClient();
-const uniqueSuffix = Date.now();
+const suffix = uniqueSuffix();
 
 let teacherId: string;
 let studentId: string;
@@ -36,10 +30,10 @@ beforeAll(async () => {
     data: {
       firstName: 'Auth',
       lastName: 'Teacher',
-      email: `auth-teacher-${uniqueSuffix}@test.local`,
-      account: { create: { email: `auth-teacher-${uniqueSuffix}@test.local` } },
+      email: `auth-teacher-${suffix}@test.local`,
+      account: { create: { email: `auth-teacher-${suffix}@test.local` } },
       bio: 'Teacher for auth integration tests',
-      pageSlug: `auth-teacher-${uniqueSuffix}`,
+      pageSlug: `auth-teacher-${suffix}`,
     },
   });
   teacherId = teacher.id;
@@ -49,10 +43,10 @@ beforeAll(async () => {
     data: {
       firstName: 'Auth',
       lastName: 'Student',
-      email: `auth-student-${uniqueSuffix}@test.local`,
+      email: `auth-student-${suffix}@test.local`,
       incomeTier: 3,
       claimedAt: new Date(),
-      account: { create: { email: `auth-student-${uniqueSuffix}@test.local` } },
+      account: { create: { email: `auth-student-${suffix}@test.local` } },
     },
   });
   studentId = student.id;
@@ -68,8 +62,8 @@ afterAll(async () => {
     where: {
       email: {
         in: [
-          `auth-teacher-${uniqueSuffix}@test.local`,
-          `auth-student-${uniqueSuffix}@test.local`,
+          `auth-teacher-${suffix}@test.local`,
+          `auth-student-${suffix}@test.local`,
         ],
       },
     },
@@ -81,7 +75,7 @@ afterAll(async () => {
 
 describe('Magic link flow (teacher)', () => {
   it('generates token, verifies it, and creates a valid session', async () => {
-    const email = `auth-teacher-${uniqueSuffix}@test.local`;
+    const email = `auth-teacher-${suffix}@test.local`;
 
     // Generate magic link token
     const rawToken = await generateMagicLinkToken(prisma, email);
@@ -112,7 +106,7 @@ describe('Magic link flow (teacher)', () => {
 
 describe('Magic link flow (student)', () => {
   it('generates token, verifies it, and creates a valid student session', async () => {
-    const email = `auth-student-${uniqueSuffix}@test.local`;
+    const email = `auth-student-${suffix}@test.local`;
 
     // Generate magic link token
     const rawToken = await generateMagicLinkToken(prisma, email);
@@ -142,7 +136,7 @@ describe('Magic link flow (student)', () => {
 
 describe('Magic link token is one-time use', () => {
   it('succeeds on first verify, returns null on second verify', async () => {
-    const email = `auth-teacher-${uniqueSuffix}@test.local`;
+    const email = `auth-teacher-${suffix}@test.local`;
 
     const rawToken = await generateMagicLinkToken(prisma, email);
 

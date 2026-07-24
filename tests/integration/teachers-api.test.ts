@@ -1,34 +1,25 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
-
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
+import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
 
 const prisma = new PrismaClient();
-const uniqueSuffix = Date.now();
-const rawSessionToken = crypto.randomBytes(32).toString('hex');
-
-const BASE_URL = 'http://localhost:3000';
-const sessionCookie = `fair_yoga_session=${rawSessionToken}`;
+const suffix = uniqueSuffix();
 
 let teacherId: string;
+let teacherAccountId: string;
+let teacherToken: string;
 let otherTeacherId: string;
 
 async function putTeacher(
   id: string,
   body: Record<string, unknown>,
-  cookie?: string,
+  token?: string,
 ): Promise<Response> {
   return fetch(`${BASE_URL}/api/teachers/${id}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
-      ...(cookie ? { Cookie: cookie } : {}),
+      ...(token ? cookie(token) : {}),
     },
     body: JSON.stringify(body),
   });
@@ -40,45 +31,40 @@ describe('PUT /api/teachers/[id]', () => {
       data: {
         firstName: 'Settings',
         lastName: 'Teacher',
-        email: `settings-teacher-${uniqueSuffix}@test.local`,
-        account: { create: { email: `settings-teacher-${uniqueSuffix}@test.local` } },
+        email: `settings-teacher-${suffix}@test.local`,
+        account: { create: { email: `settings-teacher-${suffix}@test.local` } },
         bio: 'Teacher settings tests',
-        pageSlug: `settings-teacher-${uniqueSuffix}`,
+        pageSlug: `settings-teacher-${suffix}`,
       },
     });
     teacherId = teacher.id;
+    teacherAccountId = teacher.accountId;
 
     const other = await prisma.teacher.create({
       data: {
         firstName: 'Other',
         lastName: 'Teacher',
-        email: `settings-other-${uniqueSuffix}@test.local`,
-        account: { create: { email: `settings-other-${uniqueSuffix}@test.local` } },
+        email: `settings-other-${suffix}@test.local`,
+        account: { create: { email: `settings-other-${suffix}@test.local` } },
         bio: 'Ownership fixture',
-        pageSlug: `settings-other-${uniqueSuffix}`,
+        pageSlug: `settings-other-${suffix}`,
       },
     });
     otherTeacherId = other.id;
 
-    await prisma.session.create({
-      data: {
-        id: hashToken(rawSessionToken),
-        accountId: teacher.accountId,
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    teacherToken = await createSession(prisma, teacherAccountId);
   });
 
   afterAll(async () => {
-    await prisma.session.deleteMany({ where: { id: hashToken(rawSessionToken) } });
+    await prisma.session.deleteMany({ where: { accountId: teacherAccountId } });
     if (teacherId) await prisma.teacher.delete({ where: { id: teacherId } });
     if (otherTeacherId) await prisma.teacher.delete({ where: { id: otherTeacherId } });
     await prisma.account.deleteMany({
       where: {
         email: {
           in: [
-            `settings-teacher-${uniqueSuffix}@test.local`,
-            `settings-other-${uniqueSuffix}@test.local`,
+            `settings-teacher-${suffix}@test.local`,
+            `settings-other-${suffix}@test.local`,
           ],
         },
       },
@@ -94,9 +80,9 @@ describe('PUT /api/teachers/[id]', () => {
         defaultTimezone: 'Europe/London',
         // The unchanged own slug must pass the conflict check: losing the
         // existing.id !== id exclusion would 409 every settings save.
-        pageSlug: `settings-teacher-${uniqueSuffix}`,
+        pageSlug: `settings-teacher-${suffix}`,
       },
-      sessionCookie,
+      teacherToken,
     );
     expect(res.status).toBe(200);
 
@@ -106,14 +92,14 @@ describe('PUT /api/teachers/[id]', () => {
   });
 
   it('rejects unknown fields — the schema is strict', async () => {
-    const res = await putTeacher(teacherId, { role: 'admin' }, sessionCookie);
+    const res = await putTeacher(teacherId, { role: 'admin' }, teacherToken);
     expect(res.status).toBe(400);
   });
 
   it('rejects a timezone Intl cannot resolve', async () => {
     const before = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
 
-    const res = await putTeacher(teacherId, { defaultTimezone: 'Not/AZone' }, sessionCookie);
+    const res = await putTeacher(teacherId, { defaultTimezone: 'Not/AZone' }, teacherToken);
     expect(res.status).toBe(400);
 
     const after = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
@@ -121,7 +107,7 @@ describe('PUT /api/teachers/[id]', () => {
   });
 
   it("rejects updating another teacher's profile", async () => {
-    const res = await putTeacher(otherTeacherId, { bio: 'Hijacked' }, sessionCookie);
+    const res = await putTeacher(otherTeacherId, { bio: 'Hijacked' }, teacherToken);
     expect(res.status).toBe(403);
 
     const persisted = await prisma.teacher.findUniqueOrThrow({ where: { id: otherTeacherId } });
@@ -136,8 +122,8 @@ describe('PUT /api/teachers/[id]', () => {
   it("rejects claiming another teacher's page slug with the SLUG_TAKEN code", async () => {
     const res = await putTeacher(
       teacherId,
-      { pageSlug: `settings-other-${uniqueSuffix}` },
-      sessionCookie,
+      { pageSlug: `settings-other-${suffix}` },
+      teacherToken,
     );
     expect(res.status).toBe(409);
     // The code pins the deliberate pre-check: the P2002 fallback also
@@ -149,7 +135,7 @@ describe('PUT /api/teachers/[id]', () => {
 
   it("rejects reading another teacher's profile — the raw row carries bank details", async () => {
     const res = await fetch(`${BASE_URL}/api/teachers/${otherTeacherId}`, {
-      headers: { Cookie: sessionCookie },
+      headers: cookie(teacherToken),
     });
     expect(res.status).toBe(403);
   });
