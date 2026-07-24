@@ -1,26 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
 import { generateInstancesForTemplate } from '@/services/class-generator';
-
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
+import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
 
 const prisma = new PrismaClient();
-const uniqueSuffix = Date.now();
-const rawSessionToken = crypto.randomBytes(32).toString('hex');
-const teacherEmail = `tmpl-teacher-${uniqueSuffix}@test.local`;
+const suffix = uniqueSuffix();
+const teacherEmail = `tmpl-teacher-${suffix}@test.local`;
 
 let teacherId: string;
 let roomId: string;
 let teacherRoomId: string;
-
-const BASE_URL = 'http://localhost:3000';
-const sessionCookie = `fair_yoga_session=${rawSessionToken}`;
+let teacherAccountId: string;
+let sessionToken: string;
 
 /**
  * Schema convention (0=Monday, ..., 6=Sunday) — 3 is Thursday. Any fixed
@@ -54,7 +45,7 @@ beforeAll(async () => {
       email: teacherEmail,
       account: { create: { email: teacherEmail } },
       bio: 'Teacher for template API tests',
-      pageSlug: `tmpl-teacher-${uniqueSuffix}`,
+      pageSlug: `tmpl-teacher-${suffix}`,
       defaultTimezone: 'UTC',
     },
   });
@@ -63,7 +54,7 @@ beforeAll(async () => {
   const room = await prisma.room.create({
     data: {
       venueName: 'Template Venue',
-      address: `${uniqueSuffix} Template St`,
+      address: `${suffix} Template St`,
       city: 'Testville',
       postcode: '1234TP',
       floor: '1',
@@ -82,13 +73,8 @@ beforeAll(async () => {
     where: { id: teacherId },
     select: { accountId: true },
   });
-  await prisma.session.create({
-    data: {
-      id: hashToken(rawSessionToken),
-      accountId: account.accountId,
-      expiresAt: new Date(Date.now() + 86400000),
-    },
-  });
+  teacherAccountId = account.accountId;
+  sessionToken = await createSession(prisma, account.accountId);
 });
 
 afterAll(async () => {
@@ -99,7 +85,7 @@ afterAll(async () => {
   await prisma.classTemplate.deleteMany({ where: { teacherId } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId } });
   await prisma.room.delete({ where: { id: roomId } });
-  await prisma.session.deleteMany({ where: { id: hashToken(rawSessionToken) } });
+  await prisma.session.deleteMany({ where: { accountId: teacherAccountId } });
   await prisma.teacher.delete({ where: { id: teacherId } });
   await prisma.account.deleteMany({ where: { email: teacherEmail } });
   await prisma.$disconnect();
@@ -109,7 +95,7 @@ describe('POST /api/class-templates', () => {
   it('creates the template and its four-week instance window in one request', async () => {
     const res = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: sessionCookie },
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
       body: JSON.stringify(templateBody('Instant Flow')),
     });
     expect(res.status).toBe(201);
@@ -162,7 +148,7 @@ describe('PATCH /api/class-templates/[id]', () => {
   it('re-activation tops the window back up; archive and pause do not generate', async () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: sessionCookie },
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
       body: JSON.stringify(templateBody('Toggle Flow')),
     });
     expect(create.status).toBe(201);
@@ -180,7 +166,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const toggle = () =>
       fetch(`${BASE_URL}/api/class-templates/${template.id}`, {
         method: 'PATCH',
-        headers: { Cookie: sessionCookie },
+        headers: cookie(sessionToken),
       });
 
     // active → paused: no generation.
@@ -203,7 +189,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const archive = () =>
       fetch(`${BASE_URL}/api/class-templates/${template.id}?action=archive`, {
         method: 'PATCH',
-        headers: { Cookie: sessionCookie },
+        headers: cookie(sessionToken),
       });
     expect((await archive()).status).toBe(200);
     expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(3);
@@ -218,7 +204,7 @@ describe('PATCH /api/class-templates/[id]', () => {
   it('refuses to toggle an archived template — no instant classes for shelved things', async () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: sessionCookie },
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
       body: JSON.stringify(templateBody('Shelved Flow')),
     });
     expect(create.status).toBe(201);
@@ -226,14 +212,14 @@ describe('PATCH /api/class-templates/[id]', () => {
 
     const archive = await fetch(
       `${BASE_URL}/api/class-templates/${template.id}?action=archive`,
-      { method: 'PATCH', headers: { Cookie: sessionCookie } },
+      { method: 'PATCH', headers: cookie(sessionToken) },
     );
     expect(archive.status).toBe(200);
     await prisma.class.deleteMany({ where: { templateId: template.id } });
 
     const toggle = await fetch(`${BASE_URL}/api/class-templates/${template.id}`, {
       method: 'PATCH',
-      headers: { Cookie: sessionCookie },
+      headers: cookie(sessionToken),
     });
     expect(toggle.status).toBe(409);
 
@@ -289,7 +275,7 @@ describe('PATCH /api/class-templates/[id]', () => {
 
     const activate = await fetch(`${BASE_URL}/api/class-templates/${templateA.id}`, {
       method: 'PATCH',
-      headers: { Cookie: sessionCookie },
+      headers: cookie(sessionToken),
     });
     expect(activate.status).toBe(200);
 

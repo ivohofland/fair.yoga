@@ -1,18 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
-
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
+import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
 
 const prisma = new PrismaClient();
-const uniqueSuffix = Date.now();
-const teacherToken = crypto.randomBytes(32).toString('hex');
-const otherTeacherToken = crypto.randomBytes(32).toString('hex');
+const suffix = uniqueSuffix();
+
+let teacherToken: string;
+let otherTeacherToken: string;
 
 let teacherId: string;
 let otherTeacherId: string;
@@ -21,11 +15,8 @@ let studentId: string;
 let classId: string;
 let paymentId: string;
 
-const BASE_URL = 'http://localhost:3000';
-const cookie = (token: string) => ({ Cookie: `fair_yoga_session=${token}` });
-
-async function makeTeacher(tag: string, token: string): Promise<string> {
-  const email = `pay-${tag}-${uniqueSuffix}@test.local`;
+async function makeTeacher(tag: string): Promise<{ id: string; token: string }> {
+  const email = `pay-${tag}-${suffix}@test.local`;
   const teacher = await prisma.teacher.create({
     data: {
       firstName: 'Pay',
@@ -33,32 +24,30 @@ async function makeTeacher(tag: string, token: string): Promise<string> {
       email,
       account: { create: { email } },
       bio: 'Teacher for payment API tests',
-      pageSlug: `pay-${tag}-${uniqueSuffix}`,
+      pageSlug: `pay-${tag}-${suffix}`,
     },
   });
   const account = await prisma.teacher.findUniqueOrThrow({
     where: { id: teacher.id },
     select: { accountId: true },
   });
-  await prisma.session.create({
-    data: {
-      id: hashToken(token),
-      accountId: account.accountId,
-      expiresAt: new Date(Date.now() + 86400000),
-    },
-  });
-  return teacher.id;
+  const token = await createSession(prisma, account.accountId);
+  return { id: teacher.id, token };
 }
 
 beforeAll(async () => {
   await prisma.$connect();
-  teacherId = await makeTeacher('owner', teacherToken);
-  otherTeacherId = await makeTeacher('other', otherTeacherToken);
+  const owner = await makeTeacher('owner');
+  teacherId = owner.id;
+  teacherToken = owner.token;
+  const other = await makeTeacher('other');
+  otherTeacherId = other.id;
+  otherTeacherToken = other.token;
 
   const room = await prisma.room.create({
     data: {
       venueName: 'Payment Venue',
-      address: `${uniqueSuffix} Payment St`,
+      address: `${suffix} Payment St`,
       city: 'Testville',
       postcode: '1234PY',
       floor: '1',
@@ -94,7 +83,7 @@ beforeAll(async () => {
     data: {
       firstName: 'Reminder',
       lastName: 'Student',
-      email: `pay-student-${uniqueSuffix}@test.local`,
+      email: `pay-student-${suffix}@test.local`,
       incomeTier: 3,
     },
   });

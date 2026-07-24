@@ -1,20 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
-
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
+import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
 
 const prisma = new PrismaClient();
-const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const BASE_URL = 'http://localhost:3000';
+const suffix = uniqueSuffix();
 
-const studentToken = crypto.randomBytes(32).toString('hex');
-const teacherToken = crypto.randomBytes(32).toString('hex'); // non-student session, for the 403 case
+let studentToken: string;
+let teacherToken: string; // non-student session, for the 403 case
 
 let teacherId: string;
 let studentId: string;
@@ -27,7 +19,7 @@ function claim(token: string | null, body: unknown) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Cookie: `fair_yoga_session=${token}` } : {}),
+      ...(token ? cookie(token) : {}),
     },
     body: JSON.stringify(body),
   });
@@ -42,26 +34,20 @@ beforeAll(async () => {
     data: {
       firstName: 'Waitlist',
       lastName: 'Teacher',
-      email: `waitlistapi-teacher-${uniqueSuffix}@test.local`,
-      account: { create: { email: `waitlistapi-teacher-${uniqueSuffix}@test.local` } },
+      email: `waitlistapi-teacher-${suffix}@test.local`,
+      account: { create: { email: `waitlistapi-teacher-${suffix}@test.local` } },
       bio: 'Waitlist API tests',
-      pageSlug: `waitlistapi-teacher-${uniqueSuffix}`,
+      pageSlug: `waitlistapi-teacher-${suffix}`,
       defaultTimezone: 'UTC',
     },
   });
   teacherId = teacher.id;
-  await prisma.session.create({
-    data: {
-      id: hashToken(teacherToken),
-      accountId: teacher.accountId,
-      expiresAt: new Date(Date.now() + 86400000),
-    },
-  });
+  teacherToken = await createSession(prisma, teacher.accountId);
 
   const room = await prisma.room.create({
     data: {
       venueName: 'Waitlist API Studio',
-      address: `${uniqueSuffix} Waitlist St`,
+      address: `${suffix} Waitlist St`,
       city: 'Testville',
       postcode: '1234WA',
       floor: '1',
@@ -80,20 +66,14 @@ beforeAll(async () => {
     data: {
       firstName: 'Waitlist',
       lastName: 'Student',
-      email: `waitlistapi-student-${uniqueSuffix}@test.local`,
+      email: `waitlistapi-student-${suffix}@test.local`,
       claimedAt: new Date(),
-      account: { create: { email: `waitlistapi-student-${uniqueSuffix}@test.local` } },
+      account: { create: { email: `waitlistapi-student-${suffix}@test.local` } },
       incomeTier: 3,
     },
   });
   studentId = student.id;
-  await prisma.session.create({
-    data: {
-      id: hashToken(studentToken),
-      accountId: student.accountId!,
-      expiresAt: new Date(Date.now() + 86400000),
-    },
-  });
+  studentToken = await createSession(prisma, student.accountId!);
 
   // --- 409 fixture -----------------------------------------------------
   // A class far in the future. getWaitlistWindow resolves this to
