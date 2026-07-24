@@ -38,6 +38,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return respondError('Invalid teacher room', 400);
   }
 
+  // Atomic: a generation failure rolls the template create back rather than
+  // leaving a template that produces no classes. Failure propagates (500).
   const template = await prisma.$transaction(async (tx) => {
     const created = await tx.classTemplate.create({
       data: {
@@ -62,5 +64,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return created;
   });
 
-  return respondOk(template, 201);
+  const { teacher, ...created } = template;
+  void teacher;
+  return respondOk(created, 201);
 });
