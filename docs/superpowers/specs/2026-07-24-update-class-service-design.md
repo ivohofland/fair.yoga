@@ -110,7 +110,7 @@ export async function updateClass(
 
 `ClassUpdateData` is declared explicitly in the service rather than derived from
 `updateClassSchema`, so the service stays framework- and wire-format-agnostic.
-Its fields mirror what that schema accepts today.
+Its fields mirror what that schema accepts today. — **superseded, see Correction 3**: this type is now derived from the schema, with a type-level pin.
 
 ### Behaviour, in order
 
@@ -120,7 +120,7 @@ Its fields mirror what that schema accepts today.
 4. No keys in `data` → `no_fields`.
 5. `updateMany({ where: sentEconomicFields.length > 0 ? { id, settingsLocked: false } : { id }, data })`.
 6. `count === 0` → **`locked`** if economic fields were sent (the genuine race),
-   otherwise **`not_found`** (the row disappeared). *This is the fix.*
+   otherwise **`not_found`** (the row disappeared). *This is the fix.* — **superseded, see Correction 2**: this classification is itself incomplete.
 7. Re-read and return `{ ok: true, cls }`.
 
 **On the order of steps 3 and 4** — see the Correction below; the ordering is
@@ -166,7 +166,7 @@ test file. Two cases:
 green **without modification**. It pins the 409 message, the scoped lock, the
 ownership guard, and atomic rejection of mixed bodies — so an unchanged pass is
 the evidence the extraction preserved behaviour. No new integration tests: the
-fixed branch still isn't reachable over HTTP.
+fixed branch still isn't reachable over HTTP. — **amended, see Correction 4**.
 
 ## Also in scope
 
@@ -188,9 +188,9 @@ decision rather than an oversight.
 ## Verification
 
 `tsc` + `eslint` clean. The `class-lifecycle` unit tests and the full
-integration project green, with `classes-api.test.ts` unmodified.
+integration project green, with `classes-api.test.ts` unmodified. — **amended, see Correction 4**.
 
-## Correction (2026-07-24, written while drafting the plan)
+## Correction 1 — the step 3 / step 4 ordering claim was wrong (2026-07-24, written while drafting the plan)
 
 **The step 3 / step 4 ordering claim was wrong.** This spec originally said the
 lock check "must precede" the empty-body 400, on the grounds that a locked
@@ -207,7 +207,7 @@ error this project keeps finding: asserting that an ordering is load-bearing
 without checking whether any input can actually distinguish the two orders.
 That check is cheap and should precede the claim, not follow it.
 
-### 2 — the fix was half a fix (2026-07-24, from the PR #78 review)
+## Correction 2 — the fix was half a fix (2026-07-24, from the PR #78 review)
 
 The design above fixes the `count === 0` classification for the non-economic
 branch and leaves the economic one asserting a single cause. That is wrong for
@@ -231,7 +231,7 @@ before writing down a cause.* Having just corrected one unverified claim about
 branch behaviour was not protection against making another, two paragraphs
 later, about the branch the document was actually about.
 
-### 3 — deriving `ClassUpdateData` fixed nothing on its own (2026-07-24, from the PR #78 review)
+## Correction 3 — deriving `ClassUpdateData` fixed nothing on its own (2026-07-24, from the PR #78 review)
 
 The review found that a field added to `updateClassSchema` but not to the
 hand-declared `ClassUpdateData` reaches Prisma with no compile error, because
@@ -268,3 +268,35 @@ The recurring lesson, now three for three in this document: a proposed fix is a
 hypothesis. This one came from a careful reviewer, was plausible, and was wrong
 — and it was wrong in the same direction as everything else corrected here,
 claiming a compile-time guarantee nobody had run the compiler to confirm.
+
+## Correction 4 — the round-1 fix shipped a 500, and the pin guarded the wrong type (2026-07-24, from the PR #78 re-review)
+
+**The "unreachable" throw was reachable.** Prisma's `updateMany` issues no
+`UPDATE` at all when every value in `data` is `undefined`, returning
+`{ count: 0 }` without regard to the row's existence. The emptiness guard
+tested key *presence*, so a vacuous payload passed it, drew a zero count, found
+its row alive, and hit the invariant throw — a 500 for a request that asked for
+no change. Measured against the real database, not argued. The guard now tests
+for a defined value, which is the rule the same function already applied one
+step earlier when computing `sentEconomic`; the throw is unreachable now for a
+reason that holds.
+
+**The type pin referenced the wrong Prisma type.** It checked
+`ClassUncheckedUpdateInput` (single-record) while guarding a `updateMany` call,
+which takes `ClassUncheckedUpdateManyInput`. The former additionally accepts
+nested relation writes, so a schema field named `notifications` passed both the
+pin and the call site.
+
+**`classes-api.test.ts` is no longer literally unmodified.** The Testing and
+Verification sections above promise it stays untouched as behaviour-preservation
+evidence. Five of its comments cited route lines this refactor moved, and were
+updated in `c569621` — comments only, no assertion, test name, or fixture. The
+evidence stands; the wording above does not, and none of the three earlier
+corrections caught it.
+
+That last point is the one worth keeping. This document has now corrected itself
+four times, and each time the error was a claim written down without running the
+check that would have falsified it — including inside sections whose whole
+subject was that habit. The convention that survives is narrow and mechanical:
+if a sentence asserts what the compiler, the database, or the test suite does,
+run it before writing the sentence.
