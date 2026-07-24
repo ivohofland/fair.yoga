@@ -244,4 +244,63 @@ describe('PATCH /api/class-templates/[id]', () => {
     expect(after.isArchived).toBe(true);
     expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(0);
   });
+
+  it('re-activation generates only for the re-activated template, not teacher-wide', async () => {
+    // Template A: paused, no instances — created directly (bypassing the
+    // route) so its window starts empty.
+    const templateA = await prisma.classTemplate.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Scope A',
+        dayOfWeek: 4,
+        startTime: '10:00',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+        isActive: false,
+      },
+    });
+
+    // Template B: already active, no instances — also created directly so
+    // the old teacher-wide generator's "top up every active template"
+    // behavior would have populated it; the new template-scoped generator
+    // must leave it alone.
+    const templateB = await prisma.classTemplate.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Scope B',
+        dayOfWeek: 5,
+        startTime: '10:00',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+        isActive: true,
+      },
+    });
+    expect(await prisma.class.count({ where: { templateId: templateB.id } })).toBe(0);
+
+    const activate = await fetch(`${BASE_URL}/api/class-templates/${templateA.id}`, {
+      method: 'PATCH',
+      headers: { Cookie: sessionCookie },
+    });
+    expect(activate.status).toBe(200);
+
+    // A's window generated...
+    expect(
+      await prisma.class.count({ where: { templateId: templateA.id } }),
+    ).toBeGreaterThanOrEqual(1);
+    // ...but B — also active, untouched by this request — stays empty.
+    expect(await prisma.class.count({ where: { templateId: templateB.id } })).toBe(0);
+
+    await prisma.class.deleteMany({ where: { templateId: { in: [templateA.id, templateB.id] } } });
+    await prisma.classTemplate.deleteMany({ where: { id: { in: [templateA.id, templateB.id] } } });
+  });
 });
