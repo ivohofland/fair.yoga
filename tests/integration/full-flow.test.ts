@@ -256,14 +256,15 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
     expect(registration.status).toBe('registered');
   });
 
+  // Step 11 is intentionally absent — it used to write `settingsLocked: true`
+  // via `prisma.class.update` and then assert it, a tautology asserting its
+  // own write. The genuine flip, via a real registration over HTTP, is
+  // covered by registrations-api's `locks settings atomically with the first
+  // registration` test. Nothing downstream here reads `settingsLocked`, so
+  // removing the step needed no replacement setup.
   // -----------------------------------------------------------------------
   // Step 12: Transition class open -> in_progress
   // -----------------------------------------------------------------------
-  // (Step 11 used to write settingsLocked: true via prisma.class.update and
-  // then assert it — a tautology asserting its own write. The genuine flip,
-  // via a real registration over HTTP, is covered by
-  // registrations-api.test.ts:207-214. Nothing downstream here reads
-  // settingsLocked, so removing the step needed no replacement setup.)
   it('Step 12: transitions class from open to in_progress', async () => {
     const result = await transitionClass(prisma, classId, 'in_progress');
 

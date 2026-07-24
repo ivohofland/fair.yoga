@@ -82,8 +82,8 @@ beforeAll(async () => {
   otherAccountId = other.accountId;
   otherToken = await seedSession(prisma, otherAccountId);
 
-  // Room.isPublic defaults to true (prisma/schema.prisma:226) — explicit
-  // false here, since these cases start from a private room.
+  // Room.isPublic defaults to true (the `isPublic` field, prisma/schema.prisma:226)
+  // — explicit false here, since these cases start from a private room.
   const room = await prisma.room.create({
     data: {
       venueName: 'Rooms API Studio',

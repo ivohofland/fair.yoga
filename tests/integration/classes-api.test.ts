@@ -110,8 +110,14 @@ beforeAll(async () => {
   cancelClassId = cancelCls.id;
 
   // -- PUT /api/classes/[id] economic-lock fixtures ------------------------
-  // Both `open` (not `draft`): a real registration requires it, and PUT
-  // itself doesn't gate on status, so this doesn't affect what's tested.
+  // Both `open` (not `draft`), but for different reasons. `lockedCls` needs
+  // `open` because a real registration requires it (see below — the lock
+  // fixture is set by an actual HTTP registration, not a direct write).
+  // `economicsCls` is `open` so that it is otherwise IDENTICAL to `lockedCls`
+  // — same status, room, rates — differing only in the lock. That identity is
+  // what makes the 200-vs-409 pair between them a meaningful contrast, rather
+  // than two differently-shaped fixtures that happen to land on different
+  // status codes for unrelated reasons.
   const economicsCls = await prisma.class.create({
     data: {
       teacherId: ownerId,

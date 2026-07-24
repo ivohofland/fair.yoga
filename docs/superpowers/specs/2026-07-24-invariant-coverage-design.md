@@ -102,3 +102,34 @@ turns `deleteMany` into delete-all.
 
 `tsc` + `eslint` clean; the integration project green. Each 403/409 asserts the
 DB is unchanged, not just the status code.
+
+## Correction (2026-07-24, from the PR #70 review)
+
+1. **The ordering premise was wrong.** §2's "same actor, same room, only
+   `isPublic` differs — that is what pins the ordering" does not hold: holding
+   the actor as the creator makes the creator-ownership guard a no-op under
+   either ordering (a creator always passes it, so swapping the two guards
+   can't change which one fires for that actor). The discriminating case is
+   **non-creator + public room** — the only combination whose 403 message
+   differs between the current order (`isPublic` first: "Public rooms cannot
+   be edited") and a swapped order (`createdById` first: "Only the room
+   creator can update this room"). That case was added during review.
+
+2. **A miscitation.** The "Problem" section cites `registrations-api.test.ts:168`
+   as evidence the lock is "false before a real registration". That line sits
+   inside a *cross-teacher rejection* test ("rejects a teacher registering
+   students into another teacher's class"), asserting that a **victim's**
+   class was not locked by a **rejected** registration attempt — a different
+   invariant from the one under discussion. The genuine flip coverage is
+   registrations-api's `locks settings atomically with the first
+   registration` test; the "false before" baseline referenced above actually
+   lives in `full-flow.test.ts`.
+
+3. **"Not producible over HTTP" is too strong.** The compare-and-swap note
+   (§1, "Deliberately not tested") claims reaching `result.count === 0` is
+   "not producible over HTTP". The suite already races concurrent HTTP
+   registrations elsewhere (see registrations-api's `never exceeds capacity
+   under concurrent registrations` test), and `count === 0` is also reachable
+   via a concurrent class *delete* landing between the route's read and
+   write. The accurate claim is that it is not *deterministically*
+   reproducible over HTTP — not that it's impossible.
