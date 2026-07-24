@@ -132,13 +132,14 @@ export async function generateInstancesForTemplate(
 }
 
 /**
- * Cron entry point: tops up the rolling window for all active templates
- * (or one teacher's). Each template is isolated — one template whose
- * generation throws is logged and skipped, the rest still generate, and
- * the first error is rethrown at the end for job-health visibility.
+ * Cron / teacher-wide entry point: tops up the rolling window for all
+ * active templates (or one teacher's). Each template is isolated — one
+ * template whose generation throws is logged and skipped, the rest still
+ * generate, and the first error is rethrown at the end for job-health
+ * visibility.
  */
 export async function generateClassInstances(
-  db: PrismaClient | Prisma.TransactionClient,
+  db: PrismaClient,
   from?: Date,
   teacherId?: string,
 ): Promise<number> {
