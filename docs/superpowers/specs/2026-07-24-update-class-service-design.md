@@ -183,7 +183,7 @@ which can itself race a delete and throw — surfacing as a 500 via
 narrower) window than the one being fixed. Recorded so its survival is a
 decision rather than an oversight.
 
-**`GET`/`DELETE` on the same route file.** Untouched.
+**`GET` on the same route file.** Untouched.
 
 ## Verification
 
@@ -206,3 +206,27 @@ that fails one way and passes the other does not exist. And it is the same
 error this project keeps finding: asserting that an ordering is load-bearing
 without checking whether any input can actually distinguish the two orders.
 That check is cheap and should precede the claim, not follow it.
+
+### 2 — the fix was half a fix (2026-07-24, from the PR #78 review)
+
+The design above fixes the `count === 0` classification for the non-economic
+branch and leaves the economic one asserting a single cause. That is wrong for
+the same reason #72 was wrong. The compare-and-swap filter,
+`{ id, settingsLocked: false }`, is compound: zero rows match if the lock
+flipped **or** if the row was deleted. Reporting `locked` for both reproduces
+the original defect on the sibling branch — and is harder to diagnose, because
+the message names a real field instead of an empty list.
+
+It is reachable, not theoretical: `syncTemplateInstances` hard-deletes future
+instances that are unlocked and `draft`/`open` — precisely the rows that reach
+this compare-and-swap — so changing a template's day-of-week while editing one
+of its instances triggers it.
+
+`updateClass` now re-reads on `count === 0` and decides from what it finds
+instead of inferring from which filter it used.
+
+The lesson is the one this spec's first correction already stated and this
+section failed to apply: *check whether the input can distinguish the cases
+before writing down a cause.* Having just corrected one unverified claim about
+branch behaviour was not protection against making another, two paragraphs
+later, about the branch the document was actually about.

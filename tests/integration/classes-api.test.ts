@@ -341,20 +341,21 @@ describe('PUT /api/classes/[id]', () => {
     const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
     expect(before.settingsLocked).toBe(true); // sanity: the beforeAll fixture registration locked it
 
-    // Body order deliberately reversed from ECONOMIC_FIELDS' own declaration
-    // order (classes/[id]/route.ts:35-41 — roomCost before minRate), so the
-    // "regardless of the order given in the request body" claim below is
-    // actually exercised rather than accidentally true because the two orders match.
+    // Body order deliberately reversed from the `ECONOMIC_FIELDS` constant's
+    // own declaration order (src/services/class-lifecycle.ts — roomCost
+    // before minRate), so the "regardless of the order given in the request
+    // body" claim below is actually exercised rather than accidentally true
+    // because the two orders match.
     const res = await put(ownerToken, lockedClassId, { minRate: 1, roomCost: 999 });
     expect(res.status).toBe(409);
 
-    // The ECONOMIC_FIELDS lock's 409 message (classes/[id]/route.ts:74) names
-    // every sent field, in ECONOMIC_FIELDS order regardless of request-body
-    // order. Two separate toContain checks rather than one 'roomCost, minRate'
-    // string, so this doesn't depend on ECONOMIC_FIELDS' own declaration
-    // order — alphabetizing that array is cosmetic and shouldn't fail this
-    // test. Each check still distinguishes this 409 from withErrorHandler's
-    // unrelated 'Resource already exists' 409 (src/lib/api-utils.ts) just as well.
+    // The `locked` branch's 409 message in the route's `PUT` names every sent
+    // field, in ECONOMIC_FIELDS order regardless of request-body order. Two
+    // separate toContain checks rather than one 'roomCost, minRate' string, so
+    // this doesn't depend on ECONOMIC_FIELDS' own declaration order —
+    // alphabetizing that array is cosmetic and shouldn't fail this test. Each
+    // check still distinguishes this 409 from withErrorHandler's unrelated
+    // 'Resource already exists' 409 (src/lib/api-utils.ts) just as well.
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toContain('roomCost');
     expect(json.error.message).toContain('minRate');
@@ -367,11 +368,11 @@ describe('PUT /api/classes/[id]', () => {
   it('locked class: a mixed economic + non-economic body is rejected atomically', async () => {
     const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
 
-    // The route rejects before any write (classes/[id]/route.ts:72-77, ahead
-    // of the update). Nothing pinned that the rejection is all-or-nothing
-    // until this case — a future "strip the locked fields and apply the
-    // rest" refactor could pass every other case here while quietly changing
-    // the contract from atomic rejection to partial apply.
+    // The lock check inside `updateClass` rejects before any write happens.
+    // Nothing pinned that the rejection is all-or-nothing until this case — a
+    // future "strip the locked fields and apply the rest" refactor could pass
+    // every other case here while quietly changing the contract from atomic
+    // rejection to partial apply.
     const res = await put(ownerToken, lockedClassId, { description: 'x', roomCost: 999 });
     expect(res.status).toBe(409);
 
@@ -400,15 +401,15 @@ describe('PUT /api/classes/[id]', () => {
 
     // An economic field, not `description`: a non-economic body can't tell
     // ownership-first from lock-first apart, because sentEconomicFields would
-    // be empty either way and the lock branch (route.ts:72) would be
-    // unreachable regardless of guard order. roomCost makes the two orderings
-    // diverge: ownership-first -> 403 "Not your class"; lock-first -> 409
-    // "Cannot update economic fields...".
+    // be empty either way and the `ECONOMIC_FIELDS` lock in `updateClass`
+    // would be unreachable regardless of guard order. roomCost makes the two
+    // orderings diverge: ownership-first -> 403 "Not your class"; lock-first
+    // -> 409 "Cannot update economic fields...".
     const res = await put(otherTeacherToken, lockedClassId, { roomCost: 999 });
     expect(res.status).toBe(403);
 
-    // The bespoke ownership guard's own message (classes/[id]/route.ts:54),
-    // which runs ahead of parseBody and the ECONOMIC_FIELDS lock check.
+    // The ownership guard's own message, in the route's `PUT` ahead of
+    // parseBody and the ECONOMIC_FIELDS lock check.
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toContain('Not your class');
 
