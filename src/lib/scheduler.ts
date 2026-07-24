@@ -25,6 +25,29 @@ interface Job {
 
 const MINUTE = 60 * 1000;
 
+/**
+ * Runs each sweep in isolation: a failure in one must not starve the others.
+ * Every failure is logged with its sweep name; the first is rethrown so job
+ * health still surfaces the failure.
+ */
+export function isolatedSweeps(
+  job: string,
+  sweeps: Array<(db: PrismaClient) => Promise<unknown>>,
+): (db: PrismaClient) => Promise<void> {
+  return async (db) => {
+    const errors: unknown[] = [];
+    for (const sweep of sweeps) {
+      try {
+        await sweep(db);
+      } catch (err) {
+        log.error({ err, sweep: sweep.name }, `${job} sweep failed`);
+        errors.push(err);
+      }
+    }
+    if (errors.length > 0) throw errors[0];
+  };
+}
+
 /** Last-run bookkeeping per job, surfaced by /api/health. */
 export interface JobHealth {
   lastRunAt: string | null;
@@ -67,21 +90,11 @@ export async function startScheduler(): Promise<void> {
     {
       name: 'class-transitions',
       intervalMs: 1 * MINUTE,
-      run: async (db) => {
-        // Each sweep isolated: a failure in one must not starve the others.
-        const sweeps = [autoTransitionToInProgress, autoCancelClasses, autoCompleteClasses];
-        const errors: unknown[] = [];
-        for (const sweep of sweeps) {
-          try {
-            await sweep(db);
-          } catch (err) {
-            log.error({ err, sweep: sweep.name }, 'class-transitions sweep failed');
-            errors.push(err);
-          }
-        }
-        // Still surface the failure in job health.
-        if (errors.length > 0) throw errors[0];
-      },
+      run: isolatedSweeps('class-transitions', [
+        autoTransitionToInProgress,
+        autoCancelClasses,
+        autoCompleteClasses,
+      ]),
     },
     {
       name: 'email-fallback',
@@ -91,19 +104,7 @@ export async function startScheduler(): Promise<void> {
     {
       name: 'class-generation',
       intervalMs: 60 * MINUTE,
-      run: async (db) => {
-        const sweeps = [generateClassInstances, generateStudioClassInstances];
-        const errors: unknown[] = [];
-        for (const sweep of sweeps) {
-          try {
-            await sweep(db);
-          } catch (err) {
-            log.error({ err, sweep: sweep.name }, 'class-generation sweep failed');
-            errors.push(err);
-          }
-        }
-        if (errors.length > 0) throw errors[0];
-      },
+      run: isolatedSweeps('class-generation', [generateClassInstances, generateStudioClassInstances]),
     },
     {
       name: 'payment-reminders',
