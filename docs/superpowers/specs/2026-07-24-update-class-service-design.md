@@ -123,9 +123,8 @@ Its fields mirror what that schema accepts today.
    otherwise **`not_found`** (the row disappeared). *This is the fix.*
 7. Re-read and return `{ ok: true, cls }`.
 
-**Step 3 must precede step 4.** Today a locked class sent only economic fields
-returns 409, not the empty-body 400. Reordering would silently change that, and
-`classes-api.test.ts` pins the 409.
+**On the order of steps 3 and 4** — see the Correction below; the ordering is
+unobservable and needs no test.
 
 ### The split
 
@@ -190,3 +189,20 @@ decision rather than an oversight.
 
 `tsc` + `eslint` clean. The `class-lifecycle` unit tests and the full
 integration project green, with `classes-api.test.ts` unmodified.
+
+## Correction (2026-07-24, written while drafting the plan)
+
+**The step 3 / step 4 ordering claim was wrong.** This spec originally said the
+lock check "must precede" the empty-body 400, on the grounds that a locked
+class sent only economic fields must return 409 rather than 400. Those two
+branches cannot compete: if any economic field is present in `data`, then
+`Object.keys(data).length > 0` by definition, so the `no_fields` branch is
+unreachable for exactly the inputs the lock branch claims. The order is
+**unobservable**, in the current route as well as in the extracted service.
+
+Worth stating rather than quietly dropping, for two reasons. The claim would
+have sent an implementer hunting for a test that cannot be written — a case
+that fails one way and passes the other does not exist. And it is the same
+error this project keeps finding: asserting that an ordering is load-bearing
+without checking whether any input can actually distinguish the two orders.
+That check is cheap and should precede the claim, not follow it.
