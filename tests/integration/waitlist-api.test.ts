@@ -100,7 +100,9 @@ beforeAll(async () => {
   // 'auto_promote' no matter when the suite runs (it's nowhere near the
   // cancel deadline), so claimSpot deterministically throws
   // WaitlistPromotionError('wrong_window') — the "outside the claim
-  // window" 409 branch that only exists at the route layer.
+  // window" 409 branch. The window/state guard itself lives in
+  // claimSpot/getWaitlistWindow (service); only the exception → 409
+  // mapping is route-level.
   const farFutureClass = await prisma.class.create({
     data: {
       teacherId,
