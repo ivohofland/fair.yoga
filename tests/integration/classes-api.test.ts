@@ -36,14 +36,10 @@ async function makeTeacher(tag: string, token: string): Promise<string> {
       pageSlug: `classesapi-${tag}-${uniqueSuffix}`,
     },
   });
-  const account = await prisma.teacher.findUniqueOrThrow({
-    where: { id: teacher.id },
-    select: { accountId: true },
-  });
   await prisma.session.create({
     data: {
       id: hashToken(token),
-      accountId: account.accountId,
+      accountId: teacher.accountId,
       expiresAt: new Date(Date.now() + 86400000),
     },
   });

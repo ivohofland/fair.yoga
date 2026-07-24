@@ -50,14 +50,10 @@ beforeAll(async () => {
     },
   });
   teacherId = teacher.id;
-  const teacherAccount = await prisma.teacher.findUniqueOrThrow({
-    where: { id: teacherId },
-    select: { accountId: true },
-  });
   await prisma.session.create({
     data: {
       id: hashToken(teacherToken),
-      accountId: teacherAccount.accountId,
+      accountId: teacher.accountId,
       expiresAt: new Date(Date.now() + 86400000),
     },
   });
@@ -91,14 +87,10 @@ beforeAll(async () => {
     },
   });
   studentId = student.id;
-  const studentAccount = await prisma.student.findUniqueOrThrow({
-    where: { id: studentId },
-    select: { accountId: true },
-  });
   await prisma.session.create({
     data: {
       id: hashToken(studentToken),
-      accountId: studentAccount.accountId!,
+      accountId: student.accountId!,
       expiresAt: new Date(Date.now() + 86400000),
     },
   });
