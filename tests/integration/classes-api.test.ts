@@ -189,8 +189,20 @@ afterAll(async () => {
     await prisma.notification.deleteMany({ where: { relatedClassId: { in: allClassIds } } });
     await prisma.class.deleteMany({ where: { id: { in: allClassIds } } });
   }
-  await prisma.teacherRoom.deleteMany({ where: { teacherId: ownerId } });
-  await prisma.room.delete({ where: { id: roomId } });
+  // Guarded like every other delete in this function: an undefined
+  // `teacherId` turns `deleteMany` into an unfiltered delete-all across the
+  // whole table (not a no-op like `delete` would give you), and a `beforeAll`
+  // that throws before `ownerId` is assigned still runs this `afterAll` with
+  // it `undefined`. `room.delete` would only throw on an undefined id rather
+  // than mass-delete, but that throw aborts the rest of this function before
+  // the student cleanup below — guarding it too keeps teardown running to
+  // completion instead of stopping partway.
+  if (ownerId) {
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: ownerId } });
+  }
+  if (roomId) {
+    await prisma.room.delete({ where: { id: roomId } });
+  }
   if (lockStudentId) {
     // Self-booking upserts a TeacherStudent link (registrations route) —
     // clean it up before the teacher/student rows go.
