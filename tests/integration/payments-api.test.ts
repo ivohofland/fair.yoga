@@ -27,11 +27,7 @@ async function makeTeacher(tag: string): Promise<{ id: string; token: string }> 
       pageSlug: `pay-${tag}-${suffix}`,
     },
   });
-  const account = await prisma.teacher.findUniqueOrThrow({
-    where: { id: teacher.id },
-    select: { accountId: true },
-  });
-  const token = await seedSession(prisma, account.accountId);
+  const token = await seedSession(prisma, teacher.accountId);
   return { id: teacher.id, token };
 }
 

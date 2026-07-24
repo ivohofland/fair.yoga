@@ -66,6 +66,7 @@ beforeAll(async () => {
     },
   });
   ownerId = owner.id;
+  ownerAccountIdForCleanup = owner.accountId;
 
   const other = await prisma.teacher.create({
     data: {
@@ -78,6 +79,7 @@ beforeAll(async () => {
     },
   });
   otherTeacherId = other.id;
+  otherAccountIdForCleanup = other.accountId;
 
   const room = await prisma.room.create({
     data: {
@@ -124,19 +126,8 @@ beforeAll(async () => {
   });
   unlinkedStudentId = unlinked.id;
 
-  const ownerAccount = await prisma.teacher.findUniqueOrThrow({
-    where: { id: ownerId },
-    select: { accountId: true },
-  });
-  ownerAccountIdForCleanup = ownerAccount.accountId;
-  ownerToken = await seedSession(prisma, ownerAccount.accountId);
-
-  const otherAccount = await prisma.teacher.findUniqueOrThrow({
-    where: { id: otherTeacherId },
-    select: { accountId: true },
-  });
-  otherAccountIdForCleanup = otherAccount.accountId;
-  otherTeacherToken = await seedSession(prisma, otherAccount.accountId);
+  ownerToken = await seedSession(prisma, owner.accountId);
+  otherTeacherToken = await seedSession(prisma, other.accountId);
 });
 
 afterAll(async () => {

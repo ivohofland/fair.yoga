@@ -50,6 +50,7 @@ beforeAll(async () => {
     },
   });
   teacherId = teacher.id;
+  teacherAccountId = teacher.accountId;
 
   const room = await prisma.room.create({
     data: {
@@ -69,12 +70,7 @@ beforeAll(async () => {
   });
   teacherRoomId = teacherRoom.id;
 
-  const account = await prisma.teacher.findUniqueOrThrow({
-    where: { id: teacherId },
-    select: { accountId: true },
-  });
-  teacherAccountId = account.accountId;
-  sessionToken = await seedSession(prisma, account.accountId);
+  sessionToken = await seedSession(prisma, teacher.accountId);
 });
 
 afterAll(async () => {
