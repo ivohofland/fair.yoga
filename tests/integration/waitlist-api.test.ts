@@ -19,7 +19,6 @@ const teacherToken = crypto.randomBytes(32).toString('hex'); // non-student sess
 let teacherId: string;
 let studentId: string;
 let roomId: string;
-let teacherRoomId: string;
 let farFutureClassId: string;
 let freedSpotClassId: string;
 
@@ -79,7 +78,7 @@ beforeAll(async () => {
   const teacherRoom = await prisma.teacherRoom.create({
     data: { teacherId, roomId, capacityOverride: 8, rentalRate: 15 },
   });
-  teacherRoomId = teacherRoom.id;
+  const teacherRoomId = teacherRoom.id;
 
   const student = await prisma.student.create({
     data: {
@@ -132,12 +131,11 @@ beforeAll(async () => {
   });
 
   // --- 201 fixture -------------------------------------------------------
-  // A class whose start is computed relative to *now* so the request lands
-  // inside the 1-hour first-come-first-claimed window (cutoff..deadline)
-  // regardless of when the suite runs. cancelDeadline HOURS_6 + a class
-  // starting ~6h15m from now puts "now" 15 minutes before the deadline —
-  // comfortably inside the final-hour broadcast window, with a wide (15min
-  // forward / 45min back) margin for suite runtime. Teacher timezone is UTC
+  // classStart = now + 6h15m with a HOURS_6 deadline puts the request inside
+  // the first-come-first-claimed window: deadline now+15m, cutoff now-45m.
+  // The 15 minutes forward is the budget for the suite to reach this test
+  // (it flips to `frozen` past that); the 45 minutes back is slack against
+  // clock skew between test process and server. Teacher timezone is UTC
   // (see above), so classStartInstant is plain Date.UTC arithmetic.
   const now = new Date();
   const classStart = new Date(now.getTime() + (6 * 60 + 15) * 60 * 1000);
@@ -178,6 +176,12 @@ afterAll(async () => {
   await prisma.class.deleteMany({ where: { id: { in: classIds } } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId } });
   await prisma.room.delete({ where: { id: roomId } });
+
+  // claimSpot writes a booking_confirmed notification (recipientId = studentId,
+  // no FK — nothing else cascades it). Clean it before the student delete so
+  // it doesn't orphan in the shared dev DB and later trip processEmailFallback
+  // into logging `recipient-missing`.
+  await prisma.notification.deleteMany({ where: { recipientId: studentId } });
 
   const studentAccount = await prisma.student.findUniqueOrThrow({
     where: { id: studentId },
@@ -223,6 +227,12 @@ describe('POST /api/waitlist/claim', () => {
     const res = await claim(studentToken, { classId: farFutureClassId });
     expect(res.status).toBe(409);
 
+    // Pin WHICH 409 fired — claimSpot has five distinct reasons; matching
+    // only the status would also pass for the wrong branch. Substring is
+    // verbatim from claimSpot's `wrong_window` throw in src/services/waitlist.ts.
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toMatch(/final hour|window/i);
+
     // No state change: the entry keeps waiting, no registration is created.
     const entry = await prisma.waitlistEntry.findUniqueOrThrow({
       where: { classId_studentId: { classId: farFutureClassId, studentId } },
@@ -248,5 +258,17 @@ describe('POST /api/waitlist/claim', () => {
     });
     expect(registration.status).toBe('registered');
     expect(registration.id).toBe(json.data.registrationId);
+  });
+
+  it('409s a second claim on the same now-filled spot (class_full)', async () => {
+    // freedSpotClassId now holds 1 active registration against
+    // maxStudents: 1 (from the 201 test above) and is still inside the
+    // claim window, so this repeat claim hits claimSpot's `class_full`
+    // branch — the entire point of first-come-first-claimed.
+    const res = await claim(studentToken, { classId: freedSpotClassId });
+    expect(res.status).toBe(409);
+
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toMatch(/already been claimed/i);
   });
 });
