@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-const BASE_URL = 'http://localhost:3000';
+import { BASE_URL } from './helpers';
 
 /**
  * The verify route must reject an unsafe redirect at the request boundary

@@ -9,12 +9,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { uniqueSuffix } from './helpers';
 import { createSession, validateSession } from '@/lib/auth';
 import { transitionClass, completeClass } from '@/services/class-lifecycle';
 import { markPaymentPaid, getPaymentsForClass, getOutstandingPayments } from '@/services/payments';
 
 const prisma = new PrismaClient();
-const uniqueSuffix = Date.now();
+const suffix = uniqueSuffix();
 
 describe('Full flow: teacher signup -> room -> class -> student registers -> complete -> pricing -> payment', () => {
   // Shared state across sequential tests
@@ -81,16 +82,16 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
       data: {
         firstName: 'Flow',
         lastName: 'Teacher',
-        email: `flow-teacher-${uniqueSuffix}@test.local`,
-        account: { create: { email: `flow-teacher-${uniqueSuffix}@test.local` } },
+        email: `flow-teacher-${suffix}@test.local`,
+        account: { create: { email: `flow-teacher-${suffix}@test.local` } },
         bio: 'Teacher for full flow integration test',
-        pageSlug: `flow-teacher-${uniqueSuffix}`,
+        pageSlug: `flow-teacher-${suffix}`,
       },
     });
     teacherId = teacher.id;
 
     expect(teacherId).toBeDefined();
-    expect(teacher.email).toBe(`flow-teacher-${uniqueSuffix}@test.local`);
+    expect(teacher.email).toBe(`flow-teacher-${suffix}@test.local`);
   });
 
   // -----------------------------------------------------------------------
@@ -124,7 +125,7 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
     const room = await prisma.room.create({
       data: {
         venueName: 'Flow Studio',
-        address: `${uniqueSuffix} Flow St`,
+        address: `${suffix} Flow St`,
         city: 'Amsterdam',
         postcode: '1234FL',
         floor: '1',
@@ -207,10 +208,10 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
       data: {
         firstName: 'Flow',
         lastName: 'Student',
-        email: `flow-student-${uniqueSuffix}@test.local`,
+        email: `flow-student-${suffix}@test.local`,
         incomeTier: 3,
         claimedAt: new Date(),
-        account: { create: { email: `flow-student-${uniqueSuffix}@test.local` } },
+        account: { create: { email: `flow-student-${suffix}@test.local` } },
       },
     });
     studentId = student.id;

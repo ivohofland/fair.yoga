@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { generateMagicLinkToken } from '@/lib/auth';
+import { BASE_URL, uniqueSuffix } from './helpers';
 
-const BASE_URL = 'http://localhost:3000';
 const prisma = new PrismaClient();
-const uniqueSuffix = `${Date.now()}`;
+const suffix = uniqueSuffix();
 
 /**
  * Profile-attachment rules: an unauthenticated signup must never attach a
@@ -12,9 +12,9 @@ const uniqueSuffix = `${Date.now()}`;
  * and fresh signups create the account atomically with the profile.
  */
 
-const takenEmail = `signup-taken-${uniqueSuffix}@test.local`;
-const teacherOnlyEmail = `signup-teacheronly-${uniqueSuffix}@test.local`;
-const unclaimedEmail = `signup-unclaimed-${uniqueSuffix}@test.local`;
+const takenEmail = `signup-taken-${suffix}@test.local`;
+const teacherOnlyEmail = `signup-teacheronly-${suffix}@test.local`;
+const unclaimedEmail = `signup-unclaimed-${suffix}@test.local`;
 
 let takenStudentId: string;
 let unclaimedStudentId: string;
@@ -43,20 +43,20 @@ beforeAll(async () => {
       lastName: 'Teacher',
       email: teacherOnlyEmail,
       bio: 'Teacher-only fixtures',
-      pageSlug: `signup-teacheronly-${uniqueSuffix}`,
+      pageSlug: `signup-teacheronly-${suffix}`,
       account: { create: { email: teacherOnlyEmail } },
     },
   });
 });
 
 afterAll(async () => {
-  await prisma.magicLinkToken.deleteMany({ where: { email: { contains: uniqueSuffix } } });
-  await prisma.teacher.deleteMany({ where: { email: { contains: uniqueSuffix } } });
+  await prisma.magicLinkToken.deleteMany({ where: { email: { contains: suffix } } });
+  await prisma.teacher.deleteMany({ where: { email: { contains: suffix } } });
   await prisma.student.deleteMany({
     where: { id: { in: [takenStudentId, unclaimedStudentId] } },
   });
-  await prisma.student.deleteMany({ where: { email: { contains: uniqueSuffix } } });
-  await prisma.account.deleteMany({ where: { email: { contains: uniqueSuffix } } });
+  await prisma.student.deleteMany({ where: { email: { contains: suffix } } });
+  await prisma.account.deleteMany({ where: { email: { contains: suffix } } });
   await prisma.$disconnect();
 });
 
@@ -70,7 +70,7 @@ describe('POST /api/teachers', () => {
         lastName: 'Attempt',
         email: takenEmail,
         bio: 'Should not exist',
-        pageSlug: `signup-grab-${uniqueSuffix}`,
+        pageSlug: `signup-grab-${suffix}`,
       }),
     });
 
@@ -81,7 +81,7 @@ describe('POST /api/teachers', () => {
   });
 
   it('creates account + teacher atomically for a fresh email', async () => {
-    const email = `signup-fresh-teacher-${uniqueSuffix}@test.local`;
+    const email = `signup-fresh-teacher-${suffix}@test.local`;
     const res = await fetch(`${BASE_URL}/api/teachers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -90,7 +90,7 @@ describe('POST /api/teachers', () => {
         lastName: 'Teacher',
         email,
         bio: 'Signup fixtures',
-        pageSlug: `signup-fresh-${uniqueSuffix}`,
+        pageSlug: `signup-fresh-${suffix}`,
       }),
     });
 
@@ -106,7 +106,7 @@ describe('POST /api/teachers', () => {
 
 describe('POST /api/auth/student-signup', () => {
   it('creates account + claimed student for a fresh email', async () => {
-    const email = `signup-fresh-student-${uniqueSuffix}@test.local`;
+    const email = `signup-fresh-student-${suffix}@test.local`;
     const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
