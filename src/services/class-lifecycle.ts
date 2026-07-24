@@ -256,6 +256,12 @@ export type ClassUpdateData =
  */
 type UnwritableClassFields =
   Exclude<keyof ClassUpdateData, keyof Prisma.ClassUncheckedUpdateManyInput>;
+// The tuple wrapping is the conventional never-check idiom, kept for that
+// reason rather than a load-bearing one: distribution applies only to naked
+// type parameters, so on a concrete alias like the above `[X] extends [never]`
+// and `X extends never` behave identically — measured, both forms reject a
+// two-member union and both accept `never`. The brackets stay correct if this
+// check is ever moved into a generic helper.
 type ClassUpdateColumnsExist = [UnwritableClassFields] extends [never]
   ? true
   : UnwritableClassFields;
