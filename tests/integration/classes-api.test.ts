@@ -211,6 +211,13 @@ afterAll(async () => {
       await prisma.session.deleteMany({ where: { accountId: lockStudentAccountId } });
     }
     await prisma.student.delete({ where: { id: lockStudentId } });
+    if (lockStudentAccountId) {
+      // Student.accountId is the FK — deleting the Student doesn't take the
+      // linked Account with it, so this must be explicit or the account
+      // (classesapi-lockstudent-*@test.local) leaks every run. Mirrors
+      // waitlist-api.test.ts / privacy-api.test.ts / registrations-api.test.ts.
+      await prisma.account.deleteMany({ where: { id: lockStudentAccountId } });
+    }
   }
   for (const id of [ownerId, otherTeacherId]) {
     const t = await prisma.teacher.findUniqueOrThrow({
@@ -350,6 +357,9 @@ describe('PUT /api/classes/[id]', () => {
     });
 
   it('unlocked class: owner edits economic fields -> 200, the new values persist', async () => {
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId } });
+    expect(before.settingsLocked).toBe(false); // sanity: the control fixture for the locked-class cases below
+
     const res = await put(ownerToken, economicsClassId, { roomCost: 42, minStudents: 2 });
     expect(res.status).toBe(200);
 
@@ -362,17 +372,43 @@ describe('PUT /api/classes/[id]', () => {
     const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
     expect(before.settingsLocked).toBe(true); // sanity: the beforeAll fixture registration locked it
 
-    const res = await put(ownerToken, lockedClassId, { roomCost: 999, minRate: 1 });
+    // Body order deliberately reversed from ECONOMIC_FIELDS' own declaration
+    // order (classes/[id]/route.ts:35-41 — roomCost before minRate), so the
+    // "regardless of the order given in the request body" claim below is
+    // actually exercised rather than accidentally true because the two orders match.
+    const res = await put(ownerToken, lockedClassId, { minRate: 1, roomCost: 999 });
     expect(res.status).toBe(409);
 
-    // route.ts:74 — names exactly the ECONOMIC_FIELDS sent, in ECONOMIC_FIELDS
-    // order (route.ts:35-41), regardless of the order given in the request body.
+    // The ECONOMIC_FIELDS lock's 409 message (classes/[id]/route.ts:74) names
+    // every sent field, in ECONOMIC_FIELDS order regardless of request-body
+    // order. Two separate toContain checks rather than one 'roomCost, minRate'
+    // string, so this doesn't depend on ECONOMIC_FIELDS' own declaration
+    // order — alphabetizing that array is cosmetic and shouldn't fail this
+    // test. Each check still distinguishes this 409 from withErrorHandler's
+    // unrelated 'Resource already exists' 409 (src/lib/api-utils.ts) just as well.
     const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toContain('roomCost, minRate');
+    expect(json.error.message).toContain('roomCost');
+    expect(json.error.message).toContain('minRate');
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
     expect(Number(after.roomCost)).toBe(Number(before.roomCost));
     expect(Number(after.minRate)).toBe(Number(before.minRate));
+  });
+
+  it('locked class: a mixed economic + non-economic body is rejected atomically', async () => {
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+
+    // The route rejects before any write (classes/[id]/route.ts:72-77, ahead
+    // of the update). Nothing pinned that the rejection is all-or-nothing
+    // until this case — a future "strip the locked fields and apply the
+    // rest" refactor could pass every other case here while quietly changing
+    // the contract from atomic rejection to partial apply.
+    const res = await put(ownerToken, lockedClassId, { description: 'x', roomCost: 999 });
+    expect(res.status).toBe(409);
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    expect(Number(after.roomCost)).toBe(Number(before.roomCost));
+    expect(after.description).toBe(before.description);
   });
 
   it('locked class: a non-economic edit still succeeds — the lock is scoped to economics', async () => {
