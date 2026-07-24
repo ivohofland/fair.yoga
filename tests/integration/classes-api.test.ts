@@ -10,7 +10,7 @@ function hashToken(token: string): string {
 }
 
 const prisma = new PrismaClient();
-const uniqueSuffix = Date.now();
+const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 const ownerToken = crypto.randomBytes(32).toString('hex');
 const otherTeacherToken = crypto.randomBytes(32).toString('hex');
 
@@ -18,6 +18,7 @@ let ownerId: string;
 let otherTeacherId: string;
 let roomId: string;
 let classId: string;
+let cancelClassId: string;
 
 const BASE_URL = 'http://localhost:3000';
 const cookie = (token: string) => ({ Cookie: `fair_yoga_session=${token}` });
@@ -90,10 +91,34 @@ beforeAll(async () => {
     },
   });
   classId = cls.id;
+
+  // Separate draft fixture for the /transition cancel-branch tests: cancelling
+  // mutates status away from `draft`, which the tests above depend on staying
+  // put. No registrations/waitlist entries here, so the cancel transaction's
+  // notification fan-out has nothing to notify (see the cancel test below).
+  const cancelCls = await prisma.class.create({
+    data: {
+      teacherId: ownerId,
+      teacherRoomId: teacherRoom.id,
+      classType: 'Classes API Cancel',
+      date: new Date('2099-06-01'),
+      startTime: '09:00',
+      durationMinutes: 60,
+      roomCost: 15,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 1,
+      maxStudents: 8,
+    },
+  });
+  cancelClassId = cancelCls.id;
 });
 
 afterAll(async () => {
-  await prisma.class.deleteMany({ where: { id: classId } });
+  await prisma.notification.deleteMany({
+    where: { relatedClassId: { in: [classId, cancelClassId] } },
+  });
+  await prisma.class.deleteMany({ where: { id: { in: [classId, cancelClassId] } } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId: ownerId } });
   await prisma.room.delete({ where: { id: roomId } });
   for (const id of [ownerId, otherTeacherId]) {
@@ -112,7 +137,7 @@ describe('POST /api/classes/[id]/complete', () => {
   const complete = (token: string | null, id: string) =>
     fetch(`${BASE_URL}/api/classes/${id}/complete`, {
       method: 'POST',
-      headers: token ? cookie(token) : undefined,
+      headers: { ...(token ? cookie(token) : {}) },
     });
 
   it('rejects a signed-out caller', async () => {
@@ -136,6 +161,11 @@ describe('POST /api/classes/[id]/complete', () => {
   it('409s completing a class straight from draft (invalid transition)', async () => {
     const res = await complete(ownerToken, classId);
     expect(res.status).toBe(409);
+
+    // Pin WHICH 409 fired — verbatim substring from validateTransition's
+    // error in src/services/class-lifecycle.ts.
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toContain('cannot move from "draft" to "completed"');
 
     const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
     expect(unchanged.status).toBe('draft');
@@ -175,7 +205,44 @@ describe('POST /api/classes/[id]/transition', () => {
     const res = await transition(ownerToken, classId, { status: 'in_progress' });
     expect(res.status).toBe(409);
 
+    // Pin WHICH 409 fired — verbatim substring from validateTransition's
+    // error in src/services/class-lifecycle.ts.
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toContain('cannot move from "draft" to "in_progress"');
+
     const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
     expect(unchanged.status).toBe('draft');
+  });
+
+  it('400s a transition to "completed" — the enum deliberately excludes it', async () => {
+    // transitionClassSchema's status enum is ['draft','open','in_progress',
+    // 'cancelled'] — completion only happens via /complete, never /transition.
+    const res = await transition(ownerToken, classId, { status: 'completed' });
+    expect(res.status).toBe(400);
+
+    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    expect(unchanged.status).toBe('draft');
+  });
+
+  it('cancels a class (happy path)', async () => {
+    const res = await transition(ownerToken, cancelClassId, { status: 'cancelled' });
+    expect(res.status).toBe(200);
+
+    const cancelled = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId } });
+    expect(cancelled.status).toBe('cancelled');
+  });
+
+  it('409s cancelling an already-cancelled class', async () => {
+    const res = await transition(ownerToken, cancelClassId, { status: 'cancelled' });
+    expect(res.status).toBe(409);
+
+    // Pin WHICH 409 fired — verbatim substring from the route's own guard
+    // text in src/app/api/classes/[id]/transition/route.ts (the conditional
+    // updateMany matched 0 rows because the class is already cancelled).
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toContain('Cannot cancel a class with status "cancelled"');
+
+    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId } });
+    expect(unchanged.status).toBe('cancelled');
   });
 });
