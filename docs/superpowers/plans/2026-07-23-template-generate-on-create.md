@@ -1,5 +1,7 @@
 # Template Generate On Create Implementation Plan
 
+> **Superseded by [2026-07-23-class-generation-hardening](./2026-07-23-class-generation-hardening.md)** — template creation is now atomic (generate inside the create transaction; failure rolls back and 500s) rather than swallow-and-heal-via-cron.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Recurring-class instances exist the moment the template does — generation wired into template create and re-activate, orphan generate endpoint deleted.

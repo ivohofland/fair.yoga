@@ -1,5 +1,7 @@
 # Recurring templates: instances exist the moment the template does
 
+> **Superseded by [2026-07-23-class-generation-hardening-design](./2026-07-23-class-generation-hardening-design.md)** — template creation is now atomic (generate inside the create transaction; failure rolls back and 500s) rather than swallow-and-heal-via-cron.
+
 **Date:** 2026-07-23
 **Status:** Approved (issue #44; approach A chosen by Ivo)
 
