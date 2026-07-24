@@ -241,19 +241,27 @@ export type ClassUpdateData =
 
 /**
  * Compile-time pin: every field the wire schema accepts must be a column
- * Prisma can actually update on `Class`.
+ * `updateMany` can actually write on `Class`.
  *
  * Because `ClassUpdateData` is derived, a new schema field lands in `keyof
  * ClassUpdateData`; if it has no matching column this alias resolves to that
  * field's name instead of `true`, and the assignment below stops compiling
  * with the offending field named in the error. A hand-declared type could not
  * do this — the unknown field would never appear in `keyof` at all.
+ *
+ * The reference is the *Many* input deliberately: `ClassUncheckedUpdateInput`
+ * (the single-record type) additionally accepts nested relation writes
+ * (`registrations`, `notifications`, …) that `updateMany` rejects, so pinning
+ * against it would wave through a schema field named after a relation.
  */
-type ClassUpdateColumnsExist =
-  Exclude<keyof ClassUpdateData, keyof Prisma.ClassUncheckedUpdateInput> extends never
-    ? true
-    : Exclude<keyof ClassUpdateData, keyof Prisma.ClassUncheckedUpdateInput>;
+type UnwritableClassFields =
+  Exclude<keyof ClassUpdateData, keyof Prisma.ClassUncheckedUpdateManyInput>;
+type ClassUpdateColumnsExist = [UnwritableClassFields] extends [never]
+  ? true
+  : UnwritableClassFields;
 
+// `void` because this repo's eslint `no-unused-vars` has no `varsIgnorePattern`
+// — the const exists only to force the conditional type above to be evaluated.
 const _classUpdateDataMatchesSchema: ClassUpdateColumnsExist = true;
 void _classUpdateDataMatchesSchema;
 
