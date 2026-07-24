@@ -299,7 +299,15 @@ export async function updateClass(
     return { ok: false, reason: 'locked', fields: sentEconomic };
   }
 
-  if (Object.keys(data).length === 0) {
+  // A key whose value is `undefined` is not an edit. Prisma agrees more
+  // strongly than you might expect: given a `data` object whose every value is
+  // undefined it issues no UPDATE at all and returns `{ count: 0 }` — with no
+  // regard for whether the row exists. Testing key *presence* here (rather
+  // than defined *values*, as `sentEconomic` above already does) let a
+  // no-op payload reach the compare-and-swap, come back with a zero count,
+  // and land in the "unreachable" branch below as a 500.
+  const hasEdit = Object.values(data).some((v) => v !== undefined);
+  if (!hasEdit) {
     return { ok: false, reason: 'no_fields' };
   }
 
@@ -326,10 +334,11 @@ export async function updateClass(
     // economic fields were sent.
     if (sentEconomic !== null) return { ok: false, reason: 'locked', fields: sentEconomic };
 
-    // Unreachable: with no economic fields the filter was `{ id }` alone, and
-    // a surviving row would have matched it. Loud rather than silently
-    // returning a plausible-but-wrong reason — the mistake this PR exists to
-    // stop making.
+    // Unreachable, and now actually so: `hasEdit` above guarantees at least
+    // one defined value, so Prisma issues a real UPDATE whose `{ id }` filter
+    // can only match zero rows if the row is gone — and the re-read above
+    // would have caught that. Loud rather than silently returning a
+    // plausible-but-wrong reason.
     throw new Error(`updateClass: class ${classId} matched no rows but still exists`);
   }
 
