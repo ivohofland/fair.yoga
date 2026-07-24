@@ -56,7 +56,9 @@ describe('PUT /api/teachers/[id]', () => {
   });
 
   afterAll(async () => {
-    await prisma.session.deleteMany({ where: { accountId: teacherAccountId } });
+    if (teacherAccountId) {
+      await prisma.session.deleteMany({ where: { accountId: teacherAccountId } });
+    }
     if (teacherId) await prisma.teacher.delete({ where: { id: teacherId } });
     if (otherTeacherId) await prisma.teacher.delete({ where: { id: otherTeacherId } });
     await prisma.account.deleteMany({

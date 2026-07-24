@@ -47,7 +47,9 @@ describe('students privacy API', () => {
   });
 
   afterAll(async () => {
-    await prisma.session.deleteMany({ where: { accountId: studentAccountId } });
+    if (studentAccountId) {
+      await prisma.session.deleteMany({ where: { accountId: studentAccountId } });
+    }
     if (studentId) {
       await prisma.studentPrivacy.deleteMany({ where: { studentId } });
       await prisma.student.delete({ where: { id: studentId } });

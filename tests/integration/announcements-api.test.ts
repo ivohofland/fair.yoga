@@ -142,7 +142,9 @@ describe('POST /api/announcements', () => {
   });
 
   afterAll(async () => {
-    await prisma.session.deleteMany({ where: { accountId: teacherAccountId } });
+    if (teacherAccountId) {
+      await prisma.session.deleteMany({ where: { accountId: teacherAccountId } });
+    }
     const studentIds = [s1Id, s2Id, s3Id].filter(Boolean);
     if (studentIds.length) {
       await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });

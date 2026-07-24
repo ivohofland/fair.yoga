@@ -85,7 +85,9 @@ afterAll(async () => {
   await prisma.classTemplate.deleteMany({ where: { teacherId } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId } });
   await prisma.room.delete({ where: { id: roomId } });
-  await prisma.session.deleteMany({ where: { accountId: teacherAccountId } });
+  if (teacherAccountId) {
+    await prisma.session.deleteMany({ where: { accountId: teacherAccountId } });
+  }
   await prisma.teacher.delete({ where: { id: teacherId } });
   await prisma.account.deleteMany({ where: { email: teacherEmail } });
   await prisma.$disconnect();
