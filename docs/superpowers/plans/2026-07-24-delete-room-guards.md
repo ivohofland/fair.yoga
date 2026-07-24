@@ -543,3 +543,26 @@ helper defined in Step 3 is used with that exact signature in all five cases.
 `creator.id` and the module-level `creatorId` are interchangeable inside
 `beforeAll` — Step 5 says which to use and why, so an implementer doesn't have
 to guess that the choice is stylistic.
+
+## Correction (2026-07-24, from the Task 1 review)
+
+Task 1 Step 7's comment on the `hasClasses` 400 case was wrong and has been
+replaced in the shipped test. It read:
+
+> The teacher-room assertion matters as much as the room one: the handler
+> deletes teacher-rooms BEFORE the room, so a missing guard would leave the
+> teacher-room gone even though the room survived.
+
+The first clause is true; the conclusion is not. That state is unreachable.
+The `Class` row that makes `hasClasses` true is the same row whose
+`Restrict`-defaulting relation makes the handler's
+`teacherRoom.deleteMany({ where: { roomId } })` throw, and the statement is
+atomic — so the teacher-room survives rather than being orphaned. Remove the
+guard and the request returns **500**, not 400 (`withErrorHandler` in
+`src/lib/api-utils.ts` gives only `P2002` a status of its own), which the
+`expect(res.status).toBe(400)` two lines above already catches.
+
+The assertions themselves stay: they belong for the ordinary reason every
+non-200 case in this file asserts the DB is unchanged. Only the justification
+was overclaimed — the same failure mode PR #70's review found on this file,
+which is why the Task 1 reviewer was primed to look for it.

@@ -334,9 +334,13 @@ describe('DELETE /api/rooms/[id]', () => {
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toContain('Cannot delete a room that has classes');
 
-    // The teacher-room assertion matters as much as the room one: the handler
-    // deletes teacher-rooms BEFORE the room, so a missing guard would leave
-    // the teacher-room gone even though the room survived.
+    // Both counts are here for the same reason every non-200 case in this file
+    // asserts the DB is unchanged — not because a missing guard could orphan
+    // the teacher-room. It couldn't: the class that makes hasClasses true is
+    // the same row whose Restrict relation makes the handler's
+    // teacherRoom.deleteMany throw, and that throw is atomic, so the row
+    // survives. Drop the guard and this is a 500 (withErrorHandler maps only
+    // P2002 to a status of its own), which the assertion above catches first.
     expect(await prisma.room.count({ where: { id: deleteWithClassRoomId } })).toBe(1);
     expect(await prisma.teacherRoom.count({ where: { roomId: deleteWithClassRoomId } })).toBe(1);
   });
