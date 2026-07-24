@@ -266,12 +266,25 @@ const _classUpdateDataMatchesSchema: ClassUpdateColumnsExist = true;
 void _classUpdateDataMatchesSchema;
 
 /**
+ * Thrown when `updateClass` reaches a state its own guards say cannot happen.
+ * A programmer error, never a business outcome — business outcomes are values
+ * of `UpdateClassResult`. Named so it is distinguishable from unrelated
+ * failures in `withErrorHandler`'s catch-all.
+ */
+export class UpdateClassInvariantError extends Error {}
+
+/**
  * Why an update did or did not happen.
  *
  * `locked` carries a NON-EMPTY tuple of offending fields deliberately. The bug
  * this type replaced (#72) returned a "locked" response naming no fields at
  * all, for a request that touched none — the compiler now refuses to construct
  * that. Callers own the user-facing wording; this type owns the distinction.
+ *
+ * Every *business* outcome of an update is a variant here. The one non-outcome
+ * — an invariant violation, where the function's own reasoning about its
+ * inputs turns out to be wrong — is not encoded as a value; it throws
+ * `UpdateClassInvariantError` instead.
  */
 export type UpdateClassResult =
   | { ok: true; cls: Class }
@@ -282,10 +295,12 @@ export type UpdateClassResult =
 /**
  * Apply a partial update to a class, enforcing the economic-field lock.
  *
- * The lock is enforced twice on purpose: once against the row we read (so the
- * caller gets a precise list of offending fields), and once inside the write
- * as a compare-and-swap (so a first registration landing in between still
- * blocks the edit).
+ * The lock is checked twice. The first check, against the row we just read, is
+ * an optimisation: it answers the common case in one query instead of three.
+ * The compare-and-swap inside the write is the one that matters — it catches a
+ * first registration landing between that read and this write, and on its own
+ * it produces the identical result, list of offending fields included.
+ * Deleting the first check would cost round trips, not correctness.
  */
 export async function updateClass(
   db: PrismaClient,
@@ -347,7 +362,9 @@ export async function updateClass(
     // can only match zero rows if the row is gone — and the re-read above
     // would have caught that. Loud rather than silently returning a
     // plausible-but-wrong reason.
-    throw new Error(`updateClass: class ${classId} matched no rows but still exists`);
+    throw new UpdateClassInvariantError(
+      `updateClass: class ${classId} matched no rows but still exists`,
+    );
   }
 
   return { ok: true, cls: await db.class.findUniqueOrThrow({ where: { id: classId } }) };
