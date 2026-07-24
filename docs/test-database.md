@@ -48,8 +48,8 @@ Vitest 4's `projects` config splits the suite by blast radius:
 
 | Project | Files | Database |
 |---|---|---|
-| `unit` | `src/**/*.test.ts` (17 files: services + lib) | **`ethical_yoga_test`** |
-| `integration` | `tests/integration/**/*.test.ts` (4 files) | dev `ethical_yoga` (unchanged — must match the running app) |
+| `unit` | `src/**/*.test.ts` (28 files: services + lib) | **`ethical_yoga_test`** |
+| `integration` | `tests/integration/**/*.test.ts` (17 files) | dev `ethical_yoga` (unchanged — must match the running app) |
 
 `npx vitest run` still runs everything; `--project unit` selects one tier.
 The dangerous tests — everything that instantiates a bare `PrismaClient`

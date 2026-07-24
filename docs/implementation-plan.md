@@ -99,7 +99,7 @@ Built by Ivo + Claude Code. Technical foundation first, then layer on UI and fea
   - `api/rooms/*` — CRUD, library search
   - `api/announcements/*` — create, send
 
-3.5 — Write integration tests for all API routes
+3.5 — Write integration tests for all API routes (superseded as blanket policy by the Testing conventions section in `docs/technical-architecture.md` — not every route earns its own HTTP guard test)
 
 3.6 — Implement SSE endpoint for real-time notifications
 
