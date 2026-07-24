@@ -199,34 +199,32 @@ describe('POST /api/payments/[id]/remind', () => {
   });
 });
 
+const UNKNOWN_PAYMENT_ID = '00000000-0000-4000-8000-000000000000';
+const paid = (token: string | null, id: string, body: unknown = { method: 'cash' }) =>
+  fetch(`${BASE_URL}/api/payments/${id}/paid`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? cookie(token) : {}) },
+    body: JSON.stringify(body),
+  });
+const unpaid = (token: string | null, id: string) =>
+  fetch(`${BASE_URL}/api/payments/${id}/unpaid`, {
+    method: 'POST',
+    headers: { ...(token ? cookie(token) : {}) },
+  });
+
 describe('POST /api/payments/[id]/paid', () => {
   it('rejects a signed-out caller', async () => {
-    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/paid`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ method: 'cash' }),
-    });
+    const res = await paid(null, paymentId);
     expect(res.status).toBe(401);
   });
 
   it('404s an unknown payment', async () => {
-    const res = await fetch(
-      `${BASE_URL}/api/payments/00000000-0000-4000-8000-000000000000/paid`,
-      {
-        method: 'POST',
-        headers: { ...cookie(teacherToken), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ method: 'cash' }),
-      },
-    );
+    const res = await paid(teacherToken, UNKNOWN_PAYMENT_ID);
     expect(res.status).toBe(404);
   });
 
-  it("403s another teacher's payment", async () => {
-    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/paid`, {
-      method: 'POST',
-      headers: { ...cookie(otherTeacherToken), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ method: 'cash' }),
-    });
+  it("403s another teacher's payment (paid)", async () => {
+    const res = await paid(otherTeacherToken, paymentId);
     expect(res.status).toBe(403);
 
     const unchanged = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
@@ -234,42 +232,53 @@ describe('POST /api/payments/[id]/paid', () => {
   });
 
   it('400s a body missing method', async () => {
-    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/paid`, {
-      method: 'POST',
-      headers: { ...cookie(teacherToken), 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
+    const res = await paid(teacherToken, paymentId, {});
     expect(res.status).toBe(400);
   });
 
   it('marks the pending payment paid', async () => {
-    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/paid`, {
-      method: 'POST',
-      headers: { ...cookie(teacherToken), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ method: 'cash' }),
-    });
+    const res = await paid(teacherToken, paymentId);
     expect(res.status).toBe(200);
     const { data } = (await res.json()) as { data: { status: string } };
     expect(data.status).toBe('paid');
 
     const stamped = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(stamped.status).toBe('paid');
+    expect(stamped.method).toBe('cash');
+    expect(stamped.paidAt).not.toBeNull();
+  });
+
+  it('409s re-marking a payment that is already paid', async () => {
+    const res = await paid(teacherToken, paymentId);
+    expect(res.status).toBe(409);
+
+    const unchanged = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(unchanged.status).toBe('paid');
   });
 });
 
 describe('POST /api/payments/[id]/unpaid', () => {
-  it('rejects a signed-out caller', async () => {
-    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/unpaid`, {
-      method: 'POST',
+  // Self-seeding: this block mutates the shared fixture payment, so don't
+  // depend on the /paid block having run.
+  beforeAll(async () => {
+    await prisma.payment.update({
+      where: { id: paymentId },
+      data: { status: 'paid', method: 'cash', paidAt: new Date() },
     });
+  });
+
+  it('rejects a signed-out caller', async () => {
+    const res = await unpaid(null, paymentId);
     expect(res.status).toBe(401);
   });
 
-  it("403s another teacher's payment", async () => {
-    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/unpaid`, {
-      method: 'POST',
-      headers: cookie(otherTeacherToken),
-    });
+  it('404s an unknown payment', async () => {
+    const res = await unpaid(teacherToken, UNKNOWN_PAYMENT_ID);
+    expect(res.status).toBe(404);
+  });
+
+  it("403s another teacher's payment (unpaid)", async () => {
+    const res = await unpaid(otherTeacherToken, paymentId);
     expect(res.status).toBe(403);
 
     const unchanged = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
@@ -277,10 +286,7 @@ describe('POST /api/payments/[id]/unpaid', () => {
   });
 
   it('undoes the paid payment back to pending', async () => {
-    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/unpaid`, {
-      method: 'POST',
-      headers: cookie(teacherToken),
-    });
+    const res = await unpaid(teacherToken, paymentId);
     expect(res.status).toBe(200);
     const { data } = (await res.json()) as { data: { status: string } };
     expect(data.status).toBe('pending');
@@ -290,16 +296,13 @@ describe('POST /api/payments/[id]/unpaid', () => {
   });
 
   it('409s a payment that is already pending', async () => {
-    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/unpaid`, {
-      method: 'POST',
-      headers: cookie(teacherToken),
-    });
+    const res = await unpaid(teacherToken, paymentId);
     expect(res.status).toBe(409);
 
-    // Fixture is already pending, but restore explicitly so the file's
-    // afterAll cleanup is unaffected regardless of test order.
-    await prisma.payment.update({ where: { id: paymentId }, data: { status: 'pending' } });
-    const restored = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
-    expect(restored.status).toBe('pending');
+    // Read BEFORE any restore: a 409 must have changed nothing.
+    const unchanged = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(unchanged.status).toBe('pending');
+    expect(unchanged.method).toBeNull();
+    expect(unchanged.paidAt).toBeNull();
   });
 });
