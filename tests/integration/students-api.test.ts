@@ -238,7 +238,7 @@ describe('POST /api/students', () => {
 });
 
 describe('GET/PUT /api/students/[id] — profile-presence authorization', () => {
-  const dualSuffix = `${uniqueSuffix()}-dual`;
+  const dualSuffix = `${suffix}-dual`;
 
   let dualTeacherId: string;
   let dualOwnStudentId: string;

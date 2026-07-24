@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, seedSession, hashToken } from './helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession } from './helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
 
 // One dedicated student per case keeps every test order-independent.
-type Fixture = { id: string; token: string };
+type Fixture = { id: string; token: string; accountId: string };
 let sNoStamp: Fixture;
 let sChooser: Fixture;
 let sBooker: Fixture;
@@ -15,6 +15,7 @@ let sFiller: Fixture;
 let teacherToken: string;
 
 let teacherId: string;
+let teacherAccountId: string;
 let crmStudentId: string;
 let roomId: string;
 let openClassId: string;
@@ -61,7 +62,7 @@ describe('tierSelectedAt stamping', () => {
         },
       });
       const token = await seedSession(prisma, student.accountId!);
-      return { id: student.id, token };
+      return { id: student.id, token, accountId: student.accountId! };
     }
 
     sNoStamp = await mkStudent('nostamp');
@@ -81,6 +82,7 @@ describe('tierSelectedAt stamping', () => {
       },
     });
     teacherId = teacher.id;
+    teacherAccountId = teacher.accountId;
     teacherToken = await seedSession(prisma, teacher.accountId);
 
     const crm = await prisma.student.create({
@@ -145,7 +147,7 @@ describe('tierSelectedAt stamping', () => {
     const students = [sNoStamp, sChooser, sBooker, sWaitlister, sFiller].filter(Boolean);
     await prisma.session.deleteMany({
       where: {
-        id: { in: [...students.map((s) => hashToken(s.token)), hashToken(teacherToken)] },
+        accountId: { in: [...students.map((s) => s.accountId), teacherAccountId] },
       },
     });
     const classIds = [openClassId, fullClassId].filter(Boolean);
