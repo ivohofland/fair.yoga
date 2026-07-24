@@ -248,7 +248,8 @@ export const updateClassSchema = z.object({
   date: isoDate.optional(),
   startTime: timeHHmm.optional(),
   durationMinutes: z.number().int().positive().optional(),
-  // Economic fields — only accepted when settings not locked (checked in route)
+  // Economic fields — only accepted when settings not locked (enforced by
+  // updateClass in src/services/class-lifecycle.ts)
   roomCost: z.number().nonnegative().optional(),
   minRate: z.number().optional(),
   targetRate: z.number().optional(),

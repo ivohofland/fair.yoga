@@ -9,6 +9,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { updateClassSchema } from '@/lib/schemas';
+import { updateClass, type ClassUpdateData } from '@/services/class-lifecycle';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -32,14 +33,6 @@ export const GET = withErrorHandler(async (
   return respondOk(cls);
 });
 
-const ECONOMIC_FIELDS = [
-  'roomCost',
-  'minRate',
-  'targetRate',
-  'minStudents',
-  'maxStudents',
-] as const;
-
 export const PUT = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -59,40 +52,20 @@ export const PUT = withErrorHandler(async (
   // (UTC midnight, same as class creation). Latent until the edit UI —
   // nothing ever PUT a date before.
   const { date: dateString, ...rest } = parsed.data;
-  const body = {
+  const data: ClassUpdateData = {
     ...rest,
     ...(dateString !== undefined ? { date: new Date(dateString) } : {}),
   };
 
-  const sentEconomicFields = ECONOMIC_FIELDS.filter(
-    (f) => body[f] !== undefined,
+  const result = await updateClass(prisma, id, data);
+  if (result.ok) return respondOk(result.cls);
+
+  // Narrowed one reason at a time so the `locked` branch below can read
+  // `result.fields` without a cast.
+  if (result.reason === 'not_found') return respondError('Class not found', 404);
+  if (result.reason === 'no_fields') return respondError('No valid fields to update', 400);
+  return respondError(
+    `Cannot update economic fields when settings are locked: ${result.fields.join(', ')}`,
+    409,
   );
-
-  // Friendly early rejection when we already know the lock is set
-  if (cls.settingsLocked && sentEconomicFields.length > 0) {
-    return respondError(
-      `Cannot update economic fields when settings are locked: ${sentEconomicFields.join(', ')}`,
-      409,
-    );
-  }
-
-  if (Object.keys(body).length === 0) {
-    return respondError('No valid fields to update', 400);
-  }
-
-  // Enforce the lock in the update itself: a first registration landing
-  // between our read and this write must still block economic edits.
-  const result = await prisma.class.updateMany({
-    where: sentEconomicFields.length > 0 ? { id, settingsLocked: false } : { id },
-    data: body,
-  });
-  if (result.count === 0) {
-    return respondError(
-      `Cannot update economic fields when settings are locked: ${sentEconomicFields.join(', ')}`,
-      409,
-    );
-  }
-
-  const updated = await prisma.class.findUniqueOrThrow({ where: { id } });
-  return respondOk(updated);
 });
