@@ -257,23 +257,13 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
   });
 
   // -----------------------------------------------------------------------
-  // Step 11: Verify settingsLocked flips true after first registration
-  // -----------------------------------------------------------------------
-  it('Step 11: settingsLocked flips to true after first registration', async () => {
-    // In the real app, the API route or a trigger sets settingsLocked.
-    // Here we simulate by updating it as the route would.
-    await prisma.class.update({
-      where: { id: classId },
-      data: { settingsLocked: true },
-    });
-
-    const cls = await prisma.class.findUnique({ where: { id: classId } });
-    expect(cls?.settingsLocked).toBe(true);
-  });
-
-  // -----------------------------------------------------------------------
   // Step 12: Transition class open -> in_progress
   // -----------------------------------------------------------------------
+  // (Step 11 used to write settingsLocked: true via prisma.class.update and
+  // then assert it — a tautology asserting its own write. The genuine flip,
+  // via a real registration over HTTP, is covered by
+  // registrations-api.test.ts:207-214. Nothing downstream here reads
+  // settingsLocked, so removing the step needed no replacement setup.)
   it('Step 12: transitions class from open to in_progress', async () => {
     const result = await transitionClass(prisma, classId, 'in_progress');
 
