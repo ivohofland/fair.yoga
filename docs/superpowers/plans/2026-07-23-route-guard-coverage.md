@@ -85,9 +85,9 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Interfaces:** produces its own fixtures — a student + session token, a teacher + session token (to prove the non-student 403), a teacher-owned `Class`, and a `WaitlistEntry` for the student on that class. Copy waitlist fixture shapes from `registrations-api.test.ts`.
 
-- [ ] **Step 1: Write the file** implementing spec §3's table for `POST /api/waitlist/claim`: 401 (no cookie), 403 (teacher session — the route requires `session.studentId`), 400 (body missing/blank `classId` — check `claimWaitlistSchema`), 409 (`claimSpot` rejects: outside the claim window / not waiting — the common deterministic case is a class whose window is not the final-hour broadcast, so `claimSpot` throws `WaitlistPromotionError`). Read `src/app/api/waitlist/claim/route.ts` and `claimSpot` in `src/services/waitlist.ts` to pick a class-date fixture that deterministically produces the 409 window branch. If a deterministic in-window 201 fixture is feasible, add it; otherwise assert the 409 window branch and note the 201 success path as service-covered (`waitlist.test.ts`).
+- [ ] **Step 1: Write the file** implementing spec §3's table for `POST /api/waitlist/claim`: 401 (no cookie), 403 (teacher session — the route requires `session.studentId`), 400 (body missing/blank `classId` — check `claimWaitlistSchema`), 409 (`claimSpot` rejects: outside the claim window / not waiting — the common deterministic case is a class whose window is not the final-hour broadcast, so `claimSpot` throws `WaitlistPromotionError`). Read `src/app/api/waitlist/claim/route.ts` and `claimSpot` in `src/services/waitlist.ts` to pick a class-date fixture that deterministically produces the 409 window branch. If a deterministic in-window 201 fixture is feasible, add it — `claimSpot` had zero coverage anywhere (service or HTTP) before this PR, so the 201 path is not otherwise covered.
 
-`afterAll` cleans up waitlist entry → class → teacherRoom/room → student → sessions → teacher → accounts in FK order, `$disconnect()`.
+`afterAll` cleans up waitlist entry → registration (the 201 claim creates one) → class → teacherRoom/room → student → sessions → teacher → accounts in FK order, `$disconnect()`.
 
 - [ ] **Step 2: Run — expect PASS**
 
