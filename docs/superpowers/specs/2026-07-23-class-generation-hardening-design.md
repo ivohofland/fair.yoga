@@ -46,7 +46,8 @@ const template = await prisma.$transaction(async (tx) => {
   await generateInstancesForTemplate(tx, created);
   return created;
 });
-return respondOk(stripTeacher(template), 201);
+const { teacher, ...created } = template;
+return respondOk(created, 201);
 ```
 Failure propagates through `withErrorHandler` (500) instead of log-and-201. The teacher-room ownership check stays before the transaction.
 
@@ -69,7 +70,7 @@ The `class-generation` job runs `generateClassInstances` then `generateStudioCla
 
 ## Testing
 
-- **Unit (`class-generator.test.ts`) — per-template isolation (new pattern).** Dependency-inject a stub `db` (`as unknown as PrismaClient`) whose `classTemplate.findMany` returns two templates and whose `class.create` throws a non-P2002 error for the first template's rows only. Assert: the second template's instances are still created, `generateClassInstances` rethrows at the end, and the failure is logged with the failing `templateId`. This is the failure-injection pattern #55 asks the repo to adopt.
+- **Unit (`class-generator.test.ts`) — per-template isolation (new pattern).** Dependency-inject a stub `db` (`as unknown as PrismaClient`) whose `classTemplate.findMany` returns three templates (A, B, C) and whose `class.create` throws a non-P2002 error for A and C only. Assert: B's instances are still created despite A failing before it and C failing after it, `generateClassInstances` rethrows the first error (A's) at the end, and both A and C's failures are logged with their `templateId` (not just the rethrown one). This is the failure-injection pattern #55 asks the repo to adopt.
 - **Integration (`class-templates-api.test.ts`) — transactional rollback (new).** Prove real rollback: inside a real `prisma.$transaction`, create a valid template, then call `generateInstancesForTemplate(tx, { ...created, teacherRoomId: <nonexistent uuid> })` so `class.create` hits a deterministic FK error (P2003, not the swallowed P2002); assert the transaction rejects and neither the template nor any instance persisted (`count` unchanged before/after). Uses the template-scoped path exactly as #56 specifies.
 - **Existing suite carries over unchanged.** `generateClassInstances`'s signature is stable, so its 6 DB tests are unaffected. The two `class-templates-api` happy-path tests ("creates the template and its four-week window", "re-activation tops the window back up") still pass — success still 201s with the window present; only the *failure* path changed.
 
