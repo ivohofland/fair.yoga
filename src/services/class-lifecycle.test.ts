@@ -564,12 +564,43 @@ describe('updateClass (DB)', () => {
   it('applies an economic edit to an unlocked class', async () => {
     const cls = await makeClass(false);
 
-    const result = await updateClass(prisma, cls.id, { roomCost: 42, minStudents: 2 });
+    const result = await updateClass(prisma, cls.id, {
+      roomCost: 42,
+      minRate: 5,
+      targetRate: 60,
+      minStudents: 2,
+      maxStudents: 20,
+    });
+    expect(result.ok).toBe(true);
+
+    // Every economic field, not a sample: these are the pricing engine's
+    // inputs, and stripping any one of them from the write used to leave this
+    // suite green.
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(Number(stored.roomCost)).toBe(42);
+    expect(Number(stored.minRate)).toBe(5);
+    expect(Number(stored.targetRate)).toBe(60);
+    expect(stored.minStudents).toBe(2);
+    expect(stored.maxStudents).toBe(20);
+  });
+
+  it('applies the non-economic fields, including clearing description to null', async () => {
+    const cls = await makeClass(false);
+    await prisma.class.update({ where: { id: cls.id }, data: { description: 'Set first' } });
+
+    const result = await updateClass(prisma, cls.id, {
+      classType: 'Vinyasa',
+      startTime: '18:30',
+      durationMinutes: 75,
+      description: null,
+    });
     expect(result.ok).toBe(true);
 
     const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(Number(stored.roomCost)).toBe(42);
-    expect(stored.minStudents).toBe(2);
+    expect(stored.classType).toBe('Vinyasa');
+    expect(stored.startTime).toBe('18:30');
+    expect(stored.durationMinutes).toBe(75);
+    expect(stored.description).toBeNull();
   });
 
   it('rejects an economic edit to a locked class, naming the fields sent', async () => {
