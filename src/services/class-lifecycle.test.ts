@@ -9,6 +9,7 @@ import {
   transitionClass,
   completeClass,
   updateClass,
+  UpdateClassInvariantError,
   type EconomicField,
 } from './class-lifecycle';
 
@@ -593,6 +594,7 @@ describe('updateClass (DB)', () => {
       startTime: '18:30',
       durationMinutes: 75,
       description: null,
+      date: new Date('2027-03-09'),
     });
     expect(result.ok).toBe(true);
 
@@ -601,6 +603,9 @@ describe('updateClass (DB)', () => {
     expect(stored.startTime).toBe('18:30');
     expect(stored.durationMinutes).toBe(75);
     expect(stored.description).toBeNull();
+    // Compared as a date string, not with toEqual, so timezone handling on
+    // this @db.Date column can't produce a false pass or fail around midnight.
+    expect(stored.date.toISOString().slice(0, 10)).toBe('2027-03-09');
   });
 
   it('rejects an economic edit to a locked class, naming the fields sent', async () => {
@@ -645,6 +650,18 @@ describe('updateClass (DB)', () => {
     const result = await updateClass(prisma, cls.id, {});
     expect(result).toEqual({ ok: false, reason: 'no_fields' });
   });
+
+  it('treats an all-undefined payload as no edit, not as a vanished row', async () => {
+    const cls = await makeClass(false);
+
+    // Prisma issues no UPDATE at all for a data object whose every value is
+    // undefined, returning { count: 0 } regardless of the row's existence.
+    // Before this was handled, that zero count was read as "the row vanished"
+    // and — with no economic fields to blame — reached an invariant throw,
+    // surfacing as a 500 for a request that asked for nothing.
+    const result = await updateClass(prisma, cls.id, { description: undefined });
+    expect(result).toEqual({ ok: false, reason: 'no_fields' });
+  });
 });
 
 describe('updateClass — the count === 0 branches', () => {
@@ -666,8 +683,10 @@ describe('updateClass — the count === 0 branches', () => {
       class: {
         findUnique: async () => {
           reads += 1;
-          // Read 1 is updateClass's opening read; read 2 is the existence
-          // re-check after count === 0.
+          // Read 1 (updateClass's opening read) always reports the locked
+          // flag; every read after that reports current existence. The stub
+          // only distinguishes first from rest — it does not itself enforce
+          // that there are exactly two; `reads` below lets a test pin that.
           if (reads === 1) return { id: 'stub-class', settingsLocked: opts.settingsLocked };
           return opts.rowSurvives ? { id: 'stub-class' } : null;
         },
@@ -680,11 +699,14 @@ describe('updateClass — the count === 0 branches', () => {
         },
       },
     } as unknown as PrismaClient;
-    return { db, updateManyCalls };
+    // A getter, not a snapshot: it must read the live `reads` closure
+    // variable at assertion time, after updateClass has run.
+    return { db, updateManyCalls, get reads() { return reads; } };
   }
 
   it('reports locked when the row survives — the compare-and-swap lost its race', async () => {
-    const { db, updateManyCalls } = stubDb({ settingsLocked: false, rowSurvives: true });
+    const stub = stubDb({ settingsLocked: false, rowSurvives: true });
+    const { db, updateManyCalls } = stub;
 
     const result = await updateClass(db, 'stub-class', { roomCost: 42 });
     expect(result).toEqual({ ok: false, reason: 'locked', fields: ['roomCost'] });
@@ -694,6 +716,13 @@ describe('updateClass — the count === 0 branches', () => {
     // and pins the guard whose removal this suite previously did not notice.
     expect(updateManyCalls).toHaveLength(1);
     expect(updateManyCalls[0]?.where).toEqual({ id: 'stub-class', settingsLocked: false });
+
+    // Exactly the opening read plus one re-check — a spurious third
+    // `findUnique` would be invisible to every other assertion here. Read via
+    // `stub.reads`, not a destructured copy, because a getter destructured
+    // before `updateClass` runs captures its value at that instant (0), not
+    // the live count.
+    expect(stub.reads).toBe(2);
   });
 
   it('reports not_found when economic fields were sent but the row is gone', async () => {
@@ -710,13 +739,42 @@ describe('updateClass — the count === 0 branches', () => {
     // The originally-filed bug. Before the fix this returned the `locked`
     // reason with an empty field list, rendered as
     // "Cannot update economic fields when settings are locked: " with a 409.
-    const { db, updateManyCalls } = stubDb({ settingsLocked: false, rowSurvives: false });
+    const stub = stubDb({ settingsLocked: false, rowSurvives: false });
+    const { db, updateManyCalls } = stub;
 
     const result = await updateClass(db, 'stub-class', { description: 'x' });
     expect(result).toEqual({ ok: false, reason: 'not_found' });
 
     // No economic fields sent, so the filter must NOT constrain settingsLocked.
     expect(updateManyCalls[0]?.where).toEqual({ id: 'stub-class' });
+
+    // Exactly the opening read plus one re-check — a spurious third
+    // `findUnique` would be invisible to every other assertion here. Read via
+    // `stub.reads`, not a destructured copy — see the comment in the case above.
+    expect(stub.reads).toBe(2);
+  });
+
+  it('answers a visibly-locked row from the read, without attempting the write', async () => {
+    const { db, updateManyCalls } = stubDb({ settingsLocked: true, rowSurvives: true });
+
+    const result = await updateClass(db, 'stub-class', { roomCost: 42 });
+    expect(result).toEqual({ ok: false, reason: 'locked', fields: ['roomCost'] });
+
+    // The point of this case: the pre-check answered it. Deleting that check
+    // leaves the result identical (the compare-and-swap re-derives it), so
+    // only the absence of a write attempt distinguishes the two.
+    expect(updateManyCalls).toHaveLength(0);
+  });
+
+  it('throws rather than guessing when a zero count contradicts a surviving row', async () => {
+    const { db } = stubDb({ settingsLocked: false, rowSurvives: true });
+
+    // Only the stub can produce this: a real Prisma UPDATE with a defined
+    // value cannot report zero matches for a row that still exists. Pinned
+    // because the alternative — inventing a plausible reason — is the exact
+    // defect #72 was filed for.
+    await expect(updateClass(db, 'stub-class', { description: 'x' }))
+      .rejects.toThrow(UpdateClassInvariantError);
   });
 });
 
