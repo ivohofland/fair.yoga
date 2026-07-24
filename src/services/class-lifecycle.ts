@@ -292,14 +292,28 @@ export async function updateClass(
   });
 
   if (result.count === 0) {
-    // Two different events land here, and #72 was them sharing one response:
-    //   economic fields sent -> the compare-and-swap lost its race, the lock
-    //                           flipped between our read and this write
-    //   none sent            -> the where was just { id }, so the only way to
-    //                           match nothing is that the row was deleted
-    return sentEconomic !== null
-      ? { ok: false, reason: 'locked', fields: sentEconomic }
-      : { ok: false, reason: 'not_found' };
+    // Both filter shapes constrain `id`, so a deleted row explains a zero
+    // count under either of them — find out which happened rather than
+    // assuming. #72 was this branch asserting a cause instead of checking it;
+    // the economic path had the identical defect, and a deleted class
+    // reported as "locked" is harder to spot than #72's empty list, because
+    // the field name it names looks entirely plausible.
+    const stillExists = await db.class.findUnique({
+      where: { id: classId },
+      select: { id: true },
+    });
+    if (!stillExists) return { ok: false, reason: 'not_found' };
+
+    // The row survives, so the only other conjunct that can have failed is
+    // `settingsLocked: false` — which is only ever in the filter when
+    // economic fields were sent.
+    if (sentEconomic !== null) return { ok: false, reason: 'locked', fields: sentEconomic };
+
+    // Unreachable: with no economic fields the filter was `{ id }` alone, and
+    // a surviving row would have matched it. Loud rather than silently
+    // returning a plausible-but-wrong reason — the mistake this PR exists to
+    // stop making.
+    throw new Error(`updateClass: class ${classId} matched no rows but still exists`);
   }
 
   return { ok: true, cls: await db.class.findUniqueOrThrow({ where: { id: classId } }) };
