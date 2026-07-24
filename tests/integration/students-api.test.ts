@@ -1,19 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
-
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
+import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
 
 const prisma = new PrismaClient();
-const uniqueSuffix = Date.now();
-const rawSessionToken = crypto.randomBytes(32).toString('hex');
+const suffix = uniqueSuffix();
 
 let teacherId: string;
+let teacherAccountId: string;
+let teacherToken: string;
 const studentIds: string[] = [];
 
 beforeAll(async () => {
@@ -23,13 +17,14 @@ beforeAll(async () => {
     data: {
       firstName: 'CRM',
       lastName: 'Teacher',
-      email: `crm-teacher-${uniqueSuffix}@test.local`,
-      account: { create: { email: `crm-teacher-${uniqueSuffix}@test.local` } },
+      email: `crm-teacher-${suffix}@test.local`,
+      account: { create: { email: `crm-teacher-${suffix}@test.local` } },
       bio: 'Teacher for CRM tests',
-      pageSlug: `crm-teacher-${uniqueSuffix}`,
+      pageSlug: `crm-teacher-${suffix}`,
     },
   });
   teacherId = teacher.id;
+  teacherAccountId = teacher.accountId;
 
   // Create 25 students linked to this teacher
   for (let i = 0; i < 25; i++) {
@@ -37,7 +32,7 @@ beforeAll(async () => {
       data: {
         firstName: `Student${String(i).padStart(2, '0')}`,
         lastName: 'Test',
-        email: `crm-student-${uniqueSuffix}-${i}@test.local`,
+        email: `crm-student-${suffix}-${i}@test.local`,
       },
     });
     studentIds.push(student.id);
@@ -51,23 +46,12 @@ beforeAll(async () => {
     data: {
       firstName: 'Unlinked',
       lastName: 'Student',
-      email: `crm-unlinked-${uniqueSuffix}@test.local`,
+      email: `crm-unlinked-${suffix}@test.local`,
     },
   });
   studentIds.push(unlinked.id);
 
-  // Create a session for the teacher
-  const teacherAccount = await prisma.teacher.findUniqueOrThrow({
-    where: { id: teacherId },
-    select: { accountId: true },
-  });
-  await prisma.session.create({
-    data: {
-      id: hashToken(rawSessionToken),
-      accountId: teacherAccount.accountId,
-      expiresAt: new Date(Date.now() + 86400000),
-    },
-  });
+  teacherToken = await createSession(prisma, teacherAccountId);
 });
 
 afterAll(async () => {
@@ -75,7 +59,7 @@ afterAll(async () => {
     where: { teacherId },
   });
   await prisma.session.deleteMany({
-    where: { id: hashToken(rawSessionToken) },
+    where: { accountId: teacherAccountId },
   });
   await prisma.student.deleteMany({
     where: { id: { in: studentIds } },
@@ -84,13 +68,10 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-const BASE_URL = 'http://localhost:3000';
-const sessionCookie = `fair_yoga_session=${rawSessionToken}`;
-
 describe('GET /api/students', () => {
   it('returns paginated students for the teacher', async () => {
     const res = await fetch(`${BASE_URL}/api/students?page=1&pageSize=10`, {
-      headers: { Cookie: sessionCookie },
+      headers: cookie(teacherToken),
     });
     expect(res.status).toBe(200);
     const json = await res.json();
@@ -102,7 +83,7 @@ describe('GET /api/students', () => {
 
   it('returns page 3 with remaining students', async () => {
     const res = await fetch(`${BASE_URL}/api/students?page=3&pageSize=10`, {
-      headers: { Cookie: sessionCookie },
+      headers: cookie(teacherToken),
     });
     expect(res.status).toBe(200);
     const json = await res.json();
@@ -113,7 +94,7 @@ describe('GET /api/students', () => {
 
   it('filters by search term (name)', async () => {
     const res = await fetch(`${BASE_URL}/api/students?search=Student00`, {
-      headers: { Cookie: sessionCookie },
+      headers: cookie(teacherToken),
     });
     expect(res.status).toBe(200);
     const json = await res.json();
@@ -123,8 +104,8 @@ describe('GET /api/students', () => {
 
   it('filters by search term (email)', async () => {
     const res = await fetch(
-      `${BASE_URL}/api/students?search=crm-student-${uniqueSuffix}-1@`,
-      { headers: { Cookie: sessionCookie } },
+      `${BASE_URL}/api/students?search=crm-student-${suffix}-1@`,
+      { headers: cookie(teacherToken) },
     );
     expect(res.status).toBe(200);
     const json = await res.json();
@@ -133,7 +114,7 @@ describe('GET /api/students', () => {
 
   it('does not return students not linked to the teacher', async () => {
     const res = await fetch(`${BASE_URL}/api/students?search=Unlinked`, {
-      headers: { Cookie: sessionCookie },
+      headers: cookie(teacherToken),
     });
     expect(res.status).toBe(200);
     const json = await res.json();
@@ -152,11 +133,11 @@ describe('POST /api/students', () => {
   it('creates a new student and TeacherStudent link', async () => {
     const res = await fetch(`${BASE_URL}/api/students`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: sessionCookie },
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
       body: JSON.stringify({
         firstName: 'New',
         lastName: 'Person',
-        email: `crm-new-${uniqueSuffix}@test.local`,
+        email: `crm-new-${suffix}@test.local`,
       }),
     });
     expect(res.status).toBe(201);
@@ -174,11 +155,11 @@ describe('POST /api/students', () => {
   it('returns 409 when student already in contacts', async () => {
     const res = await fetch(`${BASE_URL}/api/students`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: sessionCookie },
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
       body: JSON.stringify({
         firstName: 'New',
         lastName: 'Person',
-        email: `crm-new-${uniqueSuffix}@test.local`,
+        email: `crm-new-${suffix}@test.local`,
       }),
     });
     expect(res.status).toBe(409);
@@ -192,32 +173,25 @@ describe('POST /api/students', () => {
       data: {
         firstName: 'Second',
         lastName: 'Teacher',
-        email: `crm-teacher2-${uniqueSuffix}@test.local`,
-        account: { create: { email: `crm-teacher2-${uniqueSuffix}@test.local` } },
+        email: `crm-teacher2-${suffix}@test.local`,
+        account: { create: { email: `crm-teacher2-${suffix}@test.local` } },
         bio: 'Second teacher',
-        pageSlug: `crm-teacher2-${uniqueSuffix}`,
+        pageSlug: `crm-teacher2-${suffix}`,
       },
     });
-    const rawToken2 = crypto.randomBytes(32).toString('hex');
-    await prisma.session.create({
-      data: {
-        id: hashToken(rawToken2),
-        accountId: teacher2.accountId,
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    const rawToken2 = await createSession(prisma, teacher2.accountId);
 
     // Teacher 2 adds the same student by email
     const res = await fetch(`${BASE_URL}/api/students`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Cookie: `fair_yoga_session=${rawToken2}`,
+        ...cookie(rawToken2),
       },
       body: JSON.stringify({
         firstName: 'New',
         lastName: 'Person',
-        email: `crm-new-${uniqueSuffix}@test.local`,
+        email: `crm-new-${suffix}@test.local`,
       }),
     });
     expect(res.status).toBe(200);
@@ -226,14 +200,14 @@ describe('POST /api/students', () => {
 
     // Cleanup teacher2
     await prisma.teacherStudent.deleteMany({ where: { teacherId: teacher2.id } });
-    await prisma.session.delete({ where: { id: hashToken(rawToken2) } });
+    await prisma.session.deleteMany({ where: { accountId: teacher2.accountId } });
     await prisma.teacher.delete({ where: { id: teacher2.id } });
   });
 
   it('returns 400 for invalid input', async () => {
     const res = await fetch(`${BASE_URL}/api/students`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: sessionCookie },
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
       body: JSON.stringify({ firstName: '', lastName: '', email: 'not-an-email' }),
     });
     expect(res.status).toBe(400);
@@ -262,15 +236,15 @@ describe('POST /api/students', () => {
 });
 
 describe('GET/PUT /api/students/[id] — profile-presence authorization', () => {
-  const dualSuffix = `${Date.now()}-dual`;
-  const dualToken = crypto.randomBytes(32).toString('hex');
-  const rosterToken = crypto.randomBytes(32).toString('hex');
+  const dualSuffix = `${uniqueSuffix()}-dual`;
 
   let dualTeacherId: string;
   let dualOwnStudentId: string;
   let dualAccountId: string;
+  let dualToken: string;
   let rosterStudentId: string;
   let rosterAccountId: string;
+  let rosterToken: string;
 
   const as = (token: string, path: string, init?: RequestInit) =>
     fetch(`${BASE_URL}${path}`, {
@@ -278,7 +252,7 @@ describe('GET/PUT /api/students/[id] — profile-presence authorization', () => 
       headers: {
         'Content-Type': 'application/json',
         ...init?.headers,
-        Cookie: `fair_yoga_session=${token}`,
+        ...cookie(token),
       },
     });
 
@@ -306,13 +280,7 @@ describe('GET/PUT /api/students/[id] — profile-presence authorization', () => 
       },
     });
     dualOwnStudentId = ownStudent.id;
-    await prisma.session.create({
-      data: {
-        id: hashToken(dualToken),
-        accountId: dualAccountId,
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    dualToken = await createSession(prisma, dualAccountId);
 
     const rosterEmail = `stuapi-roster-${dualSuffix}@test.local`;
     const roster = await prisma.student.create({
@@ -329,13 +297,7 @@ describe('GET/PUT /api/students/[id] — profile-presence authorization', () => 
     await prisma.teacherStudent.create({
       data: { teacherId: dualTeacherId, studentId: rosterStudentId },
     });
-    await prisma.session.create({
-      data: {
-        id: hashToken(rosterToken),
-        accountId: rosterAccountId,
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    rosterToken = await createSession(prisma, rosterAccountId);
   });
 
   afterAll(async () => {
@@ -395,7 +357,7 @@ describe('GET /api/students — overduePayments', () => {
     const room = await prisma.room.create({
       data: {
         venueName: 'Overdue Studio',
-        address: `${uniqueSuffix} Overdue St`,
+        address: `${suffix} Overdue St`,
         city: 'Amsterdam',
         postcode: '1111OD',
         maxCapacity: 10,
@@ -411,10 +373,10 @@ describe('GET /api/students — overduePayments', () => {
       data: {
         firstName: 'Other',
         lastName: 'Teacher',
-        email: `crm-other-${uniqueSuffix}@test.local`,
-        account: { create: { email: `crm-other-${uniqueSuffix}@test.local` } },
+        email: `crm-other-${suffix}@test.local`,
+        account: { create: { email: `crm-other-${suffix}@test.local` } },
         bio: 'Scoping fixture for overdue counts',
-        pageSlug: `crm-other-${uniqueSuffix}`,
+        pageSlug: `crm-other-${suffix}`,
       },
     });
     otherTeacherId = otherTeacher.id;
@@ -500,13 +462,13 @@ describe('GET /api/students — overduePayments', () => {
       await prisma.teacher.delete({ where: { id: otherTeacherId } });
     }
     await prisma.account.deleteMany({
-      where: { email: `crm-other-${uniqueSuffix}@test.local` },
+      where: { email: `crm-other-${suffix}@test.local` },
     });
   });
 
   async function fetchSingleStudent(search: string) {
     const res = await fetch(`${BASE_URL}/api/students?search=${search}`, {
-      headers: { Cookie: sessionCookie },
+      headers: cookie(teacherToken),
     });
     expect(res.status).toBe(200);
     const json = await res.json();
@@ -531,7 +493,7 @@ describe('GET /api/students — overduePayments', () => {
 
   it('maps counts to the right rows across a full page', async () => {
     const res = await fetch(`${BASE_URL}/api/students?page=1&pageSize=10`, {
-      headers: { Cookie: sessionCookie },
+      headers: cookie(teacherToken),
     });
     expect(res.status).toBe(200);
     const json = await res.json();

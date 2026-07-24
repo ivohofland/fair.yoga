@@ -1,26 +1,18 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
-
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
+import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
 
 const prisma = new PrismaClient();
-const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const BASE_URL = 'http://localhost:3000';
+const suffix = uniqueSuffix();
 
-const tokens = [crypto.randomBytes(32).toString('hex'), crypto.randomBytes(32).toString('hex')];
+const tokens: string[] = [];
 const studentIds: string[] = [];
 let notificationId: string;
 
 function markRead(token: string, id: string) {
   return fetch(`${BASE_URL}/api/notifications/${id}/read`, {
     method: 'POST',
-    headers: { Cookie: `fair_yoga_session=${token}` },
+    headers: cookie(token),
   });
 }
 
@@ -32,20 +24,14 @@ describe('POST /api/notifications/[id]/read — student recipients', () => {
         data: {
           firstName: `NotifStudent${i}`,
           lastName: 'Test',
-          email: `notifapi-${uniqueSuffix}-${i}@test.local`,
+          email: `notifapi-${suffix}-${i}@test.local`,
           incomeTier: 3,
           claimedAt: new Date(),
-          account: { create: { email: `notifapi-${uniqueSuffix}-${i}@test.local` } },
+          account: { create: { email: `notifapi-${suffix}-${i}@test.local` } },
         },
       });
       studentIds.push(student.id);
-      await prisma.session.create({
-        data: {
-          id: hashToken(tokens[i]!),
-          accountId: student.accountId!,
-          expiresAt: new Date(Date.now() + 86400000),
-        },
-      });
+      tokens.push(await createSession(prisma, student.accountId!));
     }
     const notification = await prisma.notification.create({
       data: {

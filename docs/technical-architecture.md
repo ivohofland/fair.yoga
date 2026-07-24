@@ -21,6 +21,12 @@
 
 **TypeScript strict mode.** The tsconfig enforces `strict: true`, which enables `noImplicitAny`, `strictNullChecks`, `strictFunctionTypes`, and all other strict flags. This is non-negotiable. For an open-source project with volunteer contributors, the compiler is the first line of defense against bugs.
 
+### Testing conventions
+
+**Integration fixtures.** `tests/integration/helpers.ts` owns the *mechanical* layer every test file used to hand-roll: `BASE_URL`, `hashToken`, `cookie(token)`, `uniqueSuffix()`, and `createSession(db, accountId)`. Semantic fixtures — which class is open, which payment is pending, what a teacher's rates are — stay in each test file so a test's setup is readable where it is used. There is deliberately no `makeTeacherWithSession`-style wrapper: it would need parameters for slug, bio, timezone, tier and claim state, growing with every caller until the interesting values vanish behind a helper call. A test needing a non-standard session (an already-expired one, say) creates it inline rather than bending the helper.
+
+**What earns an HTTP guard test.** `requireTeacher`/`requireSession` are the same code on ~40 routes, so a 401/403 ladder per route re-tests one helper forty times. Test the shared guard helpers **once**; a route earns its own HTTP guard test only when its authorization is **bespoke** (its own ownership chain or state guard) or when it carries a **business invariant**. Rate-limited auth routes are deliberately not covered at the HTTP layer — the in-memory limiter makes local full-suite runs flaky, and we do not add a test-mode bypass to production code for test convenience.
+
 ---
 
 ## Project Structure

@@ -1,25 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
-
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
+import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
 
 const prisma = new PrismaClient();
-const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const BASE_URL = 'http://localhost:3000';
+const suffix = uniqueSuffix();
 
 // Sessions
-const ownerToken = crypto.randomBytes(32).toString('hex');
-const otherTeacherToken = crypto.randomBytes(32).toString('hex');
-const studentTokens = [
-  crypto.randomBytes(32).toString('hex'),
-  crypto.randomBytes(32).toString('hex'),
-];
+let ownerToken: string;
+let otherTeacherToken: string;
+const studentTokens: string[] = [];
 
 let ownerId: string;
 let ownerAccountIdForCleanup: string;
@@ -57,7 +46,7 @@ function post(token: string, body: Record<string, unknown>) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Cookie: `fair_yoga_session=${token}`,
+      ...cookie(token),
     },
     body: JSON.stringify(body),
   });
@@ -70,10 +59,10 @@ beforeAll(async () => {
     data: {
       firstName: 'Owner',
       lastName: 'Teacher',
-      email: `regapi-owner-${uniqueSuffix}@test.local`,
-      account: { create: { email: `regapi-owner-${uniqueSuffix}@test.local` } },
+      email: `regapi-owner-${suffix}@test.local`,
+      account: { create: { email: `regapi-owner-${suffix}@test.local` } },
       bio: 'Registration API tests',
-      pageSlug: `regapi-owner-${uniqueSuffix}`,
+      pageSlug: `regapi-owner-${suffix}`,
     },
   });
   ownerId = owner.id;
@@ -82,10 +71,10 @@ beforeAll(async () => {
     data: {
       firstName: 'Other',
       lastName: 'Teacher',
-      email: `regapi-other-${uniqueSuffix}@test.local`,
-      account: { create: { email: `regapi-other-${uniqueSuffix}@test.local` } },
+      email: `regapi-other-${suffix}@test.local`,
+      account: { create: { email: `regapi-other-${suffix}@test.local` } },
       bio: 'Registration API tests',
-      pageSlug: `regapi-other-${uniqueSuffix}`,
+      pageSlug: `regapi-other-${suffix}`,
     },
   });
   otherTeacherId = other.id;
@@ -93,7 +82,7 @@ beforeAll(async () => {
   const room = await prisma.room.create({
     data: {
       venueName: 'Reg API Studio',
-      address: `${uniqueSuffix} Reg St`,
+      address: `${suffix} Reg St`,
       city: 'Amsterdam',
       postcode: '1234RA',
       floor: '1',
@@ -115,27 +104,21 @@ beforeAll(async () => {
       data: {
         firstName: `RegStudent${i}`,
         lastName: 'Test',
-        email: `regapi-student-${uniqueSuffix}-${i}@test.local`,
+        email: `regapi-student-${suffix}-${i}@test.local`,
         claimedAt: new Date(),
-        account: { create: { email: `regapi-student-${uniqueSuffix}-${i}@test.local` } },
+        account: { create: { email: `regapi-student-${suffix}-${i}@test.local` } },
         incomeTier: 3,
       },
     });
     studentIds.push(student.id);
     await prisma.teacherStudent.create({ data: { teacherId: ownerId, studentId: student.id } });
-    await prisma.session.create({
-      data: {
-        id: hashToken(studentTokens[i]!),
-        accountId: student.accountId!,
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    studentTokens.push(await createSession(prisma, student.accountId!));
   }
   const unlinked = await prisma.student.create({
     data: {
       firstName: 'Unlinked',
       lastName: 'Test',
-      email: `regapi-unlinked-${uniqueSuffix}@test.local`,
+      email: `regapi-unlinked-${suffix}@test.local`,
       incomeTier: 3,
     },
   });
@@ -146,25 +129,14 @@ beforeAll(async () => {
     select: { accountId: true },
   });
   ownerAccountIdForCleanup = ownerAccount.accountId;
-  await prisma.session.create({
-    data: {
-      id: hashToken(ownerToken),
-      accountId: ownerAccount.accountId,
-      expiresAt: new Date(Date.now() + 86400000),
-    },
-  });
+  ownerToken = await createSession(prisma, ownerAccount.accountId);
+
   const otherAccount = await prisma.teacher.findUniqueOrThrow({
     where: { id: otherTeacherId },
     select: { accountId: true },
   });
   otherAccountIdForCleanup = otherAccount.accountId;
-  await prisma.session.create({
-    data: {
-      id: hashToken(otherTeacherToken),
-      accountId: otherAccount.accountId,
-      expiresAt: new Date(Date.now() + 86400000),
-    },
-  });
+  otherTeacherToken = await createSession(prisma, otherAccount.accountId);
 });
 
 afterAll(async () => {
@@ -295,7 +267,7 @@ describe('POST /api/registrations', () => {
 
     const cancel = await fetch(`${BASE_URL}/api/registrations/${firstJson.data.id}`, {
       method: 'DELETE',
-      headers: { Cookie: `fair_yoga_session=${studentTokens[0]!}` },
+      headers: cookie(studentTokens[0]!),
     });
     expect(cancel.status).toBe(200);
 
@@ -345,7 +317,7 @@ describe('DELETE /api/waitlist/[id] — profile-presence authorization', () => {
   const del = (token: string, id: string) =>
     fetch(`${BASE_URL}/api/waitlist/${id}`, {
       method: 'DELETE',
-      headers: { Cookie: `fair_yoga_session=${token}` },
+      headers: cookie(token),
     });
 
   async function makeEntry(classId: string, studentId: string) {
