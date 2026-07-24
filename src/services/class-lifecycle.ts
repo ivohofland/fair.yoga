@@ -266,7 +266,7 @@ export async function updateClass(
   if (!cls) return { ok: false, reason: 'not_found' };
 
   // Destructured rather than length-checked, so the non-empty tuple below is
-  // proven to the compiler instead of asserted.
+  // proven to the compiler (via noUncheckedIndexedAccess) instead of asserted.
   const [firstEconomic, ...otherEconomic] = ECONOMIC_FIELDS.filter(
     (f) => data[f] !== undefined,
   );

@@ -64,8 +64,14 @@ export const PUT = withErrorHandler(async (
   // `result.fields` without a cast.
   if (result.reason === 'not_found') return respondError('Class not found', 404);
   if (result.reason === 'no_fields') return respondError('No valid fields to update', 400);
-  return respondError(
-    `Cannot update economic fields when settings are locked: ${result.fields.join(', ')}`,
-    409,
-  );
+  if (result.reason === 'locked') {
+    return respondError(
+      `Cannot update economic fields when settings are locked: ${result.fields.join(', ')}`,
+      409,
+    );
+  }
+  // Exhaustiveness: a new UpdateClassResult variant becomes a compile error
+  // here rather than being silently answered as though it were `locked`.
+  const unhandled: never = result;
+  return unhandled;
 });

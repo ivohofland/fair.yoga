@@ -9,6 +9,7 @@ import {
   transitionClass,
   completeClass,
   updateClass,
+  type EconomicField,
 } from './class-lifecycle';
 
 // We use string literals matching the Prisma ClassStatus enum values.
@@ -685,5 +686,18 @@ describe('updateClass — the count === 0 branches', () => {
 
     // No economic fields sent, so the filter must NOT constrain settingsLocked.
     expect(updateManyCalls[0]?.where).toEqual({ id: 'stub-class' });
+  });
+});
+
+describe("updateClass's non-empty tuple guarantee", () => {
+  it('depends on noUncheckedIndexedAccess, which is pinned here', () => {
+    const [first] = [] as EconomicField[];
+    // @ts-expect-error `first` is `EconomicField | undefined` under
+    // noUncheckedIndexedAccess (tsconfig.json). If that flag is ever relaxed
+    // this assignment stops erroring, this directive becomes the error, and
+    // the build tells us — instead of updateClass's "proven, not asserted"
+    // narrowing quietly becoming a no-op.
+    const pinned: EconomicField = first;
+    expect(pinned).toBeUndefined();
   });
 });
