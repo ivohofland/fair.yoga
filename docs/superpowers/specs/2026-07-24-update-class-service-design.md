@@ -230,3 +230,41 @@ section failed to apply: *check whether the input can distinguish the cases
 before writing down a cause.* Having just corrected one unverified claim about
 branch behaviour was not protection against making another, two paragraphs
 later, about the branch the document was actually about.
+
+### 3 — deriving `ClassUpdateData` fixed nothing on its own (2026-07-24, from the PR #78 review)
+
+The review found that a field added to `updateClassSchema` but not to the
+hand-declared `ClassUpdateData` reaches Prisma with no compile error, because
+the route builds its payload with `{ ...rest }` and spreading defeats
+TypeScript's excess-property check. The proposed remedy was to derive the type
+from the schema instead. That was applied — and then measured, which the
+proposal had not been.
+
+**Deriving alone changes nothing.** Adding a field to `updateClassSchema` with
+the derived type in place still leaves `tsc --noEmit` at exit 0: the derived
+type simply absorbs the new field, and `data` is a variable rather than an
+object literal, so structural typing carries the extra property through to
+`db.class.updateMany` exactly as before. Hand-declared and derived are
+behaviourally identical here — both silent at compile time, both a runtime
+Prisma error.
+
+What closes it is a type-level pin asserting every key of `ClassUpdateData` is
+a column Prisma can update:
+
+```ts
+type ClassUpdateColumnsExist =
+  Exclude<keyof ClassUpdateData, keyof Prisma.ClassUncheckedUpdateInput> extends never
+    ? true
+    : Exclude<keyof ClassUpdateData, keyof Prisma.ClassUncheckedUpdateInput>;
+const _classUpdateDataMatchesSchema: ClassUpdateColumnsExist = true;
+```
+
+Verified: with it, adding a schema-only field fails the build naming the field
+— `Type 'true' is not assignable to type '"smuggledField"'`. The derivation is
+what makes the pin possible (a hand-declared type would never see the new key
+in `keyof`), so the two belong together; neither is sufficient alone.
+
+The recurring lesson, now three for three in this document: a proposed fix is a
+hypothesis. This one came from a careful reviewer, was plausible, and was wrong
+— and it was wrong in the same direction as everything else corrected here,
+claiming a compile-time guarantee nobody had run the compiler to confirm.

@@ -7,7 +7,7 @@
  * "Full" is derived (registrations >= maxStudents), not a stored state.
  */
 
-import type { PrismaClient, ClassStatus, RegistrationStatus, Class } from '@prisma/client';
+import type { PrismaClient, Prisma, ClassStatus, RegistrationStatus, Class } from '@prisma/client';
 import type { z } from 'zod';
 import type { updateClassSchema } from '@/lib/schemas';
 import { calculateClassPricing } from './pricing';
@@ -225,15 +225,37 @@ export async function completeClass(
 /**
  * The fields a teacher may change on an existing class.
  *
- * Derived from `updateClassSchema` rather than hand-declared, so a field added
- * to the wire schema is a compile error here instead of a silent passenger:
- * the route builds this value with `{ ...rest }`, and spreading defeats
- * TypeScript's excess-property check, so a hand-written field list caught
- * nothing. `date` is the one genuine difference — a `YYYY-MM-DD` string on the
- * wire, a `Date` by the time it reaches Prisma.
+ * Derived from `updateClassSchema` rather than hand-declared. `date` is the one
+ * genuine difference — a `YYYY-MM-DD` string on the wire, a `Date` by the time
+ * it reaches Prisma.
+ *
+ * Deriving alone buys no safety: the route builds its payload with
+ * `{ ...rest }`, and spreading defeats TypeScript's excess-property check, so a
+ * field added to the schema reaches `db.class.updateMany` either way — hand-
+ * declared or derived — and fails at runtime rather than at compile time.
+ * Measured, not assumed: adding a field to `updateClassSchema` alone leaves
+ * `tsc --noEmit` at exit 0. What deriving enables is the pin below.
  */
 export type ClassUpdateData =
   Omit<z.infer<typeof updateClassSchema>, 'date'> & { date?: Date };
+
+/**
+ * Compile-time pin: every field the wire schema accepts must be a column
+ * Prisma can actually update on `Class`.
+ *
+ * Because `ClassUpdateData` is derived, a new schema field lands in `keyof
+ * ClassUpdateData`; if it has no matching column this alias resolves to that
+ * field's name instead of `true`, and the assignment below stops compiling
+ * with the offending field named in the error. A hand-declared type could not
+ * do this — the unknown field would never appear in `keyof` at all.
+ */
+type ClassUpdateColumnsExist =
+  Exclude<keyof ClassUpdateData, keyof Prisma.ClassUncheckedUpdateInput> extends never
+    ? true
+    : Exclude<keyof ClassUpdateData, keyof Prisma.ClassUncheckedUpdateInput>;
+
+const _classUpdateDataMatchesSchema: ClassUpdateColumnsExist = true;
+void _classUpdateDataMatchesSchema;
 
 /**
  * Why an update did or did not happen.
