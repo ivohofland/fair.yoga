@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession } from './helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -138,7 +138,7 @@ describe('POST /api/announcements', () => {
     // S3: cancelled in class 1 only.
     await register(class1Id, s3Id, 'cancelled');
 
-    teacherToken = await createSession(prisma, teacherAccountId);
+    teacherToken = await seedSession(prisma, teacherAccountId);
   });
 
   afterAll(async () => {

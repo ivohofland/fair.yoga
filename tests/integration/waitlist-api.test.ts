@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession } from './helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -42,7 +42,7 @@ beforeAll(async () => {
     },
   });
   teacherId = teacher.id;
-  teacherToken = await createSession(prisma, teacher.accountId);
+  teacherToken = await seedSession(prisma, teacher.accountId);
 
   const room = await prisma.room.create({
     data: {
@@ -73,7 +73,7 @@ beforeAll(async () => {
     },
   });
   studentId = student.id;
-  studentToken = await createSession(prisma, student.accountId!);
+  studentToken = await seedSession(prisma, student.accountId!);
 
   // --- 409 fixture -----------------------------------------------------
   // A class far in the future. getWaitlistWindow resolves this to

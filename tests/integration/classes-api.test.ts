@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession } from './helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -28,7 +28,7 @@ async function makeTeacher(tag: string): Promise<{ id: string; token: string }> 
       pageSlug: `classesapi-${tag}-${suffix}`,
     },
   });
-  const token = await createSession(prisma, teacher.accountId);
+  const token = await seedSession(prisma, teacher.accountId);
   return { id: teacher.id, token };
 }
 

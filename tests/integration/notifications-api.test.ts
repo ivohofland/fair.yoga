@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession } from './helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -31,7 +31,7 @@ describe('POST /api/notifications/[id]/read — student recipients', () => {
         },
       });
       studentIds.push(student.id);
-      tokens.push(await createSession(prisma, student.accountId!));
+      tokens.push(await seedSession(prisma, student.accountId!));
     }
     const notification = await prisma.notification.create({
       data: {

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { generateInstancesForTemplate } from '@/services/class-generator';
-import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession } from './helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -74,7 +74,7 @@ beforeAll(async () => {
     select: { accountId: true },
   });
   teacherAccountId = account.accountId;
-  sessionToken = await createSession(prisma, account.accountId);
+  sessionToken = await seedSession(prisma, account.accountId);
 });
 
 afterAll(async () => {

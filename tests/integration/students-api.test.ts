@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession } from './helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -51,7 +51,7 @@ beforeAll(async () => {
   });
   studentIds.push(unlinked.id);
 
-  teacherToken = await createSession(prisma, teacherAccountId);
+  teacherToken = await seedSession(prisma, teacherAccountId);
 });
 
 afterAll(async () => {
@@ -181,7 +181,7 @@ describe('POST /api/students', () => {
         pageSlug: `crm-teacher2-${suffix}`,
       },
     });
-    const rawToken2 = await createSession(prisma, teacher2.accountId);
+    const rawToken2 = await seedSession(prisma, teacher2.accountId);
 
     // Teacher 2 adds the same student by email
     const res = await fetch(`${BASE_URL}/api/students`, {
@@ -282,7 +282,7 @@ describe('GET/PUT /api/students/[id] — profile-presence authorization', () => 
       },
     });
     dualOwnStudentId = ownStudent.id;
-    dualToken = await createSession(prisma, dualAccountId);
+    dualToken = await seedSession(prisma, dualAccountId);
 
     const rosterEmail = `stuapi-roster-${dualSuffix}@test.local`;
     const roster = await prisma.student.create({
@@ -299,7 +299,7 @@ describe('GET/PUT /api/students/[id] — profile-presence authorization', () => 
     await prisma.teacherStudent.create({
       data: { teacherId: dualTeacherId, studentId: rosterStudentId },
     });
-    rosterToken = await createSession(prisma, rosterAccountId);
+    rosterToken = await seedSession(prisma, rosterAccountId);
   });
 
   afterAll(async () => {

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, createSession, hashToken } from './helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession, hashToken } from './helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -60,7 +60,7 @@ describe('tierSelectedAt stamping', () => {
           tierSelectedAt: null,
         },
       });
-      const token = await createSession(prisma, student.accountId!);
+      const token = await seedSession(prisma, student.accountId!);
       return { id: student.id, token };
     }
 
@@ -81,7 +81,7 @@ describe('tierSelectedAt stamping', () => {
       },
     });
     teacherId = teacher.id;
-    teacherToken = await createSession(prisma, teacher.accountId);
+    teacherToken = await seedSession(prisma, teacher.accountId);
 
     const crm = await prisma.student.create({
       data: {

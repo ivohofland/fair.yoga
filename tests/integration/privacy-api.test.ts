@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession } from './helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -43,7 +43,7 @@ describe('students privacy API', () => {
       },
     });
     teacherId = teacher.id;
-    studentToken = await createSession(prisma, studentAccountId);
+    studentToken = await seedSession(prisma, studentAccountId);
   });
 
   afterAll(async () => {

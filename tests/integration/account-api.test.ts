@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession } from './helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -39,7 +39,7 @@ beforeAll(async () => {
   });
   teacherId = teacher.id;
   accountId = teacher.accountId;
-  rawToken = await createSession(prisma, accountId);
+  rawToken = await seedSession(prisma, accountId);
 
   // The teacher already sits in someone's CRM as an unclaimed contact
   // under the same email — the join must claim this row, not collide.

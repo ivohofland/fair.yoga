@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, createSession } from './helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession } from './helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -112,7 +112,7 @@ beforeAll(async () => {
     });
     studentIds.push(student.id);
     await prisma.teacherStudent.create({ data: { teacherId: ownerId, studentId: student.id } });
-    studentTokens.push(await createSession(prisma, student.accountId!));
+    studentTokens.push(await seedSession(prisma, student.accountId!));
   }
   const unlinked = await prisma.student.create({
     data: {
@@ -129,14 +129,14 @@ beforeAll(async () => {
     select: { accountId: true },
   });
   ownerAccountIdForCleanup = ownerAccount.accountId;
-  ownerToken = await createSession(prisma, ownerAccount.accountId);
+  ownerToken = await seedSession(prisma, ownerAccount.accountId);
 
   const otherAccount = await prisma.teacher.findUniqueOrThrow({
     where: { id: otherTeacherId },
     select: { accountId: true },
   });
   otherAccountIdForCleanup = otherAccount.accountId;
-  otherTeacherToken = await createSession(prisma, otherAccount.accountId);
+  otherTeacherToken = await seedSession(prisma, otherAccount.accountId);
 });
 
 afterAll(async () => {
