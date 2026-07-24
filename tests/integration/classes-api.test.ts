@@ -11,7 +11,6 @@ let otherTeacherToken: string;
 let ownerId: string;
 let otherTeacherId: string;
 let roomId: string;
-let teacherRoomId: string;
 let classId: string;
 let cancelClassId: string;
 
@@ -66,47 +65,41 @@ beforeAll(async () => {
   const teacherRoom = await prisma.teacherRoom.create({
     data: { teacherId: ownerId, roomId, capacityOverride: 8, rentalRate: 15 },
   });
-  teacherRoomId = teacherRoom.id;
+
+  // Local fixture helper — the four class creates below share every field
+  // except classType and status. teacherRoom.id is already in scope here, so
+  // this closes over it directly rather than reading it back off a
+  // module-level let.
+  function makeClass(classType: string, status: 'draft' | 'open' = 'draft') {
+    return prisma.class.create({
+      data: {
+        teacherId: ownerId,
+        teacherRoomId: teacherRoom.id,
+        classType,
+        date: new Date('2099-06-01'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 8,
+        status,
+      },
+    });
+  }
 
   // Left in the default `draft` status deliberately: draft cannot transition
   // straight to `completed` or `in_progress`, so the state guard on both
   // routes is reachable here without any registrations/pricing fixtures.
-  const cls = await prisma.class.create({
-    data: {
-      teacherId: ownerId,
-      teacherRoomId: teacherRoom.id,
-      classType: 'Classes API',
-      date: new Date('2099-06-01'),
-      startTime: '09:00',
-      durationMinutes: 60,
-      roomCost: 15,
-      minRate: 10,
-      targetRate: 20,
-      minStudents: 1,
-      maxStudents: 8,
-    },
-  });
+  const cls = await makeClass('Classes API');
   classId = cls.id;
 
   // Separate draft fixture for the /transition cancel-branch tests: cancelling
   // mutates status away from `draft`, which the tests above depend on staying
   // put. No registrations/waitlist entries here, so the cancel transaction's
   // notification fan-out has nothing to notify (see the cancel test below).
-  const cancelCls = await prisma.class.create({
-    data: {
-      teacherId: ownerId,
-      teacherRoomId: teacherRoom.id,
-      classType: 'Classes API Cancel',
-      date: new Date('2099-06-01'),
-      startTime: '09:00',
-      durationMinutes: 60,
-      roomCost: 15,
-      minRate: 10,
-      targetRate: 20,
-      minStudents: 1,
-      maxStudents: 8,
-    },
-  });
+  const cancelCls = await makeClass('Classes API Cancel');
   cancelClassId = cancelCls.id;
 
   // -- PUT /api/classes/[id] economic-lock fixtures ------------------------
@@ -118,40 +111,10 @@ beforeAll(async () => {
   // what makes the 200-vs-409 pair between them a meaningful contrast, rather
   // than two differently-shaped fixtures that happen to land on different
   // status codes for unrelated reasons.
-  const economicsCls = await prisma.class.create({
-    data: {
-      teacherId: ownerId,
-      teacherRoomId,
-      classType: 'Classes API Lock (unlocked)',
-      date: new Date('2099-06-01'),
-      startTime: '09:00',
-      durationMinutes: 60,
-      roomCost: 15,
-      minRate: 10,
-      targetRate: 20,
-      minStudents: 1,
-      maxStudents: 8,
-      status: 'open',
-    },
-  });
+  const economicsCls = await makeClass('Classes API Lock (unlocked)', 'open');
   economicsClassId = economicsCls.id;
 
-  const lockedCls = await prisma.class.create({
-    data: {
-      teacherId: ownerId,
-      teacherRoomId,
-      classType: 'Classes API Lock (locked)',
-      date: new Date('2099-06-01'),
-      startTime: '09:00',
-      durationMinutes: 60,
-      roomCost: 15,
-      minRate: 10,
-      targetRate: 20,
-      minStudents: 1,
-      maxStudents: 8,
-      status: 'open',
-    },
-  });
+  const lockedCls = await makeClass('Classes API Lock (locked)', 'open');
   lockedClassId = lockedCls.id;
 
   // A student who books lockedClassId over HTTP — the same trigger path

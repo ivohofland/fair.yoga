@@ -51,36 +51,39 @@ function put(token: string, id: string, body: Record<string, unknown>) {
   });
 }
 
+// Local fixture helper — of exactly the shape classes-api.test.ts's own
+// makeTeacher(tag) already uses. Binds the email literal once instead of
+// repeating it for the teacher and its nested account.
+async function makeTeacher(
+  tag: string,
+): Promise<{ id: string; accountId: string; token: string }> {
+  const email = `roomsapi-${tag}-${suffix}@test.local`;
+  const teacher = await prisma.teacher.create({
+    data: {
+      firstName: 'Room',
+      lastName: tag,
+      email,
+      account: { create: { email } },
+      bio: 'Rooms API tests',
+      pageSlug: `roomsapi-${tag}-${suffix}`,
+    },
+  });
+  const token = await seedSession(prisma, teacher.accountId);
+  return { id: teacher.id, accountId: teacher.accountId, token };
+}
+
 beforeAll(async () => {
   await prisma.$connect();
 
-  const creator = await prisma.teacher.create({
-    data: {
-      firstName: 'Room',
-      lastName: 'Creator',
-      email: `roomsapi-creator-${suffix}@test.local`,
-      account: { create: { email: `roomsapi-creator-${suffix}@test.local` } },
-      bio: 'Rooms API tests',
-      pageSlug: `roomsapi-creator-${suffix}`,
-    },
-  });
+  const creator = await makeTeacher('creator');
   creatorId = creator.id;
   creatorAccountId = creator.accountId;
-  creatorToken = await seedSession(prisma, creatorAccountId);
+  creatorToken = creator.token;
 
-  const other = await prisma.teacher.create({
-    data: {
-      firstName: 'Room',
-      lastName: 'Outsider',
-      email: `roomsapi-other-${suffix}@test.local`,
-      account: { create: { email: `roomsapi-other-${suffix}@test.local` } },
-      bio: 'Rooms API tests',
-      pageSlug: `roomsapi-other-${suffix}`,
-    },
-  });
+  const other = await makeTeacher('other');
   otherTeacherId = other.id;
   otherAccountId = other.accountId;
-  otherToken = await seedSession(prisma, otherAccountId);
+  otherToken = other.token;
 
   // Room.isPublic defaults to true (the `isPublic` field, prisma/schema.prisma:226)
   // — explicit false here, since these cases start from a private room.
