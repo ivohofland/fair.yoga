@@ -614,3 +614,38 @@ describe('updateClass (DB)', () => {
     expect(result).toEqual({ ok: false, reason: 'no_fields' });
   });
 });
+
+describe('updateClass — the count === 0 branches', () => {
+  // Reaching `count === 0` needs the row to change between updateClass's read
+  // and its write. Against a real database that is a genuine race with no
+  // deterministic trigger — which is exactly why #72's wrong status shipped
+  // unnoticed. A stub is the only way to exercise these two lines.
+  //
+  // `settingsLocked: false` on the read is essential to the first case: a
+  // locked row would be caught by the earlier check and never reach the
+  // compare-and-swap at all.
+  function stubDb(): PrismaClient {
+    return {
+      class: {
+        findUnique: async () => ({ id: 'stub-class', settingsLocked: false }),
+        updateMany: async () => ({ count: 0 }),
+        findUniqueOrThrow: async () => {
+          throw new Error('findUniqueOrThrow must not be reached when count === 0');
+        },
+      },
+    } as unknown as PrismaClient;
+  }
+
+  it('reports locked when economic fields were sent — the compare-and-swap lost', async () => {
+    const result = await updateClass(stubDb(), 'stub-class', { roomCost: 42 });
+    expect(result).toEqual({ ok: false, reason: 'locked', fields: ['roomCost'] });
+  });
+
+  it('reports not_found when no economic field was sent — the row was deleted (#72)', async () => {
+    // The whole point of the issue. Before the fix this returned the `locked`
+    // reason with an empty field list, which the route rendered as
+    // "Cannot update economic fields when settings are locked: " with a 409.
+    const result = await updateClass(stubDb(), 'stub-class', { description: 'x' });
+    expect(result).toEqual({ ok: false, reason: 'not_found' });
+  });
+});
