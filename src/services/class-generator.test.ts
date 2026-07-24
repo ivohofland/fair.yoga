@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { log } from '@/lib/log';
 import { getNextOccurrences, generateClassInstances } from './class-generator';
 
 // ===========================================================================
@@ -303,7 +304,15 @@ describe('generateClassInstances (per-template isolation)', () => {
       },
     } as unknown as import('@prisma/client').PrismaClient;
 
+    const spy = vi.spyOn(log, 'error').mockImplementation(() => log);
+
     await expect(generateClassInstances(stub, from)).rejects.toThrow('boom-A');
     expect(created).toContain('B'); // B generated despite A failing before and C failing after
+
+    // Both failing templates are logged, not just the one that's rethrown.
+    const loggedTemplateIds = spy.mock.calls.map((c) => (c[0] as { templateId?: string }).templateId);
+    expect(loggedTemplateIds).toContain('A');
+    expect(loggedTemplateIds).toContain('C');
+    spy.mockRestore();
   });
 });
