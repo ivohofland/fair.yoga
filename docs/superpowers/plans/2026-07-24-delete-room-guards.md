@@ -491,7 +491,7 @@ Tests only — no `src/` changes. Every non-200 case asserts the room still exis
 
 ## Which case pins *ordering*
 
-Same correction PR #70's review established, applied here from the start:
+Same correction PR #70's review established (recorded in `docs/superpowers/specs/2026-07-24-invariant-coverage-design.md`, `## Correction`), applied here from the start:
 
 | Case | Current (`isPublic` first) | Swapped (`createdById` first) | Detects a swap? |
 |---|---|---|---|
@@ -566,3 +566,21 @@ The assertions themselves stay: they belong for the ordinary reason every
 non-200 case in this file asserts the DB is unchanged. Only the justification
 was overclaimed — the same failure mode PR #70's review found on this file,
 which is why the Task 1 reviewer was primed to look for it.
+
+## Correction (2026-07-24, from the PR #75 review)
+
+1. **Task 2 mutation-tested one guard pair; there are two.** `DELETE` has
+   three ordered guards — `isPublic` → `createdById` → `hasClasses` — so Task
+   2's swap covered only the first adjacent pair. Swapping the *second*
+   (`createdById` ↔ `hasClasses`) left all nine tests green. A sixth case,
+   **non-creator + private + has-classes**, was added in review and now fails
+   exactly that swap. Any future plan of this shape should enumerate guard
+   *pairs*, not guards, and mutate each one.
+
+2. **The Self-Review's `401`/`404` line was wrong.** It says the omission "is
+   carried by the Global Constraints and the spec, and needs no task". The
+   spec's own justification was itself faulty: the "What earns an HTTP guard
+   test" convention exempts the **shared** auth guard, not the bespoke
+   `Room not found` null-check. The 404 is omitted for being trivial, which is
+   a defensible reason but a different one. Corrected in the spec's own
+   `## Correction` section.

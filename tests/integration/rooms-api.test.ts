@@ -279,17 +279,31 @@ describe('PUT /api/rooms/[id]', () => {
 });
 
 /**
- * Same split as the PUT block, different messages:
+ * DELETE has THREE ordered guards, not two: isPublic -> createdById ->
+ * hasClasses. That is two adjacent pairs, and each needs its own
+ * discriminating case. Both follow the same rule: a creator always *passes*
+ * the createdById guard, so no creator-held case can detect a swap involving
+ * it. Only a non-creator can.
+ *
  *   - creator+public pins the *product decision* — a public room can't be
- *     deleted even by its creator.
- *   - non-creator+public pins the *guard ordering*. Under the current order
- *     (isPublic first) it returns "Public rooms cannot be deleted"; swap the
- *     two guards and it returns "Only the room creator can delete this room".
- *     It is the only case whose result changes, because a creator passes the
- *     createdById guard as a no-op under either ordering.
+ *     deleted even by its creator. It cannot detect any swap.
+ *   - non-creator+public pins the isPublic <-> createdById order. Current
+ *     order says "Public rooms cannot be deleted"; swapped, it says "Only the
+ *     room creator can delete this room".
+ *   - non-creator+private+has-classes pins the createdById <-> hasClasses
+ *     order. Current order says "Only the room creator can delete this room";
+ *     swapped, it says "Cannot delete a room that has classes" with a 400 —
+ *     which would leak to a stranger whether a room they don't own has
+ *     classes on it.
+ *
+ * Both pairs were verified by mutation, not by argument: swapping each pair
+ * in the handler fails exactly the one case named above and nothing else.
+ * The second pair was found unpinned in review AFTER the first was fixed —
+ * proof that reasoning about one pair says nothing about its neighbour.
  *
  * Unlike the PUT block, each case here owns its room — a successful delete
  * destroys one, so shared mutable state would make the cases order-dependent.
+ * The two 403-only cases that share a room are safe: neither writes.
  */
 describe('DELETE /api/rooms/[id]', () => {
   it('a non-creator is rejected from a public room — this is what actually pins the ordering', async () => {
@@ -343,6 +357,23 @@ describe('DELETE /api/rooms/[id]', () => {
     // P2002 to a status of its own), which the assertion above catches first.
     expect(await prisma.room.count({ where: { id: deleteWithClassRoomId } })).toBe(1);
     expect(await prisma.teacherRoom.count({ where: { roomId: deleteWithClassRoomId } })).toBe(1);
+  });
+
+  it('a non-creator is rejected from a private room that has classes — pins the second guard pair', async () => {
+    // Reuses the has-classes room deliberately: it is the ONLY fixture whose
+    // state can tell createdById-first from hasClasses-first apart. The two
+    // cases either side of this one can't — the creator passes createdById as
+    // a no-op, and a room with no classes never reaches hasClasses at all.
+    const res = await del(otherToken, deleteWithClassRoomId);
+    expect(res.status).toBe(403);
+
+    // Ownership loses to nothing here. Swap createdById and hasClasses and
+    // this becomes 400 "Cannot delete a room that has classes" — telling a
+    // stranger something about a private room they have no business knowing.
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toContain('Only the room creator can delete this room');
+
+    expect(await prisma.room.count({ where: { id: deleteWithClassRoomId } })).toBe(1);
   });
 
   it('the creator deletes a private, class-free room -> 200, room and teacher-rooms gone', async () => {

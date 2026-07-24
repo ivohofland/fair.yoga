@@ -68,7 +68,9 @@ returns the same message. That case pins the **product decision**; only the
 non-creator-on-a-public-room case pins the **ordering**.
 
 This is the correction PR #70's review established for `PUT`, applied here from
-the start. See that spec's `## Correction` section.
+the start — see the `## Correction` section of
+`docs/superpowers/specs/2026-07-24-invariant-coverage-design.md`, which is
+where that reasoning is recorded despite its filename giving no hint of it.
 
 ### No `401` / `404` cases
 
@@ -137,3 +139,29 @@ only.
 
 `tsc` + `eslint` clean; the integration project green. Tests only — no `src/`
 changes.
+
+## Correction (2026-07-24, from the PR #75 review)
+
+1. **A second unpinned guard pair, missed entirely.** This spec treats
+   `DELETE`'s guards as one ordered pair. They are **three** — `isPublic` →
+   `createdById` → `hasClasses` — which is *two* adjacent pairs, each needing
+   its own discriminating case. The five cases above pin the first pair and
+   are blind to the second: swapping `createdById` and `hasClasses` left the
+   whole suite green, confirmed by mutation. The missing case is
+   **non-creator + private + has-classes**, added during review. It reuses the
+   existing has-classes fixture, so it cost no new fixture — only the
+   realisation that the analysis had to be run per *pair*, not per route.
+
+   The lesson generalises past this file: having reasoned carefully about one
+   guard pair says nothing about its neighbour, and the confidence from the
+   first analysis is exactly what hid the second gap.
+
+2. **The `401`/`404` justification conflated two different things.** The
+   section above waves both away by citing "What earns an HTTP guard test".
+   That convention exempts the **shared** `requireTeacher`/`requireSession`
+   path from per-route retesting — it says nothing about `Room not found`,
+   which is bespoke per-route `findUnique` + null-check logic. Omitting the
+   404 may still be reasonable (the branch is a single null check that fails
+   loudly, and the `PUT` block omits it too), but it is omitted for being
+   **trivial**, not because the convention covers it. The original wording
+   would have propagated a misreading of the convention to the next route.
