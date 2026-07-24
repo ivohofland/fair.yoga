@@ -11,8 +11,17 @@ let otherTeacherToken: string;
 let ownerId: string;
 let otherTeacherId: string;
 let roomId: string;
+let teacherRoomId: string;
 let classId: string;
 let cancelClassId: string;
+
+// Dedicated fixtures for the PUT /api/classes/[id] economic-lock tests —
+// kept separate from classId/cancelClassId above, which the existing tests
+// depend on staying in `draft`.
+let economicsClassId: string;
+let lockedClassId: string;
+let lockStudentId: string;
+let lockStudentAccountId: string | null;
 
 const UNKNOWN_CLASS_ID = '00000000-0000-4000-8000-000000000000';
 
@@ -57,6 +66,7 @@ beforeAll(async () => {
   const teacherRoom = await prisma.teacherRoom.create({
     data: { teacherId: ownerId, roomId, capacityOverride: 8, rentalRate: 15 },
   });
+  teacherRoomId = teacherRoom.id;
 
   // Left in the default `draft` status deliberately: draft cannot transition
   // straight to `completed` or `in_progress`, so the state guard on both
@@ -98,15 +108,98 @@ beforeAll(async () => {
     },
   });
   cancelClassId = cancelCls.id;
+
+  // -- PUT /api/classes/[id] economic-lock fixtures ------------------------
+  // Both `open` (not `draft`): a real registration requires it, and PUT
+  // itself doesn't gate on status, so this doesn't affect what's tested.
+  const economicsCls = await prisma.class.create({
+    data: {
+      teacherId: ownerId,
+      teacherRoomId,
+      classType: 'Classes API Lock (unlocked)',
+      date: new Date('2099-06-01'),
+      startTime: '09:00',
+      durationMinutes: 60,
+      roomCost: 15,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 1,
+      maxStudents: 8,
+      status: 'open',
+    },
+  });
+  economicsClassId = economicsCls.id;
+
+  const lockedCls = await prisma.class.create({
+    data: {
+      teacherId: ownerId,
+      teacherRoomId,
+      classType: 'Classes API Lock (locked)',
+      date: new Date('2099-06-01'),
+      startTime: '09:00',
+      durationMinutes: 60,
+      roomCost: 15,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 1,
+      maxStudents: 8,
+      status: 'open',
+    },
+  });
+  lockedClassId = lockedCls.id;
+
+  // A student who books lockedClassId over HTTP — the same trigger path
+  // registrations-api.test.ts uses (POST /api/registrations) — so the lock
+  // comes from the app's own behaviour, never a direct `settingsLocked`
+  // write.
+  const lockStudentEmail = `classesapi-lockstudent-${suffix}@test.local`;
+  const lockStudent = await prisma.student.create({
+    data: {
+      firstName: 'Lock',
+      lastName: 'Student',
+      email: lockStudentEmail,
+      claimedAt: new Date(),
+      account: { create: { email: lockStudentEmail } },
+      incomeTier: 3,
+    },
+  });
+  lockStudentId = lockStudent.id;
+  lockStudentAccountId = lockStudent.accountId;
+  const lockStudentToken = await seedSession(prisma, lockStudentAccountId!);
+
+  const lockRes = await fetch(`${BASE_URL}/api/registrations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...cookie(lockStudentToken) },
+    body: JSON.stringify({ classId: lockedClassId }),
+  });
+  if (lockRes.status !== 201) {
+    throw new Error(
+      `Fixture setup: expected the locking registration to succeed (201), got ${lockRes.status}`,
+    );
+  }
 });
 
 afterAll(async () => {
-  await prisma.notification.deleteMany({
-    where: { relatedClassId: { in: [classId, cancelClassId] } },
-  });
-  await prisma.class.deleteMany({ where: { id: { in: [classId, cancelClassId] } } });
+  // registration -> class, per the lock fixtures' FK direction.
+  if (lockedClassId) {
+    await prisma.registration.deleteMany({ where: { classId: lockedClassId } });
+  }
+  const allClassIds = [classId, cancelClassId, economicsClassId, lockedClassId].filter(Boolean);
+  if (allClassIds.length > 0) {
+    await prisma.notification.deleteMany({ where: { relatedClassId: { in: allClassIds } } });
+    await prisma.class.deleteMany({ where: { id: { in: allClassIds } } });
+  }
   await prisma.teacherRoom.deleteMany({ where: { teacherId: ownerId } });
   await prisma.room.delete({ where: { id: roomId } });
+  if (lockStudentId) {
+    // Self-booking upserts a TeacherStudent link (registrations route) —
+    // clean it up before the teacher/student rows go.
+    await prisma.teacherStudent.deleteMany({ where: { studentId: lockStudentId } });
+    if (lockStudentAccountId) {
+      await prisma.session.deleteMany({ where: { accountId: lockStudentAccountId } });
+    }
+    await prisma.student.delete({ where: { id: lockStudentId } });
+  }
   for (const id of [ownerId, otherTeacherId]) {
     const t = await prisma.teacher.findUniqueOrThrow({
       where: { id },
@@ -230,5 +323,72 @@ describe('POST /api/classes/[id]/transition', () => {
 
     const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId } });
     expect(unchanged.status).toBe('cancelled');
+  });
+});
+
+describe('PUT /api/classes/[id]', () => {
+  const put = (token: string, id: string, body: Record<string, unknown>) =>
+    fetch(`${BASE_URL}/api/classes/${id}`, {
+      method: 'PUT',
+      headers: {
+        ...cookie(token),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+  it('unlocked class: owner edits economic fields -> 200, the new values persist', async () => {
+    const res = await put(ownerToken, economicsClassId, { roomCost: 42, minStudents: 2 });
+    expect(res.status).toBe(200);
+
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId } });
+    expect(Number(updated.roomCost)).toBe(42);
+    expect(updated.minStudents).toBe(2);
+  });
+
+  it('locked class: economic edit is rejected with 409 naming the fields sent', async () => {
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    expect(before.settingsLocked).toBe(true); // sanity: the beforeAll fixture registration locked it
+
+    const res = await put(ownerToken, lockedClassId, { roomCost: 999, minRate: 1 });
+    expect(res.status).toBe(409);
+
+    // route.ts:74 — names exactly the ECONOMIC_FIELDS sent, in ECONOMIC_FIELDS
+    // order (route.ts:35-41), regardless of the order given in the request body.
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toContain('roomCost, minRate');
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    expect(Number(after.roomCost)).toBe(Number(before.roomCost));
+    expect(Number(after.minRate)).toBe(Number(before.minRate));
+  });
+
+  it('locked class: a non-economic edit still succeeds — the lock is scoped to economics', async () => {
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+
+    const res = await put(ownerToken, lockedClassId, { description: 'Updated after lock' });
+    expect(res.status).toBe(200);
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    expect(after.description).toBe('Updated after lock');
+    expect(Number(after.roomCost)).toBe(Number(before.roomCost));
+    expect(Number(after.minRate)).toBe(Number(before.minRate));
+    expect(Number(after.targetRate)).toBe(Number(before.targetRate));
+    expect(after.minStudents).toBe(before.minStudents);
+    expect(after.maxStudents).toBe(before.maxStudents);
+  });
+
+  it("403s another teacher's cookie on a locked class — ownership guard fires first", async () => {
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+
+    const res = await put(otherTeacherToken, lockedClassId, { description: 'Should not apply' });
+    expect(res.status).toBe(403);
+
+    // route.ts:54 — the bespoke ownership guard's own message.
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toContain('Not your class');
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    expect(after.description).toBe(before.description);
   });
 });
