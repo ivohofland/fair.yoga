@@ -1,14 +1,29 @@
 /**
  * PUT /api/rooms/[id] — the public-room lock.
  *
- * `if (room.isPublic) return 403` fires BEFORE the creator-ownership check
- * (src/app/api/rooms/[id]/route.ts:77-83), so a public room is read-only for
- * everyone — including its own creator. Deliberate (#52/#60: public rooms are
- * community property; an admin surface will eventually mediate changes), but
- * surprising enough that a future reordering could look like a bug fix while
- * silently reversing that decision. These tests pin the ordering: same actor,
- * same room, only `isPublic` differs between the first two cases — and the
- * two 403s assert their *distinct* messages, so a swap in guard order fails.
+ * The `isPublic` guard (rooms/[id]/route.ts:77-79) precedes the `createdById`
+ * guard (:81-83), so a public room is read-only for everyone — including its
+ * own creator. Deliberate (#52/#60: public rooms are community property; an
+ * admin surface will eventually mediate changes), but surprising enough that
+ * a future reordering could look like a bug fix while silently reversing that
+ * decision.
+ *
+ * These four cases cover the full 2x2 of {creator, non-creator} x {private,
+ * public}, but they don't split evenly by what they prove:
+ *   - creator+public pins the *product decision* — a public room is
+ *     read-only even for its own creator (see #52/#60).
+ *   - non-creator+public pins the *guard ordering*. It is the only
+ *     combination whose message differs when the two guards are swapped:
+ *     current order (isPublic first) says "Public rooms cannot be edited";
+ *     swapped (createdById first) says "Only the room creator can update
+ *     this room". The other three cases return the same message under either
+ *     ordering — creator+private and non-creator+private never reach the
+ *     isPublic guard's alternate message, and creator+public passes the
+ *     createdById guard as a no-op either way it's ordered.
+ *
+ * All four cases share one room and run in declaration order — the isPublic
+ * flip (third case) is one-way, so any case declared below it inherits a
+ * public room.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
@@ -119,7 +134,7 @@ describe('PUT /api/rooms/[id]', () => {
     const res = await put(otherToken, roomId, { venueName: 'Should not apply' });
     expect(res.status).toBe(403);
 
-    // route.ts:82 — the creator-ownership guard's own message.
+    // The createdById guard's own message (rooms/[id]/route.ts:82).
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toContain('Only the room creator can update this room');
 
@@ -127,7 +142,7 @@ describe('PUT /api/rooms/[id]', () => {
     expect(after.venueName).toBe(before.venueName);
   });
 
-  it('the same creator is rejected once the room is public — distinct message', async () => {
+  it('the same creator is rejected once the room is public — pins the product decision', async () => {
     // Fixture state, not the invariant under test — flipped directly so the
     // only thing that changes between this case and the first is isPublic.
     await prisma.room.update({ where: { id: roomId }, data: { isPublic: true } });
@@ -136,13 +151,40 @@ describe('PUT /api/rooms/[id]', () => {
     const res = await put(creatorToken, roomId, { venueName: 'Should not apply either' });
     expect(res.status).toBe(403);
 
-    // route.ts:78 — fires BEFORE the creator check (route.ts:82), even for
-    // the room's own creator. That ordering is the point of this file.
+    // The isPublic guard (rooms/[id]/route.ts:78) fires before the createdById
+    // guard (:82), even for the room's own creator. This alone doesn't pin the
+    // guard *ordering* though — see the file header: with the creator as actor,
+    // the createdById guard is a no-op under either ordering, so this case
+    // would return the same message if the guards were swapped. What it pins
+    // is the product decision that a public room is read-only for its creator.
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toContain('Public rooms cannot be edited');
 
     const after = await prisma.room.findUniqueOrThrow({ where: { id: roomId } });
     expect(after.venueName).toBe(before.venueName);
     expect(after.isPublic).toBe(true);
+  });
+
+  it('a non-creator is rejected from the same public room — this is what actually pins the ordering', async () => {
+    // The room is already public from the previous case; declared after it
+    // deliberately (see the file header — the isPublic flip is one-way). No
+    // new fixture needed.
+    const before = await prisma.room.findUniqueOrThrow({ where: { id: roomId } });
+    expect(before.isPublic).toBe(true);
+
+    const res = await put(otherToken, roomId, { venueName: 'Should not apply either' });
+    expect(res.status).toBe(403);
+
+    // Current order: the isPublic guard (route.ts:77-79) fires first, so this
+    // is "Public rooms cannot be edited" — NOT the createdById guard's "Only
+    // the room creator..." message. Swap the two guards and this message
+    // flips, because unlike the creator, a non-creator doesn't pass the
+    // createdById guard as a no-op. This is the only one of the four cases
+    // whose outcome depends on guard order.
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toContain('Public rooms cannot be edited');
+
+    const after = await prisma.room.findUniqueOrThrow({ where: { id: roomId } });
+    expect(after.venueName).toBe(before.venueName);
   });
 });

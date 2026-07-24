@@ -378,17 +378,24 @@ describe('PUT /api/classes/[id]', () => {
     expect(after.maxStudents).toBe(before.maxStudents);
   });
 
-  it("403s another teacher's cookie on a locked class — ownership guard fires first", async () => {
+  it("403s another teacher's cookie on a locked class with an economic body — proves the ownership guard fires before the lock check", async () => {
     const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
 
-    const res = await put(otherTeacherToken, lockedClassId, { description: 'Should not apply' });
+    // An economic field, not `description`: a non-economic body can't tell
+    // ownership-first from lock-first apart, because sentEconomicFields would
+    // be empty either way and the lock branch (route.ts:72) would be
+    // unreachable regardless of guard order. roomCost makes the two orderings
+    // diverge: ownership-first -> 403 "Not your class"; lock-first -> 409
+    // "Cannot update economic fields...".
+    const res = await put(otherTeacherToken, lockedClassId, { roomCost: 999 });
     expect(res.status).toBe(403);
 
-    // route.ts:54 — the bespoke ownership guard's own message.
+    // The bespoke ownership guard's own message (classes/[id]/route.ts:54),
+    // which runs ahead of parseBody and the ECONOMIC_FIELDS lock check.
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toContain('Not your class');
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
-    expect(after.description).toBe(before.description);
+    expect(Number(after.roomCost)).toBe(Number(before.roomCost));
   });
 });
