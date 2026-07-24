@@ -8,6 +8,8 @@
  */
 
 import type { PrismaClient, ClassStatus, RegistrationStatus, Class } from '@prisma/client';
+import type { z } from 'zod';
+import type { updateClassSchema } from '@/lib/schemas';
 import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 
@@ -223,22 +225,15 @@ export async function completeClass(
 /**
  * The fields a teacher may change on an existing class.
  *
- * Declared here rather than derived from `updateClassSchema` so the service
- * stays independent of the wire format — the schema's `date` is a
- * `YYYY-MM-DD` string, which the route converts before calling in.
+ * Derived from `updateClassSchema` rather than hand-declared, so a field added
+ * to the wire schema is a compile error here instead of a silent passenger:
+ * the route builds this value with `{ ...rest }`, and spreading defeats
+ * TypeScript's excess-property check, so a hand-written field list caught
+ * nothing. `date` is the one genuine difference — a `YYYY-MM-DD` string on the
+ * wire, a `Date` by the time it reaches Prisma.
  */
-export type ClassUpdateData = {
-  classType?: string;
-  description?: string | null;
-  date?: Date;
-  startTime?: string;
-  durationMinutes?: number;
-  roomCost?: number;
-  minRate?: number;
-  targetRate?: number;
-  minStudents?: number;
-  maxStudents?: number;
-};
+export type ClassUpdateData =
+  Omit<z.infer<typeof updateClassSchema>, 'date'> & { date?: Date };
 
 /**
  * Why an update did or did not happen.
