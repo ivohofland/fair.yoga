@@ -109,6 +109,8 @@ export const PATCH = withErrorHandler(async (
     return respondError('Unarchive the template before activating it', 409);
   }
 
+  // Atomic: a generation failure rolls the toggle back rather than leaving
+  // the template active with a stale window. Failure propagates (500).
   const updated = await prisma.$transaction(async (tx) => {
     const t = await tx.classTemplate.update({
       where: { id },
@@ -119,5 +121,7 @@ export const PATCH = withErrorHandler(async (
     return t;
   });
 
-  return respondOk(updated);
+  const { teacher, ...result } = updated;
+  void teacher;
+  return respondOk(result);
 });
