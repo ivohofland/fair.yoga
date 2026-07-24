@@ -618,34 +618,72 @@ describe('updateClass (DB)', () => {
 describe('updateClass — the count === 0 branches', () => {
   // Reaching `count === 0` needs the row to change between updateClass's read
   // and its write. Against a real database that is a genuine race with no
-  // deterministic trigger — which is exactly why #72's wrong status shipped
-  // unnoticed. A stub is the only way to exercise these two lines.
+  // deterministic trigger — which is why #72's wrong status shipped unnoticed.
   //
-  // `settingsLocked: false` on the read is essential to the first case: a
-  // locked row would be caught by the earlier check and never reach the
-  // compare-and-swap at all.
-  function stubDb(): PrismaClient {
-    return {
+  // The stub RECORDS what it was called with. That matters: a stub that only
+  // returns `{ count: 0 }` proves the classification is right while proving
+  // nothing about the query that produced it — with such a stub, deleting the
+  // `settingsLocked: false` guard from the compare-and-swap left every test
+  // passing.
+  type UpdateManyArgs = { where: Record<string, unknown>; data: Record<string, unknown> };
+
+  function stubDb(opts: { settingsLocked: boolean; rowSurvives: boolean }) {
+    const updateManyCalls: UpdateManyArgs[] = [];
+    let reads = 0;
+    const db = {
       class: {
-        findUnique: async () => ({ id: 'stub-class', settingsLocked: false }),
-        updateMany: async () => ({ count: 0 }),
+        findUnique: async () => {
+          reads += 1;
+          // Read 1 is updateClass's opening read; read 2 is the existence
+          // re-check after count === 0.
+          if (reads === 1) return { id: 'stub-class', settingsLocked: opts.settingsLocked };
+          return opts.rowSurvives ? { id: 'stub-class' } : null;
+        },
+        updateMany: async (args: UpdateManyArgs) => {
+          updateManyCalls.push(args);
+          return { count: 0 };
+        },
         findUniqueOrThrow: async () => {
           throw new Error('findUniqueOrThrow must not be reached when count === 0');
         },
       },
     } as unknown as PrismaClient;
+    return { db, updateManyCalls };
   }
 
-  it('reports locked when economic fields were sent — the compare-and-swap lost', async () => {
-    const result = await updateClass(stubDb(), 'stub-class', { roomCost: 42 });
+  it('reports locked when the row survives — the compare-and-swap lost its race', async () => {
+    const { db, updateManyCalls } = stubDb({ settingsLocked: false, rowSurvives: true });
+
+    const result = await updateClass(db, 'stub-class', { roomCost: 42 });
     expect(result).toEqual({ ok: false, reason: 'locked', fields: ['roomCost'] });
+
+    // Proves the CAS path actually ran rather than the early lock-check, which
+    // returns an identical value and would otherwise be indistinguishable —
+    // and pins the guard whose removal this suite previously did not notice.
+    expect(updateManyCalls).toHaveLength(1);
+    expect(updateManyCalls[0]?.where).toEqual({ id: 'stub-class', settingsLocked: false });
+  });
+
+  it('reports not_found when economic fields were sent but the row is gone', async () => {
+    // The Critical finding from PR #78's review: this combination used to be
+    // reported as `locked`, naming a plausible field, for a class that had
+    // actually been deleted mid-request.
+    const { db } = stubDb({ settingsLocked: false, rowSurvives: false });
+
+    const result = await updateClass(db, 'stub-class', { roomCost: 42 });
+    expect(result).toEqual({ ok: false, reason: 'not_found' });
   });
 
   it('reports not_found when no economic field was sent — the row was deleted (#72)', async () => {
-    // The whole point of the issue. Before the fix this returned the `locked`
-    // reason with an empty field list, which the route rendered as
+    // The originally-filed bug. Before the fix this returned the `locked`
+    // reason with an empty field list, rendered as
     // "Cannot update economic fields when settings are locked: " with a 409.
-    const result = await updateClass(stubDb(), 'stub-class', { description: 'x' });
+    const { db, updateManyCalls } = stubDb({ settingsLocked: false, rowSurvives: false });
+
+    const result = await updateClass(db, 'stub-class', { description: 'x' });
     expect(result).toEqual({ ok: false, reason: 'not_found' });
+
+    // No economic fields sent, so the filter must NOT constrain settingsLocked.
+    expect(updateManyCalls[0]?.where).toEqual({ id: 'stub-class' });
   });
 });
