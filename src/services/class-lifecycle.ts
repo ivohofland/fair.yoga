@@ -7,7 +7,7 @@
  * "Full" is derived (registrations >= maxStudents), not a stored state.
  */
 
-import type { PrismaClient, ClassStatus, RegistrationStatus } from '@prisma/client';
+import type { PrismaClient, ClassStatus, RegistrationStatus, Class } from '@prisma/client';
 import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 
@@ -214,4 +214,93 @@ export async function completeClass(
 
     return { ok: true, newStatus: 'completed' as ClassStatus };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Class updates
+// ---------------------------------------------------------------------------
+
+/**
+ * The fields a teacher may change on an existing class.
+ *
+ * Declared here rather than derived from `updateClassSchema` so the service
+ * stays independent of the wire format — the schema's `date` is a
+ * `YYYY-MM-DD` string, which the route converts before calling in.
+ */
+export type ClassUpdateData = {
+  classType?: string;
+  description?: string | null;
+  date?: Date;
+  startTime?: string;
+  durationMinutes?: number;
+  roomCost?: number;
+  minRate?: number;
+  targetRate?: number;
+  minStudents?: number;
+  maxStudents?: number;
+};
+
+/**
+ * Why an update did or did not happen.
+ *
+ * `locked` carries a NON-EMPTY tuple of offending fields deliberately. The bug
+ * this type replaced (#72) returned a "locked" response naming no fields at
+ * all, for a request that touched none — the compiler now refuses to construct
+ * that. Callers own the user-facing wording; this type owns the distinction.
+ */
+export type UpdateClassResult =
+  | { ok: true; cls: Class }
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'locked'; fields: readonly [EconomicField, ...EconomicField[]] }
+  | { ok: false; reason: 'no_fields' };
+
+/**
+ * Apply a partial update to a class, enforcing the economic-field lock.
+ *
+ * The lock is enforced twice on purpose: once against the row we read (so the
+ * caller gets a precise list of offending fields), and once inside the write
+ * as a compare-and-swap (so a first registration landing in between still
+ * blocks the edit).
+ */
+export async function updateClass(
+  db: PrismaClient,
+  classId: string,
+  data: ClassUpdateData,
+): Promise<UpdateClassResult> {
+  const cls = await db.class.findUnique({ where: { id: classId } });
+  if (!cls) return { ok: false, reason: 'not_found' };
+
+  // Destructured rather than length-checked, so the non-empty tuple below is
+  // proven to the compiler instead of asserted.
+  const [firstEconomic, ...otherEconomic] = ECONOMIC_FIELDS.filter(
+    (f) => data[f] !== undefined,
+  );
+  const sentEconomic: readonly [EconomicField, ...EconomicField[]] | null =
+    firstEconomic === undefined ? null : [firstEconomic, ...otherEconomic];
+
+  if (cls.settingsLocked && sentEconomic !== null) {
+    return { ok: false, reason: 'locked', fields: sentEconomic };
+  }
+
+  if (Object.keys(data).length === 0) {
+    return { ok: false, reason: 'no_fields' };
+  }
+
+  const result = await db.class.updateMany({
+    where: sentEconomic !== null ? { id: classId, settingsLocked: false } : { id: classId },
+    data,
+  });
+
+  if (result.count === 0) {
+    // Two different events land here, and #72 was them sharing one response:
+    //   economic fields sent -> the compare-and-swap lost its race, the lock
+    //                           flipped between our read and this write
+    //   none sent            -> the where was just { id }, so the only way to
+    //                           match nothing is that the row was deleted
+    return sentEconomic !== null
+      ? { ok: false, reason: 'locked', fields: sentEconomic }
+      : { ok: false, reason: 'not_found' };
+  }
+
+  return { ok: true, cls: await db.class.findUniqueOrThrow({ where: { id: classId } }) };
 }

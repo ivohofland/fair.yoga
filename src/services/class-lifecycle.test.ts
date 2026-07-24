@@ -8,6 +8,7 @@ import {
   isEconomicFieldLocked,
   transitionClass,
   completeClass,
+  updateClass,
 } from './class-lifecycle';
 
 // We use string literals matching the Prisma ClassStatus enum values.
@@ -463,5 +464,153 @@ describe('completeClass (DB)', () => {
     if (!result.ok) {
       expect(result.error).toContain('not found');
     }
+  });
+});
+
+// ===========================================================================
+
+describe('updateClass (DB)', () => {
+  let teacherId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+
+  // `settingsLocked` is written directly here because it is an INPUT
+  // precondition for this function, not the behaviour under test. The genuine
+  // flip — a real registration setting it — is covered by
+  // registrations-api's `locks settings atomically with the first
+  // registration`. Do not copy this shortcut into a test that claims to cover
+  // the flip itself.
+  const makeClass = (settingsLocked: boolean) =>
+    prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Hatha',
+        date: new Date('2026-06-01'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 35,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 4,
+        maxStudents: 12,
+        status: 'draft',
+        settingsLocked,
+      },
+    });
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Update',
+        lastName: 'Teacher',
+        email: `update-teacher-${uniqueSuffix}@test.local`,
+        account: { create: { email: `update-teacher-${uniqueSuffix}@test.local` } },
+        bio: 'Test teacher for updateClass tests',
+        pageSlug: `update-teacher-${uniqueSuffix}`,
+      },
+    });
+    teacherId = teacher.id;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Update Studio',
+        address: `${uniqueSuffix} Update St`,
+        city: 'Amsterdam',
+        postcode: '1234AB',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 35 },
+    });
+    teacherRoomId = teacherRoom.id;
+  });
+
+  afterAll(async () => {
+    // Guarded: an undefined filter turns deleteMany into an unfiltered
+    // delete-all across the table.
+    if (teacherId) {
+      await prisma.class.deleteMany({ where: { teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    }
+    if (roomId) await prisma.room.delete({ where: { id: roomId } });
+    if (teacherId) await prisma.teacher.delete({ where: { id: teacherId } });
+    await prisma.$disconnect();
+  });
+
+  it('returns not_found for an unknown class', async () => {
+    const result = await updateClass(prisma, 'non-existent-id', { classType: 'Vinyasa' });
+    expect(result).toEqual({ ok: false, reason: 'not_found' });
+  });
+
+  it('applies a non-economic edit to an unlocked class', async () => {
+    const cls = await makeClass(false);
+
+    const result = await updateClass(prisma, cls.id, { description: 'Updated' });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.cls.description).toBe('Updated');
+
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(stored.description).toBe('Updated');
+  });
+
+  it('applies an economic edit to an unlocked class', async () => {
+    const cls = await makeClass(false);
+
+    const result = await updateClass(prisma, cls.id, { roomCost: 42, minStudents: 2 });
+    expect(result.ok).toBe(true);
+
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(Number(stored.roomCost)).toBe(42);
+    expect(stored.minStudents).toBe(2);
+  });
+
+  it('rejects an economic edit to a locked class, naming the fields sent', async () => {
+    const cls = await makeClass(true);
+
+    // Sent in the reverse of ECONOMIC_FIELDS' own declaration order, so the
+    // returned tuple's ordering is shown to come from the constant rather
+    // than from the caller.
+    const result = await updateClass(prisma, cls.id, { minRate: 1, roomCost: 999 });
+    expect(result).toEqual({ ok: false, reason: 'locked', fields: ['roomCost', 'minRate'] });
+
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(Number(stored.roomCost)).toBe(35);
+    expect(Number(stored.minRate)).toBe(15);
+  });
+
+  it('allows a non-economic edit to a locked class — the lock is scoped to economics', async () => {
+    const cls = await makeClass(true);
+
+    const result = await updateClass(prisma, cls.id, { description: 'Still editable' });
+    expect(result.ok).toBe(true);
+
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(stored.description).toBe('Still editable');
+    expect(Number(stored.roomCost)).toBe(35);
+  });
+
+  it('rejects a mixed economic + non-economic body atomically', async () => {
+    const cls = await makeClass(true);
+
+    const result = await updateClass(prisma, cls.id, { description: 'x', roomCost: 999 });
+    expect(result).toEqual({ ok: false, reason: 'locked', fields: ['roomCost'] });
+
+    const stored = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(stored.description).toBeNull();
+    expect(Number(stored.roomCost)).toBe(35);
+  });
+
+  it('returns no_fields for an empty body', async () => {
+    const cls = await makeClass(false);
+
+    const result = await updateClass(prisma, cls.id, {});
+    expect(result).toEqual({ ok: false, reason: 'no_fields' });
   });
 });
