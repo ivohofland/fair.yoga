@@ -1,18 +1,25 @@
 name: CI
 
+# No path filtering, deliberately. `checks` and `test` are required status
+# checks on main, and a required check that never runs never reports — the
+# pull request just sits pending with no way to merge it.
+#
+# `paths-ignore` for docs/** cannot express "only docs changed": it fires when
+# *any* non-docs file changed, so a PR touching code and docs together matches
+# it, and a stub workflow covering the inverse `paths` matches too. Both run,
+# both report the same check names, and the stub — which always passes — can
+# satisfy a context whose real run failed. That masks CI on exactly the checks
+# the branch ruleset relies on.
+#
+# So everything runs on everything. This is a public repo, so the minutes are
+# free; the cost is wall-clock on docs-only pull requests. If that becomes
+# annoying, short-circuit the expensive *steps* inside the `test` job rather
+# than filtering the workflow trigger — the job must still run and report.
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
-      - 'LICENSE'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
-      - 'LICENSE'
 
 # A newer push supersedes the run for the previous one — don't spend
 # minutes finishing a result nobody will read. PRs get the same treatment
