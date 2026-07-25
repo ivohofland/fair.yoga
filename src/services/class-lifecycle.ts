@@ -274,35 +274,32 @@ void _classUpdateDataMatchesSchema;
 /**
  * The fields a teacher may change on their own class via `PUT /api/classes/[id]`.
  *
- * This is an authorization boundary, not a field list for convenience: adding
- * an entry grants write access to a `Class` column that may be gated by
- * business logic the plain update path does not run. Before adding one, check
- * what else guards that column —
+ * A pure type, not a runtime array: nothing reads this list at runtime — the
+ * schema's `.strict()` already rejects undeclared keys, so this exists only to
+ * feed the two pins below. Unlike `ECONOMIC_FIELDS`, which the update path
+ * genuinely iterates, a runtime `as const` array here would be used solely as
+ * a `typeof` source and earn an eslint suppression for the privilege.
+ *
+ * This is an authorization boundary: adding a member grants write access to a
+ * `Class` column that may be gated by business logic the plain update path does
+ * not run. Before adding one, check what else guards that column —
  *   - `status`             → the lifecycle state machine (`VALID_TRANSITIONS`)
  *   - `settingsLocked`     → the economic lock (this very function)
  *   - `teacherId`          → class ownership
  *   - the financial totals → set only by `completeClass`'s pricing run
  * — because the compiler will not.
  */
-const TEACHER_EDITABLE_CLASS_FIELDS = [
-  'classType',
-  'description',
-  'date',
-  'startTime',
-  'durationMinutes',
-  'roomCost',
-  'minRate',
-  'targetRate',
-  'minStudents',
-  'maxStudents',
-] as const;
-// `void` because eslint's `no-unused-vars` flags this const as "assigned a
-// value but only used as a type" — every other reference to it below is a
-// `typeof` type query, never a value read. Same idiom as the pins that
-// follow, for the same reason: no `varsIgnorePattern` in this repo's config.
-void TEACHER_EDITABLE_CLASS_FIELDS;
-
-type TeacherEditableClassField = (typeof TEACHER_EDITABLE_CLASS_FIELDS)[number];
+type TeacherEditableClassField =
+  | 'classType'
+  | 'description'
+  | 'date'
+  | 'startTime'
+  | 'durationMinutes'
+  | 'roomCost'
+  | 'minRate'
+  | 'targetRate'
+  | 'minStudents'
+  | 'maxStudents';
 
 /**
  * Compile-time pin (forward): every field `updateClassSchema` accepts must be

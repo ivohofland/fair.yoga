@@ -169,3 +169,17 @@ bidirectional compile pins cover both drift directions without it.
 `tsc` + `eslint` clean; the unit and integration projects green (the change is
 type-level only, so no test behaviour shifts). The four mutation checks above
 each produce the named-field failure and revert cleanly.
+
+## Correction (2026-07-25, from implementation)
+
+The allowlist above is written as a `const TEACHER_EDITABLE_CLASS_FIELDS = [...] as const` array with a `typeof …[number]` alias. Building it revealed that form earns an eslint `no-unused-vars` warning: nothing reads the array at runtime — the schema's `.strict()` already rejects undeclared keys — so its only reference is the `typeof` query, and the fix would be a `void` suppression like the assertion consts use.
+
+That suppression papers over the real point: this is a compile-time-only authorization boundary, so it should be a **type**, not a runtime value pretending to be used. Shipped as a direct union instead —
+
+```ts
+type TeacherEditableClassField =
+  | 'classType' | 'description' | 'date' | 'startTime' | 'durationMinutes'
+  | 'roomCost' | 'minRate' | 'targetRate' | 'minStudents' | 'maxStudents';
+```
+
+— which drives both pins identically (each still names the offending field), needs no suppression, and does not falsely echo `ECONOMIC_FIELDS`' frozen-array form when, unlike that constant, nothing iterates it. The two pins are otherwise exactly as specified.
