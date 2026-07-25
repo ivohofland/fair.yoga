@@ -105,14 +105,27 @@ beforeAll(async () => {
   });
 
   // --- 201 fixture -------------------------------------------------------
-  // classStart = now + 6h15m with a HOURS_6 deadline puts the request inside
-  // the first-come-first-claimed window: deadline now+15m, cutoff now-45m.
-  // The 15 minutes forward is the budget for the suite to reach this test
-  // (it flips to `frozen` past that); the 45 minutes back is slack against
-  // clock skew between test process and server. Teacher timezone is UTC
-  // (see above), so classStartInstant is plain Date.UTC arithmetic.
+  // The claim window is exactly one hour wide (cutoff = deadline − 1h), and
+  // the route calls claimSpot with no injected clock, so an HTTP test of the
+  // success path has to place the class relative to real time. The only
+  // freedom is how that hour is split between "budget for the suite to reach
+  // this test" and "slack against clock skew".
+  //
+  // classStart = now + 6h50m with a HOURS_6 deadline gives deadline now+50m,
+  // cutoff now−10m: a 50-minute budget and 10 minutes of skew slack. It was
+  // 15/45, which is the wrong way round — the test process and the server are
+  // the same machine on localhost, so skew is effectively zero, while the
+  // budget is the thing that actually fails (the window flips to `frozen`
+  // past it). The suite runs in ~20s locally and ~3m in CI.
+  //
+  // #66 unit-covered claimSpot's whole window matrix deterministically, which
+  // is why this no longer needs to prove anything about *windows*. It stays
+  // because it is the only test pinning what the ROUTE adds on success —
+  // 201 rather than 200, and the response shape — which no service test can
+  // reach. Teacher timezone is UTC (see above), so classStartInstant is plain
+  // Date.UTC arithmetic.
   const now = new Date();
-  const classStart = new Date(now.getTime() + (6 * 60 + 15) * 60 * 1000);
+  const classStart = new Date(now.getTime() + (6 * 60 + 50) * 60 * 1000);
   const freedSpotDate = new Date(
     Date.UTC(classStart.getUTCFullYear(), classStart.getUTCMonth(), classStart.getUTCDate()),
   );

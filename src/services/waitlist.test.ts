@@ -5,7 +5,9 @@ import {
   addToWaitlist,
   removeFromWaitlist,
   promoteNext,
+  claimSpot,
   WaitlistJoinError,
+  WaitlistPromotionError,
 } from './waitlist';
 
 // ===========================================================================
@@ -571,5 +573,231 @@ describe('promoteNext (DB)', () => {
     });
     expect(reactivated.status).toBe('registered');
     expect(reactivated.cancelledAt).toBeNull();
+  });
+});
+
+// ===========================================================================
+// claimSpot — the first-come-first-claimed window matrix
+// ===========================================================================
+
+/**
+ * `claimSpot` had no unit coverage of any kind: its only execution under test
+ * anywhere was one HTTP case from #64, which had to reach the claim window
+ * with a wall-clock-relative fixture. It takes an injectable clock, so the
+ * whole matrix can be pinned deterministically here instead — and the guards
+ * fire in a fixed order (status → window → capacity → entry), so each case
+ * below has to satisfy every guard ahead of the one it targets.
+ */
+describe('claimSpot (DB)', () => {
+  // One fixed class drives every instant, so nothing here reads the wall clock:
+  //   class starts       2026-06-01 09:00 UTC  (teacher default timezone UTC)
+  //   HOURS_24        →  deadline 2026-05-31 09:00 UTC
+  //   cutoff = deadline − 1h        2026-05-31 08:00 UTC
+  const BEFORE_CUTOFF = new Date('2026-05-30T12:00:00Z');
+  const IN_CLAIM_WINDOW = new Date('2026-05-31T08:30:00Z');
+  // Exactly the deadline: the comparison is `>=`, so this is the first frozen
+  // instant, not the last claimable one.
+  const AT_DEADLINE = new Date('2026-05-31T09:00:00Z');
+
+  let teacherId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+  let fillerId: string;
+  let waiterId: string;
+  let outsiderId: string;
+  const classIds: string[] = [];
+
+  /**
+   * A full, open class with `waiter` on its waitlist — the state every claim
+   * starts from. `maxStudents: 1` plus one registration is the cheapest way to
+   * be full, which is what `addToWaitlist` requires before it will accept
+   * anyone.
+   */
+  const makeFullClass = async (): Promise<string> => {
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Claim Flow',
+        date: new Date('2026-06-01'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 1,
+        cancelDeadline: 'HOURS_24',
+        status: 'open',
+      },
+    });
+    classIds.push(cls.id);
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId: fillerId, tierAtBooking: 3 },
+    });
+    await addToWaitlist(prisma, cls.id, waiterId);
+    return cls.id;
+  };
+
+  /** Frees the single spot, so a claim can get past the capacity guard. */
+  const freeTheSpot = (classId: string) =>
+    prisma.registration.update({
+      where: { classId_studentId: { classId, studentId: fillerId } },
+      data: { status: 'cancelled', cancelledAt: new Date() },
+    });
+
+  beforeAll(async () => {
+    const mail = `claim-teacher-${uniqueSuffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Claim',
+        lastName: 'Teacher',
+        email: mail,
+        account: { create: { email: mail } },
+        bio: 'Test teacher for claimSpot tests',
+        pageSlug: `claim-teacher-${uniqueSuffix}`,
+        defaultTimezone: 'UTC',
+      },
+    });
+    teacherId = teacher.id;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Claim Studio',
+        address: `${uniqueSuffix} Claim St`,
+        city: 'Amsterdam',
+        postcode: '9012CL',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 20, rentalRate: 15 },
+    });
+    teacherRoomId = teacherRoom.id;
+
+    const mk = async (label: string) =>
+      (
+        await prisma.student.create({
+          data: {
+            firstName: 'Claim',
+            lastName: label,
+            email: `claim-${label}-${uniqueSuffix}@test.local`,
+            incomeTier: 4,
+          },
+        })
+      ).id;
+    fillerId = await mk('filler');
+    waiterId = await mk('waiter');
+    outsiderId = await mk('outsider');
+  });
+
+  afterAll(async () => {
+    await prisma.notification.deleteMany({ where: { relatedClassId: { in: classIds } } });
+    await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
+    await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
+    await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+    await prisma.student.deleteMany({ where: { id: { in: [fillerId, waiterId, outsiderId] } } });
+    await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
+    await prisma.room.delete({ where: { id: roomId } });
+    await prisma.teacher.delete({ where: { id: teacherId } });
+    await prisma.$disconnect();
+  });
+
+  const expectRejection = async (
+    promise: Promise<unknown>,
+    reason: WaitlistPromotionError['reason'],
+  ) => {
+    await expect(promise).rejects.toBeInstanceOf(WaitlistPromotionError);
+    await promise.catch((err: unknown) => {
+      expect((err as WaitlistPromotionError).reason).toBe(reason);
+    });
+  };
+
+  it('refuses a claim before the final hour — the queue auto-promotes then', async () => {
+    const classId = await makeFullClass();
+    await freeTheSpot(classId);
+
+    // The spot is free and the student is waiting; only the clock is wrong.
+    await expectRejection(
+      claimSpot(prisma, classId, waiterId, BEFORE_CUTOFF),
+      'wrong_window',
+    );
+    expect(
+      await prisma.registration.count({ where: { classId, studentId: waiterId } }),
+    ).toBe(0);
+  });
+
+  it('refuses a claim once the cancellation deadline has passed', async () => {
+    const classId = await makeFullClass();
+    await freeTheSpot(classId);
+
+    // Boundary case: exactly the deadline instant is already frozen.
+    await expectRejection(claimSpot(prisma, classId, waiterId, AT_DEADLINE), 'window_frozen');
+  });
+
+  it('refuses a claim when the spot has already been taken', async () => {
+    const classId = await makeFullClass();
+    // Deliberately do NOT free the spot: the class is still at capacity.
+
+    await expectRejection(
+      claimSpot(prisma, classId, waiterId, IN_CLAIM_WINDOW),
+      'class_full',
+    );
+  });
+
+  it('refuses a claim from a student who is not on the waitlist', async () => {
+    const classId = await makeFullClass();
+    await freeTheSpot(classId);
+
+    // The capacity guard runs before the entry guard, which is why the spot
+    // has to be free for this case to reach the branch it is testing.
+    await expectRejection(
+      claimSpot(prisma, classId, outsiderId, IN_CLAIM_WINDOW),
+      'entry_not_waiting',
+    );
+  });
+
+  it('refuses a claim on a class that is no longer open', async () => {
+    const classId = await makeFullClass();
+    await freeTheSpot(classId);
+    // Cancelled after the waitlist formed — the status guard runs first, so
+    // this fires even though the window and capacity are both fine.
+    await prisma.class.update({ where: { id: classId }, data: { status: 'cancelled' } });
+
+    await expectRejection(
+      claimSpot(prisma, classId, waiterId, IN_CLAIM_WINDOW),
+      'class_not_open',
+    );
+  });
+
+  it('claims the spot: registration created at the student’s tier, entry promoted, student notified', async () => {
+    const classId = await makeFullClass();
+    await freeTheSpot(classId);
+
+    const entry = await claimSpot(prisma, classId, waiterId, IN_CLAIM_WINDOW);
+
+    expect(entry.status).toBe('promoted');
+    expect(entry.promotedAt).not.toBeNull();
+    expect(entry.registrationId).not.toBeNull();
+
+    const registration = await prisma.registration.findUniqueOrThrow({
+      where: { id: entry.registrationId! },
+    });
+    expect(registration.studentId).toBe(waiterId);
+    expect(registration.status).toBe('registered');
+    // Captured from the student's current tier at claim time — this is the
+    // income history the pricing engine bills against later.
+    expect(registration.tierAtBooking).toBe(4);
+
+    const notifications = await prisma.notification.findMany({
+      where: { relatedClassId: classId, recipientId: waiterId, recipientType: 'student' },
+    });
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]!.type).toBe('booking_confirmed');
   });
 });
