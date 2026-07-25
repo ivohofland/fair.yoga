@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import type { RegistrationStatus } from '@prisma/client';
-import { updateClassTemplate, archiveOrUnarchiveTemplate } from './class-template-lifecycle';
+import {
+  updateClassTemplate,
+  archiveOrUnarchiveTemplate,
+  pauseOrResumeTemplate,
+} from './class-template-lifecycle';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -208,6 +212,9 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   let roomId: string;
   let teacherRoomId: string;
   let studentId: string;
+  let otherTeacherId: string;
+  let otherAccountId: string;
+  let otherRoomId: string;
 
   const makeTemplate = (classType: string) =>
     prisma.classTemplate.create({
@@ -261,6 +268,11 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     roomId = seeded.roomId;
     teacherRoomId = seeded.teacherRoomId;
 
+    const other = await seedTeacher('archive-other');
+    otherTeacherId = other.teacherId;
+    otherAccountId = other.accountId;
+    otherRoomId = other.roomId;
+
     const student = await prisma.student.create({
       data: {
         firstName: 'Archive',
@@ -272,15 +284,44 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   });
 
   afterAll(async () => {
-    await prisma.class.deleteMany({ where: { teacherId } });
-    await prisma.classTemplate.deleteMany({ where: { teacherId } });
-    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
-    await prisma.room.delete({ where: { id: roomId } });
     await prisma.student.delete({ where: { id: studentId } });
-    await prisma.session.deleteMany({ where: { accountId } });
-    await prisma.teacher.delete({ where: { id: teacherId } });
-    await prisma.account.delete({ where: { id: accountId } });
+    for (const [t, r, a] of [
+      [teacherId, roomId, accountId],
+      [otherTeacherId, otherRoomId, otherAccountId],
+    ] as const) {
+      await prisma.class.deleteMany({ where: { teacherId: t } });
+      await prisma.classTemplate.deleteMany({ where: { teacherId: t } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: t } });
+      await prisma.room.delete({ where: { id: r } });
+      await prisma.session.deleteMany({ where: { accountId: a } });
+      await prisma.teacher.delete({ where: { id: t } });
+      await prisma.account.delete({ where: { id: a } });
+    }
     await prisma.$disconnect();
+  });
+
+  it('returns not_found for a template that does not exist', async () => {
+    const result = await archiveOrUnarchiveTemplate(
+      prisma,
+      '00000000-0000-0000-0000-000000000000',
+      teacherId,
+    );
+    expect(result).toEqual({ ok: false, reason: 'not_found' });
+  });
+
+  it("returns forbidden for another teacher's template, and leaves it and its classes untouched", async () => {
+    const t = await makeTemplate('Not Yours');
+    const c = await makeClass(t.id, { date: future() });
+
+    // The ownership check is the only thing stopping teacher B from
+    // destroying teacher A's schedule — this is the function that deletes
+    // rows, so it must refuse before touching anything.
+    const result = await archiveOrUnarchiveTemplate(prisma, t.id, otherTeacherId);
+
+    expect(result).toEqual({ ok: false, reason: 'forbidden' });
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.isArchived).toBe(false);
+    expect(await prisma.class.count({ where: { id: c.id } })).toBe(1);
   });
 
   it('deletes a future class nobody booked', async () => {
@@ -309,8 +350,13 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const c = await makeClass(t.id, { date: future() });
     await register(c.id, studentId, 'late_cancel');
 
-    await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
+    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
 
+    // Assert the archive itself actually happened — a class surviving proves
+    // nothing on its own if the function silently no-op'd or errored.
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.template.isArchived).toBe(true);
     // ACTIVE_REGISTRATION_STATUSES excludes late_cancel; CHARGED_STATUSES does
     // not. Deleting this would cascade away a registration the student owes
     // for. If this test ever fails, check which constant the rule is using.
@@ -322,8 +368,11 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const c = await makeClass(t.id, { date: future() });
     await register(c.id, studentId, 'registered');
 
-    await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
+    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
 
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.template.isArchived).toBe(true);
     expect(await prisma.class.count({ where: { id: c.id } })).toBe(1);
   });
 
@@ -331,8 +380,11 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const t = await makeTemplate('Keep Today');
     const c = await makeClass(t.id, { date: today() });
 
-    await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
+    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
 
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.template.isArchived).toBe(true);
     expect(await prisma.class.count({ where: { id: c.id } })).toBe(1);
   });
 
@@ -340,8 +392,11 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const t = await makeTemplate('Keep Past');
     const c = await makeClass(t.id, { date: past() });
 
-    await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
+    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
 
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.template.isArchived).toBe(true);
     expect(await prisma.class.count({ where: { id: c.id } })).toBe(1);
   });
 
@@ -398,5 +453,135 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     expect(new Set(stillSurviving)).toEqual(new Set(survivingIds));
     expect(await prisma.class.count({ where: { id: unbooked.id } })).toBe(0);
     expect(await prisma.class.count({ where: { id: booked.id } })).toBe(1);
+  });
+});
+
+describe('pauseOrResumeTemplate (DB)', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const futureOn = (daysFromNow: number) => new Date(Date.now() + daysFromNow * DAY);
+
+  let teacherId: string;
+  let accountId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+
+  const makeTemplate = (classType: string) =>
+    prisma.classTemplate.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType,
+        dayOfWeek: 3,
+        startTime: '09:30',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+      },
+    });
+
+  const makeClass = (templateId: string, date: Date, startTime: string) =>
+    prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        templateId,
+        classType: 'Pause Rule',
+        date,
+        startTime,
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 8,
+        status: 'open',
+      },
+    });
+
+  beforeAll(async () => {
+    await prisma.$connect();
+    const seeded = await seedTeacher('pause');
+    teacherId = seeded.teacherId;
+    accountId = seeded.accountId;
+    roomId = seeded.roomId;
+    teacherRoomId = seeded.teacherRoomId;
+  });
+
+  afterAll(async () => {
+    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.classTemplate.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.delete({ where: { id: roomId } });
+    await prisma.session.deleteMany({ where: { accountId } });
+    await prisma.teacher.delete({ where: { id: teacherId } });
+    await prisma.account.delete({ where: { id: accountId } });
+    await prisma.$disconnect();
+  });
+
+  it('pausing an active template deletes nothing and reports the furthest-out scheduled class', async () => {
+    const t = await makeTemplate('Pause Active');
+    const soon = await makeClass(t.id, futureOn(3), '08:00');
+    const later = await makeClass(t.id, futureOn(10), '19:00');
+
+    const result = await pauseOrResumeTemplate(prisma, t.id, teacherId);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.template.isActive).toBe(false);
+    expect(result.lastScheduled).not.toBeNull();
+    if (!result.lastScheduled) throw new Error('expected lastScheduled');
+    expect(result.lastScheduled.date.toISOString().slice(0, 10)).toBe(
+      later.date.toISOString().slice(0, 10),
+    );
+    expect(result.lastScheduled.startTime).toBe('19:00');
+    // Deletes nothing: pausing withdraws no already-generated class — that is
+    // archiving's job, not pausing's.
+    expect(await prisma.class.count({ where: { id: soon.id } })).toBe(1);
+    expect(await prisma.class.count({ where: { id: later.id } })).toBe(1);
+  });
+
+  it('resuming a paused template regenerates its instance window', async () => {
+    const t = await makeTemplate('Resume Regenerates');
+
+    const paused = await pauseOrResumeTemplate(prisma, t.id, teacherId);
+    expect(paused.ok).toBe(true);
+    if (!paused.ok) throw new Error('expected ok');
+    expect(paused.template.isActive).toBe(false);
+    expect(await prisma.class.count({ where: { templateId: t.id } })).toBe(0);
+
+    const resumed = await pauseOrResumeTemplate(prisma, t.id, teacherId);
+
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) throw new Error('expected ok');
+    expect(resumed.template.isActive).toBe(true);
+    // The rolling window materializes classes where a moment ago there were
+    // none — the regeneration this test exists to prove wasn't silently
+    // dropped when the PATCH route's logic was moved into this function.
+    expect(await prisma.class.count({ where: { templateId: t.id } })).toBeGreaterThan(0);
+  });
+
+  it('pausing a template with no scheduled classes reports lastScheduled: null', async () => {
+    const t = await makeTemplate('Pause Empty');
+
+    const result = await pauseOrResumeTemplate(prisma, t.id, teacherId);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.lastScheduled).toBeNull();
+  });
+
+  it("returns 'archived' for an archived template rather than toggling", async () => {
+    const t = await makeTemplate('Pause Archived');
+    const archived = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
+    expect(archived.ok).toBe(true);
+
+    const result = await pauseOrResumeTemplate(prisma, t.id, teacherId);
+
+    expect(result).toEqual({ ok: false, reason: 'archived' });
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.isActive).toBe(false);
   });
 });

@@ -371,20 +371,26 @@ export async function archiveOrUnarchiveTemplate(
     if (!archiving) return { ok: true as const, template: updated, deleted: 0, remaining: 0 };
 
     const now = new Date();
-    const deletable = await tx.class.findMany({
+
+    // Deliberately one statement, not a `findMany` followed by a
+    // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
+    // registration commit in the gap between them under READ COMMITTED, and
+    // the delete — keyed only on the ids already read — does not re-check it,
+    // destroying a class (and cascading away a now-charged registration) that
+    // became booked after the read. Passing the predicate straight to
+    // `deleteMany` makes Postgres re-evaluate it at execution time, and its
+    // returned `count` is the number of rows that actually matched then — not
+    // a stale count from an earlier read. Do not "optimise" this back into a
+    // read-then-delete.
+    const { count: deleted } = await tx.class.deleteMany({
       where: {
         ...scheduledWhere(templateId, now),
         registrations: { none: { status: { in: CHARGED_STATUSES } } },
       },
-      select: { id: true },
     });
-
-    if (deletable.length > 0) {
-      await tx.class.deleteMany({ where: { id: { in: deletable.map((c) => c.id) } } });
-    }
 
     const remaining = await tx.class.count({ where: scheduledWhere(templateId, now) });
 
-    return { ok: true as const, template: updated, deleted: deletable.length, remaining };
+    return { ok: true as const, template: updated, deleted, remaining };
   });
 }
