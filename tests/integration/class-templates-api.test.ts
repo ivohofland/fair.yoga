@@ -431,4 +431,25 @@ describe('PUT /api/class-templates/[id]', () => {
     const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
     expect(after.teacherRoomId).toBe(teacherRoomId);
   });
+
+  // Body parsing now runs before the exists/ownership checks, because the
+  // service owns those and needs typed data to be called at all. So a
+  // malformed body against someone else's template is a 400, not the 403 the
+  // pre-service handler returned. Deliberate, and not an information leak: the
+  // cheap probe is `{}`, which parses fine and still yields 403 (see the case
+  // above), so this ordering tells a prober strictly less, not more.
+  it('rejects a malformed body before revealing that the template is not yours', async () => {
+    const id = await createTemplate('Order Guard');
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(otherSessionToken) },
+      body: JSON.stringify({ isActive: false }),
+    });
+    expect(res.status).toBe(400);
+
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
+    expect(after.classType).toBe('Order Guard');
+    expect(after.isActive).toBe(true);
+  });
 });

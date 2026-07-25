@@ -44,9 +44,11 @@ export const PUT = withErrorHandler(async (
   const parsed = await parseBody(request, updateClassTemplateSchema);
   if ('error' in parsed) return parsed.error;
 
-  // Annotated, not inferred: this is what routes the payload through the
-  // pinned type, so a field added to the schema has to clear the allowlist
-  // in class-template-lifecycle.ts before it can reach Prisma.
+  // Annotated for insurance, not for wiring: `parsed.data` already has this
+  // type, so this cannot fail today. It would start earning its keep if
+  // `ClassTemplateUpdateData` ever stops being a bare `z.infer` of the schema.
+  // The pins themselves fire on compiling class-template-lifecycle.ts, which
+  // this import pulls in regardless.
   const data: ClassTemplateUpdateData = parsed.data;
 
   const result = await updateClassTemplate(prisma, id, session.teacherId, data);
@@ -58,7 +60,12 @@ export const PUT = withErrorHandler(async (
   if (result.reason === 'not_found') return respondError('Class template not found', 404);
   if (result.reason === 'forbidden') return respondError('Access denied', 403);
   if (result.reason === 'no_fields') return respondError('No valid fields to update', 400);
-  return respondError('Invalid teacher room', 400);
+  if (result.reason === 'invalid_room') return respondError('Invalid teacher room', 400);
+
+  // Exhaustiveness: a new UpdateClassTemplateResult variant becomes a compile
+  // error here rather than being silently answered as "Invalid teacher room".
+  const unhandled: never = result;
+  return unhandled;
 });
 
 
