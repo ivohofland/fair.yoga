@@ -1099,12 +1099,28 @@ Expected: exit 0.
 
 - [ ] **Step 4: Rebuild and re-run the characterization tests**
 
-The integration project talks to the built app, so the rebuild is required — otherwise the tests exercise the old handler and pass for the wrong reason.
+The integration project talks to whatever is serving `:3000`, so that server must
+be running your new code — otherwise the tests exercise the old handler and pass
+for the wrong reason. Which command you need depends on how it is being served:
 
 ```bash
-kill %1 2>/dev/null || true
-npm run build && npm run start > /tmp/app.log 2>&1 &
-until curl -sf http://localhost:3000/api/health > /dev/null; do sleep 1; done
+# Which is it? `next dev` hot-reloads; `next start` serves a fixed build.
+ps aux | grep -E "next (dev|start)" | grep -v grep
+```
+
+- **`next dev` already running** (the common local case): it hot-reloads on save.
+  Do **not** rebuild or restart it — just re-run the tests. Rebuilding would
+  replace someone's dev server with a production one.
+- **`next start`, or nothing running:** rebuild, because the served bundle is
+  frozen at build time.
+  ```bash
+  npm run build && npm run start > /tmp/app.log 2>&1 &
+  until curl -sf http://localhost:3000/api/health > /dev/null; do sleep 1; done
+  ```
+
+Either way, then:
+
+```bash
 npx vitest run --project integration tests/integration/class-templates-api.test.ts
 ```
 
