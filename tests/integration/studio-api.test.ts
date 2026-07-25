@@ -234,6 +234,64 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
     // Explicit activation is the separate, deliberate step.
     expect(after.isActive).toBe(false);
   });
+
+  // #86, mirroring class-templates-api.test.ts's equivalent case: archiving
+  // must withdraw the future window, not just flip the flag.
+  it('archiving deletes the unbooked future window and reports the counts', async () => {
+    const template = await makeTemplate(ownerId, 'Archive Window');
+    const makeInstance = (date: string) =>
+      prisma.studioClass.create({
+        data: {
+          teacherId: ownerId,
+          templateId: template.id,
+          classType: 'Archive Window',
+          date: new Date(date),
+          startTime: '18:00',
+          durationMinutes: 60,
+          location: 'Community Studio',
+          hourlyRate: 45,
+        },
+      });
+    await makeInstance('2099-08-05');
+    await makeInstance('2099-08-12');
+
+    const res = await send(
+      'PATCH',
+      ownerToken,
+      `/api/studio-class-templates/${template.id}?action=archive`,
+    );
+    expect(res.status).toBe(200);
+
+    const { data } = (await res.json()) as { data: { deleted: number; remaining: number } };
+    expect(data.deleted).toBe(2);
+    expect(data.remaining).toBe(0);
+    expect(await prisma.studioClass.count({ where: { templateId: template.id } })).toBe(0);
+  });
+
+  it('pausing removes nothing and reports the last scheduled class', async () => {
+    const template = await makeTemplate(ownerId, 'Pause Window');
+    const later = await prisma.studioClass.create({
+      data: {
+        teacherId: ownerId,
+        templateId: template.id,
+        classType: 'Pause Window',
+        date: new Date('2099-09-01'),
+        startTime: '19:00',
+        durationMinutes: 60,
+        location: 'Community Studio',
+        hourlyRate: 45,
+      },
+    });
+
+    const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${template.id}`);
+    expect(res.status).toBe(200);
+
+    const { data } = (await res.json()) as {
+      data: { lastScheduled: { startTime: string } | null };
+    };
+    expect(data.lastScheduled).not.toBeNull();
+    expect(await prisma.studioClass.count({ where: { id: later.id } })).toBe(1);
+  });
 });
 
 describe('/api/studio-classes', () => {

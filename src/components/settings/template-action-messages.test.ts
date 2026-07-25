@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pauseMessage, archiveMessage } from './template-action-messages';
+import { pauseMessage, archiveMessage, archiveStudioMessage } from './template-action-messages';
 
 describe('pauseMessage', () => {
   it('names the last still-scheduled date and time', () => {
@@ -49,6 +49,24 @@ describe('archiveMessage', () => {
   it('some deleted, many remaining — plural "classes", no pronoun', () => {
     expect(archiveMessage(2, 3)).toBe(
       'Classes on the schedule without bookings are now deleted. There are still 3 classes on the schedule — cancel individually if needed.',
+    );
+  });
+});
+
+describe('archiveStudioMessage', () => {
+  it('nothing deleted — nothing was ever scheduled', () => {
+    expect(archiveStudioMessage(0)).toBe('Nothing from this template was scheduled.');
+  });
+
+  it('one deleted — singular "class"', () => {
+    expect(archiveStudioMessage(1)).toBe(
+      'Deleted 1 scheduled studio class. Nothing from this template is scheduled any more.',
+    );
+  });
+
+  it('many deleted — plural "classes"', () => {
+    expect(archiveStudioMessage(3)).toBe(
+      'Deleted 3 scheduled studio classes. Nothing from this template is scheduled any more.',
     );
   });
 });

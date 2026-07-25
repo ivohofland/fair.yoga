@@ -3,24 +3,39 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { readErrorMessage } from '@/lib/client-errors';
+import { pauseMessage } from './template-action-messages';
 
 interface ToggleStudioTemplateButtonProps {
   templateId: string;
   isActive: boolean;
 }
 
+/** Shape of the `data` payload on a successful toggle (pause/resume) PATCH. */
+interface ToggleStudioTemplateResponse {
+  lastScheduled: { date: string; startTime: string } | null;
+}
+
 export function ToggleStudioTemplateButton({ templateId, isActive }: ToggleStudioTemplateButtonProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
 
   async function handleToggle() {
     setLoading(true);
     setError('');
+    setMessage('');
     try {
       const res = await fetch(`/api/studio-class-templates/${templateId}`, { method: 'PATCH' });
       if (res.ok) {
-        router.push('/settings/studio-classes');
+        const { data } = (await res.json()) as { data: ToggleStudioTemplateResponse };
+
+        // Only the pause direction gets a message — resuming needs no explanation.
+        if (isActive) {
+          const last = data.lastScheduled;
+          setMessage(pauseMessage(last ? { date: new Date(last.date), startTime: last.startTime } : null));
+        }
+        router.refresh();
       } else {
         setError(await readErrorMessage(res, 'Failed to update. Please try again.'));
       }
@@ -44,6 +59,7 @@ export function ToggleStudioTemplateButton({ templateId, isActive }: ToggleStudi
           : (isActive ? 'Pause studio class' : 'Resume studio class')}
       </button>
       {error && <p className="text-sm text-danger mt-2">{error}</p>}
+      {message && <p className="type-caption mt-2">{message}</p>}
     </div>
   );
 }
