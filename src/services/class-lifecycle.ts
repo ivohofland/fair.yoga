@@ -10,6 +10,7 @@
 import type { PrismaClient, Prisma, ClassStatus, RegistrationStatus, Class } from '@prisma/client';
 import type { z } from 'zod';
 import type { updateClassSchema } from '@/lib/schemas';
+import type { NoneOf } from '@/lib/type-pins';
 import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 
@@ -256,18 +257,6 @@ export type ClassUpdateData =
  * (`registrations`, `notifications`, …) that `updateMany` rejects, so pinning
  * against it would wave through a schema field named after a relation.
  */
-type UnwritableClassFields =
-  Exclude<keyof ClassUpdateData, keyof Prisma.ClassUncheckedUpdateManyInput>;
-// The tuple wrapping is the conventional never-check idiom, kept for that
-// reason rather than a load-bearing one: distribution applies only to naked
-// type parameters, so on a concrete alias like the above `[X] extends [never]`
-// and `X extends never` behave identically — measured, both forms reject a
-// two-member union and both accept `never`. The brackets stay correct if this
-// check is ever moved into a generic helper.
-type ClassUpdateColumnsExist = [UnwritableClassFields] extends [never]
-  ? true
-  : UnwritableClassFields;
-
 // `void` because this repo's eslint `no-unused-vars` has no `varsIgnorePattern`
 // — the const exists only to force the conditional type above to be evaluated.
 // It is also what makes the check exist at all: a conditional type alias that
@@ -275,7 +264,9 @@ type ClassUpdateColumnsExist = [UnwritableClassFields] extends [never]
 // pairs in this section removes its pin silently, with nothing reporting the
 // loss. Named for what it checks — columns exist — not for schema agreement,
 // which is the pin below it.
-const _classUpdateColumnsExist: ClassUpdateColumnsExist = true;
+const _classUpdateColumnsExist: NoneOf<
+  Exclude<keyof ClassUpdateData, keyof Prisma.ClassUncheckedUpdateManyInput>
+> = true;
 void _classUpdateColumnsExist;
 
 /**
@@ -335,11 +326,9 @@ type TeacherEditableClassField =
  * that are never right. See issue #79 for the latent `status` bypass this
  * closes — latent, because no such field is in the schema today.
  */
-type UnpermittedClassFields = Exclude<keyof ClassUpdateData, TeacherEditableClassField>;
-type ClassUpdateFieldsArePermitted = [UnpermittedClassFields] extends [never]
-  ? true
-  : UnpermittedClassFields;
-const _classUpdateFieldsArePermitted: ClassUpdateFieldsArePermitted = true;
+const _classUpdateFieldsArePermitted: NoneOf<
+  Exclude<keyof ClassUpdateData, TeacherEditableClassField>
+> = true;
 void _classUpdateFieldsArePermitted;
 
 /**
@@ -360,16 +349,18 @@ void _classUpdateFieldsArePermitted;
  *     pins green. Covered instead by the key-set test in `schemas.test.ts`,
  *     which reads the schema object rather than a type derived from it.
  */
-type StaleAllowlistFields = Exclude<TeacherEditableClassField, keyof ClassUpdateData>;
-type AllowlistHasNoStaleFields = [StaleAllowlistFields] extends [never]
-  ? true
-  : StaleAllowlistFields;
-const _allowlistHasNoStaleFields: AllowlistHasNoStaleFields = true;
+const _allowlistHasNoStaleFields: NoneOf<
+  Exclude<TeacherEditableClassField, keyof ClassUpdateData>
+> = true;
 void _allowlistHasNoStaleFields;
 
 /**
- * The `Class` columns no teacher may write through the plain update path,
- * whatever the wire schema comes to say.
+ * The `Class` columns the plain update path must never write.
+ *
+ * "Plain update path", not "never": each of these is owned by a different,
+ * guarded route — `status` by `POST …/transition` and `completeClass`,
+ * `settingsLocked` by the first registration. The pin says "not here", which is
+ * why the name says it too.
  *
  * The forward and reverse pins force the allowlist to mirror the schema, which
  * means the quickest way to make a forward-pin failure go away is to paste the
@@ -385,7 +376,7 @@ void _allowlistHasNoStaleFields;
  * not a weakness: the guard makes the decision visible, it does not pretend to
  * be an access-control system.
  */
-type NeverTeacherEditableClassField =
+type PlainUpdateForbiddenClassField =
   | 'id'
   | 'teacherId'
   | 'status'
@@ -400,24 +391,18 @@ type NeverTeacherEditableClassField =
  * while looking like protection — the same rot the reverse pin exists to stop,
  * one list over.
  */
-type UnknownForbiddenColumns =
-  Exclude<NeverTeacherEditableClassField, keyof Prisma.ClassUncheckedUpdateManyInput>;
-type ForbiddenColumnsExist = [UnknownForbiddenColumns] extends [never]
-  ? true
-  : UnknownForbiddenColumns;
-const _forbiddenColumnsExist: ForbiddenColumnsExist = true;
+const _forbiddenColumnsExist: NoneOf<
+  Exclude<PlainUpdateForbiddenClassField, keyof Prisma.ClassUncheckedUpdateManyInput>
+> = true;
 void _forbiddenColumnsExist;
 
 /**
  * Compile-time pin (forbidden): no forbidden column may appear on the
  * teacher-editable allowlist. Fails naming the field that must not be there.
  */
-type ForbiddenFieldsOnAllowlist =
-  Extract<TeacherEditableClassField, NeverTeacherEditableClassField>;
-type AllowlistHasNoForbiddenFields = [ForbiddenFieldsOnAllowlist] extends [never]
-  ? true
-  : ForbiddenFieldsOnAllowlist;
-const _allowlistHasNoForbiddenFields: AllowlistHasNoForbiddenFields = true;
+const _allowlistHasNoForbiddenFields: NoneOf<
+  Extract<TeacherEditableClassField, PlainUpdateForbiddenClassField>
+> = true;
 void _allowlistHasNoForbiddenFields;
 
 /**
