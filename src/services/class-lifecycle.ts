@@ -272,6 +272,68 @@ const _classUpdateDataMatchesSchema: ClassUpdateColumnsExist = true;
 void _classUpdateDataMatchesSchema;
 
 /**
+ * The fields a teacher may change on their own class via `PUT /api/classes/[id]`.
+ *
+ * This is an authorization boundary, not a field list for convenience: adding
+ * an entry grants write access to a `Class` column that may be gated by
+ * business logic the plain update path does not run. Before adding one, check
+ * what else guards that column —
+ *   - `status`             → the lifecycle state machine (`VALID_TRANSITIONS`)
+ *   - `settingsLocked`     → the economic lock (this very function)
+ *   - `teacherId`          → class ownership
+ *   - the financial totals → set only by `completeClass`'s pricing run
+ * — because the compiler will not.
+ */
+const TEACHER_EDITABLE_CLASS_FIELDS = [
+  'classType',
+  'description',
+  'date',
+  'startTime',
+  'durationMinutes',
+  'roomCost',
+  'minRate',
+  'targetRate',
+  'minStudents',
+  'maxStudents',
+] as const;
+// `void` because eslint's `no-unused-vars` flags this const as "assigned a
+// value but only used as a type" — every other reference to it below is a
+// `typeof` type query, never a value read. Same idiom as the pins that
+// follow, for the same reason: no `varsIgnorePattern` in this repo's config.
+void TEACHER_EDITABLE_CLASS_FIELDS;
+
+type TeacherEditableClassField = (typeof TEACHER_EDITABLE_CLASS_FIELDS)[number];
+
+/**
+ * Compile-time pin (forward): every field `updateClassSchema` accepts must be
+ * on the teacher-editable allowlist. Add a column-shaped field to the schema
+ * without adding it to the allowlist and this resolves to that field's name
+ * instead of `true`, failing the build with the field named. This is the guard
+ * the column pin above does NOT provide — it proves a field is *permitted*, not
+ * merely that it is a real, writable column. See issue #79 for the `status`
+ * bypass this closes.
+ */
+type UnpermittedClassFields = Exclude<keyof ClassUpdateData, TeacherEditableClassField>;
+type ClassUpdateFieldsArePermitted = [UnpermittedClassFields] extends [never]
+  ? true
+  : UnpermittedClassFields;
+const _classUpdateFieldsArePermitted: ClassUpdateFieldsArePermitted = true;
+void _classUpdateFieldsArePermitted;
+
+/**
+ * Compile-time pin (reverse): every allowlist entry must still be a field the
+ * schema accepts. Remove a field from `updateClassSchema` but leave it on the
+ * allowlist and this names the stale entry, so the list can't rot into granting
+ * permission for a column that no longer flows through this route.
+ */
+type StaleAllowlistFields = Exclude<TeacherEditableClassField, keyof ClassUpdateData>;
+type AllowlistHasNoStaleFields = [StaleAllowlistFields] extends [never]
+  ? true
+  : StaleAllowlistFields;
+const _allowlistHasNoStaleFields: AllowlistHasNoStaleFields = true;
+void _allowlistHasNoStaleFields;
+
+/**
  * Thrown when `updateClass` reaches a state its own guards say cannot happen.
  * A programmer error, never a business outcome — business outcomes are values
  * of `UpdateClassResult`. Named so it is distinguishable from unrelated
