@@ -20,11 +20,13 @@
  */
 
 import { Prisma } from '@prisma/client';
-import type { PrismaClient, ClassTemplate } from '@prisma/client';
+import type { PrismaClient, ClassTemplate, ClassStatus } from '@prisma/client';
 import type { z } from 'zod';
 import type { updateClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { syncTemplateInstances, type TemplateSyncResult } from './template-sync';
+import { generateInstancesForTemplate } from './class-generator';
+import { CHARGED_STATUSES } from './class-lifecycle';
 
 /**
  * The fields a teacher may change on an existing template.
@@ -259,4 +261,130 @@ export async function updateClassTemplate(
   const sync = await syncTemplateInstances(db, templateId);
 
   return { ok: true, template: updated, sync };
+}
+
+// ---------------------------------------------------------------------------
+// Pause / resume and archive / un-archive (#86)
+// ---------------------------------------------------------------------------
+
+/** The furthest-out class still on the schedule, for the pause confirmation. */
+export type PauseTemplateResult =
+  | { ok: true; template: ClassTemplate; lastScheduled: { date: Date; startTime: string } | null }
+  | { ok: false; reason: 'not_found' | 'forbidden' | 'archived' };
+
+export type ArchiveTemplateResult =
+  | { ok: true; template: ClassTemplate; deleted: number; remaining: number }
+  | { ok: false; reason: 'not_found' | 'forbidden' };
+
+/**
+ * Statuses a generated instance can still be withdrawn or regenerated from.
+ * A plain, mutable `ClassStatus[]` — not `as const` — because Prisma's `in`
+ * filter wants `ClassStatus[]`, not a readonly tuple.
+ */
+const SCHEDULED_STATUSES: ClassStatus[] = ['draft', 'open'];
+
+/** Future classes still on the schedule for a template — the actionable ones. */
+const scheduledWhere = (templateId: string, now: Date) => ({
+  templateId,
+  date: { gt: now },
+  status: { in: SCHEDULED_STATUSES },
+});
+
+/**
+ * Pause or resume generation. Deletes nothing: pausing means "no new classes",
+ * not "withdraw what I already offered" — that is what archiving is for.
+ *
+ * The re-activation branch is moved verbatim from the PATCH route's previous
+ * default action (`src/app/api/class-templates/[id]/route.ts`), not
+ * reconstructed: atomic so a generation failure rolls the `isActive` toggle
+ * back rather than leaving the template active with a stale window, and using
+ * the same typed `teacher: { select: { defaultTimezone: true } }` include
+ * `generateInstancesForTemplate` requires.
+ */
+export async function pauseOrResumeTemplate(
+  db: PrismaClient,
+  templateId: string,
+  teacherId: string,
+): Promise<PauseTemplateResult> {
+  const template = await db.classTemplate.findUnique({ where: { id: templateId } });
+  if (!template) return { ok: false, reason: 'not_found' };
+  if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
+  if (template.isArchived) return { ok: false, reason: 'archived' };
+
+  const updated = await db.$transaction(async (tx) => {
+    const t = await tx.classTemplate.update({
+      where: { id: templateId },
+      data: { isActive: !template.isActive },
+      include: { teacher: { select: { defaultTimezone: true } } },
+    });
+    if (t.isActive) await generateInstancesForTemplate(tx, t);
+    return t;
+  });
+
+  // The include above is only for `generateInstancesForTemplate`'s benefit —
+  // `PauseTemplateResult` carries a plain `ClassTemplate`, so the joined
+  // `teacher` is dropped rather than leaked back to the caller.
+  const { teacher, ...template_ } = updated;
+  void teacher;
+
+  const lastScheduled = await db.class.findFirst({
+    where: scheduledWhere(templateId, new Date()),
+    orderBy: [{ date: 'desc' }, { startTime: 'desc' }],
+    select: { date: true, startTime: true },
+  });
+
+  return { ok: true, template: template_, lastScheduled };
+}
+
+/**
+ * Archive or un-archive. Archiving withdraws the future classes nobody booked
+ * and leaves the rest standing (#86): generated instances are created `open`
+ * and the public booking page filters on status and date without consulting
+ * the template, so without this an archived template keeps up to four weeks of
+ * classes publicly bookable.
+ *
+ * "Nobody booked" means no registration in a CHARGED status — deliberately not
+ * `settingsLocked` (which answers whether the price may change, and stays true
+ * forever) and not `ACTIVE_REGISTRATION_STATUSES` (which excludes `late_cancel`,
+ * so a class a student still owes for would be cascaded away).
+ *
+ * The update and the delete share a transaction: a half-applied archive is
+ * exactly the shelved-but-bookable state this exists to prevent.
+ */
+export async function archiveOrUnarchiveTemplate(
+  db: PrismaClient,
+  templateId: string,
+  teacherId: string,
+): Promise<ArchiveTemplateResult> {
+  const template = await db.classTemplate.findUnique({ where: { id: templateId } });
+  if (!template) return { ok: false, reason: 'not_found' };
+  if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
+
+  const archiving = !template.isArchived;
+
+  return db.$transaction(async (tx) => {
+    const updated = await tx.classTemplate.update({
+      where: { id: templateId },
+      data: { isArchived: archiving, isActive: false },
+    });
+
+    if (!archiving) return { ok: true as const, template: updated, deleted: 0, remaining: 0 };
+
+    const now = new Date();
+    const deletable = await tx.class.findMany({
+      where: {
+        ...scheduledWhere(templateId, now),
+        registrations: { none: { status: { in: CHARGED_STATUSES } } },
+      },
+      select: { id: true },
+    });
+
+    if (deletable.length > 0) {
+      await tx.class.deleteMany({ where: { id: { in: deletable.map((c) => c.id) } } });
+    }
+
+    const remaining = await tx.class.count({ where: scheduledWhere(templateId, now) });
+
+    return { ok: true as const, template: updated, deleted: deletable.length, remaining };
+  });
 }

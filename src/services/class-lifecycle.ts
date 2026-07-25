@@ -122,8 +122,14 @@ export async function transitionClass(
 // Class completion
 // ---------------------------------------------------------------------------
 
-/** Registration statuses that are charged when a class completes. */
-const CHARGED_STATUSES: RegistrationStatus[] = ['registered', 'attended', 'no_show', 'late_cancel'];
+/**
+ * Registration statuses that represent a real obligation: the student is
+ * charged for these when the class completes. Exported because the archive
+ * rule in `class-template-lifecycle.ts` decides what is safe to delete by the
+ * same list — a class carrying any of these is one a student is still on the
+ * hook for, and must not be removed silently.
+ */
+export const CHARGED_STATUSES: RegistrationStatus[] = ['registered', 'attended', 'no_show', 'late_cancel'];
 
 /**
  * Complete a class: validate transition, calculate pricing, update
