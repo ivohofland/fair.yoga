@@ -8,17 +8,10 @@ import { CancelBookingButton } from '@/components/student/cancel-booking-button'
 import { UpdatesStrip } from '@/components/student/updates-strip';
 import { WaitlistEntryActions } from '@/components/student/waitlist-entry-actions';
 import { PaymentQr } from '@/components/student/payment-qr';
-import { formatRoomLocation, paymentStateText } from '@/lib/format';
+import { formatRoomLocation, paymentStateText, formatDayHeader } from '@/lib/format';
 import { getWaitlistWindow } from '@/services/waitlist';
 
 export const dynamic = 'force-dynamic';
-
-function formatDayHeader(date: Date): string {
-  const d = new Date(date);
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${days[d.getUTCDay()]}, ${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
-}
 
 // The student's home: upcoming bookings, waitlist spots, past classes with
 // what to pay and where. No engagement tricks — a quiet ledger.

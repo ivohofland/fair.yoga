@@ -4,7 +4,7 @@ import { StatusBadge, deriveBadgeVariant, type BadgeVariant } from '@/components
 import { RegistrationProgress } from '@/components/ui/registration-progress';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
-import { formatRoomLocation } from '@/lib/format';
+import { formatRoomLocation, formatDayHeader } from '@/lib/format';
 
 type ClassWithDetails = Class & {
   _count: { registrations: number };
@@ -20,16 +20,6 @@ interface ClassListProps {
   showAddLink?: boolean;
   dimPast?: boolean;
   sortDesc?: boolean;
-}
-
-function formatDayHeader(date: Date): string {
-  const d = new Date(date);
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
-  return `${days[d.getUTCDay()]}, ${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
 }
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;

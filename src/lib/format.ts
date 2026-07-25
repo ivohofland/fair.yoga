@@ -29,3 +29,20 @@ export function paymentStateText(status: string): { label: string; className: st
   if (status === 'overdue') return { label: '! Overdue', className: 'text-danger font-medium' };
   return { label: '\u25cb Unpaid', className: '' };
 }
+
+/**
+ * A class's day, as the schedule and bookings views render it: `Thursday, Jun 12`.
+ *
+ * UTC accessors throughout: `Class.date` is a `@db.Date` (midnight UTC) and the
+ * time of day lives separately in `startTime`, so reading it in local time would
+ * shift the date across the boundary for anyone west of UTC.
+ */
+export function formatDayHeader(date: Date): string {
+  const d = new Date(date);
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  return `${days[d.getUTCDay()]}, ${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
