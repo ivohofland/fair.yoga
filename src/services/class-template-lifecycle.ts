@@ -6,10 +6,11 @@
  * (#82 is #79 one route over) and with the same five pins.
  */
 
-import type { Prisma } from '@prisma/client';
+import type { Prisma, PrismaClient, ClassTemplate } from '@prisma/client';
 import type { z } from 'zod';
 import type { updateClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
+import { syncTemplateInstances, type TemplateSyncResult } from './template-sync';
 
 /**
  * The fields a teacher may change on an existing template.
@@ -148,3 +149,56 @@ const _templateAllowlistHasNoForbiddenFields: NoneOf<
   Extract<TeacherEditableClassTemplateField, PlainUpdateForbiddenTemplateField>
 > = true;
 void _templateAllowlistHasNoForbiddenFields;
+
+/**
+ * Why an update did or did not happen. Every business outcome is a variant;
+ * callers own the user-facing wording.
+ */
+export type UpdateClassTemplateResult =
+  | { ok: true; template: ClassTemplate; sync: TemplateSyncResult }
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'forbidden' }
+  | { ok: false; reason: 'no_fields' }
+  | { ok: false; reason: 'invalid_room' };
+
+/**
+ * Apply a partial update to a class template, then propagate it to the
+ * instances that are still mutable.
+ *
+ * Takes `teacherId` rather than a session: this is the ownership check, and
+ * keeping it a plain argument is what lets the function be tested without HTTP.
+ *
+ * The write and the propagation are deliberately NOT one transaction, matching
+ * the behaviour this replaced: if `syncTemplateInstances` throws, the template
+ * row is already updated and the error propagates, so the caller sees a failure
+ * for a partially applied change. That window is real and predates this
+ * function; closing it changes behaviour (a sync failure would roll the edit
+ * back) and belongs in its own change, with its own test.
+ */
+export async function updateClassTemplate(
+  db: PrismaClient,
+  templateId: string,
+  teacherId: string,
+  data: ClassTemplateUpdateData,
+): Promise<UpdateClassTemplateResult> {
+  const template = await db.classTemplate.findUnique({ where: { id: templateId } });
+  if (!template) return { ok: false, reason: 'not_found' };
+  if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
+
+  if (Object.keys(data).length === 0) return { ok: false, reason: 'no_fields' };
+
+  // A teacher may only attach a template to a room they already hold. Checked
+  // before the write so a bad room never lands, and checked here rather than in
+  // the route so the guard travels with the function.
+  if (data.teacherRoomId !== undefined) {
+    const teacherRoom = await db.teacherRoom.findUnique({ where: { id: data.teacherRoomId } });
+    if (!teacherRoom || teacherRoom.teacherId !== teacherId) {
+      return { ok: false, reason: 'invalid_room' };
+    }
+  }
+
+  const updated = await db.classTemplate.update({ where: { id: templateId }, data });
+  const sync = await syncTemplateInstances(db, templateId);
+
+  return { ok: true, template: updated, sync };
+}
