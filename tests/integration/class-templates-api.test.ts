@@ -13,6 +13,13 @@ let teacherRoomId: string;
 let teacherAccountId: string;
 let sessionToken: string;
 
+const otherEmail = `tmpl-other-${suffix}@test.local`;
+let otherTeacherId: string;
+let otherTeacherAccountId: string;
+let otherRoomId: string;
+let otherTeacherRoomId: string;
+let otherSessionToken: string;
+
 /**
  * Schema convention (0=Monday, ..., 6=Sunday) — 3 is Thursday. Any fixed
  * weekday works; the assertion below converts to JS's getUTCDay() (0=Sunday)
@@ -71,9 +78,56 @@ beforeAll(async () => {
   teacherRoomId = teacherRoom.id;
 
   sessionToken = await seedSession(prisma, teacher.accountId);
+
+  // A second teacher, for the two cross-teacher PUT cases: editing
+  // someone else's template (403) and attaching to someone else's room
+  // (400). Both guards live in the route today and move into the service
+  // in Task 5 — these tests are what prove the move preserved them.
+  const other = await prisma.teacher.create({
+    data: {
+      firstName: 'Other',
+      lastName: 'Teacher',
+      email: otherEmail,
+      account: { create: { email: otherEmail } },
+      bio: 'Second teacher for template API tests',
+      pageSlug: `tmpl-other-${suffix}`,
+      defaultTimezone: 'UTC',
+    },
+  });
+  otherTeacherId = other.id;
+  otherTeacherAccountId = other.accountId;
+
+  const otherRoom = await prisma.room.create({
+    data: {
+      venueName: 'Other Venue',
+      address: `${suffix} Other St`,
+      city: 'Testville',
+      postcode: '5678TP',
+      floor: '2',
+      roomName: 'Studio',
+      maxCapacity: 10,
+      createdById: otherTeacherId,
+    },
+  });
+  otherRoomId = otherRoom.id;
+  const otherTeacherRoom = await prisma.teacherRoom.create({
+    data: { teacherId: otherTeacherId, roomId: otherRoomId, capacityOverride: 8, rentalRate: 15 },
+  });
+  otherTeacherRoomId = otherTeacherRoom.id;
+  otherSessionToken = await seedSession(prisma, other.accountId);
 });
 
 afterAll(async () => {
+  await prisma.class.deleteMany({ where: { teacherId: otherTeacherId } });
+  await prisma.classTemplate.deleteMany({ where: { teacherId: otherTeacherId } });
+  await prisma.teacherRoom.deleteMany({ where: { teacherId: otherTeacherId } });
+  await prisma.room.delete({ where: { id: otherRoomId } });
+  if (otherTeacherAccountId) {
+    await prisma.session.deleteMany({ where: { accountId: otherTeacherAccountId } });
+  }
+  await prisma.teacher.delete({ where: { id: otherTeacherId } });
+  await prisma.account.deleteMany({ where: { email: otherEmail } });
+
   // By teacherId, not tracked ids: a test that dies between the POST
   // and its bookkeeping must not leak rows that abort the rest of the
   // cleanup chain (same pattern as the e2e suite).
@@ -286,5 +340,95 @@ describe('PATCH /api/class-templates/[id]', () => {
 
     await prisma.class.deleteMany({ where: { templateId: { in: [templateA.id, templateB.id] } } });
     await prisma.classTemplate.deleteMany({ where: { id: { in: [templateA.id, templateB.id] } } });
+  });
+});
+
+describe('PUT /api/class-templates/[id]', () => {
+  const createTemplate = async (classType: string): Promise<string> => {
+    const res = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify(templateBody(classType)),
+    });
+    expect(res.status).toBe(201);
+    const { data } = (await res.json()) as { data: { id: string } };
+    return data.id;
+  };
+
+  it('updates the template and propagates to its still-mutable instances', async () => {
+    const id = await createTemplate('Editable Flow');
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ classType: 'Renamed Flow', durationMinutes: 75 }),
+    });
+    expect(res.status).toBe(200);
+
+    const { data } = (await res.json()) as {
+      data: { classType: string; durationMinutes: number; sync: { synced: number } };
+    };
+    expect(data.classType).toBe('Renamed Flow');
+    expect(data.durationMinutes).toBe(75);
+
+    // Nothing is booked, so every future instance is still mutable. Asserted
+    // on the future set rather than a fixed count: syncTemplateInstances uses
+    // `date > now`, so whether today's instance is in scope depends on the
+    // clock, and pinning "4" here would be flaky by construction.
+    expect(data.sync.synced).toBeGreaterThan(0);
+    const future = await prisma.class.findMany({
+      where: { templateId: id, date: { gt: new Date() } },
+    });
+    expect(future.length).toBeGreaterThan(0);
+    expect(future.every((c) => c.classType === 'Renamed Flow')).toBe(true);
+    expect(future.every((c) => c.durationMinutes === 75)).toBe(true);
+  });
+
+  it("refuses to edit another teacher's template", async () => {
+    const id = await createTemplate('Not Yours');
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(otherSessionToken) },
+      body: JSON.stringify({ classType: 'Hijacked' }),
+    });
+    expect(res.status).toBe(403);
+
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
+    expect(after.classType).toBe('Not Yours');
+  });
+
+  // This is the runtime behaviour every compile-time pin's reasoning rests on:
+  // an undeclared key is a 400, so the ONLY way a forbidden column reaches
+  // Prisma is by being declared in the schema — a source edit, which the pins
+  // catch. If this test ever fails, the pins are guarding the wrong thing.
+  it('rejects an undeclared key — the schema is strict', async () => {
+    const id = await createTemplate('Strict Flow');
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ classType: 'Renamed', isActive: false }),
+    });
+    expect(res.status).toBe(400);
+
+    // Rejected whole: the declared field is not written either.
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
+    expect(after.classType).toBe('Strict Flow');
+    expect(after.isActive).toBe(true);
+  });
+
+  it("refuses a teacherRoom belonging to another teacher", async () => {
+    const id = await createTemplate('Room Guard');
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ teacherRoomId: otherTeacherRoomId }),
+    });
+    expect(res.status).toBe(400);
+
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
+    expect(after.teacherRoomId).toBe(teacherRoomId);
   });
 });
