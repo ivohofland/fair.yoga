@@ -37,8 +37,12 @@ let linkId: string;
 /** A second link, with a class on it, for the delete guard. */
 let linkWithClassId: string;
 let blockingClassId: string;
-/** Free room with no link yet — the create cases claim it. */
+/** Free PRIVATE room owned by `owner`, with no link yet — the create cases claim it. */
 let freeRoomId: string;
+/** Public room: usable by anyone, which is the whole point of public. */
+let publicRoomId: string;
+/** Private room owned by `other` — the one `owner` must not be able to claim. */
+let othersPrivateRoomId: string;
 
 const ORIGINAL_RATE = 25;
 
@@ -105,6 +109,38 @@ beforeAll(async () => {
 
   roomId = (await makeRoom('Main')).id;
   freeRoomId = (await makeRoom('Unclaimed')).id;
+
+  publicRoomId = (
+    await prisma.room.create({
+      data: {
+        venueName: 'Teacher Rooms API Studio',
+        address: `${suffix} Public St`,
+        city: 'Testville',
+        postcode: '1234TP',
+        floor: '1',
+        roomName: 'Community Hall',
+        maxCapacity: 20,
+        createdById: owner.id,
+        isPublic: true,
+      },
+    })
+  ).id;
+
+  othersPrivateRoomId = (
+    await prisma.room.create({
+      data: {
+        venueName: 'Other Teacher Studio',
+        address: `${suffix} Other St`,
+        city: 'Testville',
+        postcode: '5678TR',
+        floor: '2',
+        roomName: 'Private Back Room',
+        maxCapacity: 10,
+        createdById: other.id,
+        isPublic: false,
+      },
+    })
+  ).id;
 
   linkId = (
     await prisma.teacherRoom.create({
@@ -174,13 +210,56 @@ describe('POST /api/teacher-rooms', () => {
     const err = (await second.json()) as { error: { code?: string } };
     expect(err.error.code).toBe('DUPLICATE');
 
-    // The pair is unique per teacher, not per room: the same room links again
-    // under a different teacher. This is the shape #77's open half is about —
-    // it is the *rate* that is private, not the association.
-    const otherTeacher = await create(otherToken, { ...body, rentalRate: 99 });
-    expect(otherTeacher.status).toBe(201);
+    expect(await prisma.teacherRoom.count({ where: { roomId: freeRoomId } })).toBe(1);
+  });
 
-    expect(await prisma.teacherRoom.count({ where: { roomId: freeRoomId } })).toBe(2);
+  // The uniqueness is per (teacher, room), so two teachers CAN hold the same
+  // room — but only where they are both entitled to it. #77 settled that as
+  // public rooms only: this assertion used to live on a private room, which
+  // the visibility guard now forbids.
+  it('two teachers can hold the same PUBLIC room, each with their own rate', async () => {
+    const first = await create(ownerToken, {
+      roomId: publicRoomId,
+      capacityOverride: 10,
+      rentalRate: 20,
+    });
+    expect(first.status).toBe(201);
+
+    const second = await create(otherToken, {
+      roomId: publicRoomId,
+      capacityOverride: 10,
+      rentalRate: 99,
+    });
+    expect(second.status).toBe(201);
+
+    // It is the rate that is private, not the association.
+    const links = await prisma.teacherRoom.findMany({ where: { roomId: publicRoomId } });
+    expect(links).toHaveLength(2);
+    expect(new Set(links.map((l) => Number(l.rentalRate)))).toEqual(new Set([20, 99]));
+  });
+
+  // #77's second half. The rule is not new — `GET /api/rooms/[id]` already
+  // reads "public, or created by you"; the create route simply never applied
+  // it, so any teacher could attach to a private room whose id they knew and,
+  // by adding a class, permanently block its creator from deleting it.
+  it("refuses to link a teacher to another teacher's private room", async () => {
+    const res = await create(ownerToken, {
+      roomId: othersPrivateRoomId,
+      capacityOverride: 5,
+      rentalRate: 10,
+    });
+
+    expect(res.status).toBe(403);
+    expect(await prisma.teacherRoom.count({ where: { roomId: othersPrivateRoomId } })).toBe(0);
+  });
+
+  it('404s a room that does not exist, instead of failing on the foreign key', async () => {
+    const res = await create(ownerToken, {
+      roomId: '00000000-0000-0000-0000-000000000000',
+      capacityOverride: 5,
+      rentalRate: 10,
+    });
+    expect(res.status).toBe(404);
   });
 });
 
