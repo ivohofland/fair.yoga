@@ -37,6 +37,22 @@ not stop at the template: it calls `syncTemplateInstances`, which propagates
 onto generated `Class` rows. A bad template field reaches `Class` without going
 through `PUT /api/classes/[id]` at all.
 
+> **Corrected 2026-07-25 in review — the paragraph above overstates the
+> mechanism.** `syncTemplateInstances` hand-enumerates the twelve columns it
+> copies (`template-sync.ts`, the `data:` block of its `class.updateMany`), so a
+> *newly added* template schema field does **not** reach `Class`; that needs a
+> second, separate edit to the sync service. The escalation as written does not
+> hold.
+>
+> The real asymmetry is narrower and more concrete, and is the sentence that
+> should have been here: the sync path already writes `teacherRoomId`,
+> `cancelDeadline` and `autoCancelCheck` onto `Class` rows, and **none of those
+> three is on `TeacherEditableClassField` or in `updateClassSchema`**. So the
+> template route genuinely is a path to three `Class` columns the class route
+> refuses — for the twelve fields that exist today, not for hypothetical new
+> ones. Not a hole (same teacher, own instances, room ownership checked), but it
+> is the real instance of the thing this paragraph asserted abstractly.
+
 **Nothing is exploitable today.** None of those columns is in the schema. This
 closes what the route permits the next contributor to add without a signal.
 
