@@ -1,16 +1,10 @@
 import { test, expect } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
 import { accountIdOfTeacher } from './account-helpers';
+import { uniqueSuffix, hashToken } from '../helpers';
 
 const prisma = new PrismaClient();
-
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
 
 function generateToken(): string {
   return crypto.randomBytes(32).toString('hex');
@@ -29,8 +23,8 @@ async function createMagicLinkToken(email: string): Promise<string> {
   return rawToken;
 }
 
-const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const teacherEmail = `e2e-auth-${uniqueSuffix}@test.local`;
+const suffix = uniqueSuffix();
+const teacherEmail = `e2e-auth-${suffix}@test.local`;
 
 let teacherId: string;
 
@@ -46,7 +40,7 @@ test.describe('Magic link authentication', () => {
         email: teacherEmail,
         account: { create: { email: teacherEmail } },
         bio: 'Teacher for e2e auth tests',
-        pageSlug: `e2e-auth-${uniqueSuffix}`,
+        pageSlug: `e2e-auth-${suffix}`,
       },
     });
     teacherId = teacher.id;

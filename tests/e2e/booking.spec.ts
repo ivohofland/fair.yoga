@@ -1,19 +1,13 @@
 import { test, expect } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
 import { accountIdOfStudent } from './account-helpers';
+import { uniqueSuffix, hashToken, seedSession, sessionCookie } from '../helpers';
 
 const prisma = new PrismaClient();
 
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
-
-const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const slug = `e2e-booking-${uniqueSuffix}`;
+const suffix = uniqueSuffix();
+const slug = `e2e-booking-${suffix}`;
 
 let teacherId: string;
 let roomId: string;
@@ -30,8 +24,8 @@ test.describe('Public booking flow', () => {
       data: {
         firstName: 'Booking',
         lastName: 'Teacher',
-        email: `e2e-booking-teacher-${uniqueSuffix}@test.local`,
-        account: { create: { email: `e2e-booking-teacher-${uniqueSuffix}@test.local` } },
+        email: `e2e-booking-teacher-${suffix}@test.local`,
+        account: { create: { email: `e2e-booking-teacher-${suffix}@test.local` } },
         bio: 'Vinyasa in the east of town.',
         pageSlug: slug,
       },
@@ -41,7 +35,7 @@ test.describe('Public booking flow', () => {
     const room = await prisma.room.create({
       data: {
         venueName: 'E2E Studio',
-        address: `${uniqueSuffix} Booking St`,
+        address: `${suffix} Booking St`,
         city: 'Amsterdam',
         postcode: '1234BK',
         floor: '1',
@@ -95,8 +89,8 @@ test.describe('Public booking flow', () => {
       data: {
         firstName: 'Booking',
         lastName: 'Student',
-        email: `e2e-booking-student-${uniqueSuffix}@test.local`,
-        account: { create: { email: `e2e-booking-student-${uniqueSuffix}@test.local` } },
+        email: `e2e-booking-student-${suffix}@test.local`,
+        account: { create: { email: `e2e-booking-student-${suffix}@test.local` } },
         incomeTier: 3,
         claimedAt: new Date(),
       },
@@ -111,7 +105,7 @@ test.describe('Public booking flow', () => {
     await prisma.registration.deleteMany({ where: { classId } });
     await prisma.teacherStudent.deleteMany({ where: { teacherId } });
     await prisma.session.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, studentId) } });
-    await prisma.magicLinkToken.deleteMany({ where: { email: { contains: uniqueSuffix } } });
+    await prisma.magicLinkToken.deleteMany({ where: { email: { contains: suffix } } });
     await prisma.class.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
@@ -158,7 +152,7 @@ test.describe('Public booking flow', () => {
     await prisma.magicLinkToken.create({
       data: {
         tokenHash: hashToken(rawToken),
-        email: `e2e-booking-student-${uniqueSuffix}@test.local`,
+        email: `e2e-booking-student-${suffix}@test.local`,
         redirectTo: `/${slug}/book/${classId}`,
         expiresAt: new Date(Date.now() + 15 * 60 * 1000),
       },
@@ -204,17 +198,8 @@ test.describe('Public booking flow', () => {
   test('a returning student sees their tier and the settings link, not the picker', async ({ page, context }) => {
     // The previous test booked class 1 as tier 2 — this student is now a
     // returning tier-1/2 student: summary + honesty nudge, no radiogroup.
-    const sessionToken = crypto.randomBytes(32).toString('hex');
-    await prisma.session.create({
-      data: {
-        id: hashToken(sessionToken),
-        accountId: await accountIdOfStudent(prisma, studentId),
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
-    await context.addCookies([
-      { name: 'fair_yoga_session', value: sessionToken, url: 'http://localhost:3000' },
-    ]);
+    const sessionToken = await seedSession(prisma, await accountIdOfStudent(prisma, studentId));
+    await context.addCookies([sessionCookie(sessionToken)]);
 
     await page.goto(`/${slug}/book/${secondClassId}`);
     await expect(page.getByText(/You're in Tier 2/)).toBeVisible();
@@ -260,7 +245,7 @@ test.describe('Public booking flow', () => {
     // The server-side stamp is the load-bearing guard (integration-
     // tested); this is the user-facing proof: book without touching a
     // radio, and the picker never comes back.
-    const email = `e2e-booking-default-${uniqueSuffix}@test.local`;
+    const email = `e2e-booking-default-${suffix}@test.local`;
     const defaultStudent = await prisma.student.create({
       data: {
         firstName: 'Default',
@@ -270,17 +255,8 @@ test.describe('Public booking flow', () => {
         claimedAt: new Date(),
       },
     });
-    const sessionToken = crypto.randomBytes(32).toString('hex');
-    await prisma.session.create({
-      data: {
-        id: hashToken(sessionToken),
-        accountId: await accountIdOfStudent(prisma, defaultStudent.id),
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
-    await context.addCookies([
-      { name: 'fair_yoga_session', value: sessionToken, url: 'http://localhost:3000' },
-    ]);
+    const sessionToken = await seedSession(prisma, await accountIdOfStudent(prisma, defaultStudent.id));
+    await context.addCookies([sessionCookie(sessionToken)]);
 
     await page.goto(`/${slug}/book/${classId}`);
     await expect(page.getByRole('radiogroup')).toBeVisible();
@@ -330,21 +306,8 @@ test.describe('Public booking flow', () => {
 
   test('the booking shows up under /bookings', async ({ page, context }) => {
     // Reuse an authenticated session created directly.
-    const sessionToken = crypto.randomBytes(32).toString('hex');
-    await prisma.session.create({
-      data: {
-        id: hashToken(sessionToken),
-        accountId: await accountIdOfStudent(prisma, studentId),
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
-    await context.addCookies([
-      {
-        name: 'fair_yoga_session',
-        value: sessionToken,
-        url: 'http://localhost:3000',
-      },
-    ]);
+    const sessionToken = await seedSession(prisma, await accountIdOfStudent(prisma, studentId));
+    await context.addCookies([sessionCookie(sessionToken)]);
 
     await page.goto('/bookings');
     await expect(page.getByRole('heading', { name: 'Your bookings' })).toBeVisible();

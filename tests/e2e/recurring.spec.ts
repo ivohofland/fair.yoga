@@ -1,10 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
 import fs from 'fs';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
 import { accountIdOfTeacher } from './account-helpers';
+import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 
 /**
  * The recurring-class lifecycle, end to end: template created through
@@ -15,11 +13,6 @@ import { accountIdOfTeacher } from './account-helpers';
 
 const prisma = new PrismaClient();
 
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
-
 /** CRON_SECRET from the environment (CI) or .env (local). */
 function cronSecret(): string {
   if (process.env.CRON_SECRET) return process.env.CRON_SECRET;
@@ -29,8 +22,7 @@ function cronSecret(): string {
   return match[1]!.trim().replace(/^"|"$/g, '');
 }
 
-const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const teacherToken = crypto.randomBytes(32).toString('hex');
+const suffix = uniqueSuffix();
 
 // Three days from now, so the template's weekday never lands on the run
 // day itself. On the run day the counts turn time-of-day-dependent: the
@@ -45,6 +37,7 @@ const templateDayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday',
 ]!;
 
 let teacherId: string;
+let teacherToken: string;
 let roomId: string;
 let templateId: string;
 
@@ -57,25 +50,19 @@ test.describe('Recurring classes', () => {
       data: {
         firstName: 'Recurring',
         lastName: 'Teacher',
-        email: `e2e-recurring-${uniqueSuffix}@test.local`,
-        account: { create: { email: `e2e-recurring-${uniqueSuffix}@test.local` } },
+        email: `e2e-recurring-${suffix}@test.local`,
+        account: { create: { email: `e2e-recurring-${suffix}@test.local` } },
         bio: 'Recurring e2e fixtures',
-        pageSlug: `e2e-recurring-${uniqueSuffix}`,
+        pageSlug: `e2e-recurring-${suffix}`,
       },
     });
     teacherId = teacher.id;
-    await prisma.session.create({
-      data: {
-        id: hashToken(teacherToken),
-        accountId: await accountIdOfTeacher(prisma, teacherId),
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    teacherToken = await seedSession(prisma, await accountIdOfTeacher(prisma, teacherId));
 
     const room = await prisma.room.create({
       data: {
         venueName: 'Recurring Studio',
-        address: `${uniqueSuffix} Recurring St`,
+        address: `${suffix} Recurring St`,
         city: 'Amsterdam',
         postcode: '1234RC',
         floor: '1',
@@ -101,9 +88,7 @@ test.describe('Recurring classes', () => {
   });
 
   test.beforeEach(async ({ context }) => {
-    await context.addCookies([
-      { name: 'fair_yoga_session', value: teacherToken, url: 'http://localhost:3000' },
-    ]);
+    await context.addCookies([sessionCookie(teacherToken)]);
   });
 
   test('creates a template through settings', async ({ page }) => {

@@ -1,10 +1,8 @@
 import { test, expect, type BrowserContext } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
 import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
+import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 
 /**
  * Accessibility sweep: axe-core over the key screens, failing on any
@@ -15,25 +13,18 @@ import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
 
 const prisma = new PrismaClient();
 
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
-
-const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const slug = `e2e-a11y-${uniqueSuffix}`;
-const teacherToken = crypto.randomBytes(32).toString('hex');
-const studentToken = crypto.randomBytes(32).toString('hex');
+const suffix = uniqueSuffix();
+const slug = `e2e-a11y-${suffix}`;
 
 let teacherId: string;
 let roomId: string;
 let classId: string;
 let studentId: string;
+let teacherToken: string;
+let studentToken: string;
 
 async function signIn(context: BrowserContext, token: string): Promise<void> {
-  await context.addCookies([
-    { name: 'fair_yoga_session', value: token, url: 'http://localhost:3000' },
-  ]);
+  await context.addCookies([sessionCookie(token)]);
 }
 
 async function expectNoSeriousViolations(page: import('@playwright/test').Page): Promise<void> {
@@ -57,25 +48,19 @@ test.describe('Accessibility sweep', () => {
       data: {
         firstName: 'Axe',
         lastName: 'Teacher',
-        email: `e2e-a11y-teacher-${uniqueSuffix}@test.local`,
-        account: { create: { email: `e2e-a11y-teacher-${uniqueSuffix}@test.local` } },
+        email: `e2e-a11y-teacher-${suffix}@test.local`,
+        account: { create: { email: `e2e-a11y-teacher-${suffix}@test.local` } },
         bio: 'Accessibility sweep fixtures',
         pageSlug: slug,
       },
     });
     teacherId = teacher.id;
-    await prisma.session.create({
-      data: {
-        id: hashToken(teacherToken),
-        accountId: await accountIdOfTeacher(prisma, teacherId),
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    teacherToken = await seedSession(prisma, await accountIdOfTeacher(prisma, teacherId));
 
     const room = await prisma.room.create({
       data: {
         venueName: 'Axe Studio',
-        address: `${uniqueSuffix} Axe St`,
+        address: `${suffix} Axe St`,
         city: 'Amsterdam',
         postcode: '1234AX',
         floor: '1',
@@ -111,20 +96,14 @@ test.describe('Accessibility sweep', () => {
       data: {
         firstName: 'Axe',
         lastName: 'Student',
-        email: `e2e-a11y-student-${uniqueSuffix}@test.local`,
-        account: { create: { email: `e2e-a11y-student-${uniqueSuffix}@test.local` } },
+        email: `e2e-a11y-student-${suffix}@test.local`,
+        account: { create: { email: `e2e-a11y-student-${suffix}@test.local` } },
         incomeTier: 3,
         claimedAt: new Date(),
       },
     });
     studentId = student.id;
-    await prisma.session.create({
-      data: {
-        id: hashToken(studentToken),
-        accountId: await accountIdOfStudent(prisma, studentId),
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    studentToken = await seedSession(prisma, await accountIdOfStudent(prisma, studentId));
     await prisma.registration.create({
       data: { classId, studentId, status: 'registered', tierAtBooking: 3 },
     });

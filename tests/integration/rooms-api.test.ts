@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, seedSession } from './helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();

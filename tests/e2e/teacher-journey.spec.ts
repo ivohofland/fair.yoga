@@ -1,9 +1,7 @@
 import { test, expect, type BrowserContext } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
 import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
+import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 
 /**
  * The core product loop, end to end through the UI:
@@ -14,17 +12,12 @@ import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';
 
 const prisma = new PrismaClient();
 
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
-
-const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const teacherToken = crypto.randomBytes(32).toString('hex');
-const bookingStudentToken = crypto.randomBytes(32).toString('hex');
+const suffix = uniqueSuffix();
 
 let teacherId: string;
+let teacherToken: string;
 let bookingStudentId: string;
+let bookingStudentToken: string;
 let walkInStudentId: string;
 let classId: string;
 
@@ -37,9 +30,7 @@ function checkinSlot(): { date: Date; startTime: string } {
 }
 
 async function signInTeacher(context: BrowserContext): Promise<void> {
-  await context.addCookies([
-    { name: 'fair_yoga_session', value: teacherToken, url: 'http://localhost:3000' },
-  ]);
+  await context.addCookies([sessionCookie(teacherToken)]);
 }
 
 test.describe('Teacher journey', () => {
@@ -51,21 +42,15 @@ test.describe('Teacher journey', () => {
       data: {
         firstName: 'Journey',
         lastName: 'Teacher',
-        email: `e2e-journey-teacher-${uniqueSuffix}@test.local`,
-        account: { create: { email: `e2e-journey-teacher-${uniqueSuffix}@test.local` } },
+        email: `e2e-journey-teacher-${suffix}@test.local`,
+        account: { create: { email: `e2e-journey-teacher-${suffix}@test.local` } },
         bio: 'Teacher for the full-journey e2e test',
-        pageSlug: `e2e-journey-${uniqueSuffix}`,
+        pageSlug: `e2e-journey-${suffix}`,
         defaultTimezone: 'UTC',
       },
     });
     teacherId = teacher.id;
-    await prisma.session.create({
-      data: {
-        id: hashToken(teacherToken),
-        accountId: await accountIdOfTeacher(prisma, teacherId),
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    teacherToken = await seedSession(prisma, await accountIdOfTeacher(prisma, teacherId));
 
     // This student signs in to book, so they are claimed — and they share
     // their full name with this teacher so the roster reads "Journey
@@ -74,8 +59,8 @@ test.describe('Teacher journey', () => {
       data: {
         firstName: 'Journey',
         lastName: 'Student',
-        email: `e2e-journey-student-${uniqueSuffix}@test.local`,
-        account: { create: { email: `e2e-journey-student-${uniqueSuffix}@test.local` } },
+        email: `e2e-journey-student-${suffix}@test.local`,
+        account: { create: { email: `e2e-journey-student-${suffix}@test.local` } },
         claimedAt: new Date(),
         incomeTier: 3,
       },
@@ -84,13 +69,7 @@ test.describe('Teacher journey', () => {
     await prisma.studentPrivacy.create({
       data: { studentId: bookingStudentId, teacherId, shareFullName: true },
     });
-    await prisma.session.create({
-      data: {
-        id: hashToken(bookingStudentToken),
-        accountId: await accountIdOfStudent(prisma, bookingStudentId),
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    bookingStudentToken = await seedSession(prisma, await accountIdOfStudent(prisma, bookingStudentId));
 
     // The walk-in picker is roster-only; this student never signs in and
     // stays a genuinely unclaimed CRM row (full name by default).
@@ -98,7 +77,7 @@ test.describe('Teacher journey', () => {
       data: {
         firstName: 'Walkin',
         lastName: 'Guest',
-        email: `e2e-journey-walkin-${uniqueSuffix}@test.local`,
+        email: `e2e-journey-walkin-${suffix}@test.local`,
         incomeTier: 2,
       },
     });
@@ -151,7 +130,7 @@ test.describe('Teacher journey', () => {
 
     // Step 1: search by address — nothing exists at this made-up street.
     await page.getByLabel('Postcode').fill('9999JT');
-    await page.getByLabel('Street').fill(`Journeyweg-${uniqueSuffix}`);
+    await page.getByLabel('Street').fill(`Journeyweg-${suffix}`);
     await page.getByRole('button', { name: 'Search' }).click();
     await expect(page.getByText('No rooms found at this address.')).toBeVisible();
     await page.getByRole('button', { name: 'Create new room' }).click();

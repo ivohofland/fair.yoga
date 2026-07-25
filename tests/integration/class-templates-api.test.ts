@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { generateInstancesForTemplate } from '@/services/class-generator';
-import { BASE_URL, cookie, uniqueSuffix, seedSession } from './helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();

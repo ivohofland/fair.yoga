@@ -1,21 +1,15 @@
 import { test, expect } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
+import { uniqueSuffix, hashToken, seedSession, sessionCookie } from '../helpers';
 
 const prisma = new PrismaClient();
 
-function hashToken(token: string): string {
-  return encodeHexLowerCase(sha256(new TextEncoder().encode(token)));
-}
-
-const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const teacherToken = crypto.randomBytes(32).toString('hex');
+const suffix = uniqueSuffix();
 
 let teacherId: string;
+let teacherToken: string;
 let otherTeacherId: string;
-const otherTeacherToken = crypto.randomBytes(32).toString('hex');
+let otherTeacherToken: string;
 let roomId: string;
 let draftClassId: string;
 let lockedClassId: string;
@@ -31,44 +25,32 @@ test.describe('Class edit screen', () => {
       data: {
         firstName: 'Editing',
         lastName: 'Teacher',
-        email: `e2e-classedit-teacher-${uniqueSuffix}@test.local`,
-        account: { create: { email: `e2e-classedit-teacher-${uniqueSuffix}@test.local` } },
+        email: `e2e-classedit-teacher-${suffix}@test.local`,
+        account: { create: { email: `e2e-classedit-teacher-${suffix}@test.local` } },
         bio: 'Class edit e2e',
-        pageSlug: `e2e-classedit-${uniqueSuffix}`,
+        pageSlug: `e2e-classedit-${suffix}`,
       },
     });
     teacherId = teacher.id;
-    await prisma.session.create({
-      data: {
-        id: hashToken(teacherToken),
-        accountId: teacher.accountId,
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    teacherToken = await seedSession(prisma, teacher.accountId);
 
     const other = await prisma.teacher.create({
       data: {
         firstName: 'Other',
         lastName: 'Teacher',
-        email: `e2e-classedit-other-${uniqueSuffix}@test.local`,
-        account: { create: { email: `e2e-classedit-other-${uniqueSuffix}@test.local` } },
+        email: `e2e-classedit-other-${suffix}@test.local`,
+        account: { create: { email: `e2e-classedit-other-${suffix}@test.local` } },
         bio: 'Ownership fixture',
-        pageSlug: `e2e-classedit-other-${uniqueSuffix}`,
+        pageSlug: `e2e-classedit-other-${suffix}`,
       },
     });
     otherTeacherId = other.id;
-    await prisma.session.create({
-      data: {
-        id: hashToken(otherTeacherToken),
-        accountId: other.accountId,
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    otherTeacherToken = await seedSession(prisma, other.accountId);
 
     const room = await prisma.room.create({
       data: {
         venueName: 'Edit Studio',
-        address: `${uniqueSuffix} Edit St`,
+        address: `${suffix} Edit St`,
         city: 'Amsterdam',
         postcode: '1234ED',
         maxCapacity: 20,
@@ -107,7 +89,7 @@ test.describe('Class edit screen', () => {
       data: {
         firstName: 'Locked',
         lastName: 'Student',
-        email: `e2e-classedit-student-${uniqueSuffix}@test.local`,
+        email: `e2e-classedit-student-${suffix}@test.local`,
       },
     });
     studentId = student.id;
@@ -134,15 +116,13 @@ test.describe('Class edit screen', () => {
     if (studentId) await prisma.student.delete({ where: { id: studentId } });
     if (teacherId) await prisma.teacher.delete({ where: { id: teacherId } });
     await prisma.account.deleteMany({
-      where: { email: { contains: `-${uniqueSuffix}@test.local` } },
+      where: { email: { contains: `-${suffix}@test.local` } },
     });
     await prisma.$disconnect();
   });
 
   test.beforeEach(async ({ context }) => {
-    await context.addCookies([
-      { name: 'fair_yoga_session', value: teacherToken, url: 'http://localhost:3000' },
-    ]);
+    await context.addCookies([sessionCookie(teacherToken)]);
   });
 
   test('a draft edits fully — details and economics', async ({ page }) => {
@@ -189,9 +169,7 @@ test.describe('Class edit screen', () => {
     context,
   }) => {
     await context.clearCookies();
-    await context.addCookies([
-      { name: 'fair_yoga_session', value: otherTeacherToken, url: 'http://localhost:3000' },
-    ]);
+    await context.addCookies([sessionCookie(otherTeacherToken)]);
     await page.goto(`/class/${draftClassId}/edit`);
     await page.waitForURL((url) => url.pathname === '/', { timeout: 10_000 });
   });

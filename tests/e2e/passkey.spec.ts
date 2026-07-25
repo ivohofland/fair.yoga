@@ -1,9 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
 import { accountIdOfStudent } from './account-helpers';
+import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 
 /**
  * The passkey journey, on a real (virtual) authenticator: a student adds
@@ -19,19 +17,14 @@ import { accountIdOfStudent } from './account-helpers';
 
 const prisma = new PrismaClient();
 
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
-
-const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const slug = `e2e-passkey-${uniqueSuffix}`;
-const studentToken = crypto.randomBytes(32).toString('hex');
+const suffix = uniqueSuffix();
+const slug = `e2e-passkey-${suffix}`;
 
 let teacherId: string;
 let roomId: string;
 let classId: string;
 let studentId: string;
+let studentToken: string;
 
 test.describe('Passkey sign-in', () => {
   test.describe.configure({ mode: 'serial' });
@@ -42,8 +35,8 @@ test.describe('Passkey sign-in', () => {
       data: {
         firstName: 'Passkey',
         lastName: 'Teacher',
-        email: `e2e-passkey-teacher-${uniqueSuffix}@test.local`,
-        account: { create: { email: `e2e-passkey-teacher-${uniqueSuffix}@test.local` } },
+        email: `e2e-passkey-teacher-${suffix}@test.local`,
+        account: { create: { email: `e2e-passkey-teacher-${suffix}@test.local` } },
         bio: 'Passkey e2e fixtures',
         pageSlug: slug,
       },
@@ -53,7 +46,7 @@ test.describe('Passkey sign-in', () => {
     const room = await prisma.room.create({
       data: {
         venueName: 'Passkey Studio',
-        address: `${uniqueSuffix} Passkey St`,
+        address: `${suffix} Passkey St`,
         city: 'Amsterdam',
         postcode: '1234PK',
         floor: '1',
@@ -91,20 +84,14 @@ test.describe('Passkey sign-in', () => {
       data: {
         firstName: 'Pass',
         lastName: 'Key',
-        email: `e2e-passkey-student-${uniqueSuffix}@test.local`,
-        account: { create: { email: `e2e-passkey-student-${uniqueSuffix}@test.local` } },
+        email: `e2e-passkey-student-${suffix}@test.local`,
+        account: { create: { email: `e2e-passkey-student-${suffix}@test.local` } },
         claimedAt: new Date(),
         incomeTier: 3,
       },
     });
     studentId = student.id;
-    await prisma.session.create({
-      data: {
-        id: hashToken(studentToken),
-        accountId: await accountIdOfStudent(prisma, studentId),
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    studentToken = await seedSession(prisma, await accountIdOfStudent(prisma, studentId));
   });
 
   test.afterAll(async () => {
@@ -118,10 +105,10 @@ test.describe('Passkey sign-in', () => {
       await prisma.class.deleteMany({ where: { teacherId } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     }
-    await prisma.room.deleteMany({ where: { address: { contains: uniqueSuffix } } });
-    await prisma.student.deleteMany({ where: { email: { contains: uniqueSuffix } } });
-    await prisma.teacher.deleteMany({ where: { email: { contains: uniqueSuffix } } });
-    await prisma.account.deleteMany({ where: { email: { contains: uniqueSuffix } } });
+    await prisma.room.deleteMany({ where: { address: { contains: suffix } } });
+    await prisma.student.deleteMany({ where: { email: { contains: suffix } } });
+    await prisma.teacher.deleteMany({ where: { email: { contains: suffix } } });
+    await prisma.account.deleteMany({ where: { email: { contains: suffix } } });
     await prisma.$disconnect();
   });
 
@@ -146,9 +133,7 @@ test.describe('Passkey sign-in', () => {
     });
 
     // Signed in (session cookie), the student enrols a passkey.
-    await context.addCookies([
-      { name: 'fair_yoga_session', value: studentToken, url: 'http://localhost:3000' },
-    ]);
+    await context.addCookies([sessionCookie(studentToken)]);
     await page.goto('/account');
     await page.getByRole('button', { name: 'Add a passkey' }).click();
     await expect(page.getByText(/Passkey added/)).toBeVisible();
@@ -187,9 +172,9 @@ test.describe('Passkey sign-in', () => {
       data: {
         firstName: 'Pass',
         lastName: 'Key',
-        email: `e2e-passkey-student-${uniqueSuffix}@test.local`,
+        email: `e2e-passkey-student-${suffix}@test.local`,
         bio: 'Dual-role passkey fixtures',
-        pageSlug: `e2e-passkey-dual-${uniqueSuffix}`,
+        pageSlug: `e2e-passkey-dual-${suffix}`,
         account: { connect: { id: await accountIdOfStudent(prisma, studentId) } },
       },
     });

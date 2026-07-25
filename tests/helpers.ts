@@ -1,11 +1,15 @@
 /**
- * Shared fixture helpers for the integration suite.
+ * Shared fixture helpers for the integration AND e2e suites.
  *
  * Owns the mechanical layer most files were hand-rolling: `BASE_URL`,
- * `hashToken`, `cookie(token)`, `uniqueSuffix()`, and `seedSession(db,
- * accountId)`. Semantic fixtures (which class is open, which payment is
- * pending, what a teacher's rates are) stay in each test file so a test's
- * setup stays readable where it is used.
+ * `hashToken`, `cookie(token)`, `sessionCookie(token)`, `uniqueSuffix()`, and
+ * `seedSession(db, accountId)`. Semantic fixtures (which class is open, which
+ * payment is pending, what a teacher's rates are) stay in each test file so a
+ * test's setup stays readable where it is used.
+ *
+ * This module imports nothing from vitest and takes `PrismaClient` as a
+ * parameter rather than constructing one — that's what makes it usable from
+ * Playwright specs as-is, not just vitest's integration suite.
  *
  * Full rationale — including why there is no `makeTeacherWithSession`-style
  * wrapper — lives in `docs/technical-architecture.md`, "Testing conventions".
@@ -18,6 +22,10 @@ import type { PrismaClient } from '@prisma/client';
 
 /** The app under test — the dev server locally, the built app in CI. */
 export const BASE_URL = 'http://localhost:3000';
+
+/** Matches the production cookie name (src/lib/auth/session.ts) — the one
+ *  fact `cookie()` and `sessionCookie()` must never drift apart on. */
+const SESSION_COOKIE_NAME = 'fair_yoga_session';
 
 /** A day — comfortably longer than any run. Deliberately not the app's own
  *  lifetime (30 days, src/lib/auth/session.ts); no test depends on the value. */
@@ -34,9 +42,15 @@ export function hashToken(token: string): string {
   return encodeHexLowerCase(bytes);
 }
 
-/** Header object authenticating a request as the owner of `token`. */
+/** Header object authenticating a request as the owner of `token` — for the
+ *  integration suite's `fetch` calls. */
 export function cookie(token: string): { Cookie: string } {
-  return { Cookie: `fair_yoga_session=${token}` };
+  return { Cookie: `${SESSION_COOKIE_NAME}=${token}` };
+}
+
+/** Playwright-shaped counterpart to `cookie()` — for `context.addCookies([...])`. */
+export function sessionCookie(token: string): { name: string; value: string; url: string } {
+  return { name: SESSION_COOKIE_NAME, value: token, url: BASE_URL };
 }
 
 /**

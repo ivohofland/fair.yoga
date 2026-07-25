@@ -1,8 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
+import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 
 /**
  * The account-hybrid headline: a teacher attends another teacher's class
@@ -13,18 +11,13 @@ import { encodeHexLowerCase } from '@oslojs/encoding';
 
 const prisma = new PrismaClient();
 
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
-
-const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const hostSlug = `e2e-hybrid-host-${uniqueSuffix}`;
-const guestToken = crypto.randomBytes(32).toString('hex');
+const suffix = uniqueSuffix();
+const hostSlug = `e2e-hybrid-host-${suffix}`;
 
 let hostTeacherId: string;
 let guestAccountId: string;
-const onlookerToken = crypto.randomBytes(32).toString('hex');
+let guestToken: string;
+let onlookerToken: string;
 let roomId: string;
 let classId: string;
 
@@ -39,10 +32,10 @@ test.describe('Account hybrid: teacher joins a class', () => {
       data: {
         firstName: 'Hybrid',
         lastName: 'Host',
-        email: `e2e-hybrid-host-${uniqueSuffix}@test.local`,
+        email: `e2e-hybrid-host-${suffix}@test.local`,
         bio: 'Host fixtures',
         pageSlug: hostSlug,
-        account: { create: { email: `e2e-hybrid-host-${uniqueSuffix}@test.local` } },
+        account: { create: { email: `e2e-hybrid-host-${suffix}@test.local` } },
       },
     });
     hostTeacherId = host.id;
@@ -50,7 +43,7 @@ test.describe('Account hybrid: teacher joins a class', () => {
     const room = await prisma.room.create({
       data: {
         venueName: 'Hybrid Studio',
-        address: `${uniqueSuffix} Hybrid St`,
+        address: `${suffix} Hybrid St`,
         city: 'Amsterdam',
         postcode: '1234HY',
         floor: '1',
@@ -89,38 +82,26 @@ test.describe('Account hybrid: teacher joins a class', () => {
       data: {
         firstName: 'Guest',
         lastName: 'Teacher',
-        email: `e2e-hybrid-guest-${uniqueSuffix}@test.local`,
+        email: `e2e-hybrid-guest-${suffix}@test.local`,
         bio: 'Guest fixtures',
-        pageSlug: `e2e-hybrid-guest-${uniqueSuffix}`,
-        account: { create: { email: `e2e-hybrid-guest-${uniqueSuffix}@test.local` } },
+        pageSlug: `e2e-hybrid-guest-${suffix}`,
+        account: { create: { email: `e2e-hybrid-guest-${suffix}@test.local` } },
       },
     });
     guestAccountId = guest.accountId;
-    await prisma.session.create({
-      data: {
-        id: hashToken(guestToken),
-        accountId: guestAccountId,
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    guestToken = await seedSession(prisma, guestAccountId);
 
     // A student-only account, for the mirror redirect assertion.
     const onlooker = await prisma.student.create({
       data: {
         firstName: 'Onlooker',
         lastName: 'Student',
-        email: `e2e-hybrid-onlooker-${uniqueSuffix}@test.local`,
+        email: `e2e-hybrid-onlooker-${suffix}@test.local`,
         claimedAt: new Date(),
-        account: { create: { email: `e2e-hybrid-onlooker-${uniqueSuffix}@test.local` } },
+        account: { create: { email: `e2e-hybrid-onlooker-${suffix}@test.local` } },
       },
     });
-    await prisma.session.create({
-      data: {
-        id: hashToken(onlookerToken),
-        accountId: onlooker.accountId!,
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    onlookerToken = await seedSession(prisma, onlooker.accountId!);
   });
 
   test.afterAll(async () => {
@@ -130,10 +111,10 @@ test.describe('Account hybrid: teacher joins a class', () => {
     await prisma.session.deleteMany({ where: { accountId: guestAccountId } });
     await prisma.class.deleteMany({ where: { teacherId: hostTeacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId: hostTeacherId } });
-    await prisma.room.deleteMany({ where: { address: { contains: uniqueSuffix } } });
-    await prisma.student.deleteMany({ where: { email: { contains: uniqueSuffix } } });
-    await prisma.teacher.deleteMany({ where: { email: { contains: uniqueSuffix } } });
-    await prisma.account.deleteMany({ where: { email: { contains: uniqueSuffix } } });
+    await prisma.room.deleteMany({ where: { address: { contains: suffix } } });
+    await prisma.student.deleteMany({ where: { email: { contains: suffix } } });
+    await prisma.teacher.deleteMany({ where: { email: { contains: suffix } } });
+    await prisma.account.deleteMany({ where: { email: { contains: suffix } } });
     await prisma.$disconnect();
   });
 
@@ -142,17 +123,13 @@ test.describe('Account hybrid: teacher joins a class', () => {
     context,
   }) => {
     // Teacher-only session on a student surface → teacher home.
-    await context.addCookies([
-      { name: 'fair_yoga_session', value: guestToken, url: 'http://localhost:3000' },
-    ]);
+    await context.addCookies([sessionCookie(guestToken)]);
     await page.goto('/bookings');
     await page.waitForURL((url) => url.pathname === '/', { timeout: 10_000 });
 
     // Student-only session on a teacher surface → their bookings.
     await context.clearCookies();
-    await context.addCookies([
-      { name: 'fair_yoga_session', value: onlookerToken, url: 'http://localhost:3000' },
-    ]);
+    await context.addCookies([sessionCookie(onlookerToken)]);
     await page.goto('/inbox');
     await page.waitForURL('**/bookings', { timeout: 10_000 });
 
@@ -165,9 +142,7 @@ test.describe('Account hybrid: teacher joins a class', () => {
     page,
     context,
   }) => {
-    await context.addCookies([
-      { name: 'fair_yoga_session', value: guestToken, url: 'http://localhost:3000' },
-    ]);
+    await context.addCookies([sessionCookie(guestToken)]);
 
     // Not a dead end anymore: the join panel replaces the sign-in form.
     await page.goto(`/${hostSlug}/book/${classId}`);

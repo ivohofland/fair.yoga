@@ -13,7 +13,7 @@ import {
   generateMagicLinkToken,
   verifyMagicLinkToken,
 } from '@/lib/auth';
-import { hashToken, uniqueSuffix } from './helpers';
+import { hashToken, uniqueSuffix } from '../helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();

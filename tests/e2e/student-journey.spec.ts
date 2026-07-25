@@ -1,9 +1,7 @@
 import { test, expect, type BrowserContext } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
 import { accountIdOfStudent } from './account-helpers';
+import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 
 /**
  * The student's side of a contested class, end to end through the UI:
@@ -13,17 +11,9 @@ import { accountIdOfStudent } from './account-helpers';
 
 const prisma = new PrismaClient();
 
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
-
-const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const slug = `e2e-sjourney-${uniqueSuffix}`;
-const tokens = {
-  alice: crypto.randomBytes(32).toString('hex'),
-  bram: crypto.randomBytes(32).toString('hex'),
-};
+const suffix = uniqueSuffix();
+const slug = `e2e-sjourney-${suffix}`;
+let tokens: { alice: string; bram: string };
 
 let teacherId: string;
 let roomId: string;
@@ -32,9 +22,7 @@ let aliceId: string;
 let bramId: string;
 
 async function signIn(context: BrowserContext, token: string): Promise<void> {
-  await context.addCookies([
-    { name: 'fair_yoga_session', value: token, url: 'http://localhost:3000' },
-  ]);
+  await context.addCookies([sessionCookie(token)]);
 }
 
 async function bookViaApi(token: string): Promise<number> {
@@ -55,8 +43,8 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
       data: {
         firstName: 'Contested',
         lastName: 'Teacher',
-        email: `e2e-sjourney-teacher-${uniqueSuffix}@test.local`,
-        account: { create: { email: `e2e-sjourney-teacher-${uniqueSuffix}@test.local` } },
+        email: `e2e-sjourney-teacher-${suffix}@test.local`,
+        account: { create: { email: `e2e-sjourney-teacher-${suffix}@test.local` } },
         bio: 'One-seat classes for waitlist e2e',
         pageSlug: slug,
       },
@@ -66,7 +54,7 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     const room = await prisma.room.create({
       data: {
         venueName: 'Tiny Studio',
-        address: `${uniqueSuffix} Waitlist St`,
+        address: `${suffix} Waitlist St`,
         city: 'Amsterdam',
         postcode: '1234WS',
         floor: '1',
@@ -99,13 +87,13 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     });
     classId = cls.id;
 
-    const mkStudent = async (first: string, token: string) => {
+    const mkStudent = async (first: string): Promise<{ id: string; token: string }> => {
       const student = await prisma.student.create({
         data: {
           firstName: first,
           lastName: 'Student',
-          email: `e2e-sjourney-${first.toLowerCase()}-${uniqueSuffix}@test.local`,
-          account: { create: { email: `e2e-sjourney-${first.toLowerCase()}-${uniqueSuffix}@test.local` } },
+          email: `e2e-sjourney-${first.toLowerCase()}-${suffix}@test.local`,
+          account: { create: { email: `e2e-sjourney-${first.toLowerCase()}-${suffix}@test.local` } },
           incomeTier: 3,
           claimedAt: new Date(),
           // Established students: they book via API in these fixtures and
@@ -113,17 +101,14 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
           tierSelectedAt: new Date(),
         },
       });
-      await prisma.session.create({
-        data: {
-          id: hashToken(token),
-          accountId: await accountIdOfStudent(prisma, student.id),
-          expiresAt: new Date(Date.now() + 86400000),
-        },
-      });
-      return student.id;
+      const token = await seedSession(prisma, await accountIdOfStudent(prisma, student.id));
+      return { id: student.id, token };
     };
-    aliceId = await mkStudent('Alice', tokens.alice);
-    bramId = await mkStudent('Bram', tokens.bram);
+    const alice = await mkStudent('Alice');
+    const bram = await mkStudent('Bram');
+    aliceId = alice.id;
+    bramId = bram.id;
+    tokens = { alice: alice.token, bram: bram.token };
   });
 
   test.afterAll(async () => {

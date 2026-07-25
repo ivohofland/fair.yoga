@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { uniqueSuffix } from './helpers';
+import { uniqueSuffix } from '../helpers';
 import { createSession, validateSession } from '@/lib/auth';
 import { transitionClass, completeClass } from '@/services/class-lifecycle';
 import { markPaymentPaid, getPaymentsForClass, getOutstandingPayments } from '@/services/payments';

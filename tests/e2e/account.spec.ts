@@ -1,10 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
 import fs from 'fs/promises';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
 import { accountIdOfStudent } from './account-helpers';
+import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 
 /**
  * GDPR through the UI: the data export downloads real JSON, and account
@@ -13,17 +11,12 @@ import { accountIdOfStudent } from './account-helpers';
 
 const prisma = new PrismaClient();
 
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
-
-const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const studentEmail = `e2e-account-${uniqueSuffix}@test.local`;
-const sessionToken = crypto.randomBytes(32).toString('hex');
+const suffix = uniqueSuffix();
+const studentEmail = `e2e-account-${suffix}@test.local`;
 
 let studentId: string;
 let teacherId: string;
+let sessionToken: string;
 
 test.describe('Account — GDPR export and deletion', () => {
   test.describe.configure({ mode: 'serial' });
@@ -46,26 +39,20 @@ test.describe('Account — GDPR export and deletion', () => {
       data: {
         firstName: 'Privacy',
         lastName: 'Teacher',
-        email: `e2e-account-teacher-${uniqueSuffix}@test.local`,
-        account: { create: { email: `e2e-account-teacher-${uniqueSuffix}@test.local` } },
+        email: `e2e-account-teacher-${suffix}@test.local`,
+        account: { create: { email: `e2e-account-teacher-${suffix}@test.local` } },
         bio: 'Privacy settings fixture',
-        pageSlug: `e2e-account-teacher-${uniqueSuffix}`,
+        pageSlug: `e2e-account-teacher-${suffix}`,
       },
     });
     teacherId = teacher.id;
     await prisma.teacherStudent.create({ data: { teacherId, studentId } });
-    await prisma.session.create({
-      data: {
-        id: hashToken(sessionToken),
-        accountId: await accountIdOfStudent(prisma, studentId),
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    sessionToken = await seedSession(prisma, await accountIdOfStudent(prisma, studentId));
   });
 
   test.afterAll(async () => {
     await prisma.session.deleteMany({ where: { accountId: await accountIdOfStudent(prisma, studentId) } });
-    await prisma.magicLinkToken.deleteMany({ where: { email: { contains: uniqueSuffix } } });
+    await prisma.magicLinkToken.deleteMany({ where: { email: { contains: suffix } } });
     if (studentId) {
       await prisma.studentPrivacy.deleteMany({ where: { studentId } });
     }
@@ -75,15 +62,13 @@ test.describe('Account — GDPR export and deletion', () => {
     }
     await prisma.student.delete({ where: { id: studentId } });
     await prisma.account.deleteMany({
-      where: { email: `e2e-account-teacher-${uniqueSuffix}@test.local` },
+      where: { email: `e2e-account-teacher-${suffix}@test.local` },
     });
     await prisma.$disconnect();
   });
 
   test.beforeEach(async ({ context }) => {
-    await context.addCookies([
-      { name: 'fair_yoga_session', value: sessionToken, url: 'http://localhost:3000' },
-    ]);
+    await context.addCookies([sessionCookie(sessionToken)]);
   });
 
   test('the data export downloads as real JSON', async ({ page }) => {

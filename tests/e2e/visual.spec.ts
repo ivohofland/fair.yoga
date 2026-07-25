@@ -1,11 +1,9 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
-import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
 import { accountIdOfTeacher } from './account-helpers';
+import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 
 /**
  * Visual regression: screenshot baselines for the design system's key
@@ -28,23 +26,16 @@ test.skip(Boolean(process.env.CI) && !hasBaselines, 'no visual baselines for thi
 
 const prisma = new PrismaClient();
 
-function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
-}
-
-const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const slug = `e2e-visual-${uniqueSuffix}`;
-const teacherToken = crypto.randomBytes(32).toString('hex');
+const suffix = uniqueSuffix();
+const slug = `e2e-visual-${suffix}`;
 
 let teacherId: string;
+let teacherToken: string;
 let roomId: string;
 let classId: string;
 
 async function signIn(context: BrowserContext): Promise<void> {
-  await context.addCookies([
-    { name: 'fair_yoga_session', value: teacherToken, url: 'http://localhost:3000' },
-  ]);
+  await context.addCookies([sessionCookie(teacherToken)]);
 }
 
 /** All caption/label text — relative dates and timestamps live there. */
@@ -122,25 +113,19 @@ test.describe('Visual regression', () => {
       data: {
         firstName: 'Visual',
         lastName: 'Teacher',
-        email: `e2e-visual-${uniqueSuffix}@test.local`,
-        account: { create: { email: `e2e-visual-${uniqueSuffix}@test.local` } },
+        email: `e2e-visual-${suffix}@test.local`,
+        account: { create: { email: `e2e-visual-${suffix}@test.local` } },
         bio: 'Calm vinyasa in a warm room.',
         pageSlug: slug,
       },
     });
     teacherId = teacher.id;
-    await prisma.session.create({
-      data: {
-        id: hashToken(teacherToken),
-        accountId: await accountIdOfTeacher(prisma, teacherId),
-        expiresAt: new Date(Date.now() + 86400000),
-      },
-    });
+    teacherToken = await seedSession(prisma, await accountIdOfTeacher(prisma, teacherId));
 
     const room = await prisma.room.create({
       data: {
         venueName: 'Visual Studio',
-        address: `${uniqueSuffix} Visual St`,
+        address: `${suffix} Visual St`,
         city: 'Amsterdam',
         postcode: '1234VS',
         floor: '1',

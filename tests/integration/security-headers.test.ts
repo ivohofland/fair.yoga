@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { BASE_URL } from './helpers';
+import { BASE_URL } from '../helpers';
 
 // The header set from next.config.ts — served on every route. CSP details
 // differ between dev and prod (unsafe-eval, ws:), so assert the invariant

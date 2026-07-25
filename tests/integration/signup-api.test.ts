@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { generateMagicLinkToken } from '@/lib/auth';
-import { BASE_URL, uniqueSuffix } from './helpers';
+import { BASE_URL, uniqueSuffix } from '../helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();

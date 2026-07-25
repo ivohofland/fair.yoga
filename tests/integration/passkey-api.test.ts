@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { BASE_URL } from './helpers';
+import { BASE_URL } from '../helpers';
 
 /**
  * The verify route must reject an unsafe redirect at the request boundary
