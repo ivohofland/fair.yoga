@@ -5,6 +5,7 @@ import {
   passkeyAuthVerifySchema,
   createClassSchema,
   updateClassSchema,
+  updateClassTemplateSchema,
   updateTeacherSchema,
   isSafeRelativePath,
   MAX_CLASS_SIZE,
@@ -140,6 +141,34 @@ describe('updateClassSchema', () => {
       'roomCost',
       'startTime',
       'targetRate',
+    ]);
+  });
+});
+
+describe('updateClassTemplateSchema', () => {
+  // Mirrors the updateClassSchema key-set test. Less load-bearing here —
+  // ClassTemplateUpdateData is a straight z.infer with no intersection, so the
+  // reverse pin has no blind spot to compensate for — but it fails naming the
+  // field, and it guards against someone introducing an intersection later.
+  //
+  // A failure here is a decision, not a chore: adding a key grants teachers
+  // write access to that column. Read the allowlist's doc comment in
+  // class-template-lifecycle.ts before updating this list.
+  it('accepts exactly the teacher-editable field set', () => {
+    expect(Object.keys(updateClassTemplateSchema.shape).sort()).toEqual([
+      'autoCancelCheck',
+      'cancelDeadline',
+      'classType',
+      'dayOfWeek',
+      'description',
+      'durationMinutes',
+      'maxStudents',
+      'minRate',
+      'minStudents',
+      'roomCost',
+      'startTime',
+      'targetRate',
+      'teacherRoomId',
     ]);
   });
 });
