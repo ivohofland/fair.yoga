@@ -36,7 +36,7 @@ export function ArchiveStudioTemplateButton({ templateId, isArchived }: ArchiveS
         // Only the archiving direction gets a message — un-archiving deletes
         // nothing and needs no explanation.
         if (!isArchived) {
-          setMessage(archiveStudioMessage(data.deleted));
+          setMessage(archiveStudioMessage(data.deleted, data.remaining));
         }
         router.refresh();
       } else {

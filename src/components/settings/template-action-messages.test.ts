@@ -54,19 +54,43 @@ describe('archiveMessage', () => {
 });
 
 describe('archiveStudioMessage', () => {
-  it('nothing deleted — nothing was ever scheduled', () => {
-    expect(archiveStudioMessage(0)).toBe('Nothing from this template was scheduled.');
+  it('nothing deleted, nothing remaining — nothing was ever scheduled', () => {
+    expect(archiveStudioMessage(0, 0)).toBe('Nothing from this template was scheduled.');
   });
 
-  it('one deleted — singular "class"', () => {
-    expect(archiveStudioMessage(1)).toBe(
+  it('nothing deleted, one remaining — singular "class", no pronoun, no verb', () => {
+    expect(archiveStudioMessage(0, 1)).toBe(
+      '1 class still on the schedule — cancel individually if needed.',
+    );
+  });
+
+  it('nothing deleted, many remaining — plural "classes", no pronoun, no verb', () => {
+    expect(archiveStudioMessage(0, 3)).toBe(
+      '3 classes still on the schedule — cancel individually if needed.',
+    );
+  });
+
+  it('some deleted, nothing remaining — fully cleared, singular "class"', () => {
+    expect(archiveStudioMessage(1, 0)).toBe(
       'Deleted 1 scheduled studio class. Nothing from this template is scheduled any more.',
     );
   });
 
-  it('many deleted — plural "classes"', () => {
-    expect(archiveStudioMessage(3)).toBe(
+  it('some deleted, nothing remaining — fully cleared, plural "classes"', () => {
+    expect(archiveStudioMessage(3, 0)).toBe(
       'Deleted 3 scheduled studio classes. Nothing from this template is scheduled any more.',
+    );
+  });
+
+  it('some deleted, one remaining — singular "class" on both counts, no pronoun, no verb', () => {
+    expect(archiveStudioMessage(1, 1)).toBe(
+      'Deleted 1 scheduled studio class. 1 class still on the schedule — cancel individually if needed.',
+    );
+  });
+
+  it('some deleted, many remaining — plural "classes" on both counts, no pronoun, no verb', () => {
+    expect(archiveStudioMessage(2, 3)).toBe(
+      'Deleted 2 scheduled studio classes. 3 classes still on the schedule — cancel individually if needed.',
     );
   });
 });
