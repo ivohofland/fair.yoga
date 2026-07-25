@@ -247,7 +247,7 @@ export type ClassUpdateData =
  * `updateMany` can actually write on `Class`.
  *
  * Because `ClassUpdateData` is derived, a new schema field lands in `keyof
- * ClassUpdateData`; if it has no matching column this alias resolves to that
+ * ClassUpdateData`; if it has no matching column this pin resolves to that
  * field's name instead of `true`, and the assignment below stops compiling
  * with the offending field named in the error. A hand-declared type could not
  * do this — the unknown field would never appear in `keyof` at all.
@@ -257,13 +257,6 @@ export type ClassUpdateData =
  * (`registrations`, `notifications`, …) that `updateMany` rejects, so pinning
  * against it would wave through a schema field named after a relation.
  */
-// `void` because this repo's eslint `no-unused-vars` has no `varsIgnorePattern`
-// — the const exists only to force the conditional type above to be evaluated.
-// It is also what makes the check exist at all: a conditional type alias that
-// nothing assigns is never instantiated, so deleting any of the const/void
-// pairs in this section removes its pin silently, with nothing reporting the
-// loss. Named for what it checks — columns exist — not for schema agreement,
-// which is the pin below it.
 const _classUpdateColumnsExist: NoneOf<
   Exclude<keyof ClassUpdateData, keyof Prisma.ClassUncheckedUpdateManyInput>
 > = true;

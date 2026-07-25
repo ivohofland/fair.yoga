@@ -2,8 +2,22 @@
  * Class Template updates — the teacher-editable boundary for
  * `PUT /api/class-templates/[id]`.
  *
- * The sibling of `class-lifecycle.ts`'s update section, for the same reason
- * (#82 is #79 one route over) and with the same five pins.
+ * The sibling of `class-lifecycle.ts`'s update section (#82 is #79 one route
+ * over), with the same five pins. Four things deliberately differ, and are
+ * worth knowing before reading this as a mirror:
+ *
+ *   - Ownership lives here, not in the route. `updateClass` takes no
+ *     `teacherId` and its route checks ownership; this takes one and checks it
+ *     itself, so the guard travels with the function.
+ *   - `no_fields` is a key count here, not a defined-value scan. `updateClass`
+ *     uses `Object.values(...).some(v => v !== undefined)` because a zero-count
+ *     `updateMany` landed in an unreachable branch as a 500; `update` has no
+ *     such branch, and the key count is what the pre-service route did.
+ *   - The column pins reference the *Many* input while the write below is
+ *     single-record `update`. That is a deliberate tightening, not a match.
+ *   - The delete-between-read-and-write race is unhandled here. `updateClass`
+ *     went to some length for it (#72); this window throws P2025 as a 500.
+ *     Pre-existing, and out of scope for #82.
  */
 
 import type { Prisma, PrismaClient, ClassTemplate } from '@prisma/client';
@@ -27,13 +41,15 @@ import { syncTemplateInstances, type TemplateSyncResult } from './template-sync'
 export type ClassTemplateUpdateData = z.infer<typeof updateClassTemplateSchema>;
 
 /**
- * Compile-time pin: every field the wire schema accepts must be a column
- * `update` can actually write on `ClassTemplate`.
+ * Compile-time pin: every field the wire schema accepts must name a column
+ * `update` can write on `ClassTemplate` — the write below checks the types,
+ * this checks the name, and only this catches a name Prisma has never heard
+ * of.
  *
  * The reference is the *Many* input deliberately, as on the class route: the
- * single-record type additionally accepts nested relation writes (`classes`,
- * `teacher`, …) that a plain field update should never receive, so pinning
- * against it would wave through a schema field named after a relation.
+ * single-record type additionally accepts a nested relation write (`classes`)
+ * that a plain field update should never receive, so pinning against it would
+ * wave through a schema field named after that relation.
  */
 const _templateUpdateColumnsExist: NoneOf<
   Exclude<keyof ClassTemplateUpdateData, keyof Prisma.ClassTemplateUncheckedUpdateManyInput>
@@ -44,9 +60,9 @@ void _templateUpdateColumnsExist;
  * The fields a teacher may change on their own template via
  * `PUT /api/class-templates/[id]`.
  *
- * Adding a member is how a new schema field gets authorized. Three members
- * already here carry consequences beyond the template row — check what you are
- * joining before adding a fourth:
+ * Adding a member is how a new schema field gets authorized. Three kinds of
+ * member already here carry consequences beyond the template row — check what
+ * you are joining before adding another:
  *   - `dayOfWeek`     → `syncTemplateInstances` DELETES generated instances on
  *                       the old day (a different day is a different class) and
  *                       the generator refills on the new one. The most

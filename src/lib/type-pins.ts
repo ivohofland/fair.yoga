@@ -23,3 +23,30 @@
  * and two offenders correctly.
  */
 export type NoneOf<T> = [T] extends [never] ? true : T;
+
+/**
+ * `NoneOf`'s own pin. Ten security pins across two service modules now resolve
+ * through this one alias, so a vacuous `NoneOf` defangs all of them at once —
+ * measured: rewriting the body as `[T] extends [T] ? true : T` keeps `T`
+ * referenced (so lint stays green), keeps `tsc` at exit 0, and lets a `status`
+ * field reach `updateMany` with every pin still reporting success.
+ *
+ * The call sites cannot catch that. They all instantiate `NoneOf<never>`, so
+ * they pin the *passing* direction only — break the brackets and they redden
+ * immediately, but hollow the alias out and they go quiet. These three lines
+ * pin the failing direction, which is the one that carries the security value.
+ *
+ * The `@ts-expect-error` directives are the assertion: if `NoneOf` ever stops
+ * rejecting a non-`never` argument, the directive becomes unused and TypeScript
+ * fails the build on that instead.
+ */
+const _noneOfAcceptsNever: NoneOf<never> = true;
+void _noneOfAcceptsNever;
+
+// @ts-expect-error `NoneOf<'x'>` is `'x'`, not `true` — a failed pin must name its offender.
+const _noneOfRejectsOne: NoneOf<'x'> = true;
+void _noneOfRejectsOne;
+
+// @ts-expect-error `NoneOf<'x' | 'y'>` is `'x' | 'y'` — two offenders must not collapse to `true`.
+const _noneOfRejectsTwo: NoneOf<'x' | 'y'> = true;
+void _noneOfRejectsTwo;
