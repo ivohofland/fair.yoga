@@ -378,8 +378,11 @@ describe('PATCH /api/class-templates/[id]', () => {
 
   // The bug #86 is actually about: after archiving, the classes must stop being
   // publicly bookable. The public page filters on `status: 'open'` and
-  // `date >= today` and never consults the template, so this is the assertion
-  // that fails if someone later "optimises" the deletion away.
+  // `date >= today` (start-of-day) and never consults the template — mirrored
+  // here, not the deletion predicate's `date: { gt: now }`, or this assertion
+  // would be tautological with the code it guards and structurally blind to
+  // the today case: the archive rule deliberately spares a class dated today,
+  // so the page's own boundary is what a survivor must be checked against.
   it('archived templates leave nothing the public booking page would show', async () => {
     const id = await newTemplate('No Longer Bookable');
 
@@ -388,10 +391,15 @@ describe('PATCH /api/class-templates/[id]', () => {
       headers: cookie(sessionToken),
     });
 
-    const stillBookable = await prisma.class.count({
-      where: { templateId: id, status: 'open', date: { gte: new Date() } },
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const stillBookable = await prisma.class.findMany({
+      where: { templateId: id, status: 'open', date: { gte: today } },
+      select: { date: true },
     });
-    expect(stillBookable).toBe(0);
+    // Today is deliberately spared by the archive rule (`date > now`), so only
+    // a survivor dated after today would mean the withdrawal failed.
+    expect(stillBookable.filter((c) => c.date.getTime() > today.getTime())).toEqual([]);
   });
 
   it('pausing deletes nothing and reports the last scheduled class', async () => {
@@ -407,7 +415,9 @@ describe('PATCH /api/class-templates/[id]', () => {
     const { data } = (await res.json()) as {
       data: { lastScheduled: { startTime: string } | null };
     };
-    expect(data.lastScheduled).not.toBeNull();
+    // `toBeNull()` alone also passes on `undefined` — assert the real value
+    // the template's own `startTime` (`templateBody`) would produce.
+    expect(data.lastScheduled?.startTime).toBe('09:30');
     expect(await prisma.class.count({ where: { templateId: id } })).toBe(before);
   });
 });

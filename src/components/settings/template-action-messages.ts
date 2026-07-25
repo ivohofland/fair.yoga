@@ -17,7 +17,11 @@ export function pauseMessage(lastScheduled: { date: Date; startTime: string } | 
  *
  * No pronoun on the "still N classes" branches ("cancel individually", not
  * "cancel them individually") — a pronoun would have to agree with `classWord`
- * too, and already drifted out of agreement once.
+ * too, and already drifted out of agreement once. The verb was the second
+ * slip: "There are still 1 class" repeats the same mistake with "are" instead
+ * of a pronoun. Rather than add a second branch to make the verb agree too,
+ * the phrasing drops the verb entirely — "1 class still on the schedule" —
+ * so there is nothing left that can fall out of agreement with `classWord`.
  */
 export function archiveMessage(deleted: number, remaining: number): string {
   const classWord = remaining === 1 ? 'class' : 'classes';
@@ -25,14 +29,14 @@ export function archiveMessage(deleted: number, remaining: number): string {
   if (deleted === 0 && remaining === 0) return 'Nothing from this template was scheduled.';
 
   if (deleted === 0) {
-    return `No unbooked classes to delete. There are still ${remaining} ${classWord} on the schedule — cancel individually if needed.`;
+    return `No unbooked classes to delete. ${remaining} ${classWord} still on the schedule — cancel individually if needed.`;
   }
 
   if (remaining === 0) {
     return 'Classes on the schedule without bookings are now deleted. Nothing from this template is scheduled any more.';
   }
 
-  return `Classes on the schedule without bookings are now deleted. There are still ${remaining} ${classWord} on the schedule — cancel individually if needed.`;
+  return `Classes on the schedule without bookings are now deleted. ${remaining} ${classWord} still on the schedule — cancel individually if needed.`;
 }
 
 /**

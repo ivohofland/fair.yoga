@@ -158,6 +158,23 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     if (!result.ok) throw new Error('expected ok');
     expect(result.template.isArchived).toBe(true);
     expect(await prisma.studioClass.count({ where: { id: c.id } })).toBe(1);
+    // The literal `remaining: 0` this replaced would have been wrong here.
+    expect(result.remaining).toBe(1);
+  });
+
+  it("reports deleted: 0, remaining: 1 when today's class is the only one scheduled", async () => {
+    const t = await makeTemplate('Today Only');
+    await makeClass(t.id, { date: today() });
+
+    const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    // Nothing was eligible for deletion (today is spared) and the one class
+    // on the schedule is today's — the confirmation must say so, not "nothing
+    // scheduled any more".
+    expect(result.deleted).toBe(0);
+    expect(result.remaining).toBe(1);
   });
 
   it('keeps past classes', async () => {
@@ -172,14 +189,16 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     expect(await prisma.studioClass.count({ where: { id: c.id } })).toBe(1);
   });
 
-  it('reports deleted and remaining counts — remaining is always 0', async () => {
+  it('reports deleted and remaining counts — remaining is 0 with nothing scheduled today', async () => {
     const t = await makeTemplate('Counts');
     const unbooked1 = await makeClass(t.id, { date: futureOn(5) });
     const unbooked2 = await makeClass(t.id, { date: futureOn(6) });
     const pastClass = await makeClass(t.id, { date: past() });
     // Future, uncancelled classes have no registrations to consult at all —
-    // there is no charged-status filter, so every one of them is deletable
-    // and `remaining` can never be anything but 0.
+    // there is no charged-status filter, so every one of them beyond today is
+    // deletable. None of these is dated today, so `remaining` — which now
+    // only ever counts a today survivor — is 0 here (see the "keeps today's
+    // class" case above for when it is not).
     const alreadyCancelled = await makeClass(t.id, {
       date: futureOn(7),
       cancelledAt: new Date(),

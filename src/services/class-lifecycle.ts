@@ -128,6 +128,11 @@ export async function transitionClass(
  * rule in `class-template-lifecycle.ts` decides what is safe to delete by the
  * same list — a class carrying any of these is one a student is still on the
  * hook for, and must not be removed silently.
+ *
+ * A plain, mutable `RegistrationStatus[]` — not `as const` — because that
+ * archive rule's delete predicate passes it straight to Prisma's `in` filter,
+ * which wants `RegistrationStatus[]`, not a readonly tuple (same reasoning as
+ * `SCHEDULED_STATUSES` in `class-template-lifecycle.ts`).
  */
 export const CHARGED_STATUSES: RegistrationStatus[] = ['registered', 'attended', 'no_show', 'late_cancel'];
 

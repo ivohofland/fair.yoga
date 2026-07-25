@@ -289,7 +289,8 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
     const { data } = (await res.json()) as {
       data: { lastScheduled: { startTime: string } | null };
     };
-    expect(data.lastScheduled).not.toBeNull();
+    // `toBeNull()` alone also passes on `undefined` — assert the seeded value.
+    expect(data.lastScheduled?.startTime).toBe('19:00');
     expect(await prisma.studioClass.count({ where: { id: later.id } })).toBe(1);
   });
 });

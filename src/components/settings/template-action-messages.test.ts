@@ -22,15 +22,15 @@ describe('archiveMessage', () => {
     expect(archiveMessage(0, 0)).toBe('Nothing from this template was scheduled.');
   });
 
-  it('nothing deleted, one remaining — singular "class", no pronoun', () => {
+  it('nothing deleted, one remaining — singular "class", no pronoun, no verb', () => {
     expect(archiveMessage(0, 1)).toBe(
-      'No unbooked classes to delete. There are still 1 class on the schedule — cancel individually if needed.',
+      'No unbooked classes to delete. 1 class still on the schedule — cancel individually if needed.',
     );
   });
 
-  it('nothing deleted, many remaining — plural "classes", no pronoun', () => {
+  it('nothing deleted, many remaining — plural "classes", no pronoun, no verb', () => {
     expect(archiveMessage(0, 3)).toBe(
-      'No unbooked classes to delete. There are still 3 classes on the schedule — cancel individually if needed.',
+      'No unbooked classes to delete. 3 classes still on the schedule — cancel individually if needed.',
     );
   });
 
@@ -40,15 +40,15 @@ describe('archiveMessage', () => {
     );
   });
 
-  it('some deleted, one remaining — singular "class", no pronoun', () => {
+  it('some deleted, one remaining — singular "class", no pronoun, no verb', () => {
     expect(archiveMessage(3, 1)).toBe(
-      'Classes on the schedule without bookings are now deleted. There are still 1 class on the schedule — cancel individually if needed.',
+      'Classes on the schedule without bookings are now deleted. 1 class still on the schedule — cancel individually if needed.',
     );
   });
 
-  it('some deleted, many remaining — plural "classes", no pronoun', () => {
+  it('some deleted, many remaining — plural "classes", no pronoun, no verb', () => {
     expect(archiveMessage(2, 3)).toBe(
-      'Classes on the schedule without bookings are now deleted. There are still 3 classes on the schedule — cancel individually if needed.',
+      'Classes on the schedule without bookings are now deleted. 3 classes still on the schedule — cancel individually if needed.',
     );
   });
 });

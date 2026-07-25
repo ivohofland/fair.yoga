@@ -386,6 +386,25 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     if (!result.ok) throw new Error('expected ok');
     expect(result.template.isArchived).toBe(true);
     expect(await prisma.class.count({ where: { id: c.id } })).toBe(1);
+    // A `remaining` still keyed on the delete's `date > now` boundary would
+    // read 0 here and tell the teacher nothing is scheduled while this exact
+    // class stays open on their public page.
+    expect(result.remaining).toBe(1);
+  });
+
+  it("reports deleted: 0, remaining: 1 when today's class is the only one scheduled", async () => {
+    const t = await makeTemplate('Today Only');
+    await makeClass(t.id, { date: today() });
+
+    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    // Nothing was eligible for deletion (today is spared) and the one class
+    // on the schedule is today's — the confirmation must say so, not "nothing
+    // scheduled any more".
+    expect(result.deleted).toBe(0);
+    expect(result.remaining).toBe(1);
   });
 
   it('keeps past classes', async () => {

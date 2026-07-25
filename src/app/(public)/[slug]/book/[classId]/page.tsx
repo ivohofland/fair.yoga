@@ -4,20 +4,13 @@ import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { Icon } from '@/components/ui/icon';
 import { estimateTierPrices, estimateAttendanceSpread } from '@/lib/tier-estimates';
-import { formatRoomLocation } from '@/lib/format';
+import { formatRoomLocation, formatDayHeader } from '@/lib/format';
 import { PriceRange, PersonalPriceRange } from '@/components/booking/price-range';
 import { BookingFlow } from '@/components/booking/booking-flow';
 import { BookingSignIn } from '@/components/booking/booking-sign-in';
 import { JoinAsStudent } from '@/components/booking/join-as-student';
 
 export const dynamic = 'force-dynamic';
-
-function formatDayHeader(date: Date): string {
-  const d = new Date(date);
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${days[d.getUTCDay()]}, ${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
-}
 
 // Tier selection + confirmation — the most philosophically important screen.
 export default async function BookClassPage({

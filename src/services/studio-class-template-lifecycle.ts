@@ -18,10 +18,12 @@
  *   - Where the class family excludes any class with a registration in a
  *     CHARGED status, the studio family has no registrations to consult at
  *     all — `studentCount` is a plain, unconnected `Int?`. So every future
- *     uncancelled studio class is deletable, and `remaining` — the count of
- *     the same predicate after the delete — is always 0. It is returned as a
- *     literal rather than queried: querying would re-run the same predicate
- *     the delete just emptied and could only ever find zero rows.
+ *     uncancelled studio class the delete's `date > now` boundary can reach is
+ *     deletable. That boundary deliberately spares a class dated today
+ *     (`StudioClass.date` is `@db.Date`, i.e. midnight UTC, so today's row is
+ *     already `< now` past 00:00) — the same carve-out the class family has —
+ *     so `remaining` is a real query keyed at 00:00 UTC today, not a hardcoded
+ *     0: today's survivor is the one row it can ever find.
  */
 
 import type { PrismaClient, StudioClassTemplate } from '@prisma/client';
@@ -58,12 +60,15 @@ const scheduledWhere = (templateId: string, now: Date) => ({
  * Unlike the class family's `pauseOrResumeTemplate`, resuming here does not
  * call a generator. `generateStudioClassInstances` (`studio-class-generator.
  * ts`) has no per-template equivalent of `generateInstancesForTemplate` — it
- * sweeps every active, unarchived template teacher-wide — and that was true
- * of the route this replaces as well: the pre-existing `PATCH` toggle only
- * ever flipped `isActive` and left materialisation to the cron sweep. Calling
- * the teacher-wide sweep from here would generate a window for every other
- * active studio template too, not just the one being resumed — a bigger
- * behaviour change than this task is about.
+ * takes no `teacherId` at all and sweeps every active, unarchived template
+ * platform-wide, across every teacher, not just teacher-wide — and that was
+ * true of the route this replaces as well: the pre-existing `PATCH` toggle
+ * only ever flipped `isActive` and left materialisation to the cron sweep.
+ * Calling the platform-wide sweep from here would generate a window for every
+ * other teacher's active studio template too, not just the one being resumed
+ * — a bigger behaviour change than this task is about. The user-visible
+ * consequence of leaving it uncalled: a resumed studio template shows an
+ * empty window until the next hourly cron sweep fills it back in.
  */
 export async function pauseOrResumeStudioTemplate(
   db: PrismaClient,
@@ -119,6 +124,8 @@ export async function archiveOrUnarchiveStudioTemplate(
 
     if (!archiving) return { ok: true as const, template: updated, deleted: 0, remaining: 0 };
 
+    const now = new Date();
+
     // Deliberately one statement, not a `findMany` followed by a
     // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
     // class get cancelled in the gap between them under READ COMMITTED, and
@@ -129,12 +136,23 @@ export async function archiveOrUnarchiveStudioTemplate(
     // number of rows that actually matched then — not a stale count from an
     // earlier read. Do not "optimise" this back into a read-then-delete.
     const { count: deleted } = await tx.studioClass.deleteMany({
-      where: scheduledWhere(templateId, new Date()),
+      where: scheduledWhere(templateId, now),
     });
 
-    // Always 0: every row `scheduledWhere` can match is, by definition,
-    // deletable — there is no charged-status filter here the way the class
-    // family has, so nothing scheduled ever survives the delete above.
-    return { ok: true as const, template: updated, deleted, remaining: 0 };
+    // The delete above deliberately spares a class dated today (`date > now`
+    // excludes it once the clock passes 00:00 UTC), so `remaining` needs its
+    // own boundary at the start of today rather than reusing `scheduledWhere`
+    // — reusing it would undercount that same survivor, the exact bug fixed in
+    // `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`). No
+    // charged-status filter is needed here, unlike that sibling: `StudioClass`
+    // has no registrations to consult, so every uncancelled row in scope
+    // counts.
+    const startOfToday = new Date(now);
+    startOfToday.setUTCHours(0, 0, 0, 0);
+    const remaining = await tx.studioClass.count({
+      where: { templateId, date: { gte: startOfToday }, cancelledAt: null },
+    });
+
+    return { ok: true as const, template: updated, deleted, remaining };
   });
 }

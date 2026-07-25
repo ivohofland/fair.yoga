@@ -7,17 +7,10 @@ import { RegistrationProgress } from '@/components/ui/registration-progress';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import { estimateTierPrices } from '@/lib/tier-estimates';
-import { formatRoomLocation } from '@/lib/format';
+import { formatRoomLocation, formatDayHeader } from '@/lib/format';
 import { PriceRange } from '@/components/booking/price-range';
 
 export const dynamic = 'force-dynamic';
-
-function formatDayHeader(date: Date): string {
-  const d = new Date(date);
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${days[d.getUTCDay()]}, ${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
-}
 
 // The teacher's public booking page: profile + upcoming open classes with
 // honest per-tier price estimates. This is the front door of the whole

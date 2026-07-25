@@ -389,7 +389,21 @@ export async function archiveOrUnarchiveTemplate(
       },
     });
 
-    const remaining = await tx.class.count({ where: scheduledWhere(templateId, now) });
+    // `remaining` cannot reuse `scheduledWhere`'s `date: { gt: now }` boundary
+    // the delete just used. `Class.date` is `@db.Date` (midnight UTC), so a
+    // class dated today is already `< now` for the rest of the day — the
+    // delete deliberately spares it, but counting with the same boundary
+    // would then exclude that same survivor. The public booking page decides
+    // bookability with `date: { gte: today }` at start-of-day
+    // (`src/app/(public)/[slug]/page.tsx`), so counting from that same
+    // start-of-day boundary is what keeps the confirmation honest: it must
+    // include today or it tells the teacher nothing is left while the class
+    // is still open on their public page.
+    const startOfToday = new Date(now);
+    startOfToday.setUTCHours(0, 0, 0, 0);
+    const remaining = await tx.class.count({
+      where: { templateId, date: { gte: startOfToday }, status: { in: SCHEDULED_STATUSES } },
+    });
 
     return { ok: true as const, template: updated, deleted, remaining };
   });
