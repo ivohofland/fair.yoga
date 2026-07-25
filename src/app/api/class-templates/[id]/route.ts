@@ -9,8 +9,8 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { updateClassTemplateSchema } from '@/lib/schemas';
-import { syncTemplateInstances } from '@/services/template-sync';
 import { generateInstancesForTemplate } from '@/services/class-generator';
+import { updateClassTemplate, type ClassTemplateUpdateData } from '@/services/class-template-lifecycle';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -41,38 +41,24 @@ export const PUT = withErrorHandler(async (
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  const template = await prisma.classTemplate.findUnique({ where: { id } });
-  if (!template) return respondError('Class template not found', 404);
-
-  if (template.teacherId !== session.teacherId) {
-    return respondError('Access denied', 403);
-  }
-
   const parsed = await parseBody(request, updateClassTemplateSchema);
   if ('error' in parsed) return parsed.error;
-  const updateData = parsed.data;
 
-  if (Object.keys(updateData).length === 0) {
-    return respondError('No valid fields to update', 400);
-  }
+  // Annotated, not inferred: this is what routes the payload through the
+  // pinned type, so a field added to the schema has to clear the allowlist
+  // in class-template-lifecycle.ts before it can reach Prisma.
+  const data: ClassTemplateUpdateData = parsed.data;
 
-  if (updateData.teacherRoomId) {
-    const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id: updateData.teacherRoomId } });
-    if (!teacherRoom || teacherRoom.teacherId !== session.teacherId) {
-      return respondError('Invalid teacher room', 400);
-    }
-  }
+  const result = await updateClassTemplate(prisma, id, session.teacherId, data);
 
-  const updated = await prisma.classTemplate.update({
-    where: { id },
-    data: updateData,
-  });
+  if (result.ok) return respondOk({ ...result.template, sync: result.sync });
 
-  // Propagate to still-mutable generated instances; anything with
-  // bookings keeps its settings (see template-sync service).
-  const sync = await syncTemplateInstances(prisma, id);
-
-  return respondOk({ ...updated, sync });
+  // Narrowed one reason at a time so each maps to the response this route
+  // returned before the service existed.
+  if (result.reason === 'not_found') return respondError('Class template not found', 404);
+  if (result.reason === 'forbidden') return respondError('Access denied', 403);
+  if (result.reason === 'no_fields') return respondError('No valid fields to update', 400);
+  return respondError('Invalid teacher room', 400);
 });
 
 
