@@ -13,12 +13,17 @@
  */
 
 import type { PrismaClient } from '@prisma/client';
-import { generateClassInstances } from './class-generator';
+import { generateInstancesForTemplate } from './class-generator';
 
 export interface TemplateSyncResult {
   /** Instances updated in place. */
   synced: number;
-  /** Wrong-day instances removed (window refilled on the new day). */
+  /**
+   * Wrong-day instances removed. The window is refilled on the new day only
+   * when the template is active — a paused template's `dayOfWeek` edit still
+   * deletes the wrong-day instances and reports that count here, but skips
+   * the refill.
+   */
   regenerated: number;
   /** Future instances left untouched because bookings locked them. */
   kept: number;
@@ -28,7 +33,10 @@ export async function syncTemplateInstances(
   db: PrismaClient,
   templateId: string,
 ): Promise<TemplateSyncResult> {
-  const template = await db.classTemplate.findUniqueOrThrow({ where: { id: templateId } });
+  const template = await db.classTemplate.findUniqueOrThrow({
+    where: { id: templateId },
+    include: { teacher: { select: { defaultTimezone: true } } },
+  });
 
   const result = await db.$transaction(async (tx) => {
     // Future generated instances; `gt: now` deliberately excludes today —
@@ -77,8 +85,20 @@ export async function syncTemplateInstances(
 
   // Refill the window after a day change (idempotent — the unique
   // (templateId, date) constraint guards against racing cron runs).
+  //
+  // Per-template, not the cron/teacher-wide `generateClassInstances`: this
+  // runs on a request path, not a job, so a failure here must not become a
+  // 500 for an edit to a template the caller never touched. The teacher-wide
+  // generator is documented (`class-generator.ts`) as existing for job-health
+  // visibility — it throws so `scheduler.ts` can catch, log, and record the
+  // failure — and it would top up every active template this teacher owns,
+  // so an unrelated template's generation failure would surface as a failure
+  // of this edit. `generateInstancesForTemplate` is scoped to the one
+  // template actually edited, and documented as accepting a transaction
+  // client precisely so a caller can compose it — which is what would close
+  // the seam described above, if that ever happens.
   if (result.regenerated > 0 && template.isActive) {
-    await generateClassInstances(db, undefined, template.teacherId);
+    await generateInstancesForTemplate(db, template);
   }
 
   return result;

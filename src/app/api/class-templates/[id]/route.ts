@@ -47,8 +47,17 @@ export const PUT = withErrorHandler(async (
   // Annotated for insurance, not for wiring: `parsed.data` already has this
   // type, so this cannot fail today. It would start earning its keep if
   // `ClassTemplateUpdateData` ever stops being a bare `z.infer` of the schema.
-  // The pins themselves fire on compiling class-template-lifecycle.ts, which
-  // this import pulls in regardless.
+  // `tsconfig.json` includes `**/*.ts`, so `class-template-lifecycle.ts` — and
+  // the pins in it — are type-checked project-wide regardless of whether this
+  // file imports it; the import is for the type, not to trigger the checking.
+  //
+  // Left at `ClassTemplateUpdateData` rather than widened to match
+  // `updateClassTemplate`'s actual (narrower) parameter type — the allowlist
+  // intersected with the forbidden-field exclusions. That narrowing holds
+  // only because the schema declares none of the forbidden keys, which is
+  // exactly what the pins in class-template-lifecycle.ts already enforce;
+  // restating it here would mean importing a type that module doesn't export,
+  // to duplicate a check that already has an owner.
   const data: ClassTemplateUpdateData = parsed.data;
 
   const result = await updateClassTemplate(prisma, id, session.teacherId, data);

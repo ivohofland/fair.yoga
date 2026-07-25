@@ -21,32 +21,42 @@
  * permanently red with no offending field to name. Measured on TypeScript
  * 5.9.3: unbracketed, only the passing case breaks; both forms still reject one
  * and two offenders correctly.
+ *
+ * Before the fixture below existed, defanging the body to
+ * `[T] extends [T] ? true : T` kept `T` referenced (so lint stayed green) and
+ * kept `tsc` at exit 0, while letting a `status` field reach `updateMany` with
+ * every pin still reporting success. With the fixture in place that rewrite no
+ * longer keeps `tsc` at exit 0 — see `_noneOfHoldsIsTrue` below, which that
+ * rewrite fails.
  */
-export type NoneOf<T> = [T] extends [never] ? true : T;
+export type NoneOf<T extends PropertyKey> = [T] extends [never] ? true : T;
 
 /**
- * `NoneOf`'s own pin. Ten security pins across two service modules now resolve
- * through this one alias, so a vacuous `NoneOf` defangs all of them at once —
- * measured: rewriting the body as `[T] extends [T] ? true : T` keeps `T`
- * referenced (so lint stays green), keeps `tsc` at exit 0, and lets a `status`
- * field reach `updateMany` with every pin still reporting success.
+ * `NoneOf`'s own pin. Ten pins across two service modules resolve through this
+ * one alias, so a hollowed-out `NoneOf` defangs all of them at once — and the
+ * call sites cannot catch that, because every one of them instantiates
+ * `NoneOf<never>` and so only exercises the passing direction.
  *
- * The call sites cannot catch that. They all instantiate `NoneOf<never>`, so
- * they pin the *passing* direction only — break the brackets and they redden
- * immediately, but hollow the alias out and they go quiet. These three lines
- * pin the failing direction, which is the one that carries the security value.
+ * These assert *resolution identity*, not merely that `true` is rejected. That
+ * distinction is load-bearing and was learned the hard way: the first version
+ * of this fixture used `@ts-expect-error`, which a body of
+ * `[T] extends [never] ? true : 'INVARIANT VIOLATED'` satisfies happily while
+ * destroying the "names the offender" property every pin's comment depends on.
+ * `Equals` catches that; non-assignability does not.
  *
- * The `@ts-expect-error` directives are the assertion: if `NoneOf` ever stops
- * rejecting a non-`never` argument, the directive becomes unused and TypeScript
- * fails the build on that instead.
+ * Honest about the limit: no finite fixture is a proof. A body written to
+ * special-case exactly these three inputs would pass. That is not the threat —
+ * the threat is a contributor hollowing the alias out while refactoring, and
+ * these catch every such rewrite we could construct.
  */
-const _noneOfAcceptsNever: NoneOf<never> = true;
-void _noneOfAcceptsNever;
+type Equals<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+type Assert<T extends true> = T;
 
-// @ts-expect-error `NoneOf<'x'>` is `'x'`, not `true` — a failed pin must name its offender.
-const _noneOfRejectsOne: NoneOf<'x'> = true;
-void _noneOfRejectsOne;
-
-// @ts-expect-error `NoneOf<'x' | 'y'>` is `'x' | 'y'` — two offenders must not collapse to `true`.
-const _noneOfRejectsTwo: NoneOf<'x' | 'y'> = true;
-void _noneOfRejectsTwo;
+// Invariant holds -> `true`, so the assertion const in each pin compiles.
+type _noneOfHoldsIsTrue = Assert<Equals<NoneOf<never>, true>>;
+// Invariant broken -> the offender itself, so the build names the field.
+type _noneOfNamesOneOffender = Assert<Equals<NoneOf<'x'>, 'x'>>;
+// Two offenders must not collapse — this is what the tuple brackets buy.
+type _noneOfNamesTwoOffenders = Assert<Equals<NoneOf<'x' | 'y'>, 'x' | 'y'>>;
+void 0 as unknown as [_noneOfHoldsIsTrue, _noneOfNamesOneOffender, _noneOfNamesTwoOffenders];

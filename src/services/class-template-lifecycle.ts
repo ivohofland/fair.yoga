@@ -3,24 +3,24 @@
  * `PUT /api/class-templates/[id]`.
  *
  * The sibling of `class-lifecycle.ts`'s update section (#82 is #79 one route
- * over), with the same five pins. Four things deliberately differ, and are
+ * over), with the same five pins. Three things deliberately differ, and are
  * worth knowing before reading this as a mirror:
  *
  *   - Ownership lives here, not in the route. `updateClass` takes no
  *     `teacherId` and its route checks ownership; this takes one and checks it
  *     itself, so the guard travels with the function.
- *   - `no_fields` is a key count here, not a defined-value scan. `updateClass`
- *     uses `Object.values(...).some(v => v !== undefined)` because a zero-count
- *     `updateMany` landed in an unreachable branch as a 500; `update` has no
- *     such branch, and the key count is what the pre-service route did.
  *   - The column pins reference the *Many* input while the write below is
  *     single-record `update`. That is a deliberate tightening, not a match.
- *   - The delete-between-read-and-write race is unhandled here. `updateClass`
- *     went to some length for it (#72); this window throws P2025 as a 500.
- *     Pre-existing, and out of scope for #82.
+ *   - The delete-between-read-and-write race is handled, but more simply than
+ *     `updateClass`'s compare-and-swap (#72). A single-record `update` throws
+ *     Prisma's P2025 when the row is already gone rather than silently
+ *     matching zero rows the way `updateMany` does, so catching that one error
+ *     code and mapping it to `not_found` is enough — no compare-and-swap
+ *     needed.
  */
 
-import type { Prisma, PrismaClient, ClassTemplate } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import type { PrismaClient, ClassTemplate } from '@prisma/client';
 import type { z } from 'zod';
 import type { updateClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
@@ -35,8 +35,8 @@ import { syncTemplateInstances, type TemplateSyncResult } from './template-sync'
  *
  * Unlike `ClassUpdateData`, this needs no `Omit`/intersection — every schema
  * field maps to a column of the same type, including the two enums. That is why
- * the reverse pin here has no equivalent of the `date` blind spot documented on
- * the class route.
+ * the reverse pin here has no equivalent of the `date` blind spot documented in
+ * `class-lifecycle.ts`.
  */
 export type ClassTemplateUpdateData = z.infer<typeof updateClassTemplateSchema>;
 
@@ -46,7 +46,7 @@ export type ClassTemplateUpdateData = z.infer<typeof updateClassTemplateSchema>;
  * this checks the name, and only this catches a name Prisma has never heard
  * of.
  *
- * The reference is the *Many* input deliberately, as on the class route: the
+ * The reference is the *Many* input deliberately, as in the class service: the
  * single-record type additionally accepts a nested relation write (`classes`)
  * that a plain field update should never receive, so pinning against it would
  * wave through a schema field named after that relation.
@@ -93,7 +93,7 @@ type TeacherEditableClassTemplateField =
  * allowlist. Add a column-shaped field to the schema without adding it here and
  * this names that field instead of resolving to `true`.
  *
- * As on the class route, forward and reverse together force the allowlist to
+ * As in `class-lifecycle.ts`, forward and reverse together force the allowlist to
  * *equal* the schema's key set, so the allowlist holds no policy of its own.
  * What it buys is that the grant must be explicit — a second edit, next to the
  * hazards above. The forbidden pin below is what refuses the grants that are
@@ -190,22 +190,52 @@ export type UpdateClassTemplateResult =
  * for a partially applied change. That window is real and predates this
  * function; closing it changes behaviour (a sync failure would roll the edit
  * back) and belongs in its own change, with its own test.
+ *
+ * That is not the only seam. `syncTemplateInstances` has one of its own:
+ * deletes and updates run inside an inner `$transaction`, but the refill that
+ * follows a day change runs after it, outside any transaction. A refill
+ * failure there leaves the wrong-day instances already permanently deleted and
+ * the window not refilled — the template write, the sync's delete/update step,
+ * and the refill are three separately-committed steps, not one.
  */
 export async function updateClassTemplate(
   db: PrismaClient,
   templateId: string,
   teacherId: string,
-  data: ClassTemplateUpdateData,
+  // The intersection with `Partial<Record<PlainUpdateForbiddenTemplateField,
+  // never>>` is what makes the forbidden list above bind *callers*, not just
+  // the wire schema. The pins only prove the allowlist and the schema agree
+  // with each other — they say nothing about what a caller actually passes.
+  // Excess-property checking, the mechanism that would otherwise catch a
+  // stray `teacherId` or `isActive` riding along with a legitimate patch,
+  // fires only on a fresh object literal; build `data` as a variable first
+  // (`const patch = { classType: 'Yin', teacherId: 'x' }; updateClassTemplate(
+  // db, id, me, patch)`) and it never triggers, so a value with no matching
+  // type declaration would sail straight through to `update`. Marking each
+  // forbidden key optional-and-`never` here forces TypeScript to reject that
+  // argument regardless of whether it arrives as a literal or a variable.
+  data: ClassTemplateUpdateData & Partial<Record<PlainUpdateForbiddenTemplateField, never>>,
 ): Promise<UpdateClassTemplateResult> {
   const template = await db.classTemplate.findUnique({ where: { id: templateId } });
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
-  if (Object.keys(data).length === 0) return { ok: false, reason: 'no_fields' };
+  // Defined-value scan, matching `updateClass` (`class-lifecycle.ts:465`): a
+  // key present with value `undefined` is not an edit. A key-count check would
+  // let `{ description: undefined }` clear this guard, issue a no-op `update`,
+  // run a full sync for nothing, and still report `ok: true`.
+  const hasEdit = Object.values(data).some((v) => v !== undefined);
+  if (!hasEdit) return { ok: false, reason: 'no_fields' };
 
   // A teacher may only attach a template to a room they already hold. Checked
   // before the write so a bad room never lands, and checked here rather than in
   // the route so the guard travels with the function.
+  //
+  // "Room doesn't exist" and "room isn't yours" are deliberately the same
+  // outcome. Splitting them would hand a caller a cross-teacher existence
+  // oracle for `TeacherRoom` ids — try every id and read which error comes
+  // back. Right now only two tests stand between that merge and a
+  // well-meaning refactor that reports the two cases separately.
   if (data.teacherRoomId !== undefined) {
     const teacherRoom = await db.teacherRoom.findUnique({ where: { id: data.teacherRoomId } });
     if (!teacherRoom || teacherRoom.teacherId !== teacherId) {
@@ -213,7 +243,19 @@ export async function updateClassTemplate(
     }
   }
 
-  const updated = await db.classTemplate.update({ where: { id: templateId }, data });
+  let updated: ClassTemplate;
+  try {
+    updated = await db.classTemplate.update({ where: { id: templateId }, data });
+  } catch (err) {
+    // The read above and this write are not one transaction, so a delete
+    // landing in between surfaces here as Prisma's P2025 ("record to update
+    // not found"). Map it to the same outcome the read-time check above would
+    // have produced, rather than letting it fall through as an opaque 500.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+      return { ok: false, reason: 'not_found' };
+    }
+    throw err;
+  }
   const sync = await syncTemplateInstances(db, templateId);
 
   return { ok: true, template: updated, sync };
