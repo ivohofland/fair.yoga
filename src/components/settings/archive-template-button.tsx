@@ -9,10 +9,17 @@ interface ArchiveTemplateButtonProps {
   isArchived: boolean;
 }
 
+/** Shape of the `data` payload on a successful archive/un-archive PATCH. */
+interface ArchiveTemplateResponse {
+  deleted: number;
+  remaining: number;
+}
+
 export function ArchiveTemplateButton({ templateId, isArchived }: ArchiveTemplateButtonProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
 
   async function handleToggle() {
     setLoading(true);
@@ -22,7 +29,24 @@ export function ArchiveTemplateButton({ templateId, isArchived }: ArchiveTemplat
         method: 'PATCH',
       });
       if (res.ok) {
-        router.push('/settings/recurring');
+        const { data } = (await res.json()) as { data: ArchiveTemplateResponse };
+
+        // Only the archiving direction gets a message — un-archiving deletes
+        // nothing and needs no explanation.
+        if (!isArchived) {
+          const { deleted, remaining } = data;
+          const classWord = remaining === 1 ? 'class' : 'classes';
+          setMessage(
+            deleted === 0 && remaining === 0
+              ? 'Nothing from this template was scheduled.'
+              : deleted === 0
+                ? `No unbooked classes to delete. There are still ${remaining} ${classWord} on the schedule — cancel them individually if needed.`
+                : remaining === 0
+                  ? 'Classes on the schedule without bookings are now deleted. Nothing from this template is scheduled any more.'
+                  : `Classes on the schedule without bookings are now deleted. There are still ${remaining} ${classWord} on the schedule — cancel them individually if needed.`,
+          );
+        }
+        router.refresh();
       } else {
         setError(await readErrorMessage(res, 'Failed to update. Please try again.'));
       }
@@ -46,6 +70,7 @@ export function ArchiveTemplateButton({ templateId, isArchived }: ArchiveTemplat
           : (isArchived ? 'Unarchive recurring class' : 'Archive recurring class')}
       </button>
       {error && <p className="text-sm text-danger mt-2">{error}</p>}
+      {message && <p className="type-caption mt-2">{message}</p>}
     </div>
   );
 }
