@@ -9,8 +9,12 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { updateClassTemplateSchema } from '@/lib/schemas';
-import { generateInstancesForTemplate } from '@/services/class-generator';
-import { updateClassTemplate, type ClassTemplateUpdateData } from '@/services/class-template-lifecycle';
+import {
+  updateClassTemplate,
+  type ClassTemplateUpdateData,
+  pauseOrResumeTemplate,
+  archiveOrUnarchiveTemplate,
+} from '@/services/class-template-lifecycle';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -86,44 +90,47 @@ export const PATCH = withErrorHandler(async (
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  const template = await prisma.classTemplate.findUnique({ where: { id } });
-  if (!template) return respondError('Class template not found', 404);
-
-  if (template.teacherId !== session.teacherId) {
-    return respondError('Access denied', 403);
-  }
-
   const url = new URL(request.url);
   const action = url.searchParams.get('action');
 
   if (action === 'archive') {
-    const updated = await prisma.classTemplate.update({
-      where: { id },
-      data: { isArchived: !template.isArchived, isActive: false },
-    });
-    return respondOk(updated);
+    const result = await archiveOrUnarchiveTemplate(prisma, id, session.teacherId);
+
+    if (result.ok) {
+      return respondOk({ ...result.template, deleted: result.deleted, remaining: result.remaining });
+    }
+
+    if (result.reason === 'not_found') return respondError('Class template not found', 404);
+    if (result.reason === 'forbidden') return respondError('Access denied', 403);
+
+    // Exhaustiveness: a new ArchiveTemplateResult reason becomes a compile
+    // error here rather than being silently answered with the wrong status.
+    // Narrowed on `result.reason`, not `result` itself: unlike
+    // UpdateClassTemplateResult, the `ok: false` half of this type is one
+    // object with a union-typed `reason` rather than one member per reason,
+    // so control flow narrows the property to `never` without collapsing
+    // the enclosing object type the same way.
+    const unhandled: never = result.reason;
+    return unhandled;
   }
 
-  // Default: toggle active/paused. An archived template has no live
-  // half to toggle to — activating one would instantly materialize
-  // bookable classes for something the teacher shelved.
-  if (template.isArchived) {
+  // Default: toggle active/paused.
+  const result = await pauseOrResumeTemplate(prisma, id, session.teacherId);
+
+  if (result.ok) return respondOk({ ...result.template, lastScheduled: result.lastScheduled });
+
+  if (result.reason === 'not_found') return respondError('Class template not found', 404);
+  if (result.reason === 'forbidden') return respondError('Access denied', 403);
+  // An archived template has no live half to toggle to — activating one
+  // would instantly materialize bookable classes for something the teacher
+  // shelved.
+  if (result.reason === 'archived') {
     return respondError('Unarchive the template before activating it', 409);
   }
 
-  // Atomic: a generation failure rolls the toggle back rather than leaving
-  // the template active with a stale window. Failure propagates (500).
-  const updated = await prisma.$transaction(async (tx) => {
-    const t = await tx.classTemplate.update({
-      where: { id },
-      data: { isActive: !template.isActive },
-      include: { teacher: { select: { defaultTimezone: true } } },
-    });
-    if (t.isActive) await generateInstancesForTemplate(tx, t);
-    return t;
-  });
-
-  const { teacher, ...result } = updated;
-  void teacher;
-  return respondOk(result);
+  // Exhaustiveness: a new PauseTemplateResult reason becomes a compile error
+  // here rather than being silently answered with the wrong status. Narrowed
+  // on `result.reason`, same reason as the archive branch above.
+  const unhandled: never = result.reason;
+  return unhandled;
 });

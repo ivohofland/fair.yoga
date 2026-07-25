@@ -191,6 +191,20 @@ describe('POST /api/class-templates', () => {
 });
 
 describe('PATCH /api/class-templates/[id]', () => {
+  // `createTemplate` lives inside the `PUT` describe block further down this
+  // file and is not visible here — this is the same POST-and-extract-id
+  // shape, scoped locally rather than shared, matching this block's existing
+  // cases (which each POST inline instead of reaching across describes).
+  const newTemplate = async (classType: string): Promise<string> => {
+    const res = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify(templateBody(classType)),
+    });
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { data: { id: string } }).data.id;
+  };
+
   it('re-activation tops the window back up; archive and pause do not generate', async () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
@@ -225,8 +239,11 @@ describe('PATCH /api/class-templates/[id]', () => {
     expect(activate.status).toBe(200);
     expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(4);
 
-    // Archive (forces inactive) after removing another instance: no generation,
-    // and un-archive leaves the template paused — still no generation.
+    // Archive (forces inactive) after removing another instance: no
+    // generation, and — #86 — archiving withdraws whatever remains of the
+    // future unbooked window, so the count drops to zero rather than
+    // staying at 3. Un-archive leaves the template paused and does not
+    // restore what archiving deleted — still zero.
     const next = await prisma.class.findFirstOrThrow({
       where: { templateId: template.id },
       orderBy: { date: 'asc' },
@@ -238,11 +255,12 @@ describe('PATCH /api/class-templates/[id]', () => {
         headers: cookie(sessionToken),
       });
     expect((await archive()).status).toBe(200);
-    expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(3);
+    expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(0);
     expect((await archive()).status).toBe(200); // un-archive
-    expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(3);
+    expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(0);
 
-    // Explicit activation after un-archive is the "goes live" moment.
+    // Explicit activation after un-archive is the "goes live" moment: the
+    // window regenerates from scratch since nothing was left standing.
     expect((await toggle()).status).toBe(200);
     expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(4);
   });
@@ -334,6 +352,63 @@ describe('PATCH /api/class-templates/[id]', () => {
 
     await prisma.class.deleteMany({ where: { templateId: { in: [templateA.id, templateB.id] } } });
     await prisma.classTemplate.deleteMany({ where: { id: { in: [templateA.id, templateB.id] } } });
+  });
+
+  it('archiving deletes the unbooked future window and reports the counts', async () => {
+    const id = await newTemplate('Archive Counts');
+    // The POST generates a 4-week window; every class is unbooked.
+    const before = await prisma.class.count({
+      where: { templateId: id, date: { gt: new Date() } },
+    });
+    expect(before).toBeGreaterThan(0);
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}?action=archive`, {
+      method: 'PATCH',
+      headers: cookie(sessionToken),
+    });
+    expect(res.status).toBe(200);
+
+    const { data } = (await res.json()) as { data: { deleted: number; remaining: number } };
+    expect(data.deleted).toBe(before);
+    expect(data.remaining).toBe(0);
+    expect(
+      await prisma.class.count({ where: { templateId: id, date: { gt: new Date() } } }),
+    ).toBe(0);
+  });
+
+  // The bug #86 is actually about: after archiving, the classes must stop being
+  // publicly bookable. The public page filters on `status: 'open'` and
+  // `date >= today` and never consults the template, so this is the assertion
+  // that fails if someone later "optimises" the deletion away.
+  it('archived templates leave nothing the public booking page would show', async () => {
+    const id = await newTemplate('No Longer Bookable');
+
+    await fetch(`${BASE_URL}/api/class-templates/${id}?action=archive`, {
+      method: 'PATCH',
+      headers: cookie(sessionToken),
+    });
+
+    const stillBookable = await prisma.class.count({
+      where: { templateId: id, status: 'open', date: { gte: new Date() } },
+    });
+    expect(stillBookable).toBe(0);
+  });
+
+  it('pausing deletes nothing and reports the last scheduled class', async () => {
+    const id = await newTemplate('Pause Counts');
+    const before = await prisma.class.count({ where: { templateId: id } });
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PATCH',
+      headers: cookie(sessionToken),
+    });
+    expect(res.status).toBe(200);
+
+    const { data } = (await res.json()) as {
+      data: { lastScheduled: { startTime: string } | null };
+    };
+    expect(data.lastScheduled).not.toBeNull();
+    expect(await prisma.class.count({ where: { templateId: id } })).toBe(before);
   });
 });
 
@@ -521,13 +596,16 @@ describe('PUT /api/class-templates/[id]', () => {
   // The write below is a dayOfWeek change specifically, because that is the
   // one field whose sync could, in principle, materialize new bookable
   // classes (via the delete-then-refill path exercised by the case above).
-  // Observed: the PUT still succeeds and the wrong-day instances still get
-  // deleted (`regenerated > 0`), but nothing replaces them, because an
-  // archived template is always `isActive: false` (PATCH ?action=archive
-  // forces it) and syncTemplateInstances only refills after a day-of-week
-  // delete when the template is active. So this is defensible even though
-  // it is unguarded: editing a shelved template cannot materialize classes,
-  // it can only ever shrink what already exists.
+  // Before #86, archiving didn't touch existing instances, so this used to
+  // observe the PUT deleting the wrong-day instances itself (`regenerated >
+  // 0`) with nothing replacing them, because an archived template is always
+  // `isActive: false` and syncTemplateInstances only refills after a
+  // day-of-week delete when the template is active. Now archiving already
+  // withdraws the future unbooked window, so there is nothing left for the
+  // PUT to find wrong-day or otherwise — `regenerated` is 0 because the
+  // window is already empty, not because a refill was skipped. Either way
+  // the guarantee holds: editing a shelved template cannot materialize
+  // classes, it can only ever shrink or leave empty what already exists.
   it('an archived template accepts the PUT but the day-change refill never runs', async () => {
     const id = await createTemplate('Shelved Flow');
     expect(await prisma.class.count({ where: { templateId: id } })).toBeGreaterThan(0);
@@ -537,6 +615,8 @@ describe('PUT /api/class-templates/[id]', () => {
       headers: cookie(sessionToken),
     });
     expect(archive.status).toBe(200);
+    // #86: archiving already withdrew the future unbooked window.
+    expect(await prisma.class.count({ where: { templateId: id } })).toBe(0);
 
     const NEW_DAY_OF_WEEK = (DAY_OF_WEEK + 2) % 7;
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
@@ -546,7 +626,7 @@ describe('PUT /api/class-templates/[id]', () => {
     });
     expect(res.status).toBe(200);
     const { data } = (await res.json()) as { data: { sync: { regenerated: number } } };
-    expect(data.sync.regenerated).toBeGreaterThan(0);
+    expect(data.sync.regenerated).toBe(0);
 
     expect(await prisma.class.count({ where: { templateId: id } })).toBe(0);
   });
