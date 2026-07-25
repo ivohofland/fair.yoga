@@ -382,7 +382,16 @@ npm run typecheck && npm run lint && npx vitest run --project unit
 
 Expected: exit 0, unit project green.
 
-Then prove all five still fire. Run these one at a time, reverting between each:
+Then prove all five still fire. **Stage the refactor first** — `git checkout --`
+restores from the index, so with the work unstaged the reverts below would wipe
+your refactor instead of just the mutation:
+
+```bash
+git add src/lib/type-pins.ts src/services/class-lifecycle.ts
+git status --short src/   # both staged before continuing
+```
+
+Run these one at a time, reverting between each:
 
 ```bash
 # Pin 2 (forward): add a real column the allowlist lacks
@@ -661,7 +670,20 @@ If `_templateUpdateColumnsExist` fails, a schema field is not a writable column 
 
 - [ ] **Step 5: Prove all five bite**
 
-One at a time, reverting between each:
+**First, stage your work — this is not optional.** `git checkout -- <file>` restores
+from the *index*, not from HEAD. With the work unstaged, the index still holds
+pre-task content, so the revert between mutations wipes the module you just wrote
+rather than just the mutation. Worse here than in Task 2: `class-template-lifecycle.ts`
+is a **new** file, so until it is staged `git checkout --` on it fails outright with
+`pathspec did not match`.
+
+```bash
+git add src/services/class-template-lifecycle.ts src/lib/schemas.test.ts
+git status --short src/   # both staged (A/M in the left column) before continuing
+```
+
+Now the index holds the good state and each `git checkout --` below reverts the
+mutation *onto* your work. Run them one at a time, reverting between each:
 
 ```bash
 # forward: a real column the allowlist lacks
