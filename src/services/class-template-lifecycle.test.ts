@@ -121,10 +121,26 @@ describe('updateClassTemplate (DB)', () => {
     expect(after.classType).toBe('Not Yours');
   });
 
-  it('returns no_fields for an empty payload', async () => {
+  it('returns no_fields for an empty payload, and writes nothing', async () => {
     const template = await makeTemplate('Empty Payload');
     const result = await updateClassTemplate(prisma, template.id, teacherId, {});
     expect(result).toEqual({ ok: false, reason: 'no_fields' });
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
+    expect(after.classType).toBe('Empty Payload');
+  });
+
+  // Defined-value scan (class-template-lifecycle.ts:227): a key present with
+  // value `undefined` is not an edit, unlike the key-count check this
+  // replaced, which would have let this through as `ok: true` and run a
+  // no-op update plus a full sync for nothing.
+  it('returns no_fields for a payload of only undefined values, and writes nothing', async () => {
+    const template = await makeTemplate('Undefined Only');
+    const result = await updateClassTemplate(prisma, template.id, teacherId, {
+      description: undefined,
+    });
+    expect(result).toEqual({ ok: false, reason: 'no_fields' });
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
+    expect(after.classType).toBe('Undefined Only');
   });
 
   it('returns invalid_room for a room that does not exist', async () => {
@@ -163,8 +179,9 @@ describe('updateClassTemplate (DB)', () => {
     if (!result.ok) throw new Error('expected ok');
     expect(result.template.classType).toBe('Edited');
     expect(result.template.durationMinutes).toBe(75);
-    // No instances were generated for this bare template, so the sync is a
-    // no-op — asserted as shape, not as counts.
+    // These counts are deterministic here — a bare template has no
+    // instances, so the sync can only be a hard zero — unlike the API test,
+    // which cannot pin an exact number without risking clock flakiness.
     expect(result.sync).toEqual({ synced: 0, regenerated: 0, kept: 0 });
   });
 });

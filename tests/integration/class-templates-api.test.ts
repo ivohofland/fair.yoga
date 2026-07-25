@@ -5,7 +5,6 @@ import { BASE_URL, cookie, uniqueSuffix, seedSession } from './helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
-const teacherEmail = `tmpl-teacher-${suffix}@test.local`;
 
 let teacherId: string;
 let roomId: string;
@@ -13,7 +12,6 @@ let teacherRoomId: string;
 let teacherAccountId: string;
 let sessionToken: string;
 
-const otherEmail = `tmpl-other-${suffix}@test.local`;
 let otherTeacherId: string;
 let otherTeacherAccountId: string;
 let otherRoomId: string;
@@ -43,103 +41,99 @@ function templateBody(classType: string) {
   };
 }
 
-beforeAll(async () => {
-  await prisma.$connect();
+/**
+ * Creates one teacher plus the room/teacherRoom and signed-in session every
+ * PUT case here needs — whether as the acting teacher or as the "someone
+ * else's template/room" foil. Local, per-file, label-parameterized, per
+ * docs/technical-architecture.md's testing-conventions note on why there is
+ * no shared `makeTeacherWithSession` helper: `classes-api.test.ts`'s
+ * `makeTeacher(tag)` is the pattern, and `class-template-lifecycle.test.ts`'s
+ * own `seedTeacher(label)` is the sibling this mirrors — it just also needs
+ * a session token, since this file drives the route over HTTP rather than
+ * calling the service directly.
+ */
+async function seedTeacher(label: string): Promise<{
+  teacherId: string;
+  accountId: string;
+  roomId: string;
+  teacherRoomId: string;
+  sessionToken: string;
+}> {
+  const email = `tmpl-${label}-${suffix}@test.local`;
   const teacher = await prisma.teacher.create({
     data: {
-      firstName: 'Template',
+      firstName: label,
       lastName: 'Teacher',
-      email: teacherEmail,
-      account: { create: { email: teacherEmail } },
-      bio: 'Teacher for template API tests',
-      pageSlug: `tmpl-teacher-${suffix}`,
+      email,
+      account: { create: { email } },
+      bio: `Teacher for ${label} template tests`,
+      pageSlug: `tmpl-${label}-${suffix}`,
       defaultTimezone: 'UTC',
     },
   });
-  teacherId = teacher.id;
-  teacherAccountId = teacher.accountId;
-
   const room = await prisma.room.create({
     data: {
-      venueName: 'Template Venue',
-      address: `${suffix} Template St`,
+      venueName: `${label} Venue`,
+      address: `${suffix} ${label} St`,
       city: 'Testville',
       postcode: '1234TP',
       floor: '1',
       roomName: 'Loft',
       maxCapacity: 10,
-      createdById: teacherId,
+      createdById: teacher.id,
     },
   });
-  roomId = room.id;
   const teacherRoom = await prisma.teacherRoom.create({
-    data: { teacherId, roomId, capacityOverride: 8, rentalRate: 15 },
+    data: { teacherId: teacher.id, roomId: room.id, capacityOverride: 8, rentalRate: 15 },
   });
-  teacherRoomId = teacherRoom.id;
+  const sessionToken = await seedSession(prisma, teacher.accountId);
+  return {
+    teacherId: teacher.id,
+    accountId: teacher.accountId,
+    roomId: room.id,
+    teacherRoomId: teacherRoom.id,
+    sessionToken,
+  };
+}
 
-  sessionToken = await seedSession(prisma, teacher.accountId);
+beforeAll(async () => {
+  await prisma.$connect();
+  const mine = await seedTeacher('teacher');
+  teacherId = mine.teacherId;
+  teacherAccountId = mine.accountId;
+  roomId = mine.roomId;
+  teacherRoomId = mine.teacherRoomId;
+  sessionToken = mine.sessionToken;
 
   // A second teacher, for the two cross-teacher PUT cases: editing
   // someone else's template (403) and attaching to someone else's room
   // (400). Both guards live in the route today and move into the service
   // in Task 5 — these tests are what prove the move preserved them.
-  const other = await prisma.teacher.create({
-    data: {
-      firstName: 'Other',
-      lastName: 'Teacher',
-      email: otherEmail,
-      account: { create: { email: otherEmail } },
-      bio: 'Second teacher for template API tests',
-      pageSlug: `tmpl-other-${suffix}`,
-      defaultTimezone: 'UTC',
-    },
-  });
-  otherTeacherId = other.id;
+  const other = await seedTeacher('other');
+  otherTeacherId = other.teacherId;
   otherTeacherAccountId = other.accountId;
-
-  const otherRoom = await prisma.room.create({
-    data: {
-      venueName: 'Other Venue',
-      address: `${suffix} Other St`,
-      city: 'Testville',
-      postcode: '5678TP',
-      floor: '2',
-      roomName: 'Studio',
-      maxCapacity: 10,
-      createdById: otherTeacherId,
-    },
-  });
-  otherRoomId = otherRoom.id;
-  const otherTeacherRoom = await prisma.teacherRoom.create({
-    data: { teacherId: otherTeacherId, roomId: otherRoomId, capacityOverride: 8, rentalRate: 15 },
-  });
-  otherTeacherRoomId = otherTeacherRoom.id;
-  otherSessionToken = await seedSession(prisma, other.accountId);
+  otherRoomId = other.roomId;
+  otherTeacherRoomId = other.teacherRoomId;
+  otherSessionToken = other.sessionToken;
 });
 
 afterAll(async () => {
-  await prisma.class.deleteMany({ where: { teacherId: otherTeacherId } });
-  await prisma.classTemplate.deleteMany({ where: { teacherId: otherTeacherId } });
-  await prisma.teacherRoom.deleteMany({ where: { teacherId: otherTeacherId } });
-  await prisma.room.delete({ where: { id: otherRoomId } });
-  if (otherTeacherAccountId) {
-    await prisma.session.deleteMany({ where: { accountId: otherTeacherAccountId } });
+  // By teacherId, not tracked instance ids: a test that dies between the
+  // POST and its bookkeeping must not leak rows that abort the rest of the
+  // cleanup chain (same pattern as the e2e suite). FK-safe order: class →
+  // classTemplate → teacherRoom → room → session → teacher → account.
+  for (const [t, r, a] of [
+    [teacherId, roomId, teacherAccountId],
+    [otherTeacherId, otherRoomId, otherTeacherAccountId],
+  ] as const) {
+    await prisma.class.deleteMany({ where: { teacherId: t } });
+    await prisma.classTemplate.deleteMany({ where: { teacherId: t } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: t } });
+    await prisma.room.delete({ where: { id: r } });
+    await prisma.session.deleteMany({ where: { accountId: a } });
+    await prisma.teacher.delete({ where: { id: t } });
+    await prisma.account.delete({ where: { id: a } });
   }
-  await prisma.teacher.delete({ where: { id: otherTeacherId } });
-  await prisma.account.deleteMany({ where: { email: otherEmail } });
-
-  // By teacherId, not tracked ids: a test that dies between the POST
-  // and its bookkeeping must not leak rows that abort the rest of the
-  // cleanup chain (same pattern as the e2e suite).
-  await prisma.class.deleteMany({ where: { teacherId } });
-  await prisma.classTemplate.deleteMany({ where: { teacherId } });
-  await prisma.teacherRoom.deleteMany({ where: { teacherId } });
-  await prisma.room.delete({ where: { id: roomId } });
-  if (teacherAccountId) {
-    await prisma.session.deleteMany({ where: { accountId: teacherAccountId } });
-  }
-  await prisma.teacher.delete({ where: { id: teacherId } });
-  await prisma.account.deleteMany({ where: { email: teacherEmail } });
   await prisma.$disconnect();
 });
 
@@ -384,6 +378,35 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(future.every((c) => c.durationMinutes === 75)).toBe(true);
   });
 
+  it('returns 404 for a well-formed id that does not exist', async () => {
+    // The id must be well-formed (a real UUID) so the failure is genuinely
+    // `not_found` — a malformed id would be rejected by route-level parsing
+    // before the service ever looks the row up, which is a different case.
+    const res = await fetch(
+      `${BASE_URL}/api/class-templates/00000000-0000-0000-0000-000000000000`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+        body: JSON.stringify({ classType: 'Anything' }),
+      },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it('returns 400 for an empty payload, and writes nothing', async () => {
+    const id = await createTemplate('No Fields');
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
+    expect(after.classType).toBe('No Fields');
+  });
+
   it("refuses to edit another teacher's template", async () => {
     const id = await createTemplate('Not Yours');
 
@@ -451,5 +474,80 @@ describe('PUT /api/class-templates/[id]', () => {
     const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
     expect(after.classType).toBe('Order Guard');
     expect(after.isActive).toBe(true);
+  });
+
+  // `dayOfWeek` is the most destructive field on the allowlist
+  // (class-template-lifecycle.ts): changing it makes syncTemplateInstances
+  // DELETE mutable instances on the old day and refill on the new one. The
+  // unit-level template-sync.test.ts deliberately sets `isActive: false` to
+  // keep the generator out of its own tests, so this is the only place the
+  // *active* refill path — the one that actually runs in production — gets
+  // exercised end-to-end.
+  it('a dayOfWeek change deletes the old-day instances and refills the new day', async () => {
+    const id = await createTemplate('Day Shift');
+
+    const before = await prisma.class.findMany({ where: { templateId: id } });
+    expect(before.length).toBeGreaterThan(0);
+    expect(before.every((c) => c.date.getUTCDay() === EXPECTED_JS_DAY)).toBe(true);
+
+    const NEW_DAY_OF_WEEK = (DAY_OF_WEEK + 2) % 7; // still schema convention, a different weekday
+    const newExpectedJsDay = (NEW_DAY_OF_WEEK + 1) % 7;
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ dayOfWeek: NEW_DAY_OF_WEEK }),
+    });
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as { data: { sync: { regenerated: number } } };
+    expect(data.sync.regenerated).toBeGreaterThan(0);
+
+    // syncTemplateInstances only considers instances with `date > now`, so
+    // assert over the future set rather than all instances, and avoid
+    // pinning an exact count — same reasoning as the "propagates to its
+    // still-mutable instances" case above.
+    const future = await prisma.class.findMany({
+      where: { templateId: id, date: { gt: new Date() } },
+    });
+    expect(future.length).toBeGreaterThan(0);
+    expect(future.every((c) => c.date.getUTCDay() === newExpectedJsDay)).toBe(true);
+    expect(future.some((c) => c.date.getUTCDay() === EXPECTED_JS_DAY)).toBe(false);
+  });
+
+  // updateClassTemplate has no isArchived/isActive guard of its own, so
+  // whether an archived template can be edited at all is current behaviour,
+  // not a documented decision — pin it here rather than leave it assumed.
+  //
+  // The write below is a dayOfWeek change specifically, because that is the
+  // one field whose sync could, in principle, materialize new bookable
+  // classes (via the delete-then-refill path exercised by the case above).
+  // Observed: the PUT still succeeds and the wrong-day instances still get
+  // deleted (`regenerated > 0`), but nothing replaces them, because an
+  // archived template is always `isActive: false` (PATCH ?action=archive
+  // forces it) and syncTemplateInstances only refills after a day-of-week
+  // delete when the template is active. So this is defensible even though
+  // it is unguarded: editing a shelved template cannot materialize classes,
+  // it can only ever shrink what already exists.
+  it('an archived template accepts the PUT but the day-change refill never runs', async () => {
+    const id = await createTemplate('Shelved Flow');
+    expect(await prisma.class.count({ where: { templateId: id } })).toBeGreaterThan(0);
+
+    const archive = await fetch(`${BASE_URL}/api/class-templates/${id}?action=archive`, {
+      method: 'PATCH',
+      headers: cookie(sessionToken),
+    });
+    expect(archive.status).toBe(200);
+
+    const NEW_DAY_OF_WEEK = (DAY_OF_WEEK + 2) % 7;
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ dayOfWeek: NEW_DAY_OF_WEEK }),
+    });
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as { data: { sync: { regenerated: number } } };
+    expect(data.sync.regenerated).toBeGreaterThan(0);
+
+    expect(await prisma.class.count({ where: { templateId: id } })).toBe(0);
   });
 });
