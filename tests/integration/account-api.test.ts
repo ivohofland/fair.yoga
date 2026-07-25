@@ -132,3 +132,212 @@ describe('GET /api/notifications — dual account', () => {
     expect(body.data.total).toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// DELETE /api/account
+// ---------------------------------------------------------------------------
+
+/**
+ * Erasure destroys the account it runs on, so these cannot share the module
+ * fixture above — each test seeds its own and the block cleans up after all
+ * of them.
+ *
+ * `gdpr.test.ts` already pins what erasure *means* (anonymise, keep financial
+ * rows, cancel-and-notify, scrub the account email with the last live
+ * profile). What it structurally cannot reach is the route's orchestration of
+ * the two service calls — which is the half that can leave a real person
+ * partly erased. That is what this block covers.
+ */
+describe('DELETE /api/account', () => {
+  // Tracked by id, never by email: erasure anonymises the email, so an
+  // `email contains suffix` filter silently stops matching exactly the rows
+  // these tests create — and the teardown then fails on a foreign key,
+  // poisoning every later run of this suite.
+  const seededAccountIds: string[] = [];
+  const seededTeacherIds: string[] = [];
+  const seededStudentIds: string[] = [];
+  const seededRoomIds: string[] = [];
+  const seededTeacherRoomIds: string[] = [];
+  const seededClassIds: string[] = [];
+
+  /** A dual-role account: one Account carrying both a Teacher and a Student. */
+  const seedDual = async (label: string) => {
+    const mail = `accdel-${label}-${suffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Del',
+        lastName: label,
+        email: mail,
+        bio: 'DELETE /api/account fixtures',
+        pageSlug: `accdel-${label}-${suffix}`,
+        account: { create: { email: mail } },
+      },
+    });
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Del',
+        lastName: label,
+        email: `student-${mail}`,
+        accountId: teacher.accountId,
+        claimedAt: new Date(),
+      },
+    });
+    seededAccountIds.push(teacher.accountId);
+    seededTeacherIds.push(teacher.id);
+    seededStudentIds.push(student.id);
+    return {
+      accountId: teacher.accountId,
+      teacherId: teacher.id,
+      studentId: student.id,
+      token: await seedSession(prisma, teacher.accountId),
+    };
+  };
+
+  afterAll(async () => {
+    // Erasure soft-deletes, so every row these tests made is still here, and
+    // dependants must go before their parents.
+    await prisma.payment.deleteMany({
+      where: { registration: { classId: { in: seededClassIds } } },
+    });
+    await prisma.registration.deleteMany({ where: { classId: { in: seededClassIds } } });
+    await prisma.notification.deleteMany({
+      where: {
+        OR: [
+          { relatedClassId: { in: seededClassIds } },
+          { recipientId: { in: [...seededTeacherIds, ...seededStudentIds] } },
+        ],
+      },
+    });
+    await prisma.class.deleteMany({ where: { id: { in: seededClassIds } } });
+    await prisma.teacherRoom.deleteMany({ where: { id: { in: seededTeacherRoomIds } } });
+    await prisma.room.deleteMany({ where: { id: { in: seededRoomIds } } });
+    await prisma.student.deleteMany({ where: { id: { in: seededStudentIds } } });
+    await prisma.teacher.deleteMany({ where: { id: { in: seededTeacherIds } } });
+    await prisma.session.deleteMany({ where: { accountId: { in: seededAccountIds } } });
+    await prisma.account.deleteMany({ where: { id: { in: seededAccountIds } } });
+  });
+
+  it('rejects an unauthenticated delete', async () => {
+    const res = await fetch(`${BASE_URL}/api/account`, { method: 'DELETE' });
+    expect(res.status).toBe(401);
+  });
+
+  it('erases both halves of a dual account and invalidates the session', async () => {
+    const acc = await seedDual('happy');
+
+    const res = await fetch(`${BASE_URL}/api/account`, {
+      method: 'DELETE',
+      headers: cookie(acc.token),
+    });
+    expect(res.status).toBe(200);
+
+    // The service tests assert the composed order; this asserts the ROUTE
+    // composes it — both profiles gone in one request, not just the first.
+    const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: acc.teacherId } });
+    const student = await prisma.student.findUniqueOrThrow({ where: { id: acc.studentId } });
+    expect(teacher.deletedAt).not.toBeNull();
+    expect(student.deletedAt).not.toBeNull();
+
+    // Last live profile erased: the account email is PII too, and the
+    // session must not outlive the profiles it authenticated.
+    const account = await prisma.account.findUniqueOrThrow({ where: { id: acc.accountId } });
+    expect(account.email).toBe(`deleted-${acc.accountId}@deleted.invalid`);
+    expect(await prisma.session.count({ where: { accountId: acc.accountId } })).toBe(0);
+  });
+
+  it('reports PARTIAL_ERASURE when the teacher half fails after the student half committed, and a retry finishes the job', async () => {
+    const acc = await seedDual('partial');
+
+    // Make the teacher half throw, using real data rather than a mock: the
+    // route's erasure of a teacher completes their in-progress classes first
+    // (gdpr.ts, uncaught), and pricing throws on a tier outside 1-5
+    // (pricing.ts, "Invalid tier"). `tierAtBooking` is a bare Int with no DB
+    // constraint, so an out-of-range value is writable today.
+    //
+    // Engineered state, deliberately: no normal flow creates tier 0. #39 is
+    // about making an out-of-range tier unrepresentable — when that lands,
+    // this setup stops compiling or stops throwing, and this test should be
+    // re-pointed at another failure inside `deleteTeacherAccount` rather than
+    // deleted. It failing loudly is the point; silently ceasing to cover the
+    // branch is the thing to avoid.
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Erasure Venue',
+        address: `${suffix} Erasure St`,
+        city: 'Testville',
+        postcode: '1234ER',
+        floor: '1',
+        roomName: 'Hall',
+        maxCapacity: 10,
+        createdById: acc.teacherId,
+      },
+    });
+    seededRoomIds.push(room.id);
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: acc.teacherId, roomId: room.id, capacityOverride: 8, rentalRate: 15 },
+    });
+    seededTeacherRoomIds.push(teacherRoom.id);
+    const cls = await prisma.class.create({
+      data: {
+        teacherId: acc.teacherId,
+        teacherRoomId: teacherRoom.id,
+        classType: 'Erasure Flow',
+        date: new Date('2026-06-01'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 8,
+        status: 'in_progress',
+      },
+    });
+    seededClassIds.push(cls.id);
+    const attendee = await prisma.student.create({
+      data: { firstName: 'Book', lastName: 'Ed', email: `attendee-${suffix}@test.local` },
+    });
+    seededStudentIds.push(attendee.id);
+    const registration = await prisma.registration.create({
+      data: { classId: cls.id, studentId: attendee.id, tierAtBooking: 0 },
+    });
+
+    const del = () =>
+      fetch(`${BASE_URL}/api/account`, { method: 'DELETE', headers: cookie(acc.token) });
+
+    const first = await del();
+    expect(first.status).toBe(500);
+    const body = (await first.json()) as { error: { message: string; code?: string } };
+    expect(body.error.code).toBe('PARTIAL_ERASURE');
+
+    // The advice in that message ("Press Delete again to finish") is only
+    // sound if the student half really did commit — otherwise the user is
+    // being told to finish something that never started.
+    const student = await prisma.student.findUniqueOrThrow({ where: { id: acc.studentId } });
+    expect(student.deletedAt).not.toBeNull();
+    const teacherAfterFirst = await prisma.teacher.findUniqueOrThrow({
+      where: { id: acc.teacherId },
+    });
+    expect(teacherAfterFirst.deletedAt).toBeNull();
+
+    // And the retry has to be able to authenticate: the session survives
+    // because a live teacher profile still uses the account.
+    expect(await prisma.session.count({ where: { accountId: acc.accountId } })).toBe(1);
+
+    // Clear the failure and press Delete again, as the message instructs.
+    await prisma.registration.update({
+      where: { id: registration.id },
+      data: { tierAtBooking: 3 },
+    });
+
+    const second = await del();
+    expect(second.status).toBe(200);
+
+    const teacherAfterRetry = await prisma.teacher.findUniqueOrThrow({
+      where: { id: acc.teacherId },
+    });
+    expect(teacherAfterRetry.deletedAt).not.toBeNull();
+    const account = await prisma.account.findUniqueOrThrow({ where: { id: acc.accountId } });
+    expect(account.email).toBe(`deleted-${acc.accountId}@deleted.invalid`);
+  });
+});
