@@ -16,8 +16,13 @@ export async function generateStudioClassInstances(
 ): Promise<number> {
   const startDate = from ?? new Date();
 
+  // isArchived is defence in depth, matching class-generator.ts: the PATCH
+  // route keeps archived templates inactive, but if that invariant ever slips
+  // the generator must not materialise classes for something the teacher
+  // shelved. It slipped once — the studio route had neither guard until #53's
+  // coverage pass found it.
   const templates = await db.studioClassTemplate.findMany({
-    where: { isActive: true },
+    where: { isActive: true, isArchived: false },
   });
 
   let totalCreated = 0;

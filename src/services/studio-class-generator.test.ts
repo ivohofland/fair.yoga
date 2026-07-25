@@ -9,6 +9,8 @@ const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 describe('generateStudioClassInstances (DB)', () => {
   let teacherId: string;
   let templateId: string;
+  /** Archived but active — the state the PATCH route used to allow. */
+  let shelvedTemplateId: string;
 
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
@@ -36,11 +38,34 @@ describe('generateStudioClassInstances (DB)', () => {
       },
     });
     templateId = template.id;
+
+    // Defence in depth, mirroring class-generator.ts: the route now refuses to
+    // activate an archived template, but if that invariant ever slips the
+    // generator must not materialise classes for something the teacher shelved.
+    // This row is written directly because the route no longer permits it.
+    const shelved = await prisma.studioClassTemplate.create({
+      data: {
+        teacherId,
+        classType: 'Shelved',
+        location: 'Studio Gen Test',
+        dayOfWeek: 2,
+        startTime: '11:00',
+        durationMinutes: 60,
+        hourlyRate: 45,
+        isActive: true,
+        isArchived: true,
+      },
+    });
+    shelvedTemplateId = shelved.id;
   });
 
   afterAll(async () => {
-    await prisma.studioClass.deleteMany({ where: { templateId } });
-    await prisma.studioClassTemplate.delete({ where: { id: templateId } });
+    await prisma.studioClass.deleteMany({
+      where: { templateId: { in: [templateId, shelvedTemplateId] } },
+    });
+    await prisma.studioClassTemplate.deleteMany({
+      where: { id: { in: [templateId, shelvedTemplateId] } },
+    });
     await prisma.teacher.delete({ where: { id: teacherId } });
     await prisma.$disconnect();
   });
@@ -76,5 +101,11 @@ describe('generateStudioClassInstances (DB)', () => {
     const dates = instances.map((i) => i.date.toISOString());
     expect(dates.length).toBeGreaterThanOrEqual(3);
     expect(new Set(dates).size).toBe(dates.length);
+  });
+
+  it('skips an archived template even when it is still flagged active', async () => {
+    await generateStudioClassInstances(prisma);
+
+    expect(await prisma.studioClass.count({ where: { templateId: shelvedTemplateId } })).toBe(0);
   });
 });

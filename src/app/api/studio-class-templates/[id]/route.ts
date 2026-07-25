@@ -75,6 +75,14 @@ export const PATCH = withErrorHandler(async (
     return respondOk(updated);
   }
 
+  // Default: toggle active/paused. An archived template has no live half to
+  // toggle to — activating one would put it back in the generator's sweep for
+  // something the teacher shelved. Mirrors the same guard on
+  // `class-templates/[id]`; this route was missing it (#53).
+  if (template.isArchived) {
+    return respondError('Unarchive the template before activating it', 409);
+  }
+
   const updated = await prisma.studioClassTemplate.update({
     where: { id },
     data: { isActive: !template.isActive },
