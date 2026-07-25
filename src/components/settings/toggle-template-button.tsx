@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { readErrorMessage } from '@/lib/client-errors';
-import { formatDayHeader } from '@/lib/format';
+import { pauseMessage } from './template-action-messages';
 
 interface ToggleTemplateButtonProps {
   templateId: string;
@@ -24,6 +24,7 @@ export function ToggleTemplateButton({ templateId, isActive }: ToggleTemplateBut
   async function handleToggle() {
     setLoading(true);
     setError('');
+    setMessage('');
     try {
       const res = await fetch(`/api/class-templates/${templateId}`, { method: 'PATCH' });
       if (res.ok) {
@@ -32,11 +33,7 @@ export function ToggleTemplateButton({ templateId, isActive }: ToggleTemplateBut
         // Only the pause direction gets a message — resuming needs no explanation.
         if (isActive) {
           const last = data.lastScheduled;
-          setMessage(
-            last
-              ? `No new classes will be added to your schedule. The last one still scheduled is ${formatDayHeader(new Date(last.date))} · ${last.startTime}.`
-              : 'No new classes will be added to your schedule. Nothing from this template is currently scheduled.',
-          );
+          setMessage(pauseMessage(last ? { date: new Date(last.date), startTime: last.startTime } : null));
         }
         router.refresh();
       } else {

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { readErrorMessage } from '@/lib/client-errors';
+import { archiveMessage } from './template-action-messages';
 
 interface ArchiveTemplateButtonProps {
   templateId: string;
@@ -24,6 +25,7 @@ export function ArchiveTemplateButton({ templateId, isArchived }: ArchiveTemplat
   async function handleToggle() {
     setLoading(true);
     setError('');
+    setMessage('');
     try {
       const res = await fetch(`/api/class-templates/${templateId}?action=archive`, {
         method: 'PATCH',
@@ -34,17 +36,7 @@ export function ArchiveTemplateButton({ templateId, isArchived }: ArchiveTemplat
         // Only the archiving direction gets a message — un-archiving deletes
         // nothing and needs no explanation.
         if (!isArchived) {
-          const { deleted, remaining } = data;
-          const classWord = remaining === 1 ? 'class' : 'classes';
-          setMessage(
-            deleted === 0 && remaining === 0
-              ? 'Nothing from this template was scheduled.'
-              : deleted === 0
-                ? `No unbooked classes to delete. There are still ${remaining} ${classWord} on the schedule — cancel them individually if needed.`
-                : remaining === 0
-                  ? 'Classes on the schedule without bookings are now deleted. Nothing from this template is scheduled any more.'
-                  : `Classes on the schedule without bookings are now deleted. There are still ${remaining} ${classWord} on the schedule — cancel them individually if needed.`,
-          );
+          setMessage(archiveMessage(data.deleted, data.remaining));
         }
         router.refresh();
       } else {
