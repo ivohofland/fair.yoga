@@ -1,0 +1,47 @@
+# Docs-only counterpart to ci.yml.
+#
+# ci.yml carries `paths-ignore` for docs/**, **.md and LICENSE, so a docs-only
+# change never triggers it. That is the behaviour we want for CI minutes — a
+# 25-minute Postgres + Playwright run proves nothing about a Markdown edit —
+# but it breaks the moment `checks` or `test` becomes a *required* status check
+# on main: the run never starts, the check never reports, and the pull request
+# sits pending forever with no way to merge it.
+#
+# This is GitHub's documented workaround for skipped-but-required checks: a
+# second workflow with the same name, exposing jobs with the same IDs, matching
+# exactly the paths the real one ignores. Whichever set of files a PR touches,
+# precisely one of the two workflows runs, and the required contexts always
+# report.
+#
+# Keep the `paths` here the mirror image of `paths-ignore` in ci.yml, and keep
+# the job IDs identical to the ones there. If you add a job to ci.yml and make
+# it required, add its stub here too.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '**.md'
+      - 'LICENSE'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '**.md'
+      - 'LICENSE'
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Docs-only change — no code to type-check or lint."
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Docs-only change — no code to test."

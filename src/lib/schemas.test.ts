@@ -117,6 +117,31 @@ describe('updateClassSchema', () => {
   it('rejects unknown fields — the schema is strict', () => {
     expect(updateClassSchema.safeParse({ status: 'completed' }).success).toBe(false);
   });
+
+  // Guards the teacher-editable allowlist in class-lifecycle.ts from the one
+  // drift its compile-time pins cannot see. Those pins compare the allowlist
+  // against `keyof ClassUpdateData`, and that type re-adds `date` via an
+  // intersection — so `date` is in `keyof` whether or not this schema declares
+  // it, and dropping it here leaves both pins green. Reading the real schema
+  // object catches it, and names the field.
+  //
+  // A failure here is a decision, not a chore: adding a key means granting
+  // teachers write access to that column. Read the allowlist's doc comment
+  // before updating this list.
+  it('accepts exactly the teacher-editable field set', () => {
+    expect(Object.keys(updateClassSchema.shape).sort()).toEqual([
+      'classType',
+      'date',
+      'description',
+      'durationMinutes',
+      'maxStudents',
+      'minRate',
+      'minStudents',
+      'roomCost',
+      'startTime',
+      'targetRate',
+    ]);
+  });
 });
 
 describe('updateTeacherSchema.defaultTimezone', () => {

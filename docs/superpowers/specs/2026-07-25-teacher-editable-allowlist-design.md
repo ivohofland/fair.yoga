@@ -155,6 +155,10 @@ representation — a fragile check whose own correctness would need continual
 re-verification, the exact failure mode this route's history kept hitting. The
 bidirectional compile pins cover both drift directions without it.
 
+> **Retracted 2026-07-25 in review — both sentences above are wrong.** See
+> "Correction 2: the runtime test was declined on false grounds" below. The
+> agreement test shipped.
+
 ## Out of scope
 
 - **Making `status` editable through any route.** Status changes go through
@@ -183,3 +187,56 @@ type TeacherEditableClassField =
 ```
 
 — which drives both pins identically (each still names the offending field), needs no suppression, and does not falsely echo `ECONOMIC_FIELDS`' frozen-array form when, unlike that constant, nothing iterates it. The two pins are otherwise exactly as specified.
+
+## Correction 2 (2026-07-25, from PR review)
+
+Three claims in this spec were wrong. They are corrected here rather than
+deleted, because the reasoning that produced them is the kind worth being able
+to recognise later.
+
+### The `ZodEffects` justification was false for this repo
+
+The Testing section declined a runtime agreement test on the grounds that
+`updateClassSchema` is a `ZodEffects` whose key-set is reachable only through
+zod internals. **That describes zod v3.** This project is on zod **4.4.3**,
+where `ZodEffects` does not exist (`'ZodEffects' in z === false`), `.refine()`
+returns the same `ZodObject`, and `.shape` is public API. Measured: the schema's
+constructor is `ZodObject`, `Object.keys(updateClassSchema.shape)` returns the
+ten field names, and it typechecks under `strict: true` with **no cast**.
+
+The declined test was three lines and touched nothing internal. It has shipped
+in `src/lib/schemas.test.ts`.
+
+The general lesson is not "check the version" but that the argument was accepted
+because it *sounded* like the kind of fragility the route's history had already
+taught us to avoid. A plausible-sounding reason to skip a test deserves the same
+verification as a claim in the code.
+
+### "The bidirectional compile pins cover both drift directions" was false
+
+They cover both directions for nine of the ten fields. `ClassUpdateData` is
+`Omit<z.infer<…>, 'date'> & { date?: Date }`, so `date` is present in `keyof`
+whether or not the schema declares it — remove `date` from `updateClassSchema`
+and **both pins stay green**. The reverse pin's mutation check used an invented
+`'notAField'`, which it does catch, rather than a real field with a hand-declared
+type member, which it does not.
+
+The build does still break in that case, at the route's `const { date: dateString,
+...rest }` destructure — but with an error that never mentions the allowlist. The
+shipped key-set test closes this properly, and the blind spot is now documented
+beside the reverse pin itself.
+
+### The allowlist proves less than "permitted"
+
+The forward and reverse pins together force the allowlist to *equal* the
+schema's key set. So the allowlist carries no policy of its own: the state "the
+schema has `status` but a teacher may not write it" does not compile. What the
+pins buy is that a grant must be **explicit** — a second edit, in a file whose
+comment lists the hazards — not that it is *correct*. The original wording
+("proves a field is *permitted*") claimed the latter.
+
+A third pin now closes the gap the first two left: a `NeverTeacherEditableClassField`
+denylist (`id`, `teacherId`, `status`, `settingsLocked`, and the three financial
+totals) that refuses the reflexive repair of pasting the offending name into the
+allowlist. It is itself pinned against `Prisma.ClassUncheckedUpdateManyInput`, so
+a typo in the denylist fails rather than silently protecting nothing.

@@ -230,11 +230,13 @@ export async function completeClass(
  * it reaches Prisma.
  *
  * Deriving alone buys no safety: the route builds its payload with
- * `{ ...rest }`, and spreading defeats TypeScript's excess-property check, so a
- * field added to the schema reaches `db.class.updateMany` either way — hand-
- * declared or derived — and fails at runtime rather than at compile time.
- * Measured, not assumed: adding a field to `updateClassSchema` alone leaves
- * `tsc --noEmit` at exit 0. What deriving enables is the pin below.
+ * `{ ...rest }`, and spreading defeats TypeScript's excess-property check, so
+ * the route itself will never flag a field added to the schema — it reaches
+ * `db.class.updateMany` either way, hand-declared or derived. What deriving
+ * enables is the pins below, and they are what catches it now: before them
+ * adding a field to `updateClassSchema` alone left `tsc --noEmit` at exit 0
+ * (that was true when this type landed, and is why #79 was filed); today the
+ * allowlist pin fails the build with the field named.
  */
 export type ClassUpdateData =
   Omit<z.infer<typeof updateClassSchema>, 'date'> & { date?: Date };
@@ -268,8 +270,13 @@ type ClassUpdateColumnsExist = [UnwritableClassFields] extends [never]
 
 // `void` because this repo's eslint `no-unused-vars` has no `varsIgnorePattern`
 // — the const exists only to force the conditional type above to be evaluated.
-const _classUpdateDataMatchesSchema: ClassUpdateColumnsExist = true;
-void _classUpdateDataMatchesSchema;
+// It is also what makes the check exist at all: a conditional type alias that
+// nothing assigns is never instantiated, so deleting any of the const/void
+// pairs in this section removes its pin silently, with nothing reporting the
+// loss. Named for what it checks — columns exist — not for schema agreement,
+// which is the pin below it.
+const _classUpdateColumnsExist: ClassUpdateColumnsExist = true;
+void _classUpdateColumnsExist;
 
 /**
  * The fields a teacher may change on their own class via `PUT /api/classes/[id]`.
@@ -280,14 +287,22 @@ void _classUpdateDataMatchesSchema;
  * genuinely iterates, a runtime `as const` array here would be used solely as
  * a `typeof` source and earn an eslint suppression for the privilege.
  *
- * This is an authorization boundary: adding a member grants write access to a
- * `Class` column that may be gated by business logic the plain update path does
- * not run. Before adding one, check what else guards that column —
- *   - `status`             → the lifecycle state machine (`VALID_TRANSITIONS`)
- *   - `settingsLocked`     → the economic lock (this very function)
- *   - `teacherId`          → class ownership
- *   - the financial totals → set only by `completeClass`'s pricing run
- * — because the compiler will not.
+ * Adding a member is how a new schema field gets authorized: it grants write
+ * access to a `Class` column that may be gated by business logic the plain
+ * update path does not run. Before adding one, go read what actually guards
+ * that column — none of these guards live in `updateClass`, which is the point:
+ *   - `status`             → the lifecycle state machine (`VALID_TRANSITIONS`),
+ *                            enforced by `validateTransition` in
+ *                            `transitionClass` and `completeClass`
+ *   - `settingsLocked`     → written once by the first registration
+ *                            (`api/registrations/route.ts`). `updateClass` only
+ *                            *reads* it, to gate `ECONOMIC_FIELDS` — so nothing
+ *                            here would stop a write to the flag itself
+ *   - `teacherId`          → class ownership, checked in the route
+ *                            (`api/classes/[id]/route.ts`), not in this service
+ *   - the financial totals → written only by `completeClass`
+ * — because the compiler will not. For the columns above, the forbidden pin
+ * below refuses the grant outright; for anything else, the judgement is yours.
  */
 type TeacherEditableClassField =
   | 'classType'
@@ -306,9 +321,19 @@ type TeacherEditableClassField =
  * on the teacher-editable allowlist. Add a column-shaped field to the schema
  * without adding it to the allowlist and this resolves to that field's name
  * instead of `true`, failing the build with the field named. This is the guard
- * the column pin above does NOT provide — it proves a field is *permitted*, not
- * merely that it is a real, writable column. See issue #79 for the `status`
- * bypass this closes.
+ * the column pin above does NOT provide: `status` is a perfectly real, writable
+ * column, so that pin waves it through.
+ *
+ * What it proves is narrower than "this field is permitted". Together with the
+ * reverse pin it forces the allowlist to equal the schema's key set exactly, so
+ * the allowlist holds no policy of its own and cannot encode "the schema has
+ * `status` but a teacher may not write it" — that state does not compile. What
+ * it buys is that the grant must be *explicit*: a new schema field breaks the
+ * build until someone also names it above, next to the list of what else guards
+ * these columns. It cannot tell a considered grant from a paste of the name the
+ * error just handed you. The forbidden pin below is what refuses the grants
+ * that are never right. See issue #79 for the latent `status` bypass this
+ * closes — latent, because no such field is in the schema today.
  */
 type UnpermittedClassFields = Exclude<keyof ClassUpdateData, TeacherEditableClassField>;
 type ClassUpdateFieldsArePermitted = [UnpermittedClassFields] extends [never]
@@ -322,6 +347,18 @@ void _classUpdateFieldsArePermitted;
  * schema accepts. Remove a field from `updateClassSchema` but leave it on the
  * allowlist and this names the stale entry, so the list can't rot into granting
  * permission for a column that no longer flows through this route.
+ *
+ * Two things to know before deleting this as redundant paranoia:
+ *   - It is the only pin that fires if `ClassUpdateData` ever degrades to `{}`
+ *     or `unknown` — on an empty `keyof`, the forward pin passes vacuously.
+ *     Measured across `any`, `unknown`, `{}`, `never` and an added index
+ *     signature: every degradation trips the forward pin or this one, and the
+ *     narrowing half is caught here alone.
+ *   - It is blind to exactly one field. `date` is re-added unconditionally by
+ *     the intersection in `ClassUpdateData`, so it is in `keyof` whether or not
+ *     the schema declares it, and dropping `date` from the schema leaves both
+ *     pins green. Covered instead by the key-set test in `schemas.test.ts`,
+ *     which reads the schema object rather than a type derived from it.
  */
 type StaleAllowlistFields = Exclude<TeacherEditableClassField, keyof ClassUpdateData>;
 type AllowlistHasNoStaleFields = [StaleAllowlistFields] extends [never]
@@ -329,6 +366,59 @@ type AllowlistHasNoStaleFields = [StaleAllowlistFields] extends [never]
   : StaleAllowlistFields;
 const _allowlistHasNoStaleFields: AllowlistHasNoStaleFields = true;
 void _allowlistHasNoStaleFields;
+
+/**
+ * The `Class` columns no teacher may write through the plain update path,
+ * whatever the wire schema comes to say.
+ *
+ * The forward and reverse pins force the allowlist to mirror the schema, which
+ * means the quickest way to make a forward-pin failure go away is to paste the
+ * offending field name into the allowlist — exactly the reflexive grant #79 is
+ * about. This list is the set where that repair is never the right one, and the
+ * pin below fails on a const whose *name* carries the reason, since the name is
+ * the part of a type error people actually read.
+ *
+ * It also changes the shape of the mistake: adding a member above is a one-line
+ * edit that looks like configuration, while deleting a member here reads in
+ * review as what it is. Granting one of these still has an escape hatch — the
+ * contributor has to remove it from this list first — and that is the point,
+ * not a weakness: the guard makes the decision visible, it does not pretend to
+ * be an access-control system.
+ */
+type NeverTeacherEditableClassField =
+  | 'id'
+  | 'teacherId'
+  | 'status'
+  | 'settingsLocked'
+  | 'effectiveTeacherRate'
+  | 'totalStudents'
+  | 'totalRevenue';
+
+/**
+ * Compile-time pin: every name above must be a real `Class` column. Without
+ * this, a typo (`statuss`) would sit in the forbidden list protecting nothing
+ * while looking like protection — the same rot the reverse pin exists to stop,
+ * one list over.
+ */
+type UnknownForbiddenColumns =
+  Exclude<NeverTeacherEditableClassField, keyof Prisma.ClassUncheckedUpdateManyInput>;
+type ForbiddenColumnsExist = [UnknownForbiddenColumns] extends [never]
+  ? true
+  : UnknownForbiddenColumns;
+const _forbiddenColumnsExist: ForbiddenColumnsExist = true;
+void _forbiddenColumnsExist;
+
+/**
+ * Compile-time pin (forbidden): no forbidden column may appear on the
+ * teacher-editable allowlist. Fails naming the field that must not be there.
+ */
+type ForbiddenFieldsOnAllowlist =
+  Extract<TeacherEditableClassField, NeverTeacherEditableClassField>;
+type AllowlistHasNoForbiddenFields = [ForbiddenFieldsOnAllowlist] extends [never]
+  ? true
+  : ForbiddenFieldsOnAllowlist;
+const _allowlistHasNoForbiddenFields: AllowlistHasNoForbiddenFields = true;
+void _allowlistHasNoForbiddenFields;
 
 /**
  * Thrown when `updateClass` reaches a state its own guards say cannot happen.

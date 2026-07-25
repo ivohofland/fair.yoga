@@ -47,8 +47,12 @@ jobs:
       - name: Validate Prisma schema
         run: npx prisma validate
 
+      # Same command a contributor runs locally, so a green terminal and a
+      # green CI mean the same thing. `npm test` does NOT type-check — Vitest
+      # strips types via esbuild — so this is the only gate on the compile-time
+      # pins in src/services/class-lifecycle.ts.
       - name: TypeScript type check
-        run: npx tsc --noEmit
+        run: npm run typecheck
 
       - name: Lint
         run: npm run lint
