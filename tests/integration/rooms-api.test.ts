@@ -35,6 +35,11 @@ let deletePrivateRoomId: string;
 let deleteWithClassRoomId: string;
 let deleteEmptyRoomId: string;
 let deleteClassId: string;
+// #77: a room carrying TWO TeacherRooms, where only the OTHER teacher's has a
+// class. Every other fixture here gives a room exactly one TeacherRoom owned by
+// the deleting teacher, which is what left the cross-teacher guard unpinned.
+let deleteCrossTeacherRoomId: string;
+let crossTeacherClassId: string;
 
 function put(token: string, id: string, body: Record<string, unknown>) {
   return fetch(`${BASE_URL}/api/rooms/${id}`, {
@@ -153,14 +158,45 @@ beforeAll(async () => {
   await prisma.teacherRoom.create({
     data: { teacherId: creator.id, roomId: deleteEmptyRoomId, capacityOverride: 8, rentalRate: 15 },
   });
+
+  // Private, created by `creator`, shared with `other` (#77). The creator's own
+  // TeacherRoom is class-free; the other teacher's carries the only class. So
+  // the ONLY thing that can block the creator's delete is a guard that looks
+  // beyond their own teacher-rooms.
+  const crossRoom = await makeRoom('Delete Cross Teacher', false);
+  deleteCrossTeacherRoomId = crossRoom.id;
+  await prisma.teacherRoom.create({
+    data: { teacherId: creator.id, roomId: deleteCrossTeacherRoomId, capacityOverride: 8, rentalRate: 15 },
+  });
+  const otherTeacherRoom = await prisma.teacherRoom.create({
+    data: { teacherId: other.id, roomId: deleteCrossTeacherRoomId, capacityOverride: 8, rentalRate: 22 },
+  });
+  const crossClass = await prisma.class.create({
+    data: {
+      teacherId: other.id,
+      teacherRoomId: otherTeacherRoom.id,
+      classType: 'Rooms API Cross Teacher Guard',
+      date: new Date('2099-06-01'),
+      startTime: '10:00',
+      durationMinutes: 60,
+      roomCost: 15,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 1,
+      maxStudents: 8,
+      status: 'draft',
+    },
+  });
+  crossTeacherClassId = crossClass.id;
 });
 
 afterAll(async () => {
   // FK order: class -> teacher-rooms -> rooms. Class.teacherRoom is a required
   // relation defaulting to Restrict, so the class must go first or the
   // teacher-room delete throws.
-  if (deleteClassId) {
-    await prisma.class.deleteMany({ where: { id: deleteClassId } });
+  const classIds = [deleteClassId, crossTeacherClassId].filter(Boolean);
+  if (classIds.length > 0) {
+    await prisma.class.deleteMany({ where: { id: { in: classIds } } });
   }
   const roomIds = [
     roomId,
@@ -168,6 +204,7 @@ afterAll(async () => {
     deletePrivateRoomId,
     deleteWithClassRoomId,
     deleteEmptyRoomId,
+    deleteCrossTeacherRoomId,
   ].filter(Boolean);
   if (roomIds.length > 0) {
     await prisma.teacherRoom.deleteMany({ where: { roomId: { in: roomIds } } });
@@ -374,6 +411,34 @@ describe('DELETE /api/rooms/[id]', () => {
     expect(json.error.message).toContain('Only the room creator can delete this room');
 
     expect(await prisma.room.count({ where: { id: deleteWithClassRoomId } })).toBe(1);
+  });
+
+  // #77. Every other fixture in this file gives a room exactly one TeacherRoom,
+  // owned by whoever is deleting — so a narrowing "fix" like
+  //
+  //     const hasClasses = room.teacherRooms
+  //       .filter((tr) => tr.teacherId === session.teacherId)
+  //       .some((tr) => tr._count.classes > 0);
+  //
+  // would pass this entire suite while letting teacher A delete a room out from
+  // under teacher B, cascading away B's TeacherRoom and orphaning B's classes.
+  // (In practice Restrict turns that into a 500 rather than silent data loss —
+  // still a production bug on a routine action.) This is the only case where
+  // the blocking class belongs to someone other than the caller, so it is the
+  // only one that can detect that change.
+  it("another teacher's class blocks the creator's delete — the guard is deliberately cross-teacher", async () => {
+    const res = await del(creatorToken, deleteCrossTeacherRoomId);
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toBe('Cannot delete a room that has classes');
+
+    // Nothing removed — including the other teacher's link and its class.
+    expect(await prisma.room.count({ where: { id: deleteCrossTeacherRoomId } })).toBe(1);
+    expect(
+      await prisma.teacherRoom.count({ where: { roomId: deleteCrossTeacherRoomId } }),
+    ).toBe(2);
+    expect(await prisma.class.count({ where: { id: crossTeacherClassId } })).toBe(1);
   });
 
   it('the creator deletes a private, class-free room -> 200, room and teacher-rooms gone', async () => {
