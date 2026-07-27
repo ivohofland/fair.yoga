@@ -77,6 +77,13 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
       },
     });
 
+  /** Narrows to the archiving arm — see the class family's test for why. */
+  const expectArchived = (result: Awaited<ReturnType<typeof archiveOrUnarchiveStudioTemplate>>) => {
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`);
+    if (result.action !== 'archived') throw new Error('expected the archiving direction');
+    return result;
+  };
+
   beforeAll(async () => {
     await prisma.$connect();
     const seeded = await seedTeacher('archive');
@@ -154,12 +161,11 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
 
     const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId);
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('expected ok');
-    expect(result.template.isArchived).toBe(true);
+    const archived = expectArchived(result);
+    expect(archived.template.isArchived).toBe(true);
     expect(await prisma.studioClass.count({ where: { id: c.id } })).toBe(1);
     // The literal `remaining: 0` this replaced would have been wrong here.
-    expect(result.remaining).toBe(1);
+    expect(archived.remaining).toBe(1);
   });
 
   it("reports deleted: 0, remaining: 1 when today's class is the only one scheduled", async () => {
@@ -168,13 +174,12 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
 
     const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId);
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('expected ok');
     // Nothing was eligible for deletion (today is spared) and the one class
     // on the schedule is today's — the confirmation must say so, not "nothing
     // scheduled any more".
-    expect(result.deleted).toBe(0);
-    expect(result.remaining).toBe(1);
+    const archived = expectArchived(result);
+    expect(archived.deleted).toBe(0);
+    expect(archived.remaining).toBe(1);
   });
 
   it('keeps past classes', async () => {
@@ -206,10 +211,9 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
 
     const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId);
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('expected ok');
-    expect(result.deleted).toBe(2);
-    expect(result.remaining).toBe(0);
+    const archived = expectArchived(result);
+    expect(archived.deleted).toBe(2);
+    expect(archived.remaining).toBe(0);
     expect(await prisma.studioClass.count({ where: { id: unbooked1.id } })).toBe(0);
     expect(await prisma.studioClass.count({ where: { id: unbooked2.id } })).toBe(0);
     expect(await prisma.studioClass.count({ where: { id: pastClass.id } })).toBe(1);
@@ -221,17 +225,18 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     const unbooked = await makeClass(t.id, { date: futureOn(5) });
     const cancelled = await makeClass(t.id, { date: futureOn(6), cancelledAt: new Date() });
 
-    const archived = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId);
-    expect(archived.ok).toBe(true);
-    if (!archived.ok) throw new Error('expected ok');
+    const archived = expectArchived(
+      await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId),
+    );
     expect(archived.deleted).toBe(1);
     expect(archived.remaining).toBe(0);
 
     const resumed = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId);
     expect(resumed.ok).toBe(true);
     if (!resumed.ok) throw new Error('expected ok');
-    expect(resumed.deleted).toBe(0);
-    expect(resumed.remaining).toBe(0);
+    // Reports the direction and nothing else — no zeros that would read like
+    // a real archive that happened to match nothing.
+    expect(resumed.action).toBe('unarchived');
     expect(resumed.template.isArchived).toBe(false);
 
     expect(await prisma.studioClass.count({ where: { id: unbooked.id } })).toBe(0);

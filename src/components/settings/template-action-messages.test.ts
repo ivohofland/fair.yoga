@@ -22,15 +22,21 @@ describe('archiveMessage', () => {
     expect(archiveMessage(0, 0)).toBe('Nothing from this template was scheduled.');
   });
 
+  /**
+   * "Nothing was withdrawn", not "No unbooked classes to delete": the survivor
+   * this branch reports is often today's class, which *is* unbooked and was
+   * spared by the delete's boundary rather than by anyone booking it. The old
+   * wording contradicted the count in its own sentence.
+   */
   it('nothing deleted, one remaining — singular "class", no pronoun, no verb', () => {
     expect(archiveMessage(0, 1)).toBe(
-      'No unbooked classes to delete. 1 class still on the schedule — cancel individually if needed.',
+      'Nothing was withdrawn. 1 class still on the schedule — cancel individually if needed.',
     );
   });
 
   it('nothing deleted, many remaining — plural "classes", no pronoun, no verb', () => {
     expect(archiveMessage(0, 3)).toBe(
-      'No unbooked classes to delete. 3 classes still on the schedule — cancel individually if needed.',
+      'Nothing was withdrawn. 3 classes still on the schedule — cancel individually if needed.',
     );
   });
 

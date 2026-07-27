@@ -3,7 +3,7 @@ import { formatDayHeader } from './format';
 
 /**
  * `formatDayHeader` had no tests while it was a private copy inside one
- * component. #86 promoted it to `src/lib/format.ts` and pointed six consumers
+ * component. #86 promoted it to `src/lib/format.ts` and pointed five files
  * at it — the schedule list, the student bookings page, both public booking
  * pages, and the settings confirmation copy — so a change here now moves text
  * on the teacher's schedule, a student's bookings, and a public booking page

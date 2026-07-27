@@ -28,8 +28,12 @@ export function archiveMessage(deleted: number, remaining: number): string {
 
   if (deleted === 0 && remaining === 0) return 'Nothing from this template was scheduled.';
 
+  // Not "No unbooked classes to delete" — a class dated today is unbooked and
+  // still spared by the delete's boundary, so that phrasing contradicts the
+  // very count in the same sentence. "Nothing was withdrawn" is true whether
+  // the survivors are booked or merely too close to their start.
   if (deleted === 0) {
-    return `No unbooked classes to delete. ${remaining} ${classWord} still on the schedule — cancel individually if needed.`;
+    return `Nothing was withdrawn. ${remaining} ${classWord} still on the schedule — cancel individually if needed.`;
   }
 
   if (remaining === 0) {
@@ -45,11 +49,10 @@ export function archiveMessage(deleted: number, remaining: number): string {
  * the archiving direction — mirroring `archiveMessage`.
  *
  * `remaining` is not always 0 here: `archiveOrUnarchiveStudioTemplate`'s
- * delete deliberately spares a class dated today (`date > now` excludes it
- * once the clock passes 00:00 UTC), but the count backing `remaining` is
- * keyed from the start of today (00:00 UTC) instead, matching what the
- * teacher sees on their schedule — so archiving on a class's own day
- * legitimately leaves that one class behind. Pausing a studio template
+ * delete deliberately spares a class dated today, but the count backing
+ * `remaining` is keyed from the start of the teacher's today instead,
+ * matching what they see on their schedule — so archiving on a class's own
+ * day legitimately leaves that one class behind. Pausing a studio template
  * reuses `pauseMessage` as-is rather than duplicating it — its wording never
  * names "recurring" or "studio", so it already fits both template families.
  */

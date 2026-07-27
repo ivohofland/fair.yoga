@@ -129,12 +129,20 @@ export async function transitionClass(
  * same list — a class carrying any of these is one a student is still on the
  * hook for, and must not be removed silently.
  *
- * A plain, mutable `RegistrationStatus[]` — not `as const` — because that
- * archive rule's delete predicate passes it straight to Prisma's `in` filter,
- * which wants `RegistrationStatus[]`, not a readonly tuple (same reasoning as
- * `SCHEDULED_STATUSES` in `class-template-lifecycle.ts`).
+ * Frozen, like `ECONOMIC_FIELDS` above: this list now gates a destructive
+ * `deleteMany` in two services, so a mutation anywhere in the process would
+ * silently widen what archiving is allowed to destroy. Prisma's `in` filter
+ * does want a mutable `RegistrationStatus[]` and will not accept a readonly
+ * one — that is a constraint on the call site, not on the source of truth, so
+ * callers spread (`in: [...CHARGED_STATUSES]`) exactly as `waitlist.ts` does
+ * with `ACTIVE_REGISTRATION_STATUSES`.
  */
-export const CHARGED_STATUSES: RegistrationStatus[] = ['registered', 'attended', 'no_show', 'late_cancel'];
+export const CHARGED_STATUSES: readonly RegistrationStatus[] = Object.freeze([
+  'registered',
+  'attended',
+  'no_show',
+  'late_cancel',
+]);
 
 /**
  * Complete a class: validate transition, calculate pricing, update

@@ -70,12 +70,16 @@ export const PATCH = withErrorHandler(async (
   if (action === 'archive') {
     const result = await archiveOrUnarchiveStudioTemplate(prisma, id, session.teacherId);
 
+    // Only the archiving direction reports counts — same reasoning as the
+    // class family's route.
     if (result.ok) {
-      return respondOk({
-        ...result.template,
-        deleted: result.deleted,
-        remaining: result.remaining,
-      });
+      return result.action === 'archived'
+        ? respondOk({
+            ...result.template,
+            deleted: result.deleted,
+            remaining: result.remaining,
+          })
+        : respondOk(result.template);
     }
 
     if (result.reason === 'not_found') return respondError('Studio class template not found', 404);

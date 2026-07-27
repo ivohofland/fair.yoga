@@ -96,8 +96,14 @@ export const PATCH = withErrorHandler(async (
   if (action === 'archive') {
     const result = await archiveOrUnarchiveTemplate(prisma, id, session.teacherId);
 
+    // Only the archiving direction reports counts. Un-archiving deletes
+    // nothing, and answering it with `deleted: 0, remaining: 0` would put two
+    // numbers on the wire that mean "not applicable" while reading exactly
+    // like "archived, and nothing matched".
     if (result.ok) {
-      return respondOk({ ...result.template, deleted: result.deleted, remaining: result.remaining });
+      return result.action === 'archived'
+        ? respondOk({ ...result.template, deleted: result.deleted, remaining: result.remaining })
+        : respondOk(result.template);
     }
 
     if (result.reason === 'not_found') return respondError('Class template not found', 404);
