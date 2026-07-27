@@ -18,15 +18,15 @@
  *   - Where the class family excludes any class with a registration in a
  *     CHARGED status, the studio family has no registrations to consult at
  *     all — `studentCount` is a plain, unconnected `Int?`. So every future
- *     uncancelled studio class the delete's `date > now` boundary can reach is
- *     deletable. That boundary deliberately spares a class dated today
- *     (`StudioClass.date` is `@db.Date`, i.e. midnight UTC, so today's row is
- *     already `< now` past 00:00) — the same carve-out the class family has —
- *     so `remaining` is a real query keyed at 00:00 UTC today, not a hardcoded
- *     0: today's survivor is the one row it can ever find.
+ *     uncancelled studio class the delete's boundary can reach is deletable.
+ *     That boundary deliberately spares a class dated today — the same
+ *     carve-out the class family has — so `remaining` is a real query keyed
+ *     at the start of the teacher's today, not a hardcoded 0: today's
+ *     survivor is the one row it can ever find.
  */
 
 import type { PrismaClient, StudioClassTemplate } from '@prisma/client';
+import { startOfLocalDay } from '@/lib/timezone';
 
 /** The furthest-out class still on the schedule, for the pause confirmation. */
 export type PauseStudioTemplateResult =
@@ -37,19 +37,36 @@ export type PauseStudioTemplateResult =
     }
   | { ok: false; reason: 'not_found' | 'forbidden' | 'archived' };
 
+/**
+ * Archiving and un-archiving are different operations, so they report
+ * different things — see `ArchiveTemplateResult` for why the un-archiving arm
+ * carries no counts.
+ */
 export type ArchiveStudioTemplateResult =
-  | { ok: true; template: StudioClassTemplate; deleted: number; remaining: number }
+  | {
+      ok: true;
+      action: 'archived';
+      template: StudioClassTemplate;
+      deleted: number;
+      remaining: number;
+    }
+  | { ok: true; action: 'unarchived'; template: StudioClassTemplate }
   | { ok: false; reason: 'not_found' | 'forbidden' };
 
 /**
- * Future studio classes still on the schedule for a template — the
- * actionable ones. The studio analogue of `scheduledWhere` in
+ * Studio classes still on the schedule for a template, from the given
+ * calendar-date boundary onward. The studio analogue of `scheduledWhere` in
  * `class-template-lifecycle.ts`, but keyed on `cancelledAt` rather than
  * `status` because that is the only lifecycle column `StudioClass` has.
+ *
+ * The boundary is a parameter for the same reason as there: the delete uses
+ * `gt` (today's class is spared) and the counts use `gte` (today's class is
+ * the survivor they must report), against a calendar date from
+ * `startOfLocalDay` rather than a raw instant.
  */
-const scheduledWhere = (templateId: string, now: Date) => ({
+const scheduledWhere = (templateId: string, date: { gt: Date } | { gte: Date }) => ({
   templateId,
-  date: { gt: now },
+  date,
   cancelledAt: null,
 });
 
@@ -75,7 +92,10 @@ export async function pauseOrResumeStudioTemplate(
   templateId: string,
   teacherId: string,
 ): Promise<PauseStudioTemplateResult> {
-  const template = await db.studioClassTemplate.findUnique({ where: { id: templateId } });
+  const template = await db.studioClassTemplate.findUnique({
+    where: { id: templateId },
+    include: { teacher: { select: { defaultTimezone: true } } },
+  });
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
   if (template.isArchived) return { ok: false, reason: 'archived' };
@@ -85,8 +105,12 @@ export async function pauseOrResumeStudioTemplate(
     data: { isActive: !template.isActive },
   });
 
+  // `gte` today, not `gt`: pause deletes nothing, so there is no spare-today
+  // carve-out to mirror here — today's class is still on the schedule and
+  // must be reported as such.
+  const today = startOfLocalDay(new Date(), template.teacher.defaultTimezone);
   const lastScheduled = await db.studioClass.findFirst({
-    where: scheduledWhere(templateId, new Date()),
+    where: scheduledWhere(templateId, { gte: today }),
     orderBy: [{ date: 'desc' }, { startTime: 'desc' }],
     select: { date: true, startTime: true },
   });
@@ -110,11 +134,15 @@ export async function archiveOrUnarchiveStudioTemplate(
   templateId: string,
   teacherId: string,
 ): Promise<ArchiveStudioTemplateResult> {
-  const template = await db.studioClassTemplate.findUnique({ where: { id: templateId } });
+  const template = await db.studioClassTemplate.findUnique({
+    where: { id: templateId },
+    include: { teacher: { select: { defaultTimezone: true } } },
+  });
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
   const archiving = !template.isArchived;
+  const timeZone = template.teacher.defaultTimezone;
 
   return db.$transaction(async (tx) => {
     const updated = await tx.studioClassTemplate.update({
@@ -122,9 +150,13 @@ export async function archiveOrUnarchiveStudioTemplate(
       data: { isArchived: archiving, isActive: false },
     });
 
-    if (!archiving) return { ok: true as const, template: updated, deleted: 0, remaining: 0 };
+    if (!archiving) return { ok: true as const, action: 'unarchived' as const, template: updated };
 
-    const now = new Date();
+    // The teacher's calendar today, not `new Date()` — `StudioClass.date` is
+    // `@db.Date`, so both sides of every comparison below are calendar dates.
+    // See `archiveOrUnarchiveTemplate` for what comparing the column to a raw
+    // instant costs in each direction.
+    const today = startOfLocalDay(new Date(), timeZone);
 
     // Deliberately one statement, not a `findMany` followed by a
     // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
@@ -136,23 +168,18 @@ export async function archiveOrUnarchiveStudioTemplate(
     // number of rows that actually matched then — not a stale count from an
     // earlier read. Do not "optimise" this back into a read-then-delete.
     const { count: deleted } = await tx.studioClass.deleteMany({
-      where: scheduledWhere(templateId, now),
+      where: scheduledWhere(templateId, { gt: today }),
     });
 
-    // The delete above deliberately spares a class dated today (`date > now`
-    // excludes it once the clock passes 00:00 UTC), so `remaining` needs its
-    // own boundary at the start of today rather than reusing `scheduledWhere`
-    // — reusing it would undercount that same survivor, the exact bug fixed in
-    // `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`). No
-    // charged-status filter is needed here, unlike that sibling: `StudioClass`
-    // has no registrations to consult, so every uncancelled row in scope
-    // counts.
-    const startOfToday = new Date(now);
-    startOfToday.setUTCHours(0, 0, 0, 0);
+    // `gte`, where the delete used `gt`: the delete spares a class dated
+    // today, and counting with its boundary would undercount that same
+    // survivor. No charged-status filter is needed here, unlike the class
+    // sibling — `StudioClass` has no registrations to consult, so every
+    // uncancelled row in scope counts.
     const remaining = await tx.studioClass.count({
-      where: { templateId, date: { gte: startOfToday }, cancelledAt: null },
+      where: scheduledWhere(templateId, { gte: today }),
     });
 
-    return { ok: true as const, template: updated, deleted, remaining };
+    return { ok: true as const, action: 'archived' as const, template: updated, deleted, remaining };
   });
 }

@@ -1,6 +1,70 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { classStartInstant } from './timezone';
+import { classStartInstant, startOfLocalDay } from './timezone';
 import { log } from '@/lib/log';
+
+/**
+ * The boundary #86's archive rule compares `Class.date` against. These are
+ * the deterministic teeth for that fix: the service tests seed a teacher and
+ * ask whether today's class survived, but "today" there is whatever the clock
+ * says at run time. Here the instants are fixed, so both directions of the
+ * bug are pinned at every hour of the day.
+ */
+describe('startOfLocalDay', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('is the UTC calendar date for a UTC teacher', () => {
+    expect(startOfLocalDay(new Date('2026-07-26T13:45:00Z'), 'UTC').toISOString()).toBe(
+      '2026-07-26T00:00:00.000Z',
+    );
+  });
+
+  /**
+   * West of UTC, late local evening: UTC has already rolled into the next
+   * calendar day while the teacher is still on the previous one. Using `now`
+   * directly here is what left tomorrow's class bookable under an archived
+   * template — the delete's `date > now` read false for it.
+   */
+  it('stays on the previous day west of UTC after UTC midnight', () => {
+    expect(
+      startOfLocalDay(new Date('2026-07-26T01:05:00Z'), 'America/Los_Angeles').toISOString(),
+    ).toBe('2026-07-25T00:00:00.000Z');
+  });
+
+  /**
+   * East of UTC, local morning: the teacher is already on the next calendar
+   * day while UTC is not. Using `now` directly here is what deleted a class
+   * running that same evening — `date > now` read true for it.
+   */
+  it('advances to the next day east of UTC before UTC midnight', () => {
+    expect(startOfLocalDay(new Date('2026-07-25T21:00:00Z'), 'Pacific/Auckland').toISOString()).toBe(
+      '2026-07-26T00:00:00.000Z',
+    );
+  });
+
+  it('returns midnight, not the instant it was given', () => {
+    const d = startOfLocalDay(new Date('2026-07-26T13:45:30.500Z'), 'Europe/Amsterdam');
+    expect([d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds()]).toEqual([
+      0, 0, 0, 0,
+    ]);
+  });
+
+  it('falls back to the UTC calendar date for an unknown timezone', () => {
+    expect(startOfLocalDay(new Date('2026-07-26T13:45:00Z'), 'Not/AZone').toISOString()).toBe(
+      '2026-07-26T00:00:00.000Z',
+    );
+  });
+
+  it('warns when falling back so the bad zone is observable', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    startOfLocalDay(new Date('2026-07-26T13:45:00Z'), 'Not/AZone');
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ timeZone: 'Not/AZone' }),
+      expect.stringContaining('falling back to UTC'),
+    );
+  });
+});
 
 // Class rows store a calendar date (UTC midnight) + HH:mm wall-clock startTime.
 // classStartInstant interprets that wall clock in the teacher's timezone.

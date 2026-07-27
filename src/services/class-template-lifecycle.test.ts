@@ -6,6 +6,7 @@ import {
   archiveOrUnarchiveTemplate,
   pauseOrResumeTemplate,
 } from './class-template-lifecycle';
+import { startOfLocalDay } from '@/lib/timezone';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -13,7 +14,7 @@ const uniqueSuffix = Date.now();
 // Hoisted to module scope: a pure function of `label` (plus the module-scope
 // `prisma`/`uniqueSuffix` above), so both describe blocks below can seed their
 // own, separate teacher/room/teacherRoom fixtures from it.
-const seedTeacher = async (label: string) => {
+const seedTeacher = async (label: string, defaultTimezone = 'UTC') => {
   const email = `tpl-${label}-${uniqueSuffix}@test.local`;
   const teacher = await prisma.teacher.create({
     data: {
@@ -23,7 +24,7 @@ const seedTeacher = async (label: string) => {
       account: { create: { email } },
       bio: `Teacher for ${label} template tests`,
       pageSlug: `tpl-${label}-${uniqueSuffix}`,
-      defaultTimezone: 'UTC',
+      defaultTimezone,
     },
   });
   const room = await prisma.room.create({
@@ -215,6 +216,9 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   let otherTeacherId: string;
   let otherAccountId: string;
   let otherRoomId: string;
+  type Seeded = Awaited<ReturnType<typeof seedTeacher>>;
+  let east: Seeded;
+  let west: Seeded;
 
   const makeTemplate = (classType: string) =>
     prisma.classTemplate.create({
@@ -260,6 +264,18 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   const register = (classId: string, studentId: string, status: RegistrationStatus) =>
     prisma.registration.create({ data: { classId, studentId, tierAtBooking: 3, status } });
 
+  /**
+   * Narrows to the archiving arm. `deleted`/`remaining` exist only there —
+   * un-archiving reports no counts rather than two zeros that would read like
+   * "archived, and nothing matched" — so every count assertion has to say
+   * which direction it expected. That is the discriminant earning its keep.
+   */
+  const expectArchived = (result: Awaited<ReturnType<typeof archiveOrUnarchiveTemplate>>) => {
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`);
+    if (result.action !== 'archived') throw new Error('expected the archiving direction');
+    return result;
+  };
+
   beforeAll(async () => {
     await prisma.$connect();
     const seeded = await seedTeacher('archive');
@@ -272,6 +288,12 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     otherTeacherId = other.teacherId;
     otherAccountId = other.accountId;
     otherRoomId = other.roomId;
+
+    // Two zones 25 hours apart, so their local calendar dates always differ by
+    // exactly one day — whatever the clock says when this runs. See the
+    // timezone test below for why that fixed gap is what makes it deterministic.
+    east = await seedTeacher('archive-east', 'Pacific/Kiritimati');
+    west = await seedTeacher('archive-west', 'Pacific/Niue');
 
     const student = await prisma.student.create({
       data: {
@@ -288,6 +310,8 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     for (const [t, r, a] of [
       [teacherId, roomId, accountId],
       [otherTeacherId, otherRoomId, otherAccountId],
+      [east.teacherId, east.roomId, east.accountId],
+      [west.teacherId, west.roomId, west.accountId],
     ] as const) {
       await prisma.class.deleteMany({ where: { teacherId: t } });
       await prisma.classTemplate.deleteMany({ where: { teacherId: t } });
@@ -382,14 +406,13 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
 
     const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('expected ok');
-    expect(result.template.isArchived).toBe(true);
+    const archived = expectArchived(result);
+    expect(archived.template.isArchived).toBe(true);
     expect(await prisma.class.count({ where: { id: c.id } })).toBe(1);
-    // A `remaining` still keyed on the delete's `date > now` boundary would
-    // read 0 here and tell the teacher nothing is scheduled while this exact
-    // class stays open on their public page.
-    expect(result.remaining).toBe(1);
+    // A `remaining` still keyed on the delete's own boundary would read 0 here
+    // and tell the teacher nothing is scheduled while this exact class stays
+    // open on their public page.
+    expect(archived.remaining).toBe(1);
   });
 
   it("reports deleted: 0, remaining: 1 when today's class is the only one scheduled", async () => {
@@ -398,13 +421,131 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
 
     const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('expected ok');
     // Nothing was eligible for deletion (today is spared) and the one class
     // on the schedule is today's — the confirmation must say so, not "nothing
     // scheduled any more".
-    expect(result.deleted).toBe(0);
-    expect(result.remaining).toBe(1);
+    const archived = expectArchived(result);
+    expect(archived.deleted).toBe(0);
+    expect(archived.remaining).toBe(1);
+  });
+
+  /**
+   * The rule is "no CHARGED registration", deliberately *not* `settingsLocked`
+   * — which answers whether the price may still change and, once set, never
+   * resets. Every other fixture here leaves `settingsLocked` false (the test
+   * helper writes `Registration` rows directly, bypassing the flip in
+   * `api/registrations/route.ts`), so without this case a refactor to the
+   * wrong-but-plausible `settingsLocked` check would pass the whole suite.
+   */
+  it('deletes a future class that is settingsLocked but carries no charged registration', async () => {
+    const t = await makeTemplate('Locked But Unbooked');
+    const c = await makeClass(t.id, { date: future() });
+    await prisma.class.update({ where: { id: c.id }, data: { settingsLocked: true } });
+    await register(c.id, studentId, 'cancelled');
+
+    const archived = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId));
+
+    expect(archived.deleted).toBe(1);
+    expect(archived.remaining).toBe(0);
+    expect(await prisma.class.count({ where: { id: c.id } })).toBe(0);
+  });
+
+  /**
+   * `SCHEDULED_STATUSES` is `['draft', 'open']`. A future class in any other
+   * status is out of the archive rule's scope and must survive — pinning the
+   * list against silent widening, which nothing else here does.
+   */
+  it.each(['in_progress', 'completed'] as const)(
+    'keeps a future %s class — outside the draft/open scope',
+    async (status) => {
+      const t = await makeTemplate(`Scope ${status}`);
+      const c = await makeClass(t.id, { date: future() });
+      await prisma.class.update({ where: { id: c.id }, data: { status } });
+
+      const archived = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId));
+
+      expect(archived.deleted).toBe(0);
+      expect(archived.remaining).toBe(0);
+      expect(await prisma.class.count({ where: { id: c.id } })).toBe(1);
+    },
+  );
+
+  it('deletes a future draft class, like an open one', async () => {
+    const t = await makeTemplate('Draft Scope');
+    const c = await makeClass(t.id, { date: future(), status: 'draft' });
+
+    const archived = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId));
+
+    expect(archived.deleted).toBe(1);
+    expect(await prisma.class.count({ where: { id: c.id } })).toBe(0);
+  });
+
+  /**
+   * The boundary is the *teacher's* calendar day, not UTC's.
+   *
+   * Deterministic despite depending on the wall clock, because the two zones
+   * are 25 hours apart: their local dates always differ by exactly one day.
+   * Let U be UTC's date. Either Kiritimati is on U+1 and Niue on U, or
+   * Kiritimati is on U and Niue on U-1 — and each case breaks a different
+   * half of the old UTC-based logic:
+   *
+   *   - Kiritimati on U+1: `date > now` reads true for its today, so the
+   *     class running that same evening is deleted.
+   *   - Niue on U-1: `date >= startOfUtcToday` reads false for its today, so
+   *     the surviving class is not counted and the teacher is told nothing is
+   *     left while it is still open on their page.
+   *
+   * One of the two always fires, whichever hour CI runs at.
+   */
+  it("keys the boundary on the teacher's calendar day, not UTC's", async () => {
+    for (const seeded of [east, west]) {
+      const teacher = await prisma.teacher.findUniqueOrThrow({
+        where: { id: seeded.teacherId },
+        select: { defaultTimezone: true },
+      });
+      const localToday = startOfLocalDay(new Date(), teacher.defaultTimezone);
+
+      const t = await prisma.classTemplate.create({
+        data: {
+          teacherId: seeded.teacherId,
+          teacherRoomId: seeded.teacherRoomId,
+          classType: `Zone ${teacher.defaultTimezone}`,
+          dayOfWeek: 3,
+          startTime: '09:30',
+          durationMinutes: 60,
+          roomCost: 15,
+          minRate: 10,
+          targetRate: 20,
+          minStudents: 2,
+          maxStudents: 8,
+        },
+      });
+      const c = await prisma.class.create({
+        data: {
+          teacherId: seeded.teacherId,
+          teacherRoomId: seeded.teacherRoomId,
+          templateId: t.id,
+          classType: 'Zone Boundary',
+          date: localToday,
+          startTime: '19:00',
+          durationMinutes: 60,
+          roomCost: 15,
+          minRate: 10,
+          targetRate: 20,
+          minStudents: 1,
+          maxStudents: 8,
+          status: 'open',
+        },
+      });
+
+      const archived = expectArchived(
+        await archiveOrUnarchiveTemplate(prisma, t.id, seeded.teacherId),
+      );
+
+      expect(archived.deleted).toBe(0);
+      expect(archived.remaining).toBe(1);
+      expect(await prisma.class.count({ where: { id: c.id } })).toBe(1);
+    }
   });
 
   it('keeps past classes', async () => {
@@ -433,10 +574,9 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
 
     const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('expected ok');
-    expect(result.deleted).toBe(2);
-    expect(result.remaining).toBe(1);
+    const archived = expectArchived(result);
+    expect(archived.deleted).toBe(2);
+    expect(archived.remaining).toBe(1);
     expect(await prisma.class.count({ where: { id: unbooked1.id } })).toBe(0);
     expect(await prisma.class.count({ where: { id: unbooked2.id } })).toBe(0);
     expect(await prisma.class.count({ where: { id: booked.id } })).toBe(1);
@@ -449,9 +589,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const booked = await makeClass(t.id, { date: futureOn(6) });
     await register(booked.id, studentId, 'registered');
 
-    const archived = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
-    expect(archived.ok).toBe(true);
-    if (!archived.ok) throw new Error('expected ok');
+    const archived = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId));
     expect(archived.deleted).toBe(1);
     expect(archived.remaining).toBe(1);
 
@@ -462,8 +600,11 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const resumed = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
     expect(resumed.ok).toBe(true);
     if (!resumed.ok) throw new Error('expected ok');
-    expect(resumed.deleted).toBe(0);
-    expect(resumed.remaining).toBe(0);
+    // Reports the direction and nothing else. Previously this arm returned
+    // `deleted: 0, remaining: 0` — indistinguishable from a real archive that
+    // matched nothing, even though a booked class is still standing (asserted
+    // by `stillSurviving` below).
+    expect(resumed.action).toBe('unarchived');
     expect(resumed.template.isArchived).toBe(false);
 
     const stillSurviving = (

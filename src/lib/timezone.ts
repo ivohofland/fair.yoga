@@ -40,6 +40,44 @@ function timeZoneOffsetMs(instant: Date, timeZone: string): number {
 }
 
 /**
+ * The teacher's current calendar date, expressed the way `Class.date` and
+ * `StudioClass.date` store one: midnight UTC of the local day.
+ *
+ * Those columns are `@db.Date` — they hold a *calendar date*, not an instant.
+ * The only sound comparison against them is another calendar date. Comparing
+ * one to `new Date()` silently treats the teacher's calendar as UTC's, which
+ * is true only at offset 0: east of UTC the teacher's today still reads as
+ * `> now` for the first hours of their day, and west of UTC their tomorrow
+ * already reads as `< now` through the evening. Both directions matter to
+ * #86's archive boundary, where one spares a class and the other deletes it.
+ *
+ * Unknown timezones fall back to the UTC calendar date rather than throwing,
+ * matching `classStartInstant`.
+ */
+export function startOfLocalDay(instant: Date, timeZone: string): Date {
+  try {
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+
+    const parts: Partial<Record<Intl.DateTimeFormatPartTypes, number>> = {};
+    for (const { type, value } of dtf.formatToParts(instant)) {
+      if (type !== 'literal') parts[type] = Number(value);
+    }
+
+    return new Date(Date.UTC(parts.year!, parts.month! - 1, parts.day!));
+  } catch {
+    log.warn({ timeZone }, 'invalid timezone, falling back to UTC calendar date');
+    const utc = new Date(instant);
+    utc.setUTCHours(0, 0, 0, 0);
+    return utc;
+  }
+}
+
+/**
  * The UTC instant at which a class starts: the stored calendar date's
  * wall-clock startTime interpreted in the given IANA timezone.
  *

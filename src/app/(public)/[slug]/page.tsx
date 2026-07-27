@@ -8,6 +8,7 @@ import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import { estimateTierPrices } from '@/lib/tier-estimates';
 import { formatRoomLocation, formatDayHeader } from '@/lib/format';
+import { startOfLocalDay } from '@/lib/timezone';
 import { PriceRange } from '@/components/booking/price-range';
 
 export const dynamic = 'force-dynamic';
@@ -24,13 +25,23 @@ export default async function TeacherBookingPage({
 
   const teacher = await prisma.teacher.findUnique({
     where: { pageSlug: slug },
-    select: { id: true, firstName: true, lastName: true, bio: true, deletedAt: true },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      bio: true,
+      deletedAt: true,
+      defaultTimezone: true,
+    },
   });
   // deletedAt: erasure renames the slug, but never rely on that alone.
   if (!teacher || teacher.deletedAt) notFound();
 
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
+  // The teacher's calendar today, not UTC's. `Class.date` is `@db.Date`, so
+  // this compares a calendar date to a calendar date; a UTC start-of-day
+  // would hide a class still hours from starting for any teacher west of UTC,
+  // and is the boundary #86's archive rule is written to agree with.
+  const today = startOfLocalDay(new Date(), teacher.defaultTimezone);
 
   const classes = await prisma.class.findMany({
     where: { teacherId: teacher.id, status: 'open', date: { gte: today } },

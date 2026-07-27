@@ -24,6 +24,7 @@ import type { PrismaClient, ClassTemplate, ClassStatus } from '@prisma/client';
 import type { z } from 'zod';
 import type { updateClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
+import { startOfLocalDay } from '@/lib/timezone';
 import { syncTemplateInstances, type TemplateSyncResult } from './template-sync';
 import { generateInstancesForTemplate } from './class-generator';
 import { CHARGED_STATUSES } from './class-lifecycle';
@@ -272,22 +273,39 @@ export type PauseTemplateResult =
   | { ok: true; template: ClassTemplate; lastScheduled: { date: Date; startTime: string } | null }
   | { ok: false; reason: 'not_found' | 'forbidden' | 'archived' };
 
+/**
+ * Archiving and un-archiving are different operations, so they report
+ * different things. `deleted`/`remaining` exist only on the archiving arm:
+ * un-archiving removes nothing, and returning zeros for it would be
+ * indistinguishable from "archived, and nothing matched".
+ */
 export type ArchiveTemplateResult =
-  | { ok: true; template: ClassTemplate; deleted: number; remaining: number }
+  | { ok: true; action: 'archived'; template: ClassTemplate; deleted: number; remaining: number }
+  | { ok: true; action: 'unarchived'; template: ClassTemplate }
   | { ok: false; reason: 'not_found' | 'forbidden' };
 
 /**
  * Statuses a generated instance can still be withdrawn or regenerated from.
- * A plain, mutable `ClassStatus[]` — not `as const` — because Prisma's `in`
- * filter wants `ClassStatus[]`, not a readonly tuple.
+ * Frozen for the same reason as `CHARGED_STATUSES`: it gates a destructive
+ * delete. Prisma's `in` wants a mutable array, so call sites spread.
  */
-const SCHEDULED_STATUSES: ClassStatus[] = ['draft', 'open'];
+const SCHEDULED_STATUSES: readonly ClassStatus[] = Object.freeze(['draft', 'open']);
 
-/** Future classes still on the schedule for a template — the actionable ones. */
-const scheduledWhere = (templateId: string, now: Date) => ({
+/**
+ * Classes still on the schedule for a template, from the given calendar-date
+ * boundary onward.
+ *
+ * The boundary is a parameter rather than baked in because the two callers
+ * need different ones against the same status filter, and the difference is
+ * load-bearing: the delete uses `gt` (today's class is spared) while the
+ * counts use `gte` (today's class is exactly the survivor they must report).
+ * Both are compared against a *calendar date* from `startOfLocalDay`, never a
+ * raw instant — see that helper for why.
+ */
+const scheduledWhere = (templateId: string, date: { gt: Date } | { gte: Date }) => ({
   templateId,
-  date: { gt: now },
-  status: { in: SCHEDULED_STATUSES },
+  date,
+  status: { in: [...SCHEDULED_STATUSES] },
 });
 
 /**
@@ -306,7 +324,10 @@ export async function pauseOrResumeTemplate(
   templateId: string,
   teacherId: string,
 ): Promise<PauseTemplateResult> {
-  const template = await db.classTemplate.findUnique({ where: { id: templateId } });
+  const template = await db.classTemplate.findUnique({
+    where: { id: templateId },
+    include: { teacher: { select: { defaultTimezone: true } } },
+  });
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
   if (template.isArchived) return { ok: false, reason: 'archived' };
@@ -327,8 +348,14 @@ export async function pauseOrResumeTemplate(
   const { teacher, ...template_ } = updated;
   void teacher;
 
+  // `gte` today, not `gt`: this reports what is still on the schedule, and
+  // today's class is still on it. Pause deletes nothing, so there is no
+  // spare-today carve-out here to mirror — using the delete's `gt` boundary
+  // would tell a teacher whose only remaining class is today's that nothing
+  // is scheduled, while it sits on their schedule and open on their page.
+  const today = startOfLocalDay(new Date(), template.teacher.defaultTimezone);
   const lastScheduled = await db.class.findFirst({
-    where: scheduledWhere(templateId, new Date()),
+    where: scheduledWhere(templateId, { gte: today }),
     orderBy: [{ date: 'desc' }, { startTime: 'desc' }],
     select: { date: true, startTime: true },
   });
@@ -356,11 +383,15 @@ export async function archiveOrUnarchiveTemplate(
   templateId: string,
   teacherId: string,
 ): Promise<ArchiveTemplateResult> {
-  const template = await db.classTemplate.findUnique({ where: { id: templateId } });
+  const template = await db.classTemplate.findUnique({
+    where: { id: templateId },
+    include: { teacher: { select: { defaultTimezone: true } } },
+  });
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
   const archiving = !template.isArchived;
+  const timeZone = template.teacher.defaultTimezone;
 
   return db.$transaction(async (tx) => {
     const updated = await tx.classTemplate.update({
@@ -368,9 +399,17 @@ export async function archiveOrUnarchiveTemplate(
       data: { isArchived: archiving, isActive: false },
     });
 
-    if (!archiving) return { ok: true as const, template: updated, deleted: 0, remaining: 0 };
+    if (!archiving) return { ok: true as const, action: 'unarchived' as const, template: updated };
 
-    const now = new Date();
+    // The teacher's calendar today, not `new Date()`. `Class.date` is
+    // `@db.Date`, so both sides of every comparison below are calendar dates
+    // — the comparison the generator that created these rows already makes
+    // (`class-generator.ts` filters on `classStartInstant`). Comparing the
+    // column to a raw instant instead would, east of UTC, delete a class
+    // running that same evening, and west of UTC leave tomorrow's class
+    // bookable under an archived template — the exact leak #86 exists to
+    // close.
+    const today = startOfLocalDay(new Date(), timeZone);
 
     // Deliberately one statement, not a `findMany` followed by a
     // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
@@ -384,27 +423,21 @@ export async function archiveOrUnarchiveTemplate(
     // read-then-delete.
     const { count: deleted } = await tx.class.deleteMany({
       where: {
-        ...scheduledWhere(templateId, now),
-        registrations: { none: { status: { in: CHARGED_STATUSES } } },
+        ...scheduledWhere(templateId, { gt: today }),
+        registrations: { none: { status: { in: [...CHARGED_STATUSES] } } },
       },
     });
 
-    // `remaining` cannot reuse `scheduledWhere`'s `date: { gt: now }` boundary
-    // the delete just used. `Class.date` is `@db.Date` (midnight UTC), so a
-    // class dated today is already `< now` for the rest of the day — the
-    // delete deliberately spares it, but counting with the same boundary
-    // would then exclude that same survivor. The public booking page decides
-    // bookability with `date: { gte: today }` at start-of-day
-    // (`src/app/(public)/[slug]/page.tsx`), so counting from that same
-    // start-of-day boundary is what keeps the confirmation honest: it must
-    // include today or it tells the teacher nothing is left while the class
-    // is still open on their public page.
-    const startOfToday = new Date(now);
-    startOfToday.setUTCHours(0, 0, 0, 0);
+    // `gte`, where the delete used `gt`. The delete deliberately spares a
+    // class dated today — "a class hours from starting should not shift under
+    // its students", the rule `syncTemplateInstances` already applies to
+    // edits — so counting with the delete's own boundary would exclude that
+    // same survivor and tell the teacher nothing is left while the class is
+    // still open on their public page.
     const remaining = await tx.class.count({
-      where: { templateId, date: { gte: startOfToday }, status: { in: SCHEDULED_STATUSES } },
+      where: scheduledWhere(templateId, { gte: today }),
     });
 
-    return { ok: true as const, template: updated, deleted, remaining };
+    return { ok: true as const, action: 'archived' as const, template: updated, deleted, remaining };
   });
 }
