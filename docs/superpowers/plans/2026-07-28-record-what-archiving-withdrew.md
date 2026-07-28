@@ -398,7 +398,10 @@ In `src/app/(teacher)/settings/recurring/[id]/page.tsx`, inside the `<section>` 
 
 Import it from `@/components/settings/archived-record`. Do the same in `src/app/(teacher)/settings/studio-classes/[id]/page.tsx` — read that file first to find its equivalent section, and match its existing layout rather than importing the recurring page's structure.
 
-Both pages already load the full template row, so no query changes.
+Both pages already load the template row. They do each need one query change:
+the rendered date must be converted to the teacher's zone, so add
+`teacher: { select: { defaultTimezone: true } }` to both `include`s — narrowly,
+matching the three existing call sites, not `teacher: true`.
 
 - [ ] **Step 6: Verify the pages compile and nothing regressed**
 

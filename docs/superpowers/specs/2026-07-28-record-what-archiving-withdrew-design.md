@@ -89,7 +89,12 @@ the next reader from assuming `remaining` was forgotten.
 `settings/recurring/[id]` already loads the template and renders its archive
 button. An archived template gains a line there:
 
-> Archived 12 June · 3 classes withdrawn
+> Archived 12 Jun 2026 · 3 classes withdrawn
+
+The year is not decoration. This is a *historical* date, and the schedule's
+`formatDayHeader` omits the year because it renders upcoming classes — a
+record meant to survive indefinitely cannot borrow that format without
+becoming unable to distinguish last year from this one.
 
 with the count omitted when `withdrawnCount` is `0`, since "0 classes withdrawn"
 answers a question nobody asked and reads like a failure. Templates archived
