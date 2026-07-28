@@ -223,19 +223,19 @@ describe('PATCH /api/class-templates/[id]', () => {
     });
     await prisma.class.delete({ where: { id: first.id } });
 
-    const toggle = () =>
-      fetch(`${BASE_URL}/api/class-templates/${template.id}`, {
+    const toggle = (state: string) =>
+      fetch(`${BASE_URL}/api/class-templates/${template.id}?state=${state}`, {
         method: 'PATCH',
         headers: cookie(sessionToken),
       });
 
     // active → paused: no generation.
-    const pause = await toggle();
+    const pause = await toggle('paused');
     expect(pause.status).toBe(200);
     expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(3);
 
     // paused → active: the missing instance comes back.
-    const activate = await toggle();
+    const activate = await toggle('active');
     expect(activate.status).toBe(200);
     expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(4);
 
@@ -249,19 +249,19 @@ describe('PATCH /api/class-templates/[id]', () => {
       orderBy: { date: 'asc' },
     });
     await prisma.class.delete({ where: { id: next.id } });
-    const archive = () =>
-      fetch(`${BASE_URL}/api/class-templates/${template.id}?action=archive`, {
+    const archive = (state: string) =>
+      fetch(`${BASE_URL}/api/class-templates/${template.id}?state=${state}`, {
         method: 'PATCH',
         headers: cookie(sessionToken),
       });
-    expect((await archive()).status).toBe(200);
+    expect((await archive('archived')).status).toBe(200);
     expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(0);
-    expect((await archive()).status).toBe(200); // un-archive
+    expect((await archive('unarchived')).status).toBe(200); // un-archive
     expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(0);
 
     // Explicit activation after un-archive is the "goes live" moment: the
     // window regenerates from scratch since nothing was left standing.
-    expect((await toggle()).status).toBe(200);
+    expect((await toggle('active')).status).toBe(200);
     expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(4);
   });
 
@@ -275,13 +275,13 @@ describe('PATCH /api/class-templates/[id]', () => {
     const { data: template } = (await create.json()) as { data: { id: string } };
 
     const archive = await fetch(
-      `${BASE_URL}/api/class-templates/${template.id}?action=archive`,
+      `${BASE_URL}/api/class-templates/${template.id}?state=archived`,
       { method: 'PATCH', headers: cookie(sessionToken) },
     );
     expect(archive.status).toBe(200);
     await prisma.class.deleteMany({ where: { templateId: template.id } });
 
-    const toggle = await fetch(`${BASE_URL}/api/class-templates/${template.id}`, {
+    const toggle = await fetch(`${BASE_URL}/api/class-templates/${template.id}?state=active`, {
       method: 'PATCH',
       headers: cookie(sessionToken),
     });
@@ -337,7 +337,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     });
     expect(await prisma.class.count({ where: { templateId: templateB.id } })).toBe(0);
 
-    const activate = await fetch(`${BASE_URL}/api/class-templates/${templateA.id}`, {
+    const activate = await fetch(`${BASE_URL}/api/class-templates/${templateA.id}?state=active`, {
       method: 'PATCH',
       headers: cookie(sessionToken),
     });
@@ -362,7 +362,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     });
     expect(before).toBeGreaterThan(0);
 
-    const res = await fetch(`${BASE_URL}/api/class-templates/${id}?action=archive`, {
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}?state=archived`, {
       method: 'PATCH',
       headers: cookie(sessionToken),
     });
@@ -386,7 +386,7 @@ describe('PATCH /api/class-templates/[id]', () => {
   it('archived templates leave nothing the public booking page would show', async () => {
     const id = await newTemplate('No Longer Bookable');
 
-    await fetch(`${BASE_URL}/api/class-templates/${id}?action=archive`, {
+    await fetch(`${BASE_URL}/api/class-templates/${id}?state=archived`, {
       method: 'PATCH',
       headers: cookie(sessionToken),
     });
@@ -406,7 +406,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const id = await newTemplate('Pause Counts');
     const before = await prisma.class.count({ where: { templateId: id } });
 
-    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}?state=paused`, {
       method: 'PATCH',
       headers: cookie(sessionToken),
     });
@@ -419,6 +419,106 @@ describe('PATCH /api/class-templates/[id]', () => {
     // the template's own `startTime` (`templateBody`) would produce.
     expect(data.lastScheduled?.startTime).toBe('09:30');
     expect(await prisma.class.count({ where: { templateId: id } })).toBe(before);
+  });
+
+  it('rejects a PATCH with no state parameter', async () => {
+    const create = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify(templateBody('No State')),
+    });
+    const { data: template } = (await create.json()) as { data: { id: string } };
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${template.id}`, {
+      method: 'PATCH',
+      headers: cookie(sessionToken),
+    });
+    expect(res.status).toBe(400);
+
+    // The row is untouched — a rejected request must not have toggled anything.
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
+    expect(after.isActive).toBe(true);
+  });
+
+  it('rejects an unrecognised state value', async () => {
+    const create = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify(templateBody('Bad State')),
+    });
+    const { data: template } = (await create.json()) as { data: { id: string } };
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${template.id}?state=sideways`, {
+      method: 'PATCH',
+      headers: cookie(sessionToken),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  /**
+   * The #98 case. Two identical requests must reach the same state, not
+   * opposite ones — this is what the old `!current` toggle got wrong when a
+   * response was lost and the teacher clicked again.
+   */
+  it('is idempotent: pausing twice leaves the template paused', async () => {
+    const create = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify(templateBody('Twice Paused')),
+    });
+    const { data: template } = (await create.json()) as { data: { id: string } };
+
+    const pause = () =>
+      fetch(`${BASE_URL}/api/class-templates/${template.id}?state=paused`, {
+        method: 'PATCH',
+        headers: cookie(sessionToken),
+      });
+
+    const first = await pause();
+    expect(first.status).toBe(200);
+    expect(((await first.json()) as { data: { action: string } }).data.action).toBe('paused');
+
+    const second = await pause();
+    expect(second.status).toBe(200);
+    expect(((await second.json()) as { data: { action: string } }).data.action).toBe('unchanged');
+
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
+    expect(after.isActive).toBe(false);
+  });
+
+  /**
+   * The sharpest half of #98: archiving withdraws unbooked future classes, so a
+   * second archive that fell through to un-archive would un-shelve the template.
+   * It must be a no-op — and must NOT withdraw a second time.
+   */
+  it('is idempotent: archiving twice does not withdraw twice', async () => {
+    const create = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify(templateBody('Twice Archived')),
+    });
+    const { data: template } = (await create.json()) as { data: { id: string } };
+
+    const archive = () =>
+      fetch(`${BASE_URL}/api/class-templates/${template.id}?state=archived`, {
+        method: 'PATCH',
+        headers: cookie(sessionToken),
+      });
+
+    const first = await archive();
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as { data: { action: string; deleted: number } };
+    expect(firstBody.data.action).toBe('archived');
+
+    const survivors = await prisma.class.count({ where: { templateId: template.id } });
+
+    const second = await archive();
+    expect(second.status).toBe(200);
+    expect(((await second.json()) as { data: { action: string } }).data.action).toBe('unchanged');
+
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
+    expect(after.isArchived).toBe(true);
+    expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(survivors);
   });
 });
 
@@ -620,7 +720,7 @@ describe('PUT /api/class-templates/[id]', () => {
     const id = await createTemplate('Shelved Flow');
     expect(await prisma.class.count({ where: { templateId: id } })).toBeGreaterThan(0);
 
-    const archive = await fetch(`${BASE_URL}/api/class-templates/${id}?action=archive`, {
+    const archive = await fetch(`${BASE_URL}/api/class-templates/${id}?state=archived`, {
       method: 'PATCH',
       headers: cookie(sessionToken),
     });

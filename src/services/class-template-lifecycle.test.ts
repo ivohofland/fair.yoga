@@ -329,6 +329,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       prisma,
       '00000000-0000-0000-0000-000000000000',
       teacherId,
+      'archived',
     );
     expect(result).toEqual({ ok: false, reason: 'not_found' });
   });
@@ -340,7 +341,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     // The ownership check is the only thing stopping teacher B from
     // destroying teacher A's schedule — this is the function that deletes
     // rows, so it must refuse before touching anything.
-    const result = await archiveOrUnarchiveTemplate(prisma, t.id, otherTeacherId);
+    const result = await archiveOrUnarchiveTemplate(prisma, t.id, otherTeacherId, 'archived');
 
     expect(result).toEqual({ ok: false, reason: 'forbidden' });
     const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
@@ -352,7 +353,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const t = await makeTemplate('Del Unbooked');
     const c = await makeClass(t.id, { date: future() });
 
-    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
+    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived');
 
     expect(result.ok).toBe(true);
     expect(await prisma.class.count({ where: { id: c.id } })).toBe(0);
@@ -363,7 +364,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const c = await makeClass(t.id, { date: future() });
     await register(c.id, studentId, 'cancelled');
 
-    await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
+    await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived');
 
     // Nobody is affected and nothing is owed, so this is not "booked".
     expect(await prisma.class.count({ where: { id: c.id } })).toBe(0);
@@ -374,7 +375,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const c = await makeClass(t.id, { date: future() });
     await register(c.id, studentId, 'late_cancel');
 
-    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
+    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived');
 
     // Assert the archive itself actually happened — a class surviving proves
     // nothing on its own if the function silently no-op'd or errored.
@@ -392,7 +393,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const c = await makeClass(t.id, { date: future() });
     await register(c.id, studentId, 'registered');
 
-    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
+    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived');
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -404,7 +405,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const t = await makeTemplate('Keep Today');
     const c = await makeClass(t.id, { date: today() });
 
-    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
+    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived');
 
     const archived = expectArchived(result);
     expect(archived.template.isArchived).toBe(true);
@@ -419,7 +420,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const t = await makeTemplate('Today Only');
     await makeClass(t.id, { date: today() });
 
-    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
+    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived');
 
     // Nothing was eligible for deletion (today is spared) and the one class
     // on the schedule is today's — the confirmation must say so, not "nothing
@@ -443,7 +444,9 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     await prisma.class.update({ where: { id: c.id }, data: { settingsLocked: true } });
     await register(c.id, studentId, 'cancelled');
 
-    const archived = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId));
+    const archived = expectArchived(
+      await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'),
+    );
 
     expect(archived.deleted).toBe(1);
     expect(archived.remaining).toBe(0);
@@ -462,7 +465,9 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       const c = await makeClass(t.id, { date: future() });
       await prisma.class.update({ where: { id: c.id }, data: { status } });
 
-      const archived = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId));
+      const archived = expectArchived(
+        await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'),
+      );
 
       expect(archived.deleted).toBe(0);
       expect(archived.remaining).toBe(0);
@@ -474,7 +479,9 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const t = await makeTemplate('Draft Scope');
     const c = await makeClass(t.id, { date: future(), status: 'draft' });
 
-    const archived = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId));
+    const archived = expectArchived(
+      await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'),
+    );
 
     expect(archived.deleted).toBe(1);
     expect(await prisma.class.count({ where: { id: c.id } })).toBe(0);
@@ -539,7 +546,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       });
 
       const archived = expectArchived(
-        await archiveOrUnarchiveTemplate(prisma, t.id, seeded.teacherId),
+        await archiveOrUnarchiveTemplate(prisma, t.id, seeded.teacherId, 'archived'),
       );
 
       expect(archived.deleted).toBe(0);
@@ -552,7 +559,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const t = await makeTemplate('Keep Past');
     const c = await makeClass(t.id, { date: past() });
 
-    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
+    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived');
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -572,7 +579,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     // neither the deleted count nor the remaining one.
     const alreadyCancelled = await makeClass(t.id, { date: futureOn(8), status: 'cancelled' });
 
-    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
+    const result = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived');
 
     const archived = expectArchived(result);
     expect(archived.deleted).toBe(2);
@@ -589,7 +596,9 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     const booked = await makeClass(t.id, { date: futureOn(6) });
     await register(booked.id, studentId, 'registered');
 
-    const archived = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId));
+    const archived = expectArchived(
+      await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'),
+    );
     expect(archived.deleted).toBe(1);
     expect(archived.remaining).toBe(1);
 
@@ -597,7 +606,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       await prisma.class.findMany({ where: { templateId: t.id }, select: { id: true } })
     ).map((c) => c.id);
 
-    const resumed = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
+    const resumed = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'unarchived');
     expect(resumed.ok).toBe(true);
     if (!resumed.ok) throw new Error('expected ok');
     // Reports the direction and nothing else. Previously this arm returned
@@ -686,10 +695,11 @@ describe('pauseOrResumeTemplate (DB)', () => {
     const soon = await makeClass(t.id, futureOn(3), '08:00');
     const later = await makeClass(t.id, futureOn(10), '19:00');
 
-    const result = await pauseOrResumeTemplate(prisma, t.id, teacherId);
+    const result = await pauseOrResumeTemplate(prisma, t.id, teacherId, 'paused');
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
+    if (result.action !== 'paused') throw new Error('expected the paused action');
     expect(result.template.isActive).toBe(false);
     expect(result.lastScheduled).not.toBeNull();
     if (!result.lastScheduled) throw new Error('expected lastScheduled');
@@ -706,13 +716,13 @@ describe('pauseOrResumeTemplate (DB)', () => {
   it('resuming a paused template regenerates its instance window', async () => {
     const t = await makeTemplate('Resume Regenerates');
 
-    const paused = await pauseOrResumeTemplate(prisma, t.id, teacherId);
+    const paused = await pauseOrResumeTemplate(prisma, t.id, teacherId, 'paused');
     expect(paused.ok).toBe(true);
     if (!paused.ok) throw new Error('expected ok');
     expect(paused.template.isActive).toBe(false);
     expect(await prisma.class.count({ where: { templateId: t.id } })).toBe(0);
 
-    const resumed = await pauseOrResumeTemplate(prisma, t.id, teacherId);
+    const resumed = await pauseOrResumeTemplate(prisma, t.id, teacherId, 'active');
 
     expect(resumed.ok).toBe(true);
     if (!resumed.ok) throw new Error('expected ok');
@@ -726,19 +736,20 @@ describe('pauseOrResumeTemplate (DB)', () => {
   it('pausing a template with no scheduled classes reports lastScheduled: null', async () => {
     const t = await makeTemplate('Pause Empty');
 
-    const result = await pauseOrResumeTemplate(prisma, t.id, teacherId);
+    const result = await pauseOrResumeTemplate(prisma, t.id, teacherId, 'paused');
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
+    if (result.action !== 'paused') throw new Error('expected the paused action');
     expect(result.lastScheduled).toBeNull();
   });
 
   it("returns 'archived' for an archived template rather than toggling", async () => {
     const t = await makeTemplate('Pause Archived');
-    const archived = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId);
+    const archived = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived');
     expect(archived.ok).toBe(true);
 
-    const result = await pauseOrResumeTemplate(prisma, t.id, teacherId);
+    const result = await pauseOrResumeTemplate(prisma, t.id, teacherId, 'active');
 
     expect(result).toEqual({ ok: false, reason: 'archived' });
     const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });

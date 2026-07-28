@@ -8,7 +8,7 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
-import { updateClassTemplateSchema } from '@/lib/schemas';
+import { updateClassTemplateSchema, templateStateQuerySchema } from '@/lib/schemas';
 import {
   updateClassTemplate,
   type ClassTemplateUpdateData,
@@ -90,16 +90,20 @@ export const PATCH = withErrorHandler(async (
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  const url = new URL(request.url);
-  const action = url.searchParams.get('action');
+  const parsed = templateStateQuerySchema.safeParse(
+    Object.fromEntries(request.nextUrl.searchParams),
+  );
+  if (!parsed.success) {
+    return respondError('A state of active, paused, archived or unarchived is required', 400);
+  }
+  const { state } = parsed.data;
 
-  if (action === 'archive') {
-    const result = await archiveOrUnarchiveTemplate(prisma, id, session.teacherId);
+  if (state === 'archived' || state === 'unarchived') {
+    const result = await archiveOrUnarchiveTemplate(prisma, id, session.teacherId, state);
 
-    // Only the archiving direction reports counts. Un-archiving deletes
-    // nothing, and answering it with `deleted: 0, remaining: 0` would put two
-    // numbers on the wire that mean "not applicable" while reading exactly
-    // like "archived, and nothing matched".
+    // Only the archiving direction reports counts. The other two arms deleted
+    // nothing, and answering them with zeros would put two numbers on the wire
+    // that mean "not applicable" while reading like "archived, nothing matched".
     if (result.ok) {
       return result.action === 'archived'
         ? respondOk({
@@ -125,10 +129,13 @@ export const PATCH = withErrorHandler(async (
     return unhandled;
   }
 
-  // Default: toggle active/paused.
-  const result = await pauseOrResumeTemplate(prisma, id, session.teacherId);
+  const result = await pauseOrResumeTemplate(prisma, id, session.teacherId, state);
 
-  if (result.ok) return respondOk({ ...result.template, lastScheduled: result.lastScheduled });
+  if (result.ok) {
+    return result.action === 'paused'
+      ? respondOk({ ...result.template, action: result.action, lastScheduled: result.lastScheduled })
+      : respondOk({ ...result.template, action: result.action });
+  }
 
   if (result.reason === 'not_found') return respondError('Class template not found', 404);
   if (result.reason === 'forbidden') return respondError('Access denied', 403);

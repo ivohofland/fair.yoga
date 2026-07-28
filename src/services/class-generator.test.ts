@@ -336,7 +336,7 @@ describe('generateClassInstances (DB)', () => {
       await new Promise((r) => setTimeout(r, 100));
 
       let archiveSettled = false;
-      const archiving = archiveOrUnarchiveTemplate(prisma, templateId, teacherId).then((r) => {
+      const archiving = archiveOrUnarchiveTemplate(prisma, templateId, teacherId, 'archived').then((r) => {
         archiveSettled = true;
         return r;
       });
@@ -396,7 +396,7 @@ describe('generateClassInstances (DB)', () => {
         // Let the claim acquire the lock before the archive contends for it.
         await new Promise((r) => setTimeout(r, 100));
 
-        const archiving = archiveOrUnarchiveTemplate(prisma, templateId, teacherId);
+        const archiving = archiveOrUnarchiveTemplate(prisma, templateId, teacherId, 'archived');
 
         // Hold past Prisma's 5s default on the archive side — comfortably
         // above it (5.5s), not just brushing it, so this doesn't flake right
@@ -550,7 +550,7 @@ describe('generateClassInstances (DB)', () => {
         expect(beforeArchive[0]!.date.toISOString()).toBe(today.toISOString());
 
         // 2. Archive, straight after the commit — no concurrency involved.
-        const result = await archiveOrUnarchiveTemplate(prisma, template.id, teacherId);
+        const result = await archiveOrUnarchiveTemplate(prisma, template.id, teacherId, 'archived');
         if (!result.ok) throw new Error('archive should have succeeded');
         if (result.action !== 'archived') throw new Error('expected an archive, not an unarchive');
 

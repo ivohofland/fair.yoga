@@ -3,16 +3,11 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { readErrorMessage } from '@/lib/client-errors';
-import { pauseMessage } from './template-action-messages';
+import { resolveTemplateConfirmation, type TemplateToggleResponse } from './template-action-messages';
 
 interface ToggleTemplateButtonProps {
   templateId: string;
   isActive: boolean;
-}
-
-/** Shape of the `data` payload on a successful toggle (pause/resume) PATCH. */
-interface ToggleTemplateResponse {
-  lastScheduled: { date: string; startTime: string } | null;
 }
 
 export function ToggleTemplateButton({ templateId, isActive }: ToggleTemplateButtonProps) {
@@ -26,15 +21,15 @@ export function ToggleTemplateButton({ templateId, isActive }: ToggleTemplateBut
     setError('');
     setMessage('');
     try {
-      const res = await fetch(`/api/class-templates/${templateId}`, { method: 'PATCH' });
+      // Derived beside the label below, from the same prop, so the two cannot
+      // disagree about which direction this click means.
+      const target = isActive ? 'paused' : 'active';
+      const res = await fetch(`/api/class-templates/${templateId}?state=${target}`, {
+        method: 'PATCH',
+      });
       if (res.ok) {
-        const { data } = (await res.json()) as { data: ToggleTemplateResponse };
-
-        // Only the pause direction gets a message — resuming needs no explanation.
-        if (isActive) {
-          const last = data.lastScheduled;
-          setMessage(pauseMessage(last ? { date: new Date(last.date), startTime: last.startTime } : null));
-        }
+        const { data } = (await res.json()) as { data: TemplateToggleResponse };
+        setMessage(resolveTemplateConfirmation(data) ?? '');
         router.refresh();
       } else {
         setError(await readErrorMessage(res, 'Failed to update. Please try again.'));

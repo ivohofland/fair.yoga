@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { pauseMessage, archiveMessage, archiveStudioMessage } from './template-action-messages';
+import {
+  pauseMessage,
+  archiveMessage,
+  archiveStudioMessage,
+  resolveTemplateConfirmation,
+} from './template-action-messages';
 
 describe('pauseMessage', () => {
   it('names the last still-scheduled date and time', () => {
@@ -98,5 +103,34 @@ describe('archiveStudioMessage', () => {
     expect(archiveStudioMessage(2, 3)).toBe(
       'Deleted 2 scheduled studio classes. 3 classes still on the schedule — cancel individually if needed.',
     );
+  });
+});
+
+describe('resolveTemplateConfirmation', () => {
+  it('returns the pause message when the template was paused', () => {
+    expect(
+      resolveTemplateConfirmation({
+        action: 'paused',
+        lastScheduled: { date: '2026-06-12T00:00:00.000Z', startTime: '09:30' },
+      }),
+    ).toBe(
+      'No new classes will be added to your schedule. The last one still scheduled is Friday, Jun 12 · 09:30.',
+    );
+  });
+
+  it('returns the archive message when the template was archived', () => {
+    expect(resolveTemplateConfirmation({ action: 'archived', deleted: 2, remaining: 1 })).toBe(
+      'Classes on the schedule without bookings are now deleted. 1 class still on the schedule — cancel individually if needed.',
+    );
+  });
+
+  /**
+   * Both would describe something that did not happen. `unchanged` in
+   * particular is what a stale second tab and a retry-after-lost-response
+   * reach, so captioning it with either message is the #98 bug wearing a
+   * different hat.
+   */
+  it.each(['active', 'unarchived', 'unchanged'] as const)('says nothing for %s', (action) => {
+    expect(resolveTemplateConfirmation({ action })).toBeNull();
   });
 });

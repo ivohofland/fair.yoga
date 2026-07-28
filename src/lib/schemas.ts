@@ -416,3 +416,24 @@ export const createAnnouncementSchema = z.object({
   classId: z.string().uuid().optional(),
   message: z.string().min(1),
 });
+
+// ============================================================================
+// TOGGLE STATE (PATCH query params)
+// ============================================================================
+
+/**
+ * The state a PATCH toggle should reach. Required, and deliberately not
+ * defaulted: a request that omits it is a 400, not a toggle. Falling back to
+ * toggling would leave the #98 behaviour reachable for any caller that forgets
+ * the parameter — which is how one defect came to exist in six places.
+ *
+ * `state`, not `to`: `to` is already a date-range bound on `GET /api/classes`.
+ */
+export const templateStateQuerySchema = z.object({
+  state: z.enum(['active', 'paused', 'archived', 'unarchived']),
+});
+
+/** The archive-only subset, for routes with no active/paused axis. */
+export const archiveStateQuerySchema = z.object({
+  state: z.enum(['archived', 'unarchived']),
+});

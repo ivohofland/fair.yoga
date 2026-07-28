@@ -131,7 +131,7 @@ void _templateAllowlistHasNoStaleFields;
  *   - `isActive`   → `PATCH`, which wraps the flip in a transaction and calls
  *                    `generateInstancesForTemplate`. A bare flip to `true`
  *                    would mark a template active with no instance window.
- *   - `isArchived` → `PATCH ?action=archive`, which also forces
+ *   - `isArchived` → `PATCH ?state=archived`, which also forces
  *                    `isActive: false`. Writing it alone can produce the
  *                    archived-but-active state `PATCH` refuses to create.
  *   - `createdAt`, `updatedAt` → Prisma-managed.
@@ -270,18 +270,26 @@ export async function updateClassTemplate(
 
 /** The furthest-out class still on the schedule, for the pause confirmation. */
 export type PauseTemplateResult =
-  | { ok: true; template: ClassTemplate; lastScheduled: { date: Date; startTime: string } | null }
+  | {
+      ok: true;
+      action: 'paused';
+      template: ClassTemplate;
+      lastScheduled: { date: Date; startTime: string } | null;
+    }
+  | { ok: true; action: 'active'; template: ClassTemplate }
+  | { ok: true; action: 'unchanged'; template: ClassTemplate }
   | { ok: false; reason: 'not_found' | 'forbidden' | 'archived' };
 
 /**
- * Archiving and un-archiving are different operations, so they report
- * different things. `deleted`/`remaining` exist only on the archiving arm:
- * un-archiving removes nothing, and returning zeros for it would be
- * indistinguishable from "archived, and nothing matched".
+ * Archiving and un-archiving are different operations and report different
+ * things; `unchanged` is a third, and reports nothing at all. `deleted`/
+ * `remaining` exist only on the archiving arm — un-archiving removes nothing,
+ * and a no-op removes nothing twice.
  */
 export type ArchiveTemplateResult =
   | { ok: true; action: 'archived'; template: ClassTemplate; deleted: number; remaining: number }
   | { ok: true; action: 'unarchived'; template: ClassTemplate }
+  | { ok: true; action: 'unchanged'; template: ClassTemplate }
   | { ok: false; reason: 'not_found' | 'forbidden' };
 
 /**
@@ -323,6 +331,7 @@ export async function pauseOrResumeTemplate(
   db: PrismaClient,
   templateId: string,
   teacherId: string,
+  target: 'active' | 'paused',
 ): Promise<PauseTemplateResult> {
   const template = await db.classTemplate.findUnique({
     where: { id: templateId },
@@ -330,47 +339,51 @@ export async function pauseOrResumeTemplate(
   });
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
+
+  const { teacher: _t, ...bare } = template;
+  void _t;
+
+  const desiredActive = target === 'active';
+
+  // Before the archived guard, deliberately. Archiving forces `isActive:
+  // false`, so `?state=paused` on an archived template is already true and
+  // there is nothing to refuse — only `?state=active` is the transition the
+  // guard exists to block.
+  if (template.isActive === desiredActive) {
+    return { ok: true, action: 'unchanged', template: bare };
+  }
+
   if (template.isArchived) return { ok: false, reason: 'archived' };
 
   const updated = await db.$transaction(
     async (tx) => {
       const t = await tx.classTemplate.update({
         where: { id: templateId },
-        data: { isActive: !template.isActive },
+        data: { isActive: desiredActive },
         include: { teacher: { select: { defaultTimezone: true } } },
       });
       if (t.isActive) await generateInstancesForTemplate(tx, t);
       return t;
     },
-    // This `update` takes the same row lock the generator sweep's
-    // `claimTemplateForGeneration` (class-generator.ts) holds for the
-    // duration of its own per-template transaction, so a resume can now
-    // block on a sweep in progress. Matching the sweep's 10s transaction
-    // timeout means this waits at most as long as the sweep could possibly
-    // run, not Prisma's 5s default — which a loaded VPS can exceed and turn
-    // an ordinary resume into an opaque P2028.
+    // The claim in `class-generator.ts` holds this row's lock for up to its
+    // own 10s transaction; Prisma's 5s default would abort us mid-wait.
     { timeout: 10_000 },
   );
 
-  // The include above is only for `generateInstancesForTemplate`'s benefit —
-  // `PauseTemplateResult` carries a plain `ClassTemplate`, so the joined
-  // `teacher` is dropped rather than leaked back to the caller.
   const { teacher, ...template_ } = updated;
   void teacher;
 
-  // `gte` today, not `gt`: this reports what is still on the schedule, and
-  // today's class is still on it. Pause deletes nothing, so there is no
-  // spare-today carve-out here to mirror — using the delete's `gt` boundary
-  // would tell a teacher whose only remaining class is today's that nothing
-  // is scheduled, while it sits on their schedule and open on their page.
-  const today = startOfLocalDay(new Date(), template.teacher.defaultTimezone);
-  const lastScheduled = await db.class.findFirst({
-    where: scheduledWhere(templateId, { gte: today }),
-    orderBy: [{ date: 'desc' }, { startTime: 'desc' }],
-    select: { date: true, startTime: true },
-  });
+  if (!desiredActive) {
+    const today = startOfLocalDay(new Date(), template.teacher.defaultTimezone);
+    const lastScheduled = await db.class.findFirst({
+      where: scheduledWhere(templateId, { gte: today }),
+      orderBy: [{ date: 'desc' }, { startTime: 'desc' }],
+      select: { date: true, startTime: true },
+    });
+    return { ok: true, action: 'paused', template: template_, lastScheduled };
+  }
 
-  return { ok: true, template: template_, lastScheduled };
+  return { ok: true, action: 'active', template: template_ };
 }
 
 /**
@@ -392,6 +405,7 @@ export async function archiveOrUnarchiveTemplate(
   db: PrismaClient,
   templateId: string,
   teacherId: string,
+  target: 'archived' | 'unarchived',
 ): Promise<ArchiveTemplateResult> {
   const template = await db.classTemplate.findUnique({
     where: { id: templateId },
@@ -400,7 +414,16 @@ export async function archiveOrUnarchiveTemplate(
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
-  const archiving = !template.isArchived;
+  const archiving = target === 'archived';
+
+  // No write, no delete. Archiving twice must not withdraw twice — the
+  // withdrawal is a consequence of the transition, not of the request.
+  if (template.isArchived === archiving) {
+    const { teacher: _t, ...bare } = template;
+    void _t;
+    return { ok: true, action: 'unchanged', template: bare };
+  }
+
   const timeZone = template.teacher.defaultTimezone;
 
   return db.$transaction(

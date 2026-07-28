@@ -73,3 +73,31 @@ export function archiveStudioMessage(deleted: number, remaining: number): string
 
   return `Deleted ${deleted} scheduled studio ${deletedWord}. ${remaining} ${classWord} still on the schedule — cancel individually if needed.`;
 }
+
+/** The `data` payload of a successful PATCH on a class template. */
+export type TemplateToggleResponse =
+  | { action: 'paused'; lastScheduled: { date: string; startTime: string } | null }
+  | { action: 'archived'; deleted: number; remaining: number }
+  | { action: 'active' | 'unarchived' | 'unchanged' };
+
+/**
+ * Decides whether the button says anything, and what.
+ *
+ * `null` means "say nothing", which is the correct answer for three of the five
+ * actions — and `unchanged` is the one that matters: it is what a stale second
+ * tab and a retry-after-lost-response reach, so showing either confirmation
+ * there would describe something that did not happen.
+ *
+ * Pure, and separated from the components for that reason: this is the seam the
+ * #93 wrong-shape bug lived in (`archiveStudioMessage` had the wrong signature
+ * and the button silently discarded `remaining`), and it was caught by review
+ * rather than by a test because nothing here was testable.
+ */
+export function resolveTemplateConfirmation(data: TemplateToggleResponse): string | null {
+  if (data.action === 'paused') {
+    const last = data.lastScheduled;
+    return pauseMessage(last ? { date: new Date(last.date), startTime: last.startTime } : null);
+  }
+  if (data.action === 'archived') return archiveMessage(data.deleted, data.remaining);
+  return null;
+}
