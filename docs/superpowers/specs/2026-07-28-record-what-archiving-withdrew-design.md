@@ -98,15 +98,19 @@ button. An archived template gains a line there:
 
 > Archived 12 Jun 2026 · 3 classes withdrawn
 
-The year is not decoration. This is a *historical* date, and the schedule's
-`formatDayHeader` omits the year because it renders upcoming classes — a
-record meant to survive indefinitely cannot borrow that format without
-becoming unable to distinguish last year from this one.
-
 with the count omitted when `withdrawnCount` is `0`, since "0 classes withdrawn"
 answers a question nobody asked and reads like a failure. Templates archived
 before this ships have `archivedAt: null` and render nothing — no invented
 history, no "unknown" placeholder.
+
+The year is not decoration, and it needs its own formatter. `formatDayHeader`
+omits the year, which is right for the schedule it was written for; a record
+meant to survive indefinitely cannot borrow that format without losing the
+ability to tell last year from this one. Worth stating precisely, because the
+tempting shorthand is false: `formatDayHeader` is *not* only for upcoming
+dates — `(student)/bookings` uses it for the "Past classes" section and for
+bank-transfer remittance strings. That is arguably a place the year is missing
+too, but it is not this change's to fix.
 
 The studio detail page gets the same treatment. The two archived *list* pages
 are deliberately untouched: a list is for finding the thing, and one line per
