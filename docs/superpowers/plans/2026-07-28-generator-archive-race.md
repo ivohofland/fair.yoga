@@ -204,7 +204,10 @@ git add -A
 Delete ` FOR UPDATE` from the query in `claimTemplateForGeneration`, then confirm the mutation actually landed in the function under test before drawing any conclusion:
 
 ```bash
-grep -n "FOR UPDATE" src/services/class-generator.ts   # expect: no match
+# NB: the phrase also appears in the helper's docstring, so a bare count is
+# ambiguous. Read the matching lines and confirm the one inside the SQL
+# template literal is gone while the prose reference remains.
+grep -n "FOR UPDATE" src/services/class-generator.ts
 npx vitest run --project unit src/services/class-generator.test.ts
 ```
 
@@ -214,7 +217,7 @@ Restore:
 
 ```bash
 git checkout -- src/services/class-generator.ts
-grep -c "FOR UPDATE" src/services/class-generator.ts   # expect: 1
+grep -n "FOR UPDATE" src/services/class-generator.ts   # SQL occurrence restored
 ```
 
 - [ ] **Step 7: Write the failing mid-sweep race test**
@@ -633,7 +636,10 @@ git add -A
 Delete ` FOR UPDATE` from `claimStudioTemplateForGeneration`, confirm it landed in the right function, then run:
 
 ```bash
-grep -n "FOR UPDATE" src/services/studio-class-generator.ts   # expect: no match
+# NB: check the matching LINES, not a count — if the phrase also appears in a
+# docstring, a count is ambiguous. Confirm the occurrence inside the SQL
+# template literal is gone.
+grep -n "FOR UPDATE" src/services/studio-class-generator.ts
 npx vitest run --project unit src/services/studio-class-generator.test.ts
 ```
 
@@ -643,7 +649,7 @@ Restore:
 
 ```bash
 git checkout -- src/services/studio-class-generator.ts
-grep -c "FOR UPDATE" src/services/studio-class-generator.ts   # expect: 1
+grep -n "FOR UPDATE" src/services/studio-class-generator.ts   # SQL occurrence restored
 ```
 
 - [ ] **Step 10: Run the whole suite and the type check**
