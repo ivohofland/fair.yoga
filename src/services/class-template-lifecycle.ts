@@ -134,6 +134,12 @@ void _templateAllowlistHasNoStaleFields;
  *   - `isArchived` → `PATCH ?state=archived`, which also forces
  *                    `isActive: false`. Writing it alone can produce the
  *                    archived-but-active state `PATCH` refuses to create.
+ *   - `archivedAt`, `withdrawnCount` → written only by the same `PATCH
+ *                    ?state=archived|unarchived` transaction that owns
+ *                    `isArchived` (#97). A plain update setting these directly
+ *                    could forge "Archived <date> · <count> withdrawn" onto a
+ *                    template that was never archived — the exact stale-record
+ *                    state the un-archive clear exists to prevent.
  *   - `createdAt`, `updatedAt` → Prisma-managed.
  *
  * The forward and reverse pins make the allowlist mirror the schema, so the
@@ -146,6 +152,8 @@ type PlainUpdateForbiddenTemplateField =
   | 'teacherId'
   | 'isActive'
   | 'isArchived'
+  | 'archivedAt'
+  | 'withdrawnCount'
   | 'createdAt'
   | 'updatedAt';
 
