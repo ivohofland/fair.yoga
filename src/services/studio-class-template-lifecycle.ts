@@ -203,18 +203,28 @@ export async function archiveOrUnarchiveStudioTemplate(
 
   return db.$transaction(
     async (tx) => {
-      const updated = await tx.studioClassTemplate.update({
+      await tx.studioClassTemplate.update({
         where: { id: templateId },
         data: { isArchived: archiving, isActive: false },
       });
 
-      if (!archiving) return { ok: true as const, action: 'unarchived' as const, template: updated };
+      if (!archiving) {
+        const cleared = await tx.studioClassTemplate.update({
+          where: { id: templateId },
+          data: { archivedAt: null, withdrawnCount: null },
+        });
+        // A live template has no withdrawal to report. Leaving a stale count
+        // on it would be worse than having none (#97).
+        return { ok: true as const, action: 'unarchived' as const, template: cleared };
+      }
 
-      // The teacher's calendar today, not `new Date()` — `StudioClass.date` is
-      // `@db.Date`, so both sides of every comparison below are calendar dates.
-      // See `archiveOrUnarchiveTemplate` for what comparing the column to a raw
+      // One clock reading serves both the calendar boundary and the
+      // timestamp recorded below. `StudioClass.date` is `@db.Date`, so both
+      // sides of every comparison below are calendar dates. See
+      // `archiveOrUnarchiveTemplate` for what comparing the column to a raw
       // instant costs in each direction.
-      const today = startOfLocalDay(new Date(), timeZone);
+      const now = new Date();
+      const today = startOfLocalDay(now, timeZone);
 
       // Deliberately one statement, not a `findMany` followed by a
       // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
@@ -238,7 +248,15 @@ export async function archiveOrUnarchiveStudioTemplate(
         where: scheduledWhere(templateId, { gte: today }),
       });
 
-      return { ok: true as const, action: 'archived' as const, template: updated, deleted, remaining };
+      // Written from the delete's own `count`, inside the same transaction —
+      // see `archiveOrUnarchiveTemplate` for why this is a second `update`
+      // rather than folded into the first (#97).
+      const recorded = await tx.studioClassTemplate.update({
+        where: { id: templateId },
+        data: { archivedAt: now, withdrawnCount: deleted },
+      });
+
+      return { ok: true as const, action: 'archived' as const, template: recorded, deleted, remaining };
     },
     // This `update` takes the same row lock `claimStudioTemplateForGeneration`
     // (studio-class-generator.ts) holds with its `FOR UPDATE` for the

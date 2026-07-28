@@ -259,6 +259,96 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     expect(await prisma.studioClass.count({ where: { id: unbooked.id } })).toBe(0);
     expect(await prisma.studioClass.count({ where: { id: cancelled.id } })).toBe(1);
   });
+
+  /**
+   * #97. The counts used to live only in the confirmation message, so closing
+   * the tab lost them. `withdrawnCount` comes from the `deleteMany`'s own
+   * returned count — not a separate query — so the record cannot claim a
+   * different number from the one the delete actually removed.
+   */
+  it('records when it archived and how many classes it withdrew', async () => {
+    const t = await makeTemplate('Records Withdrawal');
+    await makeClass(t.id, { date: futureOn(5) });
+    await makeClass(t.id, { date: futureOn(6) });
+
+    const before = Date.now();
+    const archived = expectArchived(
+      await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived'),
+    );
+
+    expect(archived.deleted).toBe(2);
+    expect(archived.template.withdrawnCount).toBe(2);
+    expect(archived.template.archivedAt).not.toBeNull();
+    expect(archived.template.archivedAt!.getTime()).toBeGreaterThanOrEqual(before);
+  });
+
+  /**
+   * The count must equal what was deleted, not what was scheduled. Today's
+   * class is spared by the delete's boundary, so the two numbers differ here —
+   * which is exactly the case a `count()` written from the wrong query would
+   * get wrong while looking right.
+   */
+  it('records the deleted count, not the scheduled count', async () => {
+    const t = await makeTemplate('Withdrawal Excludes Today');
+    await makeClass(t.id, { date: futureOn(5) });
+    await makeClass(t.id, { date: today() });
+
+    const archived = expectArchived(
+      await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived'),
+    );
+
+    expect(archived.deleted).toBe(1);
+    expect(archived.remaining).toBe(1);
+    expect(archived.template.withdrawnCount).toBe(1);
+  });
+
+  /**
+   * Zero is a real answer and must be distinguishable from "never archived".
+   * That distinction is the entire reason both columns are nullable.
+   */
+  it('records zero when there was nothing to withdraw', async () => {
+    const t = await makeTemplate('Nothing To Withdraw');
+
+    const archived = expectArchived(
+      await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived'),
+    );
+
+    expect(archived.template.withdrawnCount).toBe(0);
+    expect(archived.template.archivedAt).not.toBeNull();
+  });
+
+  it('clears the record when un-archiving', async () => {
+    const t = await makeTemplate('Cleared On Resume');
+    await makeClass(t.id, { date: futureOn(5) });
+    expectArchived(await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived'));
+
+    const resumed = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'unarchived');
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) throw new Error('expected ok');
+
+    expect(resumed.template.archivedAt).toBeNull();
+    expect(resumed.template.withdrawnCount).toBeNull();
+  });
+
+  /**
+   * Overwrite, not accumulate. The second archive withdrew one class; a
+   * running total would report two and describe an archive that never happened.
+   */
+  it('overwrites the record when archiving a second time', async () => {
+    const t = await makeTemplate('Archived Twice');
+    await makeClass(t.id, { date: futureOn(5) });
+    await makeClass(t.id, { date: futureOn(6) });
+    expectArchived(await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived'));
+    await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'unarchived');
+
+    await makeClass(t.id, { date: futureOn(7) });
+    const second = expectArchived(
+      await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived'),
+    );
+
+    expect(second.deleted).toBe(1);
+    expect(second.template.withdrawnCount).toBe(1);
+  });
 });
 
 describe('pauseOrResumeStudioTemplate (DB)', () => {

@@ -454,22 +454,31 @@ export async function archiveOrUnarchiveTemplate(
 
   return db.$transaction(
     async (tx) => {
-      const updated = await tx.classTemplate.update({
+      await tx.classTemplate.update({
         where: { id: templateId },
         data: { isArchived: archiving, isActive: false },
       });
 
-      if (!archiving) return { ok: true as const, action: 'unarchived' as const, template: updated };
+      if (!archiving) {
+        const cleared = await tx.classTemplate.update({
+          where: { id: templateId },
+          data: { archivedAt: null, withdrawnCount: null },
+        });
+        // A live template has no withdrawal to report. Leaving a stale count
+        // on it would be worse than having none (#97).
+        return { ok: true as const, action: 'unarchived' as const, template: cleared };
+      }
 
-      // The teacher's calendar today, not `new Date()`. `Class.date` is
-      // `@db.Date`, so both sides of every comparison below are calendar dates
-      // — the comparison the generator that created these rows already makes
-      // (`class-generator.ts` filters on `classStartInstant`). Comparing the
-      // column to a raw instant instead would, east of UTC, delete a class
-      // running that same evening, and west of UTC leave tomorrow's class
-      // bookable under an archived template — the exact leak #86 exists to
-      // close.
-      const today = startOfLocalDay(new Date(), timeZone);
+      // One clock reading serves both the calendar boundary and the
+      // timestamp recorded below. `Class.date` is `@db.Date`, so both sides
+      // of every comparison below are calendar dates — the comparison the
+      // generator that created these rows already makes (`class-generator.ts`
+      // filters on `classStartInstant`). Comparing the column to a raw
+      // instant instead would, east of UTC, delete a class running that same
+      // evening, and west of UTC leave tomorrow's class bookable under an
+      // archived template — the exact leak #86 exists to close.
+      const now = new Date();
+      const today = startOfLocalDay(now, timeZone);
 
       // Deliberately one statement, not a `findMany` followed by a
       // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
@@ -498,7 +507,18 @@ export async function archiveOrUnarchiveTemplate(
         where: scheduledWhere(templateId, { gte: today }),
       });
 
-      return { ok: true as const, action: 'archived' as const, template: updated, deleted, remaining };
+      // Written from the delete's own `count`, inside the same transaction, so
+      // the record cannot claim a number the delete did not produce and cannot
+      // survive a rollback that withdrew nothing (#97). A second `update`
+      // rather than folding this into the first: that one runs before the
+      // delete and takes the row lock the sweep serialises against (#95), and
+      // moving it would change when that lock is acquired.
+      const recorded = await tx.classTemplate.update({
+        where: { id: templateId },
+        data: { archivedAt: now, withdrawnCount: deleted },
+      });
+
+      return { ok: true as const, action: 'archived' as const, template: recorded, deleted, remaining };
     },
     // This `update` takes the same row lock the generator sweep's
     // `claimTemplateForGeneration` (class-generator.ts) holds for the

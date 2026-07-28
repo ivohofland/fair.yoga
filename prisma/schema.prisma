@@ -275,6 +275,17 @@ model ClassTemplate {
   autoCancelCheck AutoCancelCheck @default(HOURS_2)
   isActive        Boolean         @default(true)
   isArchived      Boolean         @default(false)
+
+  /// When this template was last archived, and how many future unbooked
+  /// classes that archive withdrew. Both null until the first archive, and
+  /// cleared again on un-archive — a live template has no withdrawal to
+  /// report. Re-archiving overwrites: a teacher asking what archiving removed
+  /// means the archive in force, not every archive this template has had.
+  ///
+  /// `remaining` is deliberately absent. Only the deletion is unrecoverable;
+  /// what is still scheduled is a live query, and truer computed than frozen.
+  archivedAt      DateTime?
+  withdrawnCount  Int?
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
@@ -331,6 +342,17 @@ model StudioClassTemplate {
   hourlyRate      Decimal  @db.Decimal(10, 2)
   isActive        Boolean  @default(true)
   isArchived      Boolean  @default(false)
+
+  /// When this template was last archived, and how many future unbooked
+  /// classes that archive withdrew. Both null until the first archive, and
+  /// cleared again on un-archive — a live template has no withdrawal to
+  /// report. Re-archiving overwrites: a teacher asking what archiving removed
+  /// means the archive in force, not every archive this template has had.
+  ///
+  /// `remaining` is deliberately absent. Only the deletion is unrecoverable;
+  /// what is still scheduled is a live query, and truer computed than frozen.
+  archivedAt      DateTime?
+  withdrawnCount  Int?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
