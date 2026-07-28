@@ -28,7 +28,7 @@ describe('ArchiveTemplateButton', () => {
     ok: boolean;
     json?: () => Promise<unknown>;
   }): void {
-    fetchMock.mockResolvedValue(response as unknown as Response);
+    fetchMock.mockResolvedValue(response);
     vi.stubGlobal('fetch', fetchMock);
   }
 
@@ -71,10 +71,18 @@ describe('ArchiveTemplateButton', () => {
 
     fireEvent.click(screen.getByRole('button'));
 
-    // Queried from the DOM. Asserting the resolver's return value would prove
-    // nothing this project does not already prove in `unit`.
+    // Queried from the DOM, and the whole string rather than a shared prefix:
+    // "Classes on the schedule without bookings are now deleted." opens two
+    // branches of `archiveMessage` (template-action-messages.ts), and only the
+    // text after it depends on `deleted`/`remaining`. A component that
+    // silently dropped `remaining` — the #93 bug this file's docblock cites —
+    // would render the other branch and still match a prefix-only regex.
+    // Asserting the resolver's return value would prove nothing this project
+    // does not already prove in `unit`.
     expect(
-      await screen.findByText(/Classes on the schedule without bookings are now deleted/),
+      await screen.findByText(
+        'Classes on the schedule without bookings are now deleted. 1 class still on the schedule — cancel individually if needed.',
+      ),
     ).toBeInTheDocument();
     await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
   });
@@ -93,7 +101,7 @@ describe('ArchiveTemplateButton', () => {
     let release!: (value: { ok: boolean; json: () => Promise<unknown> }) => void;
     fetchMock.mockReturnValue(
       new Promise((resolve) => {
-        release = resolve as typeof release;
+        release = resolve;
       }),
     );
     vi.stubGlobal('fetch', fetchMock);
