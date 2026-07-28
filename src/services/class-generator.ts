@@ -187,11 +187,19 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
  * the next query fails with `25P02`, not a clean P2002 skip. Under `FOR
  * UPDATE` this is moot (dead code, safe); under a weaker lock it is live and
  * broken.
+ *
+ * Returns the locked row rather than a boolean, so a caller cannot generate
+ * from the snapshot its outer `findMany` read minutes earlier (#102). The raw
+ * statement above still does the locking and the eligibility re-check; the
+ * Prisma read below is what makes the values authoritative, and it is safe
+ * precisely because the lock is still held when it runs. Two statements rather
+ * than one `SELECT *` because `roomCost`, `minRate` and `targetRate` are
+ * `DECIMAL(10,2)` and a raw row does not hand back Prisma's `Decimal`.
  */
 export async function claimTemplateForGeneration(
   tx: Prisma.TransactionClient,
   templateId: string,
-): Promise<boolean> {
+): Promise<TemplateWithTimezone | null> {
   await tx.$executeRawUnsafe(LOCK_TIMEOUT_SQL);
   const rows = await tx.$queryRaw<Array<{ id: string }>>`
     SELECT "id" FROM "ClassTemplate"
@@ -199,7 +207,16 @@ export async function claimTemplateForGeneration(
       AND "isActive" = true
       AND "isArchived" = false
     FOR UPDATE`;
-  return rows.length === 1;
+  if (rows.length !== 1) return null;
+
+  // Under the lock taken above, so nothing can change this row before we
+  // commit. `OrThrow` because the row provably exists — the FOR UPDATE just
+  // matched it — and an impossible `| null` would force every caller to
+  // pretend to handle it.
+  return tx.classTemplate.findUniqueOrThrow({
+    where: { id: templateId },
+    include: { teacher: { select: { defaultTimezone: true } } },
+  });
 }
 
 /**
@@ -236,8 +253,11 @@ export async function generateClassInstances(
       // be minutes stale, which is #95.
       totalCreated += await db.$transaction(
         async (tx) => {
-          if (!(await claimTemplateForGeneration(tx, template.id))) return 0;
-          return generateInstancesForTemplate(tx, template, startDate);
+          const fresh = await claimTemplateForGeneration(tx, template.id);
+          if (!fresh) return 0;
+          // `fresh`, not `template`: the loop variable is the pre-filter's
+          // snapshot and may be minutes old. #102.
+          return generateInstancesForTemplate(tx, fresh, startDate);
         },
         // Comfortably above the claim's own 2s lock_timeout, so Postgres
         // gives up on the lock before Prisma gives up on the transaction.
