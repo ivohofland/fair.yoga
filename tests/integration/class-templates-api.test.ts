@@ -265,7 +265,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(4);
   });
 
-  it('refuses to toggle an archived template — no instant classes for shelved things', async () => {
+  it('refuses to activate an archived template — no instant classes for shelved things', async () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },

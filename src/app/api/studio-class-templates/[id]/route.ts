@@ -100,10 +100,6 @@ export const PATCH = withErrorHandler(async (
     return unhandled;
   }
 
-  // active/paused. An archived template has no live half to toggle to —
-  // activating one would put it back in the generator's sweep for something
-  // the teacher shelved. Mirrors the same guard on `class-templates/[id]`;
-  // this route was missing it (#53).
   const result = await pauseOrResumeStudioTemplate(prisma, id, session.teacherId, state);
 
   if (result.ok) {
@@ -114,6 +110,13 @@ export const PATCH = withErrorHandler(async (
 
   if (result.reason === 'not_found') return respondError('Studio class template not found', 404);
   if (result.reason === 'forbidden') return respondError('Access denied', 403);
+  // An archived template has no live half to toggle to — activating one
+  // would put it back in the generator's sweep for something the teacher
+  // shelved. Mirrors the same guard on `class-templates/[id]`; this route was
+  // missing it (#53). Only `state === 'active'` reaches this: `paused` on an
+  // archived template is already true, so it is a 200 `unchanged` before this
+  // reason is ever produced — pinned by
+  // `studio-class-template-lifecycle.test.ts`.
   if (result.reason === 'archived') {
     return respondError('Unarchive the template before activating it', 409);
   }

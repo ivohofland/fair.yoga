@@ -435,6 +435,15 @@ export async function archiveOrUnarchiveTemplate(
 
   // No write, no delete. Archiving twice must not withdraw twice — the
   // withdrawal is a consequence of the transition, not of the request.
+  //
+  // The one place "already there" and "apply the transition" differ
+  // observably: both archiving and un-archiving force `isActive: false`
+  // below, but this early return touches nothing. So `?state=unarchived`
+  // against a template that is already unarchived but still active answers
+  // `unchanged` and leaves it active, where a real un-archive would have
+  // paused it. That is correct — `isArchived` and `isActive` are independent
+  // axes, and no button ever sends that combination — but it deserves to be
+  // written down rather than left for a future reader to derive.
   if (template.isArchived === archiving) {
     const { teacher: _t, ...bare } = template;
     void _t;

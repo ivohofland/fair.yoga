@@ -519,6 +519,9 @@ describe('PATCH /api/students/[id]', () => {
   // pagination and overdue-payments assertions above.
   let patchStudentId: string;
   let linkId: string;
+  let otherTeacherId: string;
+  let otherAccountId: string;
+  let otherToken: string;
 
   beforeAll(async () => {
     const student = await prisma.student.create({
@@ -534,17 +537,37 @@ describe('PATCH /api/students/[id]', () => {
       data: { teacherId, studentId: patchStudentId },
     });
     linkId = link.id;
+
+    // A teacher with no link to `patchStudentId` at all — the non-owner
+    // fixture for the ownership-order case below.
+    const otherEmail = `stuapi-patch-other-${suffix}@test.local`;
+    const other = await prisma.teacher.create({
+      data: {
+        firstName: 'Patch',
+        lastName: 'Other',
+        email: otherEmail,
+        account: { create: { email: otherEmail } },
+        bio: 'Non-owner fixture for PATCH /api/students/[id]',
+        pageSlug: `stuapi-patch-other-${suffix}`,
+      },
+    });
+    otherTeacherId = other.id;
+    otherAccountId = other.accountId;
+    otherToken = await seedSession(prisma, otherAccountId);
   });
 
   afterAll(async () => {
     await prisma.teacherStudent.deleteMany({ where: { id: linkId } });
     await prisma.student.delete({ where: { id: patchStudentId } });
+    await prisma.session.deleteMany({ where: { accountId: otherAccountId } });
+    await prisma.teacher.delete({ where: { id: otherTeacherId } });
+    await prisma.account.delete({ where: { id: otherAccountId } });
   });
 
-  const patch = (query = '') =>
+  const patch = (query = '', token = teacherToken) =>
     fetch(`${BASE_URL}/api/students/${patchStudentId}${query}`, {
       method: 'PATCH',
-      headers: cookie(teacherToken),
+      headers: cookie(token),
     });
 
   it('rejects a missing state rather than falling back to a toggle', async () => {
@@ -558,6 +581,24 @@ describe('PATCH /api/students/[id]', () => {
   it('rejects an unrecognised state', async () => {
     const res = await patch('?state=nonsense');
     expect(res.status).toBe(400);
+  });
+
+  // Pins the 'Student not in your contacts' 403 (nowhere else in this file
+  // does), and does so with `?state=unarchived` — the state the link is
+  // already in at this point in the file — deliberately. The lookup here is
+  // keyed on `{ teacherId, studentId }`, so a non-owner's query can never
+  // find a row to compare `isArchived` against in the first place; unlike
+  // the class-template and teacher-room families, there is no separate
+  // "fetch by id, then check ownership" step to reorder. Still worth
+  // pinning explicitly rather than leaving that guarantee implicit.
+  it("refuses a PATCH from a teacher not in the student's contacts, even for the state the link is already in", async () => {
+    const res = await patch('?state=unarchived', otherToken);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toBe('Student not in your contacts');
+
+    const after = await prisma.teacherStudent.findUniqueOrThrow({ where: { id: linkId } });
+    expect(after.isArchived).toBe(false);
   });
 
   it('sets the state it names, and repeating it is a no-op that reports unchanged', async () => {
@@ -575,5 +616,28 @@ describe('PATCH /api/students/[id]', () => {
 
     const after = await prisma.teacherStudent.findUniqueOrThrow({ where: { id: linkId } });
     expect(after.isArchived).toBe(true);
+  });
+
+  // The un-archive arm of the same toggle, live at `/students/archived` —
+  // nothing until now asserted that `?state=unarchived` actually reverses the
+  // archive rather than merely accepting the request.
+  it('un-archives, and repeating it is a no-op that reports unchanged', async () => {
+    const archive = await patch('?state=archived');
+    expect(archive.status).toBe(200);
+
+    const first = await patch('?state=unarchived');
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as { data: { isArchived: boolean; action: string } };
+    expect(firstBody.data.isArchived).toBe(false);
+    expect(firstBody.data.action).toBe('unarchived');
+
+    const second = await patch('?state=unarchived');
+    expect(second.status).toBe(200);
+    const secondBody = (await second.json()) as { data: { isArchived: boolean; action: string } };
+    expect(secondBody.data.isArchived).toBe(false);
+    expect(secondBody.data.action).toBe('unchanged');
+
+    const after = await prisma.teacherStudent.findUniqueOrThrow({ where: { id: linkId } });
+    expect(after.isArchived).toBe(false);
   });
 });

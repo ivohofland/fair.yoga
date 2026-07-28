@@ -184,6 +184,15 @@ export async function archiveOrUnarchiveStudioTemplate(
 
   // No write, no delete. Archiving twice must not withdraw twice — the
   // withdrawal is a consequence of the transition, not of the request.
+  //
+  // The one place "already there" and "apply the transition" differ
+  // observably: both archiving and un-archiving force `isActive: false`
+  // below, but this early return touches nothing. So `?state=unarchived`
+  // against a template that is already unarchived but still active answers
+  // `unchanged` and leaves it active, where a real un-archive would have
+  // paused it. That is correct — `isArchived` and `isActive` are independent
+  // axes, and no button ever sends that combination — but it deserves to be
+  // written down rather than left for a future reader to derive.
   if (template.isArchived === archiving) {
     const { teacher: _t, ...bare } = template;
     void _t;
@@ -231,11 +240,15 @@ export async function archiveOrUnarchiveStudioTemplate(
 
       return { ok: true as const, action: 'archived' as const, template: updated, deleted, remaining };
     },
-    // Mirrors `archiveOrUnarchiveTemplate`'s timeout, which gives the studio
-    // generator sweep the same claim-and-lock treatment class-generator.ts
-    // already has: once this `update` can block on a sweep in progress the
-    // same way the class family's does, it waits at most as long as the
-    // sweep could possibly run, not Prisma's 5s default.
+    // This `update` takes the same row lock `claimStudioTemplateForGeneration`
+    // (studio-class-generator.ts) holds with its `FOR UPDATE` for the
+    // duration of its own per-template transaction — that claim is what gives
+    // this the claim-and-lock treatment, not the timeout below; this archive
+    // can block on a sweep in progress today. The 10s figure only matches the
+    // sweep's own transaction timeout so Prisma's 5s default does not abort
+    // this update while it waits on that lock — a loaded VPS can exceed 5s,
+    // which would otherwise turn an ordinary archive click into an opaque
+    // P2028.
     { timeout: 10_000 },
   );
 }

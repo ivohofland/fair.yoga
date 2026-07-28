@@ -349,6 +349,25 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     expect(await prisma.class.count({ where: { id: c.id } })).toBe(1);
   });
 
+  /**
+   * The guard order matters here specifically: `isArchived === archiving` is
+   * true on this fresh (unarchived) row and the request names 'unarchived',
+   * so this is the one case that distinguishes "ownership checked first" from
+   * "unchanged checked first" — every other forbidden case in this file asks
+   * for a state the row is NOT already in, so it would pass just as well with
+   * the guards swapped. Reordering `unchanged` above `forbidden` would answer
+   * this with a 200 `unchanged` instead — handing a non-owner the row.
+   */
+  it("returns forbidden for another teacher's template already in the requested state, and writes nothing", async () => {
+    const t = await makeTemplate('Owner Unarchived, Foreign Request');
+
+    const result = await archiveOrUnarchiveTemplate(prisma, t.id, otherTeacherId, 'unarchived');
+
+    expect(result).toEqual({ ok: false, reason: 'forbidden' });
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.isArchived).toBe(false);
+  });
+
   it('deletes a future class nobody booked', async () => {
     const t = await makeTemplate('Del Unbooked');
     const c = await makeClass(t.id, { date: future() });
@@ -633,6 +652,9 @@ describe('pauseOrResumeTemplate (DB)', () => {
   let accountId: string;
   let roomId: string;
   let teacherRoomId: string;
+  let otherTeacherId: string;
+  let otherAccountId: string;
+  let otherRoomId: string;
 
   const makeTemplate = (classType: string) =>
     prisma.classTemplate.create({
@@ -677,16 +699,26 @@ describe('pauseOrResumeTemplate (DB)', () => {
     accountId = seeded.accountId;
     roomId = seeded.roomId;
     teacherRoomId = seeded.teacherRoomId;
+
+    const other = await seedTeacher('pause-other');
+    otherTeacherId = other.teacherId;
+    otherAccountId = other.accountId;
+    otherRoomId = other.roomId;
   });
 
   afterAll(async () => {
-    await prisma.class.deleteMany({ where: { teacherId } });
-    await prisma.classTemplate.deleteMany({ where: { teacherId } });
-    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
-    await prisma.room.delete({ where: { id: roomId } });
-    await prisma.session.deleteMany({ where: { accountId } });
-    await prisma.teacher.delete({ where: { id: teacherId } });
-    await prisma.account.delete({ where: { id: accountId } });
+    for (const [t, r, a] of [
+      [teacherId, roomId, accountId],
+      [otherTeacherId, otherRoomId, otherAccountId],
+    ] as const) {
+      await prisma.class.deleteMany({ where: { teacherId: t } });
+      await prisma.classTemplate.deleteMany({ where: { teacherId: t } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: t } });
+      await prisma.room.delete({ where: { id: r } });
+      await prisma.session.deleteMany({ where: { accountId: a } });
+      await prisma.teacher.delete({ where: { id: t } });
+      await prisma.account.delete({ where: { id: a } });
+    }
     await prisma.$disconnect();
   });
 
@@ -742,6 +774,24 @@ describe('pauseOrResumeTemplate (DB)', () => {
     if (!result.ok) throw new Error('expected ok');
     if (result.action !== 'paused') throw new Error('expected the paused action');
     expect(result.lastScheduled).toBeNull();
+  });
+
+  /**
+   * A fresh template's `isActive` defaults `true`, so requesting 'active' as
+   * a non-owner asks for the state the row is already in — the one case that
+   * would let a swapped guard order answer `unchanged` (and hand a non-owner
+   * the row) instead of `forbidden`. Every other case in this file requests a
+   * state the row is NOT already in, so it cannot tell the two orderings
+   * apart.
+   */
+  it("returns forbidden for another teacher's template already in the requested state, and writes nothing", async () => {
+    const t = await makeTemplate('Owner Active, Foreign Request');
+
+    const result = await pauseOrResumeTemplate(prisma, t.id, otherTeacherId, 'active');
+
+    expect(result).toEqual({ ok: false, reason: 'forbidden' });
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.isActive).toBe(true);
   });
 
   it("returns 'archived' for an archived template rather than toggling", async () => {

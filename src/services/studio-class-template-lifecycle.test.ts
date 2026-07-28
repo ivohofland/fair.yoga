@@ -134,6 +134,22 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     expect(await prisma.studioClass.count({ where: { id: c.id } })).toBe(1);
   });
 
+  /**
+   * See the class family's equivalent test for why this specific combination
+   * — requesting the state the row is already in, as a non-owner — is the
+   * one case that distinguishes "ownership checked first" from "unchanged
+   * checked first".
+   */
+  it("returns forbidden for another teacher's template already in the requested state, and writes nothing", async () => {
+    const t = await makeTemplate('Owner Unarchived, Foreign Request');
+
+    const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, otherTeacherId, 'unarchived');
+
+    expect(result).toEqual({ ok: false, reason: 'forbidden' });
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.isArchived).toBe(false);
+  });
+
   it('deletes a future uncancelled studio class', async () => {
     const t = await makeTemplate('Del Unbooked');
     const c = await makeClass(t.id, { date: future() });
@@ -251,6 +267,8 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
 
   let teacherId: string;
   let accountId: string;
+  let otherTeacherId: string;
+  let otherAccountId: string;
 
   const makeTemplate = (classType: string) =>
     prisma.studioClassTemplate.create({
@@ -284,14 +302,23 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     const seeded = await seedTeacher('pause');
     teacherId = seeded.teacherId;
     accountId = seeded.accountId;
+
+    const other = await seedTeacher('pause-other');
+    otherTeacherId = other.teacherId;
+    otherAccountId = other.accountId;
   });
 
   afterAll(async () => {
-    await prisma.studioClass.deleteMany({ where: { teacherId } });
-    await prisma.studioClassTemplate.deleteMany({ where: { teacherId } });
-    await prisma.session.deleteMany({ where: { accountId } });
-    await prisma.teacher.delete({ where: { id: teacherId } });
-    await prisma.account.delete({ where: { id: accountId } });
+    for (const [t, a] of [
+      [teacherId, accountId],
+      [otherTeacherId, otherAccountId],
+    ] as const) {
+      await prisma.studioClass.deleteMany({ where: { teacherId: t } });
+      await prisma.studioClassTemplate.deleteMany({ where: { teacherId: t } });
+      await prisma.session.deleteMany({ where: { accountId: a } });
+      await prisma.teacher.delete({ where: { id: t } });
+      await prisma.account.delete({ where: { id: a } });
+    }
     await prisma.$disconnect();
   });
 
@@ -343,6 +370,22 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     if (!result.ok) throw new Error('expected ok');
     if (result.action !== 'paused') throw new Error('expected the paused action');
     expect(result.lastScheduled).toBeNull();
+  });
+
+  /**
+   * See the class family's equivalent test for why this specific combination
+   * — requesting the state the row is already in ('active', a fresh
+   * template's default), as a non-owner — is the one case that distinguishes
+   * "ownership checked first" from "unchanged checked first".
+   */
+  it("returns forbidden for another teacher's template already in the requested state, and writes nothing", async () => {
+    const t = await makeTemplate('Owner Active, Foreign Request');
+
+    const result = await pauseOrResumeStudioTemplate(prisma, t.id, otherTeacherId, 'active');
+
+    expect(result).toEqual({ ok: false, reason: 'forbidden' });
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.isActive).toBe(true);
   });
 
   it("returns 'archived' for an archived template rather than toggling", async () => {

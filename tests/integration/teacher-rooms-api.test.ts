@@ -288,6 +288,23 @@ describe('/api/teacher-rooms/[id] — the ownership chain', () => {
     expect(after.isArchived).toBe(false);
   });
 
+  // Run before anything else in this file archives `linkId` (it starts
+  // unarchived): the PATCH route reads the row by id, then checks
+  // `teacherId !== session.teacherId`, THEN checks `isArchived === archiving`
+  // — so this is the one request that would tell the two guards apart if
+  // they were ever reordered. `?state=unarchived` names the state the row is
+  // already in; every other ownership case in this file asks for a state the
+  // row is NOT already in, so it cannot distinguish "ownership first" from
+  // "unchanged first". Swap the two guards in the route and this becomes a
+  // 200 `unchanged` that hands a non-owner the row.
+  it('refuses a PATCH from another teacher even when the requested state matches what the row already is', async () => {
+    const res = await send('PATCH', otherToken, `${linkId}?state=unarchived`);
+    expect(res.status).toBe(403);
+
+    const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: linkId } });
+    expect(after.isArchived).toBe(false);
+  });
+
   it('404s an id that does not exist, before any ownership check can leak its absence', async () => {
     const res = await send('GET', ownerToken, '00000000-0000-0000-0000-000000000000');
     expect(res.status).toBe(404);
@@ -339,6 +356,29 @@ describe('PATCH /api/teacher-rooms/[id]', () => {
 
     const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: linkId } });
     expect(after.isArchived).toBe(true);
+  });
+
+  // The un-archive arm of the same toggle, live at `/settings/rooms/archived`
+  // — nothing until now asserted that `?state=unarchived` actually reverses
+  // the archive rather than merely accepting the request.
+  it('un-archives, and repeating it is a no-op that reports unchanged', async () => {
+    const archive = await send('PATCH', ownerToken, `${linkId}?state=archived`);
+    expect(archive.status).toBe(200);
+
+    const first = await send('PATCH', ownerToken, `${linkId}?state=unarchived`);
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as { data: { isArchived: boolean; action: string } };
+    expect(firstBody.data.isArchived).toBe(false);
+    expect(firstBody.data.action).toBe('unarchived');
+
+    const second = await send('PATCH', ownerToken, `${linkId}?state=unarchived`);
+    expect(second.status).toBe(200);
+    const secondBody = (await second.json()) as { data: { isArchived: boolean; action: string } };
+    expect(secondBody.data.isArchived).toBe(false);
+    expect(secondBody.data.action).toBe('unchanged');
+
+    const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: linkId } });
+    expect(after.isArchived).toBe(false);
   });
 });
 

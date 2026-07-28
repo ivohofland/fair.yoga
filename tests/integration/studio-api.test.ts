@@ -187,7 +187,7 @@ describe('/api/studio-class-templates/[id] — ownership', () => {
 });
 
 describe('PATCH /api/studio-class-templates/[id]', () => {
-  it('toggles active, and archiving forces inactive', async () => {
+  it('reaches paused then active as named, and archiving forces inactive', async () => {
     const id = (await makeTemplate(ownerId, 'Toggle Target')).id;
 
     const paused = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=paused`);
