@@ -93,7 +93,7 @@ docs/               Product specs, design brief, architecture docs
 
 ## Testing
 
-Tests run against the real PostgreSQL database (no mocks). The database must be running and migrations applied before tests will work:
+Most tests run against the real PostgreSQL database (no mocks); the `components` project is the exception — it mocks `fetch` and `next/navigation` and touches no database. The database must be running and migrations applied before the rest will work:
 
 ```bash
 docker compose up -d    # start PostgreSQL

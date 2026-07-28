@@ -2,11 +2,13 @@ import { defineConfig } from 'vitest/config';
 import { loadEnv } from 'vite';
 import path from 'path';
 
-// Two projects with different blast radii (docs/test-database.md):
+// Three projects with different blast radii (docs/test-database.md):
 // - unit: services + lib, runs against the dedicated test database so
 //   clock-injected sweeps can never touch dev/seed data
 // - integration: talks to the HTTP app on :3000, so its fixtures must
 //   live in the same database that app reads (dev locally, CI's in CI)
+// - components: jsdom rendering with `fetch` and `next/navigation` mocked
+//   (tests/setup/components.ts) — touches no database at all
 export default defineConfig(({ mode }) => {
   const fileEnv = loadEnv(mode, process.cwd(), '');
   const devUrl = process.env.DATABASE_URL ?? fileEnv.DATABASE_URL ?? '';

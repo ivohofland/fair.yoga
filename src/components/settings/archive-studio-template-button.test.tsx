@@ -34,7 +34,7 @@ describe('ArchiveStudioTemplateButton', () => {
 
   const archivedOk = {
     ok: true,
-    json: async () => ({ data: { action: 'archived', deleted: 4, remaining: 0 } }),
+    json: async () => ({ data: { action: 'archived', deleted: 4, remaining: 1 } }),
   };
 
   it('sends state=archived when the template is not archived', async () => {
@@ -78,7 +78,7 @@ describe('ArchiveStudioTemplateButton', () => {
     // different branch and still match a prefix-only regex.
     expect(
       await screen.findByText(
-        'Deleted 4 scheduled studio classes. Nothing from this template is scheduled any more.',
+        'Deleted 4 scheduled studio classes. 1 class still on the schedule — cancel individually if needed.',
       ),
     ).toBeInTheDocument();
     await waitFor(() => expect(routerRefresh).toHaveBeenCalled());

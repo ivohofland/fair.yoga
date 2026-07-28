@@ -78,8 +78,8 @@ describe('ToggleTemplateButton', () => {
 
     // Queried from the DOM, and the whole string: `pauseMessage` interpolates
     // both `formatDayHeader(lastScheduled.date)` and `lastScheduled.startTime`,
-    // so a component that dropped either — or passed the raw ISO string
-    // instead of a `Date` — would fail this and pass a prefix-only regex.
+    // so a component that dropped either would fail this and pass a
+    // prefix-only regex.
     expect(
       await screen.findByText(
         'No new classes will be added to your schedule. The last one still scheduled is Friday, Jun 12 · 09:30.',
