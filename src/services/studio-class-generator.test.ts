@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
+import { log } from '@/lib/log';
 import { generateStudioClassInstances, claimStudioTemplateForGeneration } from './studio-class-generator';
 import { archiveOrUnarchiveStudioTemplate } from './studio-class-template-lifecycle';
 
@@ -181,6 +182,62 @@ describe('generateStudioClassInstances (DB)', () => {
       const result = await archiving;
       expect(result.ok).toBe(true);
     });
+
+    /**
+     * Regression guard for `archiveOrUnarchiveStudioTemplate`'s own
+     * `{ timeout: 10_000 }` — the studio side of review round 1's finding 1,
+     * which `class-generator.test.ts`'s equivalent test closed for the class
+     * family. That fix is on the *Prisma* transaction timeout on the archive
+     * side, a different axis from the claim's 2s Postgres `lock_timeout` the
+     * test above and the mid-sweep race test both stay well under (~300-400ms
+     * of headroom) — neither of those can tell a 10s budget from Prisma's
+     * unset 5s default, because neither holds the lock anywhere near either
+     * number. This test has to actually cross 5s, or deleting
+     * `{ timeout: 10_000 }` from `archiveOrUnarchiveStudioTemplate` leaves the
+     * whole suite green.
+     *
+     * Deliberately slow (~5.5s, on top of everything else in this file) —
+     * that's the cost of a guard that means something. Do not shorten the
+     * hold below 5s: it has to clear Prisma's default, not brush it.
+     */
+    it(
+      'lets a concurrent archive outlive its own transaction default once the claim holds past it',
+      async () => {
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+
+        const claiming = prisma.$transaction(
+          async (tx) => {
+            expect(await claimStudioTemplateForGeneration(tx, templateId)).toBe(true);
+            await held;
+          },
+          { timeout: 15_000 },
+        );
+
+        // Let the claim acquire the lock before the archive contends for it.
+        await new Promise((r) => setTimeout(r, 100));
+
+        const archiving = archiveOrUnarchiveStudioTemplate(prisma, templateId, teacherId);
+
+        // Hold past Prisma's 5s default on the archive side — comfortably
+        // above it (5.5s), not just brushing it, so this doesn't flake right
+        // at the boundary it exists to cross.
+        await new Promise((r) => setTimeout(r, 5_500));
+
+        release();
+        await claiming;
+
+        // With { timeout: 10_000 } on the archive's transaction, it waited
+        // out the lock and succeeded. Without it, Prisma would have aborted
+        // the archive's transaction with P2028 around the 5s mark, and this
+        // `await` would reject instead of resolving `ok: true`.
+        const result = await archiving;
+        expect(result.ok).toBe(true);
+      },
+      15_000,
+    );
   });
 
   describe('generateStudioClassInstances — archive mid-sweep', () => {
@@ -238,5 +295,59 @@ describe('generateStudioClassInstances (DB)', () => {
 
       expect(await prisma.studioClass.count({ where: { templateId } })).toBe(0);
     });
+  });
+});
+
+// ===========================================================================
+// Per-template isolation — stubbed db, no real DB
+// ===========================================================================
+
+describe('generateStudioClassInstances (per-template isolation)', () => {
+  function tmpl(id: string, teacherId: string) {
+    return {
+      id,
+      teacherId,
+      dayOfWeek: 0,
+      startTime: '09:00',
+      classType: 'Hatha',
+      durationMinutes: 60,
+      location: 'Stub Studio',
+      hourlyRate: 45,
+    };
+  }
+
+  it('a failing template does not abort the others, and the error is rethrown', async () => {
+    const created: string[] = [];
+    const from = new Date('2099-01-05T00:00:00Z'); // deterministic future window
+    const stub = {
+      studioClassTemplate: { findMany: async () => [tmpl('A', 't1'), tmpl('B', 't1'), tmpl('C', 't1')] },
+      studioClass: {
+        findFirst: async () => null,
+        create: async ({ data }: { data: { templateId: string } }) => {
+          if (data.templateId === 'A') throw new Error('boom-A');
+          if (data.templateId === 'C') throw new Error('boom-C');
+          created.push(data.templateId);
+          return {};
+        },
+      },
+      // The sweep now claims each template inside its own transaction before
+      // generating. This stub has no real lock semantics to exercise (the DB
+      // tests above cover that) — it only needs the claim to always succeed
+      // so error isolation between templates is still what's under test.
+      $executeRawUnsafe: async () => 0,
+      $queryRaw: async () => [{ id: 'stub' }],
+      $transaction: async (fn: (tx: unknown) => Promise<number>) => fn(stub),
+    } as unknown as import('@prisma/client').PrismaClient;
+
+    const spy = vi.spyOn(log, 'error').mockImplementation(() => log);
+
+    await expect(generateStudioClassInstances(stub, from)).rejects.toThrow('boom-A');
+    expect(created).toContain('B'); // B generated despite A failing before and C failing after
+
+    // Both failing templates are logged, not just the one that's rethrown.
+    const loggedTemplateIds = spy.mock.calls.map((c) => (c[0] as { templateId?: string }).templateId);
+    expect(loggedTemplateIds).toContain('A');
+    expect(loggedTemplateIds).toContain('C');
+    spy.mockRestore();
   });
 });

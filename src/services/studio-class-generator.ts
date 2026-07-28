@@ -38,8 +38,12 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
  * Do not weaken `FOR UPDATE` to `FOR NO KEY UPDATE` — see
  * `claimTemplateForGeneration` for why that is not a free optimisation: it is
  * what makes a concurrent insert for this template impossible while the claim
- * holds it, which is what makes the P2002 branch below unreachable whenever
- * it runs after a successful claim.
+ * holds it, which is what makes the P2002 branch below unreachable, full
+ * stop. That hedge is load-bearing in `class-generator.ts`, where
+ * `generateInstancesForTemplate` has three genuinely unclaimed callers; the
+ * loop below has no caller other than `generateStudioClassInstances`'s own
+ * claimed transaction, so there is no unclaimed path left for the branch to
+ * matter on.
  */
 export async function claimStudioTemplateForGeneration(
   tx: Prisma.TransactionClient,
@@ -55,6 +59,24 @@ export async function claimStudioTemplateForGeneration(
   return rows.length === 1;
 }
 
+/**
+ * Cron entry point: tops up the rolling window for every active, unarchived
+ * studio template, platform-wide — no `teacherId` scoping, unlike
+ * `generateClassInstances` (see `pauseOrResumeStudioTemplate`'s docstring in
+ * `studio-class-template-lifecycle.ts` for why nothing here is teacher-wide).
+ * Each template is isolated: one template whose generation throws — now
+ * including a claim's lock timeout, a new way to fail this sweep did not
+ * previously have — is logged and skipped, the rest still generate, and the
+ * first error is rethrown at the end for job-health visibility.
+ *
+ * This changes what a throw means to both callers
+ * (`api/cron/generate-classes/route.ts` and `lib/scheduler.ts`'s
+ * `isolatedSweeps`): it used to mean the sweep aborted partway through and
+ * some templates never got a turn; it now means the sweep ran to completion
+ * and at least one template failed along the way. Both callers already
+ * tolerate either shape, but do not assume "threw" still implies "incomplete"
+ * when reading this signature.
+ */
 export async function generateStudioClassInstances(
   db: PrismaClient,
   from?: Date,
@@ -91,8 +113,12 @@ export async function generateStudioClassInstances(
             });
             if (existing) continue;
 
-            // @@unique([templateId, date]) makes concurrent runs collide on
-            // P2002 instead of creating duplicate instances.
+            // Unreachable while the claim above holds the row lock: no other
+            // insert for this templateId can land inside this transaction, so
+            // nothing is left to collide with `@@unique([templateId, date])`.
+            // Kept as a defensive backstop only — pre-lock, this branch was
+            // the one doing real work; see `claimStudioTemplateForGeneration`
+            // for why that is no longer true.
             try {
               await tx.studioClass.create({
                 data: {
@@ -108,7 +134,7 @@ export async function generateStudioClassInstances(
               });
             } catch (err) {
               if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-                continue; // a concurrent run created this instance first
+                continue; // dead under the claim's lock; see the comment above
               }
               throw err;
             }
