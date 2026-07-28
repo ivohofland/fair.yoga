@@ -24,6 +24,35 @@ export default defineConfig(({ mode }) => {
       globals: true,
       environment: 'node',
       fileParallelism: false,
+      // Pinned, not inherited from whatever machine happens to run the suite.
+      //
+      // `formatDayHeader` and `formatHistoricalDate` (src/lib/format.ts) read
+      // their argument with `getUTC*` accessors, and every test that names that
+      // guarantee can only observe it in a zone where the local and the UTC
+      // accessors disagree. CI is `ubuntu-latest` — UTC — where `getDate()` and
+      // `getUTCDate()` return the same number for every input. Unpinned, those
+      // tests therefore pass against a local-time implementation on the one
+      // machine whose verdict gates a merge. Swapping every accessor in
+      // `format.ts` to its local-time twin leaves that whole file green under
+      // TZ=UTC — and green under Europe/Amsterdam, the zone it was written in —
+      // while failing most of it under this pin.
+      //
+      // West of UTC specifically. Both formatters are handed values already
+      // pinned to midnight UTC (`@db.Date` columns, `startOfLocalDay` output),
+      // and for those a local read moves the calendar day back exactly one day
+      // west of UTC while moving nothing at or east of it. A zone east of UTC
+      // would leave the same assertions vacuous.
+      //
+      // Deleting this line fails nothing. It silently makes those assertions
+      // tautological again, which is why it is a comment and not a bare option.
+      //
+      // Set at the root so all three projects inherit it — a project's own
+      // `env` (unit's `DATABASE_URL`) merges with this rather than replacing
+      // it. The integration project's app process on :3000 keeps its own zone,
+      // so that suite now runs cross-zone against the app; it was verified
+      // green under this pin, and the mismatch is the realistic case anyway
+      // (a UTC server, a client somewhere else).
+      env: { TZ: 'America/New_York' },
       coverage: {
         provider: 'v8',
         reporter: ['text', 'lcov'],

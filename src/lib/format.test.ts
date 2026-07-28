@@ -32,14 +32,17 @@ describe('formatDayHeader', () => {
    * midnight-UTC date renders as the *previous* day for anyone west of UTC —
    * a class on the 12th would show as the 11th on a student's bookings page.
    *
-   * This test runs in whatever zone the machine is in (Europe/Amsterdam
-   * locally, UTC in CI), so it cannot prove the west-of-UTC case on its own.
-   * The late-evening instant below is the portable proxy: at 23:30 UTC the
-   * local date has already rolled over east of UTC, so a local-time
-   * implementation would disagree here.
+   * The fixture is a midnight-UTC value because that is the only shape this
+   * function is ever handed, and `vitest.config.ts` pins the run to a zone west
+   * of UTC so that shape discriminates: read locally, `2026-03-01T00:00Z`
+   * renders as Saturday, Feb 28. Month, weekday and day-of-month all move, so a
+   * local-time implementation cannot coincidentally agree here.
+   *
+   * The three cases above are midnight-UTC too and so bite the same way; this
+   * one exists to say why, and to fail under a name that names the guarantee.
    */
   it('reads the date in UTC, not the local zone', () => {
-    expect(formatDayHeader(new Date('2026-06-12T23:30:00.000Z'))).toBe('Friday, Jun 12');
+    expect(formatDayHeader(new Date('2026-03-01T00:00:00.000Z'))).toBe('Sunday, Mar 1');
   });
 
   it('accepts a Date-like value without mutating the caller’s Date', () => {
@@ -74,14 +77,16 @@ describe('formatHistoricalDate', () => {
   });
 
   /**
-   * Same portable proxy as `formatDayHeader`'s equivalent case: a late-evening
-   * UTC instant whose local calendar day has already rolled over east of UTC.
-   * Reading this in local time (or with `toLocaleDateString`, unqualified)
-   * would print Jun 12 instead of Jun 13, and could even roll the year on a
-   * Dec 31 / Jan 1 instant.
+   * Same reasoning as `formatDayHeader`'s equivalent case, and the same shape:
+   * this function's one caller hands it `startOfLocalDay` output, which is
+   * midnight UTC of the teacher's calendar day. `vitest.config.ts` pins the run
+   * west of UTC, where a local read of a midnight-UTC value renders the
+   * *previous* day — so reading this in local time (or with
+   * `toLocaleDateString`, unqualified) would print 31 Dec 2024, rolling the
+   * year as well as the day.
    */
   it('reads the date in UTC, not the local zone', () => {
-    expect(formatHistoricalDate(new Date('2026-06-12T23:30:00.000Z'))).toBe('12 Jun 2026');
+    expect(formatHistoricalDate(new Date('2025-01-01T00:00:00.000Z'))).toBe('1 Jan 2025');
   });
 
   it('accepts a Date-like value without mutating the caller’s Date', () => {
