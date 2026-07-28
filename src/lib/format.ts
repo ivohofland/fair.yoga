@@ -50,16 +50,24 @@ export function formatDayHeader(date: Date): string {
 /**
  * A past, historical date, where the year matters: `12 Jun 2025`.
  *
- * `formatDayHeader` is for upcoming or in-progress dates — the schedule, a
- * class about to happen — and deliberately omits the year, since within the
- * next few months "Friday, Jun 12" is unambiguous. This is for records meant
- * to survive indefinitely, where dropping the year lets a date from last year
- * read identically to one from last month with nothing to tell them apart.
+ * Use this for records meant to survive indefinitely, where dropping the year
+ * lets a date from last year read identically to one from last month with
+ * nothing to tell them apart. `formatDayHeader` omits the year, which is safe
+ * while a date is near enough that "Friday, Jun 12" can only mean one day.
  *
- * Same UTC-accessors reasoning as `formatDayHeader`: this expects a value
- * already pinned to a calendar day at UTC midnight (e.g. `startOfLocalDay`'s
- * output), not a raw instant — reading a true instant in local time would
- * shift the calendar day for anyone whose zone disagrees with UTC.
+ * That split is the intent, not a description of the callers. `formatDayHeader`
+ * is not confined to upcoming dates: `src/app/(student)/bookings/page.tsx` uses
+ * it for the "Past classes" section and embeds it in the bank-transfer
+ * remittance string for classes already taught — dates with no expiry, printed
+ * without a year. Whether that is the one place still owed a year is an open
+ * question, not a settled one; do not audit callers on the assumption that it
+ * already follows the rule above.
+ *
+ * Same UTC-accessors reasoning as `formatDayHeader`, and the same direction:
+ * this expects a value already pinned to a calendar day at UTC midnight (e.g.
+ * `startOfLocalDay`'s output), not a raw instant. For such a value a local read
+ * shifts the calendar day back one day *west* of UTC, and moves nothing at or
+ * east of it — see `vitest.config.ts` for why the test run is pinned west.
  */
 export function formatHistoricalDate(date: Date): string {
   const d = new Date(date);

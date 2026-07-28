@@ -535,8 +535,10 @@ export async function archiveOrUnarchiveTemplate(
         // lock-then-read pattern `claimTemplateForGeneration` uses, and
         // `OrThrow` for the same reason: the update just matched this row.
         //
-        // A live template has no withdrawal to report. Leaving a stale count
-        // on it would be worse than having none (#97).
+        // A template that is no longer archived has no withdrawal to report.
+        // Not a *live* one — the CAS above forced `isActive: false` in the
+        // same write, so what is standing here is paused. Leaving a stale
+        // count on it would be worse than having none (#97).
         const cleared = await tx.classTemplate.findUniqueOrThrow({ where: { id: templateId } });
         return { ok: true as const, action: 'unarchived' as const, template: cleared };
       }
@@ -581,12 +583,17 @@ export async function archiveOrUnarchiveTemplate(
 
       // Written from the delete's own `count`, inside the same transaction, so
       // the record cannot claim a number the delete did not produce and cannot
-      // survive a rollback that withdrew nothing (#97). A second statement
-      // rather than folding this into the CAS above: that one has to run
-      // before the delete to take the row lock the sweep serialises against
-      // (#95), and `deleted` does not exist until the delete has run. A plain
-      // single-record `update` is enough here — the CAS's lock is still held,
-      // so nothing can have moved this row since.
+      // survive a rollback that withdrew nothing (#97).
+      //
+      // A second statement rather than folded into the CAS above, on data
+      // dependency alone: `deleted` does not exist until the `deleteMany` has
+      // run, and the CAS runs before it. The lock ordering is a separate point
+      // and closes the other direction — the CAS has to stay the transaction's
+      // first statement to take the row lock the sweep serialises against
+      // (#95), so it cannot instead be moved down to where `deleted` exists.
+      //
+      // A plain single-record `update` is enough here: the CAS's lock is still
+      // held, so nothing can have moved this row since.
       const recorded = await tx.classTemplate.update({
         where: { id: templateId },
         data: { archivedAt: now, withdrawnCount: deleted },

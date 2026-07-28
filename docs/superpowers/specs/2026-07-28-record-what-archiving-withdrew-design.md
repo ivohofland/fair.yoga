@@ -58,14 +58,17 @@ model ClassTemplate {
 }
 ```
 
-and the same pair on `StudioClassTemplate`. Both nullable: `null` means never
-archived, which is every existing row and the correct answer for them.
+and the same pair on `StudioClassTemplate`. Both nullable: `null` means no
+archive recorded itself, which is every existing row and the correct answer for
+them. Not the same as "never archived" — see the `isArchived` bullet under
+Risks for the bulk path that archives without writing either column.
 
 Written inside the archive transaction, alongside the flag flip and the delete,
 so a record that says three classes were withdrawn is a record three classes
-were actually withdrawn. Un-archiving clears both back to `null` — an
-un-archived template has no withdrawal to report, and leaving a stale count on a
-live template would be worse than having none.
+were actually withdrawn. Un-archiving clears both back to `null` — a template
+that is no longer archived has no withdrawal to report, and leaving a stale
+count on it would be worse than having none. (Not a *live* template: the same
+write forces `isActive: false`, so what is standing there is paused.)
 
 Re-archiving overwrites. That is deliberate: a teacher asking "what did
 archiving remove?" is asking about the archive that is in force, not a history
@@ -75,10 +78,14 @@ and this is not one.
 ### 2. `remaining` is not persisted
 
 Only `deleted` is unrecoverable, so only `deleted` is stored. `remaining` — the
-future classes still on the schedule for this template — is a live query, and
-computing it at render time is *more* truthful than freezing it: a teacher who
-cancels one of those survivors individually afterwards should see the number
-drop, not read a count that was accurate for one afternoon in June.
+future classes still on the schedule for this template — is returned once, by
+the archive PATCH, into the transient confirmation message shown right after
+the click. Nothing persists it and no page recomputes it on load. Freezing it
+in a column would be worse than not having it: a teacher who cancels one of
+those survivors individually afterwards would keep reading a count that was
+accurate for one afternoon in June. Computing it at render time would be
+truthful, and is a thing this design does *not* do — if a later change wants
+the number on the page, it queries for it there rather than reviving a column.
 
 This is why the column is `withdrawnCount` rather than a pair. Naming it after
 what it records, not after the confirmation message that first exposed it, keeps

@@ -253,8 +253,10 @@ export async function archiveOrUnarchiveStudioTemplate(
         // because the CAS above holds this row's lock until we commit — the
         // same lock-then-read pattern the generator's claim uses.
         //
-        // A live template has no withdrawal to report. Leaving a stale count
-        // on it would be worse than having none (#97).
+        // A template that is no longer archived has no withdrawal to report.
+        // Not a *live* one — the CAS above forced `isActive: false` in the
+        // same write, so what is standing here is paused. Leaving a stale
+        // count on it would be worse than having none (#97).
         const cleared = await tx.studioClassTemplate.findUniqueOrThrow({
           where: { id: templateId },
         });
@@ -291,11 +293,13 @@ export async function archiveOrUnarchiveStudioTemplate(
         where: scheduledWhere(templateId, { gte: today }),
       });
 
-      // Written from the delete's own `count`, inside the same transaction —
-      // see `archiveOrUnarchiveTemplate` for why this is a second statement
-      // rather than folded into the CAS (#97). A plain single-record `update`
-      // is enough: the CAS's lock is still held, so nothing can have moved
-      // this row since.
+      // Written from the delete's own `count`, inside the same transaction
+      // (#97). A second statement rather than folded into the CAS above, on
+      // data dependency alone: `deleted` does not exist until the `deleteMany`
+      // has run, and the CAS runs before it — see `archiveOrUnarchiveTemplate`
+      // for the separate lock-ordering point that keeps the CAS first. A plain
+      // single-record `update` is enough: the CAS's lock is still held, so
+      // nothing can have moved this row since.
       const recorded = await tx.studioClassTemplate.update({
         where: { id: templateId },
         data: { archivedAt: now, withdrawnCount: deleted },

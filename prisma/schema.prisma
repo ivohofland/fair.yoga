@@ -276,15 +276,37 @@ model ClassTemplate {
   isActive        Boolean         @default(true)
   isArchived      Boolean         @default(false)
 
-  /// When this template was last archived, and how many future unbooked
-  /// classes that archive withdrew. Both null until the first archive, and
-  /// cleared again on un-archive — a live template has no withdrawal to
-  /// report. Re-archiving overwrites: a teacher asking what archiving removed
-  /// means the archive in force, not every archive this template has had.
+  /// When this template was last archived (#97).
   ///
-  /// `remaining` is deliberately absent. Only the deletion is unrecoverable;
-  /// what is still scheduled is a live query, and truer computed than frozen.
+  /// Null when no archive has recorded one — which is not the same as
+  /// `isArchived: false`. `eraseTeacher` (src/services/gdpr.ts) bulk-archives
+  /// every template of an erased teacher with an `updateMany` that writes
+  /// neither this column nor `withdrawnCount`, so `isArchived: true` with both
+  /// null is reachable today, as it is for every template archived before #97
+  /// shipped. Read this as "the archive that recorded itself", never as "is it
+  /// archived" — `isArchived` answers that.
+  ///
+  /// Cleared again on un-archive, which forces `isActive: false` in the same
+  /// write: what has no withdrawal to report is a template that is no longer
+  /// archived, and it is paused at that moment, not live. Re-archiving
+  /// overwrites rather than accumulating — a teacher asking what archiving
+  /// removed means the archive in force, not every archive this template has
+  /// had.
   archivedAt      DateTime?
+
+  /// How many future unbooked classes that same archive withdrew — the
+  /// `deleteMany`'s own returned count, written inside its transaction, so it
+  /// cannot claim a number the delete did not produce. Null and cleared on
+  /// exactly the terms `archivedAt` above describes, which is what keeps a
+  /// recorded `0` ("archived, withdrew nothing") distinguishable from no
+  /// record at all.
+  ///
+  /// What is still scheduled is deliberately not stored beside it. The archive
+  /// PATCH returns a `remaining` count once, for the confirmation message
+  /// shown right after the click; nothing persists it and no page recomputes
+  /// it on load. Only the deletion is unrecoverable, so only the deletion is
+  /// recorded — and a frozen copy would go stale the moment a teacher cancels
+  /// one of the survivors.
   withdrawnCount  Int?
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
@@ -343,15 +365,42 @@ model StudioClassTemplate {
   isActive        Boolean  @default(true)
   isArchived      Boolean  @default(false)
 
-  /// When this template was last archived, and how many future unbooked
-  /// classes that archive withdrew. Both null until the first archive, and
-  /// cleared again on un-archive — a live template has no withdrawal to
-  /// report. Re-archiving overwrites: a teacher asking what archiving removed
-  /// means the archive in force, not every archive this template has had.
+  /// When this template was last archived (#97).
   ///
-  /// `remaining` is deliberately absent. Only the deletion is unrecoverable;
-  /// what is still scheduled is a live query, and truer computed than frozen.
+  /// Null when no archive has recorded one — which is not the same as
+  /// `isArchived: false`. `eraseTeacher` (src/services/gdpr.ts) bulk-archives
+  /// every studio template of an erased teacher with an `updateMany` that
+  /// writes neither this column nor `withdrawnCount`, so `isArchived: true`
+  /// with both null is reachable today, as it is for every template archived
+  /// before #97 shipped. Read this as "the archive that recorded itself",
+  /// never as "is it archived" — `isArchived` answers that.
+  ///
+  /// Cleared again on un-archive, which forces `isActive: false` in the same
+  /// write: what has no withdrawal to report is a template that is no longer
+  /// archived, and it is paused at that moment, not live. Re-archiving
+  /// overwrites rather than accumulating — a teacher asking what archiving
+  /// removed means the archive in force, not every archive this template has
+  /// had.
   archivedAt      DateTime?
+
+  /// How many future studio classes that same archive withdrew — the
+  /// `deleteMany`'s own returned count, written inside its transaction, so it
+  /// cannot claim a number the delete did not produce. Null and cleared on
+  /// exactly the terms `archivedAt` above describes, which is what keeps a
+  /// recorded `0` ("archived, withdrew nothing") distinguishable from no
+  /// record at all.
+  ///
+  /// Not "unbooked", unlike `ClassTemplate.withdrawnCount`: `StudioClass` has
+  /// no registrations to consult, so the only filter is `cancelledAt: null`
+  /// and every uncancelled future studio class the boundary reaches is
+  /// withdrawn. An already-cancelled one is an income record and survives.
+  ///
+  /// What is still scheduled is deliberately not stored beside it. The archive
+  /// PATCH returns a `remaining` count once, for the confirmation message
+  /// shown right after the click; nothing persists it and no page recomputes
+  /// it on load. Only the deletion is unrecoverable, so only the deletion is
+  /// recorded — and a frozen copy would go stale the moment a teacher cancels
+  /// one of the survivors.
   withdrawnCount  Int?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
