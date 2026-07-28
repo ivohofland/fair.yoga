@@ -16,6 +16,7 @@
 - **The new project's glob is `src/components/**/*.test.tsx`** — the `.tsx` extension is what keeps it disjoint from `unit`'s `src/**/*.test.ts`. Do not widen either.
 - **CI must actually run it.** `npm test` is `vitest run` with no `--project` flag and `.github/workflows/ci.yml:150` runs exactly that, so a new project is collected automatically. Verify this rather than assuming it — a test layer CI never runs is worse than none.
 - **URL assertions check the whole string**, never `toContain('state=')`. A substring match survives the template id being dropped, which is the wiring error this layer exists to catch.
+- **Confirmation assertions check the whole string too**, never a prefix regex. `archiveMessage` and `pauseMessage` share leading text across branches, so a prefix matches a message built from the *wrong* arguments — a component that dropped `remaining` would render a different branch and still pass. That is exactly the #93 bug this layer exists to catch, and the URL rule's reasoning applies here with more force.
 - **Both prop values for every button.** Asserting one direction leaves the ternary half-covered, and inverting it is the exact mistake the inline derivation risks.
 - **Assertions on rendered output go through the DOM** (`findByText`, `getByRole`), never through the resolver's return value — that is already covered in the `unit` project.
 - **Async state updates need `findBy*`/`waitFor`**, not synchronous `getBy*`. The handlers set state after an awaited `fetch`; getting this wrong produces tests that pass while emitting `act()` warnings, which is the shape of a test everyone learns to ignore.
@@ -49,7 +50,7 @@
 - Create: `tests/setup/components.ts`, `src/components/settings/archive-template-button.test.tsx`
 
 **Interfaces:**
-- Produces: the `components` Vitest project; `tests/setup/components.ts` exporting nothing but registering matchers and the `next/navigation` mock globally; and the test shape Task 2 copies for five more buttons.
+- Produces: the `components` Vitest project; `tests/setup/components.ts`, which registers the jest-dom matchers, mocks `next/navigation` globally, and **exports `routerRefresh` and `routerPush` as `vi.fn()`s** cleared before each test; and the test shape Task 2 copies for five more buttons.
 
 - [ ] **Step 1: Install the three dev dependencies**
 
@@ -294,13 +295,15 @@ git commit -m "test: add a jsdom component project, proved on the archive button
 
 **The three template siblings get five tests each**, the same shape as Task 1's, with these differences:
 
-| File | Component | Endpoint | Targets (`isArchived`/`isActive` false → true) | Success payload | Expected confirmation text |
+| File | Component | Endpoint | Targets (`isArchived`/`isActive` false → true) | Success payload | Expected confirmation (assert the WHOLE string, read from `template-action-messages.ts`) |
 |---|---|---|---|---|---|
-| `toggle-template-button.test.tsx` | `ToggleTemplateButton`, prop `isActive` | `/api/class-templates/tpl-1` | `paused` when active, `active` when paused | `{ action: 'paused', lastScheduled: { date: '2026-06-12T00:00:00.000Z', startTime: '09:30' } }` | `/No new classes will be added to your schedule/` |
-| `toggle-studio-template-button.test.tsx` | `ToggleStudioTemplateButton`, prop `isActive` | `/api/studio-class-templates/tpl-1` | `paused` when active, `active` when paused | same as above | `/No new classes will be added to your schedule/` |
-| `archive-studio-template-button.test.tsx` | `ArchiveStudioTemplateButton`, prop `isArchived` | `/api/studio-class-templates/tpl-1` | `archived` when not archived, `unarchived` when archived | `{ action: 'archived', deleted: 4, remaining: 0 }` | `/Deleted 4 scheduled studio classes/` |
+| `toggle-template-button.test.tsx` | `ToggleTemplateButton`, prop `isActive` | `/api/class-templates/tpl-1` | `paused` when active, `active` when paused | `{ action: 'paused', lastScheduled: { date: '2026-06-12T00:00:00.000Z', startTime: '09:30' } }` | the full `pauseMessage` output for that `lastScheduled` |
+| `toggle-studio-template-button.test.tsx` | `ToggleStudioTemplateButton`, prop `isActive` | `/api/studio-class-templates/tpl-1` | `paused` when active, `active` when paused | same as above | the full `pauseMessage` output for that `lastScheduled` |
+| `archive-studio-template-button.test.tsx` | `ArchiveStudioTemplateButton`, prop `isArchived` | `/api/studio-class-templates/tpl-1` | `archived` when not archived, `unarchived` when archived | `{ action: 'archived', deleted: 4, remaining: 0 }` | the full `archiveStudioMessage(4, 0)` output |
 
 Each still asserts the whole URL, both prop values, the rendered confirmation, the rendered error, and the disabled state — and each still asserts `routerRefresh` was called on success and not on error.
+
+**Read every expected message out of `src/components/settings/template-action-messages.ts` rather than transcribing it.** These strings contain em dashes and branch on their arguments; a prefix or a retyped approximation defeats the point of the assertion.
 
 **The room and student buttons get two tests each — URL only.** They render no confirmation; success is a `router.push`, so there is nothing further a component test would observe. Their shape:
 
