@@ -291,15 +291,16 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
   it('records the deleted count, not the scheduled count', async () => {
     const t = await makeTemplate('Withdrawal Excludes Today');
     await makeClass(t.id, { date: futureOn(5) });
+    await makeClass(t.id, { date: futureOn(6) });
     await makeClass(t.id, { date: today() });
 
     const archived = expectArchived(
       await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived'),
     );
 
-    expect(archived.deleted).toBe(1);
+    expect(archived.deleted).toBe(2);
     expect(archived.remaining).toBe(1);
-    expect(archived.template.withdrawnCount).toBe(1);
+    expect(archived.template.withdrawnCount).toBe(2);
   });
 
   /**
