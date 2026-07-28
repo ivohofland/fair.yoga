@@ -39,11 +39,29 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
  * `claimTemplateForGeneration` for why that is not a free optimisation: it is
  * what makes a concurrent insert for this template impossible while the claim
  * holds it, which is what makes the P2002 branch below unreachable, full
- * stop. That hedge is load-bearing in `class-generator.ts`, where
- * `generateInstancesForTemplate` has three genuinely unclaimed callers; the
- * loop below has no caller other than `generateStudioClassInstances`'s own
- * claimed transaction, so there is no unclaimed path left for the branch to
- * matter on.
+ * stop. `generateInstancesForTemplate` (`class-generator.ts`) has three
+ * callers that never take that claim, but the hedge is only genuinely
+ * load-bearing for one of them:
+ *   - `api/class-templates/route.ts` creates a brand-new template row inside
+ *     its own transaction — nothing else can reference that id yet, so
+ *     nothing can race the insert. Its hedge is dead, not load-bearing.
+ *   - `pauseOrResumeTemplate` (`class-template-lifecycle.ts`) is reachable —
+ *     its own `update` only flips `isActive`, a non-key column, so Postgres
+ *     grants it `FOR NO KEY UPDATE`, which does not conflict with the `FOR
+ *     KEY SHARE` a concurrent `Class` insert takes on the same template row
+ *     for FK integrity — but the hedge is broken there by the very 25P02
+ *     mechanism this docstring warns about above: its `catch` runs inside an
+ *     interactive transaction, so a genuine P2002 still leaves Postgres with
+ *     an aborted transaction that fails the next query with 25P02 instead of
+ *     a clean skip.
+ *   - `syncTemplateInstances`'s refill (`template-sync.ts`) calls through a
+ *     bare `PrismaClient`, not a transaction client, so each insert
+ *     autocommits on its own; a genuine collision there is a clean P2002 with
+ *     nothing left to poison. This is the one caller the hedge actually
+ *     protects.
+ * The loop below has no caller other than `generateStudioClassInstances`'s
+ * own claimed transaction, so there is no unclaimed path left for the branch
+ * to matter on here.
  */
 export async function claimStudioTemplateForGeneration(
   tx: Prisma.TransactionClient,

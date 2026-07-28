@@ -325,77 +325,99 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
     }
   }
 
-  await db.$transaction(async (tx) => {
-    // Cancel every upcoming class and tell the people in them.
-    const upcoming = await tx.class.findMany({
-      where: { teacherId, status: { in: ['draft', 'open', 'in_progress'] } },
-      include: {
-        registrations: {
-          where: { status: 'registered' },
-          select: { studentId: true },
+  await db.$transaction(
+    async (tx) => {
+      // Cancel every upcoming class and tell the people in them.
+      const upcoming = await tx.class.findMany({
+        where: { teacherId, status: { in: ['draft', 'open', 'in_progress'] } },
+        include: {
+          registrations: {
+            where: { status: 'registered' },
+            select: { studentId: true },
+          },
         },
-      },
-    });
-
-    for (const cls of upcoming) {
-      await tx.class.update({ where: { id: cls.id }, data: { status: 'cancelled' } });
-      await tx.waitlistEntry.updateMany({
-        where: { classId: cls.id, status: 'waiting' },
-        data: { status: 'removed' },
       });
-      if (cls.registrations.length > 0) {
-        const notifications: CreateNotificationInput[] = cls.registrations.map((r) => ({
-          recipientType: 'student' as const,
-          recipientId: r.studentId,
-          type: 'class_cancelled' as const,
-          title: 'Class cancelled',
-          body: `${cls.classType} has been cancelled — the teacher closed their account.`,
-          relatedClassId: cls.id,
-        }));
-        await createBulkNotifications(tx, notifications);
-      }
-    }
 
-    await tx.classTemplate.updateMany({ where: { teacherId }, data: { isActive: false, isArchived: true } });
-    await tx.studioClassTemplate.updateMany({ where: { teacherId }, data: { isActive: false, isArchived: true } });
-    await tx.studentPrivacy.deleteMany({ where: { teacherId } });
-    await tx.teacherStudent.deleteMany({ where: { teacherId } });
-    await tx.notification.deleteMany({ where: { recipientType: 'teacher', recipientId: teacherId } });
-    // Sessions and passkeys belong to the account. They die with the
-    // erased profile unless a live student profile still uses the account.
-    {
-      const studentOnAccount = await tx.student.findFirst({
-        where: { accountId: teacher.accountId, deletedAt: null },
-        select: { id: true },
-      });
-      if (!studentOnAccount) {
-        await tx.session.deleteMany({ where: { accountId: teacher.accountId } });
-        await tx.passkeyCredential.deleteMany({ where: { accountId: teacher.accountId } });
-        // Last live profile erased: the account email is PII too.
-        await tx.account.update({
-          where: { id: teacher.accountId },
-          data: { email: `deleted-${teacher.accountId}@deleted.invalid` },
+      for (const cls of upcoming) {
+        await tx.class.update({ where: { id: cls.id }, data: { status: 'cancelled' } });
+        await tx.waitlistEntry.updateMany({
+          where: { classId: cls.id, status: 'waiting' },
+          data: { status: 'removed' },
         });
+        if (cls.registrations.length > 0) {
+          const notifications: CreateNotificationInput[] = cls.registrations.map((r) => ({
+            recipientType: 'student' as const,
+            recipientId: r.studentId,
+            type: 'class_cancelled' as const,
+            title: 'Class cancelled',
+            body: `${cls.classType} has been cancelled — the teacher closed their account.`,
+            relatedClassId: cls.id,
+          }));
+          await createBulkNotifications(tx, notifications);
+        }
       }
-    }
-    await tx.magicLinkToken.deleteMany({ where: { email: teacher.email } });
 
-    await tx.teacher.update({
-      where: { id: teacherId },
-      data: {
-        firstName: 'Deleted',
-        lastName: 'Teacher',
-        email: `deleted-${teacherId}@deleted.invalid`,
-        photoUrl: null,
-        bio: '',
-        pageSlug: `deleted-${teacherId}`,
-        bankIban: null,
-        bankAccountName: null,
-        customDomain: null,
-        processorType: null,
-        processorAccountId: null,
-        deletedAt: new Date(),
-      },
-    });
-  });
+      await tx.classTemplate.updateMany({ where: { teacherId }, data: { isActive: false, isArchived: true } });
+      await tx.studioClassTemplate.updateMany({ where: { teacherId }, data: { isActive: false, isArchived: true } });
+      await tx.studentPrivacy.deleteMany({ where: { teacherId } });
+      await tx.teacherStudent.deleteMany({ where: { teacherId } });
+      await tx.notification.deleteMany({ where: { recipientType: 'teacher', recipientId: teacherId } });
+      // Sessions and passkeys belong to the account. They die with the
+      // erased profile unless a live student profile still uses the account.
+      {
+        const studentOnAccount = await tx.student.findFirst({
+          where: { accountId: teacher.accountId, deletedAt: null },
+          select: { id: true },
+        });
+        if (!studentOnAccount) {
+          await tx.session.deleteMany({ where: { accountId: teacher.accountId } });
+          await tx.passkeyCredential.deleteMany({ where: { accountId: teacher.accountId } });
+          // Last live profile erased: the account email is PII too.
+          await tx.account.update({
+            where: { id: teacher.accountId },
+            data: { email: `deleted-${teacher.accountId}@deleted.invalid` },
+          });
+        }
+      }
+      await tx.magicLinkToken.deleteMany({ where: { email: teacher.email } });
+
+      await tx.teacher.update({
+        where: { id: teacherId },
+        data: {
+          firstName: 'Deleted',
+          lastName: 'Teacher',
+          email: `deleted-${teacherId}@deleted.invalid`,
+          photoUrl: null,
+          bio: '',
+          pageSlug: `deleted-${teacherId}`,
+          bankIban: null,
+          bankAccountName: null,
+          customDomain: null,
+          processorType: null,
+          processorAccountId: null,
+          deletedAt: new Date(),
+        },
+      });
+    },
+    // The `classTemplate.updateMany`/`studioClassTemplate.updateMany` below
+    // take the same row locks the generator sweep's `claimTemplateForGeneration`
+    // / `claimStudioTemplateForGeneration` (class-generator.ts,
+    // studio-class-generator.ts) hold for the duration of their own
+    // per-template transactions (#95), so account erasure can now block on a
+    // sweep in progress the same way an archive or pause click can. This site
+    // needs the matching 10s budget more than those three do, not just for
+    // symmetry: by the time this transaction opens, `deleteTeacherAccount` has
+    // already run `completeClass` for every in-progress class above — pricing,
+    // payments, and notifications committed outside this transaction, not
+    // inside it. A P2028 here rolls back the erasure but not that billing,
+    // leaving the two halves of one account-deletion request permanently out
+    // of sync, and it surfaces as an opaque 500 on `DELETE /api/account`
+    // rather than a merely-failed archive click the teacher can just retry.
+    // This transaction is also already the longest of the four sites: it
+    // loops over every upcoming class doing an update plus bulk notifications
+    // before it ever reaches the template rows, so it has less headroom
+    // against Prisma's 5s default than the archive/pause sites did even before
+    // a lock wait enters the picture.
+    { timeout: 10_000 },
+  );
 }

@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
+import { startOfLocalDay } from '@/lib/timezone';
 import {
   getNextOccurrences,
   generateClassInstances,
+  generateInstancesForTemplate,
   claimTemplateForGeneration,
 } from './class-generator';
 import { archiveOrUnarchiveTemplate } from './class-template-lifecycle';
@@ -363,6 +365,17 @@ describe('generateClassInstances (DB)', () => {
      * Deliberately slow (~5.5s, on top of everything else in this file) —
      * that's the cost of a guard that means something. Do not shorten the
      * hold below 5s: it has to clear Prisma's default, not brush it.
+     *
+     * This is now the one place in either family that proves the timeout
+     * actually does something end to end. The studio side used to pay for an
+     * identical ~5.5s hold to prove the same mechanism a second time — since
+     * Prisma's `$transaction` timeout isn't family-specific, that bought
+     * nothing but 5.5 more seconds per run, so its test was replaced with a
+     * cheap assertion that `archiveOrUnarchiveStudioTemplate` still passes
+     * `{ timeout: 10_000 }` (`studio-class-generator.test.ts`'s `opens its
+     * transaction with { timeout: 10_000 }`). That leaves this test as the
+     * only one actually exercising the 5s boundary — do not delete it under
+     * the assumption the studio side still covers it.
      */
     it(
       'lets a concurrent archive outlive its own transaction default once the claim holds past it',
@@ -466,6 +479,94 @@ describe('generateClassInstances (DB)', () => {
 
       // 4. Nothing was materialised for a template the teacher shelved.
       expect(await prisma.class.count({ where: { templateId } })).toBe(0);
+    });
+  });
+
+  describe('claim-first interleaving — archive right after a committed generation', () => {
+    /**
+     * The interleaving `claimTemplateForGeneration`'s docstring describes as
+     * "claim first": the sweep claims the row, generates, and commits before
+     * an archive ever runs. This is ordering, not timing — the claim
+     * transaction is fully committed before the archive starts, so no lock
+     * hold or sleep is needed to reproduce it, unlike the concurrent races
+     * above.
+     *
+     * What the docstring used to get wrong: it isn't a clean handoff where
+     * the archive's `deleteMany` withdraws everything the claim just made.
+     * That delete's boundary is `gt: today` (`scheduledWhere` in
+     * `class-template-lifecycle.ts`) — the same spare-today carve-out applied
+     * everywhere else, because a class hours from starting should not vanish
+     * out from under students who already see it as open. So when the claim
+     * generates a class dated today, that one class survives the archive that
+     * follows, and `remaining`'s `gte` boundary reports it honestly rather
+     * than a total that quietly excludes it. This test builds exactly that
+     * shape — one of the four generated classes dated today, three dated in
+     * later weeks — and asserts the survivor.
+     */
+    it("spares the class generated for today; withdraws the three generated for later weeks", async () => {
+      const timeZone = 'Europe/Amsterdam';
+      const today = startOfLocalDay(new Date(), timeZone);
+      // Schema convention 0=Monday..6=Sunday; JS getUTCDay() 0=Sunday..6=Saturday.
+      const dayOfWeek = (today.getUTCDay() + 6) % 7;
+
+      const template = await prisma.classTemplate.create({
+        data: {
+          teacherId,
+          teacherRoomId,
+          classType: 'Vinyasa',
+          description: 'Claim-first interleaving fixture',
+          dayOfWeek,
+          // Comfortably after `today` (UTC midnight) once interpreted in
+          // Amsterdam time, at any DST offset — guarantees today's occurrence
+          // clears generateInstancesForTemplate's "start still ahead" filter
+          // regardless of what time of day this test happens to run.
+          startTime: '23:59',
+          durationMinutes: 60,
+          roomCost: 10,
+          minRate: 10,
+          targetRate: 20,
+          minStudents: 1,
+          maxStudents: 8,
+          cancelDeadline: 'HOURS_24',
+          autoCancelCheck: 'HOURS_2',
+          isActive: true,
+        },
+        include: { teacher: { select: { defaultTimezone: true } } },
+      });
+
+      try {
+        // 1. Claim, generate, and commit — the "claim first" arm.
+        const created = await prisma.$transaction(async (tx) => {
+          expect(await claimTemplateForGeneration(tx, template.id)).toBe(true);
+          return generateInstancesForTemplate(tx, template, today);
+        });
+        expect(created).toBe(4);
+
+        const beforeArchive = await prisma.class.findMany({
+          where: { templateId: template.id },
+          orderBy: { date: 'asc' },
+        });
+        expect(beforeArchive).toHaveLength(4);
+        expect(beforeArchive[0]!.date.toISOString()).toBe(today.toISOString());
+
+        // 2. Archive, straight after the commit — no concurrency involved.
+        const result = await archiveOrUnarchiveTemplate(prisma, template.id, teacherId);
+        if (!result.ok) throw new Error('archive should have succeeded');
+        if (result.action !== 'archived') throw new Error('expected an archive, not an unarchive');
+
+        // 3. Exactly the outcome the corrected docstring describes: today's
+        //    class survives, the three later-week ones do not.
+        expect(result.deleted).toBe(3);
+        expect(result.remaining).toBe(1);
+
+        const afterArchive = await prisma.class.findMany({ where: { templateId: template.id } });
+        expect(afterArchive).toHaveLength(1);
+        expect(afterArchive[0]!.date.toISOString()).toBe(today.toISOString());
+        expect(afterArchive[0]!.status).toBe('open'); // still publicly bookable
+      } finally {
+        await prisma.class.deleteMany({ where: { templateId: template.id } });
+        await prisma.classTemplate.delete({ where: { id: template.id } });
+      }
     });
   });
 });

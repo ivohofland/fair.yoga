@@ -147,7 +147,22 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
  * serialise instead of interleaving:
  *
  *   - claim first  → the archive's UPDATE waits; we generate and commit; the
- *                    archive's own deleteMany then withdraws what we made.
+ *                    archive's own deleteMany then withdraws what we made —
+ *                    all but a class dated today. Its boundary is `gt: today`
+ *                    (`scheduledWhere` in `class-template-lifecycle.ts`), the
+ *                    same deliberate spare-today carve-out applied everywhere
+ *                    else: a class hours from starting should not disappear
+ *                    out from under students who already see it as open.
+ *                    `remaining` counts with `gte`, so the teacher is told
+ *                    honestly that one class survived rather than being
+ *                    handed a total that quietly excludes it. One publicly
+ *                    bookable class under a just-archived template is this
+ *                    interleaving's correct outcome, not a gap this lock
+ *                    failed to close. The studio side reaches it more often:
+ *                    `generateStudioClassInstances` has no equivalent of
+ *                    `classStartInstant`'s "start is still ahead" filter at
+ *                    all, so it can generate today's instance even after that
+ *                    start time has already passed.
  *   - archive first → we wait, then read `isArchived: true` and skip.
  *
  * A plain re-read would not do this. Under READ COMMITTED each statement takes

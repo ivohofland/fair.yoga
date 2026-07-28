@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { log } from '@/lib/log';
 import { generateStudioClassInstances, claimStudioTemplateForGeneration } from './studio-class-generator';
@@ -7,6 +7,14 @@ import { archiveOrUnarchiveStudioTemplate } from './studio-class-template-lifecy
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+
+/**
+ * `$transaction`'s options parameter, lifted from `PrismaClient` itself
+ * rather than hand-declared — `Parameters<>` on an overloaded method resolves
+ * to the last overload, which for `$transaction` is the callback form this
+ * codebase actually uses (the array form is first and irrelevant here).
+ */
+type TransactionOptions = NonNullable<Parameters<PrismaClient['$transaction']>[1]>;
 
 describe('generateStudioClassInstances (DB)', () => {
   let teacherId: string;
@@ -86,7 +94,7 @@ describe('generateStudioClassInstances (DB)', () => {
     expect(afterSecond).toBe(afterFirst);
   });
 
-  it('never creates duplicates under concurrent runs (unique constraint)', async () => {
+  it('never creates duplicates under concurrent runs (row lock serialises the sweeps)', async () => {
     const from = new Date('2099-03-01T00:00:00Z');
 
     await Promise.all([
@@ -94,8 +102,16 @@ describe('generateStudioClassInstances (DB)', () => {
       generateStudioClassInstances(prisma, from),
     ]);
 
-    // The two runs may split the work between them, but every date must
-    // exist exactly once — the unique constraint absorbs the race.
+    // Every date exists exactly once, but not because the unique constraint
+    // absorbed a collision — `claimStudioTemplateForGeneration`'s `FOR UPDATE`
+    // means these two sweeps never actually generate concurrently for this
+    // template. One claims the row and runs to completion (claim, generate,
+    // commit) before the other's claim can even acquire the lock; by the time
+    // the second sweep gets in, its own `studioClass.findFirst` pre-check
+    // already finds every date the first sweep created and skips it, so no
+    // insert — and no P2002 — ever happens on the second pass. The row lock
+    // is what serialises the two sweeps; the constraint is a backstop that
+    // never gets exercised here.
     const instances = await prisma.studioClass.findMany({
       where: { templateId, date: { gte: from } },
       select: { date: true },
@@ -185,59 +201,50 @@ describe('generateStudioClassInstances (DB)', () => {
 
     /**
      * Regression guard for `archiveOrUnarchiveStudioTemplate`'s own
-     * `{ timeout: 10_000 }` — the studio side of review round 1's finding 1,
-     * which `class-generator.test.ts`'s equivalent test closed for the class
-     * family. That fix is on the *Prisma* transaction timeout on the archive
-     * side, a different axis from the claim's 2s Postgres `lock_timeout` the
-     * test above and the mid-sweep race test both stay well under (~300-400ms
-     * of headroom) — neither of those can tell a 10s budget from Prisma's
-     * unset 5s default, because neither holds the lock anywhere near either
-     * number. This test has to actually cross 5s, or deleting
-     * `{ timeout: 10_000 }` from `archiveOrUnarchiveStudioTemplate` leaves the
-     * whole suite green.
+     * `{ timeout: 10_000 }` — the studio side of review round 1's finding 1.
+     * This used to be a ~5.5s test that held the claim's lock past Prisma's
+     * 5s default and asserted the archive still resolved instead of P2028'ing
+     * (mirroring the class family's version). That end-to-end proof already
+     * exists on the class side
+     * (`class-generator.test.ts`'s `lets a concurrent archive outlive its own
+     * transaction default once the claim holds past it`) — the mechanism it
+     * proves, Prisma's `$transaction` timeout actually extending the wait
+     * budget, is not family-specific, so paying for it twice bought nothing
+     * but 5.5 more seconds in every run of this file. The family-specific
+     * half — that the archive path takes a lock the sweep can contend for at
+     * all — is already covered above by the ~400ms mutual-exclusion test.
      *
-     * Deliberately slow (~5.5s, on top of everything else in this file) —
-     * that's the cost of a guard that means something. Do not shorten the
-     * hold below 5s: it has to clear Prisma's default, not brush it.
+     * What this pins instead: that `archiveOrUnarchiveStudioTemplate` still
+     * passes `{ timeout: 10_000 }` as its transaction's options, so a future
+     * edit can't silently drop it back to Prisma's 5s default and have this
+     * file stay green. It does not re-prove that the option changes Prisma's
+     * behaviour — that's the sibling test's job — only that the option is
+     * still there. `spyingClient` is a `Proxy` around the real client that
+     * intercepts `$transaction` to record its `options` argument and then
+     * delegates to the real call, so the archive still runs for real.
      */
-    it(
-      'lets a concurrent archive outlive its own transaction default once the claim holds past it',
-      async () => {
-        let release!: () => void;
-        const held = new Promise<void>((resolve) => {
-          release = resolve;
-        });
+    it('opens its transaction with { timeout: 10_000 }', async () => {
+      let recordedOptions: TransactionOptions | undefined;
+      const spyingClient = new Proxy(prisma, {
+        get(target, prop, receiver) {
+          if (prop === '$transaction') {
+            return (
+              fn: (tx: Prisma.TransactionClient) => Promise<unknown>,
+              options?: TransactionOptions,
+            ) => {
+              recordedOptions = options;
+              return target.$transaction(fn, options);
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      });
 
-        const claiming = prisma.$transaction(
-          async (tx) => {
-            expect(await claimStudioTemplateForGeneration(tx, templateId)).toBe(true);
-            await held;
-          },
-          { timeout: 15_000 },
-        );
+      const result = await archiveOrUnarchiveStudioTemplate(spyingClient, templateId, teacherId);
 
-        // Let the claim acquire the lock before the archive contends for it.
-        await new Promise((r) => setTimeout(r, 100));
-
-        const archiving = archiveOrUnarchiveStudioTemplate(prisma, templateId, teacherId);
-
-        // Hold past Prisma's 5s default on the archive side — comfortably
-        // above it (5.5s), not just brushing it, so this doesn't flake right
-        // at the boundary it exists to cross.
-        await new Promise((r) => setTimeout(r, 5_500));
-
-        release();
-        await claiming;
-
-        // With { timeout: 10_000 } on the archive's transaction, it waited
-        // out the lock and succeeded. Without it, Prisma would have aborted
-        // the archive's transaction with P2028 around the 5s mark, and this
-        // `await` would reject instead of resolving `ok: true`.
-        const result = await archiving;
-        expect(result.ok).toBe(true);
-      },
-      15_000,
-    );
+      expect(result.ok).toBe(true);
+      expect(recordedOptions).toEqual({ timeout: 10_000 });
+    });
   });
 
   describe('generateStudioClassInstances — archive mid-sweep', () => {
