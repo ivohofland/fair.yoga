@@ -33,9 +33,10 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
  * `claimTemplateForGeneration` for what that would silently break: `SET
  * LOCAL` becomes a no-op with nothing to scope to, and the row lock releases
  * the instant the `SELECT` completes. That used to mean the claim returned
- * `true` while holding nothing; it is worse now, not gone: the
- * `findUniqueOrThrow` below then runs unlocked too, and can throw P2025 if
- * the row is deleted out from under it before that second statement runs.
+ * `true` while holding nothing; it is not gone, and it now has a second
+ * consequence: the `findUniqueOrThrow` below then runs unlocked too, and can
+ * throw P2025 if the row is deleted out from under it before that second
+ * statement runs.
  *
  * Do not weaken `FOR UPDATE` to `FOR NO KEY UPDATE` — see
  * `claimTemplateForGeneration` for why that is not a free optimisation: it is

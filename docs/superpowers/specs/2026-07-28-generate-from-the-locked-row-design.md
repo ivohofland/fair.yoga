@@ -112,17 +112,36 @@ source of the values written.
 
 ### 3. `generateInstancesForTemplate`'s signature does not change
 
-It keeps taking a `TemplateWithTimezone`. Its three other callers each pass a
-row they read or wrote inside their own transaction:
+It keeps taking a `TemplateWithTimezone`. Two of its three other callers pass
+a row they read or wrote inside their own transaction; the third does not:
 
 | Caller | Freshness |
 |---|---|
 | `POST /api/class-templates` | the row it just created, same transaction |
 | `pauseOrResumeTemplate` | the row it just updated, same transaction |
-| `syncTemplateInstances` | reached from `updateClassTemplate`, which just wrote it |
+| `syncTemplateInstances` | **not fresh** — read on the bare `db` (`template-sync.ts:36`), before its own `$transaction` opens (`:41`), and handed to `generateInstancesForTemplate` on the bare `db` again (`:101`) after that transaction has already committed. Neither statement is in a transaction; no lock is ever taken. |
 
-Making it take an id would push a redundant re-read into all three to fix a
-problem only the sweep has.
+`syncTemplateInstances` is the exception, not a third instance of the same
+guarantee, and this fix does not close it. The window between its read and
+its reuse spans its entire inner transaction, unguarded by any lock, so a
+second write to the same template can land inside it. Two overlapping `PUT`s
+that both edit `dayOfWeek` can interleave so that the *later* sync's delete
+runs off a stale snapshot: it deletes the window the earlier edit correctly
+built, then refills on the day the stale snapshot names — worse than the
+sweep's original bug, because here the delete itself is stale, not only the
+regenerate. As with the sweep, nothing subsequently repairs it: sync only
+runs again on the next edit to this template.
+
+Passing an id instead of a row would not have fixed this caller. An id just
+moves the re-read to immediately before use — but `syncTemplateInstances`
+holds no lock for that re-read to happen *under*, so the second write can
+still land in the (shorter, but still real) gap between the re-read and the
+call. This is #83's write/sync atomicity seam — `syncTemplateInstances` runs
+outside a transaction entirely — not something this fix reaches.
+
+For the two callers that are genuinely fresh, making the signature take an id
+would still be the wrong move: a redundant re-read to fix a problem only the
+sweep has. The signature stays as it is.
 
 ## Testing
 

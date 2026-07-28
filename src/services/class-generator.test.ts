@@ -283,10 +283,20 @@ describe('generateClassInstances (DB)', () => {
     const claim = (id: string) =>
       prisma.$transaction((tx) => claimTemplateForGeneration(tx, id));
 
+    // Captured, not hardcoded — same reason as the mid-sweep describe below:
+    // other tests in this file assert the fixture's own startTime, so a
+    // guessed restore value would corrupt them.
+    let originalStartTime: string;
+
+    beforeAll(async () => {
+      const t = await prisma.classTemplate.findUniqueOrThrow({ where: { id: templateId } });
+      originalStartTime = t.startTime;
+    });
+
     afterEach(async () => {
       await prisma.classTemplate.update({
         where: { id: templateId },
-        data: { isActive: true, isArchived: false },
+        data: { isActive: true, isArchived: false, startTime: originalStartTime },
       });
     });
 
@@ -325,11 +335,6 @@ describe('generateClassInstances (DB)', () => {
 
       expect(before.startTime).not.toBe('21:15');
       expect(claimed?.startTime).toBe('21:15');
-
-      await prisma.classTemplate.update({
-        where: { id: templateId },
-        data: { startTime: before.startTime },
-      });
     });
 
     /**

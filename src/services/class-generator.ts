@@ -176,9 +176,9 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
  * without complaint. It would make `SET LOCAL` a no-op (there is no
  * transaction for "local" to scope to) and release the row lock the instant
  * the `SELECT` completes. That used to mean the claim returned `true` while
- * holding nothing; it is worse now, not gone: the `findUniqueOrThrow` below
- * then runs unlocked too, and can throw P2025 if the row is deleted out from
- * under it before that second statement runs.
+ * holding nothing; it is not gone, and it now has a second consequence: the
+ * `findUniqueOrThrow` below then runs unlocked too, and can throw P2025 if
+ * the row is deleted out from under it before that second statement runs.
  *
  * Do not weaken `FOR UPDATE` to `FOR NO KEY UPDATE` to stop blocking `Class`
  * inserts — it looks like a free optimisation but isn't. `FOR UPDATE` is what
@@ -253,13 +253,14 @@ export async function generateClassInstances(
       // held when the instances are created, or the archive it is protecting
       // against can commit in between. The `findMany` above is only a
       // pre-filter — by the time the loop reaches this template its row may
-      // be minutes stale, which is #95.
+      // be minutes stale: #95 closed that for `isActive`/`isArchived`, #102
+      // for every other value the generator reads.
       totalCreated += await db.$transaction(
         async (tx) => {
           const fresh = await claimTemplateForGeneration(tx, template.id);
           if (!fresh) return 0;
           // `fresh`, not `template`: the loop variable is the pre-filter's
-          // snapshot and may be minutes old. #102.
+          // stale snapshot.
           return generateInstancesForTemplate(tx, fresh, startDate);
         },
         // Comfortably above the claim's own 2s lock_timeout, so Postgres
