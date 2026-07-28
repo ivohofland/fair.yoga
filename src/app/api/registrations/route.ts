@@ -73,8 +73,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // actually exercises, a roster link the acting teacher doesn't hold — and
   // an unusable class now answers about the student first, where it used to
   // answer about the class. This changed what one existing test proved: a
-  // cross-teacher request used to reach the ownership check inside the
-  // transaction, but now dies at the roster-link check instead, so that
+  // cross-teacher request used to reach the ownership check — which now
+  // lives inside the transaction, but sat at the top of the handler before
+  // this fix — and now dies at the roster-link check instead, so that
   // test's meaning shifted and it was supplemented with one that reaches the
   // ownership check directly (a teacher's own roster student, posted into
   // another teacher's class).

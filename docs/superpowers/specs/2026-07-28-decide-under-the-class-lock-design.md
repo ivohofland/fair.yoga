@@ -172,9 +172,9 @@ been tested.
 - **The lock is held marginally longer** — by one indexed read that used to
   happen before it. Bounded by the same transaction as the count and the insert
   that already run under it.
-- **A 404 now costs a transaction.** `findUniqueOrThrow` after a `FOR UPDATE`
-  that matched nothing means opening a transaction to answer "no such class".
-  One round trip, on a path that is not hot.
+- **A 404 now costs a transaction.** `findUnique` after a `FOR UPDATE` that
+  matched nothing means opening a transaction to answer "no such class". One
+  round trip, on a path that is not hot.
 - **Three new error types on a route that already has two.** If a fourth
   category ever appears, the pattern is worth extracting; at five it is worth
   the service the previous section scopes out.

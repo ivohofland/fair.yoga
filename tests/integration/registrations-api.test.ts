@@ -190,10 +190,12 @@ afterAll(async () => {
 });
 
 describe('POST /api/registrations', () => {
-  it('rejects a teacher registering students into another teacher\'s class', async () => {
+  it('rejects a cross-teacher registration at the roster-link check, before the class loads', async () => {
     const classId = await makeClass(5);
     const res = await post(otherTeacherToken, { classId, studentId: studentIds[0] });
     expect(res.status).toBe(403);
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toBe('Student is not in your roster');
 
     // And the victim's class must NOT have been settings-locked
     const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
@@ -402,7 +404,7 @@ describe('POST /api/registrations', () => {
     // see the uncommitted cancellation, and booked a cancelled class.
     expect(res.status).toBe(409);
     const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toContain('cancelled');
+    expect(json.error.message).toBe('Cannot register for a class with status "cancelled"');
     expect(await prisma.registration.count({ where: { classId } })).toBe(0);
   });
 
