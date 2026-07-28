@@ -757,6 +757,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     expect(second.template.withdrawnCount).toBe(1);
     expect(second.template.archivedAt).not.toBeNull();
     expect(second.template.archivedAt!.getTime()).toBeGreaterThanOrEqual(before);
+    expect(second.template.archivedAt!.getTime()).toBeLessThanOrEqual(Date.now());
   });
 });
 
