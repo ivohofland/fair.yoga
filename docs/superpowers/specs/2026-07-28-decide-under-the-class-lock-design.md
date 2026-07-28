@@ -49,8 +49,8 @@ behind reintroduces the hazard this fix exists to remove.
 
 `src/services/waitlist.ts` takes the identical lock in three places and gets it
 right in all three — `addToWaitlist` (`:166`), `promoteNext` (`:280`) and
-`claimSpot` (`:390`) each open the transaction, take `FOR UPDATE`, then
-`findUniqueOrThrow` the class **inside** and decide from that. The registration
+`claimSpot` (`:390`) each open the transaction, take `FOR UPDATE`, then read
+the class **inside** and decide from that. The registration
 route is the fourth site of a three-site pattern, and the only one that reads
 before it locks.
 
@@ -65,10 +65,11 @@ The outer `prisma.class.findUnique` goes away entirely. Inside the transaction,
 immediately after the `FOR UPDATE`:
 
 ```ts
-const cls = await tx.class.findUniqueOrThrow({
+const cls = await tx.class.findUnique({
   where: { id: body.classId },
   include: { teacher: { select: { defaultTimezone: true } } },
 });
+if (!cls) throw new ClassNotFoundError();
 ```
 
 Everything then derives from that row: the status check, `maxStudents`, the
@@ -94,10 +95,13 @@ this for `ClassFullError` and `AlreadyRegisteredError`:
 | `NotYourClassError` | 403 `Not your class` |
 | `ClassStatusError` (carries the status) | 409 `Cannot register for a class with status "<status>"` |
 
-`findUniqueOrThrow` raises Prisma's `P2025` when the class does not exist;
-catching that inside the transaction and rethrowing `ClassNotFoundError` keeps
-the mapping in one place rather than spreading Prisma error codes into the
-route's `catch`.
+The read uses `findUnique` and an explicit null check, **not**
+`findUniqueOrThrow`. That is the opposite of #102's choice, deliberately: there
+the row provably existed because the `FOR UPDATE` had just matched it, so a
+`| null` was an impossible branch. Here the id comes from the request body, so
+the null is not only reachable but the ordinary way a client gets a 404 — and
+`findUnique` + `if (!cls) throw new ClassNotFoundError()` says that in two lines
+without routing a Prisma error code through a `catch`.
 
 The response bodies and status codes are unchanged from today's, so no client
 sees a difference except in the races this fixes.
@@ -121,9 +125,11 @@ genuinely blocks the request:
 1. Open a transaction that sets the class `status: 'cancelled'`; **do not
    commit**. It holds the row lock.
 2. `fetch` the booking POST **without awaiting**.
-3. Assert it has not settled. Pre-fix it would already have read the class,
-   seen `open`, and be waiting only on the lock; post-fix it is waiting before
-   reading anything.
+3. Assert it has not settled. **This is a liveness check, not the teeth** — it
+   holds both before and after the fix, since the pre-fix route also reaches the
+   `FOR UPDATE` and blocks there, just after having already read the class. It
+   is here to prove the request really is waiting on the lock rather than having
+   raced past it, which is what makes step 5 meaningful.
 4. Commit the cancellation. Await the POST.
 5. Assert **409**, and that no `Registration` row was created.
 
