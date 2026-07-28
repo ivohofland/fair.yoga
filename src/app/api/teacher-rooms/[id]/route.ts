@@ -8,7 +8,7 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
-import { updateTeacherRoomSchema } from '@/lib/schemas';
+import { updateTeacherRoomSchema, archiveStateQuerySchema } from '@/lib/schemas';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -71,19 +71,35 @@ export const PATCH = withErrorHandler(async (
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
+  const parsed = archiveStateQuerySchema.safeParse(
+    Object.fromEntries(request.nextUrl.searchParams),
+  );
+  if (!parsed.success) {
+    return respondError('A state of archived or unarchived is required', 400);
+  }
+  const archiving = parsed.data.state === 'archived';
+
   const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id } });
   if (!teacherRoom) return respondError('Teacher-room not found', 404);
-
   if (teacherRoom.teacherId !== session.teacherId) {
     return respondError('Access denied', 403);
   }
 
+  // Already there: no write. The point of #98 — a retry after a lost response
+  // must not undo what the first attempt did.
+  if (teacherRoom.isArchived === archiving) {
+    return respondOk({ isArchived: teacherRoom.isArchived, action: 'unchanged' });
+  }
+
   const updated = await prisma.teacherRoom.update({
     where: { id },
-    data: { isArchived: !teacherRoom.isArchived },
+    data: { isArchived: archiving },
   });
 
-  return respondOk({ isArchived: updated.isArchived });
+  return respondOk({
+    isArchived: updated.isArchived,
+    action: archiving ? 'archived' : 'unarchived',
+  });
 });
 
 export const DELETE = withErrorHandler(async (

@@ -511,3 +511,69 @@ describe('GET /api/students — overduePayments', () => {
     expect(byName.get('Student03')).toBe(0);
   });
 });
+
+describe('PATCH /api/students/[id]', () => {
+  // A dedicated student + link rather than reusing the shared 25: GET
+  // /api/students filters to isArchived: false by default, so archiving one
+  // of the shared fixtures would silently drop it out of the earlier
+  // pagination and overdue-payments assertions above.
+  let patchStudentId: string;
+  let linkId: string;
+
+  beforeAll(async () => {
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Patch',
+        lastName: 'Target',
+        email: `stuapi-patch-${suffix}@test.local`,
+      },
+    });
+    patchStudentId = student.id;
+
+    const link = await prisma.teacherStudent.create({
+      data: { teacherId, studentId: patchStudentId },
+    });
+    linkId = link.id;
+  });
+
+  afterAll(async () => {
+    await prisma.teacherStudent.deleteMany({ where: { id: linkId } });
+    await prisma.student.delete({ where: { id: patchStudentId } });
+  });
+
+  const patch = (query = '') =>
+    fetch(`${BASE_URL}/api/students/${patchStudentId}${query}`, {
+      method: 'PATCH',
+      headers: cookie(teacherToken),
+    });
+
+  it('rejects a missing state rather than falling back to a toggle', async () => {
+    const res = await patch();
+    expect(res.status).toBe(400);
+
+    const after = await prisma.teacherStudent.findUniqueOrThrow({ where: { id: linkId } });
+    expect(after.isArchived).toBe(false);
+  });
+
+  it('rejects an unrecognised state', async () => {
+    const res = await patch('?state=nonsense');
+    expect(res.status).toBe(400);
+  });
+
+  it('sets the state it names, and repeating it is a no-op that reports unchanged', async () => {
+    const first = await patch('?state=archived');
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as { data: { isArchived: boolean; action: string } };
+    expect(firstBody.data.isArchived).toBe(true);
+    expect(firstBody.data.action).toBe('archived');
+
+    const second = await patch('?state=archived');
+    expect(second.status).toBe(200);
+    const secondBody = (await second.json()) as { data: { isArchived: boolean; action: string } };
+    expect(secondBody.data.isArchived).toBe(true);
+    expect(secondBody.data.action).toBe('unchanged');
+
+    const after = await prisma.teacherStudent.findUniqueOrThrow({ where: { id: linkId } });
+    expect(after.isArchived).toBe(true);
+  });
+});

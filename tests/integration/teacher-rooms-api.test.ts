@@ -271,10 +271,13 @@ describe('/api/teacher-rooms/[id] — the ownership chain', () => {
   // commercial terms rather than merely being untidy.
   it("another teacher cannot read, edit, archive or delete the owner's link", async () => {
     for (const method of ['GET', 'PUT', 'PATCH', 'DELETE'] as const) {
+      // PATCH now validates `state` before the ownership lookup, so a bare
+      // PATCH would 400 before ever reaching the 403 this test is pinning.
+      // A valid state keeps this exercising ownership, not parsing.
       const res = await send(
         method,
         otherToken,
-        linkId,
+        method === 'PATCH' ? `${linkId}?state=archived` : linkId,
         method === 'PUT' ? { rentalRate: 1 } : undefined,
       );
       expect(res.status, `${method} should be 403`).toBe(403);
@@ -308,16 +311,34 @@ describe('PUT /api/teacher-rooms/[id]', () => {
 });
 
 describe('PATCH /api/teacher-rooms/[id]', () => {
-  it('toggles isArchived rather than setting it, so the same call reverses itself', async () => {
-    const first = await send('PATCH', ownerToken, linkId);
-    expect(first.status).toBe(200);
-    expect(((await first.json()) as { data: { isArchived: boolean } }).data.isArchived).toBe(true);
-
-    const second = await send('PATCH', ownerToken, linkId);
-    expect(((await second.json()) as { data: { isArchived: boolean } }).data.isArchived).toBe(false);
+  it('rejects a missing state rather than falling back to a toggle', async () => {
+    const res = await send('PATCH', ownerToken, linkId);
+    expect(res.status).toBe(400);
 
     const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: linkId } });
     expect(after.isArchived).toBe(false);
+  });
+
+  it('rejects an unrecognised state', async () => {
+    const res = await send('PATCH', ownerToken, `${linkId}?state=nonsense`);
+    expect(res.status).toBe(400);
+  });
+
+  it('sets the state it names, and repeating it is a no-op that reports unchanged', async () => {
+    const first = await send('PATCH', ownerToken, `${linkId}?state=archived`);
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as { data: { isArchived: boolean; action: string } };
+    expect(firstBody.data.isArchived).toBe(true);
+    expect(firstBody.data.action).toBe('archived');
+
+    const second = await send('PATCH', ownerToken, `${linkId}?state=archived`);
+    expect(second.status).toBe(200);
+    const secondBody = (await second.json()) as { data: { isArchived: boolean; action: string } };
+    expect(secondBody.data.isArchived).toBe(true);
+    expect(secondBody.data.action).toBe('unchanged');
+
+    const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: linkId } });
+    expect(after.isArchived).toBe(true);
   });
 });
 

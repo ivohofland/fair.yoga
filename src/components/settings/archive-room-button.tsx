@@ -15,7 +15,10 @@ export function ArchiveRoomButton({ teacherRoomId, isArchived }: ArchiveRoomButt
   async function handleToggle() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/teacher-rooms/${teacherRoomId}`, { method: 'PATCH' });
+      const res = await fetch(
+        `/api/teacher-rooms/${teacherRoomId}?state=${isArchived ? 'unarchived' : 'archived'}`,
+        { method: 'PATCH' },
+      );
       if (res.ok) {
         router.push('/settings/rooms');
       }

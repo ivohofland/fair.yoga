@@ -8,7 +8,7 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
-import { updateStudentSchema, createStudentSchema } from '@/lib/schemas';
+import { updateStudentSchema, createStudentSchema, archiveStateQuerySchema } from '@/lib/schemas';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -183,15 +183,32 @@ export const PATCH = withErrorHandler(async (
     return respondError('Access denied', 403);
   }
 
+  const parsed = archiveStateQuerySchema.safeParse(
+    Object.fromEntries(request.nextUrl.searchParams),
+  );
+  if (!parsed.success) {
+    return respondError('A state of archived or unarchived is required', 400);
+  }
+  const archiving = parsed.data.state === 'archived';
+
   const link = await prisma.teacherStudent.findUnique({
     where: { teacherId_studentId: { teacherId: session.teacherId, studentId: id } },
   });
   if (!link) return respondError('Student not in your contacts', 403);
 
+  // Already there: no write. The point of #98 — a retry after a lost response
+  // must not undo what the first attempt did.
+  if (link.isArchived === archiving) {
+    return respondOk({ isArchived: link.isArchived, action: 'unchanged' });
+  }
+
   const updated = await prisma.teacherStudent.update({
     where: { id: link.id },
-    data: { isArchived: !link.isArchived },
+    data: { isArchived: archiving },
   });
 
-  return respondOk({ isArchived: updated.isArchived });
+  return respondOk({
+    isArchived: updated.isArchived,
+    action: archiving ? 'archived' : 'unarchived',
+  });
 });

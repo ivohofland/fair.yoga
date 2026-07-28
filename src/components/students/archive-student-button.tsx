@@ -15,7 +15,10 @@ export function ArchiveStudentButton({ studentId, isArchived }: ArchiveStudentBu
   async function handleToggle() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/students/${studentId}`, { method: 'PATCH' });
+      const res = await fetch(
+        `/api/students/${studentId}?state=${isArchived ? 'unarchived' : 'archived'}`,
+        { method: 'PATCH' },
+      );
       if (res.ok) {
         router.push('/students');
       }
