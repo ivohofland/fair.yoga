@@ -678,4 +678,4 @@ git commit -m "fix: lock the studio template row before generating its window (#
 - [ ] `npx vitest run --project unit` — 364 passing
 - [ ] `npx vitest run --project integration` — 192 passing (needs the app on `:3000`; do not restart it)
 - [ ] `npx playwright test` — 118 passing
-- [ ] `grep -rn '\$queryRaw\|\$executeRaw' src/` returns exactly the four lines this plan adds — two claims and their two `SET LOCAL` calls, and nothing else
+- [ ] `grep -rn '\$queryRaw\|\$executeRaw' src/` (single quotes — in double quotes `\$` collapses to an end-of-line anchor and silently matches nothing) shows the four lines this plan adds — two claims and their two `SET LOCAL` calls — alongside the five pre-existing uses in `waitlist.ts`, `registrations/route.ts` and `health/route.ts`, and nothing further

@@ -120,10 +120,28 @@ for (const template of templates) {
 Per-template error isolation is preserved: the transaction is inside the
 existing `try`, so one template's failure still skips only that template.
 
-### Why raw SQL, given the repo has none
+### Why raw SQL
 
-`src/` contains no `$queryRaw`/`$executeRaw` today, so this establishes a
-precedent and the bar is higher than "it works".
+**Correction.** An earlier draft of this spec claimed `src/` contained no
+`$queryRaw`/`$executeRaw`, so the change would be setting a precedent. That was
+wrong — the check behind it was a shell-quoting mistake (`"\$queryRaw"` in
+double quotes collapses to `$queryRaw`, which grep reads as an end-of-line
+anchor and never matches). This branch **follows an existing convention**:
+
+- `src/services/waitlist.ts:166`, `:280`, `:390` — `tx.$queryRaw` running
+  `SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE` inside a
+  transaction, three times.
+- `src/app/api/registrations/route.ts:92` — the same statement again.
+
+So the row-lock-via-raw-`FOR UPDATE` idiom is already how this codebase
+serialises concurrent writes to a row, and the design below is a fourth and
+fifth use of it rather than a new departure.
+
+The two new claims deliberately differ from those four in two ways: they carry
+an eligibility predicate in the `WHERE` (so the lock and the decision are one
+statement), and they set `lock_timeout` (so a cron sweep cannot hang on a
+contended row). Both differences follow from being called in a loop from a
+background job rather than once from a request.
 
 The typed alternative is a conditional `updateMany` as the claim —
 `updateMany({ where: { id, isActive: true, isArchived: false }, data: {...} })`
