@@ -139,7 +139,7 @@ describe('generateStudioClassInstances (DB)', () => {
     });
 
     it('claims a live template', async () => {
-      expect(await claim(templateId)).toBe(true);
+      expect(await claim(templateId)).not.toBeNull();
     });
 
     it('refuses an archived template', async () => {
@@ -147,7 +147,7 @@ describe('generateStudioClassInstances (DB)', () => {
         where: { id: templateId },
         data: { isArchived: true },
       });
-      expect(await claim(templateId)).toBe(false);
+      expect(await claim(templateId)).toBeNull();
     });
 
     it('refuses a paused template', async () => {
@@ -155,11 +155,29 @@ describe('generateStudioClassInstances (DB)', () => {
         where: { id: templateId },
         data: { isActive: false },
       });
-      expect(await claim(templateId)).toBe(false);
+      expect(await claim(templateId)).toBeNull();
     });
 
     it('refuses a template that no longer exists', async () => {
-      expect(await claim('00000000-0000-0000-0000-000000000000')).toBe(false);
+      expect(await claim('00000000-0000-0000-0000-000000000000')).toBeNull();
+    });
+
+    it('returns values committed after the caller read the row', async () => {
+      const before = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: templateId } });
+      await prisma.studioClassTemplate.update({
+        where: { id: templateId },
+        data: { startTime: '21:15' },
+      });
+
+      const claimed = await prisma.$transaction((tx) => claimStudioTemplateForGeneration(tx, templateId));
+
+      expect(before.startTime).not.toBe('21:15');
+      expect(claimed?.startTime).toBe('21:15');
+
+      await prisma.studioClassTemplate.update({
+        where: { id: templateId },
+        data: { startTime: before.startTime },
+      });
     });
 
     /**
@@ -176,7 +194,7 @@ describe('generateStudioClassInstances (DB)', () => {
 
       const claiming = prisma.$transaction(
         async (tx) => {
-          expect(await claimStudioTemplateForGeneration(tx, templateId)).toBe(true);
+          expect(await claimStudioTemplateForGeneration(tx, templateId)).not.toBeNull();
           await held;
         },
         { timeout: 15_000 },
@@ -303,6 +321,86 @@ describe('generateStudioClassInstances (DB)', () => {
       expect(await prisma.studioClass.count({ where: { templateId } })).toBe(0);
     });
   });
+
+  describe('generateStudioClassInstances — edit mid-sweep', () => {
+    // Captured, not hardcoded: other tests in this file assert the fixture's
+    // own dayOfWeek/startTime, so restoring a guessed value would corrupt them.
+    let original: { dayOfWeek: number; startTime: string };
+
+    beforeAll(async () => {
+      const t = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: templateId } });
+      original = { dayOfWeek: t.dayOfWeek, startTime: t.startTime };
+    });
+
+    afterEach(async () => {
+      await prisma.studioClass.deleteMany({ where: { templateId } });
+      await prisma.studioClassTemplate.update({
+        where: { id: templateId },
+        data: { ...original, isActive: true, isArchived: false },
+      });
+    });
+
+    /**
+     * #102, studio side. The claim locks the row, so a concurrent edit cannot
+     * commit while we generate — but before this fix the sweep still
+     * generated from the object its outer `findMany` read, so it wrote the
+     * pre-edit values anyway.
+     *
+     * Deterministic by the same lever as the archive race: an uncommitted write
+     * is invisible under READ COMMITTED, so the sweep's list read genuinely sees
+     * the old values and the template genuinely enters the loop.
+     */
+    it('writes the values committed while the sweep was waiting, not the ones it read', async () => {
+      await prisma.studioClass.deleteMany({ where: { templateId } });
+
+      let commit!: () => void;
+      const held = new Promise<void>((resolve) => {
+        commit = resolve;
+      });
+
+      // 1. Edit, uncommitted. Holds the row lock; invisible to the sweep.
+      const editing = prisma.$transaction(
+        async (tx) => {
+          await tx.studioClassTemplate.update({
+            where: { id: templateId },
+            data: { dayOfWeek: 5, startTime: '18:45' },
+          });
+          await held;
+        },
+        { timeout: 15_000 },
+      );
+
+      await new Promise((r) => setTimeout(r, 100));
+
+      // 2. Sweep. Its findMany reads the pre-edit row; its claim then blocks.
+      let sweepSettled = false;
+      const sweeping = generateStudioClassInstances(prisma).then((n) => {
+        sweepSettled = true;
+        return n;
+      });
+
+      await new Promise((r) => setTimeout(r, 300));
+      expect(sweepSettled).toBe(false);
+
+      // 3. Commit. The claim unblocks and re-reads under its own lock.
+      commit();
+      await editing;
+      await sweeping;
+
+      // 4. Everything it created carries the post-edit values.
+      const created = await prisma.studioClass.findMany({
+        where: { templateId },
+        select: { date: true, startTime: true },
+      });
+      expect(created.length).toBeGreaterThan(0);
+      for (const c of created) {
+        expect(c.startTime).toBe('18:45');
+        // dayOfWeek 5 in this schema's convention (0=Mon) is Saturday,
+        // which is getUTCDay() === 6.
+        expect(c.date.getUTCDay()).toBe(6);
+      }
+    });
+  });
 });
 
 // ===========================================================================
@@ -327,7 +425,13 @@ describe('generateStudioClassInstances (per-template isolation)', () => {
     const created: string[] = [];
     const from = new Date('2099-01-05T00:00:00Z'); // deterministic future window
     const stub = {
-      studioClassTemplate: { findMany: async () => [tmpl('A', 't1'), tmpl('B', 't1'), tmpl('C', 't1')] },
+      studioClassTemplate: {
+        findMany: async () => [tmpl('A', 't1'), tmpl('B', 't1'), tmpl('C', 't1')],
+        // The claim re-reads under its own lock (#102) — this stub has no real
+        // row to re-read, so it just hands back the same fixture the findMany
+        // above already produced, keyed by the id the claim was given.
+        findUniqueOrThrow: async ({ where: { id } }: { where: { id: string } }) => tmpl(id, 't1'),
+      },
       studioClass: {
         findFirst: async () => null,
         create: async ({ data }: { data: { templateId: string } }) => {

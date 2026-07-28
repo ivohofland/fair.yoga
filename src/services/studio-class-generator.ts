@@ -5,7 +5,7 @@
  */
 
 import { Prisma } from '@prisma/client';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient, StudioClassTemplate } from '@prisma/client';
 import { getNextOccurrences } from './class-generator';
 import { log } from '@/lib/log';
 
@@ -32,8 +32,10 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
  * Must be called with a transaction client, never a bare `PrismaClient` — see
  * `claimTemplateForGeneration` for what that would silently break: `SET
  * LOCAL` becomes a no-op with nothing to scope to, and the row lock releases
- * the instant the `SELECT` completes, so the claim returns `true` while
- * holding nothing.
+ * the instant the `SELECT` completes. That used to mean the claim returned
+ * `true` while holding nothing; it is worse now, not gone: the
+ * `findUniqueOrThrow` below then runs unlocked too, and can throw P2025 if
+ * the row is deleted out from under it before that second statement runs.
  *
  * Do not weaken `FOR UPDATE` to `FOR NO KEY UPDATE` — see
  * `claimTemplateForGeneration` for why that is not a free optimisation: it is
@@ -62,11 +64,19 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
  * The loop below has no caller other than `generateStudioClassInstances`'s
  * own claimed transaction, so there is no unclaimed path left for the branch
  * to matter on here.
+ *
+ * Returns the locked row rather than a boolean, so a caller cannot generate
+ * from the snapshot its outer `findMany` read minutes earlier (#102). The raw
+ * statement above still does the locking and the eligibility re-check; the
+ * Prisma read below is what makes the values authoritative, and it is safe
+ * precisely because the lock is still held when it runs. Two statements
+ * rather than one `SELECT *` because `hourlyRate` is `DECIMAL(10,2)` and a
+ * raw row does not hand back Prisma's `Decimal`.
  */
 export async function claimStudioTemplateForGeneration(
   tx: Prisma.TransactionClient,
   templateId: string,
-): Promise<boolean> {
+): Promise<StudioClassTemplate | null> {
   await tx.$executeRawUnsafe(LOCK_TIMEOUT_SQL);
   const rows = await tx.$queryRaw<Array<{ id: string }>>`
     SELECT "id" FROM "StudioClassTemplate"
@@ -74,7 +84,10 @@ export async function claimStudioTemplateForGeneration(
       AND "isActive" = true
       AND "isArchived" = false
     FOR UPDATE`;
-  return rows.length === 1;
+  if (rows.length !== 1) return null;
+
+  // Under the lock taken above; `OrThrow` because the row provably exists.
+  return tx.studioClassTemplate.findUniqueOrThrow({ where: { id: templateId } });
 }
 
 /**
@@ -120,14 +133,17 @@ export async function generateStudioClassInstances(
       // only a pre-filter — this template's row may be minutes stale by now.
       totalCreated += await db.$transaction(
         async (tx) => {
-          if (!(await claimStudioTemplateForGeneration(tx, template.id))) return 0;
+          const fresh = await claimStudioTemplateForGeneration(tx, template.id);
+          if (!fresh) return 0;
 
+          // `fresh`, not `template`: the loop variable is the pre-filter's
+          // snapshot and may be minutes old. #102.
           let created = 0;
-          const dates = getNextOccurrences(template.dayOfWeek, startDate, DEFAULT_WEEKS);
+          const dates = getNextOccurrences(fresh.dayOfWeek, startDate, DEFAULT_WEEKS);
 
           for (const date of dates) {
             const existing = await tx.studioClass.findFirst({
-              where: { templateId: template.id, date },
+              where: { templateId: fresh.id, date },
             });
             if (existing) continue;
 
@@ -140,14 +156,14 @@ export async function generateStudioClassInstances(
             try {
               await tx.studioClass.create({
                 data: {
-                  teacherId: template.teacherId,
-                  templateId: template.id,
-                  classType: template.classType,
+                  teacherId: fresh.teacherId,
+                  templateId: fresh.id,
+                  classType: fresh.classType,
                   date,
-                  startTime: template.startTime,
-                  durationMinutes: template.durationMinutes,
-                  location: template.location,
-                  hourlyRate: template.hourlyRate,
+                  startTime: fresh.startTime,
+                  durationMinutes: fresh.durationMinutes,
+                  location: fresh.location,
+                  hourlyRate: fresh.hourlyRate,
                 },
               });
             } catch (err) {

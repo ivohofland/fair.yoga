@@ -167,15 +167,18 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
  *
  * A plain re-read would not do this. Under READ COMMITTED each statement takes
  * a fresh snapshot, so an archive committing between the re-read and the
- * `create` is invisible to the re-read and still lost. Do not "simplify" this
- * into a `findUnique`.
+ * `create` is invisible to the re-read and still lost. Do not "simplify" the
+ * locking `SELECT` above into a plain `findUnique`.
  *
  * Must be called with a transaction client, never a bare `PrismaClient` —
  * `Prisma.TransactionClient` is structurally just `Omit<PrismaClient,
  * ITXClientDenyList>`, so `claimTemplateForGeneration(prisma, id)` type-checks
  * without complaint. It would make `SET LOCAL` a no-op (there is no
  * transaction for "local" to scope to) and release the row lock the instant
- * the `SELECT` completes, so the claim returns `true` while holding nothing.
+ * the `SELECT` completes. That used to mean the claim returned `true` while
+ * holding nothing; it is worse now, not gone: the `findUniqueOrThrow` below
+ * then runs unlocked too, and can throw P2025 if the row is deleted out from
+ * under it before that second statement runs.
  *
  * Do not weaken `FOR UPDATE` to `FOR NO KEY UPDATE` to stop blocking `Class`
  * inserts — it looks like a free optimisation but isn't. `FOR UPDATE` is what
