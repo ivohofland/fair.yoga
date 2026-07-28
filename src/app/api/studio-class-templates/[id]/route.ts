@@ -8,7 +8,7 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
-import { updateStudioClassTemplateSchema } from '@/lib/schemas';
+import { updateStudioClassTemplateSchema, templateStateQuerySchema } from '@/lib/schemas';
 import {
   pauseOrResumeStudioTemplate,
   archiveOrUnarchiveStudioTemplate,
@@ -64,11 +64,16 @@ export const PATCH = withErrorHandler(async (
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  const url = new URL(request.url);
-  const action = url.searchParams.get('action');
+  const parsed = templateStateQuerySchema.safeParse(
+    Object.fromEntries(request.nextUrl.searchParams),
+  );
+  if (!parsed.success) {
+    return respondError('A state of active, paused, archived or unarchived is required', 400);
+  }
+  const { state } = parsed.data;
 
-  if (action === 'archive') {
-    const result = await archiveOrUnarchiveStudioTemplate(prisma, id, session.teacherId);
+  if (state === 'archived' || state === 'unarchived') {
+    const result = await archiveOrUnarchiveStudioTemplate(prisma, id, session.teacherId, state);
 
     // Only the archiving direction reports counts — same reasoning as the
     // class family's route.
@@ -95,13 +100,17 @@ export const PATCH = withErrorHandler(async (
     return unhandled;
   }
 
-  // Default: toggle active/paused. An archived template has no live half to
-  // toggle to — activating one would put it back in the generator's sweep for
-  // something the teacher shelved. Mirrors the same guard on
-  // `class-templates/[id]`; this route was missing it (#53).
-  const result = await pauseOrResumeStudioTemplate(prisma, id, session.teacherId);
+  // active/paused. An archived template has no live half to toggle to —
+  // activating one would put it back in the generator's sweep for something
+  // the teacher shelved. Mirrors the same guard on `class-templates/[id]`;
+  // this route was missing it (#53).
+  const result = await pauseOrResumeStudioTemplate(prisma, id, session.teacherId, state);
 
-  if (result.ok) return respondOk({ ...result.template, lastScheduled: result.lastScheduled });
+  if (result.ok) {
+    return result.action === 'paused'
+      ? respondOk({ ...result.template, action: result.action, lastScheduled: result.lastScheduled })
+      : respondOk({ ...result.template, action: result.action });
+  }
 
   if (result.reason === 'not_found') return respondError('Studio class template not found', 404);
   if (result.reason === 'forbidden') return respondError('Access denied', 403);

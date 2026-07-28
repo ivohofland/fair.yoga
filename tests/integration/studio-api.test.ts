@@ -149,12 +149,20 @@ describe('/api/studio-class-templates/[id] — ownership', () => {
   // One case, three verbs: a single bespoke guard repeated. Every studio row is
   // scoped to one teacher, so this chain is the whole authorization model here.
   it("another teacher cannot read, edit or toggle the owner's template", async () => {
-    for (const [method, body] of [
-      ['GET', undefined],
-      ['PUT', { hourlyRate: 1 }],
-      ['PATCH', undefined],
+    for (const [method, body, query] of [
+      ['GET', undefined, ''],
+      ['PUT', { hourlyRate: 1 }, ''],
+      // A valid `state` is required so this reaches the service's ownership
+      // check rather than tripping the query-schema's own 400 first — the
+      // route validates `state` before it ever looks the template up.
+      ['PATCH', undefined, '?state=paused'],
     ] as const) {
-      const res = await send(method, otherToken, `/api/studio-class-templates/${templateId}`, body);
+      const res = await send(
+        method,
+        otherToken,
+        `/api/studio-class-templates/${templateId}${query}`,
+        body,
+      );
       expect(res.status, `${method} should be 403`).toBe(403);
     }
 
@@ -182,13 +190,13 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
   it('toggles active, and archiving forces inactive', async () => {
     const id = (await makeTemplate(ownerId, 'Toggle Target')).id;
 
-    const paused = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}`);
+    const paused = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=paused`);
     expect(paused.status).toBe(200);
     expect(
       (await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id } })).isActive,
     ).toBe(false);
 
-    const active = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}`);
+    const active = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=active`);
     expect(active.status).toBe(200);
     expect(
       (await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id } })).isActive,
@@ -198,7 +206,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
     const archived = await send(
       'PATCH',
       ownerToken,
-      `/api/studio-class-templates/${id}?action=archive`,
+      `/api/studio-class-templates/${id}?state=archived`,
     );
     expect(archived.status).toBe(200);
     const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id } });
@@ -214,7 +222,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
   it('refuses to activate an archived template — no classes for shelved things', async () => {
     const id = (await makeTemplate(ownerId, 'Shelved', { isArchived: true, isActive: false })).id;
 
-    const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}`);
+    const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=active`);
     expect(res.status).toBe(409);
 
     const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id } });
@@ -226,7 +234,11 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
     const id = (await makeTemplate(ownerId, 'Unarchive Me', { isArchived: true, isActive: false }))
       .id;
 
-    const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?action=archive`);
+    const res = await send(
+      'PATCH',
+      ownerToken,
+      `/api/studio-class-templates/${id}?state=unarchived`,
+    );
     expect(res.status).toBe(200);
 
     const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id } });
@@ -258,7 +270,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
     const res = await send(
       'PATCH',
       ownerToken,
-      `/api/studio-class-templates/${template.id}?action=archive`,
+      `/api/studio-class-templates/${template.id}?state=archived`,
     );
     expect(res.status).toBe(200);
 
@@ -283,7 +295,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
       },
     });
 
-    const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${template.id}`);
+    const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${template.id}?state=paused`);
     expect(res.status).toBe(200);
 
     const { data } = (await res.json()) as {
@@ -292,6 +304,88 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
     // `toBeNull()` alone also passes on `undefined` — assert the seeded value.
     expect(data.lastScheduled?.startTime).toBe('19:00');
     expect(await prisma.studioClass.count({ where: { id: later.id } })).toBe(1);
+  });
+
+  it('rejects a PATCH with no state parameter', async () => {
+    const id = (await makeTemplate(ownerId, 'No State')).id;
+
+    const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}`);
+    expect(res.status).toBe(400);
+
+    // The row is untouched — a rejected request must not have toggled anything.
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id } });
+    expect(after.isActive).toBe(true);
+  });
+
+  it('rejects an unrecognised state value', async () => {
+    const id = (await makeTemplate(ownerId, 'Bad State')).id;
+
+    const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=sideways`);
+    expect(res.status).toBe(400);
+
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id } });
+    expect(after.isActive).toBe(true);
+  });
+
+  /**
+   * The #98 case, mirroring class-templates-api.test.ts's equivalent: two
+   * identical requests must reach the same state, not opposite ones.
+   */
+  it('is idempotent: pausing twice leaves the template paused', async () => {
+    const id = (await makeTemplate(ownerId, 'Twice Paused')).id;
+
+    const pause = () =>
+      send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=paused`);
+
+    const first = await pause();
+    expect(first.status).toBe(200);
+    expect(((await first.json()) as { data: { action: string } }).data.action).toBe('paused');
+
+    const second = await pause();
+    expect(second.status).toBe(200);
+    expect(((await second.json()) as { data: { action: string } }).data.action).toBe('unchanged');
+
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id } });
+    expect(after.isActive).toBe(false);
+  });
+
+  /**
+   * The sharpest half of #98: archiving withdraws unbooked future classes, so
+   * a second archive that fell through to un-archive would un-shelve the
+   * template. It must be a no-op — and must NOT withdraw a second time.
+   */
+  it('is idempotent: archiving twice does not withdraw twice', async () => {
+    const template = await makeTemplate(ownerId, 'Twice Archived');
+    await prisma.studioClass.create({
+      data: {
+        teacherId: ownerId,
+        templateId: template.id,
+        classType: 'Twice Archived',
+        date: new Date('2099-10-01'),
+        startTime: '18:00',
+        durationMinutes: 60,
+        location: 'Community Studio',
+        hourlyRate: 45,
+      },
+    });
+
+    const archive = () =>
+      send('PATCH', ownerToken, `/api/studio-class-templates/${template.id}?state=archived`);
+
+    const first = await archive();
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as { data: { action: string; deleted: number } };
+    expect(firstBody.data.action).toBe('archived');
+
+    const survivors = await prisma.studioClass.count({ where: { templateId: template.id } });
+
+    const second = await archive();
+    expect(second.status).toBe(200);
+    expect(((await second.json()) as { data: { action: string } }).data.action).toBe('unchanged');
+
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: template.id } });
+    expect(after.isArchived).toBe(true);
+    expect(await prisma.studioClass.count({ where: { templateId: template.id } })).toBe(survivors);
   });
 });
 

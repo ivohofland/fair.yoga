@@ -101,3 +101,18 @@ export function resolveTemplateConfirmation(data: TemplateToggleResponse): strin
   if (data.action === 'archived') return archiveMessage(data.deleted, data.remaining);
   return null;
 }
+
+/**
+ * The studio sibling of `resolveTemplateConfirmation`. A separate function
+ * rather than a parameter, because only the archive wording differs and
+ * threading a message function through would put most of the English in the
+ * caller — the two families are kept parallel-but-separate throughout.
+ */
+export function resolveStudioConfirmation(data: TemplateToggleResponse): string | null {
+  if (data.action === 'paused') {
+    const last = data.lastScheduled;
+    return pauseMessage(last ? { date: new Date(last.date), startTime: last.startTime } : null);
+  }
+  if (data.action === 'archived') return archiveStudioMessage(data.deleted, data.remaining);
+  return null;
+}

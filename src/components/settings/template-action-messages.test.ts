@@ -4,6 +4,7 @@ import {
   archiveMessage,
   archiveStudioMessage,
   resolveTemplateConfirmation,
+  resolveStudioConfirmation,
 } from './template-action-messages';
 
 describe('pauseMessage', () => {
@@ -132,5 +133,31 @@ describe('resolveTemplateConfirmation', () => {
    */
   it.each(['active', 'unarchived', 'unchanged'] as const)('says nothing for %s', (action) => {
     expect(resolveTemplateConfirmation({ action })).toBeNull();
+  });
+});
+
+describe('resolveStudioConfirmation', () => {
+  it('returns the pause message when the template was paused', () => {
+    expect(
+      resolveStudioConfirmation({
+        action: 'paused',
+        lastScheduled: { date: '2026-06-12T00:00:00.000Z', startTime: '09:30' },
+      }),
+    ).toBe(
+      'No new classes will be added to your schedule. The last one still scheduled is Friday, Jun 12 · 09:30.',
+    );
+  });
+
+  it('returns the studio archive message when the template was archived', () => {
+    expect(resolveStudioConfirmation({ action: 'archived', deleted: 2, remaining: 1 })).toBe(
+      'Deleted 2 scheduled studio classes. 1 class still on the schedule — cancel individually if needed.',
+    );
+  });
+
+  // Same reasoning as `resolveTemplateConfirmation`'s equivalent case:
+  // `unchanged` is what a stale second tab and a retry-after-lost-response
+  // reach, so captioning it would describe something that did not happen.
+  it.each(['active', 'unarchived', 'unchanged'] as const)('says nothing for %s', (action) => {
+    expect(resolveStudioConfirmation({ action })).toBeNull();
   });
 });

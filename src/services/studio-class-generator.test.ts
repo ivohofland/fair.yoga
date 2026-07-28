@@ -185,7 +185,7 @@ describe('generateStudioClassInstances (DB)', () => {
       await new Promise((r) => setTimeout(r, 100));
 
       let archiveSettled = false;
-      const archiving = archiveOrUnarchiveStudioTemplate(prisma, templateId, teacherId).then((r) => {
+      const archiving = archiveOrUnarchiveStudioTemplate(prisma, templateId, teacherId, 'archived').then((r) => {
         archiveSettled = true;
         return r;
       });
@@ -240,7 +240,7 @@ describe('generateStudioClassInstances (DB)', () => {
         },
       });
 
-      const result = await archiveOrUnarchiveStudioTemplate(spyingClient, templateId, teacherId);
+      const result = await archiveOrUnarchiveStudioTemplate(spyingClient, templateId, teacherId, 'archived');
 
       expect(result.ok).toBe(true);
       expect(recordedOptions).toEqual({ timeout: 10_000 });

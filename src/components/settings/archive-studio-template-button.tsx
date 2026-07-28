@@ -3,26 +3,12 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { readErrorMessage } from '@/lib/client-errors';
-import { archiveStudioMessage } from './template-action-messages';
+import { resolveStudioConfirmation, type TemplateToggleResponse } from './template-action-messages';
 
 interface ArchiveStudioTemplateButtonProps {
   templateId: string;
   isArchived: boolean;
 }
-
-/**
- * Shape of the `data` payload on a successful archive/un-archive PATCH.
- *
- * A union, not two optional numbers: un-archiving deletes nothing and the
- * route omits the counts entirely rather than sending zeros that would read
- * like a real archive matching nothing. Discriminating on `action` also means
- * the confirmation follows what the server actually did, rather than the
- * `isArchived` prop captured at the last render — which a second tab can
- * leave stale.
- */
-type ArchiveStudioTemplateResponse =
-  | { action: 'archived'; deleted: number; remaining: number }
-  | { action: 'unarchived' };
 
 export function ArchiveStudioTemplateButton({ templateId, isArchived }: ArchiveStudioTemplateButtonProps) {
   const router = useRouter();
@@ -35,17 +21,13 @@ export function ArchiveStudioTemplateButton({ templateId, isArchived }: ArchiveS
     setError('');
     setMessage('');
     try {
-      const res = await fetch(`/api/studio-class-templates/${templateId}?action=archive`, {
+      const target = isArchived ? 'unarchived' : 'archived';
+      const res = await fetch(`/api/studio-class-templates/${templateId}?state=${target}`, {
         method: 'PATCH',
       });
       if (res.ok) {
-        const { data } = (await res.json()) as { data: ArchiveStudioTemplateResponse };
-
-        // Only the archiving direction gets a message — un-archiving deletes
-        // nothing and needs no explanation.
-        if (data.action === 'archived') {
-          setMessage(archiveStudioMessage(data.deleted, data.remaining));
-        }
+        const { data } = (await res.json()) as { data: TemplateToggleResponse };
+        setMessage(resolveStudioConfirmation(data) ?? '');
         router.refresh();
       } else {
         setError(await readErrorMessage(res, 'Failed to update. Please try again.'));

@@ -114,6 +114,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
       prisma,
       '00000000-0000-0000-0000-000000000000',
       teacherId,
+      'archived',
     );
     expect(result).toEqual({ ok: false, reason: 'not_found' });
   });
@@ -125,7 +126,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     // The ownership check is the only thing stopping teacher B from
     // destroying teacher A's schedule — this is the function that deletes
     // rows, so it must refuse before touching anything.
-    const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, otherTeacherId);
+    const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, otherTeacherId, 'archived');
 
     expect(result).toEqual({ ok: false, reason: 'forbidden' });
     const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
@@ -137,7 +138,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     const t = await makeTemplate('Del Unbooked');
     const c = await makeClass(t.id, { date: future() });
 
-    const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId);
+    const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived');
 
     expect(result.ok).toBe(true);
     expect(await prisma.studioClass.count({ where: { id: c.id } })).toBe(0);
@@ -147,7 +148,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     const t = await makeTemplate('Keep Cancelled');
     const c = await makeClass(t.id, { date: future(), cancelledAt: new Date() });
 
-    const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId);
+    const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived');
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -159,7 +160,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     const t = await makeTemplate('Keep Today');
     const c = await makeClass(t.id, { date: today() });
 
-    const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId);
+    const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived');
 
     const archived = expectArchived(result);
     expect(archived.template.isArchived).toBe(true);
@@ -172,7 +173,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     const t = await makeTemplate('Today Only');
     await makeClass(t.id, { date: today() });
 
-    const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId);
+    const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived');
 
     // Nothing was eligible for deletion (today is spared) and the one class
     // on the schedule is today's — the confirmation must say so, not "nothing
@@ -186,7 +187,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     const t = await makeTemplate('Keep Past');
     const c = await makeClass(t.id, { date: past() });
 
-    const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId);
+    const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived');
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -209,7 +210,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
       cancelledAt: new Date(),
     });
 
-    const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId);
+    const result = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived');
 
     const archived = expectArchived(result);
     expect(archived.deleted).toBe(2);
@@ -226,12 +227,12 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     const cancelled = await makeClass(t.id, { date: futureOn(6), cancelledAt: new Date() });
 
     const archived = expectArchived(
-      await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId),
+      await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived'),
     );
     expect(archived.deleted).toBe(1);
     expect(archived.remaining).toBe(0);
 
-    const resumed = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId);
+    const resumed = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'unarchived');
     expect(resumed.ok).toBe(true);
     if (!resumed.ok) throw new Error('expected ok');
     // Reports the direction and nothing else — no zeros that would read like
@@ -299,10 +300,11 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     const soon = await makeClass(t.id, futureOn(3), '08:00');
     const later = await makeClass(t.id, futureOn(10), '19:00');
 
-    const result = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId);
+    const result = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
+    if (result.action !== 'paused') throw new Error('expected the paused action');
     expect(result.template.isActive).toBe(false);
     expect(result.lastScheduled).not.toBeNull();
     if (!result.lastScheduled) throw new Error('expected lastScheduled');
@@ -320,12 +322,12 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     const t = await makeTemplate('Resume Simple');
     const c = await makeClass(t.id, futureOn(3), '08:00');
 
-    const paused = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId);
+    const paused = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');
     expect(paused.ok).toBe(true);
     if (!paused.ok) throw new Error('expected ok');
     expect(paused.template.isActive).toBe(false);
 
-    const resumed = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId);
+    const resumed = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
     expect(resumed.ok).toBe(true);
     if (!resumed.ok) throw new Error('expected ok');
     expect(resumed.template.isActive).toBe(true);
@@ -335,22 +337,52 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
   it('pausing a template with no scheduled classes reports lastScheduled: null', async () => {
     const t = await makeTemplate('Pause Empty');
 
-    const result = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId);
+    const result = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
+    if (result.action !== 'paused') throw new Error('expected the paused action');
     expect(result.lastScheduled).toBeNull();
   });
 
   it("returns 'archived' for an archived template rather than toggling", async () => {
     const t = await makeTemplate('Pause Archived');
-    const archived = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId);
+    const archived = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived');
     expect(archived.ok).toBe(true);
 
-    const result = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId);
+    // 'active' specifically: that is the only transition the archived guard
+    // blocks. 'paused' would hit the unchanged guard first — see the
+    // guard-order test below.
+    const result = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
 
     expect(result).toEqual({ ok: false, reason: 'archived' });
     const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
     expect(after.isActive).toBe(false);
+  });
+
+  /**
+   * The guard order in `pauseOrResumeStudioTemplate` is deliberate: `unchanged`
+   * must be checked before the `archived` guard, because archiving forces
+   * `isActive: false` — so `?state=paused` on an archived template is already
+   * true and there is nothing to refuse. Swap the two guards and every other
+   * test in this file still passes; only this one would start seeing a 409
+   * (`reason: 'archived'`) where it should see a 200 `unchanged` — reachable
+   * from exactly the stale-tab case #98 is about: tab A archives, tab B still
+   * shows an active template and offers "Pause studio class".
+   */
+  it('an archived template is already paused — pausing it again is unchanged, not a 409', async () => {
+    const t = await makeTemplate('Archived Then Paused');
+    const archived = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived');
+    expect(archived.ok).toBe(true);
+
+    const result = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.action).toBe('unchanged');
+
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.isActive).toBe(false);
+    expect(after.isArchived).toBe(true);
   });
 });

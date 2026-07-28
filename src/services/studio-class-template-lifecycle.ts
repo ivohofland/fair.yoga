@@ -1,13 +1,12 @@
 /**
  * Studio Class Template lifecycle — pause/resume and archive/un-archive for
- * `PATCH /api/studio-class-templates/[id]` (#86).
+ * `PATCH /api/studio-class-templates/[id]` (#86, #98).
  *
  * The studio sibling of `class-template-lifecycle.ts`'s pause/archive section.
  * Deliberately not sharing an implementation with it — PR #92 found the two
  * families had already drifted apart in their guards, and their registration
- * semantics genuinely differ. Two differences from the class family matter
- * here, and both come from the same root cause: `StudioClass` carries no
- * `status` column and no relation to `Student` at all.
+ * semantics genuinely differ. Three differences from the class family matter
+ * here:
  *
  *   - Where the class family's deletable predicate spreads a `status: {
  *     in: ['draft', 'open'] }` clause, the studio predicate has no status to
@@ -23,24 +22,35 @@
  *     carve-out the class family has — so `remaining` is a real query keyed
  *     at the start of the teacher's today, not a hardcoded 0: today's
  *     survivor is the one row it can ever find.
+ *   - `pauseOrResumeStudioTemplate` does not call a generator, and has no
+ *     `$transaction` at all — see that function's own doc comment for both.
  */
 
 import type { PrismaClient, StudioClassTemplate } from '@prisma/client';
 import { startOfLocalDay } from '@/lib/timezone';
 
-/** The furthest-out class still on the schedule, for the pause confirmation. */
+/**
+ * Outcome of a pause/resume PATCH. `paused` carries the furthest-out class
+ * still on the schedule, for the pause confirmation; `active` and
+ * `unchanged` report nothing beyond the template itself — mirroring
+ * `PauseTemplateResult` in the class family.
+ */
 export type PauseStudioTemplateResult =
   | {
       ok: true;
+      action: 'paused';
       template: StudioClassTemplate;
       lastScheduled: { date: Date; startTime: string } | null;
     }
+  | { ok: true; action: 'active'; template: StudioClassTemplate }
+  | { ok: true; action: 'unchanged'; template: StudioClassTemplate }
   | { ok: false; reason: 'not_found' | 'forbidden' | 'archived' };
 
 /**
- * Archiving and un-archiving are different operations, so they report
- * different things — see `ArchiveTemplateResult` for why the un-archiving arm
- * carries no counts.
+ * Archiving and un-archiving are different operations and report different
+ * things; `unchanged` is a third, and reports nothing at all — see
+ * `ArchiveTemplateResult` for why the un-archiving and unchanged arms carry
+ * no counts.
  */
 export type ArchiveStudioTemplateResult =
   | {
@@ -51,6 +61,7 @@ export type ArchiveStudioTemplateResult =
       remaining: number;
     }
   | { ok: true; action: 'unarchived'; template: StudioClassTemplate }
+  | { ok: true; action: 'unchanged'; template: StudioClassTemplate }
   | { ok: false; reason: 'not_found' | 'forbidden' };
 
 /**
@@ -86,11 +97,17 @@ const scheduledWhere = (templateId: string, date: { gt: Date } | { gte: Date }) 
  * — a bigger behaviour change than this task is about. The user-visible
  * consequence of leaving it uncalled: a resumed studio template shows an
  * empty window until the next hourly cron sweep fills it back in.
+ *
+ * With no generator to call, there is also nothing here that needs the class
+ * family's `$transaction`: the single `update` below is autocommit, so there
+ * is no Prisma transaction timeout to bust — it simply waits on any row lock
+ * (e.g. the generator sweep's own claim) and then succeeds.
  */
 export async function pauseOrResumeStudioTemplate(
   db: PrismaClient,
   templateId: string,
   teacherId: string,
+  target: 'active' | 'paused',
 ): Promise<PauseStudioTemplateResult> {
   const template = await db.studioClassTemplate.findUnique({
     where: { id: templateId },
@@ -98,24 +115,45 @@ export async function pauseOrResumeStudioTemplate(
   });
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
+
+  // Dropped rather than leaked back to the caller — `PauseStudioTemplateResult`
+  // carries a plain `StudioClassTemplate`, and this early-return path never
+  // reaches the write below that would otherwise need the join.
+  const { teacher: _t, ...bare } = template;
+  void _t;
+
+  const desiredActive = target === 'active';
+
+  // Before the archived guard, deliberately — the same reason as the class
+  // family's `pauseOrResumeTemplate`: archiving forces `isActive: false`, so
+  // `?state=paused` on an archived template is already true and there is
+  // nothing to refuse — only `?state=active` is the transition the guard
+  // exists to block.
+  if (template.isActive === desiredActive) {
+    return { ok: true, action: 'unchanged', template: bare };
+  }
+
   if (template.isArchived) return { ok: false, reason: 'archived' };
 
   const updated = await db.studioClassTemplate.update({
     where: { id: templateId },
-    data: { isActive: !template.isActive },
+    data: { isActive: desiredActive },
   });
 
-  // `gte` today, not `gt`: pause deletes nothing, so there is no spare-today
-  // carve-out to mirror here — today's class is still on the schedule and
-  // must be reported as such.
-  const today = startOfLocalDay(new Date(), template.teacher.defaultTimezone);
-  const lastScheduled = await db.studioClass.findFirst({
-    where: scheduledWhere(templateId, { gte: today }),
-    orderBy: [{ date: 'desc' }, { startTime: 'desc' }],
-    select: { date: true, startTime: true },
-  });
+  if (!desiredActive) {
+    // `gte` today, not `gt`: pause deletes nothing, so there is no
+    // spare-today carve-out to mirror here — today's class is still on the
+    // schedule and must be reported as such.
+    const today = startOfLocalDay(new Date(), template.teacher.defaultTimezone);
+    const lastScheduled = await db.studioClass.findFirst({
+      where: scheduledWhere(templateId, { gte: today }),
+      orderBy: [{ date: 'desc' }, { startTime: 'desc' }],
+      select: { date: true, startTime: true },
+    });
+    return { ok: true, action: 'paused', template: updated, lastScheduled };
+  }
 
-  return { ok: true, template: updated, lastScheduled };
+  return { ok: true, action: 'active', template: updated };
 }
 
 /**
@@ -133,6 +171,7 @@ export async function archiveOrUnarchiveStudioTemplate(
   db: PrismaClient,
   templateId: string,
   teacherId: string,
+  target: 'archived' | 'unarchived',
 ): Promise<ArchiveStudioTemplateResult> {
   const template = await db.studioClassTemplate.findUnique({
     where: { id: templateId },
@@ -141,7 +180,16 @@ export async function archiveOrUnarchiveStudioTemplate(
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
-  const archiving = !template.isArchived;
+  const archiving = target === 'archived';
+
+  // No write, no delete. Archiving twice must not withdraw twice — the
+  // withdrawal is a consequence of the transition, not of the request.
+  if (template.isArchived === archiving) {
+    const { teacher: _t, ...bare } = template;
+    void _t;
+    return { ok: true, action: 'unchanged', template: bare };
+  }
+
   const timeZone = template.teacher.defaultTimezone;
 
   return db.$transaction(
@@ -183,12 +231,11 @@ export async function archiveOrUnarchiveStudioTemplate(
 
       return { ok: true as const, action: 'archived' as const, template: updated, deleted, remaining };
     },
-    // Mirrors `archiveOrUnarchiveTemplate`'s timeout ahead of Task 2, which
-    // gives the studio generator sweep the same claim-and-lock treatment
-    // class-generator.ts already has. Once that lands, this `update` can
-    // block on a sweep in progress the same way the class family's does;
-    // adding it now — rather than splitting it across two tasks — means
-    // Task 2 doesn't have to remember the other half of the symmetry.
+    // Mirrors `archiveOrUnarchiveTemplate`'s timeout, which gives the studio
+    // generator sweep the same claim-and-lock treatment class-generator.ts
+    // already has: once this `update` can block on a sweep in progress the
+    // same way the class family's does, it waits at most as long as the
+    // sweep could possibly run, not Prisma's 5s default.
     { timeout: 10_000 },
   );
 }
