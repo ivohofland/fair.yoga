@@ -20,6 +20,29 @@ class ClassFullError extends Error {}
 /** Thrown inside the transaction when the student already holds a spot. */
 class AlreadyRegisteredError extends Error {}
 
+/** Thrown inside the transaction when the locked class row does not exist. */
+class ClassNotFoundError extends Error {}
+
+/** Thrown inside the transaction when the caller does not own the class. */
+class NotYourClassError extends Error {}
+
+/**
+ * Thrown inside the transaction when the class's status forbids registration.
+ * Carries the status so the response can name it, exactly as it did when this
+ * check ran before the transaction.
+ */
+class ClassStatusError extends Error {
+  constructor(readonly classStatus: string) {
+    super(`Cannot register for a class with status "${classStatus}"`);
+  }
+}
+
+/**
+ * How long before a class starts a teacher-added registration counts as a
+ * walk-in — someone showing up at the door — rather than a normal booking.
+ */
+const WALK_IN_WINDOW_MS = 15 * 60 * 1000;
+
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireSession(request);
   if (isErrorResponse(session)) return session;
@@ -42,26 +65,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
   const isTeacher = actingTeacherId !== null;
 
-  // Look up the class
-  const cls = await prisma.class.findUnique({
-    where: { id: body.classId },
-    include: { teacher: { select: { defaultTimezone: true } } },
-  });
-  if (!cls) return respondError('Class not found', 404);
-
-  // Teachers may only manage registrations for their own classes —
-  // registering also locks the class's economic settings.
-  if (actingTeacherId && cls.teacherId !== actingTeacherId) {
-    return respondError('Not your class', 403);
-  }
-
-  // Check class status. Students book open classes; the teacher can also
-  // add someone who shows up while the class is in progress.
-  const allowedStatuses = isTeacher ? ['open', 'in_progress'] : ['open'];
-  if (!allowedStatuses.includes(cls.status)) {
-    return respondError(`Cannot register for a class with status "${cls.status}"`, 409);
-  }
-
+  // The student and the roster link concern the student, not the class, so
+  // they stay outside the transaction — holding the class lock across them
+  // would widen it for nothing. One consequence, accepted: a request with both
+  // an unknown student and an unusable class now answers about the student
+  // first, where it used to answer about the class. No test depends on that
+  // precedence, and neither answer leaks anything about the other subject.
+  //
   // Look up the student to get incomeTier
   const student = await prisma.student.findUnique({ where: { id: studentId } });
   if (!student) return respondError('Student not found', 404);
@@ -74,22 +84,50 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     if (!link) return respondError('Student is not in your roster', 403);
   }
 
-  // Walk-ins are a class-time phenomenon: someone shows up at the door and
-  // the teacher lets them in — those may exceed max_students (the teacher
-  // rate stays capped at target; extra students lower prices). A teacher
-  // adding a student well before class is a normal registration and
-  // respects capacity like everyone else.
-  const WALK_IN_WINDOW_MS = 15 * 60 * 1000;
-  const classStart = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
-  const isWalkIn =
-    isTeacher &&
-    (cls.status === 'in_progress' || Date.now() >= classStart.getTime() - WALK_IN_WINDOW_MS);
-
   try {
     const registration = await prisma.$transaction(async (tx) => {
       // Serialize concurrent registrations for this class: without the row
       // lock, two simultaneous requests both count below max and both insert.
       await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${body.classId} FOR UPDATE`;
+
+      // Read the class UNDER that lock, and decide everything from this row.
+      // #107: this read used to happen before the transaction, so `status`,
+      // `maxStudents` and the walk-in window were decided from a snapshot the
+      // lock did not protect — a class cancelled or re-capped in the gap was
+      // booked anyway. `waitlist.ts` takes this same lock in three places and
+      // reads under it in all three; this is the fourth.
+      //
+      // `findUnique`, not `findUniqueOrThrow`: unlike the generator claims in
+      // #102, the id here comes from the request body, so a missing class is
+      // the ordinary 404 path rather than an impossible branch.
+      const cls = await tx.class.findUnique({
+        where: { id: body.classId },
+        include: { teacher: { select: { defaultTimezone: true } } },
+      });
+      if (!cls) throw new ClassNotFoundError();
+
+      // Teachers may only manage registrations for their own classes —
+      // registering also locks the class's economic settings.
+      if (actingTeacherId && cls.teacherId !== actingTeacherId) {
+        throw new NotYourClassError();
+      }
+
+      // Students book open classes; the teacher can also add someone who
+      // shows up while the class is in progress.
+      const allowedStatuses = isTeacher ? ['open', 'in_progress'] : ['open'];
+      if (!allowedStatuses.includes(cls.status)) {
+        throw new ClassStatusError(cls.status);
+      }
+
+      // Walk-ins are a class-time phenomenon: someone shows up at the door and
+      // the teacher lets them in — those may exceed max_students (the teacher
+      // rate stays capped at target; extra students lower prices). A teacher
+      // adding a student well before class is a normal registration and
+      // respects capacity like everyone else.
+      const classStart = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
+      const isWalkIn =
+        isTeacher &&
+        (cls.status === 'in_progress' || Date.now() >= classStart.getTime() - WALK_IN_WINDOW_MS);
 
       // Count active registrations (cancelled and late_cancel freed their spot)
       const registrationCount = await tx.registration.count({
@@ -185,6 +223,15 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
     return respondOk(registration, 201);
   } catch (err) {
+    if (err instanceof ClassNotFoundError) {
+      return respondError('Class not found', 404);
+    }
+    if (err instanceof NotYourClassError) {
+      return respondError('Not your class', 403);
+    }
+    if (err instanceof ClassStatusError) {
+      return respondError(err.message, 409);
+    }
     if (err instanceof ClassFullError) {
       return respondError('Class is full', 409);
     }

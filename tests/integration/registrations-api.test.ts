@@ -302,6 +302,100 @@ describe('POST /api/registrations', () => {
     expect(entry.status).toBe('claimed');
     expect(entry.registrationId).toBe(bookJson.data.id);
   });
+
+  /**
+   * #107. The route took the class row lock and then decided from a row read
+   * before the lock existed, so a class cancelled in the gap was still booked.
+   *
+   * Deterministic by the lever #95 and #102 used, adapted to HTTP: an
+   * uncommitted write is invisible under READ COMMITTED, and the dev server
+   * holds its own connection, so a transaction held open here genuinely blocks
+   * the request.
+   */
+  it('refuses a booking for a class cancelled while the request waited for the lock', async () => {
+    const classId = await makeClass(5);
+
+    let commit!: () => void;
+    const held = new Promise<void>((resolve) => {
+      commit = resolve;
+    });
+
+    // Cancel, uncommitted. Holds the class row lock; invisible to the server.
+    const cancelling = prisma.$transaction(
+      async (tx) => {
+        await tx.class.update({ where: { id: classId }, data: { status: 'cancelled' } });
+        await held;
+      },
+      { timeout: 15_000 },
+    );
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    let settled = false;
+    const booking = post(studentTokens[0]!, { classId }).then((res) => {
+      settled = true;
+      return res;
+    });
+
+    // Liveness, not teeth: this holds before and after the fix, because the
+    // pre-fix route also reaches the FOR UPDATE and blocks — it has just
+    // already read the class by then. It is here to prove the request is
+    // genuinely waiting on the lock, which is what makes the assertion below
+    // mean something.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(settled).toBe(false);
+
+    commit();
+    await cancelling;
+    const res = await booking;
+
+    // Pre-fix: 201. The server read `status: 'open'` before the lock, could not
+    // see the uncommitted cancellation, and booked a cancelled class.
+    expect(res.status).toBe(409);
+    expect(await prisma.registration.count({ where: { classId } })).toBe(0);
+  });
+
+  it('refuses a booking that exceeds a cap lowered while the request waited', async () => {
+    const classId = await makeClass(2);
+
+    const first = await post(studentTokens[0]!, { classId });
+    expect(first.status).toBe(201);
+
+    let commit!: () => void;
+    const held = new Promise<void>((resolve) => {
+      commit = resolve;
+    });
+
+    // Lower the cap to 1, uncommitted — the one existing registration now
+    // fills the class.
+    const capping = prisma.$transaction(
+      async (tx) => {
+        await tx.class.update({ where: { id: classId }, data: { maxStudents: 1 } });
+        await held;
+      },
+      { timeout: 15_000 },
+    );
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    let settled = false;
+    const booking = post(studentTokens[1]!, { classId }).then((res) => {
+      settled = true;
+      return res;
+    });
+
+    await new Promise((r) => setTimeout(r, 300));
+    expect(settled).toBe(false);
+
+    commit();
+    await capping;
+    const res = await booking;
+
+    // Pre-fix: 201. The count was fresh (1) but was compared against the stale
+    // cap of 2, so the second booking fit a class that now holds one.
+    expect(res.status).toBe(409);
+    expect(await prisma.registration.count({ where: { classId } })).toBe(1);
+  });
 });
 
 describe('DELETE /api/waitlist/[id] — profile-presence authorization', () => {
