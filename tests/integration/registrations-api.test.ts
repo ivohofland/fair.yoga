@@ -15,6 +15,7 @@ let ownerAccountIdForCleanup: string;
 let otherAccountIdForCleanup: string;
 let otherTeacherId: string;
 let teacherRoomId: string;
+let otherTeacherRoomId: string;
 let roomId: string;
 const studentIds: string[] = [];
 let unlinkedStudentId: string;
@@ -26,6 +27,30 @@ async function makeClass(maxStudents: number): Promise<string> {
       teacherId: ownerId,
       teacherRoomId,
       classType: 'Reg API',
+      date: new Date('2099-06-01'),
+      startTime: '09:00',
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents,
+      status: 'open',
+    },
+  });
+  classIds.push(cls.id);
+  return cls.id;
+}
+
+// For the cross-teacher ownership test: a class the *other* teacher owns, so
+// an owner-roster student and an owner-teacher session can still collide with
+// it via studentId.
+async function makeOtherTeacherClass(maxStudents: number): Promise<string> {
+  const cls = await prisma.class.create({
+    data: {
+      teacherId: otherTeacherId,
+      teacherRoomId: otherTeacherRoomId,
+      classType: 'Reg API (other teacher)',
       date: new Date('2099-06-01'),
       startTime: '09:00',
       durationMinutes: 60,
@@ -100,6 +125,13 @@ beforeAll(async () => {
   });
   teacherRoomId = teacherRoom.id;
 
+  // Same physical room, rented separately by the other teacher — lets
+  // makeOtherTeacherClass build a class that teacher owns.
+  const otherTeacherRoom = await prisma.teacherRoom.create({
+    data: { teacherId: otherTeacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+  });
+  otherTeacherRoomId = otherTeacherRoom.id;
+
   // Two students linked to the owner, one unlinked
   for (let i = 0; i < 2; i++) {
     const student = await prisma.student.create({
@@ -134,7 +166,7 @@ afterAll(async () => {
   await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.class.deleteMany({ where: { id: { in: classIds } } });
-  await prisma.teacherRoom.deleteMany({ where: { teacherId: ownerId } });
+  await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: [ownerId, otherTeacherId] } } });
   await prisma.room.delete({ where: { id: roomId } });
   await prisma.teacherStudent.deleteMany({ where: { teacherId: ownerId } });
   const studentAccounts = await prisma.student.findMany({
@@ -166,6 +198,23 @@ describe('POST /api/registrations', () => {
     // And the victim's class must NOT have been settings-locked
     const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
     expect(cls.settingsLocked).toBe(false);
+  });
+
+  /**
+   * The test above no longer reaches the ownership check: otherTeacherToken
+   * has no roster link to studentIds[0] (only the owner does), so it now dies
+   * at the roster-link 403 instead. This test uses a student who IS on the
+   * acting teacher's own roster, so that guard passes and the ownership check
+   * inside the transaction is the only one left to fire — the realistic case
+   * of two teachers sharing a student.
+   */
+  it('rejects the owner posting their own roster student into another teacher\'s class', async () => {
+    const classId = await makeOtherTeacherClass(5);
+    const res = await post(ownerToken, { classId, studentId: studentIds[0] });
+    expect(res.status).toBe(403);
+
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toBe('Not your class');
   });
 
   it('rejects a teacher registering a student who is not in their roster', async () => {
@@ -352,6 +401,8 @@ describe('POST /api/registrations', () => {
     // Pre-fix: 201. The server read `status: 'open'` before the lock, could not
     // see the uncommitted cancellation, and booked a cancelled class.
     expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toContain('cancelled');
     expect(await prisma.registration.count({ where: { classId } })).toBe(0);
   });
 
@@ -394,6 +445,8 @@ describe('POST /api/registrations', () => {
     // Pre-fix: 201. The count was fresh (1) but was compared against the stale
     // cap of 2, so the second booking fit a class that now holds one.
     expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toContain('Class is full');
     expect(await prisma.registration.count({ where: { classId } })).toBe(1);
   });
 });

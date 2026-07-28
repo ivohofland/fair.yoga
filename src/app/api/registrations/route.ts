@@ -28,11 +28,12 @@ class NotYourClassError extends Error {}
 
 /**
  * Thrown inside the transaction when the class's status forbids registration.
- * Carries the status so the response can name it, exactly as it did when this
- * check ran before the transaction.
+ * The status is folded into `message` at construction time; the `catch`
+ * reads it back via `err.message`, so nothing needs to survive on the
+ * instance beyond what `Error` already keeps.
  */
 class ClassStatusError extends Error {
-  constructor(readonly classStatus: string) {
+  constructor(classStatus: string) {
     super(`Cannot register for a class with status "${classStatus}"`);
   }
 }
@@ -67,10 +68,16 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // The student and the roster link concern the student, not the class, so
   // they stay outside the transaction — holding the class lock across them
-  // would widen it for nothing. One consequence, accepted: a request with both
-  // an unknown student and an unusable class now answers about the student
-  // first, where it used to answer about the class. No test depends on that
-  // precedence, and neither answer leaks anything about the other subject.
+  // would widen it for nothing. One consequence, accepted: a request with a
+  // student-side problem — an unknown student, or, the case this suite
+  // actually exercises, a roster link the acting teacher doesn't hold — and
+  // an unusable class now answers about the student first, where it used to
+  // answer about the class. This changed what one existing test proved: a
+  // cross-teacher request used to reach the ownership check inside the
+  // transaction, but now dies at the roster-link check instead, so that
+  // test's meaning shifted and it was supplemented with one that reaches the
+  // ownership check directly (a teacher's own roster student, posted into
+  // another teacher's class).
   //
   // Look up the student to get incomeTier
   const student = await prisma.student.findUnique({ where: { id: studentId } });
