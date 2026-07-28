@@ -17,7 +17,7 @@ describe('ArchivedRecord', () => {
       />,
     );
 
-    expect(screen.getByText('Archived Friday, Jun 12 · 3 classes withdrawn')).toBeInTheDocument();
+    expect(screen.getByText('Archived 12 Jun 2026 · 3 classes withdrawn')).toBeInTheDocument();
   });
 
   it('uses the singular for one class', () => {
@@ -29,7 +29,7 @@ describe('ArchivedRecord', () => {
       />,
     );
 
-    expect(screen.getByText('Archived Friday, Jun 12 · 1 class withdrawn')).toBeInTheDocument();
+    expect(screen.getByText('Archived 12 Jun 2026 · 1 class withdrawn')).toBeInTheDocument();
   });
 
   /**
@@ -45,7 +45,7 @@ describe('ArchivedRecord', () => {
       />,
     );
 
-    expect(screen.getByText('Archived Friday, Jun 12')).toBeInTheDocument();
+    expect(screen.getByText('Archived 12 Jun 2026')).toBeInTheDocument();
   });
 
   /**
@@ -63,9 +63,9 @@ describe('ArchivedRecord', () => {
   /**
    * `archivedAt` is a true instant, not a `@db.Date` calendar date. 22:30 UTC
    * on Jun 12 is 00:30 CEST on Jun 13 for an Amsterdam teacher — one day
-   * later. A component that fed the raw instant straight to `formatDayHeader`
+   * later. A component that fed the raw instant straight to the formatter
    * (dropping the local-day conversion) would read the UTC calendar date and
-   * print "Jun 12" instead, so this fails if that conversion is ever dropped.
+   * print "12 Jun" instead, so this fails if that conversion is ever dropped.
    */
   it('renders the date in the teacher\'s local calendar day, not UTC\'s', () => {
     render(
@@ -76,6 +76,25 @@ describe('ArchivedRecord', () => {
       />,
     );
 
-    expect(screen.getByText('Archived Saturday, Jun 13 · 2 classes withdrawn')).toBeInTheDocument();
+    expect(screen.getByText('Archived 13 Jun 2026 · 2 classes withdrawn')).toBeInTheDocument();
+  });
+
+  /**
+   * The record's entire purpose is surviving indefinitely, so a date without
+   * a year would let a template archived last year read identically to one
+   * archived last month. This fixture sits in a year prior to every other
+   * fixture in this file, so a formatter that dropped the year (or hardcoded
+   * the current one) would not print "2025" here.
+   */
+  it('carries the year across a year boundary from the other fixtures', () => {
+    render(
+      <ArchivedRecord
+        archivedAt={new Date('2025-11-03T00:00:00.000Z')}
+        withdrawnCount={0}
+        timeZone="Europe/Amsterdam"
+      />,
+    );
+
+    expect(screen.getByText('Archived 3 Nov 2025')).toBeInTheDocument();
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatDayHeader } from './format';
+import { formatDayHeader, formatHistoricalDate } from './format';
 
 /**
  * `formatDayHeader` had no tests while it was a private copy inside one
@@ -47,6 +47,48 @@ describe('formatDayHeader', () => {
     const snapshot = original.getTime();
 
     formatDayHeader(original);
+
+    expect(original.getTime()).toBe(snapshot);
+  });
+});
+
+/**
+ * #97's archived-template record needed a date that survives indefinitely,
+ * where `formatDayHeader`'s missing year would let a date from last year
+ * read identically to one from last month. This is that formatter — day,
+ * abbreviated month, year, no weekday — and it inherits `formatDayHeader`'s
+ * UTC-accessors reasoning, so the same year-boundary and no-mutation cases
+ * apply here too.
+ */
+describe('formatHistoricalDate', () => {
+  it('renders day-of-month, abbreviated month, and year', () => {
+    expect(formatHistoricalDate(new Date('2026-06-12T00:00:00.000Z'))).toBe('12 Jun 2026');
+  });
+
+  it('does not pad the day-of-month', () => {
+    expect(formatHistoricalDate(new Date('2026-01-01T00:00:00.000Z'))).toBe('1 Jan 2026');
+  });
+
+  it('carries a year from before the current one, not just any year', () => {
+    expect(formatHistoricalDate(new Date('2025-12-31T00:00:00.000Z'))).toBe('31 Dec 2025');
+  });
+
+  /**
+   * Same portable proxy as `formatDayHeader`'s equivalent case: a late-evening
+   * UTC instant whose local calendar day has already rolled over east of UTC.
+   * Reading this in local time (or with `toLocaleDateString`, unqualified)
+   * would print Jun 12 instead of Jun 13, and could even roll the year on a
+   * Dec 31 / Jan 1 instant.
+   */
+  it('reads the date in UTC, not the local zone', () => {
+    expect(formatHistoricalDate(new Date('2026-06-12T23:30:00.000Z'))).toBe('12 Jun 2026');
+  });
+
+  it('accepts a Date-like value without mutating the caller’s Date', () => {
+    const original = new Date('2026-06-12T00:00:00.000Z');
+    const snapshot = original.getTime();
+
+    formatHistoricalDate(original);
 
     expect(original.getTime()).toBe(snapshot);
   });

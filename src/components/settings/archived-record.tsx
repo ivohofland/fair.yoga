@@ -1,4 +1,4 @@
-import { formatDayHeader } from '@/lib/format';
+import { formatHistoricalDate } from '@/lib/format';
 import { startOfLocalDay } from '@/lib/timezone';
 
 interface ArchivedRecordProps {
@@ -22,11 +22,15 @@ interface ArchivedRecordProps {
  *
  * `archivedAt` is a true instant (written as `now` at click time), not a
  * `@db.Date` calendar date — so it is converted to the teacher's calendar day
- * with `startOfLocalDay` before `formatDayHeader` ever sees it. `formatDayHeader`
- * reads with UTC accessors specifically because it expects a value already
- * pinned to local midnight; feeding it the raw instant would let the teacher's
- * UTC offset shift the displayed date, same as `startOfLocalDay`'s own doc
- * warns against.
+ * with `startOfLocalDay` before `formatHistoricalDate` ever sees it.
+ * `formatHistoricalDate` reads with UTC accessors specifically because it
+ * expects a value already pinned to local midnight; feeding it the raw
+ * instant would let the teacher's UTC offset shift the displayed date, same
+ * as `startOfLocalDay`'s own doc warns against.
+ *
+ * `formatHistoricalDate`, not `formatDayHeader`: this date has no natural
+ * expiry, so it carries a year (`12 Jun 2025`) rather than omitting one the
+ * way an upcoming-class date safely can.
  *
  * `remaining` is deliberately not here. It is returned once, by the archive
  * PATCH response, and shown only in the transient confirmation message right
@@ -43,7 +47,7 @@ export function ArchivedRecord({ archivedAt, withdrawnCount, timeZone }: Archive
 
   return (
     <p className="type-caption">
-      {`Archived ${formatDayHeader(startOfLocalDay(archivedAt, timeZone))}${withdrawn}`}
+      {`Archived ${formatHistoricalDate(startOfLocalDay(archivedAt, timeZone))}${withdrawn}`}
     </p>
   );
 }

@@ -46,3 +46,26 @@ export function formatDayHeader(date: Date): string {
   ];
   return `${days[d.getUTCDay()]}, ${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
 }
+
+/**
+ * A past, historical date, where the year matters: `12 Jun 2025`.
+ *
+ * `formatDayHeader` is for upcoming or in-progress dates — the schedule, a
+ * class about to happen — and deliberately omits the year, since within the
+ * next few months "Friday, Jun 12" is unambiguous. This is for records meant
+ * to survive indefinitely, where dropping the year lets a date from last year
+ * read identically to one from last month with nothing to tell them apart.
+ *
+ * Same UTC-accessors reasoning as `formatDayHeader`: this expects a value
+ * already pinned to a calendar day at UTC midnight (e.g. `startOfLocalDay`'s
+ * output), not a raw instant — reading a true instant in local time would
+ * shift the calendar day for anyone whose zone disagrees with UTC.
+ */
+export function formatHistoricalDate(date: Date): string {
+  const d = new Date(date);
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  return `${d.getUTCDate()} ${months[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
