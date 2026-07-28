@@ -16,7 +16,9 @@
  *     Prisma's P2025 when the row is already gone rather than silently
  *     matching zero rows the way `updateMany` does, so catching that one error
  *     code and mapping it to `not_found` is enough — no compare-and-swap
- *     needed.
+ *     needed. Scoped to `updateClassTemplate`: the archive section further
+ *     down does use a compare-and-swap, because there the race to close is two
+ *     requests applying the same transition, not a row disappearing.
  */
 
 import { Prisma } from '@prisma/client';
@@ -425,6 +427,11 @@ export async function pauseOrResumeTemplate(
  *
  * The update and the delete share a transaction: a half-applied archive is
  * exactly the shelved-but-bookable state this exists to prevent.
+ *
+ * That transaction opens with a compare-and-swap rather than a plain update,
+ * so the transition can only be applied once even when two requests race —
+ * see the statement itself for why the pre-transaction guard cannot do that
+ * job on its own.
  */
 export async function archiveOrUnarchiveTemplate(
   db: PrismaClient,
@@ -444,6 +451,11 @@ export async function archiveOrUnarchiveTemplate(
   // No write, no delete. Archiving twice must not withdraw twice — the
   // withdrawal is a consequence of the transition, not of the request.
   //
+  // A fast path, not the guarantee: this row was read before the transaction
+  // below opened, so it is outside the row lock and two concurrent archives
+  // both clear it. The compare-and-swap inside the transaction is the
+  // authoritative one; this only saves them a transaction in the common case.
+  //
   // The one place "already there" and "apply the transition" differ
   // observably: both archiving and un-archiving force `isActive: false`
   // below, but this early return touches nothing. So `?state=unarchived`
@@ -462,18 +474,70 @@ export async function archiveOrUnarchiveTemplate(
 
   return db.$transaction(
     async (tx) => {
-      await tx.classTemplate.update({
-        where: { id: templateId },
-        data: { isArchived: archiving, isActive: false },
+      // Compare-and-swap, the pattern `updateClass` already uses for #72.
+      // Constraining the write to `isArchived: !archiving` makes the
+      // *transition* the thing that can happen only once: two archives that
+      // both cleared the guard above reach here, and exactly one of them
+      // matches a row. Without it the loser overwrote the winner's
+      // `archivedAt`/`withdrawnCount` with its own timestamp and a `0` its
+      // `deleteMany` produced only because the winner had already deleted
+      // those classes — a durable record (#97) of a withdrawal that says it
+      // withdrew nothing.
+      //
+      // Still the transaction's first statement, deliberately: this is what
+      // takes the row lock `claimTemplateForGeneration` (class-generator.ts)
+      // holds with its `FOR UPDATE`, and that shared lock is what serialises
+      // an archive against a sweep in progress (#95). Moving the CAS after
+      // the `deleteMany` would withdraw classes before establishing the right
+      // to.
+      //
+      // The contended case resolves in Postgres, not here: the loser blocks
+      // inside this statement, and when the winner commits, READ COMMITTED
+      // re-evaluates this WHERE against the row version the winner left
+      // (EvalPlanQual). `isArchived` now equals `archiving`, the row is
+      // skipped, and `count` is 0. That re-evaluation applies to the CAS
+      // predicate itself only because Prisma emits this as a single `UPDATE
+      // … WHERE "id" = $1 AND "isArchived" = $2` — a filter it compiled to a
+      // subquery would be re-run under the same snapshot and match anyway.
+      const swapped = await tx.classTemplate.updateMany({
+        where: { id: templateId, isArchived: !archiving },
+        data: {
+          isArchived: archiving,
+          isActive: false,
+          // Folded in rather than issued as a second `update`: `null` depends
+          // on nothing this transaction has yet to do, unlike the archiving
+          // arm's `withdrawnCount`, which does not exist until the delete has
+          // run. See the record write at the bottom for that asymmetry.
+          ...(archiving ? {} : { archivedAt: null, withdrawnCount: null }),
+        },
       });
 
+      if (swapped.count === 0) {
+        // Both clauses of the CAS constrain the row, so a zero count means
+        // either another request already applied the transition or the row is
+        // gone — read which rather than assuming, the same distinction #72
+        // had to make. A row that still exists necessarily has `isArchived
+        // === archiving` now, so `unchanged` is a fact, not a guess.
+        //
+        // Re-read rather than reusing the snapshot from the top of this
+        // function: that one still says `isArchived: !archiving`, which is
+        // the exact value the winner just falsified.
+        const current = await tx.classTemplate.findUnique({ where: { id: templateId } });
+        if (!current) return { ok: false as const, reason: 'not_found' as const };
+        return { ok: true as const, action: 'unchanged' as const, template: current };
+      }
+
       if (!archiving) {
-        const cleared = await tx.classTemplate.update({
-          where: { id: templateId },
-          data: { archivedAt: null, withdrawnCount: null },
-        });
+        // `updateMany` returns a count, not a row, and every arm of the
+        // contract carries a template. Reading it back is safe here
+        // specifically because the CAS above holds this row's lock until we
+        // commit, so nothing can change or delete it in between — the same
+        // lock-then-read pattern `claimTemplateForGeneration` uses, and
+        // `OrThrow` for the same reason: the update just matched this row.
+        //
         // A live template has no withdrawal to report. Leaving a stale count
         // on it would be worse than having none (#97).
+        const cleared = await tx.classTemplate.findUniqueOrThrow({ where: { id: templateId } });
         return { ok: true as const, action: 'unarchived' as const, template: cleared };
       }
 
@@ -517,10 +581,12 @@ export async function archiveOrUnarchiveTemplate(
 
       // Written from the delete's own `count`, inside the same transaction, so
       // the record cannot claim a number the delete did not produce and cannot
-      // survive a rollback that withdrew nothing (#97). A second `update`
-      // rather than folding this into the first: that one runs before the
-      // delete and takes the row lock the sweep serialises against (#95), and
-      // moving it would change when that lock is acquired.
+      // survive a rollback that withdrew nothing (#97). A second statement
+      // rather than folding this into the CAS above: that one has to run
+      // before the delete to take the row lock the sweep serialises against
+      // (#95), and `deleted` does not exist until the delete has run. A plain
+      // single-record `update` is enough here — the CAS's lock is still held,
+      // so nothing can have moved this row since.
       const recorded = await tx.classTemplate.update({
         where: { id: templateId },
         data: { archivedAt: now, withdrawnCount: deleted },
@@ -528,8 +594,8 @@ export async function archiveOrUnarchiveTemplate(
 
       return { ok: true as const, action: 'archived' as const, template: recorded, deleted, remaining };
     },
-    // This `update` takes the same row lock the generator sweep's
-    // `claimTemplateForGeneration` (class-generator.ts) holds for the
+    // The compare-and-swap above takes the same row lock the generator
+    // sweep's `claimTemplateForGeneration` (class-generator.ts) holds for the
     // duration of its own per-template transaction, so an archive can now
     // block on a sweep in progress. Matching the sweep's 10s transaction
     // timeout means this waits at most as long as the sweep could possibly

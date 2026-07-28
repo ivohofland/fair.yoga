@@ -759,6 +759,110 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     expect(second.template.archivedAt!.getTime()).toBeGreaterThanOrEqual(before);
     expect(second.template.archivedAt!.getTime()).toBeLessThanOrEqual(Date.now());
   });
+
+  /**
+   * The case the sequential idempotency tests structurally cannot reach. The
+   * `isArchived === archiving` fast path reads a row fetched *before* the
+   * transaction opens, so it is outside the row lock: two archives issued
+   * close enough together both see `false` and both clear it. Before the
+   * compare-and-swap, the loser then re-applied the whole archive — its
+   * `deleteMany` matched nothing (the winner had already deleted those
+   * classes) and it wrote `withdrawnCount: 0` over the winner's correct 2.
+   * Display-only, but #97 makes that display the durable record.
+   *
+   * Deterministic by the same lever `class-generator.test.ts` uses for the
+   * #95 races: a third transaction holds the template's row lock without
+   * changing anything, and uncommitted work is invisible under READ
+   * COMMITTED. That fixes both halves of the ordering the race needs — the
+   * second call's pre-transaction read genuinely sees `isArchived: false`
+   * (nothing has committed), and both calls' first write genuinely queue on
+   * the same lock instead of running back to back.
+   *
+   * It is also the one test that exercises the Postgres behaviour the fix
+   * rests on: the loser blocks inside its `UPDATE`, and when the winner
+   * commits, READ COMMITTED re-evaluates the CAS predicate against the row
+   * version the winner left (EvalPlanQual) and matches nothing.
+   */
+  it('two concurrent archives: the loser records nothing over the winner', async () => {
+    const t = await makeTemplate('Concurrent Archive');
+    await makeClass(t.id, { date: futureOn(5) });
+    await makeClass(t.id, { date: futureOn(6) });
+
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    // Holds the row lock and nothing else — no write, so neither archive can
+    // observe it, only wait for it.
+    const blocking = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "ClassTemplate" WHERE "id" = ${t.id} FOR UPDATE`;
+        await held;
+      },
+      { timeout: 15_000 },
+    );
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    let firstSettled = false;
+    const first = archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived').then((r) => {
+      firstSettled = true;
+      return r;
+    });
+
+    // Staggered so the two contend in a known order. The assertions below do
+    // not depend on which one wins — Postgres grants tuple-lock waiters FIFO,
+    // so it is the first — but the *invariant* is "exactly one of them
+    // archives", and asserting it that way is what makes this test about the
+    // CAS rather than about lock scheduling.
+    await new Promise((r) => setTimeout(r, 100));
+
+    let secondSettled = false;
+    const second = archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived').then((r) => {
+      secondSettled = true;
+      return r;
+    });
+
+    await new Promise((r) => setTimeout(r, 300));
+    // Both are blocked in their first write. If either had settled here, the
+    // two never contended and the rest of this test would prove nothing.
+    expect(firstSettled).toBe(false);
+    expect(secondSettled).toBe(false);
+
+    release();
+    await blocking;
+
+    const settled = await Promise.all([first, second]);
+    const won = settled.find((r) => r.ok && r.action === 'archived');
+    const lost = settled.find((r) => r.ok && r.action === 'unchanged');
+    if (!won || !lost) {
+      throw new Error(
+        `expected one archived and one unchanged, got ${settled
+          .map((r) => (r.ok ? r.action : r.reason))
+          .join(' + ')}`,
+      );
+    }
+
+    const winner = expectArchived(won);
+    expect(winner.deleted).toBe(2);
+    expect(winner.template.withdrawnCount).toBe(2);
+
+    if (!lost.ok) throw new Error('expected ok');
+    // The loser reports the state the winner left, not the pre-race snapshot
+    // it read at the top of its own call — that one still said `isArchived:
+    // false`, which by then is exactly the value the winner had falsified.
+    expect(lost.template.isArchived).toBe(true);
+    expect(lost.template.withdrawnCount).toBe(2);
+
+    // The durable record, which is what #97 is for: the winner's count and
+    // the winner's timestamp, not the loser's `0` and `now`.
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.withdrawnCount).toBe(2);
+    expect(after.archivedAt).not.toBeNull();
+    expect(after.archivedAt!.getTime()).toBe(winner.template.archivedAt!.getTime());
+    expect(await prisma.class.count({ where: { templateId: t.id } })).toBe(0);
+  });
 });
 
 describe('pauseOrResumeTemplate (DB)', () => {

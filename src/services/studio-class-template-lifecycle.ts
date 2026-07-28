@@ -166,6 +166,11 @@ export async function pauseOrResumeStudioTemplate(
  *
  * The update and the delete share a transaction: a half-applied archive is
  * exactly the shelved-but-listed state this exists to prevent.
+ *
+ * That transaction opens with a compare-and-swap rather than a plain update,
+ * so the transition can only be applied once even when two requests race —
+ * see `archiveOrUnarchiveTemplate` for the full reasoning, which holds here
+ * unchanged.
  */
 export async function archiveOrUnarchiveStudioTemplate(
   db: PrismaClient,
@@ -185,6 +190,11 @@ export async function archiveOrUnarchiveStudioTemplate(
   // No write, no delete. Archiving twice must not withdraw twice — the
   // withdrawal is a consequence of the transition, not of the request.
   //
+  // A fast path, not the guarantee: this row was read before the transaction
+  // below opened, so it is outside the row lock and two concurrent archives
+  // both clear it. The compare-and-swap inside the transaction is the
+  // authoritative one; this only saves them a transaction in the common case.
+  //
   // The one place "already there" and "apply the transition" differ
   // observably: both archiving and un-archiving force `isActive: false`
   // below, but this early return touches nothing. So `?state=unarchived`
@@ -203,18 +213,51 @@ export async function archiveOrUnarchiveStudioTemplate(
 
   return db.$transaction(
     async (tx) => {
-      await tx.studioClassTemplate.update({
-        where: { id: templateId },
-        data: { isArchived: archiving, isActive: false },
+      // Compare-and-swap, mirroring `archiveOrUnarchiveTemplate` — see there
+      // for what a plain `update` cost: the loser of a race overwrote the
+      // winner's `archivedAt`/`withdrawnCount` with a `0` its own
+      // `deleteMany` produced only because the winner had already deleted
+      // those classes. Constraining the write to `isArchived: !archiving`
+      // makes the transition itself the thing that can happen only once.
+      //
+      // Still the transaction's first statement, deliberately: this is what
+      // takes the row lock `claimStudioTemplateForGeneration`
+      // (studio-class-generator.ts) holds with its `FOR UPDATE`, and the
+      // timeout below exists for the wait that lock can impose.
+      const swapped = await tx.studioClassTemplate.updateMany({
+        where: { id: templateId, isArchived: !archiving },
+        data: {
+          isArchived: archiving,
+          isActive: false,
+          // Folded in rather than issued as a second `update`: `null` depends
+          // on nothing this transaction has yet to do, unlike the archiving
+          // arm's `withdrawnCount` below.
+          ...(archiving ? {} : { archivedAt: null, withdrawnCount: null }),
+        },
       });
 
+      if (swapped.count === 0) {
+        // Another request already applied the transition, or the row is gone.
+        // Read which rather than assuming; a row that still exists
+        // necessarily has `isArchived === archiving` now. Re-read rather than
+        // reusing the snapshot from the top of this function — that one still
+        // carries the value the winner just falsified.
+        const current = await tx.studioClassTemplate.findUnique({ where: { id: templateId } });
+        if (!current) return { ok: false as const, reason: 'not_found' as const };
+        return { ok: true as const, action: 'unchanged' as const, template: current };
+      }
+
       if (!archiving) {
-        const cleared = await tx.studioClassTemplate.update({
-          where: { id: templateId },
-          data: { archivedAt: null, withdrawnCount: null },
-        });
+        // `updateMany` returns a count, not a row, and every arm of the
+        // contract carries a template. Safe to read back here specifically
+        // because the CAS above holds this row's lock until we commit — the
+        // same lock-then-read pattern the generator's claim uses.
+        //
         // A live template has no withdrawal to report. Leaving a stale count
         // on it would be worse than having none (#97).
+        const cleared = await tx.studioClassTemplate.findUniqueOrThrow({
+          where: { id: templateId },
+        });
         return { ok: true as const, action: 'unarchived' as const, template: cleared };
       }
 
@@ -249,8 +292,10 @@ export async function archiveOrUnarchiveStudioTemplate(
       });
 
       // Written from the delete's own `count`, inside the same transaction —
-      // see `archiveOrUnarchiveTemplate` for why this is a second `update`
-      // rather than folded into the first (#97).
+      // see `archiveOrUnarchiveTemplate` for why this is a second statement
+      // rather than folded into the CAS (#97). A plain single-record `update`
+      // is enough: the CAS's lock is still held, so nothing can have moved
+      // this row since.
       const recorded = await tx.studioClassTemplate.update({
         where: { id: templateId },
         data: { archivedAt: now, withdrawnCount: deleted },
@@ -258,13 +303,13 @@ export async function archiveOrUnarchiveStudioTemplate(
 
       return { ok: true as const, action: 'archived' as const, template: recorded, deleted, remaining };
     },
-    // This `update` takes the same row lock `claimStudioTemplateForGeneration`
-    // (studio-class-generator.ts) holds with its `FOR UPDATE` for the
-    // duration of its own per-template transaction — that claim is what gives
-    // this the claim-and-lock treatment, not the timeout below; this archive
-    // can block on a sweep in progress today. The 10s figure only matches the
-    // sweep's own transaction timeout so Prisma's 5s default does not abort
-    // this update while it waits on that lock — a loaded VPS can exceed 5s,
+    // The compare-and-swap above takes the same row lock
+    // `claimStudioTemplateForGeneration` (studio-class-generator.ts) holds with
+    // its `FOR UPDATE` for the duration of its own per-template transaction —
+    // that claim is what gives this the claim-and-lock treatment, not the
+    // timeout below; this archive can block on a sweep in progress today. The
+    // 10s figure only matches the sweep's own transaction timeout so Prisma's
+    // 5s default does not abort this update while it waits — a VPS can exceed 5s,
     // which would otherwise turn an ordinary archive click into an opaque
     // P2028.
     { timeout: 10_000 },
