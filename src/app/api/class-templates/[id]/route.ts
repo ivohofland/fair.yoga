@@ -102,8 +102,13 @@ export const PATCH = withErrorHandler(async (
     // like "archived, and nothing matched".
     if (result.ok) {
       return result.action === 'archived'
-        ? respondOk({ ...result.template, deleted: result.deleted, remaining: result.remaining })
-        : respondOk(result.template);
+        ? respondOk({
+            ...result.template,
+            action: result.action,
+            deleted: result.deleted,
+            remaining: result.remaining,
+          })
+        : respondOk({ ...result.template, action: result.action });
     }
 
     if (result.reason === 'not_found') return respondError('Class template not found', 404);

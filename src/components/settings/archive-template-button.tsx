@@ -10,11 +10,19 @@ interface ArchiveTemplateButtonProps {
   isArchived: boolean;
 }
 
-/** Shape of the `data` payload on a successful archive/un-archive PATCH. */
-interface ArchiveTemplateResponse {
-  deleted: number;
-  remaining: number;
-}
+/**
+ * Shape of the `data` payload on a successful archive/un-archive PATCH.
+ *
+ * A union, not two optional numbers: un-archiving deletes nothing and the
+ * route omits the counts entirely rather than sending zeros that would read
+ * like a real archive matching nothing. Discriminating on `action` also means
+ * the confirmation follows what the server actually did, rather than the
+ * `isArchived` prop captured at the last render — which a second tab can
+ * leave stale.
+ */
+type ArchiveTemplateResponse =
+  | { action: 'archived'; deleted: number; remaining: number }
+  | { action: 'unarchived' };
 
 export function ArchiveTemplateButton({ templateId, isArchived }: ArchiveTemplateButtonProps) {
   const router = useRouter();
@@ -35,7 +43,7 @@ export function ArchiveTemplateButton({ templateId, isArchived }: ArchiveTemplat
 
         // Only the archiving direction gets a message — un-archiving deletes
         // nothing and needs no explanation.
-        if (!isArchived) {
+        if (data.action === 'archived') {
           setMessage(archiveMessage(data.deleted, data.remaining));
         }
         router.refresh();
