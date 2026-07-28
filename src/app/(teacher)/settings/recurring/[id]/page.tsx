@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/layout/page-header';
 import { TemplateForm } from '@/components/settings/template-form';
 import { ToggleTemplateButton } from '@/components/settings/toggle-template-button';
 import { ArchiveTemplateButton } from '@/components/settings/archive-template-button';
+import { ArchivedRecord } from '@/components/settings/archived-record';
 
 export default async function EditTemplatePage({
   params,
@@ -48,6 +49,10 @@ export default async function EditTemplatePage({
       />
 
       <section className="mt-8 pt-6 border-t border-border flex flex-col gap-4">
+        <ArchivedRecord
+          archivedAt={template.archivedAt}
+          withdrawnCount={template.withdrawnCount}
+        />
         {!template.isArchived && (
           <ToggleTemplateButton templateId={template.id} isActive={template.isActive} />
         )}

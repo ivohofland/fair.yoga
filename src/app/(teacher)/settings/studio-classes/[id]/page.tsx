@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/layout/page-header';
 import { StudioTemplateForm } from '@/components/settings/studio-template-form';
 import { ToggleStudioTemplateButton } from '@/components/settings/toggle-studio-template-button';
 import { ArchiveStudioTemplateButton } from '@/components/settings/archive-studio-template-button';
+import { ArchivedRecord } from '@/components/settings/archived-record';
 
 export default async function EditStudioTemplatePage({
   params,
@@ -40,6 +41,10 @@ export default async function EditStudioTemplatePage({
       />
 
       <section className="mt-8 pt-6 border-t border-border flex flex-col gap-4">
+        <ArchivedRecord
+          archivedAt={template.archivedAt}
+          withdrawnCount={template.withdrawnCount}
+        />
         {!template.isArchived && (
           <ToggleStudioTemplateButton templateId={template.id} isActive={template.isActive} />
         )}
