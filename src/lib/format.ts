@@ -31,6 +31,22 @@ export function paymentStateText(status: string): { label: string; className: st
 }
 
 /**
+ * Shared by both date formatters below, which want the same abbreviations —
+ * `Jun`, not `June` and not a locale's idea of either. Module level rather than
+ * a `const` inside each: it was declared twice, twenty lines apart, and rebuilt
+ * on every call.
+ *
+ * Deliberately not `toLocaleString`: these formatters read their argument with
+ * UTC accessors on purpose (see below), and a locale-aware month would have to
+ * be told the same, at which point a fixed English array is the honest version
+ * of what this already is.
+ */
+const MONTHS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+/**
  * A class's day, as the schedule and bookings views render it: `Thursday, Jun 12`.
  *
  * UTC accessors throughout: `Class.date` is a `@db.Date` (midnight UTC) and the
@@ -40,11 +56,7 @@ export function paymentStateText(status: string): { label: string; className: st
 export function formatDayHeader(date: Date): string {
   const d = new Date(date);
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
-  return `${days[d.getUTCDay()]}, ${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
+  return `${days[d.getUTCDay()]}, ${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
 }
 
 /**
@@ -71,9 +83,5 @@ export function formatDayHeader(date: Date): string {
  */
 export function formatHistoricalDate(date: Date): string {
   const d = new Date(date);
-  const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
-  return `${d.getUTCDate()} ${months[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
