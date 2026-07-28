@@ -153,6 +153,13 @@ from the pre-delete count rather than the delete's own result: the "matches
   asserting the two agree — but it is a denormalised count, and denormalised
   counts are a category that rots. If a second deletion path ever appears, this
   column needs revisiting rather than extending.
+- **`isArchived` does not imply `archivedAt`.** GDPR erasure archives every
+  template of an erased teacher in bulk (`src/services/gdpr.ts:360`) and writes
+  no record, so those rows carry `isArchived: true` with both new columns
+  `null`. Harmless — the teacher is gone and the detail page unreachable — and
+  the component's `if (!archivedAt) return null` keeps it invisible. Recorded
+  because the tempting invariant is false: this is a second *archiving* path,
+  distinct from the second *deletion* path the bullet above anticipates.
 - **Un-archive clearing the record** means a teacher who un-archives loses the
   note of what the previous archive withdrew. That is correct — those classes
   are still gone, but the template is live again and the line would be
