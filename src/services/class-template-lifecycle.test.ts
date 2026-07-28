@@ -755,4 +755,31 @@ describe('pauseOrResumeTemplate (DB)', () => {
     const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
     expect(after.isActive).toBe(false);
   });
+
+  /**
+   * The guard order in `pauseOrResumeTemplate` is deliberate: `unchanged`
+   * must be checked before the `archived` guard, because archiving forces
+   * `isActive: false` — so `?state=paused` on an archived template is
+   * already true and there is nothing to refuse. Swap the two guards and
+   * every other test in this file still passes; only this one would start
+   * seeing a 409 (`reason: 'archived'`) where it should see a 200
+   * `unchanged` — reachable from exactly the stale-tab case #98 is about:
+   * tab A archives, tab B still shows an active template and offers "Pause
+   * recurring class".
+   */
+  it('an archived template is already paused — pausing it again is unchanged, not a 409', async () => {
+    const t = await makeTemplate('Archived Then Paused');
+    const archived = await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived');
+    expect(archived.ok).toBe(true);
+
+    const result = await pauseOrResumeTemplate(prisma, t.id, teacherId, 'paused');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.action).toBe('unchanged');
+
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.isActive).toBe(false);
+    expect(after.isArchived).toBe(true);
+  });
 });

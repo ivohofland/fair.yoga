@@ -453,6 +453,11 @@ describe('PATCH /api/class-templates/[id]', () => {
       headers: cookie(sessionToken),
     });
     expect(res.status).toBe(400);
+
+    // Same guarantee as the no-state case above — an unrecognised value is
+    // rejected whole, not partially applied.
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
+    expect(after.isActive).toBe(true);
   });
 
   /**
@@ -519,6 +524,77 @@ describe('PATCH /api/class-templates/[id]', () => {
     const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
     expect(after.isArchived).toBe(true);
     expect(await prisma.class.count({ where: { templateId: template.id } })).toBe(survivors);
+  });
+
+  // Same code path as the two idempotency cases above (both arms share one
+  // `template.isActive === desiredActive` / `template.isArchived === archiving`
+  // guard), but the spec asks for "the same request twice is idempotent"
+  // without qualifying which of the four values — cheap insurance that the
+  // other two reach it too.
+  it('is idempotent: activating twice leaves the template active', async () => {
+    const create = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify(templateBody('Twice Active')),
+    });
+    const { data: template } = (await create.json()) as { data: { id: string } };
+
+    // Pause first so the template starts inactive — activating an
+    // already-active template would be `unchanged` on the very first call.
+    const pause = await fetch(`${BASE_URL}/api/class-templates/${template.id}?state=paused`, {
+      method: 'PATCH',
+      headers: cookie(sessionToken),
+    });
+    expect(pause.status).toBe(200);
+
+    const activate = () =>
+      fetch(`${BASE_URL}/api/class-templates/${template.id}?state=active`, {
+        method: 'PATCH',
+        headers: cookie(sessionToken),
+      });
+
+    const first = await activate();
+    expect(first.status).toBe(200);
+    expect(((await first.json()) as { data: { action: string } }).data.action).toBe('active');
+
+    const second = await activate();
+    expect(second.status).toBe(200);
+    expect(((await second.json()) as { data: { action: string } }).data.action).toBe('unchanged');
+
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
+    expect(after.isActive).toBe(true);
+  });
+
+  it('is idempotent: un-archiving twice leaves the template un-archived', async () => {
+    const create = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify(templateBody('Twice Unarchived')),
+    });
+    const { data: template } = (await create.json()) as { data: { id: string } };
+
+    const archive = await fetch(`${BASE_URL}/api/class-templates/${template.id}?state=archived`, {
+      method: 'PATCH',
+      headers: cookie(sessionToken),
+    });
+    expect(archive.status).toBe(200);
+
+    const unarchive = () =>
+      fetch(`${BASE_URL}/api/class-templates/${template.id}?state=unarchived`, {
+        method: 'PATCH',
+        headers: cookie(sessionToken),
+      });
+
+    const first = await unarchive();
+    expect(first.status).toBe(200);
+    expect(((await first.json()) as { data: { action: string } }).data.action).toBe('unarchived');
+
+    const second = await unarchive();
+    expect(second.status).toBe(200);
+    expect(((await second.json()) as { data: { action: string } }).data.action).toBe('unchanged');
+
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
+    expect(after.isArchived).toBe(false);
   });
 });
 

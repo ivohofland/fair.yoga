@@ -268,7 +268,12 @@ export async function updateClassTemplate(
 // Pause / resume and archive / un-archive (#86)
 // ---------------------------------------------------------------------------
 
-/** The furthest-out class still on the schedule, for the pause confirmation. */
+/**
+ * Outcome of a pause/resume PATCH. `paused` carries the furthest-out class
+ * still on the schedule, for the pause confirmation; `active` and
+ * `unchanged` report nothing beyond the template itself — resuming needs no
+ * explanation, and `unchanged` describes a request that changed nothing.
+ */
 export type PauseTemplateResult =
   | {
       ok: true;
@@ -340,6 +345,10 @@ export async function pauseOrResumeTemplate(
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
+  // Same reason as the drop further down: `PauseTemplateResult` carries a
+  // plain `ClassTemplate`, so the joined `teacher` this include added is
+  // dropped rather than leaked back to the caller — including on this
+  // early-return path, before any write happens.
   const { teacher: _t, ...bare } = template;
   void _t;
 
@@ -370,10 +379,18 @@ export async function pauseOrResumeTemplate(
     { timeout: 10_000 },
   );
 
+  // The include above is only for `generateInstancesForTemplate`'s benefit —
+  // `PauseTemplateResult` carries a plain `ClassTemplate`, so the joined
+  // `teacher` is dropped rather than leaked back to the caller.
   const { teacher, ...template_ } = updated;
   void teacher;
 
   if (!desiredActive) {
+    // `gte` today, not `gt`: this reports what is still on the schedule, and
+    // today's class is still on it. Pause deletes nothing, so there is no
+    // spare-today carve-out here to mirror — using the delete's `gt` boundary
+    // would tell a teacher whose only remaining class is today's that nothing
+    // is scheduled, while it sits on their schedule and open on their page.
     const today = startOfLocalDay(new Date(), template.teacher.defaultTimezone);
     const lastScheduled = await db.class.findFirst({
       where: scheduledWhere(templateId, { gte: today }),
