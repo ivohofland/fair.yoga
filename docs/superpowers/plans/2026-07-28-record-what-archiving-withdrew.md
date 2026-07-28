@@ -432,8 +432,8 @@ git commit -m "feat: show what archiving withdrew on the template's own page (#9
 
 - [ ] `npx tsc --noEmit` — clean
 - [ ] `npm run lint` — clean
-- [ ] `npx vitest run --project unit` — 398 passing
-- [ ] `npx vitest run --project components` — 28 passing
+- [ ] `npx vitest run --project unit` — 403 passing (398 + 5 for `formatHistoricalDate`)
+- [ ] `npx vitest run --project components` — 30 passing (28 + the timezone and year-boundary cases)
 - [ ] `npx vitest run --project integration` — 214 passing (needs the app on `:3000`; do not restart it. `signup-api` 429s are the local rate limiter, not this change)
 - [ ] `npx playwright test` — 118 passing
 - [ ] `git status` — the generated migration directory is committed, and `docs/backlog-roadmap.md` is still untracked
