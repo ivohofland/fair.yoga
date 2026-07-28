@@ -5,9 +5,10 @@ import { routerPush } from '../../../tests/setup/components';
 
 /**
  * This button renders no confirmation on success, only a `router.push` — but
- * that push target is inline and unasserted, the same wiring class as the
- * `?state=` derivation the toggle buttons need this layer for. See the
- * spec's scope boundary (#99).
+ * that push target is derived inline, the same wiring class as the `?state=`
+ * derivation the toggle buttons need this layer for. Nothing asserted it until
+ * this file: a button that fired the correct PATCH and then navigated to the
+ * wrong page passed the whole suite (#99).
  */
 describe('ArchiveRoomButton', () => {
   const fetchMock = vi.fn();
