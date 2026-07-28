@@ -510,7 +510,13 @@ grep -n "isArchived === archiving" src/services/class-template-lifecycle.ts
 npx vitest run --project integration tests/integration/class-templates-api.test.ts
 ```
 
-Expected: `'is idempotent: archiving twice does not withdraw twice'` FAILS with `expected 'unarchived' to be 'unchanged'`. Restore with `git checkout -- src/services/class-template-lifecycle.ts`.
+Expected: `'is idempotent: archiving twice does not withdraw twice'` FAILS with
+`expected 'archived' to be 'unchanged'` — not `'unarchived'`. This mutation removes
+only the early return; `archiving` is still derived from `target`, so a second call
+re-archives rather than inverting. (The `'unarchived'` failure belongs to the *other*
+mutation the spec names — restoring `archiving = !template.isArchived` — which also
+breaks the `isArchived` assertion. Both are killed by this test; only this prose was
+wrong.) Restore with `git checkout -- src/services/class-template-lifecycle.ts`.
 
 - [ ] **Step 14: Commit**
 
