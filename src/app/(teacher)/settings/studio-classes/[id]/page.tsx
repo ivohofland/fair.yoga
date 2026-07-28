@@ -17,6 +17,7 @@ export default async function EditStudioTemplatePage({
 
   const template = await prisma.studioClassTemplate.findUnique({
     where: { id },
+    include: { teacher: true },
   });
 
   if (!template || template.teacherId !== session.teacherId) {
@@ -44,6 +45,7 @@ export default async function EditStudioTemplatePage({
         <ArchivedRecord
           archivedAt={template.archivedAt}
           withdrawnCount={template.withdrawnCount}
+          timeZone={template.teacher.defaultTimezone}
         />
         {!template.isArchived && (
           <ToggleStudioTemplateButton templateId={template.id} isActive={template.isActive} />

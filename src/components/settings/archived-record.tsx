@@ -1,8 +1,10 @@
 import { formatDayHeader } from '@/lib/format';
+import { startOfLocalDay } from '@/lib/timezone';
 
 interface ArchivedRecordProps {
   archivedAt: Date | null;
   withdrawnCount: number | null;
+  timeZone: string;
 }
 
 /**
@@ -18,21 +20,30 @@ interface ArchivedRecordProps {
  * question nobody asked and reads like something went wrong. The date still
  * shows, because when the template was shelved is worth knowing either way.
  *
- * `remaining` is deliberately not here. It is a live query on the page that
- * uses this, and truer computed than frozen — a teacher who cancels one of the
- * survivors afterwards should see that number drop.
+ * `archivedAt` is a true instant (written as `now` at click time), not a
+ * `@db.Date` calendar date — so it is converted to the teacher's calendar day
+ * with `startOfLocalDay` before `formatDayHeader` ever sees it. `formatDayHeader`
+ * reads with UTC accessors specifically because it expects a value already
+ * pinned to local midnight; feeding it the raw instant would let the teacher's
+ * UTC offset shift the displayed date, same as `startOfLocalDay`'s own doc
+ * warns against.
+ *
+ * `remaining` is deliberately not here. It is returned once, by the archive
+ * PATCH response, and shown only in the transient confirmation message right
+ * after the click — never persisted, never recomputed on page load. Freezing
+ * it here would go stale the moment a teacher cancels one of the survivors.
  */
-export function ArchivedRecord({ archivedAt, withdrawnCount }: ArchivedRecordProps) {
+export function ArchivedRecord({ archivedAt, withdrawnCount, timeZone }: ArchivedRecordProps) {
   if (!archivedAt) return null;
 
   const withdrawn =
-    withdrawnCount && withdrawnCount > 0
+    withdrawnCount !== null && withdrawnCount > 0
       ? ` · ${withdrawnCount} ${withdrawnCount === 1 ? 'class' : 'classes'} withdrawn`
       : '';
 
   return (
     <p className="type-caption">
-      {`Archived ${formatDayHeader(archivedAt)}${withdrawn}`}
+      {`Archived ${formatDayHeader(startOfLocalDay(archivedAt, timeZone))}${withdrawn}`}
     </p>
   );
 }

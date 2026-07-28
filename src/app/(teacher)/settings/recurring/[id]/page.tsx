@@ -17,7 +17,7 @@ export default async function EditTemplatePage({
 
   const template = await prisma.classTemplate.findUnique({
     where: { id },
-    include: { teacherRoom: { include: { room: true } } },
+    include: { teacherRoom: { include: { room: true } }, teacher: true },
   });
 
   if (!template || template.teacherId !== session.teacherId) {
@@ -52,6 +52,7 @@ export default async function EditTemplatePage({
         <ArchivedRecord
           archivedAt={template.archivedAt}
           withdrawnCount={template.withdrawnCount}
+          timeZone={template.teacher.defaultTimezone}
         />
         {!template.isArchived && (
           <ToggleTemplateButton templateId={template.id} isActive={template.isActive} />
