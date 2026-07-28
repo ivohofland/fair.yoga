@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { generateStudioClassInstances } from './studio-class-generator';
+import { generateStudioClassInstances, claimStudioTemplateForGeneration } from './studio-class-generator';
+import { archiveOrUnarchiveStudioTemplate } from './studio-class-template-lifecycle';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -107,5 +108,135 @@ describe('generateStudioClassInstances (DB)', () => {
     await generateStudioClassInstances(prisma);
 
     expect(await prisma.studioClass.count({ where: { templateId: shelvedTemplateId } })).toBe(0);
+  });
+
+  describe('claimStudioTemplateForGeneration', () => {
+    const claim = (id: string) =>
+      prisma.$transaction((tx) => claimStudioTemplateForGeneration(tx, id));
+
+    afterEach(async () => {
+      await prisma.studioClassTemplate.update({
+        where: { id: templateId },
+        data: { isActive: true, isArchived: false },
+      });
+    });
+
+    it('claims a live template', async () => {
+      expect(await claim(templateId)).toBe(true);
+    });
+
+    it('refuses an archived template', async () => {
+      await prisma.studioClassTemplate.update({
+        where: { id: templateId },
+        data: { isArchived: true },
+      });
+      expect(await claim(templateId)).toBe(false);
+    });
+
+    it('refuses a paused template', async () => {
+      await prisma.studioClassTemplate.update({
+        where: { id: templateId },
+        data: { isActive: false },
+      });
+      expect(await claim(templateId)).toBe(false);
+    });
+
+    it('refuses a template that no longer exists', async () => {
+      expect(await claim('00000000-0000-0000-0000-000000000000')).toBe(false);
+    });
+
+    /**
+     * The other interleaving. The mid-sweep test below covers "archive holds the
+     * lock, generator waits"; this covers "generator holds it, archive waits".
+     * The predicate cases above pass with or without `FOR UPDATE` — these two do
+     * not.
+     */
+    it('makes a concurrent archive wait until the claim transaction commits', async () => {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+
+      const claiming = prisma.$transaction(
+        async (tx) => {
+          expect(await claimStudioTemplateForGeneration(tx, templateId)).toBe(true);
+          await held;
+        },
+        { timeout: 15_000 },
+      );
+
+      await new Promise((r) => setTimeout(r, 100));
+
+      let archiveSettled = false;
+      const archiving = archiveOrUnarchiveStudioTemplate(prisma, templateId, teacherId).then((r) => {
+        archiveSettled = true;
+        return r;
+      });
+
+      await new Promise((r) => setTimeout(r, 300));
+      expect(archiveSettled).toBe(false);
+
+      release();
+      await claiming;
+      const result = await archiving;
+      expect(result.ok).toBe(true);
+    });
+  });
+
+  describe('generateStudioClassInstances — archive mid-sweep', () => {
+    afterEach(async () => {
+      await prisma.studioClass.deleteMany({ where: { templateId } });
+      await prisma.studioClassTemplate.update({
+        where: { id: templateId },
+        data: { isActive: true, isArchived: false },
+      });
+    });
+
+    /**
+     * The studio half of the #95 race. Same lever as the class family's test:
+     * an uncommitted archive is invisible to the sweep's own `findMany`, so the
+     * template enters the loop and the claim is what has to stop it.
+     */
+    it('does not generate for a template archived after the list was read', async () => {
+      // Task 1 hit this on the class side: a preceding pre-existing test can
+      // leave stray rows for this templateId, which fails the baseline
+      // assertion below for reasons unrelated to the lock. Clear first — the
+      // final assertion still carries the teeth.
+      await prisma.studioClass.deleteMany({ where: { templateId } });
+      expect(await prisma.studioClass.count({ where: { templateId } })).toBe(0);
+
+      let commit!: () => void;
+      const held = new Promise<void>((resolve) => {
+        commit = resolve;
+      });
+
+      const archiving = prisma.$transaction(
+        async (tx) => {
+          await tx.studioClassTemplate.update({
+            where: { id: templateId },
+            data: { isArchived: true, isActive: false },
+          });
+          await held;
+        },
+        { timeout: 15_000 },
+      );
+
+      await new Promise((r) => setTimeout(r, 100));
+
+      let sweepSettled = false;
+      const sweeping = generateStudioClassInstances(prisma).then((n) => {
+        sweepSettled = true;
+        return n;
+      });
+
+      await new Promise((r) => setTimeout(r, 300));
+      expect(sweepSettled).toBe(false);
+
+      commit();
+      await archiving;
+      await sweeping;
+
+      expect(await prisma.studioClass.count({ where: { templateId } })).toBe(0);
+    });
   });
 });
