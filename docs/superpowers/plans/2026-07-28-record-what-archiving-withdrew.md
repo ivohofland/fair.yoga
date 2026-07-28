@@ -112,14 +112,21 @@ Add to `src/services/class-template-lifecycle.test.ts`, inside the existing `des
    */
   it('records the deleted count, not the scheduled count', async () => {
     const t = await makeTemplate('Withdrawal Excludes Today');
+    // TWO future days, not one. With a single future class the numbers come
+    // out 1 and 1, and `withdrawnCount: remaining` is indistinguishable from
+    // `withdrawnCount: deleted` — the test reads as discriminating while
+    // discriminating nothing. `@@unique([templateId, date])` means a second
+    // class "today" is impossible, so the second day is where the gap comes
+    // from.
     await makeClass(t.id, { date: futureOn(5) });
+    await makeClass(t.id, { date: futureOn(6) });
     await makeClass(t.id, { date: today() });
 
     const archived = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'));
 
-    expect(archived.deleted).toBe(1);
+    expect(archived.deleted).toBe(2);
     expect(archived.remaining).toBe(1);
-    expect(archived.template.withdrawnCount).toBe(1);
+    expect(archived.template.withdrawnCount).toBe(2);
   });
 
   /**
@@ -225,7 +232,7 @@ Expected: PASS, including the pre-existing archive tests — several assert on t
 
 Add the same five tests to `src/services/studio-class-template-lifecycle.test.ts`, using that file's own fixtures, and make the same two service changes in `archiveOrUnarchiveStudioTemplate` against `tx.studioClassTemplate`.
 
-**Read the finished class version first** — the studio one should be recognisably its sibling. The studio delete has no charged-registration filter and its `remaining` counts uncancelled rows, so the "records the deleted count, not the scheduled count" test needs a studio-shaped fixture: one future class plus one dated today, where the delete spares today's.
+**Read the finished class version first** — the studio one should be recognisably its sibling. The studio delete has no charged-registration filter and its `remaining` counts uncancelled rows, so the "records the deleted count, not the scheduled count" test needs a studio-shaped fixture: **two** future days plus one dated today, giving `deleted` 2 and `remaining` 1. One future day is not enough — the numbers come out 1 and 1 and the test discriminates nothing while appearing to.
 
 Run: `npx vitest run --project unit src/services/studio-class-template-lifecycle.test.ts`
 Expected: PASS.
@@ -238,7 +245,7 @@ git add -A   # `git checkout --` restores from the index; docs/backlog-roadmap.m
 ```
 
 **Mutation A — write the count from a query instead of the delete.** In the class service, replace `withdrawnCount: deleted` with `withdrawnCount: remaining`. Confirm by reading the line that it landed in the service, then run the class test file.
-Expected: `'records the deleted count, not the scheduled count'` FAILS (1 vs 1 would pass by coincidence in the other tests — this is the case built to separate them). If it passes, the fixture is not producing different numbers and the test is not doing its job.
+Expected: `'records the deleted count, not the scheduled count'` FAILS, by name — not merely that something failed. That case is the only one built to separate `deleted` from `remaining`; the others catch this mutation only by luck of their fixtures. If the named test passes, the fixture is not producing different numbers and the test is not doing its job.
 
 **Mutation B — move the record outside the transaction.** Restore, then move the second `update` to after `db.$transaction(...)` returns, using `db` rather than `tx`. Run again.
 Expected: the tests still pass — this mutation is *not* caught, and that is worth knowing rather than assuming. Report it. The transaction requirement is defended by the Global Constraint and by review, not by a test, because reproducing a mid-transaction rollback here would take more machinery than the guarantee is worth.
