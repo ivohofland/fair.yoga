@@ -238,10 +238,17 @@ The first run may fail to collect if the project or setup file is wrong — that
 - [ ] **Step 6: Verify CI would run this project**
 
 ```bash
-npx vitest run 2>&1 | grep -E "components|unit|integration"
+npx vitest run --reporter=verbose 2>&1 | grep -c "|components|"
 ```
 
-Expected: all three project names appear. `npm test` is `vitest run` with no `--project`, and `.github/workflows/ci.yml:150` runs exactly that, so this is the check that the layer is not invisible to CI. If `components` does not appear here, stop and fix the config — everything downstream is worthless without it.
+Expected: a non-zero count.
+
+**Use `--reporter=verbose`, not the default.** Vitest's default reporter tags a
+file with its project name only when that file *fails*, so grepping a default
+run for project names proves nothing on a green run — it appears to work only
+when something unrelated is already broken. A useful cross-check is the file
+count: `Test Files (N)` on the full run should equal the three projects'
+individual counts summed. `npm test` is `vitest run` with no `--project`, and `.github/workflows/ci.yml:150` runs exactly that, so this is the check that the layer is not invisible to CI. If `components` does not appear here, stop and fix the config — everything downstream is worthless without it.
 
 - [ ] **Step 7: Verify the new file lints and type-checks**
 
@@ -375,7 +382,10 @@ npm run lint
 npx vitest run
 ```
 
-Expected: clean, and all three projects collected. Baselines before this plan: 388 unit, 214 integration, 0 component.
+Expected: clean. Confirm all three projects are collected with
+`npx vitest run --reporter=verbose 2>&1 | grep -c "|components|"` returning a non-zero
+count — the default reporter only tags failing files by project, so a bare run proves
+nothing on green. Baselines before this plan: 388 unit, 214 integration, 0 component.
 
 - [ ] **Step 5: Commit**
 
@@ -394,7 +404,9 @@ git commit -m "test: cover the remaining five toggle buttons' wiring (#99)"
 
 - [ ] `npx tsc --noEmit` — clean
 - [ ] `npm run lint` — clean
-- [ ] `npx vitest run` — all three projects collected; 388 unit, 214 integration, 24 component
+- [ ] `npx vitest run --reporter=verbose` — all three projects collected (grep for
+      `|components|`; the default reporter only tags failures, so it cannot prove this);
+      388 unit, 214 integration, 24 component
 - [ ] `npx vitest run --project integration` — 214 passing (needs the app on `:3000`; do not restart it. `signup-api` 429s are the local rate limiter, not this change)
 - [ ] `npx playwright test` — 118 passing
 - [ ] `git diff main -- package.json` shows exactly three new devDependencies and nothing else
