@@ -17,7 +17,7 @@ export default async function EditStudioTemplatePage({
 
   const template = await prisma.studioClassTemplate.findUnique({
     where: { id },
-    include: { teacher: true },
+    include: { teacher: { select: { defaultTimezone: true } } },
   });
 
   if (!template || template.teacherId !== session.teacherId) {

@@ -17,7 +17,10 @@ export default async function EditTemplatePage({
 
   const template = await prisma.classTemplate.findUnique({
     where: { id },
-    include: { teacherRoom: { include: { room: true } }, teacher: true },
+    include: {
+      teacherRoom: { include: { room: true } },
+      teacher: { select: { defaultTimezone: true } },
+    },
   });
 
   if (!template || template.teacherId !== session.teacherId) {
