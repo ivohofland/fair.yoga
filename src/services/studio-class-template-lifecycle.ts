@@ -144,42 +144,51 @@ export async function archiveOrUnarchiveStudioTemplate(
   const archiving = !template.isArchived;
   const timeZone = template.teacher.defaultTimezone;
 
-  return db.$transaction(async (tx) => {
-    const updated = await tx.studioClassTemplate.update({
-      where: { id: templateId },
-      data: { isArchived: archiving, isActive: false },
-    });
+  return db.$transaction(
+    async (tx) => {
+      const updated = await tx.studioClassTemplate.update({
+        where: { id: templateId },
+        data: { isArchived: archiving, isActive: false },
+      });
 
-    if (!archiving) return { ok: true as const, action: 'unarchived' as const, template: updated };
+      if (!archiving) return { ok: true as const, action: 'unarchived' as const, template: updated };
 
-    // The teacher's calendar today, not `new Date()` — `StudioClass.date` is
-    // `@db.Date`, so both sides of every comparison below are calendar dates.
-    // See `archiveOrUnarchiveTemplate` for what comparing the column to a raw
-    // instant costs in each direction.
-    const today = startOfLocalDay(new Date(), timeZone);
+      // The teacher's calendar today, not `new Date()` — `StudioClass.date` is
+      // `@db.Date`, so both sides of every comparison below are calendar dates.
+      // See `archiveOrUnarchiveTemplate` for what comparing the column to a raw
+      // instant costs in each direction.
+      const today = startOfLocalDay(new Date(), timeZone);
 
-    // Deliberately one statement, not a `findMany` followed by a
-    // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
-    // class get cancelled in the gap between them under READ COMMITTED, and
-    // the delete — keyed only on the ids already read — would not re-check
-    // it, destroying a class that became an income record after the read.
-    // Passing the predicate straight to `deleteMany` makes Postgres
-    // re-evaluate it at execution time, and its returned `count` is the
-    // number of rows that actually matched then — not a stale count from an
-    // earlier read. Do not "optimise" this back into a read-then-delete.
-    const { count: deleted } = await tx.studioClass.deleteMany({
-      where: scheduledWhere(templateId, { gt: today }),
-    });
+      // Deliberately one statement, not a `findMany` followed by a
+      // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
+      // class get cancelled in the gap between them under READ COMMITTED, and
+      // the delete — keyed only on the ids already read — would not re-check
+      // it, destroying a class that became an income record after the read.
+      // Passing the predicate straight to `deleteMany` makes Postgres
+      // re-evaluate it at execution time, and its returned `count` is the
+      // number of rows that actually matched then — not a stale count from an
+      // earlier read. Do not "optimise" this back into a read-then-delete.
+      const { count: deleted } = await tx.studioClass.deleteMany({
+        where: scheduledWhere(templateId, { gt: today }),
+      });
 
-    // `gte`, where the delete used `gt`: the delete spares a class dated
-    // today, and counting with its boundary would undercount that same
-    // survivor. No charged-status filter is needed here, unlike the class
-    // sibling — `StudioClass` has no registrations to consult, so every
-    // uncancelled row in scope counts.
-    const remaining = await tx.studioClass.count({
-      where: scheduledWhere(templateId, { gte: today }),
-    });
+      // `gte`, where the delete used `gt`: the delete spares a class dated
+      // today, and counting with its boundary would undercount that same
+      // survivor. No charged-status filter is needed here, unlike the class
+      // sibling — `StudioClass` has no registrations to consult, so every
+      // uncancelled row in scope counts.
+      const remaining = await tx.studioClass.count({
+        where: scheduledWhere(templateId, { gte: today }),
+      });
 
-    return { ok: true as const, action: 'archived' as const, template: updated, deleted, remaining };
-  });
+      return { ok: true as const, action: 'archived' as const, template: updated, deleted, remaining };
+    },
+    // Mirrors `archiveOrUnarchiveTemplate`'s timeout ahead of Task 2, which
+    // gives the studio generator sweep the same claim-and-lock treatment
+    // class-generator.ts already has. Once that lands, this `update` can
+    // block on a sweep in progress the same way the class family's does;
+    // adding it now — rather than splitting it across two tasks — means
+    // Task 2 doesn't have to remember the other half of the symmetry.
+    { timeout: 10_000 },
+  );
 }

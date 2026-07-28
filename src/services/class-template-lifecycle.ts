@@ -332,15 +332,25 @@ export async function pauseOrResumeTemplate(
   if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
   if (template.isArchived) return { ok: false, reason: 'archived' };
 
-  const updated = await db.$transaction(async (tx) => {
-    const t = await tx.classTemplate.update({
-      where: { id: templateId },
-      data: { isActive: !template.isActive },
-      include: { teacher: { select: { defaultTimezone: true } } },
-    });
-    if (t.isActive) await generateInstancesForTemplate(tx, t);
-    return t;
-  });
+  const updated = await db.$transaction(
+    async (tx) => {
+      const t = await tx.classTemplate.update({
+        where: { id: templateId },
+        data: { isActive: !template.isActive },
+        include: { teacher: { select: { defaultTimezone: true } } },
+      });
+      if (t.isActive) await generateInstancesForTemplate(tx, t);
+      return t;
+    },
+    // This `update` takes the same row lock the generator sweep's
+    // `claimTemplateForGeneration` (class-generator.ts) holds for the
+    // duration of its own per-template transaction, so a resume can now
+    // block on a sweep in progress. Matching the sweep's 10s transaction
+    // timeout means this waits at most as long as the sweep could possibly
+    // run, not Prisma's 5s default — which a loaded VPS can exceed and turn
+    // an ordinary resume into an opaque P2028.
+    { timeout: 10_000 },
+  );
 
   // The include above is only for `generateInstancesForTemplate`'s benefit —
   // `PauseTemplateResult` carries a plain `ClassTemplate`, so the joined
@@ -393,51 +403,61 @@ export async function archiveOrUnarchiveTemplate(
   const archiving = !template.isArchived;
   const timeZone = template.teacher.defaultTimezone;
 
-  return db.$transaction(async (tx) => {
-    const updated = await tx.classTemplate.update({
-      where: { id: templateId },
-      data: { isArchived: archiving, isActive: false },
-    });
+  return db.$transaction(
+    async (tx) => {
+      const updated = await tx.classTemplate.update({
+        where: { id: templateId },
+        data: { isArchived: archiving, isActive: false },
+      });
 
-    if (!archiving) return { ok: true as const, action: 'unarchived' as const, template: updated };
+      if (!archiving) return { ok: true as const, action: 'unarchived' as const, template: updated };
 
-    // The teacher's calendar today, not `new Date()`. `Class.date` is
-    // `@db.Date`, so both sides of every comparison below are calendar dates
-    // — the comparison the generator that created these rows already makes
-    // (`class-generator.ts` filters on `classStartInstant`). Comparing the
-    // column to a raw instant instead would, east of UTC, delete a class
-    // running that same evening, and west of UTC leave tomorrow's class
-    // bookable under an archived template — the exact leak #86 exists to
-    // close.
-    const today = startOfLocalDay(new Date(), timeZone);
+      // The teacher's calendar today, not `new Date()`. `Class.date` is
+      // `@db.Date`, so both sides of every comparison below are calendar dates
+      // — the comparison the generator that created these rows already makes
+      // (`class-generator.ts` filters on `classStartInstant`). Comparing the
+      // column to a raw instant instead would, east of UTC, delete a class
+      // running that same evening, and west of UTC leave tomorrow's class
+      // bookable under an archived template — the exact leak #86 exists to
+      // close.
+      const today = startOfLocalDay(new Date(), timeZone);
 
-    // Deliberately one statement, not a `findMany` followed by a
-    // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
-    // registration commit in the gap between them under READ COMMITTED, and
-    // the delete — keyed only on the ids already read — does not re-check it,
-    // destroying a class (and cascading away a now-charged registration) that
-    // became booked after the read. Passing the predicate straight to
-    // `deleteMany` makes Postgres re-evaluate it at execution time, and its
-    // returned `count` is the number of rows that actually matched then — not
-    // a stale count from an earlier read. Do not "optimise" this back into a
-    // read-then-delete.
-    const { count: deleted } = await tx.class.deleteMany({
-      where: {
-        ...scheduledWhere(templateId, { gt: today }),
-        registrations: { none: { status: { in: [...CHARGED_STATUSES] } } },
-      },
-    });
+      // Deliberately one statement, not a `findMany` followed by a
+      // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
+      // registration commit in the gap between them under READ COMMITTED, and
+      // the delete — keyed only on the ids already read — does not re-check it,
+      // destroying a class (and cascading away a now-charged registration) that
+      // became booked after the read. Passing the predicate straight to
+      // `deleteMany` makes Postgres re-evaluate it at execution time, and its
+      // returned `count` is the number of rows that actually matched then — not
+      // a stale count from an earlier read. Do not "optimise" this back into a
+      // read-then-delete.
+      const { count: deleted } = await tx.class.deleteMany({
+        where: {
+          ...scheduledWhere(templateId, { gt: today }),
+          registrations: { none: { status: { in: [...CHARGED_STATUSES] } } },
+        },
+      });
 
-    // `gte`, where the delete used `gt`. The delete deliberately spares a
-    // class dated today — "a class hours from starting should not shift under
-    // its students", the rule `syncTemplateInstances` already applies to
-    // edits — so counting with the delete's own boundary would exclude that
-    // same survivor and tell the teacher nothing is left while the class is
-    // still open on their public page.
-    const remaining = await tx.class.count({
-      where: scheduledWhere(templateId, { gte: today }),
-    });
+      // `gte`, where the delete used `gt`. The delete deliberately spares a
+      // class dated today — "a class hours from starting should not shift under
+      // its students", the rule `syncTemplateInstances` already applies to
+      // edits — so counting with the delete's own boundary would exclude that
+      // same survivor and tell the teacher nothing is left while the class is
+      // still open on their public page.
+      const remaining = await tx.class.count({
+        where: scheduledWhere(templateId, { gte: today }),
+      });
 
-    return { ok: true as const, action: 'archived' as const, template: updated, deleted, remaining };
-  });
+      return { ok: true as const, action: 'archived' as const, template: updated, deleted, remaining };
+    },
+    // This `update` takes the same row lock the generator sweep's
+    // `claimTemplateForGeneration` (class-generator.ts) holds for the
+    // duration of its own per-template transaction, so an archive can now
+    // block on a sweep in progress. Matching the sweep's 10s transaction
+    // timeout means this waits at most as long as the sweep could possibly
+    // run, not Prisma's 5s default — which a loaded VPS can exceed and turn
+    // an ordinary archive click into an opaque P2028.
+    { timeout: 10_000 },
+  );
 }

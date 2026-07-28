@@ -154,6 +154,24 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
  * a fresh snapshot, so an archive committing between the re-read and the
  * `create` is invisible to the re-read and still lost. Do not "simplify" this
  * into a `findUnique`.
+ *
+ * Must be called with a transaction client, never a bare `PrismaClient` —
+ * `Prisma.TransactionClient` is structurally just `Omit<PrismaClient,
+ * ITXClientDenyList>`, so `claimTemplateForGeneration(prisma, id)` type-checks
+ * without complaint. It would make `SET LOCAL` a no-op (there is no
+ * transaction for "local" to scope to) and release the row lock the instant
+ * the `SELECT` completes, so the claim returns `true` while holding nothing.
+ *
+ * Do not weaken `FOR UPDATE` to `FOR NO KEY UPDATE` to stop blocking `Class`
+ * inserts — it looks like a free optimisation but isn't. `FOR UPDATE` is what
+ * makes a concurrent insert for this template impossible, which is what makes
+ * the P2002 branch in `generateInstancesForTemplate` unreachable whenever it
+ * runs after a successful claim. That branch cannot work inside this
+ * transaction anyway: Prisma does not savepoint individual queries in an
+ * interactive transaction, so a failed insert would poison the rest of it —
+ * the next query fails with `25P02`, not a clean P2002 skip. Under `FOR
+ * UPDATE` this is moot (dead code, safe); under a weaker lock it is live and
+ * broken.
  */
 export async function claimTemplateForGeneration(
   tx: Prisma.TransactionClient,
