@@ -655,12 +655,23 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     await makeClass(t.id, { date: futureOn(6) });
 
     const before = Date.now();
-    const archived = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'));
+    const archived = expectArchived(
+      await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'),
+    );
 
     expect(archived.deleted).toBe(2);
     expect(archived.template.withdrawnCount).toBe(2);
     expect(archived.template.archivedAt).not.toBeNull();
     expect(archived.template.archivedAt!.getTime()).toBeGreaterThanOrEqual(before);
+    expect(archived.template.archivedAt!.getTime()).toBeLessThanOrEqual(Date.now());
+
+    // The assertions above are all on the value the function *returned*.
+    // Re-read the row so this test also proves the write reached the
+    // database, not just the response — the two can diverge if the service
+    // ever fabricates a return value instead of persisting it.
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.withdrawnCount).toBe(2);
+    expect(after.archivedAt).not.toBeNull();
   });
 
   /**
@@ -675,7 +686,9 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     await makeClass(t.id, { date: futureOn(6) });
     await makeClass(t.id, { date: today() });
 
-    const archived = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'));
+    const archived = expectArchived(
+      await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'),
+    );
 
     expect(archived.deleted).toBe(2);
     expect(archived.remaining).toBe(1);
@@ -689,7 +702,9 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   it('records zero when there was nothing to withdraw', async () => {
     const t = await makeTemplate('Nothing To Withdraw');
 
-    const archived = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'));
+    const archived = expectArchived(
+      await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'),
+    );
 
     expect(archived.template.withdrawnCount).toBe(0);
     expect(archived.template.archivedAt).not.toBeNull();
@@ -706,11 +721,24 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
 
     expect(resumed.template.archivedAt).toBeNull();
     expect(resumed.template.withdrawnCount).toBeNull();
+
+    // As above: the assertions so far only prove what came back in the
+    // response. Re-read the row to prove the clear reached the database.
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.archivedAt).toBeNull();
+    expect(after.withdrawnCount).toBeNull();
   });
 
   /**
-   * Overwrite, not accumulate. The second archive withdrew one class; a
-   * running total would report two and describe an archive that never happened.
+   * The `unchanged` guard (`isArchived === archiving`, above) makes archiving
+   * twice in a row unreachable — the only way back to the archiving arm is
+   * through an un-archive first, and that un-archive already nulled both
+   * columns. So what this test actually walks is archive → un-archive →
+   * archive again, and what it defends is that the second archive's record
+   * reflects what it just withdrew rather than carrying the un-archive's
+   * `null` forward. It also rules out an accumulate-style write: `{
+   * increment: deleted }` against a NULL column yields NULL in SQL, not a
+   * wrong total, so that bug would fail here as `null !== 1` — never as "2".
    */
   it('overwrites the record when archiving a second time', async () => {
     const t = await makeTemplate('Archived Twice');
@@ -720,10 +748,15 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'unarchived');
 
     await makeClass(t.id, { date: futureOn(7) });
-    const second = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'));
+    const before = Date.now();
+    const second = expectArchived(
+      await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'),
+    );
 
     expect(second.deleted).toBe(1);
     expect(second.template.withdrawnCount).toBe(1);
+    expect(second.template.archivedAt).not.toBeNull();
+    expect(second.template.archivedAt!.getTime()).toBeGreaterThanOrEqual(before);
   });
 });
 
