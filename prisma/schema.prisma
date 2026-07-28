@@ -279,7 +279,7 @@ model ClassTemplate {
   /// When this template was last archived (#97).
   ///
   /// Null when no archive has recorded one — which is not the same as
-  /// `isArchived: false`. `eraseTeacher` (src/services/gdpr.ts) bulk-archives
+  /// `isArchived: false`. `deleteTeacherAccount` (src/services/gdpr.ts) bulk-archives
   /// every template of an erased teacher with an `updateMany` that writes
   /// neither this column nor `withdrawnCount`, so `isArchived: true` with both
   /// null is reachable today, as it is for every template archived before #97
@@ -368,7 +368,7 @@ model StudioClassTemplate {
   /// When this template was last archived (#97).
   ///
   /// Null when no archive has recorded one — which is not the same as
-  /// `isArchived: false`. `eraseTeacher` (src/services/gdpr.ts) bulk-archives
+  /// `isArchived: false`. `deleteTeacherAccount` (src/services/gdpr.ts) bulk-archives
   /// every studio template of an erased teacher with an `updateMany` that
   /// writes neither this column nor `withdrawnCount`, so `isArchived: true`
   /// with both null is reachable today, as it is for every template archived

@@ -238,10 +238,11 @@ export async function archiveOrUnarchiveStudioTemplate(
 
       if (swapped.count === 0) {
         // Another request already applied the transition, or the row is gone.
-        // Read which rather than assuming; a row that still exists
-        // necessarily has `isArchived === archiving` now. Re-read rather than
-        // reusing the snapshot from the top of this function — that one still
-        // carries the value the winner just falsified.
+        // Read which rather than assuming. Re-read rather than reusing the
+        // snapshot from the top of this function — that one still carries the
+        // value the winner just falsified. See the class family's twin for why
+        // the flag on the returned row can still be stale under three
+        // concurrent requests, and why locking here would not be worth it.
         const current = await tx.studioClassTemplate.findUnique({ where: { id: templateId } });
         if (!current) return { ok: false as const, reason: 'not_found' as const };
         return { ok: true as const, action: 'unchanged' as const, template: current };

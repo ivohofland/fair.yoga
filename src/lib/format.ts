@@ -68,12 +68,18 @@ export function formatDayHeader(date: Date): string {
  * while a date is near enough that "Friday, Jun 12" can only mean one day.
  *
  * That split is the intent, not a description of the callers. `formatDayHeader`
- * is not confined to upcoming dates: `src/app/(student)/bookings/page.tsx` uses
- * it for the "Past classes" section and embeds it in the bank-transfer
- * remittance string for classes already taught — dates with no expiry, printed
- * without a year. Whether that is the one place still owed a year is an open
- * question, not a settled one; do not audit callers on the assumption that it
- * already follows the rule above.
+ * is not confined to upcoming dates, in at least two places:
+ *
+ * - `src/app/(student)/bookings/page.tsx` uses it for the "Past classes"
+ *   section and embeds it in the bank-transfer remittance string for classes
+ *   already taught.
+ * - `src/app/(teacher)/schedule/past/page.tsx` queries `date: { lt: today }`
+ *   with no lower bound and renders through `ClassList`, so a class from any
+ *   past year prints without one.
+ *
+ * Both are dates with no expiry, printed without a year. Whether they are owed
+ * one is an open question, not a settled one — do not audit callers on the
+ * assumption that they already follow the rule above.
  *
  * Same UTC-accessors reasoning as `formatDayHeader`, and the same direction:
  * this expects a value already pinned to a calendar day at UTC midnight (e.g.

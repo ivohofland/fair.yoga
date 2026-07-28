@@ -516,8 +516,16 @@ export async function archiveOrUnarchiveTemplate(
         // Both clauses of the CAS constrain the row, so a zero count means
         // either another request already applied the transition or the row is
         // gone — read which rather than assuming, the same distinction #72
-        // had to make. A row that still exists necessarily has `isArchived
-        // === archiving` now, so `unchanged` is a fact, not a guess.
+        // had to make.
+        //
+        // This read takes a fresh READ COMMITTED snapshot and holds no lock:
+        // the CAS matched nothing, so it acquired none. With three concurrent
+        // requests a fourth state is possible — the winner archives, someone
+        // un-archives, and this read returns `isArchived: !archiving`. The
+        // answer is still `unchanged` for *this* request, which changed
+        // nothing, and the returned row is a real row; only the flag a caller
+        // reads off it may already be stale. Locking here to close that would
+        // serialise the no-op path against the sweep for no gain.
         //
         // Re-read rather than reusing the snapshot from the top of this
         // function: that one still says `isArchived: !archiving`, which is

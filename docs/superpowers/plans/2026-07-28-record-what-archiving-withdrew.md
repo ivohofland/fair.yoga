@@ -2,6 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **This is the as-planned record, kept for provenance. Where it and the code
+> disagree, the code and `docs/superpowers/specs/2026-07-28-record-what-archiving-withdrew-design.md`
+> are authoritative.** Review found four claims here that shipped differently:
+> `null` does not mean "never archived" (GDPR bulk-archives without writing
+> either column); `remaining` is *not* a live query on any page — it is returned
+> once by the archive PATCH into a transient message; the un-archived template
+> is paused, not live; and the rendered line carries a year
+> (`Archived 12 Jun 2026`), which the code samples below predate. The archive
+> transition also became a compare-and-swap after a review found a race the
+> plan's plain `update` allowed.
+
 **Goal:** Make "how many classes did archiving remove, and when?" answerable a day later, instead of for one render (#97).
 
 **Architecture:** Two nullable columns on each template model — `archivedAt` and `withdrawnCount` — written inside the same transaction that performs the delete, and cleared on un-archive. The archived template's own detail page renders them. `remaining` is deliberately not stored; it is a live query.
@@ -435,8 +446,8 @@ git commit -m "feat: show what archiving withdrew on the template's own page (#9
 
 - [ ] `npx tsc --noEmit` — clean
 - [ ] `npm run lint` — clean
-- [ ] `npx vitest run --project unit` — 403 passing (398 + 5 for `formatHistoricalDate`)
-- [ ] `npx vitest run --project components` — 30 passing (28 + the timezone and year-boundary cases)
+- [ ] `npx vitest run --project unit` — 405 passing (+2 concurrency cases from the CAS fix)
+- [ ] `npx vitest run --project components` — 32 passing (+2 from the review's guard-isolation and west-of-UTC cases)
 - [ ] `npx vitest run --project integration` — 214 passing (needs the app on `:3000`; do not restart it. `signup-api` 429s are the local rate limiter, not this change)
 - [ ] `npx playwright test` — 118 passing
 - [ ] `git status` — the generated migration directory is committed, and `docs/backlog-roadmap.md` is still untracked

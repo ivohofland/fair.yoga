@@ -64,10 +64,17 @@ describe('ArchivedRecord', () => {
    * `archivedAt` alone governs the guard, which the case above cannot show:
    * with both props null, a guard widened to `!archivedAt || withdrawnCount
    * === null` renders nothing either way and every test still passes. This is
-   * the combination that separates them — and it is reachable in production,
-   * not hypothetical: `eraseTeacher` (gdpr.ts) bulk-archives without writing
-   * either column, and any row archived before #97 shipped carries the same
-   * shape once one is backfilled.
+   * the combination that separates them.
+   *
+   * It is not reachable today, and saying otherwise would be the third false
+   * comment on this branch. Both columns are written in one `data` object and
+   * cleared in another, so they always move together, and the migration has no
+   * backfill. `deleteTeacherAccount` (gdpr.ts) writes *neither*, which yields
+   * `(null, null)` — the case above, not this one. What this pins is that the
+   * component stays total if that ever changes: the obvious next improvement
+   * to the GDPR path is "at least record when", and a component that had
+   * quietly started keying on `withdrawnCount` would then render nothing at
+   * all for those rows.
    */
   it('renders the bare date when the count was never recorded', () => {
     render(
