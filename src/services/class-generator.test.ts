@@ -1,7 +1,12 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
-import { getNextOccurrences, generateClassInstances } from './class-generator';
+import {
+  getNextOccurrences,
+  generateClassInstances,
+  claimTemplateForGeneration,
+} from './class-generator';
+import { archiveOrUnarchiveTemplate } from './class-template-lifecycle';
 
 // ===========================================================================
 // Pure logic tests — getNextOccurrences
@@ -271,6 +276,144 @@ describe('generateClassInstances (DB)', () => {
       '2026-04-28T00:00:00.000Z',
     ]);
   });
+
+  describe('claimTemplateForGeneration', () => {
+    const claim = (id: string) =>
+      prisma.$transaction((tx) => claimTemplateForGeneration(tx, id));
+
+    afterEach(async () => {
+      await prisma.classTemplate.update({
+        where: { id: templateId },
+        data: { isActive: true, isArchived: false },
+      });
+    });
+
+    it('claims a live template', async () => {
+      expect(await claim(templateId)).toBe(true);
+    });
+
+    it('refuses an archived template', async () => {
+      await prisma.classTemplate.update({
+        where: { id: templateId },
+        data: { isArchived: true },
+      });
+      expect(await claim(templateId)).toBe(false);
+    });
+
+    it('refuses a paused template', async () => {
+      await prisma.classTemplate.update({
+        where: { id: templateId },
+        data: { isActive: false },
+      });
+      expect(await claim(templateId)).toBe(false);
+    });
+
+    it('refuses a template that no longer exists', async () => {
+      expect(await claim('00000000-0000-0000-0000-000000000000')).toBe(false);
+    });
+
+    /**
+     * The predicate cases above pass with or without `FOR UPDATE` — they never
+     * run concurrently with anything. This is the one that pins the lock.
+     */
+    it('makes a concurrent archive wait until the claim transaction commits', async () => {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+
+      const claiming = prisma.$transaction(
+        async (tx) => {
+          expect(await claimTemplateForGeneration(tx, templateId)).toBe(true);
+          await held;
+        },
+        { timeout: 15_000 },
+      );
+
+      // Let the claim acquire the lock before the archive contends for it.
+      await new Promise((r) => setTimeout(r, 100));
+
+      let archiveSettled = false;
+      const archiving = archiveOrUnarchiveTemplate(prisma, templateId, teacherId).then((r) => {
+        archiveSettled = true;
+        return r;
+      });
+
+      await new Promise((r) => setTimeout(r, 300));
+      // Without FOR UPDATE the archive's UPDATE is unobstructed and this is true.
+      expect(archiveSettled).toBe(false);
+
+      release();
+      await claiming;
+      const result = await archiving;
+      expect(result.ok).toBe(true);
+    });
+  });
+
+  describe('generateClassInstances — archive mid-sweep', () => {
+    afterEach(async () => {
+      await prisma.class.deleteMany({ where: { templateId } });
+      await prisma.classTemplate.update({
+        where: { id: templateId },
+        data: { isActive: true, isArchived: false },
+      });
+    });
+
+    /**
+     * The actual #95 race, reproduced deterministically and with no test-only
+     * hook in production code. Uncommitted writes are invisible to other
+     * transactions under READ COMMITTED, which is the lever: the sweep's own
+     * `findMany` still sees the template as live, so it enters the loop with
+     * exactly the stale list the bug is about.
+     */
+    it('does not generate for a template archived after the list was read', async () => {
+      // Earlier tests in this file leave their own classes behind for this
+      // template (they assert on them, then move on) — clear the slate so
+      // this test's counts reflect only what happens below.
+      await prisma.class.deleteMany({ where: { templateId } });
+      expect(await prisma.class.count({ where: { templateId } })).toBe(0);
+
+      let commit!: () => void;
+      const held = new Promise<void>((resolve) => {
+        commit = resolve;
+      });
+
+      // 1. Archive, but do not commit. Holds the row lock; invisible to others.
+      const archiving = prisma.$transaction(
+        async (tx) => {
+          await tx.classTemplate.update({
+            where: { id: templateId },
+            data: { isArchived: true, isActive: false },
+          });
+          await held;
+        },
+        { timeout: 15_000 },
+      );
+
+      await new Promise((r) => setTimeout(r, 100));
+
+      // 2. Sweep. Its findMany reads the pre-archive row and includes the
+      //    template; its claim then blocks on the lock.
+      let sweepSettled = false;
+      const sweeping = generateClassInstances(prisma).then((n) => {
+        sweepSettled = true;
+        return n;
+      });
+
+      await new Promise((r) => setTimeout(r, 300));
+      // Without FOR UPDATE the sweep sails past the claim and has already
+      // created the window by now.
+      expect(sweepSettled).toBe(false);
+
+      // 3. Commit the archive; the claim unblocks and sees isArchived: true.
+      commit();
+      await archiving;
+      await sweeping;
+
+      // 4. Nothing was materialised for a template the teacher shelved.
+      expect(await prisma.class.count({ where: { templateId } })).toBe(0);
+    });
+  });
 });
 
 // ===========================================================================
@@ -302,6 +445,13 @@ describe('generateClassInstances (per-template isolation)', () => {
           return {};
         },
       },
+      // The sweep now claims each template inside its own transaction before
+      // generating. This stub has no real lock semantics to exercise (the DB
+      // tests above cover that) — it only needs the claim to always succeed
+      // so error isolation between templates is still what's under test.
+      $executeRawUnsafe: async () => 0,
+      $queryRaw: async () => [{ id: 'stub' }],
+      $transaction: async (fn: (tx: unknown) => Promise<number>) => fn(stub),
     } as unknown as import('@prisma/client').PrismaClient;
 
     const spy = vi.spyOn(log, 'error').mockImplementation(() => log);

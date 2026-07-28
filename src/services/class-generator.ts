@@ -132,6 +132,44 @@ export async function generateInstancesForTemplate(
 }
 
 /**
+ * How long a claim waits for the template's row lock before giving up.
+ * A literal, not a bound parameter: Postgres does not accept bind parameters
+ * in `SET`. It is interpolated from this constant only — never from input —
+ * which is why `$executeRawUnsafe` is safe here.
+ */
+const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
+
+/**
+ * Claims a template for generation, or reports it is no longer eligible.
+ *
+ * `FOR UPDATE` is the point, not the `SELECT`. It takes the same row lock
+ * `archiveOrUnarchiveTemplate`'s `update` takes, so the sweep and an archive
+ * serialise instead of interleaving:
+ *
+ *   - claim first  → the archive's UPDATE waits; we generate and commit; the
+ *                    archive's own deleteMany then withdraws what we made.
+ *   - archive first → we wait, then read `isArchived: true` and skip.
+ *
+ * A plain re-read would not do this. Under READ COMMITTED each statement takes
+ * a fresh snapshot, so an archive committing between the re-read and the
+ * `create` is invisible to the re-read and still lost. Do not "simplify" this
+ * into a `findUnique`.
+ */
+export async function claimTemplateForGeneration(
+  tx: Prisma.TransactionClient,
+  templateId: string,
+): Promise<boolean> {
+  await tx.$executeRawUnsafe(LOCK_TIMEOUT_SQL);
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT "id" FROM "ClassTemplate"
+    WHERE "id" = ${templateId}
+      AND "isActive" = true
+      AND "isArchived" = false
+    FOR UPDATE`;
+  return rows.length === 1;
+}
+
+/**
  * Cron / teacher-wide entry point: tops up the rolling window for all
  * active templates (or one teacher's). Each template is isolated — one
  * template whose generation throws is logged and skipped, the rest still
@@ -158,7 +196,20 @@ export async function generateClassInstances(
 
   for (const template of templates) {
     try {
-      totalCreated += await generateInstancesForTemplate(db, template, startDate);
+      // One transaction per template: the claim's row lock has to still be
+      // held when the instances are created, or the archive it is protecting
+      // against can commit in between. The `findMany` above is only a
+      // pre-filter — by the time the loop reaches this template its row may
+      // be minutes stale, which is #95.
+      totalCreated += await db.$transaction(
+        async (tx) => {
+          if (!(await claimTemplateForGeneration(tx, template.id))) return 0;
+          return generateInstancesForTemplate(tx, template, startDate);
+        },
+        // Comfortably above the claim's own 2s lock_timeout, so Postgres
+        // gives up on the lock before Prisma gives up on the transaction.
+        { timeout: 10_000 },
+      );
     } catch (err) {
       log.error(
         { err, templateId: template.id, teacherId: template.teacherId },
