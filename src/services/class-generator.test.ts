@@ -348,6 +348,60 @@ describe('generateClassInstances (DB)', () => {
       const result = await archiving;
       expect(result.ok).toBe(true);
     });
+
+    /**
+     * Regression guard for `archiveOrUnarchiveTemplate`'s own
+     * `{ timeout: 10_000 }` (review round 1, finding 1). That fix is on the
+     * *Prisma* transaction timeout on the archive side, which is a different
+     * axis from the claim's 2s Postgres `lock_timeout` the test above and the
+     * mid-sweep race test both stay well under (~300-400ms of headroom) —
+     * neither of those can tell a 10s budget from Prisma's unset 5s default,
+     * because neither holds the lock anywhere near either number. This test
+     * has to actually cross 5s, or deleting `{ timeout: 10_000 }` from
+     * `archiveOrUnarchiveTemplate` leaves the whole suite green.
+     *
+     * Deliberately slow (~5.5s, on top of everything else in this file) —
+     * that's the cost of a guard that means something. Do not shorten the
+     * hold below 5s: it has to clear Prisma's default, not brush it.
+     */
+    it(
+      'lets a concurrent archive outlive its own transaction default once the claim holds past it',
+      async () => {
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+
+        const claiming = prisma.$transaction(
+          async (tx) => {
+            expect(await claimTemplateForGeneration(tx, templateId)).toBe(true);
+            await held;
+          },
+          { timeout: 15_000 },
+        );
+
+        // Let the claim acquire the lock before the archive contends for it.
+        await new Promise((r) => setTimeout(r, 100));
+
+        const archiving = archiveOrUnarchiveTemplate(prisma, templateId, teacherId);
+
+        // Hold past Prisma's 5s default on the archive side — comfortably
+        // above it (5.5s), not just brushing it, so this doesn't flake right
+        // at the boundary it exists to cross.
+        await new Promise((r) => setTimeout(r, 5_500));
+
+        release();
+        await claiming;
+
+        // With { timeout: 10_000 } on the archive's transaction, it waited
+        // out the lock and succeeded. Without it, Prisma would have aborted
+        // the archive's transaction with P2028 around the 5s mark, and this
+        // `await` would reject instead of resolving `ok: true`.
+        const result = await archiving;
+        expect(result.ok).toBe(true);
+      },
+      15_000,
+    );
   });
 
   describe('generateClassInstances — archive mid-sweep', () => {
