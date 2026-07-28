@@ -285,10 +285,15 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     // The assertions above are all on the value the function *returned*.
     // Re-read the row so this test also proves the write reached the
     // database, not just the response — the two can diverge if the service
-    // ever fabricates a return value instead of persisting it.
+    // ever fabricates a return value instead of persisting it. Both columns
+    // are checked against the returned value exactly, the timestamp included:
+    // a fabricated timestamp is the hardest kind to spot, so `not.toBeNull()`
+    // is the one assertion that would wave through the divergence this re-read
+    // exists to catch.
     const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
     expect(after.withdrawnCount).toBe(2);
     expect(after.archivedAt).not.toBeNull();
+    expect(after.archivedAt!.getTime()).toBe(archived.template.archivedAt!.getTime());
   });
 
   /**
@@ -315,6 +320,12 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
   /**
    * Zero is a real answer and must be distinguishable from "never archived".
    * That distinction is the entire reason both columns are nullable.
+   *
+   * Which makes it a claim about `0` versus `NULL` in the column, not about
+   * the returned object — so the re-read is not decoration here, it is the
+   * assertion. A service that returned `0` while leaving the column `NULL`
+   * would satisfy every in-memory check and still lose the distinction this
+   * test is named for.
    */
   it('records zero when there was nothing to withdraw', async () => {
     const t = await makeTemplate('Nothing To Withdraw');
@@ -325,12 +336,31 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
 
     expect(archived.template.withdrawnCount).toBe(0);
     expect(archived.template.archivedAt).not.toBeNull();
+
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.withdrawnCount).toBe(0);
+    expect(after.archivedAt).not.toBeNull();
   });
 
+  /**
+   * "Cleared", not "never written". Asserting only the trailing nulls cannot
+   * tell those two apart — replace the archive arm's record write with `data:
+   * {}` and a test that jumps straight from archive to un-archive still
+   * passes, having proved nothing.
+   *
+   * So the midpoint re-read is the load-bearing part: it establishes there was
+   * a record in the column to clear. It is also what makes the fixture's future
+   * class earn its place, since nothing else here reads what the delete
+   * produced.
+   */
   it('clears the record when un-archiving', async () => {
     const t = await makeTemplate('Cleared On Resume');
     await makeClass(t.id, { date: futureOn(5) });
     expectArchived(await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived'));
+
+    const recorded = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(recorded.withdrawnCount).toBe(1);
+    expect(recorded.archivedAt).not.toBeNull();
 
     const resumed = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'unarchived');
     expect(resumed.ok).toBe(true);
