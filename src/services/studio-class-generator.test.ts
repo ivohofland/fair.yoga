@@ -421,6 +421,8 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
   let eastTeacherId: string;
   let westTeacherId: string;
+  let eastAccountId: string;
+  let westAccountId: string;
   const templateIds: string[] = [];
 
   const seedTeacher = async (label: string, defaultTimezone: string) => {
@@ -436,7 +438,9 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
         defaultTimezone,
       },
     });
-    return teacher.id;
+    // Captured alongside the teacher id: `account: { create }` above makes a
+    // matching Account row, which nothing but this teardown ever deletes.
+    return { teacherId: teacher.id, accountId: teacher.accountId };
   };
 
   const makeTemplate = async (teacherId: string, dayOfWeek: number, startTime: string) => {
@@ -471,14 +475,24 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     });
 
   beforeAll(async () => {
-    eastTeacherId = await seedTeacher('east', EAST);
-    westTeacherId = await seedTeacher('west', WEST);
+    const east = await seedTeacher('east', EAST);
+    eastTeacherId = east.teacherId;
+    eastAccountId = east.accountId;
+
+    const west = await seedTeacher('west', WEST);
+    westTeacherId = west.teacherId;
+    westAccountId = west.accountId;
   });
 
   afterAll(async () => {
     await prisma.studioClass.deleteMany({ where: { templateId: { in: templateIds } } });
     await prisma.studioClassTemplate.deleteMany({ where: { id: { in: templateIds } } });
     await prisma.teacher.deleteMany({ where: { id: { in: [eastTeacherId, westTeacherId] } } });
+    // Teacher.accountId is a required FK into Account, so the teacher rows
+    // above must be gone before these accounts can be deleted without
+    // violating it — and only this teardown ever deletes them, since
+    // `account: { create }` in seedTeacher is the only thing that makes them.
+    await prisma.account.deleteMany({ where: { id: { in: [eastAccountId, westAccountId] } } });
   });
 
   it('creates the four-week window and is idempotent on a second run', async () => {

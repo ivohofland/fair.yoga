@@ -144,12 +144,14 @@ export async function generateStudioInstancesForTemplate(
     });
     if (existing) continue;
 
-    // Unreachable while a claim holds this template's row lock: no other
-    // insert for this templateId can land, so nothing is left to collide with
-    // `@@unique([templateId, date])`. Both callers take that claim — the sweep
-    // and `pauseOrResumeStudioTemplate` — which is why the branch stays dead.
-    // See `claimStudioTemplateForGeneration` for why a caller that skipped the
-    // claim would find this hedge broken rather than merely unnecessary.
+    // Unreachable for any caller holding this template's claim: no other
+    // insert for this templateId can land while the row lock is held, so
+    // nothing is left to collide with `@@unique([templateId, date])`. The
+    // sweep (`generateStudioClassInstances`) is the one production caller
+    // today, and it always claims first, which is why the branch stays dead
+    // there. See `claimStudioTemplateForGeneration` for why a caller that
+    // skips the claim would find this hedge broken rather than merely
+    // unnecessary.
     try {
       await db.studioClass.create({
         data: {

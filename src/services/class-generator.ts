@@ -158,11 +158,13 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
  *                    handed a total that quietly excludes it. One publicly
  *                    bookable class under a just-archived template is this
  *                    interleaving's correct outcome, not a gap this lock
- *                    failed to close. The studio side reaches it more often:
- *                    `generateStudioClassInstances` has no equivalent of
- *                    `classStartInstant`'s "start is still ahead" filter at
- *                    all, so it can generate today's instance even after that
- *                    start time has already passed.
+ *                    failed to close. The studio side reaches this same
+ *                    outcome at the same rate, not more often (#94):
+ *                    `generateStudioInstancesForTemplate`
+ *                    (`studio-class-generator.ts`) now applies the same
+ *                    `classStartInstant` "start is still ahead" filter this
+ *                    file's `generateInstancesForTemplate` does, so neither
+ *                    family generates an already-started today's instance.
  *   - archive first → we wait, then read `isArchived: true` and skip.
  *
  * A plain re-read would not do this. Under READ COMMITTED each statement takes
