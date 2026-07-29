@@ -664,4 +664,49 @@ describe('generateStudioClassInstances (per-template isolation)', () => {
     expect(loggedTemplateIds).toContain('C');
     spy.mockRestore();
   });
+
+  /**
+   * The P2002 branch is dead under the claim's row lock — that is the point
+   * of the claim, and two reviewers checked it empirically. This test does
+   * not dispute that; it pins what happens if a future caller ever reaches
+   * the branch anyway by generating without claiming first. Absorbing the
+   * collision is right (the row exists, which is what the caller wanted), but
+   * absorbing it in silence means a window that came back a week short with
+   * nothing anywhere saying why. A stub is the only way in: with the claim
+   * held, no concurrent insert for this templateId can exist to collide with.
+   */
+  it('logs the collision rather than silently shortening the window', async () => {
+    const from = new Date('2099-01-05T00:00:00Z');
+    const collision = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+      code: 'P2002',
+      clientVersion: 'test',
+    });
+    const stub = {
+      studioClassTemplate: {
+        findMany: async () => [tmpl('D', 't1')],
+        findUniqueOrThrow: async ({ where: { id } }: { where: { id: string } }) => tmpl(id, 't1'),
+      },
+      studioClass: {
+        findFirst: async () => null,
+        create: async () => {
+          throw collision;
+        },
+      },
+      $executeRawUnsafe: async () => 0,
+      $queryRaw: async () => [{ id: 'stub' }],
+      $transaction: async (fn: (tx: unknown) => Promise<number>) => fn(stub),
+    } as unknown as import('@prisma/client').PrismaClient;
+
+    const spy = vi.spyOn(log, 'warn').mockImplementation(() => log);
+
+    // Still absorbed: the sweep resolves rather than throwing, and reports
+    // the nothing it created. Only the silence is gone.
+    await expect(generateStudioClassInstances(stub, from)).resolves.toBe(0);
+
+    expect(spy).toHaveBeenCalled();
+    const [context] = spy.mock.calls[0] as [{ templateId?: string; date?: Date }];
+    expect(context.templateId).toBe('D');
+    expect(context.date).toBeInstanceOf(Date);
+    spy.mockRestore();
+  });
 });

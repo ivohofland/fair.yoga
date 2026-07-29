@@ -180,7 +180,17 @@ export async function generateStudioInstancesForTemplate(
       });
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        continue; // dead under the claim's lock; see the comment above
+        // Dead under the claim's lock — see the comment above for why. Logged
+        // rather than discarded outright all the same: this is the only place
+        // here that can silently shorten a generated window, and a teacher
+        // looking at three weeks instead of four has nothing else to go on.
+        // Reaching this line means a caller generated without holding the
+        // claim, which is the finding, not the collision itself.
+        log.warn(
+          { templateId: template.id, date },
+          'studio class insert hit @@unique([templateId, date]) — generated without the claim held',
+        );
+        continue;
       }
       throw err;
     }
