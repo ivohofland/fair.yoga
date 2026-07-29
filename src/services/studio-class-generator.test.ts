@@ -91,14 +91,47 @@ describe('generateStudioClassInstances (DB)', () => {
 
     await generateStudioClassInstances(prisma, from);
     const afterFirst = await prisma.studioClass.count({ where: { templateId } });
-    expect(afterFirst).toBeGreaterThanOrEqual(3); // rolling 4-week window
+    // Exactly the rolling 4-week window, not "at least most of it". The
+    // loose bound this replaces was a hedge from before `DEFAULT_WEEKS + 1`
+    // occurrences were filtered down to `DEFAULT_WEEKS`; with a filter in
+    // front of the count it would wave through the one regression worth
+    // catching, a window that comes back a week short.
+    expect(afterFirst).toBe(4);
 
     await generateStudioClassInstances(prisma, from);
     const afterSecond = await prisma.studioClass.count({ where: { templateId } });
     expect(afterSecond).toBe(afterFirst);
   });
 
-  it('never creates duplicates under concurrent runs (row lock serialises the sweeps)', async () => {
+  /**
+   * Named for what it can see, which is not the row lock. This used to be
+   * called "never creates duplicates under concurrent runs (row lock
+   * serialises the sweeps)", and the distinctness assertion below cannot
+   * fail for any implementation: `@@unique([templateId, date])` makes a
+   * duplicate date unrepresentable, so even a build where both sweeps
+   * genuinely generated at once would arrive here with a distinct set.
+   * Measured rather than assumed — removing `FOR UPDATE` from
+   * `claimStudioTemplateForGeneration` leaves this test green while failing
+   * three others in this file.
+   *
+   * What it does pin is that two overlapping sweeps both resolve, and that
+   * the window they leave is the full four weeks. Those are real: a build
+   * where the two genuinely interleaved would collide on `@@unique` inside an
+   * interactive transaction, and a `catch` there leaves Postgres with an
+   * aborted transaction that fails the next statement with 25P02 rather than
+   * skipping cleanly — which `generateStudioClassInstances` rethrows.
+   *
+   * The lock is pinned by the tests in this file that can observe it: "makes
+   * a concurrent archive wait until the claim transaction commits" above, and
+   * the two mid-sweep tests below ("does not generate for a template archived
+   * after the list was read" and "writes the values committed while the sweep
+   * was waiting, not the ones it read"). All three park a competing
+   * transaction on the row and assert nothing settles until it commits; each
+   * one fails without `FOR UPDATE`. A fourth here would buy another few
+   * hundred milliseconds of sleep in every run and no new coverage — the same
+   * trade the `{ timeout: 10_000 }` test below spells out for its own case.
+   */
+  it('two concurrent sweeps both resolve, leaving one class per date', async () => {
     const from = new Date('2099-03-01T00:00:00Z');
 
     await Promise.all([
@@ -106,22 +139,14 @@ describe('generateStudioClassInstances (DB)', () => {
       generateStudioClassInstances(prisma, from),
     ]);
 
-    // Every date exists exactly once, but not because the unique constraint
-    // absorbed a collision — `claimStudioTemplateForGeneration`'s `FOR UPDATE`
-    // means these two sweeps never actually generate concurrently for this
-    // template. One claims the row and runs to completion (claim, generate,
-    // commit) before the other's claim can even acquire the lock; by the time
-    // the second sweep gets in, its own `studioClass.findFirst` pre-check
-    // already finds every date the first sweep created and skips it, so no
-    // insert — and no P2002 — ever happens on the second pass. The row lock
-    // is what serialises the two sweeps; the constraint is a backstop that
-    // never gets exercised here.
     const instances = await prisma.studioClass.findMany({
       where: { templateId, date: { gte: from } },
       select: { date: true },
     });
     const dates = instances.map((i) => i.date.toISOString());
-    expect(dates.length).toBeGreaterThanOrEqual(3);
+    // Exactly the window, for the same reason as the test above: a loose
+    // lower bound cannot tell a full window from one the filter shortened.
+    expect(dates.length).toBe(4);
     expect(new Set(dates).size).toBe(dates.length);
   });
 

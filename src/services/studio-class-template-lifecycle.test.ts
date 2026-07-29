@@ -603,6 +603,12 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     if (!resumed.ok) throw new Error('expected ok');
     expect(resumed.template.isActive).toBe(true);
     expect(await prisma.studioClass.count({ where: { id: c.id } })).toBe(1);
+
+    // "Toggles isActive back on" is a claim about the row, and the assertion
+    // above only reads the response. Re-read so the two cannot diverge — the
+    // same reason the archive block's record tests re-read.
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.isActive).toBe(true);
   });
 
   it('pausing a template with no scheduled classes reports lastScheduled: null', async () => {
@@ -692,6 +698,13 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     if (!result.ok) throw new Error('expected ok');
     expect(result.action).toBe('active');
     expect(await prisma.studioClass.count({ where: { templateId: t.id } })).toBe(4);
+
+    // The window count above reads the database, but the resume itself is
+    // only asserted through the returned `action`. Re-read the flag too: the
+    // window and the flip commit in one transaction, and a test that watches
+    // only one of them cannot say the pair stayed together.
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.isActive).toBe(true);
   });
 
   it('generates nothing when pausing', async () => {
@@ -798,6 +811,15 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     expect(archiveResult.action).toBe('archived');
 
     expect(resumeResult).toEqual({ ok: false, reason: 'archived' });
+
+    // And generated nothing — the half the result value alone cannot show.
+    // The winning archive's own `deleteMany` has already run by the time
+    // resume's CAS misses, so a window generated on the way out of the
+    // `archived` branch is one nothing would ever withdraw: four classes
+    // standing on a template the teacher just archived. Its non-racing twin
+    // ("refuses to resume an archived template, and generates nothing")
+    // asserts this too; the racing case is where getting it wrong is easier.
+    expect(await prisma.studioClass.count({ where: { templateId: t.id } })).toBe(0);
   });
 
   /**
@@ -864,5 +886,16 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     expect(pauseResult.ok).toBe(true);
     if (!pauseResult.ok) throw new Error('expected ok');
     expect(pauseResult.action).toBe('unchanged');
+
+    // The template it carries must be the row the winning archive left, not
+    // the snapshot this call read before its own transaction opened. The
+    // route spreads `...result.template` straight into its 200 body, so
+    // returning that snapshot would describe the template to the teacher as
+    // live and unarchived when it is neither. This is the arm
+    // `ResumeTransactionOutcome`'s docstring singles out when it claims none
+    // of its arms ever carries the stale pre-transaction snapshot; without
+    // these two lines that claim has nothing holding it.
+    expect(pauseResult.template.isArchived).toBe(true);
+    expect(pauseResult.template.isActive).toBe(false);
   });
 });
