@@ -167,6 +167,17 @@ export async function pauseOrResumeStudioTemplate(
               'while holding its row lock — claim predicate and resume guards disagree',
           );
         }
+        // Must be `tx`, not `db` — the two are not interchangeable here even
+        // though both satisfy the parameter's type. The claim above holds
+        // `FOR UPDATE` on this row on `tx`'s connection; a `StudioClass`
+        // insert issued through `db` runs on a separate connection and needs
+        // `FOR KEY SHARE` on the same row for its FK check, which cannot be
+        // granted while `FOR UPDATE` is open. `tx` cannot close to release it
+        // because it is awaiting this very call. Passing `db` here therefore
+        // does not fail fast or cleanly: it blocks for the full 10s
+        // transaction timeout below, then throws — Postgres's deadlock
+        // detector does not step in, because this is one connection waiting
+        // on a lock, not a wait-for cycle between two backends.
         await generateStudioInstancesForTemplate(tx, claimed);
       }
 
