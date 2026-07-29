@@ -331,13 +331,33 @@ export async function pauseOrResumeStudioTemplate(
     { timeout: 10_000 },
   );
 
-  if (result.outcome === 'not_found') return { ok: false, reason: 'not_found' };
-  if (result.outcome === 'archived') return { ok: false, reason: 'archived' };
-  if (result.outcome === 'unchanged') {
-    return { ok: true, action: 'unchanged', template: result.template };
-  }
-  if (result.outcome === 'active') {
-    return { ok: true, action: 'active', template: result.template };
+  // A `switch` rather than the four-`if` chain this replaces, because that
+  // chain's exhaustiveness was accidental. It ended in a bare fall-through to
+  // the `paused` work below, so a new `ResumeTransactionOutcome` arm carrying
+  // a `template` compiled clean, fell past every `if`, and was answered
+  // `action: 'paused'` — with a `lastScheduled` query it never asked for.
+  // Only an arm *without* a `template` was caught, and three of the five arms
+  // carry one. The `default` below is the same `never` idiom
+  // `api/studio-class-templates/[id]/route.ts` uses twice for its public
+  // unions; `paused` breaks out to the post-transaction work it needs, which
+  // is the one thing that cannot be expressed as a `return` here.
+  switch (result.outcome) {
+    case 'not_found':
+      return { ok: false, reason: 'not_found' };
+    case 'archived':
+      return { ok: false, reason: 'archived' };
+    case 'unchanged':
+      return { ok: true, action: 'unchanged', template: result.template };
+    case 'active':
+      return { ok: true, action: 'active', template: result.template };
+    case 'paused':
+      break;
+    default: {
+      const unhandled: never = result;
+      throw new Error(
+        `pauseOrResumeStudioTemplate: unhandled transaction outcome ${JSON.stringify(unhandled)}`,
+      );
+    }
   }
 
   // `gte` today, not `gt`: pause deletes nothing, so there is no
