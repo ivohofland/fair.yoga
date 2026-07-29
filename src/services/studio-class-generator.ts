@@ -18,7 +18,7 @@ const DEFAULT_WEEKS = 4;
  * needs it to decide whether today's class has already started, and
  * `StudioClassTemplate` carries no zone of its own.
  */
-export type StudioTemplateWithTimezone = Prisma.StudioClassTemplateGetPayload<{
+type StudioTemplateWithTimezone = Prisma.StudioClassTemplateGetPayload<{
   include: { teacher: { select: { defaultTimezone: true } } };
 }>;
 
@@ -153,10 +153,15 @@ export async function generateStudioInstancesForTemplate(
     // nothing is left to collide with `@@unique([templateId, date])`. In
     // production, `generateStudioClassInstances`'s sweep and
     // `pauseOrResumeStudioTemplate`'s resume both claim before calling this
-    // function; this file's own tests call it directly, with no claim, to
-    // exercise it on its own — see `claimStudioTemplateForGeneration` for why
-    // a caller that skips the claim finds this hedge broken rather than
-    // merely unnecessary.
+    // function. This file's own tests call it directly, with no claim, to
+    // exercise it on its own, and split the same way
+    // `claimStudioTemplateForGeneration` documents for the class family: four
+    // of the five call sites pass a bare `prisma`, so each insert autocommits
+    // on its own and a genuine collision there is a clean, harmless P2002;
+    // the fifth ("accepts a transaction client…") wraps the call in its own
+    // `$transaction` with no claim, which is the one that would actually find
+    // this hedge broken rather than merely unnecessary, for the same 25P02
+    // reason.
     try {
       await db.studioClass.create({
         data: {

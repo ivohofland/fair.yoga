@@ -400,24 +400,25 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       });
     },
     // The `classTemplate.updateMany`/`studioClassTemplate.updateMany` below
-    // take the same row locks the generator sweep's `claimTemplateForGeneration`
-    // / `claimStudioTemplateForGeneration` (class-generator.ts,
+    // take the same row locks `claimTemplateForGeneration` /
+    // `claimStudioTemplateForGeneration` (class-generator.ts,
     // studio-class-generator.ts) hold for the duration of their own
-    // per-template transactions (#95), so account erasure can now block on a
-    // sweep in progress the same way an archive or pause click can. This site
-    // needs the matching 10s budget more than those three do, not just for
-    // symmetry: by the time this transaction opens, `deleteTeacherAccount` has
-    // already run `completeClass` for every in-progress class above — pricing,
-    // payments, and notifications committed outside this transaction, not
-    // inside it. A P2028 here rolls back the erasure but not that billing,
-    // leaving the two halves of one account-deletion request permanently out
-    // of sync, and it surfaces as an opaque 500 on `DELETE /api/account`
-    // rather than a merely-failed archive click the teacher can just retry.
-    // This transaction is also already the longest of the four sites: it
-    // loops over every upcoming class doing an update plus bulk notifications
-    // before it ever reaches the template rows, so it has less headroom
-    // against Prisma's 5s default than the archive/pause sites did even before
-    // a lock wait enters the picture.
+    // per-template transactions (#95) — always for the sweep, and now for the
+    // studio family's own resume too (#94) — so account erasure can now block
+    // on a sweep or a resume in progress the same way an archive or pause
+    // click can. This site needs the matching 10s budget more than those four
+    // do, not just for symmetry: by the time this transaction opens,
+    // `deleteTeacherAccount` has already run `completeClass` for every
+    // in-progress class above — pricing, payments, and notifications
+    // committed outside this transaction, not inside it. A P2028 here rolls
+    // back the erasure but not that billing, leaving the two halves of one
+    // account-deletion request permanently out of sync, and it surfaces as an
+    // opaque 500 on `DELETE /api/account` rather than a merely-failed archive
+    // click the teacher can just retry. This transaction is also already the
+    // longest of the five sites: it loops over every upcoming class doing an
+    // update plus bulk notifications before it ever reaches the template
+    // rows, so it has less headroom against Prisma's 5s default than the
+    // archive/pause sites did even before a lock wait enters the picture.
     { timeout: 10_000 },
   );
 }

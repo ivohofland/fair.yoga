@@ -22,11 +22,14 @@
  *     carve-out the class family has — so `remaining` is a real query keyed
  *     at the start of the teacher's today, not a hardcoded 0: today's
  *     survivor is the one row it can ever find.
- *   - `pauseOrResumeStudioTemplate` generates on resume, inside its own
- *     `$transaction` — see that function's own doc comment for why, and
- *     `claimStudioTemplateForGeneration` (`studio-class-generator.ts`) for
- *     why the generation is preceded by a claim rather than run straight off
- *     the `update` above it (#94).
+ *   - `pauseOrResumeStudioTemplate`'s resume write is a compare-and-swap, not
+ *     a plain `update`, and takes a claim
+ *     (`claimStudioTemplateForGeneration`, `studio-class-generator.ts`)
+ *     before generating — see that function's own doc comment for why both
+ *     matter (#94). The class family's `pauseOrResumeTemplate`
+ *     (`class-template-lifecycle.ts`) also generates inside its own
+ *     `$transaction` on resume — that part is not a difference — but with a
+ *     plain `update` and no claim first (#116).
  */
 
 import type { PrismaClient, StudioClassTemplate } from '@prisma/client';
@@ -130,7 +133,9 @@ type ResumeTransactionOutcome =
  * on `{ id }` alone — would not notice: it would re-read the new row version
  * and set `isActive: true` on a template that had just been archived. The
  * CAS makes that transition itself impossible instead of merely unlikely; a
- * miss is disambiguated under the row's lock below rather than assumed.
+ * miss is disambiguated with a plain re-read below rather than assumed — see
+ * there and `ResumeTransactionOutcome` above for why that re-read is correct
+ * whether or not the miss happens to leave a lock behind.
  *
  * The write and the generation share one transaction, so a generation
  * failure rolls the flip back rather than leaving a template flagged live
@@ -145,7 +150,15 @@ type ResumeTransactionOutcome =
  * holds `FOR NO KEY UPDATE`, so the claim's own `FOR UPDATE` below can then
  * only be blocked by something compatible with that but not with `FOR
  * UPDATE` — a concurrent `StudioClass` insert's `FOR KEY SHARE` FK check —
- * and that 2s is what bounds that wait, never a sweep or an archive.
+ * and that 2s is what bounds that wait, never a sweep or an archive. The
+ * claim's `SET LOCAL lock_timeout` governs every statement left in this
+ * transaction, not just its own `SELECT … FOR UPDATE`, so the same 2s also
+ * bounds each generated `StudioClass` insert's own `FOR KEY SHARE` on the
+ * `Teacher` row for its FK. `Teacher.email`, `pageSlug` and `accountId` are
+ * all `@unique`, so an update touching any of them — a teacher changing their
+ * page slug in another tab, say — takes `FOR UPDATE` there instead of `FOR NO
+ * KEY UPDATE`, which conflicts; negligible odds, but this paragraph exists to
+ * enumerate exactly this class of thing.
  */
 export async function pauseOrResumeStudioTemplate(
   db: PrismaClient,
@@ -480,11 +493,20 @@ export async function archiveOrUnarchiveStudioTemplate(
     // `claimStudioTemplateForGeneration` (studio-class-generator.ts) holds with
     // its `FOR UPDATE` for the duration of its own per-template transaction —
     // that claim is what gives this the claim-and-lock treatment, not the
-    // timeout below; this archive can block on a sweep in progress today. The
-    // 10s figure only matches the sweep's own transaction timeout so Prisma's
-    // 5s default does not abort this update while it waits — a VPS can exceed 5s,
-    // which would otherwise turn an ordinary archive click into an opaque
-    // P2028.
+    // timeout below; this archive can block on a sweep in progress today, or
+    // now on a resume: `pauseOrResumeStudioTemplate`'s own CAS holds this same
+    // row from its `updateMany` through generation to commit, on the same 10s
+    // budget, so a user-facing PATCH can make an archive wait exactly as a
+    // background sweep can (#94). The 10s figure matches both of those peers'
+    // transaction timeouts so Prisma's 5s default does not abort this update
+    // while it waits — a VPS can exceed 5s, which would otherwise turn an
+    // ordinary archive click into an opaque P2028. Three 10s budgets do not
+    // compose, though: if a sweep is holding the row when a resume queues
+    // behind it, and this archive then queues behind that resume, this
+    // archive's own 10s clock is already running while it waits its turn —
+    // so the third waiter in that chain is the one most likely to exhaust
+    // its own budget and surface P2028 without ever reaching its own work
+    // (#113 owns that error surface).
     { timeout: 10_000 },
   );
 }
