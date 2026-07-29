@@ -73,10 +73,11 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
  *     autocommits on its own; a genuine collision there is a clean P2002 with
  *     nothing left to poison. This is the one caller the hedge actually
  *     protects.
- * The loop below is unreachable for any caller that takes this claim first,
- * whatever that caller is — the invariant lives in the lock, not in a
- * roster of who currently holds it. `generateStudioClassInstances`'s sweep
- * and `pauseOrResumeStudioTemplate`'s resume (`studio-class-template-
+ * The P2002 branch in the loop below — not the loop itself, which runs on
+ * every claimed generation — is unreachable for any caller that takes this
+ * claim first, whatever that caller is: the invariant lives in the lock, not
+ * in a roster of who currently holds it. `generateStudioClassInstances`'s
+ * sweep and `pauseOrResumeStudioTemplate`'s resume (`studio-class-template-
  * lifecycle.ts`, #94) both do; a future caller that skips the claim and goes
  * straight to `generateStudioInstancesForTemplate` would reopen it.
  *
@@ -149,10 +150,13 @@ export async function generateStudioInstancesForTemplate(
 
     // Unreachable for any caller holding this template's claim: no other
     // insert for this templateId can land while the row lock is held, so
-    // nothing is left to collide with `@@unique([templateId, date])`. Every
-    // caller of this function claims first — see `claimStudioTemplateForGeneration`
-    // for why a caller that skipped the claim would find this hedge broken
-    // rather than merely unnecessary.
+    // nothing is left to collide with `@@unique([templateId, date])`. In
+    // production, `generateStudioClassInstances`'s sweep and
+    // `pauseOrResumeStudioTemplate`'s resume both claim before calling this
+    // function; this file's own tests call it directly, with no claim, to
+    // exercise it on its own — see `claimStudioTemplateForGeneration` for why
+    // a caller that skips the claim finds this hedge broken rather than
+    // merely unnecessary.
     try {
       await db.studioClass.create({
         data: {

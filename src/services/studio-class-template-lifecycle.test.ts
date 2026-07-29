@@ -580,9 +580,11 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
    * Pre-#94 this title read "…without deleting or generating anything" —
    * true then, false now that resuming generates (see the "fills the window"
    * case below for that behaviour on its own). What survives from the
-   * original test: generation only adds rows for the template's own pattern,
-   * so a class already on the schedule off that pattern is neither deleted
-   * nor duplicated by the resume that follows.
+   * original test: a class already on the schedule, off the template's own
+   * pattern, is neither deleted nor duplicated by the resume that follows.
+   * The duplication half is checked by date rather than by template total,
+   * because the total the resume adds depends on whether `c`'s own date
+   * happens to coincide with the template's generated pattern.
    */
   it('resuming toggles isActive back on and leaves an already-scheduled class untouched', async () => {
     const t = await makeTemplate('Resume Simple');
@@ -597,7 +599,13 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     expect(resumed.ok).toBe(true);
     if (!resumed.ok) throw new Error('expected ok');
     expect(resumed.template.isActive).toBe(true);
+    // Not deleted:
     expect(await prisma.studioClass.count({ where: { id: c.id } })).toBe(1);
+    // Not duplicated: still the only row at c's own date, whether or not that
+    // date is one the resume's generation also landed on.
+    expect(
+      await prisma.studioClass.count({ where: { templateId: t.id, date: c.date } }),
+    ).toBe(1);
   });
 
   it('pausing a template with no scheduled classes reports lastScheduled: null', async () => {
@@ -674,7 +682,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
    * `generateStudioClassInstances` — that sweeps every teacher on the
    * instance — so the fix was a per-template generator to call instead.
    */
-  it('fills the window when resuming, in the same transaction as the flag flip', async () => {
+  it('fills the window when resuming', async () => {
     const t = await makeTemplate('Resume Generates');
     await prisma.studioClassTemplate.update({
       where: { id: t.id },
@@ -719,5 +727,78 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
     expect(after.isActive).toBe(false);
     expect(await prisma.studioClass.count({ where: { templateId: t.id } })).toBe(0);
+  });
+
+  /**
+   * The race a reviewer of this fix reproduced against this file's own
+   * "provably unreachable" claim: the two guards above are read outside any
+   * lock, so a concurrent archive can commit in the gap between those reads
+   * and this function's own transaction. Constructed the same way as this
+   * file's `archiveOrUnarchiveStudioTemplate` concurrent-archive test — a
+   * third transaction holds the row lock so both requests queue behind it —
+   * except archive is started and confirmed queued first, so Postgres's FIFO
+   * lock grant hands it the row before resume's CAS gets a turn. Resume must
+   * then see the row already archived and answer `{ reason: 'archived' }`,
+   * not throw the "claim predicate diverged" error the old comment warned
+   * about.
+   */
+  it('a concurrent archive mid-resume is reported as archived, not thrown', async () => {
+    const t = await makeTemplate('Resume Vs Archive Race');
+    await prisma.studioClassTemplate.update({ where: { id: t.id }, data: { isActive: false } });
+
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    // Holds the row lock and nothing else — neither racer can observe it,
+    // only queue behind it.
+    const blocking = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "StudioClassTemplate" WHERE "id" = ${t.id} FOR UPDATE`;
+        await held;
+      },
+      { timeout: 15_000 },
+    );
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    let archiveSettled = false;
+    const archive = archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived').then(
+      (r) => {
+        archiveSettled = true;
+        return r;
+      },
+    );
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    let resumeSettled = false;
+    const resume = pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active').then((r) => {
+      resumeSettled = true;
+      return r;
+    });
+
+    await new Promise((r) => setTimeout(r, 300));
+    // Both blocked in their own transaction's first statement. If either had
+    // settled here, it never queued behind the held lock and the rest of
+    // this test proves nothing about the race it targets.
+    expect(archiveSettled).toBe(false);
+    expect(resumeSettled).toBe(false);
+
+    release();
+    await blocking;
+
+    const [archiveResult, resumeResult] = await Promise.all([archive, resume]);
+
+    // Archive's own CAS only ever checks `isArchived`, which resume never
+    // touches, so archive succeeds regardless of arrival order — this pins
+    // that it queued and won ahead of resume, not merely that it eventually
+    // ran.
+    expect(archiveResult.ok).toBe(true);
+    if (!archiveResult.ok) throw new Error('expected ok');
+    expect(archiveResult.action).toBe('archived');
+
+    expect(resumeResult).toEqual({ ok: false, reason: 'archived' });
   });
 });
