@@ -580,13 +580,16 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
    * Pre-#94 this title read "…without deleting or generating anything" —
    * true then, false now that resuming generates (see the "fills the window"
    * case below for that behaviour on its own). What survives from the
-   * original test: a class already on the schedule, off the template's own
-   * pattern, is neither deleted nor duplicated by the resume that follows.
-   * The duplication half is checked by date rather than by template total,
-   * because the total the resume adds depends on whether `c`'s own date
-   * happens to coincide with the template's generated pattern.
+   * original test: a class already on the schedule is not deleted by the
+   * resume that follows. `c`'s date is arbitrary relative to the template's
+   * own pattern — `futureOn(3)` against `dayOfWeek: 3` coincides with it one
+   * day in seven, so this fixture is not reliably "off pattern" and the test
+   * does not depend on which it is. Duplication is not asserted separately:
+   * `@@unique([templateId, date])` makes two rows at the same date
+   * unrepresentable, so a count at `c`'s own date could only ever show 0 or
+   * 1 and would add nothing beyond the not-deleted check below.
    */
-  it('resuming toggles isActive back on and leaves an already-scheduled class untouched', async () => {
+  it('resuming toggles isActive back on and does not delete an already-scheduled class', async () => {
     const t = await makeTemplate('Resume Simple');
     const c = await makeClass(t.id, futureOn(3), '08:00');
 
@@ -599,13 +602,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     expect(resumed.ok).toBe(true);
     if (!resumed.ok) throw new Error('expected ok');
     expect(resumed.template.isActive).toBe(true);
-    // Not deleted:
     expect(await prisma.studioClass.count({ where: { id: c.id } })).toBe(1);
-    // Not duplicated: still the only row at c's own date, whether or not that
-    // date is one the resume's generation also landed on.
-    expect(
-      await prisma.studioClass.count({ where: { templateId: t.id, date: c.date } }),
-    ).toBe(1);
   });
 
   it('pausing a template with no scheduled classes reports lastScheduled: null', async () => {
@@ -792,13 +789,77 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     const [archiveResult, resumeResult] = await Promise.all([archive, resume]);
 
     // Archive's own CAS only ever checks `isArchived`, which resume never
-    // touches, so archive succeeds regardless of arrival order — this pins
-    // that it queued and won ahead of resume, not merely that it eventually
-    // ran.
+    // touches, so archive succeeds regardless of arrival order — asserting
+    // its success alone would pin nothing about which one actually won the
+    // queued lock. What pins that is the resume assertion below: it would
+    // read `active` instead of `archived` had resume's CAS run first.
     expect(archiveResult.ok).toBe(true);
     if (!archiveResult.ok) throw new Error('expected ok');
     expect(archiveResult.action).toBe('archived');
 
     expect(resumeResult).toEqual({ ok: false, reason: 'archived' });
+  });
+
+  /**
+   * The other half of the same race, and the one the guard-order fix above
+   * exists for: a *pause* racing an archive must answer `unchanged`, not the
+   * `archived` a racing *resume* gets — archiving forces `isActive: false`,
+   * so a paused-or-pausing template is already in the state a pause wants.
+   * Built identically to the resume-vs-archive race above; only the second
+   * racer and its expected outcome differ.
+   */
+  it('a concurrent archive mid-pause is reported as unchanged, not archived', async () => {
+    const t = await makeTemplate('Pause Vs Archive Race');
+    // Left active (a fresh template's default) — the state a pause acts on.
+
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const blocking = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "StudioClassTemplate" WHERE "id" = ${t.id} FOR UPDATE`;
+        await held;
+      },
+      { timeout: 15_000 },
+    );
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    let archiveSettled = false;
+    const archive = archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived').then(
+      (r) => {
+        archiveSettled = true;
+        return r;
+      },
+    );
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    let pauseSettled = false;
+    const pause = pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused').then((r) => {
+      pauseSettled = true;
+      return r;
+    });
+
+    await new Promise((r) => setTimeout(r, 300));
+    expect(archiveSettled).toBe(false);
+    expect(pauseSettled).toBe(false);
+
+    release();
+    await blocking;
+
+    const [archiveResult, pauseResult] = await Promise.all([archive, pause]);
+
+    expect(archiveResult.ok).toBe(true);
+    if (!archiveResult.ok) throw new Error('expected ok');
+    expect(archiveResult.action).toBe('archived');
+
+    // Not `{ ok: false, reason: 'archived' }` — the guard order the fix
+    // above restores.
+    expect(pauseResult.ok).toBe(true);
+    if (!pauseResult.ok) throw new Error('expected ok');
+    expect(pauseResult.action).toBe('unchanged');
   });
 });

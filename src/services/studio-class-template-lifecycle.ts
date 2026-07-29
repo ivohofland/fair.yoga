@@ -91,9 +91,13 @@ const scheduledWhere = (templateId: string, date: { gt: Date } | { gte: Date }) 
 /**
  * One arm per way `pauseOrResumeStudioTemplate`'s transaction can resolve.
  * Internal only — mapped to the public `PauseStudioTemplateResult` after the
- * transaction commits. `unchanged`/`paused`/`active` all carry the row read
- * back under the CAS's lock, never the stale pre-transaction snapshot the CAS
- * exists to stop being trusted.
+ * transaction commits. None of these ever carries the stale pre-transaction
+ * snapshot the CAS exists to stop being trusted, but they get there
+ * differently: `paused`/`active` are read back under the lock the successful
+ * CAS is still holding; `unchanged` (in the count-0 miss branch) is a plain,
+ * unlocked re-read, exactly like `archiveOrUnarchiveStudioTemplate`'s own
+ * miss branch — a miss means the CAS matched nothing and so took no lock to
+ * read back under.
  */
 type ResumeTransactionOutcome =
   | { outcome: 'not_found' }
@@ -127,9 +131,16 @@ type ResumeTransactionOutcome =
  * failure rolls the flip back rather than leaving a template flagged live
  * with an empty window — the state this issue was filed about. That sharing
  * has a cost the old autocommit `update` did not: this can now fail outright
- * rather than only wait for a contended row — the claim's own 2s
- * `lock_timeout`, or this transaction's own 10s budget below, can each expire
- * while queued behind a sweep or an archive already holding the lock.
+ * rather than only wait for a contended row. The CAS itself takes `FOR NO
+ * KEY UPDATE`, which conflicts with a sweep's claim (`FOR UPDATE`) or a
+ * concurrent archive's own CAS (also `FOR NO KEY UPDATE`), and can queue
+ * behind either for up to this transaction's 10s budget below — the claim's
+ * 2s `lock_timeout` is not set yet at that point, so nothing bounds this
+ * particular wait but the 10s. Once the CAS succeeds this transaction already
+ * holds `FOR NO KEY UPDATE`, so the claim's own `FOR UPDATE` below can then
+ * only be blocked by something compatible with that but not with `FOR
+ * UPDATE` — a concurrent `StudioClass` insert's `FOR KEY SHARE` FK check —
+ * and that 2s is what bounds that wait, never a sweep or an archive.
  */
 export async function pauseOrResumeStudioTemplate(
   db: PrismaClient,
@@ -183,14 +194,44 @@ export async function pauseOrResumeStudioTemplate(
       });
 
       if (swapped.count === 0) {
-        // The fast paths above missed a race. Disambiguate under the lock
-        // this `updateMany` took, exactly as the archive path does: read
-        // which of "gone", "archived" or "already there" actually happened,
-        // rather than assuming which one it was.
+        // The fast paths above missed a race. An `updateMany` that matched
+        // zero rows holds no lock on this row — in the ordinary interleaving
+        // the concurrent change already committed before this one ran, so
+        // the `where` was evaluated against, and rejected by, that committed
+        // version, and nothing was ever locked. Disambiguate with a plain
+        // re-read instead, exactly as the archive path does — and see there
+        // for why locking here would not be worth it.
         const current = await tx.studioClassTemplate.findUnique({ where: { id: templateId } });
         if (!current) return { outcome: 'not_found' };
+        // `isActive === desiredActive` before `isArchived`, deliberately —
+        // the same order as the fast paths above, and for the same reason:
+        // archiving forces `isActive: false`, so an archived row racing a
+        // *pause* is simultaneously "already the desired state" and
+        // "archived". Checking already-desired first answers that case
+        // `unchanged`, matching the fast path and the guard order this
+        // function documents there; checking `isArchived` first would answer
+        // a plain pause with a 409 meant for resuming an archived template.
+        // A racing *resume* is not already-desired (its `isActive` is still
+        // `false`), so it falls through to the `isArchived` check below
+        // regardless of order.
+        if (current.isActive === desiredActive) {
+          return { outcome: 'unchanged', template: current };
+        }
         if (current.isArchived) return { outcome: 'archived' };
-        return { outcome: 'unchanged', template: current };
+        // Residual, not provably unreachable this time — said plainly after
+        // getting that claim wrong once already on this branch. The CAS's own
+        // `where` is `isArchived: false AND isActive: !desiredActive`; a miss
+        // means `isArchived` OR `isActive === desiredActive` held *when the
+        // CAS ran* — both checked above against a *second*, later read. Under
+        // READ COMMITTED each statement gets its own snapshot, so a row that
+        // could change back between those two snapshots — a second race
+        // stacked on the first — could in principle reach here. Surfacing
+        // that rather than silently falling through to the code below, which
+        // assumes the CAS actually succeeded.
+        throw new Error(
+          `pauseOrResumeStudioTemplate: template ${templateId} matched neither the CAS ` +
+            'nor any of its disambiguated misses — its state changed again between them',
+        );
       }
 
       if (!desiredActive) {
