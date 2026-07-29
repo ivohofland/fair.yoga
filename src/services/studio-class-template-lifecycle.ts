@@ -504,9 +504,11 @@ export async function archiveOrUnarchiveStudioTemplate(
     // compose, though: if a sweep is holding the row when a resume queues
     // behind it, and this archive then queues behind that resume, this
     // archive's own 10s clock is already running while it waits its turn —
-    // so the third waiter in that chain is the one most likely to exhaust
-    // its own budget and surface P2028 without ever reaching its own work
-    // (#113 owns that error surface).
+    // so the last link in that chain — this archive, waiting behind a
+    // waiter — is the one most likely to exhaust its own budget and surface
+    // P2028 without ever reaching its own work (#113 owns that error
+    // surface). The sweep at the head holds rather than waits, so it is a
+    // chain of three participants but only two waiters.
     { timeout: 10_000 },
   );
 }

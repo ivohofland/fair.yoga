@@ -155,13 +155,13 @@ export async function generateStudioInstancesForTemplate(
     // `pauseOrResumeStudioTemplate`'s resume both claim before calling this
     // function. This file's own tests call it directly, with no claim, to
     // exercise it on its own, and split the same way
-    // `claimStudioTemplateForGeneration` documents for the class family: four
-    // of the five call sites pass a bare `prisma`, so each insert autocommits
-    // on its own and a genuine collision there is a clean, harmless P2002;
-    // the fifth ("accepts a transaction client…") wraps the call in its own
-    // `$transaction` with no claim, which is the one that would actually find
-    // this hedge broken rather than merely unnecessary, for the same 25P02
-    // reason.
+    // `claimStudioTemplateForGeneration` documents for the class family: all
+    // but one pass a bare `prisma`, so each insert autocommits on its own and
+    // a genuine collision there is a clean, harmless P2002. The exception is
+    // the one named "accepts a transaction client…", which wraps the call in
+    // its own `$transaction` with no claim — the only caller here that would
+    // actually find this hedge broken rather than merely unnecessary, for the
+    // same 25P02 reason.
     try {
       await db.studioClass.create({
         data: {
