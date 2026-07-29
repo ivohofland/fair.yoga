@@ -94,10 +94,15 @@ const scheduledWhere = (templateId: string, date: { gt: Date } | { gte: Date }) 
  * transaction commits. None of these ever carries the stale pre-transaction
  * snapshot the CAS exists to stop being trusted, but they get there
  * differently: `paused`/`active` are read back under the lock the successful
- * CAS is still holding; `unchanged` (in the count-0 miss branch) is a plain,
- * unlocked re-read, exactly like `archiveOrUnarchiveStudioTemplate`'s own
- * miss branch — a miss means the CAS matched nothing and so took no lock to
- * read back under.
+ * CAS is still holding; `unchanged` (in the count-0 miss branch) is a plain
+ * re-read that may or may not run under a lock this transaction already
+ * holds — a miss leaves nothing locked if the conflicting change committed
+ * before this transaction's `updateMany` even ran, but a miss reached by
+ * that `updateMany` first blocking on the conflicting change and only then
+ * losing its recheck leaves the row locked to commit regardless (Postgres
+ * takes the lock before the recheck, not after). Either way the plain
+ * re-read's correctness does not depend on which happened, exactly like
+ * `archiveOrUnarchiveStudioTemplate`'s own miss branch.
  */
 type ResumeTransactionOutcome =
   | { outcome: 'not_found' }
@@ -194,13 +199,19 @@ export async function pauseOrResumeStudioTemplate(
       });
 
       if (swapped.count === 0) {
-        // The fast paths above missed a race. An `updateMany` that matched
-        // zero rows holds no lock on this row — in the ordinary interleaving
-        // the concurrent change already committed before this one ran, so
-        // the `where` was evaluated against, and rejected by, that committed
-        // version, and nothing was ever locked. Disambiguate with a plain
-        // re-read instead, exactly as the archive path does — and see there
-        // for why locking here would not be worth it.
+        // The fast paths above missed a race. A miss here may or may not
+        // leave this transaction holding a lock on the row, and the plain
+        // re-read below does not depend on which: if the conflicting change
+        // committed before this `updateMany`'s own snapshot, the `where`
+        // simply evaluated against, and was rejected by, that already-
+        // committed version, and nothing was locked. If instead the change
+        // committed while this `updateMany` was already blocked waiting on
+        // it — the exact interleaving the race tests below construct —
+        // Postgres locks the newest row version first and only then
+        // re-checks the `where` against it; a rejection at that point still
+        // leaves the lock held to commit. Disambiguate with a plain re-read
+        // either way, exactly as the archive path does — and see there for
+        // why taking a lock here on purpose would not be worth it.
         const current = await tx.studioClassTemplate.findUnique({ where: { id: templateId } });
         if (!current) return { outcome: 'not_found' };
         // `isActive === desiredActive` before `isArchived`, deliberately —

@@ -805,8 +805,11 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
    * exists for: a *pause* racing an archive must answer `unchanged`, not the
    * `archived` a racing *resume* gets — archiving forces `isActive: false`,
    * so a paused-or-pausing template is already in the state a pause wants.
-   * Built identically to the resume-vs-archive race above; only the second
-   * racer and its expected outcome differ.
+   * Built the same way as the resume-vs-archive race above (third
+   * transaction holds the row lock, both requests queue behind it, archive
+   * queued first so it wins the FIFO grant); the fixture also differs, since
+   * a pause acts on an active template rather than a paused one, so there is
+   * no `isActive: false` seed here.
    */
   it('a concurrent archive mid-pause is reported as unchanged, not archived', async () => {
     const t = await makeTemplate('Pause Vs Archive Race');
