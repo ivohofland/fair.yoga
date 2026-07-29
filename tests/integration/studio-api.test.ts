@@ -387,6 +387,26 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
     expect(after.isArchived).toBe(true);
     expect(await prisma.studioClass.count({ where: { templateId: template.id } })).toBe(survivors);
   });
+
+  /**
+   * #94 end to end: the bug was a teacher resuming and finding an empty
+   * schedule, so the assertion is on what the schedule holds afterwards, not
+   * on the response body alone.
+   */
+  it('resuming fills the window rather than waiting for the hourly sweep', async () => {
+    const id = (await makeTemplate(ownerId, 'Resume Fills Window')).id;
+
+    await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=paused`);
+    // Start from a genuinely empty window, so the count below can only come
+    // from the resume itself and not from generation at some earlier step.
+    await prisma.studioClass.deleteMany({ where: { templateId: id } });
+
+    const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=active`);
+
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { data: { action: string } }).data.action).toBe('active');
+    expect(await prisma.studioClass.count({ where: { templateId: id } })).toBe(4);
+  });
 });
 
 describe('/api/studio-classes', () => {

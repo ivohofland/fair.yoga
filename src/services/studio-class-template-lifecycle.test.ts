@@ -576,7 +576,15 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     expect(await prisma.studioClass.count({ where: { id: later.id } })).toBe(1);
   });
 
-  it('resuming toggles isActive back on without deleting or generating anything', async () => {
+  /**
+   * Pre-#94 this title read "…without deleting or generating anything" —
+   * true then, false now that resuming generates (see the "fills the window"
+   * case below for that behaviour on its own). What survives from the
+   * original test: generation only adds rows for the template's own pattern,
+   * so a class already on the schedule off that pattern is neither deleted
+   * nor duplicated by the resume that follows.
+   */
+  it('resuming toggles isActive back on and leaves an already-scheduled class untouched', async () => {
     const t = await makeTemplate('Resume Simple');
     const c = await makeClass(t.id, futureOn(3), '08:00');
 
@@ -658,5 +666,58 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
     expect(after.isActive).toBe(false);
     expect(after.isArchived).toBe(true);
+  });
+
+  /**
+   * #94. Resuming used to flip `isActive` and stop, leaving the teacher on an
+   * empty schedule until the hourly sweep. It could not call
+   * `generateStudioClassInstances` — that sweeps every teacher on the
+   * instance — so the fix was a per-template generator to call instead.
+   */
+  it('fills the window when resuming, in the same transaction as the flag flip', async () => {
+    const t = await makeTemplate('Resume Generates');
+    await prisma.studioClassTemplate.update({
+      where: { id: t.id },
+      data: { isActive: false },
+    });
+
+    const result = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.action).toBe('active');
+    expect(await prisma.studioClass.count({ where: { templateId: t.id } })).toBe(4);
+  });
+
+  it('generates nothing when pausing', async () => {
+    const t = await makeTemplate('Pause Generates Nothing');
+
+    const result = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.action).toBe('paused');
+    expect(await prisma.studioClass.count({ where: { templateId: t.id } })).toBe(0);
+  });
+
+  /**
+   * The archived guard runs before the write, so an archived template must
+   * come back refused with nothing generated — not merely un-flipped. This is
+   * the case where generating would be worst: archiving just deleted the
+   * window on purpose.
+   */
+  it('refuses to resume an archived template, and generates nothing', async () => {
+    const t = await makeTemplate('Archived Resume');
+    await prisma.studioClassTemplate.update({
+      where: { id: t.id },
+      data: { isActive: false, isArchived: true },
+    });
+
+    const result = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
+
+    expect(result).toEqual({ ok: false, reason: 'archived' });
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.isActive).toBe(false);
+    expect(await prisma.studioClass.count({ where: { templateId: t.id } })).toBe(0);
   });
 });

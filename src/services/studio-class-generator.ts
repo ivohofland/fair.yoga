@@ -73,9 +73,12 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
  *     autocommits on its own; a genuine collision there is a clean P2002 with
  *     nothing left to poison. This is the one caller the hedge actually
  *     protects.
- * The loop below has no caller other than `generateStudioClassInstances`'s
- * own claimed transaction, so there is no unclaimed path left for the branch
- * to matter on here.
+ * The loop below is unreachable for any caller that takes this claim first,
+ * whatever that caller is — the invariant lives in the lock, not in a
+ * roster of who currently holds it. `generateStudioClassInstances`'s sweep
+ * and `pauseOrResumeStudioTemplate`'s resume (`studio-class-template-
+ * lifecycle.ts`, #94) both do; a future caller that skips the claim and goes
+ * straight to `generateStudioInstancesForTemplate` would reopen it.
  *
  * Returns the locked row rather than a boolean, so a caller cannot generate
  * from the snapshot its outer `findMany` read minutes earlier (#102). The raw
@@ -146,12 +149,10 @@ export async function generateStudioInstancesForTemplate(
 
     // Unreachable for any caller holding this template's claim: no other
     // insert for this templateId can land while the row lock is held, so
-    // nothing is left to collide with `@@unique([templateId, date])`. The
-    // sweep (`generateStudioClassInstances`) is the one production caller
-    // today, and it always claims first, which is why the branch stays dead
-    // there. See `claimStudioTemplateForGeneration` for why a caller that
-    // skips the claim would find this hedge broken rather than merely
-    // unnecessary.
+    // nothing is left to collide with `@@unique([templateId, date])`. Every
+    // caller of this function claims first — see `claimStudioTemplateForGeneration`
+    // for why a caller that skipped the claim would find this hedge broken
+    // rather than merely unnecessary.
     try {
       await db.studioClass.create({
         data: {

@@ -22,12 +22,19 @@
  *     carve-out the class family has — so `remaining` is a real query keyed
  *     at the start of the teacher's today, not a hardcoded 0: today's
  *     survivor is the one row it can ever find.
- *   - `pauseOrResumeStudioTemplate` does not call a generator, and has no
- *     `$transaction` at all — see that function's own doc comment for both.
+ *   - `pauseOrResumeStudioTemplate` generates on resume, inside its own
+ *     `$transaction` — see that function's own doc comment for why, and
+ *     `claimStudioTemplateForGeneration` (`studio-class-generator.ts`) for
+ *     why the generation is preceded by a claim rather than run straight off
+ *     the `update` above it (#94).
  */
 
 import type { PrismaClient, StudioClassTemplate } from '@prisma/client';
 import { startOfLocalDay } from '@/lib/timezone';
+import {
+  claimStudioTemplateForGeneration,
+  generateStudioInstancesForTemplate,
+} from './studio-class-generator';
 
 /**
  * Outcome of a pause/resume PATCH. `paused` carries the furthest-out class
@@ -85,23 +92,16 @@ const scheduledWhere = (templateId: string, date: { gt: Date } | { gte: Date }) 
  * Pause or resume generation. Deletes nothing: pausing means "no new classes",
  * not "withdraw what I already offered" — that is what archiving is for.
  *
- * Unlike the class family's `pauseOrResumeTemplate`, resuming here does not
- * call a generator. `generateStudioClassInstances` (`studio-class-generator.
- * ts`) has no per-template equivalent of `generateInstancesForTemplate` — it
- * takes no `teacherId` at all and sweeps every active, unarchived template
- * platform-wide, across every teacher, not just teacher-wide — and that was
- * true of the route this replaces as well: the pre-existing `PATCH` toggle
- * only ever flipped `isActive` and left materialisation to the cron sweep.
- * Calling the platform-wide sweep from here would generate a window for every
- * other teacher's active studio template too, not just the one being resumed
- * — a bigger behaviour change than this task is about. The user-visible
- * consequence of leaving it uncalled: a resumed studio template shows an
- * empty window until the next hourly cron sweep fills it back in.
+ * Unlike before #94, resuming generates. It still does not call
+ * `generateStudioClassInstances` — that takes no `teacherId` and sweeps every
+ * active template platform-wide, across every teacher, which is not
+ * something a single PATCH may do. It calls
+ * `generateStudioInstancesForTemplate` instead, which is scoped to one
+ * template and accepts this transaction's client.
  *
- * With no generator to call, there is also nothing here that needs the class
- * family's `$transaction`: the single `update` below is autocommit, so there
- * is no Prisma transaction timeout to bust — it simply waits on any row lock
- * (e.g. the generator sweep's own claim) and then succeeds.
+ * The write and the generation share one transaction, so a generation failure
+ * rolls the `isActive` flip back rather than leaving a template flagged live
+ * with an empty window — the state this issue was filed about.
  */
 export async function pauseOrResumeStudioTemplate(
   db: PrismaClient,
@@ -135,10 +135,47 @@ export async function pauseOrResumeStudioTemplate(
 
   if (template.isArchived) return { ok: false, reason: 'archived' };
 
-  const updated = await db.studioClassTemplate.update({
-    where: { id: templateId },
-    data: { isActive: desiredActive },
-  });
+  const updated = await db.$transaction(
+    async (tx) => {
+      const t = await tx.studioClassTemplate.update({
+        where: { id: templateId },
+        data: { isActive: desiredActive },
+      });
+
+      if (t.isActive) {
+        // Take the row lock before generating. The `update` above only flips
+        // `isActive`, a non-key column, so Postgres grants it `FOR NO KEY
+        // UPDATE` — which does not conflict with the `FOR KEY SHARE` a
+        // concurrent `StudioClass` insert takes on this template for FK
+        // integrity. Without this claim that race is live, and the
+        // generator's P2002 hedge cannot save us: a `catch` inside an
+        // interactive transaction leaves Postgres with an aborted
+        // transaction that fails the next statement with 25P02 rather than
+        // skipping cleanly. `FOR UPDATE` makes the collision impossible
+        // instead of trying to recover from it (#94).
+        const claimed = await claimStudioTemplateForGeneration(tx, templateId);
+        if (!claimed) {
+          // Not a race — provably unreachable. The archived case returned
+          // above, `isActive` was just set true by the write above, and we
+          // hold this row's lock so nothing can archive or delete it in
+          // between. A null here means the claim's predicate and this
+          // function's guards have drifted apart. Returning 0 instead would
+          // hide that behind a silently empty window — the exact failure
+          // this issue is about.
+          throw new Error(
+            `pauseOrResumeStudioTemplate: claim returned null for template ${templateId} ` +
+              'while holding its row lock — claim predicate and resume guards disagree',
+          );
+        }
+        await generateStudioInstancesForTemplate(tx, claimed);
+      }
+
+      return t;
+    },
+    // The sweep's claim can hold this row for its own full 10s transaction;
+    // Prisma's 5s default would abort us mid-wait.
+    { timeout: 10_000 },
+  );
 
   if (!desiredActive) {
     // `gte` today, not `gt`: pause deletes nothing, so there is no
