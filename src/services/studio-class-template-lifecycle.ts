@@ -219,12 +219,20 @@ export async function pauseOrResumeStudioTemplate(
         // simply evaluated against, and was rejected by, that already-
         // committed version, and nothing was locked. If instead the change
         // committed while this `updateMany` was already blocked waiting on
-        // it — the exact interleaving the race tests below construct —
-        // Postgres locks the newest row version first and only then
-        // re-checks the `where` against it; a rejection at that point still
-        // leaves the lock held to commit. Disambiguate with a plain re-read
-        // either way, exactly as the archive path does — and see there for
-        // why taking a lock here on purpose would not be worth it.
+        // it — the exact interleaving the race tests in
+        // `studio-class-template-lifecycle.test.ts` construct — Postgres
+        // locks the newest row version first and only then re-checks the
+        // `where` against it; a rejection at that point still leaves the lock
+        // held to commit. Disambiguate with a plain re-read either way,
+        // exactly as `archiveOrUnarchiveStudioTemplate`'s own miss branch
+        // does — and see there for why taking a lock here on purpose would
+        // not be worth it. Follow that hop with the paragraph above in hand,
+        // though: it forwards to `class-template-lifecycle.ts`, whose version
+        // of this comment asserts flatly that a missed CAS "holds no lock:
+        // the CAS matched nothing, so it acquired none". That sentence is
+        // wrong for exactly the blocked-then-rejected case described here,
+        // and #117 owns correcting it — the reasoning about whether to lock
+        // survives it, the claim about what is already held does not.
         const current = await tx.studioClassTemplate.findUnique({ where: { id: templateId } });
         if (!current) return { outcome: 'not_found' };
         // `isActive === desiredActive` before `isArchived`, deliberately —
@@ -304,7 +312,14 @@ export async function pauseOrResumeStudioTemplate(
       // does not fail fast or cleanly: it blocks for the full 10s
       // transaction timeout below, then throws — Postgres's deadlock
       // detector does not step in, because this is one connection waiting
-      // on a lock, not a wait-for cycle between two backends.
+      // on a lock, not a wait-for cycle between two backends. Measured, not
+      // reasoned: swapping `tx` for `db` and running this shape standalone
+      // fails at 10.0s with Prisma's P2028 ("transaction already closed").
+      //
+      // Under vitest it looks like 5s instead, because vitest's own default
+      // `testTimeout` is 5000ms and fires first — a property of the harness,
+      // not of Prisma or of this code. Do not read that 5s as the real
+      // budget, and do not "correct" the 10s above to match it.
       await generateStudioInstancesForTemplate(tx, claimed);
 
       const { teacher: _claimTeacher, ...bareClaimed } = claimed;

@@ -54,8 +54,9 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
  * what makes a concurrent insert for this template impossible while the claim
  * holds it, which is what makes the P2002 branch below unreachable, full
  * stop. `generateInstancesForTemplate` (`class-generator.ts`) has three
- * callers that never take that claim, but the hedge is only genuinely
- * load-bearing for one of them:
+ * callers in production that never take that claim — its own tests call it
+ * directly too — but the hedge is only genuinely load-bearing for one of
+ * them:
  *   - `api/class-templates/route.ts` creates a brand-new template row inside
  *     its own transaction — nothing else can reference that id yet, so
  *     nothing can race the insert. Its hedge is dead, not load-bearing.
@@ -154,10 +155,12 @@ export async function generateStudioInstancesForTemplate(
     // production, `generateStudioClassInstances`'s sweep and
     // `pauseOrResumeStudioTemplate`'s resume both claim before calling this
     // function. This file's own tests call it directly, with no claim, to
-    // exercise it on its own, and split the same way
-    // `claimStudioTemplateForGeneration` documents for the class family: all
-    // but one pass a bare `prisma`, so each insert autocommits on its own and
-    // a genuine collision there is a clean, harmless P2002. The exception is
+    // exercise it on its own, and split along the same axis
+    // `claimStudioTemplateForGeneration` documents for the class family,
+    // though the other way round — that roster is one bare caller out of
+    // three, this is one transactional caller out of six: all but one pass a
+    // bare `prisma`, so each insert autocommits on its own and a genuine
+    // collision there is a clean, harmless P2002. The exception is
     // the one named "accepts a transaction client…", which wraps the call in
     // its own `$transaction` with no claim — the only caller here that would
     // actually find this hedge broken rather than merely unnecessary, for the
@@ -191,8 +194,10 @@ export async function generateStudioInstancesForTemplate(
 /**
  * Cron entry point: tops up the rolling window for every active, unarchived
  * studio template, platform-wide — no `teacherId` scoping, unlike
- * `generateClassInstances` (see `pauseOrResumeStudioTemplate`'s docstring in
- * `studio-class-template-lifecycle.ts` for why nothing here is teacher-wide).
+ * `generateClassInstances`. That absence is what puts this function out of
+ * reach of a single PATCH: see `pauseOrResumeStudioTemplate`
+ * (`studio-class-template-lifecycle.ts`), which reaches for
+ * `generateStudioInstancesForTemplate` instead, and says so.
  * Each template is isolated: one template whose generation throws — now
  * including a claim's lock timeout, a new way to fail this sweep did not
  * previously have — is logged and skipped, the rest still generate, and the

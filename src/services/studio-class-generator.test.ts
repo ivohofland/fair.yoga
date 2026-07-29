@@ -438,9 +438,15 @@ describe('generateStudioClassInstances (DB)', () => {
 });
 
 describe('generateStudioInstancesForTemplate (DB)', () => {
-  // Two teachers 25 hours apart. A UTC-only fixture cannot tell the
-  // "already started" filter from its absence, because at UTC the local
-  // start time and the UTC start time are the same instant.
+  // Two teachers 25 hours apart. Not because a UTC-only fixture cannot see
+  // the "already started" filter at all — it can: give a UTC teacher a `from`
+  // of noon and a 09:00 template, and the filter drops an occurrence an
+  // unfiltered build would create. What a UTC fixture cannot see is *which
+  // zone* the filter compares in, because at UTC the teacher-zone comparison
+  // and a plain UTC comparison are the same instant on every input, so both
+  // implementations agree everywhere. Telling those two apart is what these
+  // zones are for, and the "decides 'already started' in the teacher zone,
+  // not in UTC" test below is what does it.
   const EAST = 'Pacific/Kiritimati'; // UTC+14
   const WEST = 'Pacific/Niue'; // UTC-11
 
@@ -534,8 +540,9 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
   /**
    * The parity case. `from` is an explicit instant so this does not depend on
-   * when the suite runs: it is noon in the teacher's own zone on a day that
-   * matches the template's `dayOfWeek`, with the template starting at 09:00.
+   * when the suite runs: it is 14:00 in the teacher's own zone on a day that
+   * matches the template's `dayOfWeek`, with the template starting at 09:00
+   * — the same 14:00 the inline comment below the fixture names.
    * Today's occurrence has therefore already started and must be skipped, and
    * the window must slide a week rather than come back one short.
    */

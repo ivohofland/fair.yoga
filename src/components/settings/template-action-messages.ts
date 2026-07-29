@@ -1,8 +1,17 @@
 import { formatDayHeader } from '@/lib/format';
 
 /**
- * Confirmation shown after pausing a recurring template. Resuming needs no
- * explanation, so this is only ever called on the pause direction.
+ * Confirmation shown after pausing a template. Only ever called on the pause
+ * direction: both `resolveTemplateConfirmation` and
+ * `resolveStudioConfirmation` answer `null` for `active`.
+ *
+ * That used to be justified as "resuming needs no explanation", which was
+ * true when resuming did nothing but flip a flag. It is not true any more:
+ * since #94 resuming a studio template generates its four-week window on the
+ * spot, as the class family already did. So resuming now does something a
+ * teacher might reasonably want told about, and this seam says nothing.
+ * Whether it should say something is a copy decision, deliberately not taken
+ * here — only the stale justification is removed.
  */
 export function pauseMessage(lastScheduled: { date: Date; startTime: string } | null): string {
   return lastScheduled

@@ -740,10 +740,11 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
   });
 
   /**
-   * The race a reviewer of this fix reproduced against this file's own
-   * "provably unreachable" claim: the two guards above are read outside any
-   * lock, so a concurrent archive can commit in the gap between those reads
-   * and this function's own transaction. Constructed the same way as this
+   * The race a reviewer of this fix reproduced against
+   * `pauseOrResumeStudioTemplate`'s own "provably unreachable" claim: that
+   * function's two fast-path guards are read outside any lock, so a
+   * concurrent archive can commit in the gap between those reads and its own
+   * transaction. Constructed the same way as this
    * file's `archiveOrUnarchiveStudioTemplate` concurrent-archive test — a
    * third transaction holds the row lock so both requests queue behind it —
    * except archive is started and confirmed queued first, so Postgres's FIFO
