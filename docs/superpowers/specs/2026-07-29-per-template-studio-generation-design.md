@@ -148,9 +148,19 @@ removed.
 
 ### 5. What does not change
 
-The pause branch is untouched — it still deletes nothing and still reports
-`lastScheduled`. `PauseStudioTemplateResult` keeps its shape, so the PATCH route
-and its exhaustive narrowing compile unchanged.
+The pause branch still deletes nothing and still reports `lastScheduled`, and
+`PauseStudioTemplateResult` keeps its shape, so the PATCH route and its
+exhaustive narrowing compile unchanged.
+
+**Superseded during implementation:** this section originally said the pause
+branch was untouched. It is not. Review found the pre-transaction guards are
+read outside any lock, so a concurrent archive could commit between them and
+the write — which meant the write had to become a compare-and-swap for *both*
+directions, and both now run inside the transaction. Pause therefore gains the
+same failure surface as resume (it can now fail on a contended row rather than
+only wait) while gaining none of the generation benefit. That cost is real and
+was accepted; it is recorded here rather than left for a reader to discover
+from the diff.
 
 ## Testing
 
@@ -218,10 +228,14 @@ must fail).
   behaviour change to a cron path, and worth stating plainly rather than
   discovering: a teacher who relied on the sweep back-filling a just-missed
   class will now have to add it by hand.
-- **Resume now serialises against the sweep.** Taking `FOR UPDATE` means a
-  resume issued while that template's sweep transaction is mid-flight will wait,
-  up to the sweep's 2 s `lock_timeout`. Correct, and the reason for the 10 s
-  transaction budget — but resume is a user-facing PATCH, and it can now block
+- **Resume now serialises against the sweep.** A resume issued while that
+  template's sweep transaction is mid-flight will wait. **Corrected during
+  implementation:** this originally said the wait is bounded by the sweep's 2 s
+  `lock_timeout`. It is not — the waiter's own bound is what matters, and the
+  compare-and-swap runs *before* the claim issues `SET LOCAL lock_timeout`, so
+  nothing bounds that particular wait but the 10 s transaction budget. The 2 s
+  applies only after the CAS succeeds, and then only to a wait on a concurrent
+  insert's `FOR KEY SHARE`. Resume is a user-facing PATCH, and it can now block
   where it previously could not. See #113: an archive that loses this same race
   currently reports "Internal server error", and the resume path will have the
   same shape of problem until that issue is fixed.
