@@ -2,7 +2,11 @@ import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest
 import { PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { log } from '@/lib/log';
-import { generateStudioClassInstances, claimStudioTemplateForGeneration } from './studio-class-generator';
+import {
+  generateStudioClassInstances,
+  claimStudioTemplateForGeneration,
+  generateStudioInstancesForTemplate,
+} from './studio-class-generator';
 import { archiveOrUnarchiveStudioTemplate } from './studio-class-template-lifecycle';
 
 const prisma = new PrismaClient();
@@ -408,6 +412,149 @@ describe('generateStudioClassInstances (DB)', () => {
   });
 });
 
+describe('generateStudioInstancesForTemplate (DB)', () => {
+  // Two teachers 25 hours apart. A UTC-only fixture cannot tell the
+  // "already started" filter from its absence, because at UTC the local
+  // start time and the UTC start time are the same instant.
+  const EAST = 'Pacific/Kiritimati'; // UTC+14
+  const WEST = 'Pacific/Niue'; // UTC-11
+
+  let eastTeacherId: string;
+  let westTeacherId: string;
+  const templateIds: string[] = [];
+
+  const seedTeacher = async (label: string, defaultTimezone: string) => {
+    const email = `studio-pertpl-${label}-${uniqueSuffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: label,
+        lastName: 'Teacher',
+        email,
+        account: { create: { email } },
+        bio: `Per-template studio generation, ${label}`,
+        pageSlug: `studio-pertpl-${label}-${uniqueSuffix}`,
+        defaultTimezone,
+      },
+    });
+    return teacher.id;
+  };
+
+  const makeTemplate = async (teacherId: string, dayOfWeek: number, startTime: string) => {
+    const t = await prisma.studioClassTemplate.create({
+      data: {
+        teacherId,
+        classType: 'Per Template',
+        location: 'Studio Per Template',
+        dayOfWeek,
+        startTime,
+        durationMinutes: 60,
+        hourlyRate: 45,
+        isActive: true,
+      },
+    });
+    templateIds.push(t.id);
+    return t.id;
+  };
+
+  /** Loads a template in the shape the generator takes. */
+  const withZone = (id: string) =>
+    prisma.studioClassTemplate.findUniqueOrThrow({
+      where: { id },
+      include: { teacher: { select: { defaultTimezone: true } } },
+    });
+
+  const datesFor = (templateId: string) =>
+    prisma.studioClass.findMany({
+      where: { templateId },
+      orderBy: { date: 'asc' },
+      select: { date: true },
+    });
+
+  beforeAll(async () => {
+    eastTeacherId = await seedTeacher('east', EAST);
+    westTeacherId = await seedTeacher('west', WEST);
+  });
+
+  afterAll(async () => {
+    await prisma.studioClass.deleteMany({ where: { templateId: { in: templateIds } } });
+    await prisma.studioClassTemplate.deleteMany({ where: { id: { in: templateIds } } });
+    await prisma.teacher.deleteMany({ where: { id: { in: [eastTeacherId, westTeacherId] } } });
+  });
+
+  it('creates the four-week window and is idempotent on a second run', async () => {
+    const id = await makeTemplate(eastTeacherId, 3, '09:00');
+    const tpl = await withZone(id);
+
+    const first = await generateStudioInstancesForTemplate(prisma, tpl);
+    const second = await generateStudioInstancesForTemplate(prisma, tpl);
+
+    expect(first).toBe(4);
+    expect(second).toBe(0);
+    expect(await prisma.studioClass.count({ where: { templateId: id } })).toBe(4);
+  });
+
+  /**
+   * The parity case. `from` is an explicit instant so this does not depend on
+   * when the suite runs: it is noon in the teacher's own zone on a day that
+   * matches the template's `dayOfWeek`, with the template starting at 09:00.
+   * Today's occurrence has therefore already started and must be skipped, and
+   * the window must slide a week rather than come back one short.
+   */
+  it('skips an occurrence whose start time has already passed, and still creates four', async () => {
+    // 2026-08-05T00:00:00Z is a Wednesday. In Kiritimati (UTC+14) that instant
+    // is 14:00 the same Wednesday — after a 09:00 start.
+    const from = new Date('2026-08-05T00:00:00.000Z');
+    const dayOfWeek = (from.getUTCDay() + 6) % 7; // schema convention: 0 = Monday
+    const id = await makeTemplate(eastTeacherId, dayOfWeek, '09:00');
+    const tpl = await withZone(id);
+
+    const created = await generateStudioInstancesForTemplate(prisma, tpl, from);
+
+    expect(created).toBe(4);
+    const dates = (await datesFor(id)).map((d) => d.date.toISOString().slice(0, 10));
+    expect(dates).not.toContain('2026-08-05');
+    expect(dates[0]).toBe('2026-08-12');
+  });
+
+  /**
+   * The same instant and the same template shape, read from two zones 25 hours
+   * apart, must disagree about whether today's class is still ahead. If this
+   * passes with the filter deleted, the filter is not being exercised.
+   */
+  it('decides "already started" in the teacher zone, not in UTC', async () => {
+    // 20:00Z on a Wednesday. Kiritimati (UTC+14) is already Thursday 10:00, so
+    // Wednesday is long gone. Niue (UTC-11) is still Wednesday 09:00 — an hour
+    // before a 10:00 start, so Wednesday is still ahead.
+    const from = new Date('2026-08-05T20:00:00.000Z');
+    const dayOfWeek = (new Date('2026-08-05T00:00:00.000Z').getUTCDay() + 6) % 7;
+
+    const eastId = await makeTemplate(eastTeacherId, dayOfWeek, '10:00');
+    const westId = await makeTemplate(westTeacherId, dayOfWeek, '10:00');
+
+    await generateStudioInstancesForTemplate(prisma, await withZone(eastId), from);
+    await generateStudioInstancesForTemplate(prisma, await withZone(westId), from);
+
+    const east = (await datesFor(eastId)).map((d) => d.date.toISOString().slice(0, 10));
+    const west = (await datesFor(westId)).map((d) => d.date.toISOString().slice(0, 10));
+
+    expect(east).not.toContain('2026-08-05');
+    expect(west).toContain('2026-08-05');
+  });
+
+  it('accepts a transaction client, so a caller can compose it', async () => {
+    const id = await makeTemplate(westTeacherId, 4, '08:00');
+    const tpl = await withZone(id);
+
+    const created = await prisma.$transaction(
+      async (tx) => generateStudioInstancesForTemplate(tx, tpl),
+      { timeout: 10_000 },
+    );
+
+    expect(created).toBe(4);
+    expect(await prisma.studioClass.count({ where: { templateId: id } })).toBe(4);
+  });
+});
+
 // ===========================================================================
 // Per-template isolation — stubbed db, no real DB
 // ===========================================================================
@@ -423,6 +570,11 @@ describe('generateStudioClassInstances (per-template isolation)', () => {
       durationMinutes: 60,
       location: 'Stub Studio',
       hourlyRate: 45,
+      // generateStudioInstancesForTemplate (#94) now reads
+      // template.teacher.defaultTimezone to decide whether today's occurrence
+      // has already started; UTC keeps that decision equal to plain instant
+      // comparison so it doesn't interact with this test's own fixture dates.
+      teacher: { defaultTimezone: 'UTC' },
     };
   }
 

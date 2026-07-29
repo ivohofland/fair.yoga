@@ -5,11 +5,22 @@
  */
 
 import { Prisma } from '@prisma/client';
-import type { PrismaClient, StudioClassTemplate } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 import { getNextOccurrences } from './class-generator';
+import { classStartInstant } from '@/lib/timezone';
 import { log } from '@/lib/log';
 
 const DEFAULT_WEEKS = 4;
+
+/**
+ * The studio mirror of `class-generator.ts`'s `TemplateWithTimezone`. The
+ * teacher's zone is not decoration: `generateStudioInstancesForTemplate`
+ * needs it to decide whether today's class has already started, and
+ * `StudioClassTemplate` carries no zone of its own.
+ */
+export type StudioTemplateWithTimezone = Prisma.StudioClassTemplateGetPayload<{
+  include: { teacher: { select: { defaultTimezone: true } } };
+}>;
 
 /**
  * How long a claim waits for the template's row lock before giving up.
@@ -77,7 +88,7 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
 export async function claimStudioTemplateForGeneration(
   tx: Prisma.TransactionClient,
   templateId: string,
-): Promise<StudioClassTemplate | null> {
+): Promise<StudioTemplateWithTimezone | null> {
   await tx.$executeRawUnsafe(LOCK_TIMEOUT_SQL);
   const rows = await tx.$queryRaw<Array<{ id: string }>>`
     SELECT "id" FROM "StudioClassTemplate"
@@ -88,7 +99,81 @@ export async function claimStudioTemplateForGeneration(
   if (rows.length !== 1) return null;
 
   // Under the lock taken above; `OrThrow` because the row provably exists.
-  return tx.studioClassTemplate.findUniqueOrThrow({ where: { id: templateId } });
+  return tx.studioClassTemplate.findUniqueOrThrow({
+    where: { id: templateId },
+    include: { teacher: { select: { defaultTimezone: true } } },
+  });
+}
+
+/**
+ * Generates one template's rolling window. The studio mirror of
+ * `generateInstancesForTemplate` (`class-generator.ts`) — same client union,
+ * same optional `from`, same count of rows created — so the two families can
+ * be read against each other.
+ *
+ * Takes `PrismaClient | Prisma.TransactionClient` so a caller can compose it
+ * into a transaction it already owns. That is the whole reason this function
+ * exists: before #94 the loop was inlined in the sweep, so
+ * `pauseOrResumeStudioTemplate` had nothing to call but the platform-wide
+ * sweep, and left a resumed template empty until the next cron run.
+ */
+export async function generateStudioInstancesForTemplate(
+  db: PrismaClient | Prisma.TransactionClient,
+  template: StudioTemplateWithTimezone,
+  from?: Date,
+): Promise<number> {
+  const startDate = from ?? new Date();
+  let created = 0;
+
+  // The next 4 occurrences whose start is still ahead of startDate. A run
+  // after today's start time must not create a class that already happened;
+  // the window slides one week further instead. Ported from the class family
+  // in #94 — the studio side had no such filter, so the hourly sweep could
+  // materialise a class that had already started, and generating on resume
+  // would have put that in front of a teacher who was watching.
+  const dates = getNextOccurrences(template.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
+    .filter(
+      (date) =>
+        classStartInstant(date, template.startTime, template.teacher.defaultTimezone) > startDate,
+    )
+    .slice(0, DEFAULT_WEEKS);
+
+  for (const date of dates) {
+    const existing = await db.studioClass.findFirst({
+      where: { templateId: template.id, date },
+    });
+    if (existing) continue;
+
+    // Unreachable while a claim holds this template's row lock: no other
+    // insert for this templateId can land, so nothing is left to collide with
+    // `@@unique([templateId, date])`. Both callers take that claim — the sweep
+    // and `pauseOrResumeStudioTemplate` — which is why the branch stays dead.
+    // See `claimStudioTemplateForGeneration` for why a caller that skipped the
+    // claim would find this hedge broken rather than merely unnecessary.
+    try {
+      await db.studioClass.create({
+        data: {
+          teacherId: template.teacherId,
+          templateId: template.id,
+          classType: template.classType,
+          date,
+          startTime: template.startTime,
+          durationMinutes: template.durationMinutes,
+          location: template.location,
+          hourlyRate: template.hourlyRate,
+        },
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        continue; // dead under the claim's lock; see the comment above
+      }
+      throw err;
+    }
+
+    created++;
+  }
+
+  return created;
 }
 
 /**
@@ -139,45 +224,7 @@ export async function generateStudioClassInstances(
 
           // `fresh`, not `template`: the loop variable is the pre-filter's
           // snapshot and may be minutes old. #102.
-          let created = 0;
-          const dates = getNextOccurrences(fresh.dayOfWeek, startDate, DEFAULT_WEEKS);
-
-          for (const date of dates) {
-            const existing = await tx.studioClass.findFirst({
-              where: { templateId: fresh.id, date },
-            });
-            if (existing) continue;
-
-            // Unreachable while the claim above holds the row lock: no other
-            // insert for this templateId can land inside this transaction, so
-            // nothing is left to collide with `@@unique([templateId, date])`.
-            // Kept as a defensive backstop only — pre-lock, this branch was
-            // the one doing real work; see `claimStudioTemplateForGeneration`
-            // for why that is no longer true.
-            try {
-              await tx.studioClass.create({
-                data: {
-                  teacherId: fresh.teacherId,
-                  templateId: fresh.id,
-                  classType: fresh.classType,
-                  date,
-                  startTime: fresh.startTime,
-                  durationMinutes: fresh.durationMinutes,
-                  location: fresh.location,
-                  hourlyRate: fresh.hourlyRate,
-                },
-              });
-            } catch (err) {
-              if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-                continue; // dead under the claim's lock; see the comment above
-              }
-              throw err;
-            }
-
-            created++;
-          }
-
-          return created;
+          return generateStudioInstancesForTemplate(tx, fresh, startDate);
         },
         // Comfortably above the claim's own 2s lock_timeout, so Postgres
         // gives up on the lock before Prisma gives up on the transaction.
