@@ -177,8 +177,13 @@ from the diff.
   by count *and* by the specific date that must be absent.
 - **timezone-discriminating:** a teacher east and a teacher west of UTC, with
   the same template start time and the same instant, must disagree about
-  whether today's class is still ahead. A UTC-only fixture cannot tell the
-  filter from its absence.
+  whether today's class is still ahead. **Corrected during implementation:**
+  this originally said a UTC-only fixture "cannot tell the filter from its
+  absence". It can — a UTC teacher with a `from` after the start time filters
+  out an occurrence an unfiltered build would create. What a UTC-only fixture
+  cannot tell is whether the filter compares in the *teacher's zone* or in UTC,
+  since at UTC those are the same instant. That narrower claim is what the
+  two-zone pair actually earns.
 
 **Unit, the sweep:** unchanged behaviour except the filter — its existing tests
 must still pass, and one asserts it now delegates rather than duplicating.

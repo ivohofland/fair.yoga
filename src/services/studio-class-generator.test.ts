@@ -91,11 +91,15 @@ describe('generateStudioClassInstances (DB)', () => {
 
     await generateStudioClassInstances(prisma, from);
     const afterFirst = await prisma.studioClass.count({ where: { templateId } });
-    // Exactly the rolling 4-week window, not "at least most of it". The
-    // loose bound this replaces was a hedge from before `DEFAULT_WEEKS + 1`
-    // occurrences were filtered down to `DEFAULT_WEEKS`; with a filter in
-    // front of the count it would wave through the one regression worth
-    // catching, a window that comes back a week short.
+    // Exactly the rolling 4-week window, not "at least most of it". The loose
+    // bound this replaces would wave through a window that comes back a week
+    // short. Note what it does *not* pin: this fixture's filter never drops
+    // anything — the template is `dayOfWeek: 1` and `from` is a Thursday, so
+    // the first occurrence is always a future Tuesday — so the
+    // `DEFAULT_WEEKS + 1` → `DEFAULT_WEEKS` regression is caught by the
+    // per-template tests below, not here. What `toBe(4)` catches here is a
+    // window that shortens for any *other* reason, e.g. `DEFAULT_WEEKS` itself
+    // changing.
     expect(afterFirst).toBe(4);
 
     await generateStudioClassInstances(prisma, from);
@@ -121,11 +125,11 @@ describe('generateStudioClassInstances (DB)', () => {
    * aborted transaction that fails the next statement with 25P02 rather than
    * skipping cleanly — which `generateStudioClassInstances` rethrows.
    *
-   * The lock is pinned by the tests in this file that can observe it: "makes
-   * a concurrent archive wait until the claim transaction commits" above, and
-   * the two mid-sweep tests below ("does not generate for a template archived
-   * after the list was read" and "writes the values committed while the sweep
-   * was waiting, not the ones it read"). All three park a competing
+   * The lock is pinned by the three tests in this file that can observe it,
+   * all of them below: "makes a concurrent archive wait until the claim
+   * transaction commits", "does not generate for a template archived after the
+   * list was read", and "writes the values committed while the sweep was
+   * waiting, not the ones it read". All three park a competing
    * transaction on the row and assert nothing settles until it commits; each
    * one fails without `FOR UPDATE`. A fourth here would buy another few
    * hundred milliseconds of sleep in every run and no new coverage — the same
@@ -144,8 +148,9 @@ describe('generateStudioClassInstances (DB)', () => {
       select: { date: true },
     });
     const dates = instances.map((i) => i.date.toISOString());
-    // Exactly the window, for the same reason as the test above: a loose
-    // lower bound cannot tell a full window from one the filter shortened.
+    // Exactly the window, for the same reason as the test above — and with the
+    // same caveat: this fixture's `from` is a Sunday against a `dayOfWeek: 1`
+    // template, so the filter never drops anything here either.
     expect(dates.length).toBe(4);
     expect(new Set(dates).size).toBe(dates.length);
   });
