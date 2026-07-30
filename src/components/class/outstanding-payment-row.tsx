@@ -107,14 +107,16 @@ export function OutstandingPaymentRow({
               disabled={busy}
               className={`h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] border-teal text-teal hover:bg-teal-tint ${busy ? 'opacity-50' : ''}`}
               // Leads with the visible label, deliberately breaking the "… for
-              // {context}" shape the other two buttons share. WCAG 2.5.3 wants
-              // the visible text ("Mark paid") to appear contiguously and in
-              // order inside the accessible name, so a speech-input user can
-              // say what they see; "Mark {name}'s payment as paid" splits it
-              // and leaves that user without a way to activate the button. The
-              // other two conform as written — their visible text already
-              // starts their label — so they were left alone rather than
-              // reshaped for symmetry.
+              // {context}" shape the other two buttons share. WCAG 2.5.3
+              // requires the visible text ("Mark paid") to appear contiguously
+              // and in order inside the accessible name; the label this
+              // replaced, "Mark {name} payment as paid", splits it and leaves
+              // a speech-input user unable to activate a button they can read.
+              // Leading with it goes further than the SC strictly demands —
+              // "{name}, Mark paid" would also conform — because speech input
+              // matches on a prefix in practice. The other two conform as
+              // written, their visible text already starting their label, so
+              // they were left alone rather than reshaped for symmetry.
               aria-label={`Mark paid — ${studentName}, ${classContext}`}
             >
               {busy ? 'Saving...' : 'Mark paid'}

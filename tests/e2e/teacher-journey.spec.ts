@@ -345,8 +345,27 @@ test.describe('Teacher journey', () => {
     await signInTeacher(context);
     await page.goto('/settings/payments');
 
-    // The payment marked paid in the previous test sits under Received.
+    // The payment marked paid in the previous test sits under Received, whose
+    // caption carries the start time for the same reason the Outstanding rows
+    // do (#59): two paid classes of one type on one day are otherwise
+    // indistinguishable, and the amount does not tell them apart.
+    //
+    // Pinned here rather than in the component test because this caption is
+    // built inline by the page — there is no prop to hand a component test, and
+    // nothing else in the suite reads it. It shipped unpinned and a reviewer
+    // caught that by deleting the start time and watching every suite pass.
+    //
+    // Scoped to the Received section on purpose. Both sections show the same
+    // class, so an unscoped match is satisfied by the Outstanding caption and
+    // stays green when only this one loses its time — which is exactly what the
+    // first version of this assertion did.
     await expect(page.getByRole('heading', { name: 'Received' })).toBeVisible();
+    const receivedSection = page
+      .locator('section')
+      .filter({ has: page.getByRole('heading', { name: 'Received' }) });
+    await expect(
+      receivedSection.getByText(new RegExp(`Journey Flow · .* · ${slot.startTime} · `)),
+    ).toBeVisible();
     // The Outstanding row carries the reminder action. On this cross-class
     // surface the aria-label appends the class context
     // ("… for {class} · {day} · {time}", #59) so two rows for one student stay

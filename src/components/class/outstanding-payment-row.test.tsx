@@ -37,13 +37,14 @@ import { OutstandingPaymentRow } from './outstanding-payment-row';
  * " (outstanding)" appended, a caption with " (unpaid)" — die under an exact
  * match and survive a substring one.
  *
- * Between them these four tests pin the whole string reaching every consumer of
+ * Four of these tests pin the whole string reaching every consumer of
  * `classContext`: the two aria-labels this component builds itself, the
  * `context` prop it hands to `SendReminderButton`, and the visible caption.
- * That is now literally every consumer, which it was not before the undo test
- * existed. Nothing else pins any of it — `teacher-journey.spec.ts` reaches only
- * the reminder button, and asserts that the page's value *contains* the class
- * start time rather than what the whole string is. The reminder test also pins
+ * That is literally every consumer, which it was not before the undo test
+ * existed. The fifth pins something different and is described where it sits.
+ * Little else pins any of this — `teacher-journey.spec.ts` reaches only the
+ * reminder button and the two page-built captions, and asserts that each
+ * *contains* the class start time rather than what the whole string is. The reminder test also pins
  * that the row keeps passing `classContext` into a `context` prop typed
  * `string | null`, which a sibling consumer (`payment-checklist.tsx`)
  * deliberately passes `null` to; the caption test pins that what is on screen
@@ -97,10 +98,10 @@ describe('OutstandingPaymentRow', () => {
   /**
    * These two lead with "Mark paid" rather than following the "… for {context}"
    * shape the other two labels share, and that asymmetry is the point: WCAG
-   * 2.5.3 wants the visible text to sit contiguously and in order inside the
-   * accessible name, so "Mark paid" has to come first. Asserted as whole
-   * strings, so a well-meant reshape back to the parallel phrasing is caught
-   * here and not in a speech-input user's session.
+   * 2.5.3 requires the visible text to sit contiguously and in order inside the
+   * accessible name, and leading with it is what speech input matches on.
+   * Asserted as whole strings, so a reshape of the *label* back to the parallel
+   * phrasing is caught here and not in a speech-input user's session.
    */
   it('gives the mark-paid buttons distinct accessible names', () => {
     renderCollidingPair();
@@ -114,6 +115,33 @@ describe('OutstandingPaymentRow', () => {
   });
 
   /**
+   * 2.5.3 is a relation between two strings, and every other test in this file
+   * — and every test in the repo that reaches these buttons — pins only one of
+   * them, the accessible name. That leaves the visible copy invisible to CI:
+   * rename the button to "Settle" and the aria-label still says "Mark paid",
+   * which is a clean 2.5.3 failure with a green suite. Found in review by
+   * mutating exactly that and watching all 36 component tests and 18 e2e tests
+   * pass.
+   *
+   * So assert the containment directly. The regexes deliberately pin only that
+   * the name *starts with* the visible text — the rest of each label is pinned
+   * by the tests above, and duplicating that here would mean two places to
+   * update for one copy change. Undo is covered in the undo test below, which
+   * already has that button in hand.
+   */
+  it('keeps each button visible text inside its accessible name', () => {
+    renderCollidingPair();
+
+    const markPaid = screen.getAllByRole('button', { name: /^Mark paid/ });
+    expect(markPaid).toHaveLength(2);
+    markPaid.forEach((button) => expect(button).toHaveTextContent('Mark paid'));
+
+    const reminder = screen.getAllByRole('button', { name: /^Send reminder/ });
+    expect(reminder).toHaveLength(2);
+    reminder.forEach((button) => expect(button).toHaveTextContent('Send reminder'));
+  });
+
+  /**
    * Undo only renders for a payment marked paid *in this session* (the
    * `justMarked` gate), so reaching it means going through mark-paid — which
    * calls `fetch`. The stub is scaffolding to get past that gate, not the
@@ -123,6 +151,10 @@ describe('OutstandingPaymentRow', () => {
    * labels, and until this test the only one of the three with no coverage
    * anywhere. (`teacher-journey.spec.ts` asserts an Undo name, but on
    * `payment-checklist.tsx`, a different component.)
+   *
+   * Note the coupling: this reaches Undo by clicking mark-paid *by its exact
+   * accessible name*, so a mark-paid copy regression turns this test red too.
+   * Two failures for one defect, which is noise but not a wrong signal.
    */
   it('gives the undo buttons distinct accessible names', async () => {
     fetchMock.mockResolvedValue({ ok: true });
@@ -136,16 +168,17 @@ describe('OutstandingPaymentRow', () => {
       screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 18:00' }),
     );
 
-    expect(
-      await screen.findByRole('button', {
-        name: 'Undo marking Ana de Vries as paid for Vinyasa · Jun 12 · 09:30',
-      }),
-    ).toBeInTheDocument();
+    const morningUndo = await screen.findByRole('button', {
+      name: 'Undo marking Ana de Vries as paid for Vinyasa · Jun 12 · 09:30',
+    });
+    expect(morningUndo).toBeInTheDocument();
     expect(
       await screen.findByRole('button', {
         name: 'Undo marking Ana de Vries as paid for Vinyasa · Jun 12 · 18:00',
       }),
     ).toBeInTheDocument();
+    // Undo's half of the 2.5.3 relation the test above pins for the other two.
+    expect(morningUndo).toHaveTextContent('Undo');
   });
 
   /**
