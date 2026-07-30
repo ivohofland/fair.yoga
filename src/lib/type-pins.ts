@@ -32,10 +32,17 @@
 export type NoneOf<T extends PropertyKey> = [T] extends [never] ? true : T;
 
 /**
- * `NoneOf`'s own pin. Ten pins across two service modules resolve through this
- * one alias, so a hollowed-out `NoneOf` defangs all of them at once — and the
- * call sites cannot catch that, because every one of them instantiates
- * `NoneOf<never>` and so only exercises the passing direction.
+ * `NoneOf`'s own pin. Every pin in the repo resolves through this one alias —
+ * service modules and `'use client'` components alike — so a hollowed-out
+ * `NoneOf` defangs all of them at once, and the call sites cannot catch that,
+ * because every one of them instantiates `NoneOf<never>` and so only exercises
+ * the passing direction.
+ *
+ * Deliberately not a count. `grep -rn ': NoneOf<' src/` is current; a number
+ * written here was accurate for one branch and has been wrong ever since. What
+ * matters is the shape of the blast radius, not its size this week: the
+ * dependants are load-bearing invariants, and none of them can vouch for the
+ * alias they are written in.
  *
  * These assert *resolution identity*, not merely that `true` is rejected. That
  * distinction is load-bearing and was learned the hard way: the first version

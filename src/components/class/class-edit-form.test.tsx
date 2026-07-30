@@ -62,7 +62,10 @@ describe('ClassEditForm', () => {
    * for both, and this test only ever observes `JSON.parse(body)`. The route
    * itself would accept either — it filters on `data[f] !== undefined`
    * (class-lifecycle.ts:457) — so the two are equivalent over the wire, and no
-   * test here (or possible from outside the component) tells them apart.
+   * test here tells them apart. Not that none could: a spy on
+   * `JSON.stringify` sees the object before it is serialized, where the two
+   * differ. It would be testing the mechanism rather than what is sent, which
+   * is why this file does not.
    */
   it('omits the economic fields when settings are locked', async () => {
     const body = await saveWith(true);
