@@ -383,17 +383,30 @@ describe('TemplateForm', () => {
     vi.stubGlobal('fetch', fetchMock);
   }
 
-  async function submit(): Promise<Record<string, unknown>> {
+  /**
+   * Returns the URL and method alongside the parsed body — not just the body
+   * — so a test can pin `calls.at(-1)` to the request it means. Without that,
+   * an intervening `fetch` added later could make `.at(-1)` silently select
+   * the wrong call while every body assertion still passed.
+   */
+  async function submit(): Promise<{ url: string; method: string; body: Record<string, unknown> }> {
     fireEvent.click(screen.getByRole('button', { name: /save|create/i }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(1));
-    const [, options] = fetchMock.mock.calls.at(-1) ?? [];
-    return JSON.parse((options as { body: string }).body) as Record<string, unknown>;
+    const [url, options] = fetchMock.mock.calls.at(-1) ?? [];
+    const opts = options as { method: string; body: string };
+    return {
+      url: url as string,
+      method: opts.method,
+      body: JSON.parse(opts.body) as Record<string, unknown>,
+    };
   }
 
   it('sends all thirteen fields when editing', async () => {
     stubFetch();
     render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
-    const body = await submit();
+    const { url, method, body } = await submit();
+    expect(url).toBe('/api/class-templates/tpl-1');
+    expect(method).toBe('PUT');
     expect(Object.keys(body).sort()).toEqual([
       'autoCancelCheck', 'cancelDeadline', 'classType', 'dayOfWeek', 'description',
       'durationMinutes', 'maxStudents', 'minRate', 'minStudents', 'roomCost',
@@ -404,7 +417,7 @@ describe('TemplateForm', () => {
   it('trims classType and description before sending', async () => {
     stubFetch();
     render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
-    const body = await submit();
+    const { body } = await submit();
     expect(body.classType).toBe('Vinyasa');
     expect(body.description).toBe('Bring a mat.');
   });
@@ -414,7 +427,7 @@ describe('TemplateForm', () => {
     render(
       <TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial, description: '   ' }} />,
     );
-    const body = await submit();
+    const { body } = await submit();
     expect(body.description).toBeNull();
   });
 
@@ -422,13 +435,19 @@ describe('TemplateForm', () => {
    * Create sends the same body to a different endpoint, and
    * `createClassTemplateSchema` requires fields the update one leaves optional
    * — so a body good enough for PUT can still be rejected by POST. Asserting
-   * the key set on both modes is what makes the two create-side pins in the
-   * source file mean something at runtime.
+   * the key set on both modes is what makes the one create-side pin in the
+   * source file (`_formCoversCreate`, checked against `CreateTemplateWire`)
+   * mean something at runtime: the pin only guards the *key set*, and the
+   * create and update schemas agree on keys while differing in optionality
+   * and `.strict()` — differences a key-set pin can't see, which is exactly
+   * what this runtime assertion adds.
    */
   it('sends the same thirteen fields when creating', async () => {
     stubFetch();
     render(<TemplateForm mode="create" />);
-    const body = await submit();
+    const { url, method, body } = await submit();
+    expect(url).toBe('/api/class-templates');
+    expect(method).toBe('POST');
     expect(Object.keys(body).sort()).toEqual([
       'autoCancelCheck', 'cancelDeadline', 'classType', 'dayOfWeek', 'description',
       'durationMinutes', 'maxStudents', 'minRate', 'minStudents', 'roomCost',
