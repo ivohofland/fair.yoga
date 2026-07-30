@@ -52,7 +52,14 @@ for a write that landed is still correct — the row is gone before we reply, so
 "no such template" is what the caller's world now contains — but a reader who
 finds `not_found` returned after a successful write deserves to be told that on
 purpose rather than left to wonder. The `sync` result is lost with it; that is
-fine, since there are no instances left to report on.
+fine — but not for the reason first written here. `Class.templateId` is
+`onDelete: SetNull`, so deleting a template **orphans** its generated classes
+rather than removing them: they stay on the teacher's schedule, still `open`
+and still publicly bookable, frozen with their pre-edit settings and with
+nothing left that could ever propagate the edit. What makes the lost counts
+cost nothing is narrower — `syncTemplateInstances` filters on `templateId`, so
+after the delete it matches none of them and would have reported `{0,0,0}`
+anyway.
 
 **Document the other three as already correct.** `archiveOrUnarchiveTemplate`,
 `pauseOrResumeStudioTemplate` and `archiveOrUnarchiveStudioTemplate` all replaced
@@ -70,10 +77,15 @@ statements, which this codebase has repeatedly found attracts false comments
 explaining why they exist.
 
 **Reachability, stated once so nobody re-derives it:** no production path
-deletes a `ClassTemplate` or `StudioClassTemplate` row. All 14 `.delete`/
-`deleteMany` calls on those models — across `src/` and `tests/`, counted by
-`(classTemplate|studioClassTemplate)\.(delete|deleteMany)\(` — are in test
-files. `gdpr.ts` anonymises
+deletes a `ClassTemplate` or `StudioClassTemplate` row. Counting by
+`(classTemplate|studioClassTemplate)\.(delete|deleteMany)\(` across `src/` and
+`tests/`: **16 at this branch's HEAD**, 14 on `main` — the two extra are this
+branch's own new tests. Every one is in a test file.
+
+(This number has now been wrong twice. It was first written as "ten", corrected
+to 14 — which was the count on `main`, already stale because the branch had
+added two tests before the correction was made. Stating a convention is not
+enough if you then run it against the wrong revision.) `gdpr.ts` anonymises
 rather than cascade-deletes and never deletes a `Teacher`, so the `onDelete:
 Cascade` on both templates' teacher relation is unreachable too. Both guards are
 therefore unreachable today and are being added because the window is real and
@@ -108,12 +120,27 @@ true.
 No runtime behaviour changes. Every reason keeps its existing status code and
 message; `tsc` verifies the whole change.
 
-Two things this buys. The `never` guard catches a future `ok: false` member that
-is not a reason at all, which narrowing on `.reason` cannot see. And a reason
-becomes able to carry its own payload the way `UpdateClassResult.locked` carries
-its non-empty `fields` tuple — the precedent whose docstring records that its
-predecessor "returned a 'locked' response naming no fields at all, for a request
-that touched none".
+**Corrected after review — the original justification here was overclaimed, and
+a reviewer disproved it with the compiler.** This spec first said the split
+catches a future `ok: false` member that is not a reason at all, which
+narrowing on `.reason` cannot see. That is false: the old form caught it too,
+as a hard `TS2339` at the `if` lines. It also said the split is what makes a
+per-reason payload possible; also false — a payload-carrying member can be
+added *alongside* an unsplit member and every existing guard still bites.
+
+What the split actually buys, which is smaller and worth stating honestly:
+
+- the guard's failure becomes legible — `TS2322` naming the unhandled member,
+  instead of `Type 'any' is not assignable to type 'never'`;
+- the idiom matches `UpdateClassTemplateResult` ninety lines up, which retires
+  three comment paragraphs whose only job was explaining why these four sites
+  narrowed differently from their neighbour.
+
+On a branch this comment-heavy, retiring an explanation is worth more than it
+looks: a divergence that needs a paragraph at every site is a divergence that
+will eventually be described wrongly. But this is an error-message and
+consistency change, not a new guarantee, and the issue called it right at
+filing time — "the consequence is real but small".
 
 **`ResumeTransactionOutcome` is deliberately left alone.** It is module-private,
 discriminates on `outcome` rather than `reason`, carries no `ok` field, and
