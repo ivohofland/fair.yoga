@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import type { createClassTemplateSchema, updateClassTemplateSchema } from '@/lib/schemas';
+import type { CancelDeadline, AutoCancelCheck } from '@prisma/client';
 import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
@@ -35,8 +36,8 @@ export interface TemplateFormValues {
   targetRate: number;
   minStudents: number;
   maxStudents: number;
-  cancelDeadline: string;
-  autoCancelCheck: string;
+  cancelDeadline: CancelDeadline;
+  autoCancelCheck: AutoCancelCheck;
 }
 
 type UpdateTemplateWire = z.infer<typeof updateClassTemplateSchema>;
@@ -82,13 +83,47 @@ const CANCEL_DEADLINE_OPTIONS = [
   { value: 'HOURS_24', label: '24 hours' },
   { value: 'HOURS_12', label: '12 hours' },
   { value: 'HOURS_6', label: '6 hours' },
-];
+] as const;
 
 const AUTO_CANCEL_OPTIONS = [
   { value: 'HOURS_4', label: '4 hours before' },
   { value: 'HOURS_2', label: '2 hours before' },
   { value: 'HOURS_1', label: '1 hour before' },
-];
+] as const;
+
+type CancelDeadlineOption = (typeof CANCEL_DEADLINE_OPTIONS)[number]['value'];
+type AutoCancelOption = (typeof AUTO_CANCEL_OPTIONS)[number]['value'];
+
+/**
+ * The dropdown is the list. An enum member with no option here fails the build,
+ * so a teacher can never be offered a stale set of choices — the same defect as
+ * the field-list pins above, one level down.
+ *
+ * Consequence worth knowing before deleting an entry: removing an option to
+ * hide a choice from teachers now fails the build. Hiding a choice means
+ * removing it from the enum, or gating it at render.
+ */
+const _offersEveryDeadline: NoneOf<Exclude<CancelDeadline, CancelDeadlineOption>> = true;
+const _noStaleDeadline: NoneOf<Exclude<CancelDeadlineOption, CancelDeadline>> = true;
+const _offersEveryCheck: NoneOf<Exclude<AutoCancelCheck, AutoCancelOption>> = true;
+const _noStaleCheck: NoneOf<Exclude<AutoCancelOption, AutoCancelCheck>> = true;
+void _offersEveryDeadline;
+void _noStaleDeadline;
+void _offersEveryCheck;
+void _noStaleCheck;
+
+/**
+ * `<select>` hands back `e.target.value` as `string`; these narrow it without
+ * an assertion. They read the options array rather than a second list, so
+ * there is nothing here that can drift from what is rendered.
+ */
+function isCancelDeadline(v: string): v is CancelDeadline {
+  return CANCEL_DEADLINE_OPTIONS.some((o) => o.value === v);
+}
+
+function isAutoCancelCheck(v: string): v is AutoCancelCheck {
+  return AUTO_CANCEL_OPTIONS.some((o) => o.value === v);
+}
 
 const INITIAL_VALUES: TemplateFormValues = {
   teacherRoomId: '',
@@ -363,7 +398,9 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         id="cancelDeadline"
         label="Cancellation deadline"
         value={form.cancelDeadline}
-        onChange={(e) => update('cancelDeadline', e.target.value)}
+        onChange={(e) => {
+          if (isCancelDeadline(e.target.value)) update('cancelDeadline', e.target.value);
+        }}
       >
         {CANCEL_DEADLINE_OPTIONS.map((opt) => (
           <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -374,7 +411,9 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         id="autoCancelCheck"
         label="Auto-cancel check"
         value={form.autoCancelCheck}
-        onChange={(e) => update('autoCancelCheck', e.target.value)}
+        onChange={(e) => {
+          if (isAutoCancelCheck(e.target.value)) update('autoCancelCheck', e.target.value);
+        }}
       >
         {AUTO_CANCEL_OPTIONS.map((opt) => (
           <option key={opt.value} value={opt.value}>{opt.label}</option>

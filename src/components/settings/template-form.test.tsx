@@ -132,4 +132,40 @@ describe('TemplateForm', () => {
       'startTime', 'targetRate', 'teacherRoomId',
     ]);
   });
+
+  /**
+   * #85's second half. These two fields were typed `string` against Prisma
+   * enums of four and three members, so `update('cancelDeadline', 'HOURS_99')`
+   * compiled. The dropdown arrays are now the single source of both the union
+   * and the `<option>`s, so the two cannot disagree.
+   *
+   * This asserts the rendered options rather than the type, because the type is
+   * held by the pins in the source file and a runtime test cannot see it. What
+   * a runtime test *can* see is that every enum member is actually offered —
+   * the failure a teacher would meet is a missing choice, not a type error.
+   *
+   * Narrower than the spec asked for, deliberately. The spec wanted a test of
+   * "the enum guard rejecting a value outside the dropdown". The guards are
+   * module-private, and exporting them only so a test can reach them is the
+   * pattern PR #131's review rejected. Driving an invalid value through the
+   * component is not possible either — the `<option>`s are the same array the
+   * guard reads, so there is no way to select one it would refuse. What is
+   * left is this: assert that the offered set equals the enum, which is the
+   * property the guard exists to preserve.
+   */
+  it('offers every cancellation deadline the schema accepts', async () => {
+    stubFetch();
+    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    const select = await screen.findByLabelText(/cancellation deadline/i);
+    const values = Array.from(select.querySelectorAll('option')).map((o) => o.getAttribute('value'));
+    expect(values.sort()).toEqual(['HOURS_12', 'HOURS_24', 'HOURS_48', 'HOURS_6']);
+  });
+
+  it('offers every auto-cancel check the schema accepts', async () => {
+    stubFetch();
+    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    const select = await screen.findByLabelText(/auto-cancel check/i);
+    const values = Array.from(select.querySelectorAll('option')).map((o) => o.getAttribute('value'));
+    expect(values.sort()).toEqual(['HOURS_1', 'HOURS_2', 'HOURS_4']);
+  });
 });
