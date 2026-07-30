@@ -166,8 +166,9 @@ lines *are* the exhaustiveness test, enforced only by `tsc`.
   rather than writing a test that calls the two steps in sequence and claims to
   be a race.
 - **The idiom change is verified by the compiler, not by a runtime test.** The
-  existing result-shape assertions (`toEqual` on whole objects, at eleven sites
-  across the two service test files) must keep passing unchanged — they assert
+  existing result-shape assertions (`toEqual` on whole objects — 20 across the
+  two service test files, counting by `toEqual({ ok:`) must keep passing
+  unchanged — they assert
   values, and no value changes. A test that merely re-asserts the same
   `toEqual`s proves nothing new about the split.
 - **The `never` guards are verified by mutation**: add a reason to each union
