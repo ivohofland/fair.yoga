@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { routerRefresh } from '../../../tests/setup/components';
 import { OutstandingPaymentRow } from './outstanding-payment-row';
 
 /**
@@ -63,6 +64,9 @@ describe('OutstandingPaymentRow', () => {
   afterEach(() => {
     fetchMock.mockReset();
     vi.unstubAllGlobals();
+    // The two tests below spy on console.error, both to assert the log and to
+    // keep the expected noise out of the suite's output.
+    vi.restoreAllMocks();
   });
 
   function renderCollidingPair() {
@@ -227,8 +231,15 @@ describe('OutstandingPaymentRow', () => {
    * The other half: a response the guard rejects falls back to 'pending', so no
    * overdue marker appears. Weak on its own — a hardcoded 'pending' would pass
    * it too — which is why the test above exists and is the load-bearing one.
+   *
+   * It also pins the log (#58 review). `readUndoStatus` now returns `null` for
+   * a shape it cannot read and `undo` applies the `?? 'pending'`, so the
+   * fabricated value is chosen where it is visible; the console line is the
+   * only trace that it happened, since the banner deliberately stays empty —
+   * the undo *did* succeed.
    */
   it('falls back to pending when the undo response carries a bad status', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: { status: 'nonsense' } }) });
     vi.stubGlobal('fetch', fetchMock);
     renderCollidingPair();
@@ -246,5 +257,59 @@ describe('OutstandingPaymentRow', () => {
       await screen.findByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 09:30' }),
     ).toBeInTheDocument();
     expect(screen.queryByText(/! overdue/)).not.toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[payment-undo] undone, but the response shape was unreadable',
+      { paymentId: 'pay-morning' },
+    );
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  /**
+   * #58 review. `unmarkPaymentPaid` commits `status: 'pending'` before the
+   * endpoint responds, so an `ok` response whose *body* will not parse — a
+   * proxy error page, a truncated response on flaky wifi — describes a mutation
+   * that already happened.
+   *
+   * That read used to sit inside the same `try` as the fetch, so a parse
+   * failure set 'Network error. Try again.' and returned false: the row kept
+   * `isPaid`, kept showing "✓ Paid" and its Undo button, and — because
+   * `isOutstanding` derives from the same stale value — hid the reminder button
+   * for a debt that now really existed. A second Undo then got the service's
+   * contradictory `Cannot undo: current status is "pending"`.
+   *
+   * The three assertions are the three halves of that bug: the row leaves the
+   * paid state, no error banner is raised, and `undo` returned true so the
+   * caller's `router.refresh()` runs and reconciles against the server. Same
+   * principle, and the same shape, as `send-reminder-button.tsx:71-86`.
+   */
+  it('treats a committed undo with an unreadable body as the success it is', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON at position 0');
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderCollidingPair();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 09:30' }),
+    );
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Undo marking Ana de Vries as paid for Vinyasa · Jun 12 · 09:30',
+      }),
+    );
+
+    expect(
+      await screen.findByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 09:30' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(routerRefresh).toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith(
+      '[payment-undo] undone, but the response body was unreadable',
+      expect.objectContaining({ paymentId: 'pay-morning' }),
+    );
   });
 });

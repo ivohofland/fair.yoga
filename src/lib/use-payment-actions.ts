@@ -48,27 +48,61 @@ export function usePaymentActions(initial: Record<string, PaymentStatus>) {
     setUpdating(paymentId);
     setError('');
     try {
-      const res = await fetch(`/api/payments/${paymentId}/unpaid`, { method: 'POST' });
-      if (res.ok) {
-        const json: unknown = await res.json();
-        // The `?? 'pending'` is here, not inside `readUndoStatus`: the undo has
-        // already succeeded server-side, so a response we cannot read still has
-        // to move the row off "Paid", and 'pending' is what `unmarkPaymentPaid`
-        // writes (services/payments.ts:97). That is a decision, not an
-        // extraction, so it is made where it is visible.
-        setPaymentState((prev) => ({ ...prev, [paymentId]: readUndoStatus(json) ?? 'pending' }));
-        setJustMarked((prev) => {
-          const next = new Set(prev);
-          next.delete(paymentId);
-          return next;
-        });
-        return true;
+      // Only the request itself is wrapped, so 'Network error' means exactly
+      // that. It used to wrap the body read as well: an `ok` response whose
+      // body did not parse — a proxy error page, a truncation on flaky wifi —
+      // was reported as a network failure and returned false, while the server
+      // had already written 'pending'. The row kept "✓ Paid" and its Undo
+      // button, and because `isOutstanding` derives from the same stale value,
+      // the reminder button stayed hidden for a debt that now really existed.
+      let res: Response;
+      try {
+        res = await fetch(`/api/payments/${paymentId}/unpaid`, { method: 'POST' });
+      } catch (err) {
+        console.error('[payment-undo] request failed', { paymentId, err });
+        setError('Network error. Try again.');
+        return false;
       }
-      setError(await readErrorMessage(res, 'Could not undo. Try again.'));
-      return false;
-    } catch {
-      setError('Network error. Try again.');
-      return false;
+
+      if (!res.ok) {
+        setError(await readErrorMessage(res, 'Could not undo. Try again.'));
+        return false;
+      }
+
+      // Past this point the undo HAS happened — same principle as
+      // `send-reminder-button.tsx`, which commits before it responds too. An
+      // unreadable body must not be dressed up as a failure or leave the UI in
+      // its pre-action state; it is logged and the local state resolves to
+      // 'pending', which is what `unmarkPaymentPaid` writes
+      // (services/payments.ts:97). Returning true lets the caller's
+      // `router.refresh()` reconcile against the server's real value.
+      //
+      // Deliberately not surfaced in `error`: the undo succeeded, and alarming
+      // the teacher about a body they cannot act on would be wrong.
+      let status: PaymentStatus | null;
+      try {
+        const json: unknown = await res.json();
+        status = readUndoStatus(json);
+        if (status === null) {
+          console.error('[payment-undo] undone, but the response shape was unreadable', {
+            paymentId,
+          });
+        }
+      } catch (err) {
+        status = null;
+        console.error('[payment-undo] undone, but the response body was unreadable', {
+          paymentId,
+          err,
+        });
+      }
+
+      setPaymentState((prev) => ({ ...prev, [paymentId]: status ?? 'pending' }));
+      setJustMarked((prev) => {
+        const next = new Set(prev);
+        next.delete(paymentId);
+        return next;
+      });
+      return true;
     } finally {
       setUpdating(null);
     }
