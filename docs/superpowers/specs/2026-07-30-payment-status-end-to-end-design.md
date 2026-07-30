@@ -150,14 +150,28 @@ export function paymentStateText(status: PaymentStatus): { label: string; classN
   if (status === 'overdue') return { label: '! Overdue', className: 'text-danger font-medium' };
   if (status === 'pending') return { label: '○ Unpaid', className: '' };
   const unhandled: never = status;
-  throw new Error(`Unhandled payment status: ${String(unhandled)}`);
+  console.error('[payment-state-text] unhandled payment status', { status: String(unhandled) });
+  return { label: '○ Unpaid', className: '' };
 }
 ```
 
-Today's trailing `return { label: '○ Unpaid' }` is a catch-all: a new
-`refunded` member would render as "Unpaid" and nothing would complain. Naming
-`'pending'` explicitly and closing with `never` turns that into a build failure,
-matching the idiom #100 established across the template services.
+Today's trailing `return { label: '○ Unpaid' }` is an *unguarded* catch-all: a
+new `refunded` member would render as "Unpaid" and nothing would complain.
+Naming `'pending'` explicitly and closing with `never` turns that into a build
+failure, matching the idiom #100 established across the template services.
+
+**The last branch still returns, and that is deliberate** — corrected in review,
+where the first version of this threw. The `never` is the whole value of the
+branch and stays; the throw was not. `bookings/page.tsx` is an async server
+component with `export const dynamic = 'force-dynamic'` that calls this during
+render, and the app's only error boundary (`app/error.tsx`, plus
+`global-error.tsx`) logs nothing — so on enum or deploy drift a throw takes down
+an entire student-facing page on every request with no diagnostic trail, which
+is strictly worse than the catch-all it replaced (one mislabelled row). It logs
+instead, and falls back to `'○ Unpaid'`: one of the three labels the design
+system has, and the one that never overclaims payment. `console.error`, not
+`lib/log.ts`, because that module is pino and server-only while `format.ts` is
+imported by `'use client'` components.
 
 Its third caller — `bookings/page.tsx:209`, on the student side, which the issue
 does not mention — includes the full Prisma `payment` (`:36`), so it already
@@ -225,11 +239,17 @@ terms, not smuggled in here.
   call site but a *behaviour* change smuggled in with the refactor. The labels
   and classNames must come out byte-identical; the new unit tests are what hold
   that.
-- **The `never` guard throws where the old code returned.** For any status the
-  schema can produce this branch is unreachable, so the throw is a
-  can't-happen assertion rather than a new failure mode. Worth stating because
-  a reviewer seeing a `throw` added to a formatter should be able to check that
-  reasoning rather than reconstruct it.
+- **The `never` guard's runtime behaviour.** For any status the schema can
+  produce this branch is unreachable, so whatever it does is a can't-happen
+  path — but "can't happen" is exactly the assumption enum or deploy drift
+  breaks, so what it does then is the risk worth naming. It logs
+  (`console.error`, since `format.ts` is reachable from client components) and
+  returns `'○ Unpaid'`. It does **not** throw: this is called during render by
+  an async `force-dynamic` server component on a student-facing page, behind an
+  error boundary that logs nothing, so a throw would trade one mislabelled row
+  for a dead page on every request with nothing in the logs. The compile-time
+  half — a new enum member failing the build here — is unaffected and is the
+  reason the branch exists.
 - **The mutation test edits `prisma/schema.prisma`.** It must be reverted, and
   no migration may be created for it — the repo rule is that schema changes go
   through `npx prisma migrate dev`, and this is deliberately not a schema change.

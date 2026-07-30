@@ -101,14 +101,20 @@ describe('formatHistoricalDate', () => {
 
 /**
  * #58. These are `paymentStateText`'s first tests. It had none while its
- * parameter was `string` and its last branch was a catch-all `return`, which is
- * the combination this change removes: three surfaces render these exact
- * strings — the class payment checklist, a student's payment history, and the
- * student-facing bookings page — so the labels are the contract, not an
- * implementation detail.
+ * parameter was `string` and its last branch was an unguarded catch-all
+ * `return`, which is the combination this change removes: three surfaces render
+ * these exact strings — the class payment checklist, a student's payment
+ * history, and the student-facing bookings page — so the labels are the
+ * contract, not an implementation detail.
  *
  * Asserted as whole objects so a className change cannot slip through a
  * label-only assertion.
+ *
+ * The last branch still returns — '○ Unpaid', after logging — but it is now
+ * closed by `const unhandled: never`, so a new enum member breaks the build
+ * rather than reaching it. There is deliberately no test for that branch: it is
+ * unreachable for every value the type admits, and reaching it from a test
+ * would take the type assertion this project forbids. The compiler is the test.
  */
 describe('paymentStateText', () => {
   it('renders paid in teal with a check', () => {

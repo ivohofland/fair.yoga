@@ -25,16 +25,33 @@ export function timeAgo(date: Date): string {
 /**
  * Payment state as text, never a badge: "\u2713 Paid" teal, "\u25cb Unpaid"
  * brown, "! Overdue" danger. Returns label + the text-color class.
+ *
+ * Three surfaces render these, one of them student-facing, so the last branch
+ * is deliberately quiet at runtime and loud at compile time \u2014 see below.
  */
 export function paymentStateText(status: PaymentStatus): { label: string; className: string } {
   if (status === 'paid') return { label: '\u2713 Paid', className: 'text-teal' };
   if (status === 'overdue') return { label: '! Overdue', className: 'text-danger font-medium' };
   if (status === 'pending') return { label: '\u25cb Unpaid', className: '' };
-  // Unreachable for any status the schema can produce. It exists so that adding
-  // a member to the enum fails the build here instead of rendering silently as
-  // "Unpaid", which is what the old catch-all `return` did.
+  // Unreachable for any status the schema can produce, and the `never` is what
+  // keeps it that way: adding a member to the enum fails the *build* here
+  // instead of the member rendering silently as "Unpaid". That guard is the
+  // whole point of this branch and stays.
+  //
+  // What it does at runtime is deliberately undramatic. This throwing was
+  // strictly worse than the catch-all `return` it replaced: `bookings/page.tsx`
+  // is an async server component with `force-dynamic` that calls this during
+  // render, and the app's only error boundary (`app/error.tsx`, plus
+  // `global-error.tsx`) logs nothing \u2014 so on enum/deploy drift a throw takes
+  // down an entire student-facing page on every request, with no diagnostic
+  // trail. Log it and mislabel one row instead; '\u25cb Unpaid' is the calmest
+  // of the three states this design system has and never overclaims payment.
+  //
+  // `console.error`, not `lib/log.ts`: that module is pino and server-only, and
+  // this file is imported by `'use client'` components.
   const unhandled: never = status;
-  throw new Error(`Unhandled payment status: ${String(unhandled)}`);
+  console.error('[payment-state-text] unhandled payment status', { status: String(unhandled) });
+  return { label: '\u25cb Unpaid', className: '' };
 }
 
 /**
