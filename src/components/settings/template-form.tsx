@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { z } from 'zod';
+import type { createClassTemplateSchema, updateClassTemplateSchema } from '@/lib/schemas';
+import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
@@ -15,24 +18,53 @@ interface TeacherRoomOption {
   room: { roomName: string; venueName: string };
 }
 
+/**
+ * #85. The one enumeration of this form's fields. It replaced three that
+ * nothing reconciled: this prop's inline type, `INITIAL_VALUES`, and the
+ * request body. The pins below hold it against the wire schema.
+ */
+export interface TemplateFormValues {
+  teacherRoomId: string;
+  classType: string;
+  description: string;
+  dayOfWeek: number;
+  startTime: string;
+  durationMinutes: number;
+  roomCost: number;
+  minRate: number;
+  targetRate: number;
+  minStudents: number;
+  maxStudents: number;
+  cancelDeadline: string;
+  autoCancelCheck: string;
+}
+
+type UpdateTemplateWire = z.infer<typeof updateClassTemplateSchema>;
+type CreateTemplateWire = z.infer<typeof createClassTemplateSchema>;
+
+/**
+ * #85. Both schemas, though their key sets agree today.
+ *
+ * The issue warned that a pin "has to target the right schema per branch"
+ * because create and update differ — they do differ, in optionality and
+ * `.strict()`, but not in *keys*: thirteen each, the same thirteen. For a
+ * key-set pin they are interchangeable as things stand.
+ *
+ * Both are pinned because this form sends one body to both endpoints. The day
+ * their keys diverge, that single body stops satisfying one of them, and a pin
+ * against only the other would not notice.
+ */
+const _formCoversUpdate: NoneOf<Exclude<keyof UpdateTemplateWire, keyof TemplateFormValues>> = true;
+const _formCoversCreate: NoneOf<Exclude<keyof CreateTemplateWire, keyof TemplateFormValues>> = true;
+const _formHasNoExtras: NoneOf<Exclude<keyof TemplateFormValues, keyof UpdateTemplateWire>> = true;
+void _formCoversUpdate;
+void _formCoversCreate;
+void _formHasNoExtras;
+
 interface TemplateFormProps {
   mode: 'create' | 'edit';
   templateId?: string;
-  initial?: {
-    teacherRoomId: string;
-    classType: string;
-    description: string;
-    dayOfWeek: number;
-    startTime: string;
-    durationMinutes: number;
-    roomCost: number;
-    minRate: number;
-    targetRate: number;
-    minStudents: number;
-    maxStudents: number;
-    cancelDeadline: string;
-    autoCancelCheck: string;
-  };
+  initial?: TemplateFormValues;
 }
 
 const DAY_OPTIONS = [
@@ -58,7 +90,7 @@ const AUTO_CANCEL_OPTIONS = [
   { value: 'HOURS_1', label: '1 hour before' },
 ];
 
-const INITIAL_VALUES = {
+const INITIAL_VALUES: TemplateFormValues = {
   teacherRoomId: '',
   classType: '',
   description: '',
@@ -151,19 +183,9 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          teacherRoomId: form.teacherRoomId,
+          ...form,
           classType: form.classType.trim(),
           description: form.description.trim() || null,
-          dayOfWeek: form.dayOfWeek,
-          startTime: form.startTime,
-          durationMinutes: form.durationMinutes,
-          roomCost: form.roomCost,
-          minRate: form.minRate,
-          targetRate: form.targetRate,
-          minStudents: form.minStudents,
-          maxStudents: form.maxStudents,
-          cancelDeadline: form.cancelDeadline,
-          autoCancelCheck: form.autoCancelCheck,
         }),
       });
 
