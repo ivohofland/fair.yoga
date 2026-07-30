@@ -1,3 +1,5 @@
+import type { PaymentStatus } from '@prisma/client';
+
 export function formatRoomLocation(roomName: string, venueName: string): string {
   return roomName ? `${roomName} at ${venueName}` : venueName;
 }
@@ -24,10 +26,15 @@ export function timeAgo(date: Date): string {
  * Payment state as text, never a badge: "\u2713 Paid" teal, "\u25cb Unpaid"
  * brown, "! Overdue" danger. Returns label + the text-color class.
  */
-export function paymentStateText(status: string): { label: string; className: string } {
+export function paymentStateText(status: PaymentStatus): { label: string; className: string } {
   if (status === 'paid') return { label: '\u2713 Paid', className: 'text-teal' };
   if (status === 'overdue') return { label: '! Overdue', className: 'text-danger font-medium' };
-  return { label: '\u25cb Unpaid', className: '' };
+  if (status === 'pending') return { label: '\u25cb Unpaid', className: '' };
+  // Unreachable for any status the schema can produce. It exists so that adding
+  // a member to the enum fails the build here instead of rendering silently as
+  // "Unpaid", which is what the old catch-all `return` did.
+  const unhandled: never = status;
+  throw new Error(`Unhandled payment status: ${String(unhandled)}`);
 }
 
 /**

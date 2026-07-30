@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatDayHeader, formatHistoricalDate } from './format';
+import { formatDayHeader, formatHistoricalDate, paymentStateText } from './format';
 
 /**
  * `formatDayHeader` had no tests while it was a private copy inside one
@@ -96,5 +96,34 @@ describe('formatHistoricalDate', () => {
     formatHistoricalDate(original);
 
     expect(original.getTime()).toBe(snapshot);
+  });
+});
+
+/**
+ * #58. These are `paymentStateText`'s first tests. It had none while its
+ * parameter was `string` and its last branch was a catch-all `return`, which is
+ * the combination this change removes: three surfaces render these exact
+ * strings — the class payment checklist, a student's payment history, and the
+ * student-facing bookings page — so the labels are the contract, not an
+ * implementation detail.
+ *
+ * Asserted as whole objects so a className change cannot slip through a
+ * label-only assertion.
+ */
+describe('paymentStateText', () => {
+  it('renders paid in teal with a check', () => {
+    expect(paymentStateText('paid')).toEqual({ label: '✓ Paid', className: 'text-teal' });
+  });
+
+  it('renders overdue in danger, medium weight', () => {
+    expect(paymentStateText('overdue')).toEqual({
+      label: '! Overdue',
+      className: 'text-danger font-medium',
+    });
+  });
+
+  it('renders pending as unstyled unpaid', () => {
+    // No colour class: unpaid is the resting state, not an alarm.
+    expect(paymentStateText('pending')).toEqual({ label: '○ Unpaid', className: '' });
   });
 });
