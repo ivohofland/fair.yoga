@@ -23,6 +23,21 @@ const seedTeacher = async (label: string) => {
       account: { create: { email } },
       bio: `Teacher for ${label} studio template tests`,
       pageSlug: `studio-tpl-${label}-${uniqueSuffix}`,
+      // Pinned, not left to the schema default of `Europe/Amsterdam` (#123).
+      // `today()` below is an instant whose `@db.Date` column keeps the UTC
+      // calendar date, while the services derive their boundary from
+      // `startOfLocalDay(new Date(), defaultTimezone)`. From 22:00 UTC in
+      // summer those disagree by a day, so `remaining`'s `gte` missed the
+      // survivor the fixture had just created and three tests failed every
+      // evening — deterministically, and independently of the runner's own
+      // zone, since `vitest.config.ts` pins `TZ`.
+      //
+      // UTC makes the two sides agree by construction. It does not cost
+      // coverage: nothing in this file tests the archive boundary across
+      // zones, and the tests that do pin zone-dependent behaviour seed their
+      // own explicit zones (see `generateStudioInstancesForTemplate (DB)` in
+      // studio-class-generator.test.ts, which uses Kiritimati and Niue).
+      defaultTimezone: 'UTC',
     },
   });
   return { teacherId: teacher.id, accountId: teacher.accountId };
