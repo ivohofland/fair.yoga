@@ -48,16 +48,26 @@ classContext={`${p.registration.class.classType} · ${formatDay(p.registration.c
 
 ```
 Send reminder to Ana for Vinyasa · Jun 12 · 09:30
-Mark Ana's payment as paid for Vinyasa · Jun 12 · 09:30
+Mark paid — Ana, Vinyasa · Jun 12 · 09:30
 Undo marking Ana as paid for Vinyasa · Jun 12 · 09:30
 ```
 
 The reminder button's `context` prop already exists and already appends this way;
 the other two gain the same treatment inline.
 
-**One copy fix rides along:** `Mark ${studentName} payment` becomes
-`${studentName}'s payment`. It is an existing grammar wart, and it gets more
-audible once the label is longer.
+**Mark paid does not follow the shared shape, and that is deliberate.**
+This section first specified `Mark Ana's payment as paid for {context}`, with a
+note that the possessive was a grammar fix riding along. Review found the real
+problem: WCAG 2.5.3 (Label in Name) requires the visible text to appear
+*contiguously and in order* inside the accessible name, and every `Mark
+{name}'s payment as paid` form splits the visible `Mark paid` across the label
+— leaving a speech-input user unable to activate a button they can read. So the
+label leads with the visible text instead. The possessive fix is gone with the
+phrasing that needed it.
+
+The other two buttons already conform — their visible text (`Send reminder`,
+`Undo`) starts their accessible name — so they keep the `… for {context}` shape
+rather than being reshaped for symmetry. Three labels, two shapes, on purpose.
 
 ### 2. The time is visible, deliberately
 
@@ -117,13 +127,21 @@ Specifically:
 - the visible caption differs between the two rows as well — the collision is
   visual, so the fix is pinned visually.
 
-**Corrected after implementation — this section originally overstated what the
-tests do, in three ways a reader could falsify quickly:**
+Assert whole accessible names via `getByRole('button', { name: … })` with exact
+strings, not substrings.
 
-1. It said "all three" accessible names are asserted. **Two are.** The Undo
-   button renders only after a successful `markPaid` network round trip, so
-   covering it means mocking `fetch` purely to claim coverage. It is verified by
-   inspection instead, and that is recorded rather than papered over.
+**Corrected after implementation — this section originally overstated what the
+tests do, in four ways a reader could falsify quickly:**
+
+1. It said "all three" accessible names are asserted. That was written when
+   **two** were: the Undo button renders only after a successful `markPaid`
+   round trip, and reaching it means stubbing `fetch`. It was left to
+   inspection, on the reasoning that a stub added purely to claim coverage is
+   worth less than an honest gap. Review overturned that — `vi.stubGlobal`
+   through a real click is the established pattern in six component test files,
+   so the stub is scaffolding this suite already relies on, not a contrivance.
+   **All three are asserted now**, in a fourth test that clicks both rows'
+   Mark paid and then reads both Undo labels.
 2. It said that assertion "fails before the fix and passes after". **Only the
    mark-paid one does.** The fixture hands the component two already-distinct
    `classContext` values, so the reminder and caption assertions pass against
@@ -131,19 +149,30 @@ tests do, in three ways a reader could falsify quickly:**
    to consume `classContext` — worth keeping, but not proof of the fix.
 3. It said a single row is tested for natural reading. **There is no single-row
    test**; the possessive is covered inside the pair test.
+4. It said a substring match "would pass on the colliding version, which is
+   precisely the defect". **It would not.** On a colliding pair both accessible
+   names are identical, so any query — substring or exact — matches 0 or 2
+   elements and `getByRole` throws either way. Verified by re-running the
+   assertion in substring form against the pre-fix labels; it still failed.
+   Exactness is still worth keeping, for a different reason: it pins the copy,
+   so a superstring mutant (label + `" (outstanding)"`) dies. What catches a
+   collision is the duplicate-name throw, not the exactness.
 
 Worth stating plainly given what §2 argues: this is a claim corrected in the
 test file and left standing here — one string, two copies, exactly the drift the
 one-string design exists to avoid. The design was right; the spec's own prose
 was the thing that drifted.
 
-Assert whole accessible names via `getByRole('button', { name: … })` with exact
-strings, not substrings. A substring match would pass on the colliding version,
-which is precisely the defect.
-
-**Not tested:** that the `context` prop reaches the reminder button — that is
-`SendReminderButton`'s existing contract and already documented on the prop.
-Re-asserting it here would test the wiring twice and the collision once.
+**What is not asserted:** that the `context` prop reaches the reminder button.
+This was originally written as a deliberate exclusion — "`SendReminderButton`'s
+existing contract, already documented on the prop" — and that is no longer what
+the test file does. Correction 2 above records that the reminder assertion *is*
+in the file, passing against the unfixed component as regression cover for the
+row continuing to consume `classContext` — which is exactly the wiring this
+paragraph claimed was left out. The exclusion was overtaken by the
+implementation; the paragraph is kept, corrected, rather than deleted, because
+the reasoning it gives is the reason the reminder assertion proves less than the
+mark-paid one.
 
 ## Out of scope
 
@@ -152,9 +181,15 @@ Re-asserting it here would test the wiring twice and the collision once.
 - **Any change to `SendReminderButton`.** Its `context` prop already exists,
   already nullable, and already appends correctly. This spec changes what is
   passed to it, not the component.
-- **The Received section's visible captions.** They use the same inline
-  `{classType} · {formatDay(date)}` and can also repeat, but they carry no
-  interactive control whose name collides, so there is nothing to disambiguate.
+- ~~**The Received section's visible captions.**~~ **Brought into scope during
+  review.** The exclusion argued they "carry no interactive control whose name
+  collides, so there is nothing to disambiguate" — which answers the accessible
+  half and skips the visible one. §2 above accepts the time on every Outstanding
+  row precisely *because* two identical captions with the same amount are
+  ambiguous to a sighted teacher; that argument does not stop at the Received
+  heading. The captions now carry the start time too.
+  `MarkUnpaidButton`'s accessible name is untouched and still #128 — the
+  Received change fixes the visible half only, which its comment says.
 
 ## Risks
 

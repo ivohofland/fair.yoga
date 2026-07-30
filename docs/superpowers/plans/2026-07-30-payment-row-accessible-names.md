@@ -35,6 +35,22 @@
 
 ### Task 1: Give all three row buttons a unique accessible name
 
+> **Superseded in part by the PR review round (commits `a76e78b`, `3b43cec`,
+> `da4f12e`).** The steps below are kept as the record of what was planned and
+> executed first; four of their instructions no longer describe the branch, and
+> each correction is marked inline where it applies. In summary:
+>
+> | Step | Planned | Shipped |
+> |---|---|---|
+> | 3 | `Mark {name}'s payment as paid for {context}` | `Mark paid — {name}, {context}` (WCAG 2.5.3 — the visible `Mark paid` must be contiguous and first) |
+> | 4 | Undo verified by inspection; "do not add a test that mocks the fetch" | Undo **is** tested — `vi.stubGlobal('fetch', …)` through a real click is this suite's established pattern, not a contrivance |
+> | 6 | "Leave the Received section's inline caption alone" | Received gains the start time too; §2's visual-ambiguity argument does not stop at that heading. `MarkUnpaidButton`'s name is still untouched (#128) |
+> | 7 / pre-PR | 35 components tests | 36 |
+>
+> Step 8's second mutation result also changed: the e2e now pins the page's
+> `classContext` (commit `da4f12e`), so reverting it fails the suite. The
+> component tests still do not — that half of the note stands.
+
 **Files:**
 - Modify: `src/app/(teacher)/settings/payments/page.tsx`
 - Modify: `src/components/class/outstanding-payment-row.tsx`
@@ -62,9 +78,14 @@ import { OutstandingPaymentRow } from './outstanding-payment-row';
  * same type on one day; "Mark paid" and "Undo" had none at all and collided
  * for any two outstanding payments the student had.
  *
- * The fixture is the narrowest case that breaks all three: one student, one
- * class type, one day, two times. A fixture differing in type or date would
- * pass on the pre-fix code for the reminder button and prove nothing.
+ * (SUPERSEDED — write the version now in `outstanding-payment-row.test.tsx`,
+ * not this one. This block originally read "the narrowest case that breaks all
+ * three … a fixture differing in type or date would prove nothing". Both halves
+ * are false at the component level: only the mark-paid test fails pre-fix, and
+ * a type- or date-varying fixture fails exactly the same one test. Verified by
+ * building one and running it. The time fixture is still preferred, for what it
+ * documents — the case the reminder button's partial disambiguator could not
+ * tell apart — not for what it catches.)
  */
 describe('OutstandingPaymentRow', () => {
   const base = {
@@ -130,7 +151,15 @@ describe('OutstandingPaymentRow', () => {
 });
 ```
 
-`getByRole('button', { name })` matches the **whole** accessible name — a substring would pass on the colliding version, which is the defect. `getByText` and `getByRole` both throw when a query matches more than one element, so a collision fails these tests rather than silently passing.
+`getByRole('button', { name })` matches the **whole** accessible name.
+
+**Corrected after review — the original reason given here was wrong.** It said a substring match "would pass on the colliding version". It would not: on a colliding pair *both* names are identical, so any query, substring or exact, matches 0 or 2 elements and throws either way. Verified by re-running the assertion in substring form against the pre-fix labels — it still failed.
+
+Two separate mechanisms, worth keeping separate:
+- **Exactness pins the copy.** Superstring mutants (label + ` (outstanding)`, caption + ` (unpaid)`) die under an exact match and survive a substring one.
+- **The duplicate-name throw catches collisions.** `getByText` and `getByRole` both throw on more than one match, so a collision fails these tests rather than passing silently.
+
+That distinction is load-bearing: told that exactness *is* the collision guard, a maintainer could drop the second row from the fixture, keep the exact names, and believe collisions stay covered. They would not.
 
 The Undo button is deliberately not asserted here: it renders only after a successful `markPaid`, which needs a network round trip. Step 4 covers it by inspection instead — noted in the report rather than faked with a test that does not exercise it.
 
@@ -138,9 +167,13 @@ The Undo button is deliberately not asserted here: it renders only after a succe
 
 Run: `npx vitest run --project components src/components/class/outstanding-payment-row.test.tsx`
 
-Expected: `'gives the mark-paid buttons distinct accessible names'` FAILS — `getByRole` finds two buttons both named `Mark Ana de Vries payment as paid`, and Testing Library throws "Found multiple elements". The other two tests pass already, because the fixture hands the component two distinct `classContext` values directly.
+Expected: `'gives the mark-paid buttons distinct accessible names'` FAILS.
 
-That is the point of the fixture: it proves the *component* is at fault for Mark paid, and that the reminder button and caption only need the page to pass a better string.
+**Corrected after review — the mechanism first predicted here does not occur.** It said `getByRole` finds two buttons with the same name and throws "Found multiple elements". It cannot: the asserted string is the *post-fix* label, which pre-fix matches **zero** elements, so the error is `Unable to find an accessible element…`.
+
+The distinction matters. The test fails because the asserted string is **absent** — the label gained both the possessive and the context suffix — and so it would fail against pre-fix with a *single* row. The pair fixture is not what makes this test red. What the pair guards is a *future* collision, via the duplicate-name throw.
+
+The other two tests pass already, because the fixture hands the component two distinct `classContext` values directly.
 
 - [ ] **Step 3: Use the context in both unlabelled buttons**
 
@@ -150,20 +183,26 @@ In `src/components/class/outstanding-payment-row.tsx`, the Undo button's label:
                   aria-label={`Undo marking ${studentName} as paid for ${classContext}`}
 ```
 
-and the Mark paid button's:
+and the Mark paid button's — **superseded, do not copy this line**:
 
 ```tsx
               aria-label={`Mark ${studentName}'s payment as paid for ${classContext}`}
 ```
 
-Note the possessive on Mark paid — `${studentName} payment` was already ungrammatical and gets more audible in a longer label. Undo's existing phrasing (`Undo marking X as paid`) is already correct and only gains the suffix.
+```tsx
+              aria-label={`Mark paid — ${studentName}, ${classContext}`}   // shipped
+```
+
+The planned form was reshaped in review. Every `Mark {name}'s payment as paid` variant splits the visible `Mark paid` across the accessible name, which WCAG 2.5.3 forbids — a speech-input user cannot say what they see. Leading with the visible text fixes that and drops the possessive along with the phrasing that needed it. Undo's existing phrasing (`Undo marking X as paid`) already leads with its visible text, so it conforms as written and only gains the suffix.
 
 - [ ] **Step 4: Run the test and watch it pass; check Undo by inspection**
 
 Run: `npx vitest run --project components src/components/class/outstanding-payment-row.test.tsx`
-Expected: all three pass.
+Expected: all three pass. (Four, after the review round.)
 
 Then read the Undo label you just wrote and confirm it interpolates `classContext` the same way. It is not covered by a test because it renders only after a successful `markPaid` network call. **Say so in your report** — do not add a test that mocks the fetch just to claim coverage, and do not claim it is covered.
+
+**Overturned in review.** The instruction treated a `fetch` stub as coverage theatre; it is not. `vi.stubGlobal('fetch', …)` followed by a real click is how six component test files in this repo already drive their components, so the stub is scaffolding the suite depends on rather than a prop added to manufacture a green test. The gap was the only one of the three labels with no coverage anywhere, and it is now a fourth test.
 
 - [ ] **Step 5: Update the prop docblock, which your change just falsified**
 
@@ -200,7 +239,9 @@ and append it where `classContext` is built:
               classContext={`${p.registration.class.classType} · ${formatDay(p.registration.class.date)} · ${p.registration.class.startTime}`}
 ```
 
-`Class.startTime` is a `String` in `'HH:MM'` form — no formatting, no timezone handling. Leave the Received section's inline caption alone; it has no interactive control whose name collides (#128 covers its button).
+`Class.startTime` is a `String` in `'HH:MM'` form — no formatting, no timezone handling. ~~Leave the Received section's inline caption alone; it has no interactive control whose name collides (#128 covers its button).~~
+
+**Superseded.** "No control whose name collides" answers the accessible half and skips the visible one, and the spec's §2 accepts the time on every Outstanding row precisely because two identical captions with the same amount are ambiguous on screen. Received gets the same treatment. `MarkUnpaidButton`'s accessible name is still untouched and still #128.
 
 - [ ] **Step 7: Typecheck, lint, and run the suites**
 
@@ -210,7 +251,7 @@ npx vitest run --project components
 npx vitest run --project unit
 ```
 
-Expected: clean, 32 + 3 = 35 components tests, unit unchanged.
+Expected: clean, 32 + 3 = 35 components tests, unit unchanged. (36 after the review round's fourth test.)
 
 - [ ] **Step 8: Mutation-verify that the new tests bite**
 
@@ -218,6 +259,8 @@ One at a time, confirming the edit landed and reverting before the next:
 
 1. Drop ` for ${classContext}` from the Mark paid label → `'gives the mark-paid buttons distinct accessible names'` must FAIL.
 2. Drop ` · ${p.registration.class.startTime}` from the page's `classContext` → this test file still passes, because it constructs `classContext` itself. **That is expected and worth reporting:** the component tests pin the component; nothing pins the page's string. Say so plainly rather than implying end-to-end coverage.
+
+   **Half superseded.** The component half stands — this file still passes under that mutation, by construction. But "nothing pins the page's string" was true only until `da4f12e`: the e2e's reminder assertion was `/Send reminder to Walkin Guest for /`, which the pre-fix two-part label satisfied just as well, so the mutation ran green end to end. It now matches `` `Send reminder to Walkin Guest for .*${slot.startTime}` `` and the mutation fails it. That is the reason the vacuous assertion was worth fixing rather than leaving: it is what made this bullet true.
 
 - [ ] **Step 9: Check the row at 375px**
 
@@ -238,13 +281,13 @@ git commit -m "fix: give all three payment-row buttons distinct accessible names
 
 - [ ] `npx tsc --noEmit` — clean
 - [ ] `npm run lint` — clean
-- [ ] `npx vitest run --project components` — 35 passing (32 before, 3 new)
+- [ ] `npx vitest run --project components` — 36 passing (32 before, 4 new)
 - [ ] `npx vitest run --project unit` — unchanged
 - [ ] `npx vitest run --project integration` — unchanged. Needs the app on `:3000`; do not restart it. `signup-api` 429s are the local rate limiter, not this change.
 - [ ] `npx playwright test` — 118 passing
 - [ ] `git status` — only `docs/backlog-roadmap.md` untracked
 - [ ] `send-reminder-button.tsx` untouched
-- [ ] `MarkUnpaidButton` and the Received section untouched
+- [ ] `MarkUnpaidButton` untouched (the Received *caption* is changed on purpose — see Step 6)
 - [ ] The page's local `formatDay` untouched
 - [ ] Both halves of the `classContext` docblock updated
-- [ ] The Undo label's lack of test coverage stated in the report, not glossed
+- [ ] The Undo label is covered by its own test (the review round closed this gap)
