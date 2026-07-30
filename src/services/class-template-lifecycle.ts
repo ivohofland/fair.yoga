@@ -17,7 +17,7 @@
  *     matching zero rows the way `updateMany` does, so catching that one error
  *     code and mapping it to `not_found` is enough — no compare-and-swap
  *     needed. Scoped to `updateClassTemplate` and `pauseOrResumeTemplate`
- *     (#100, their guards cross-reference each other): the archive section
+ *     (#100; the latter's guard points back at the former): the archive section
  *     further down does use a compare-and-swap, because there the race to
  *     close is two requests applying the same transition, not a row
  *     disappearing.
