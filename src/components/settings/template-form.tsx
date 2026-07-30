@@ -44,23 +44,34 @@ type UpdateTemplateWire = z.infer<typeof updateClassTemplateSchema>;
 type CreateTemplateWire = z.infer<typeof createClassTemplateSchema>;
 
 /**
- * #85. Both schemas, though their key sets agree today.
+ * #85. Both schemas, both directions — four pins, because this form sends one
+ * body to both endpoints.
  *
  * The issue warned that a pin "has to target the right schema per branch"
  * because create and update differ — they do differ, in optionality and
  * `.strict()`, but not in *keys*: thirteen each, the same thirteen. For a
- * key-set pin they are interchangeable as things stand.
+ * key-set pin they are interchangeable as things stand. The day their keys
+ * diverge, that single body stops satisfying one of them, and a pin against
+ * only the other would not notice.
  *
- * Both are pinned because this form sends one body to both endpoints. The day
- * their keys diverge, that single body stops satisfying one of them, and a pin
- * against only the other would not notice.
+ * Forward (`_formCovers…`): a key the schema has and the form does not — a
+ * field that looks shipped with no input rendered for it.
+ *
+ * Reverse (`_formHasNoExtras…`): a key the form sends and the schema dropped.
+ * The two endpoints punish that differently, which is why both are pinned
+ * rather than just the update one: `updateClassTemplateSchema` is `.strict()`
+ * and would 400 the extra key, while `createClassTemplateSchema` is not, so it
+ * would *silently strip* it — the field-vanishes-without-a-word mode this
+ * change exists to eliminate. Compile time catches both.
  */
 const _formCoversUpdate: NoneOf<Exclude<keyof UpdateTemplateWire, keyof TemplateFormValues>> = true;
 const _formCoversCreate: NoneOf<Exclude<keyof CreateTemplateWire, keyof TemplateFormValues>> = true;
 const _formHasNoExtras: NoneOf<Exclude<keyof TemplateFormValues, keyof UpdateTemplateWire>> = true;
+const _formHasNoExtrasOnCreate: NoneOf<Exclude<keyof TemplateFormValues, keyof CreateTemplateWire>> = true;
 void _formCoversUpdate;
 void _formCoversCreate;
 void _formHasNoExtras;
+void _formHasNoExtrasOnCreate;
 
 interface TemplateFormProps {
   mode: 'create' | 'edit';
@@ -214,14 +225,22 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         : `/api/class-templates/${templateId}`;
       const method = mode === 'create' ? 'POST' : 'PUT';
 
+      // The intersection, not either half: one body goes to both endpoints, so
+      // it has to satisfy both schemas. The pins above hold the *key sets*
+      // against both; this annotation is what holds the *value types* — without
+      // it the literal is inferred, and retyping a schema field (say
+      // `durationMinutes` to a string) would change what the route expects
+      // while this file kept compiling.
+      const payload: CreateTemplateWire & UpdateTemplateWire = {
+        ...form,
+        classType: form.classType.trim(),
+        description: form.description.trim() || null,
+      };
+
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...form,
-          classType: form.classType.trim(),
-          description: form.description.trim() || null,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
