@@ -213,10 +213,11 @@ export async function pauseOrResumeStudioTemplate(
       // matches, and the zero-count branch below already answers `not_found`
       // by re-reading. The `findUniqueOrThrow` on the paused arm below, and
       // `claimStudioTemplateForGeneration`'s own read on the active arm, *can*
-      // raise P2025, but only run after this CAS matched, which holds the
-      // row's write lock until commit — so a concurrent delete blocks rather
-      // than wins. Replace this CAS with a plain write and that stops being
-      // true.
+      // raise P2025, but only run after this CAS matched, which — as this
+      // function's own docstring above notes — holds `FOR NO KEY UPDATE` on
+      // this row until commit. That conflicts with the `FOR UPDATE`-strength
+      // lock a concurrent `DELETE` needs, so it blocks rather than wins.
+      // Replace this CAS with a plain write and that stops being true.
       const swapped = await tx.studioClassTemplate.updateMany({
         where: { id: templateId, isArchived: false, isActive: !desiredActive },
         data: { isActive: desiredActive },
@@ -458,7 +459,10 @@ export async function archiveOrUnarchiveStudioTemplate(
       // matches, and the zero-count branch below already answers `not_found`
       // by re-reading. The `findUniqueOrThrow`/`update` sites further down
       // *can* raise P2025, but only run after this CAS matched, which holds
-      // the row's write lock until commit — so a concurrent delete blocks
+      // `FOR NO KEY UPDATE` on this row until commit — `pauseOrResumeStudioTemplate`'s
+      // own docstring above already names this CAS's mode in passing ("a
+      // concurrent archive's own CAS"). That conflicts with the `FOR
+      // UPDATE`-strength lock a concurrent `DELETE` needs, so it blocks
       // rather than wins. Replace this CAS with a plain write and that stops
       // being true.
       const swapped = await tx.studioClassTemplate.updateMany({

@@ -16,9 +16,11 @@
  *     Prisma's P2025 when the row is already gone rather than silently
  *     matching zero rows the way `updateMany` does, so catching that one error
  *     code and mapping it to `not_found` is enough — no compare-and-swap
- *     needed. Scoped to `updateClassTemplate`: the archive section further
- *     down does use a compare-and-swap, because there the race to close is two
- *     requests applying the same transition, not a row disappearing.
+ *     needed. Scoped to `updateClassTemplate` and `pauseOrResumeTemplate`
+ *     (#100, their guards cross-reference each other): the archive section
+ *     further down does use a compare-and-swap, because there the race to
+ *     close is two requests applying the same transition, not a row
+ *     disappearing.
  */
 
 import { Prisma } from '@prisma/client';
@@ -199,10 +201,13 @@ export type UpdateClassTemplateResult =
  *
  * The write and the propagation are deliberately NOT one transaction, matching
  * the behaviour this replaced: if `syncTemplateInstances` throws, the template
- * row is already updated and the error propagates, so the caller sees a failure
- * for a partially applied change. That window is real and predates this
- * function; closing it changes behaviour (a sync failure would roll the edit
- * back) and belongs in its own change, with its own test.
+ * row is already updated. Every such error propagates except P2025 — the
+ * `catch` below maps that one to `{ ok: false, reason: 'not_found' }` instead,
+ * because the row is gone before the caller is answered (#100). Anything else
+ * from the sync call still propagates, so the caller sees a failure for a
+ * partially applied change. That window is real and predates this function;
+ * closing it for those remaining failures changes behaviour (a sync failure
+ * would roll the edit back) and belongs in its own change, with its own test.
  *
  * That is not the only seam. `syncTemplateInstances` has one of its own:
  * deletes and updates run inside an inner `$transaction`, but the refill that
