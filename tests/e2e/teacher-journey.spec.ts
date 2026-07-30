@@ -345,8 +345,9 @@ test.describe('Teacher journey', () => {
     // The payment marked paid in the previous test sits under Received.
     await expect(page.getByRole('heading', { name: 'Received' })).toBeVisible();
     // The Outstanding row carries the reminder action. On this cross-class
-    // surface the aria-label appends the class context ("… for {class} · {day}")
-    // so two rows for one student stay tellable apart; the "for " pins that.
+    // surface the aria-label appends the class context
+    // ("… for {class} · {day} · {time}", #59) so two rows for one student stay
+    // tellable apart; the "for " pins that without pinning the format.
     await expect(
       page.getByRole('button', { name: /Send reminder to Walkin Guest for / }),
     ).toBeVisible();

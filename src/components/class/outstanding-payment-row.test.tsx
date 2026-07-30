@@ -9,9 +9,23 @@ import { OutstandingPaymentRow } from './outstanding-payment-row';
  * same type on one day; "Mark paid" and "Undo" had none at all and collided
  * for any two outstanding payments the student had.
  *
- * The fixture is the narrowest case that breaks all three: one student, one
- * class type, one day, two times. A fixture differing in type or date would
- * pass on the pre-fix code for the reminder button and prove nothing.
+ * The fixture is one student, one class type, one day, two times — the
+ * narrowest case that breaks all three *on the real page*.
+ *
+ * Be clear about what that means here, because it is easy to overread: at this
+ * level only the mark-paid test fails against the pre-fix component, since its
+ * label carried no context at all and so collides however the two rows differ.
+ * A type- or date-varying fixture would have failed exactly the same one test.
+ * The time fixture is preferred for what it documents, not for what it catches:
+ * it encodes the case the reminder button's partial disambiguator could not
+ * tell apart, which is the product bug #59 reports.
+ *
+ * The other two tests pass before and after. They are not decoration — they are
+ * the only thing enforcing "one string, three consumers": the reminder test
+ * pins that the row keeps passing `classContext` into a `context` prop that is
+ * `string | null` and that a sibling consumer (`payment-checklist.tsx`)
+ * deliberately passes `null` to; the caption test pins that what is on screen
+ * is that same string and not a derived subset.
  */
 describe('OutstandingPaymentRow', () => {
   const base = {

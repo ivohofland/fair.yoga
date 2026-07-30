@@ -1,8 +1,10 @@
 /**
  * Setup for the vitest `components` project.
  *
- * Registers the jest-dom matchers and stubs `next/navigation`, so six button
- * test files do not each redeclare `useRouter`. Testing-library's automatic
+ * Registers the jest-dom matchers and stubs `next/navigation`, so the test
+ * files under `src/components/**` do not each redeclare `useRouter`. Deliberately
+ * not a count: it was "six" until a seventh file depended on it, and a number
+ * here goes stale every time someone adds a test. Testing-library's automatic
  * cleanup activates from `globals: true` in the root config, so no teardown
  * is wired here.
  *
