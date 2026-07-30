@@ -11,8 +11,11 @@ import type { PrismaClient, Prisma, ClassStatus, RegistrationStatus, Class } fro
 import type { z } from 'zod';
 import type { updateClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
+import { ECONOMIC_FIELDS, type EconomicField } from '@/lib/class-fields';
 import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
+
+export { ECONOMIC_FIELDS, type EconomicField };
 
 // ---------------------------------------------------------------------------
 // State machine
@@ -68,20 +71,6 @@ export function validateTransition(
 // ---------------------------------------------------------------------------
 // Economic field locking
 // ---------------------------------------------------------------------------
-
-/**
- * The economic fields that become immutable once settings_locked flips true
- * (i.e., after the first student registers).
- */
-export const ECONOMIC_FIELDS = Object.freeze([
-  'roomCost',
-  'minRate',
-  'targetRate',
-  'minStudents',
-  'maxStudents',
-] as const);
-
-export type EconomicField = (typeof ECONOMIC_FIELDS)[number];
 
 /**
  * Whether economic fields are locked for editing.
