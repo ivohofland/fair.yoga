@@ -70,8 +70,10 @@ statements, which this codebase has repeatedly found attracts false comments
 explaining why they exist.
 
 **Reachability, stated once so nobody re-derives it:** no production path
-deletes a `ClassTemplate` or `StudioClassTemplate` row. All ten `.delete`/
-`deleteMany` calls on those models are in test files. `gdpr.ts` anonymises
+deletes a `ClassTemplate` or `StudioClassTemplate` row. All 14 `.delete`/
+`deleteMany` calls on those models — across `src/` and `tests/`, counted by
+`(classTemplate|studioClassTemplate)\.(delete|deleteMany)\(` — are in test
+files. `gdpr.ts` anonymises
 rather than cascade-deletes and never deletes a `Teacher`, so the `onDelete:
 Cascade` on both templates' teacher relation is unreachable too. Both guards are
 therefore unreachable today and are being added because the window is real and

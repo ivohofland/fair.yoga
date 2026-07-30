@@ -321,7 +321,8 @@ Expected: clean. If it is not, the split is wrong somewhere — read the error r
 - [ ] **Step 4: Run the suites**
 
 Run: `npx vitest run --project unit && npx vitest run --project integration`
-Expected: all pass, **unchanged**. The eleven existing `toEqual` result assertions across the two service test files assert values, and no value changed. If any of them needed editing, something in Step 1 changed a reason string — go back.
+Expected: all pass, **unchanged**. The existing `toEqual` result assertions across the two service test files (20
+  at HEAD, counting by `toEqual({ ok:`) assert values, and no value changed. If any of them needed editing, something in Step 1 changed a reason string — go back.
 
 - [ ] **Step 5: Mutation-verify that the guards actually bite**
 

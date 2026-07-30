@@ -195,9 +195,10 @@ describe('updateClassTemplate (DB)', () => {
   });
 
   /**
-   * #100. `updateClassTemplate`'s existing guard covers only its own
-   * `update`. `syncTemplateInstances` runs after it, outside that `try`, and
-   * opens with a `findUniqueOrThrow` — a P2025 source on Prisma 6.
+   * #100. `syncTemplateInstances` runs after the `update` and opens with a
+   * `findUniqueOrThrow` — a P2025 source on Prisma 6 — so it had a window of
+   * its own. It now sits *inside* the same `try` as the write, which is what
+   * this pins; before #100 it sat outside and the P2025 escaped as a 500.
    *
    * Note what this asserts: `not_found` for a write that *did* land. That is
    * deliberate. The row is gone before the caller is answered, so "no such
@@ -1132,7 +1133,8 @@ describe('pauseOrResumeTemplate (DB)', () => {
 
   /**
    * #100. The read and the write are not one transaction, so a delete landing
-   * between them surfaces as Prisma's P2025 rather than a clean `not_found`.
+   * between them raises Prisma's P2025 at the write. The guard maps it to
+   * `not_found`; before #100 it escaped as a 500, which is what this pins.
    *
    * Interposed rather than raced: the extension below performs the real read
    * and then deletes the row before returning it, which *is* the interleaving

@@ -221,7 +221,10 @@ export async function pauseOrResumeStudioTemplate(
       // function's own docstring above notes — holds `FOR NO KEY UPDATE` on
       // this row until commit. That conflicts with the `FOR UPDATE`-strength
       // lock a concurrent `DELETE` needs, so it blocks rather than wins.
-      // Replace this CAS with a plain write and that stops being true.
+      // What a plain single-record `update` would change is not the lock —
+      // it takes the same mode — but the first limb: it raises P2025 where
+      // `updateMany` returns `{ count: 0 }`, so the write itself becomes a
+      // P2025 source needing its own guard.
       const swapped = await tx.studioClassTemplate.updateMany({
         where: { id: templateId, isArchived: false, isActive: !desiredActive },
         data: { isActive: desiredActive },
@@ -467,8 +470,10 @@ export async function archiveOrUnarchiveStudioTemplate(
       // own docstring above already names this CAS's mode in passing ("a
       // concurrent archive's own CAS"). That conflicts with the `FOR
       // UPDATE`-strength lock a concurrent `DELETE` needs, so it blocks
-      // rather than wins. Replace this CAS with a plain write and that stops
-      // being true.
+      // rather than wins. What a plain single-record `update` would change is
+      // not the lock — it takes the same mode — but the first limb: it raises
+      // P2025 where `updateMany` returns `{ count: 0 }`, so the write itself
+      // becomes a P2025 source needing its own guard.
       const swapped = await tx.studioClassTemplate.updateMany({
         where: { id: templateId, isArchived: !archiving },
         data: {

@@ -271,10 +271,17 @@ export async function updateClassTemplate(
     // a P2025 window of its own (#100).
     sync = await syncTemplateInstances(db, templateId);
   } catch (err) {
-    // The read above and these writes are not one transaction, so a delete
-    // landing in between surfaces here as Prisma's P2025 ("record to update
-    // not found"). Map it to the same outcome the read-time check above would
-    // have produced, rather than letting it fall through as an opaque 500.
+    // The read above and the two statements in the `try` are not one
+    // transaction, so a delete landing in between surfaces here as Prisma's
+    // P2025 from either of them. Map it to the same outcome the read-time
+    // check above would have produced, rather than letting it fall through as
+    // an opaque 500.
+    //
+    // Two different statements, and Prisma gives them different cause strings
+    // under the one code — worth knowing before grepping logs: the `update`
+    // raises "Record to update not found.", while `syncTemplateInstances`'s
+    // opening `findUniqueOrThrow` raises "No record was found for a query."
+    // The second is a read, not a write.
     //
     // From the sync call this means answering `not_found` for an update that
     // *did* commit. That is the honest answer rather than a convenient one:
@@ -557,8 +564,12 @@ export async function archiveOrUnarchiveTemplate(
       // zero-count branch below already answers `not_found` by re-reading. The
       // `findUniqueOrThrow`/`update` sites further down *can* raise P2025, but
       // only run after this CAS matched, which holds the row's write lock
-      // until commit — so a concurrent delete blocks rather than wins. Replace
-      // this CAS with a plain write and that stops being true.
+      // until commit — so a concurrent delete blocks rather than wins.
+      //
+      // What a plain single-record `update` would change is not the lock — it
+      // takes the same mode — but the first limb: it raises P2025 where
+      // `updateMany` returns `{ count: 0 }`, so the write itself becomes a
+      // P2025 source needing its own guard.
       const swapped = await tx.classTemplate.updateMany({
         where: { id: templateId, isArchived: !archiving },
         data: {
