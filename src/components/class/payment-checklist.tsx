@@ -55,7 +55,12 @@ export function PaymentChecklist({ items }: PaymentChecklistProps) {
 
       <div>
         {items.map((item) => {
-          const status = paymentState[item.paymentId] ?? 'pending';
+          // `?? item.status`, not `?? 'pending'`: `noUncheckedIndexedAccess`
+          // makes this read `PaymentStatus | undefined`, and the row's own
+          // server-rendered status is the honest answer for the undefined case.
+          // Fabricating 'pending' would render an already-paid or overdue
+          // payment as plain unpaid (#58 review).
+          const status = paymentState[item.paymentId] ?? item.status;
           const isPaid = status === 'paid';
           const isOutstanding = status === 'pending' || status === 'overdue';
           const isUpdating = updating === item.paymentId;
