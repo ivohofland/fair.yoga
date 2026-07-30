@@ -257,19 +257,31 @@ export async function updateClassTemplate(
   }
 
   let updated: ClassTemplate;
+  let sync: TemplateSyncResult;
   try {
     updated = await db.classTemplate.update({ where: { id: templateId }, data });
+    // Inside the same `try` as the write above, deliberately. This call opens
+    // with a `findUniqueOrThrow` (`template-sync.ts`) and runs after the
+    // update has already committed, with no lock held in between — so it has
+    // a P2025 window of its own (#100).
+    sync = await syncTemplateInstances(db, templateId);
   } catch (err) {
-    // The read above and this write are not one transaction, so a delete
+    // The read above and these writes are not one transaction, so a delete
     // landing in between surfaces here as Prisma's P2025 ("record to update
     // not found"). Map it to the same outcome the read-time check above would
     // have produced, rather than letting it fall through as an opaque 500.
+    //
+    // From the sync call this means answering `not_found` for an update that
+    // *did* commit. That is the honest answer rather than a convenient one:
+    // the row is gone before the caller is answered, so reporting a
+    // successful update of a template that no longer exists would be the lie.
+    // The `sync` counts are lost with it, which costs nothing — there are no
+    // instances left to report on.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
       return { ok: false, reason: 'not_found' };
     }
     throw err;
   }
-  const sync = await syncTemplateInstances(db, templateId);
 
   return { ok: true, template: updated, sync };
 }
@@ -374,20 +386,34 @@ export async function pauseOrResumeTemplate(
 
   if (template.isArchived) return { ok: false, reason: 'archived' };
 
-  const updated = await db.$transaction(
-    async (tx) => {
-      const t = await tx.classTemplate.update({
-        where: { id: templateId },
-        data: { isActive: desiredActive },
-        include: { teacher: { select: { defaultTimezone: true } } },
-      });
-      if (t.isActive) await generateInstancesForTemplate(tx, t);
-      return t;
-    },
-    // The claim in `class-generator.ts` holds this row's lock for up to its
-    // own 10s transaction; Prisma's 5s default would abort us mid-wait.
-    { timeout: 10_000 },
-  );
+  const updated = await db
+    .$transaction(
+      async (tx) => {
+        const t = await tx.classTemplate.update({
+          where: { id: templateId },
+          data: { isActive: desiredActive },
+          include: { teacher: { select: { defaultTimezone: true } } },
+        });
+        if (t.isActive) await generateInstancesForTemplate(tx, t);
+        return t;
+      },
+      // The claim in `class-generator.ts` holds this row's lock for up to its
+      // own 10s transaction; Prisma's 5s default would abort us mid-wait.
+      { timeout: 10_000 },
+    )
+    .catch((err: unknown) => {
+      // Same window as `updateClassTemplate`'s guard above: the read at the
+      // top of this function and this write are not one transaction, and the
+      // `update` is the transaction's first statement, so nothing holds the
+      // row when it runs. A delete landing in between surfaces as P2025. Map
+      // it to the outcome the read-time check would have produced (#100).
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+        return null;
+      }
+      throw err;
+    });
+
+  if (updated === null) return { ok: false, reason: 'not_found' };
 
   // The include above is only for `generateInstancesForTemplate`'s benefit —
   // `PauseTemplateResult` carries a plain `ClassTemplate`, so the joined
@@ -499,6 +525,15 @@ export async function archiveOrUnarchiveTemplate(
       // predicate itself only because Prisma emits this as a single `UPDATE
       // … WHERE "id" = $1 AND "isArchived" = $2` — a filter it compiled to a
       // subquery would be re-run under the same snapshot and match anyway.
+      //
+      // No P2025 guard here, unlike `updateClassTemplate` and
+      // `pauseOrResumeTemplate` (#100). Not an omission: `updateMany` returns
+      // `{ count: 0 }` rather than throwing when nothing matches, and the
+      // zero-count branch below already answers `not_found` by re-reading. The
+      // `findUniqueOrThrow`/`update` sites further down *can* raise P2025, but
+      // only run after this CAS matched, which holds the row's write lock
+      // until commit — so a concurrent delete blocks rather than wins. Replace
+      // this CAS with a plain write and that stops being true.
       const swapped = await tx.classTemplate.updateMany({
         where: { id: templateId, isArchived: !archiving },
         data: {

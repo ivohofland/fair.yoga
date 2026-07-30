@@ -193,6 +193,52 @@ describe('updateClassTemplate (DB)', () => {
     // which cannot pin an exact number without risking clock flakiness.
     expect(result.sync).toEqual({ synced: 0, regenerated: 0, kept: 0 });
   });
+
+  /**
+   * #100. `updateClassTemplate`'s existing guard covers only its own
+   * `update`. `syncTemplateInstances` runs after it, outside that `try`, and
+   * opens with a `findUniqueOrThrow` — a P2025 source on Prisma 6.
+   *
+   * Note what this asserts: `not_found` for a write that *did* land. That is
+   * deliberate. The row is gone before the caller is answered, so "no such
+   * template" is the state their world is actually in; the alternative is
+   * reporting a successful update of something that no longer exists.
+   */
+  it('maps a delete landing between the write and the sync to not_found', async () => {
+    const t = await makeTemplate('P2025 Sync');
+
+    let deleted = false;
+    // `$extends` returns a `DynamicClientExtensionThis`, not a `PrismaClient`
+    // — it is missing `$on`, which `PrismaClient` requires and this test
+    // double has no need of. `updateClassTemplate`'s `db` parameter is typed
+    // as the concrete class, not a structural subset, so nothing short of a
+    // cast satisfies it here; the alternative, widening that parameter's
+    // type, would be a production-code change to accommodate a test. Cast
+    // to the same target the stub-client precedent in
+    // `studio-class-generator.test.ts` already casts to, rather than
+    // inventing a new one.
+    const interposing = prisma.$extends({
+      query: {
+        classTemplate: {
+          async update({ args, query }) {
+            const row = await query(args);
+            if (!deleted) {
+              deleted = true;
+              await prisma.class.deleteMany({ where: { templateId: t.id } });
+              await prisma.classTemplate.delete({ where: { id: t.id } });
+            }
+            return row;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const result = await updateClassTemplate(interposing, t.id, teacherId, {
+      classType: 'Renamed',
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'not_found' });
+  });
 });
 
 describe('archiveOrUnarchiveTemplate (DB)', () => {
@@ -1082,5 +1128,45 @@ describe('pauseOrResumeTemplate (DB)', () => {
     const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
     expect(after.isActive).toBe(false);
     expect(after.isArchived).toBe(true);
+  });
+
+  /**
+   * #100. The read and the write are not one transaction, so a delete landing
+   * between them surfaces as Prisma's P2025 rather than a clean `not_found`.
+   *
+   * Interposed rather than raced: the extension below performs the real read
+   * and then deletes the row before returning it, which *is* the interleaving
+   * the guard exists for. A two-connection race would only reach the same
+   * state less reliably.
+   */
+  it('maps a delete landing between the read and the write to not_found', async () => {
+    const t = await makeTemplate('P2025 Pause');
+    await prisma.classTemplate.update({ where: { id: t.id }, data: { isActive: false } });
+
+    let deleted = false;
+    // Cast for the same reason as the sync test's `interposing` above: the
+    // extended client is missing `$on`, so it is not assignable to
+    // `pauseOrResumeTemplate`'s `PrismaClient`-typed `db` parameter, and
+    // reusing the existing stub-client cast is the only accepted way past
+    // that without loosening the parameter's type.
+    const interposing = prisma.$extends({
+      query: {
+        classTemplate: {
+          async findUnique({ args, query }) {
+            const row = await query(args);
+            if (!deleted) {
+              deleted = true;
+              await prisma.class.deleteMany({ where: { templateId: t.id } });
+              await prisma.classTemplate.delete({ where: { id: t.id } });
+            }
+            return row;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const result = await pauseOrResumeTemplate(interposing, t.id, teacherId, 'active');
+
+    expect(result).toEqual({ ok: false, reason: 'not_found' });
   });
 });

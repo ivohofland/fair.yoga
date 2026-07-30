@@ -206,6 +206,17 @@ export async function pauseOrResumeStudioTemplate(
       // already read above makes the transition itself — not just this
       // request — what can happen only once, closing the race the two fast
       // paths above cannot.
+      //
+      // No P2025 guard here, unlike `updateClassTemplate` and
+      // `pauseOrResumeTemplate` in the class family (#100). Not an omission:
+      // `updateMany` returns `{ count: 0 }` rather than throwing when nothing
+      // matches, and the zero-count branch below already answers `not_found`
+      // by re-reading. The `findUniqueOrThrow` on the paused arm below, and
+      // `claimStudioTemplateForGeneration`'s own read on the active arm, *can*
+      // raise P2025, but only run after this CAS matched, which holds the
+      // row's write lock until commit — so a concurrent delete blocks rather
+      // than wins. Replace this CAS with a plain write and that stops being
+      // true.
       const swapped = await tx.studioClassTemplate.updateMany({
         where: { id: templateId, isArchived: false, isActive: !desiredActive },
         data: { isActive: desiredActive },
@@ -440,6 +451,16 @@ export async function archiveOrUnarchiveStudioTemplate(
       // takes the row lock `claimStudioTemplateForGeneration`
       // (studio-class-generator.ts) holds with its `FOR UPDATE`, and the
       // timeout below exists for the wait that lock can impose.
+      //
+      // No P2025 guard here, unlike `updateClassTemplate` and
+      // `pauseOrResumeTemplate` in the class family (#100). Not an omission:
+      // `updateMany` returns `{ count: 0 }` rather than throwing when nothing
+      // matches, and the zero-count branch below already answers `not_found`
+      // by re-reading. The `findUniqueOrThrow`/`update` sites further down
+      // *can* raise P2025, but only run after this CAS matched, which holds
+      // the row's write lock until commit — so a concurrent delete blocks
+      // rather than wins. Replace this CAS with a plain write and that stops
+      // being true.
       const swapped = await tx.studioClassTemplate.updateMany({
         where: { id: templateId, isArchived: !archiving },
         data: {
