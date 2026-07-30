@@ -20,6 +20,9 @@ let bookingStudentId: string;
 let bookingStudentToken: string;
 let walkInStudentId: string;
 let classId: string;
+/** Set by the check-in test, which moves the class to "now"; read by the
+ *  payments-overview test to pin the start time inside the reminder label. */
+let slot: ReturnType<typeof checkinSlot>;
 
 /** A class slot that started five minutes ago, in the teacher's UTC clock. */
 function checkinSlot(): { date: Date; startTime: string } {
@@ -256,7 +259,7 @@ test.describe('Teacher journey', () => {
 
   test('check-in: a walk-in joins at the door', async ({ page, context }) => {
     // Move the class to "now" — check-in opens 15 minutes before start.
-    const slot = checkinSlot();
+    slot = checkinSlot();
     await prisma.class.update({
       where: { id: classId },
       data: { date: slot.date, startTime: slot.startTime },
@@ -347,9 +350,18 @@ test.describe('Teacher journey', () => {
     // The Outstanding row carries the reminder action. On this cross-class
     // surface the aria-label appends the class context
     // ("… for {class} · {day} · {time}", #59) so two rows for one student stay
-    // tellable apart; the "for " pins that without pinning the format.
+    // tellable apart.
+    //
+    // The assertion reaches for the start time specifically, because that is
+    // the half of #59 the page owns: a bare /for / matched the pre-fix
+    // two-part label just as happily, so reverting this page's `classContext`
+    // left the whole suite green and nothing anywhere pinned the user-visible
+    // fix. Matching `.*${slot.startTime}` pins the content without pinning the
+    // separator or the order — the format stays free to change.
     await expect(
-      page.getByRole('button', { name: /Send reminder to Walkin Guest for / }),
+      page.getByRole('button', {
+        name: new RegExp(`Send reminder to Walkin Guest for .*${slot.startTime}`),
+      }),
     ).toBeVisible();
     // The caption from the class-page send above survives the server read.
     await expect(page.getByText(/Reminded /)).toBeVisible();
