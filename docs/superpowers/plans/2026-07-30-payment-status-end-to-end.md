@@ -47,7 +47,7 @@
 - Modify: `src/components/class/outstanding-payment-row.test.tsx`
 
 **Interfaces:**
-- Produces, for Task 2: nothing directly. Task 2 relies only on the fact that after this task, `payment-checklist.tsx:58` and `student-payment-list.tsx:32` evaluate to `PaymentStatus`, which is what lets `paymentStateText` narrow its parameter.
+- Produces, for Task 2: nothing directly. Task 2 relies only on the fact that after this task, `payment-checklist.tsx:58` and `student-payment-list.tsx:33` evaluate to `PaymentStatus`, which is what lets `paymentStateText` narrow its parameter.
 - Consumes: nothing.
 
 - [ ] **Step 1: Write the failing unit tests for the two new pure functions**
@@ -246,13 +246,25 @@ In `src/components/class/outstanding-payment-row.test.tsx`. The `fetchMock` / `a
 
 Note the mock shape: the existing undo test uses `fetchMock.mockResolvedValue({ ok: true })` because it only ever clicks Mark paid, which never calls `res.json()`. These tests click Undo, so the mock must also supply `json`.
 
+**Corrected in `ded1802`, after the first review:** the comment below originally
+claimed `'overdue'` was a reachable undo response ("the domain admits 'overdue'
+for an aged payment"). That's false — `unmarkPaymentPaid` writes `'pending'`
+unconditionally; the daily dunning sweep re-derives `'overdue'` later, from the
+payment's age. The block below is the corrected version, matching the comment
+actually committed at `outstanding-payment-row.test.tsx:197-207`.
+
 ```tsx
   /**
-   * #58. `undo` reads the post-undo status from the server rather than assuming
-   * 'pending', because undo's result is a service decision and the domain
-   * admits 'overdue' for an aged payment. This test is what makes that real:
-   * it is the only one here that fails if someone "simplifies" the round trip
-   * to a hardcoded 'pending'.
+   * #58. `undo` renders whatever status the server's response carries, guard
+   * included, rather than rendering the response verbatim or assuming the
+   * result is always 'pending'. Today `unmarkPaymentPaid`
+   * (services/payments.ts:91-97) always writes 'pending' unconditionally — the
+   * daily dunning sweep re-derives 'overdue' later, from the payment's age —
+   * so the 'overdue' response mocked below is a hypothetical exercising the
+   * read path, not current server behavior. The round trip still earns its
+   * keep: it is what keeps this correct the day `unmarkPaymentPaid` starts
+   * returning a re-derived status itself, and this is the only test here that
+   * fails if someone "simplifies" the round trip to a hardcoded 'pending'.
    */
   it('renders the status the undo response carries', async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: { status: 'overdue' } }) });
@@ -337,7 +349,7 @@ git commit -m "fix: carry PaymentStatus through usePaymentActions, validate the 
 - Modify: `src/lib/format.test.ts`
 
 **Interfaces:**
-- Consumes from Task 1: that `payment-checklist.tsx:63` and `student-payment-list.tsx:41-42` now pass a `PaymentStatus`. Without Task 1 this task does not compile.
+- Consumes from Task 1: that `payment-checklist.tsx:63` and `student-payment-list.tsx:42-43` now pass a `PaymentStatus`. Without Task 1 this task does not compile.
 - Produces: nothing.
 
 **Must run after Task 1.** `paymentStateText` is called with the hook's output; tightening it first breaks `payment-checklist.tsx`.

@@ -29,6 +29,15 @@ is declared `string` (`:11`) while `students/[id]/page.tsx:152` hands it
 #57 missed rather than a consumer to check. And `paymentStateText`
 (`format.ts:27`) takes `status: string`, making it a fourth.
 
+**There is a fifth.** `class-list.tsx`'s `ClassWithDetails.registrations`
+(`:13`) declares `{ payment: { status: string } | null }[]`, and its `.filter`
+narrowing (`:74`) repeats the same `string`, while real `PaymentStatus` data
+flows in from both `(teacher)/page.tsx:54` and
+`schedule/past/page.tsx:20`. Unlike the other four, this one was not caught
+during design at all — it surfaced only in the final whole-branch review
+before the PR, which is why it is described here rather than counted above
+with the rest.
+
 ## Design
 
 ### 1. Concrete `PaymentStatus`, not a type parameter

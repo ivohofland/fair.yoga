@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import type { Class, TeacherRoom, Room, StudioClass } from '@prisma/client';
+import type { Class, TeacherRoom, Room, StudioClass, PaymentStatus } from '@prisma/client';
 import { StatusBadge, deriveBadgeVariant, type BadgeVariant } from '@/components/ui/status-badge';
 import { RegistrationProgress } from '@/components/ui/registration-progress';
 import { Icon } from '@/components/ui/icon';
@@ -10,7 +10,7 @@ type ClassWithDetails = Class & {
   _count: { registrations: number };
   teacherRoom: TeacherRoom & { room: Room };
   /** Charged registrations' payment states — powers the completed-card rollup. */
-  registrations?: { payment: { status: string } | null }[];
+  registrations?: { payment: { status: PaymentStatus } | null }[];
 };
 
 interface ClassListProps {
@@ -71,7 +71,7 @@ function PaymentRollup({ cls }: { cls: ClassWithDetails }) {
   if (cls.status !== 'completed' || !cls.registrations) return null;
   const payments = cls.registrations
     .map((r) => r.payment)
-    .filter((p): p is { status: string } => p !== null);
+    .filter((p): p is { status: PaymentStatus } => p !== null);
   if (payments.length === 0) return null;
 
   const overdue = payments.filter((p) => p.status === 'overdue').length;
