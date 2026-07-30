@@ -32,7 +32,9 @@
 | `src/components/settings/template-form.test.tsx` | **New** | 3 |
 | `src/components/settings/template-form.tsx` | Options arrays `as const`; four enum pins; two guards | 4 |
 
-**Task 1 exists because of a constraint the spec did not foresee.** The spec has the form derive its gated five from `ECONOMIC_FIELDS`, which lives in `class-lifecycle.ts` — a module that value-imports server-only pino. Importing it from a client form would pull pino into the browser bundle. `ECONOMIC_FIELDS` has **no importers outside its own file** (verified), so relocating it to a client-safe leaf costs one re-point and unblocks Task 2.
+**Task 1 exists because of a constraint the spec did not foresee.** The spec has the form derive its gated five from `ECONOMIC_FIELDS`, which lives in `class-lifecycle.ts` — a module that value-imports server-only pino. Importing it from a client form would pull pino into the browser bundle, so the constant moves to a leaf module with no imports of its own.
+
+**`src/services/class-lifecycle.test.ts` imports both `ECONOMIC_FIELDS` (`:5`) and `type EconomicField` (`:13`) from `class-lifecycle`**, including a `@ts-expect-error` pin on the type at `:783-789`. The re-export in Step 2 is what keeps that working and is **not optional** — dropping it as an export with no consumers breaks that test file. (An earlier draft of this note claimed there were no importers outside the source file; that came from a grep that required `import` on the same line as the symbol, which multi-line import blocks defeat.)
 
 **Tasks 3 and 4 both edit `template-form.tsx`** and must run in order. They are split because a reviewer can meaningfully accept the field-list pinning while rejecting the enum treatment, or vice versa.
 
@@ -84,7 +86,7 @@ Delete the `ECONOMIC_FIELDS` and `EconomicField` declarations from `src/services
 import { ECONOMIC_FIELDS, type EconomicField } from '@/lib/class-fields';
 ```
 
-Then re-export both, because other modules and the tests may reach for them at the old path and because the service is where a reader looks for them:
+Then re-export both. This is required, not tidiness: `class-lifecycle.test.ts` imports `ECONOMIC_FIELDS` at `:5` and `type EconomicField` at `:13` from this module, and `:783-789` pins the type with a `@ts-expect-error`. Removing the export breaks that file.
 
 ```ts
 export { ECONOMIC_FIELDS, type EconomicField };
