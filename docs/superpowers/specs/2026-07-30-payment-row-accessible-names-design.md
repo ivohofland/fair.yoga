@@ -126,7 +126,18 @@ Specifically:
 - the two undo buttons do too (added in review — see correction 1);
 - the two reminder buttons do too;
 - the visible caption differs between the two rows as well — the collision is
-  visual, so the fix is pinned visually.
+  visual, so the fix is pinned visually;
+- each button's *visible* text is contained in its accessible name (added in
+  review). The four assertions above pin only the accessible name, which is one
+  half of what WCAG 2.5.3 relates: renaming the visible "Mark paid" to "Settle"
+  while leaving the label alone passed every test in the repo, because every
+  test reaches these buttons by accessible name. That mutant now dies.
+
+The Received caption is pinned in `teacher-journey.spec.ts`, not here — the
+page builds it inline, so there is no prop for a component test to drive. It
+shipped unpinned; the assertion is scoped to the Received section, because both
+sections render the same class and an unscoped one is satisfied by the
+Outstanding caption.
 
 Assert whole accessible names via `getByRole('button', { name: … })` with exact
 strings, not substrings.

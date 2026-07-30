@@ -49,7 +49,7 @@
 > | 3 | `Mark {name}'s payment as paid for {context}` | `Mark paid — {name}, {context}` (WCAG 2.5.3 — the visible `Mark paid` must be contiguous and first) |
 > | 4 | Undo verified by inspection; "do not add a test that mocks the fetch" | Undo **is** tested — `vi.stubGlobal('fetch', …)` through a real click is this suite's established pattern, not a contrivance |
 > | 6 | "Leave the Received section's inline caption alone" | Received gains the start time too; §2's visual-ambiguity argument does not stop at that heading. `MarkUnpaidButton`'s name is still untouched (#128) |
-> | 7 / pre-PR | 35 components tests | 36 |
+> | 7 / pre-PR | 35 components tests | 37 |
 >
 > Step 8's second mutation result also changed: the e2e now pins the page's
 > `classContext` (commit `da4f12e`), so reverting it fails the suite. The
@@ -263,7 +263,7 @@ npx vitest run --project components
 npx vitest run --project unit
 ```
 
-Expected: clean, 32 + 3 = 35 components tests, unit unchanged. (36 after the review round's fourth test.)
+Expected: clean, 32 + 3 = 35 components tests, unit unchanged. (37 after the review round's fourth and fifth tests.)
 
 - [ ] **Step 8: Mutation-verify that the new tests bite**
 
@@ -293,7 +293,7 @@ git commit -m "fix: give all three payment-row buttons distinct accessible names
 
 - [ ] `npx tsc --noEmit` — clean
 - [ ] `npm run lint` — clean
-- [ ] `npx vitest run --project components` — 36 passing (32 before, 4 new)
+- [ ] `npx vitest run --project components` — 37 passing (32 before, 5 new)
 - [ ] `npx vitest run --project unit` — unchanged
 - [ ] `npx vitest run --project integration` — unchanged. Needs the app on `:3000`; do not restart it. `signup-api` 429s are the local rate limiter, not this change.
 - [ ] `npx playwright test` — 118 passing
