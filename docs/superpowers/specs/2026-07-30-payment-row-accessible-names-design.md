@@ -123,6 +123,7 @@ collision.
 Specifically:
 
 - the two mark-paid buttons have distinct accessible names;
+- the two undo buttons do too (added in review — see correction 1);
 - the two reminder buttons do too;
 - the visible caption differs between the two rows as well — the collision is
   visual, so the fix is pinned visually.
@@ -142,13 +143,21 @@ tests do, in four ways a reader could falsify quickly:**
    so the stub is scaffolding this suite already relies on, not a contrivance.
    **All three are asserted now**, in a fourth test that clicks both rows'
    Mark paid and then reads both Undo labels.
-2. It said that assertion "fails before the fix and passes after". **Only the
-   mark-paid one does.** The fixture hands the component two already-distinct
-   `classContext` values, so the reminder and caption assertions pass against
-   the unfixed component too. They are regression cover for the row continuing
-   to consume `classContext` — worth keeping, but not proof of the fix.
+2. It said that assertion "fails before the fix and passes after". **Two of the
+   four do** — mark-paid and undo, both of whose labels were rewritten
+   outright, so the asserted strings are simply absent from the unfixed
+   component. The reminder and caption assertions pass against it too, because
+   the fixture hands the component two already-distinct `classContext` values;
+   they are regression cover for the row continuing to consume `classContext`,
+   worth keeping but not proof of the fix. (This item said "only the mark-paid
+   one" until the undo test landed above it in correction 1; it was not
+   remeasured at the time, and a reviewer caught the contradiction between
+   two adjacent items of this very list.)
 3. It said a single row is tested for natural reading. **There is no single-row
-   test**; the possessive is covered inside the pair test.
+   test.** It also said the possessive is covered inside the pair test; **there
+   is no possessive left to cover.** §1's reshape for WCAG 2.5.3 replaced
+   `Mark {name}'s payment as paid` with `Mark paid — {name}, {context}`, taking
+   the grammar wart out with the phrasing that carried it.
 4. It said a substring match "would pass on the colliding version, which is
    precisely the defect". **It would not.** On a colliding pair both accessible
    names are identical, so any query — substring or exact — matches 0 or 2
@@ -163,21 +172,29 @@ test file and left standing here — one string, two copies, exactly the drift t
 one-string design exists to avoid. The design was right; the spec's own prose
 was the thing that drifted.
 
-**What is not asserted:** that the `context` prop reaches the reminder button.
-This was originally written as a deliberate exclusion — "`SendReminderButton`'s
-existing contract, already documented on the prop" — and that is no longer what
-the test file does. Correction 2 above records that the reminder assertion *is*
-in the file, passing against the unfixed component as regression cover for the
-row continuing to consume `classContext` — which is exactly the wiring this
-paragraph claimed was left out. The exclusion was overtaken by the
-implementation; the paragraph is kept, corrected, rather than deleted, because
-the reasoning it gives is the reason the reminder assertion proves less than the
-mark-paid one.
+**Retracted exclusion — the `context` prop reaching the reminder button.** This
+was written as a deliberate omission ("`SendReminderButton`'s existing contract,
+already documented on the prop"), and it is not what the test file does: the
+reminder assertion is there, and correction 2 above records it. It is kept here,
+corrected rather than deleted, because the reasoning behind the omission is
+still the reason that assertion proves less than the mark-paid and undo ones —
+it passes against the unfixed component, so it is regression cover, not proof of
+the fix.
 
 ## Out of scope
 
 - **`MarkUnpaidButton`'s accessible names** — filed separately, per §3.
 - **Consolidating the local `formatDay`** — #96.
+- **The class page's mark-paid label** — `payment-checklist.tsx:110`, still
+  `Mark {name} payment as paid`. #129 already tracks it, but as a *grammar*
+  divergence, which was the accurate framing when the payments page's fix was
+  the possessive. §1's reshape changes that: the payments page no longer has a
+  possessive either, and the reason it was reshaped — WCAG 2.5.3, the visible
+  `Mark paid` split across the accessible name — applies to the class page
+  identically. So the class page has the same accessibility defect this spec
+  exists to fix, and #129 as written does not say so. Left out of scope because
+  it is a second surface with its own component and tests, but #129 needs
+  re-scoping rather than closing alongside this.
 - **Any change to `SendReminderButton`.** Its `context` prop already exists,
   already nullable, and already appends correctly. This spec changes what is
   passed to it, not the component.

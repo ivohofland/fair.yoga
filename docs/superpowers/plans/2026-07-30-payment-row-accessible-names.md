@@ -13,7 +13,7 @@
 - **TypeScript `strict: true`.** No `any`, no type assertions to silence a type error, no eslint suppressions.
 - **One string feeds both the visible caption and the accessible names.** Do not introduce a second, aria-only value — two strings that must agree is the drift this design deliberately avoids.
 - **Do not change `src/components/class/send-reminder-button.tsx`.** Its `context` prop already exists, is already nullable, and already appends correctly. This change alters what is passed to it, not the component.
-- **Do not touch `MarkUnpaidButton` or the Received section.** Filed as #128.
+- ~~**Do not touch `MarkUnpaidButton` or the Received section.**~~ **Amended in review:** do not touch `MarkUnpaidButton` — that is #128 and still out of scope. The Received section's *visible caption* is in scope and did change (Step 6), because the visual-ambiguity argument that puts the time on Outstanding rows does not stop at the Received heading.
 - **Do not replace the page's local `formatDay`.** It is correct (UTC accessors on a `@db.Date` column) and consolidating date formatters is #96's decision, which is design-gated.
 - **Do not modify `prisma/schema.prisma`**; no migration. `Class.startTime` already exists as a `String`.
 - **Never restart the dev server on `:3000`.** It is managed manually by the repo owner.
@@ -25,8 +25,8 @@
 
 | File | Change |
 |---|---|
-| `src/app/(teacher)/settings/payments/page.tsx` | Add `startTime` to the class `select`; append it to `classContext` |
-| `src/components/class/outstanding-payment-row.tsx` | Use `classContext` in the Mark paid and Undo labels; fix the possessive; update the prop docblock |
+| `src/app/(teacher)/settings/payments/page.tsx` | Add `startTime` to the class `select`; append it to `classContext` — and, per the review round, to the Received caption |
+| `src/components/class/outstanding-payment-row.tsx` | Use `classContext` in the Mark paid and Undo labels; ~~fix the possessive~~ reshape Mark paid to lead with its visible text (WCAG 2.5.3 — the possessive went with the phrasing); update the prop docblock |
 | `src/components/class/outstanding-payment-row.test.tsx` | **New** — the first test under `src/components/class/` |
 
 **One task.** The three files change together and are meaningless apart: the page supplies a value the row must consume, and the test asserts the pair. Splitting them would produce a commit where the caption shows a time no label uses, or labels referencing data the query does not select.
@@ -37,8 +37,12 @@
 
 > **Superseded in part by the PR review round (commits `a76e78b`, `3b43cec`,
 > `da4f12e`).** The steps below are kept as the record of what was planned and
-> executed first; four of their instructions no longer describe the branch, and
-> each correction is marked inline where it applies. In summary:
+> executed first; **seven** of their instructions no longer describe the branch —
+> the four in the table below, plus the Global Constraint at the top of this
+> plan, the `outstanding-payment-row.tsx` row of the File Structure table, and
+> Step 1's own copy of the "Undo is not tested" instruction. Each is marked
+> inline where it applies. (This banner first said "four" and claimed every
+> correction was marked; a reviewer found the three unmarked ones.) In summary:
 >
 > | Step | Planned | Shipped |
 > |---|---|---|
@@ -81,11 +85,15 @@ import { OutstandingPaymentRow } from './outstanding-payment-row';
  * (SUPERSEDED — write the version now in `outstanding-payment-row.test.tsx`,
  * not this one. This block originally read "the narrowest case that breaks all
  * three … a fixture differing in type or date would prove nothing". Both halves
- * are false at the component level: only the mark-paid test fails pre-fix, and
- * a type- or date-varying fixture fails exactly the same one test. Verified by
- * building one and running it. The time fixture is still preferred, for what it
- * documents — the case the reminder button's partial disambiguator could not
- * tell apart — not for what it catches.)
+ * are false at the component level. **Two** tests fail against the pre-fix
+ * component — mark-paid and undo — and a type- or date-varying fixture fails
+ * exactly those same two. (This parenthetical first said "one test", measured
+ * before `3b43cec` added the undo test and never remeasured; the shipped file
+ * says two, and the shipped file is right. Correcting a stale claim with an
+ * equally stale one is this branch's signature mistake, and it happened here.)
+ * The time fixture is still preferred, for what it documents — the case the
+ * reminder button's partial disambiguator could not tell apart — not for what
+ * it catches.)
  */
 describe('OutstandingPaymentRow', () => {
   const base = {
@@ -128,6 +136,8 @@ describe('OutstandingPaymentRow', () => {
   it('gives the mark-paid buttons distinct accessible names', () => {
     renderCollidingPair();
 
+    // SUPERSEDED by Step 3's review correction — the shipped label has no
+    // possessive: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 09:30'.
     expect(
       screen.getByRole('button', { name: "Mark Ana de Vries's payment as paid for Vinyasa · Jun 12 · 09:30" }),
     ).toBeInTheDocument();
@@ -163,6 +173,8 @@ That distinction is load-bearing: told that exactness *is* the collision guard, 
 
 The Undo button is deliberately not asserted here: it renders only after a successful `markPaid`, which needs a network round trip. Step 4 covers it by inspection instead — noted in the report rather than faked with a test that does not exercise it.
 
+**Overturned in review**, same as the copy of this instruction in Step 4. A `vi.stubGlobal('fetch', …)` and a real click is how six existing component test files in this repo drive their components; the stub is scaffolding the suite already relies on, not a fake. Undo is asserted, in a fourth test.
+
 - [ ] **Step 2: Run the test and watch it fail**
 
 Run: `npx vitest run --project components src/components/class/outstanding-payment-row.test.tsx`
@@ -171,7 +183,7 @@ Expected: `'gives the mark-paid buttons distinct accessible names'` FAILS.
 
 **Corrected after review — the mechanism first predicted here does not occur.** It said `getByRole` finds two buttons with the same name and throws "Found multiple elements". It cannot: the asserted string is the *post-fix* label, which pre-fix matches **zero** elements, so the error is `Unable to find an accessible element…`.
 
-The distinction matters. The test fails because the asserted string is **absent** — the label gained both the possessive and the context suffix — and so it would fail against pre-fix with a *single* row. The pair fixture is not what makes this test red. What the pair guards is a *future* collision, via the duplicate-name throw.
+The distinction matters. The test fails because the asserted string is **absent** — the label was rewritten outright — and so it would fail against pre-fix with a *single* row. (As planned that rewrite was "gained the possessive and the context suffix"; as shipped it is the WCAG reshape in Step 3. Either way the mechanism is absence, which is the point here.) The pair fixture is not what makes this test red. What the pair guards is a *future* collision, via the duplicate-name throw.
 
 The other two tests pass already, because the fixture hands the component two distinct `classContext` values directly.
 
