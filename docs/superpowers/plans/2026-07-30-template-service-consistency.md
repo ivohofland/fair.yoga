@@ -205,9 +205,16 @@ Move `syncTemplateInstances` inside the existing `try`, and extend that comment 
     sync = await syncTemplateInstances(db, templateId);
   } catch (err) {
     // The read above and these writes are not one transaction, so a delete
-    // landing in between surfaces here as Prisma's P2025 ("record to update
-    // not found"). Map it to the same outcome the read-time check above would
-    // have produced, rather than letting it fall through as an opaque 500.
+    // landing in between surfaces here as Prisma's P2025. Map it to the same
+    // outcome the read-time check above would have produced, rather than
+    // letting it fall through as an opaque 500.
+    //
+    // NOTE, corrected after review: this block originally glossed P2025 as
+    // "record to update not found". That is Prisma 4/5 wording. Measured
+    // against the installed 6.19.3, the `update` raises "No record was found
+    // for an update." and `findUniqueOrThrow` raises "No record was found for
+    // a query." — one word apart, so the shipped comment points at the
+    // invocation line in `err.message` as the usable discriminator instead.
     //
     // From the sync call this means answering `not_found` for an update that
     // *did* commit. That is the honest answer rather than a convenient one:
