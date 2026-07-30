@@ -142,9 +142,11 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
 /**
  * Claims a template for generation, or reports it is no longer eligible.
  *
- * `FOR UPDATE` is the point, not the `SELECT`. It takes the same row lock
- * `archiveOrUnarchiveTemplate`'s `update` takes, so the sweep and an archive
- * serialise instead of interleaving:
+ * `FOR UPDATE` is the point, not the `SELECT`. It locks the same row
+ * `archiveOrUnarchiveTemplate`'s compare-and-swap locks, and the two modes
+ * conflict — that `updateMany` touches no key column, so Postgres grants it
+ * `FOR NO KEY UPDATE`, which this blocks and which blocks this — so the sweep
+ * and an archive serialise instead of interleaving:
  *
  *   - claim first  → the archive's UPDATE waits; we generate and commit; the
  *                    archive's own deleteMany then withdraws what we made —

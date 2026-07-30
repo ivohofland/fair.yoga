@@ -456,9 +456,11 @@ export async function archiveOrUnarchiveStudioTemplate(
       // makes the transition itself the thing that can happen only once.
       //
       // Still the transaction's first statement, deliberately: this is what
-      // takes the row lock `claimStudioTemplateForGeneration`
-      // (studio-class-generator.ts) holds with its `FOR UPDATE`, and the
-      // timeout below exists for the wait that lock can impose.
+      // locks the row `claimStudioTemplateForGeneration`
+      // (studio-class-generator.ts) locks with its `FOR UPDATE`. Not the same
+      // lock mode — an `updateMany` touching no key column takes `FOR NO KEY
+      // UPDATE` — but the two *conflict*, and the timeout below exists for
+      // the wait that conflict can impose.
       //
       // No P2025 guard here, unlike `updateClassTemplate` and
       // `pauseOrResumeTemplate` in the class family (#100). Not an omission:
@@ -558,10 +560,11 @@ export async function archiveOrUnarchiveStudioTemplate(
 
       return { ok: true as const, action: 'archived' as const, template: recorded, deleted, remaining };
     },
-    // The compare-and-swap above takes the same row lock
-    // `claimStudioTemplateForGeneration` (studio-class-generator.ts) holds with
-    // its `FOR UPDATE` for the duration of its own per-template transaction —
-    // that claim is what gives this the claim-and-lock treatment, not the
+    // The compare-and-swap above locks the same row
+    // `claimStudioTemplateForGeneration` (studio-class-generator.ts) holds
+    // `FOR UPDATE` for the duration of its own per-template transaction, and
+    // the CAS's own `FOR NO KEY UPDATE` conflicts with that — the conflict is
+    // what gives this the claim-and-lock treatment, not the
     // timeout below; this archive can block on a sweep in progress today, or
     // now on a resume: `pauseOrResumeStudioTemplate`'s own CAS holds this same
     // row from its `updateMany` through generation to commit, on the same 10s

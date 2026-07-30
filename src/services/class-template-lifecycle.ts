@@ -277,18 +277,33 @@ export async function updateClassTemplate(
     // check above would have produced, rather than letting it fall through as
     // an opaque 500.
     //
-    // Two different statements, and Prisma gives them different cause strings
-    // under the one code — worth knowing before grepping logs: the `update`
-    // raises "Record to update not found.", while `syncTemplateInstances`'s
-    // opening `findUniqueOrThrow` raises "No record was found for a query."
-    // The second is a read, not a write.
+    // Two different statements under the one code, and telling them apart in
+    // a log is harder than it looks. Measured against this repo's
+    // `@prisma/client` 6.19.3: the `update` raises the cause "No record was
+    // found for an update.", `syncTemplateInstances`'s opening
+    // `findUniqueOrThrow` "No record was found for a query." One word apart,
+    // so do not go grepping for either — the discriminator that actually
+    // works is the invocation line Prisma puts at the head of `err.message`
+    // ("Invalid `prisma.classTemplate.update()` invocation" versus
+    // "…findUniqueOrThrow() invocation"). Both cause strings are Prisma's
+    // wording, not ours, and they have changed across its major versions;
+    // re-measure before relying on either.
     //
     // From the sync call this means answering `not_found` for an update that
     // *did* commit. That is the honest answer rather than a convenient one:
     // the row is gone before the caller is answered, so reporting a
     // successful update of a template that no longer exists would be the lie.
-    // The `sync` counts are lost with it, which costs nothing — there are no
-    // instances left to report on.
+    // The `sync` counts are lost with it, which costs nothing — but not
+    // because there is nothing left. `Class.template` is `onDelete: SetNull`
+    // (`prisma/schema.prisma`), so deleting a template does not take its
+    // generated classes with it: each keeps standing with `templateId: null`,
+    // still `open`, still on the teacher's schedule and public booking page,
+    // frozen with whatever settings it had before this edit. What the delete
+    // removed is the link, so `syncTemplateInstances`'s `templateId` filter
+    // now matches nothing and the counts it would have returned are `{ synced:
+    // 0, regenerated: 0, kept: 0 }` — worth nothing to a caller. Whoever
+    // writes the delete path this guard exists for inherits those orphans:
+    // they are that path's problem, not this function's.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
       return { ok: false, reason: 'not_found' };
     }
@@ -312,10 +327,18 @@ export async function updateClassTemplate(
  * drifted): that policy is about shared *implementation*, and this is two
  * fields with no logic to drift.
  *
+ * `date` is `Class.date` straight through, and that column is `@db.Date`: a
+ * calendar date pinned to midnight UTC, never an instant. That is the one
+ * property of this type a producer can actually violate, and it is what
+ * licenses `pauseMessage` to render it through `formatDayHeader`, which reads
+ * its argument with `getUTC*` accessors (`src/lib/format.ts`). Fill this from
+ * a raw `new Date()` instead and the rendered day slips back one west of UTC.
+ * Both producers satisfy it today by `select`ing the column unchanged.
+ *
  * `TemplateToggleResponse.lastScheduled` in `template-action-messages.ts` is
  * NOT this type and must not be folded into it — it carries `date: string`,
- * the post-`JSON.parse` wire form, converted back at that file's two
- * `resolve*Confirmation` call sites.
+ * the post-`JSON.parse` wire form, converted back inside that file's two
+ * `resolve*Confirmation` functions.
  */
 export type LastScheduledClass = { date: Date; startTime: string };
 
@@ -439,6 +462,20 @@ export async function pauseOrResumeTemplate(
       // `update` is the transaction's first statement, so nothing holds the
       // row when it runs. A delete landing in between surfaces as P2025. Map
       // it to the outcome the read-time check would have produced (#100).
+      //
+      // Note what this `catch` is actually attached to: the whole
+      // `$transaction`, not the `update` alone — so it covers
+      // `generateInstancesForTemplate` too. It is tight today only by
+      // accident of that function's contents, which are a `class.findFirst`
+      // and an unchecked `class.create` (`class-generator.ts`): P2003 or
+      // P2002, never P2025. So the `update` above really is the only P2025
+      // source under here, and the guard says `not_found` about the only
+      // thing that can go missing. Add a `findUniqueOrThrow` or a
+      // single-record `update` inside this transaction and that stops being
+      // true silently — #116 is queued to put `claimTemplateForGeneration`
+      // here, and it opens with a `findUniqueOrThrow`. Whoever does that owes
+      // this comment an enumeration of what it now covers, the way the
+      // sibling guard above already lists both of its statements.
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
         return null;
       }
@@ -543,11 +580,12 @@ export async function archiveOrUnarchiveTemplate(
       // withdrew nothing.
       //
       // Still the transaction's first statement, deliberately: this is what
-      // takes the row lock `claimTemplateForGeneration` (class-generator.ts)
-      // holds with its `FOR UPDATE`, and that shared lock is what serialises
-      // an archive against a sweep in progress (#95). Moving the CAS after
-      // the `deleteMany` would withdraw classes before establishing the right
-      // to.
+      // locks the row `claimTemplateForGeneration` (class-generator.ts) locks
+      // with its `FOR UPDATE`. Not the same lock mode — an `updateMany`
+      // touching no key column takes `FOR NO KEY UPDATE` — but the two
+      // *conflict*, and that conflict is what serialises an archive against a
+      // sweep in progress (#95). Moving the CAS after the `deleteMany` would
+      // withdraw classes before establishing the right to.
       //
       // The contended case resolves in Postgres, not here: the loser blocks
       // inside this statement, and when the winner commits, READ COMMITTED
@@ -563,8 +601,9 @@ export async function archiveOrUnarchiveTemplate(
       // `{ count: 0 }` rather than throwing when nothing matches, and the
       // zero-count branch below already answers `not_found` by re-reading. The
       // `findUniqueOrThrow`/`update` sites further down *can* raise P2025, but
-      // only run after this CAS matched, which holds the row's write lock
-      // until commit — so a concurrent delete blocks rather than wins.
+      // only run after this CAS matched, which holds `FOR NO KEY UPDATE` on
+      // this row until commit. That conflicts with the `FOR UPDATE`-strength
+      // lock a concurrent `DELETE` needs, so it blocks rather than wins.
       //
       // What a plain single-record `update` would change is not the lock — it
       // takes the same mode — but the first limb: it raises P2025 where
@@ -680,10 +719,11 @@ export async function archiveOrUnarchiveTemplate(
 
       return { ok: true as const, action: 'archived' as const, template: recorded, deleted, remaining };
     },
-    // The compare-and-swap above takes the same row lock the generator
-    // sweep's `claimTemplateForGeneration` (class-generator.ts) holds for the
-    // duration of its own per-template transaction, so an archive can now
-    // block on a sweep in progress. Matching the sweep's 10s transaction
+    // The compare-and-swap above locks the same row the generator sweep's
+    // `claimTemplateForGeneration` (class-generator.ts) holds `FOR UPDATE` for
+    // the duration of its own per-template transaction. The CAS's own `FOR NO
+    // KEY UPDATE` conflicts with that, so an archive can now block on a sweep
+    // in progress. Matching the sweep's 10s transaction
     // timeout means this waits at most as long as the sweep could possibly
     // run, not Prisma's 5s default — which a loaded VPS can exceed and turn
     // an ordinary archive click into an opaque P2028.
