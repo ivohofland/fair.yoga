@@ -1,4 +1,5 @@
 import { formatDayHeader } from '@/lib/format';
+import type { LastScheduledClass } from '@/services/class-template-lifecycle';
 
 /**
  * Confirmation shown after pausing a template. Only ever called on the pause
@@ -13,7 +14,7 @@ import { formatDayHeader } from '@/lib/format';
  * Whether it should say something is a copy decision, deliberately not taken
  * here — only the stale justification is removed.
  */
-export function pauseMessage(lastScheduled: { date: Date; startTime: string } | null): string {
+export function pauseMessage(lastScheduled: LastScheduledClass | null): string {
   return lastScheduled
     ? `No new classes will be added to your schedule. The last one still scheduled is ${formatDayHeader(lastScheduled.date)} · ${lastScheduled.startTime}.`
     : 'No new classes will be added to your schedule. Nothing from this template is currently scheduled.';

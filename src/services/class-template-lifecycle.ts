@@ -296,6 +296,23 @@ export async function updateClassTemplate(
 // ---------------------------------------------------------------------------
 
 /**
+ * The last class still on the schedule for a template, as `pauseOrResumeTemplate`
+ * and its studio twin report it, and as `pauseMessage` renders it.
+ *
+ * Shared rather than declared per site, which is what #100 asked for. Note the
+ * two families are otherwise deliberately parallel-but-separate (see the header
+ * of `studio-class-template-lifecycle.ts`, and PR #92, which found they had
+ * drifted): that policy is about shared *implementation*, and this is two
+ * fields with no logic to drift.
+ *
+ * `TemplateToggleResponse.lastScheduled` in `template-action-messages.ts` is
+ * NOT this type and must not be folded into it — it carries `date: string`,
+ * the post-`JSON.parse` wire form, converted back at that file's two
+ * `resolve*Confirmation` call sites.
+ */
+export type LastScheduledClass = { date: Date; startTime: string };
+
+/**
  * Outcome of a pause/resume PATCH. `paused` carries the furthest-out class
  * still on the schedule, for the pause confirmation; `active` and
  * `unchanged` report nothing beyond the template itself — resuming needs no
@@ -306,7 +323,7 @@ export type PauseTemplateResult =
       ok: true;
       action: 'paused';
       template: ClassTemplate;
-      lastScheduled: { date: Date; startTime: string } | null;
+      lastScheduled: LastScheduledClass | null;
     }
   | { ok: true; action: 'active'; template: ClassTemplate }
   | { ok: true; action: 'unchanged'; template: ClassTemplate }

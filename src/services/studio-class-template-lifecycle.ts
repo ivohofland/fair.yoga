@@ -34,6 +34,7 @@
 
 import type { PrismaClient, StudioClassTemplate } from '@prisma/client';
 import { startOfLocalDay } from '@/lib/timezone';
+import type { LastScheduledClass } from './class-template-lifecycle';
 import {
   claimStudioTemplateForGeneration,
   generateStudioInstancesForTemplate,
@@ -50,7 +51,7 @@ export type PauseStudioTemplateResult =
       ok: true;
       action: 'paused';
       template: StudioClassTemplate;
-      lastScheduled: { date: Date; startTime: string } | null;
+      lastScheduled: LastScheduledClass | null;
     }
   | { ok: true; action: 'active'; template: StudioClassTemplate }
   | { ok: true; action: 'unchanged'; template: StudioClassTemplate }
