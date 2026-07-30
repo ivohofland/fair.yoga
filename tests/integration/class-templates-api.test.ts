@@ -19,11 +19,25 @@ let otherTeacherRoomId: string;
 let otherSessionToken: string;
 
 /**
- * Schema convention (0=Monday, ..., 6=Sunday) — 3 is Thursday. Any fixed
- * weekday works; the assertion below converts to JS's getUTCDay() (0=Sunday)
- * the same way class-generator.ts does: jsDay = (dayOfWeek + 1) % 7.
+ * Schema convention (0=Monday, ..., 6=Sunday). The assertions below convert to
+ * JS's getUTCDay() (0=Sunday) the same way class-generator.ts does:
+ * jsDay = (dayOfWeek + 1) % 7.
+ *
+ * Derived rather than fixed, and this is load-bearing (#123's class-family
+ * sibling). A fixed weekday fails on the day it names: the generator keeps
+ * today's occurrence while its start time is still ahead, archive's `gt: today`
+ * then spares that class, and `remaining`'s `gte: today` counts it — so
+ * `expect(remaining).toBe(0)` saw 1 every Thursday before 09:30 in the
+ * teacher's zone. The comment this replaces claimed "any fixed weekday works",
+ * which is exactly the assumption that broke.
+ *
+ * Two days out, not one: the teacher's zone can be a calendar day ahead of
+ * UTC's (Europe/Amsterdam is, after 22:00 UTC in summer), so "tomorrow in UTC"
+ * is sometimes "today for the teacher" and would just move the failure to a
+ * different window. Two clears any zone. `NEW_DAY_OF_WEEK` below derives from
+ * this and lands another two out, so it is never today either.
  */
-const DAY_OF_WEEK = 3;
+const DAY_OF_WEEK = (((new Date().getUTCDay() + 6) % 7) + 2) % 7;
 const EXPECTED_JS_DAY = (DAY_OF_WEEK + 1) % 7;
 
 function templateBody(classType: string) {
