@@ -4,7 +4,7 @@
 
 **Goal:** Carry `PaymentStatus` through `usePaymentActions` and its three consumers so the UI-gating comparisons are compiler-checked, and replace the undo response's unchecked cast with a real type guard (#58).
 
-**Architecture:** The hook stops being `Record<string, string>` and becomes `Record<string, PaymentStatus>`. Its one untyped value — the undo response — gets a runtime guard rather than an assertion. Two boundaries that re-widen the same type (`StudentPaymentItem.status`, `paymentStateText`) are tightened in the same change, the second gaining a `never` exhaustiveness guard.
+**Architecture:** The hook stops being `Record<string, string>` and becomes `Record<string, PaymentStatus>`. Its one untyped value — the undo response — gets a runtime guard rather than an assertion, and the guard plus its reader live in a module of their own (`src/lib/payment-status.ts`) so their tests reach a real public surface instead of a test-only export. Two boundaries that re-widen the same type (`StudentPaymentItem.status`, `paymentStateText`) are tightened in the same change, the second gaining a `never` exhaustiveness guard that logs and falls back rather than throwing. A fifth widening — `class-list.tsx`'s `ClassWithDetails.registrations`, which the spec documents at `:32` and which was found only by the final whole-branch review — is Task 3.
 
 **Tech Stack:** TypeScript strict (`noUncheckedIndexedAccess` on), React client components, Vitest `unit` project (node) and `components` project (jsdom + Testing Library).
 
@@ -25,16 +25,22 @@
 
 | File | Change | Task |
 |---|---|---|
-| `src/lib/use-payment-actions.ts` | `PaymentStatus` throughout; add `isPaymentStatus` + `readUndoStatus`; replace the cast | 1 |
-| `src/lib/use-payment-actions.test.ts` | **New** — unit tests for the two new pure functions | 1 |
-| `src/components/students/student-payment-list.tsx` | `StudentPaymentItem.status: string` → `PaymentStatus` | 1 |
-| `src/components/class/outstanding-payment-row.test.tsx` | Two undo round-trip tests | 1 |
-| `src/lib/format.ts` | `paymentStateText(status: PaymentStatus)` + `never` guard | 2 |
+| `src/lib/use-payment-actions.ts` | `PaymentStatus` throughout; replace the cast; `undo` treats a committed mutation with an unreadable body as success | 1 |
+| `src/lib/payment-status.ts` | **New** — `isPaymentStatus` + `readUndoStatus`, and the `Record`-pinned member list behind them | 1 |
+| `src/lib/payment-status.test.ts` | **New** — unit tests for the two pure functions | 1 |
+| `src/components/students/student-payment-list.tsx` | `StudentPaymentItem.status: string` → `PaymentStatus`; `?? item.status` | 1 |
+| `src/components/students/student-payment-list.test.tsx` | **New** — the fallback reads the item's own status | 1 |
+| `src/components/class/payment-checklist.tsx` | `?? item.status` | 1 |
+| `src/components/class/payment-checklist.test.tsx` | **New** — the fallback reads the item's own status | 1 |
+| `src/components/class/outstanding-payment-row.test.tsx` | Two undo round-trip tests, plus the unreadable-body case | 1 |
+| `src/lib/format.ts` | `paymentStateText(status: PaymentStatus)` + `never` guard that logs and falls back | 2 |
 | `src/lib/format.test.ts` | **First** `paymentStateText` tests | 2 |
+| `src/components/schedule/class-list.tsx` | `ClassWithDetails.registrations` and the `.filter` narrowing → `PaymentStatus` | 3 |
+| `src/components/schedule/class-list.test.tsx` | **New** — `PaymentRollup`'s priority order and both guards | 3 |
 
-**Two tasks, and the split is not arbitrary.** Task 1 must land as one commit: tightening the hook makes `student-payment-list.tsx` stop compiling (verified — `Object.fromEntries` over `status: string` yields `Record<string, string>`, which `Record<string, PaymentStatus>` rejects), so the file and the hook are one atomic change. Task 2 is separable and must come *second*: `paymentStateText` is called with the hook's output, so tightening it before Task 1 would break `payment-checklist.tsx`.
+**Three tasks, and the split is not arbitrary.** Task 1 must land as one commit: tightening the hook makes `student-payment-list.tsx` stop compiling (verified — `Object.fromEntries` over `status: string` yields `Record<string, string>`, which `Record<string, PaymentStatus>` rejects), so the file and the hook are one atomic change. Task 2 is separable and must come *second*: `paymentStateText` is called with the hook's output, so tightening it before Task 1 would break `payment-checklist.tsx`. Task 3 is independent of both — `class-list.tsx` neither uses the hook nor calls `paymentStateText` — and can land in any order; it is last because it was found last.
 
-`payment-checklist.tsx` and `outstanding-payment-row.tsx` need **no source edits** in either task — their props are already `PaymentStatus` and their expressions re-derive. Verify this rather than assume it; if either needs an edit, something else is wrong.
+`outstanding-payment-row.tsx` needs **no source edits** in any task — its props are already `PaymentStatus` and its expressions re-derive, including the `?? status` fallback the other two were brought into line with. Verify this rather than assume it; if it needs an edit, something else is wrong. `payment-checklist.tsx` needs no edit *for the typing* either, and originally had none; its one-line `?? item.status` change came out of review (see the struck-through constraint above), not out of the type work.
 
 ---
 
@@ -42,8 +48,12 @@
 
 **Files:**
 - Modify: `src/lib/use-payment-actions.ts`
-- Create: `src/lib/use-payment-actions.test.ts`
+- Create: `src/lib/payment-status.ts`
+- Create: `src/lib/payment-status.test.ts`
 - Modify: `src/components/students/student-payment-list.tsx:11`
+- Create: `src/components/students/student-payment-list.test.tsx`
+- Modify: `src/components/class/payment-checklist.tsx`
+- Create: `src/components/class/payment-checklist.test.tsx`
 - Modify: `src/components/class/outstanding-payment-row.test.tsx`
 
 **Interfaces:**
@@ -52,17 +62,18 @@
 
 - [ ] **Step 1: Write the failing unit tests for the two new pure functions**
 
-Create `src/lib/use-payment-actions.test.ts`. The `unit` project's `include` is `src/**/*.test.ts`, so it is picked up with no config change. The environment is node, which is fine: both functions under test are pure, and nothing renders the hook here.
+Create `src/lib/payment-status.test.ts`. The `unit` project's `include` is `src/**/*.test.ts`, so it is picked up with no config change. The environment is node, which is fine: both functions under test are pure, and nothing renders the hook here.
+
+**Revised in review.** This file was originally `src/lib/use-payment-actions.test.ts`, importing two functions that the hook module exported *solely* so a test could reach them — a deviation from how this repo does it (`isValidTimeZone` in `schemas.ts`, `timeZoneOffsetMs` in `timezone.ts` are module-private and tested through their public entry points). Deleting the tests was the wrong correction: a mutation matrix showed each of the five catches something no other test does — swapping `PAYMENT_STATUS_KEYS.has(value)` for `value in PAYMENT_STATUSES` kills only the prototype-key test, and the component tests, which pass just `'overdue'` and `'nonsense'`, stay green through it. So the functions move to `src/lib/payment-status.ts`, whose public surface they legitimately are, and the tests move with them.
 
 ```ts
 import { describe, it, expect } from 'vitest';
-import { isPaymentStatus, readUndoStatus } from './use-payment-actions';
+import { isPaymentStatus, readUndoStatus } from './payment-status';
 
 /**
  * #58. `usePaymentActions` used to read the undo response through
  * `as { data: { status: string } }` — an unchecked assertion over a network
- * payload. These two functions replace it. They are exported solely so this
- * file can reach them; nothing else imports them.
+ * payload. These two functions replace it.
  */
 describe('isPaymentStatus', () => {
   it('accepts every member of the schema enum', () => {
@@ -99,31 +110,33 @@ describe('readUndoStatus', () => {
   });
 
   /**
-   * Every malformed shape falls back to 'pending' rather than throwing: an undo
-   * whose response we cannot read still succeeded server-side, so the row must
-   * stop showing "Paid". 'pending' is what `unmarkPaymentPaid` writes
-   * (services/payments.ts:97), so it is the honest guess, not a neutral one.
+   * Every malformed shape reads as `null`, not as a substituted 'pending'
+   * (revised in review). An undo whose response we cannot read still succeeded
+   * server-side, so the row must stop showing "Paid" — but choosing 'pending'
+   * as the stand-in is the *caller's* decision, made visibly at the call site
+   * in `undo`, which also logs it. Returning it from here hid a fabricated
+   * value behind a signature that promised a validated one.
    */
-  it('falls back to pending on any shape it cannot read', () => {
-    expect(readUndoStatus({ data: { status: 'nonsense' } })).toBe('pending');
-    expect(readUndoStatus({ data: {} })).toBe('pending');
-    expect(readUndoStatus({ data: null })).toBe('pending');
-    expect(readUndoStatus({})).toBe('pending');
-    expect(readUndoStatus(null)).toBe('pending');
-    expect(readUndoStatus('not json')).toBe('pending');
+  it('returns null on any shape it cannot read', () => {
+    expect(readUndoStatus({ data: { status: 'nonsense' } })).toBeNull();
+    expect(readUndoStatus({ data: {} })).toBeNull();
+    expect(readUndoStatus({ data: null })).toBeNull();
+    expect(readUndoStatus({})).toBeNull();
+    expect(readUndoStatus(null)).toBeNull();
+    expect(readUndoStatus('not json')).toBeNull();
   });
 });
 ```
 
 - [ ] **Step 2: Run the tests and watch them fail**
 
-Run: `npx vitest run --project unit src/lib/use-payment-actions.test.ts`
+Run: `npx vitest run --project unit src/lib/payment-status.test.ts`
 
 Expected: FAIL at import — `isPaymentStatus` and `readUndoStatus` do not exist yet. Vitest reports this as a failed suite, not a failed assertion.
 
-- [ ] **Step 3: Add the guard and the reader to the hook file**
+- [ ] **Step 3: Create the guard module**
 
-In `src/lib/use-payment-actions.ts`, change the import on line 3-4 area to add the type import, and add the two functions above `usePaymentActions`:
+Create `src/lib/payment-status.ts`. It is reached from `'use client'` modules, so its `@prisma/client` import is type-only like every other one in a client path here.
 
 ```ts
 import type { PaymentStatus } from '@prisma/client';
@@ -136,10 +149,11 @@ import type { PaymentStatus } from '@prisma/client';
  * `readonly PaymentStatus[]` would accept a subset silently.
  *
  * The values are hand-listed rather than derived from Prisma's runtime enum
- * export (which does exist) because this is a client module and every
- * `@prisma/client` import in a `'use client'` file in this repo is type-only —
- * a value import would be the first, and would risk pulling the Prisma runtime
- * into the browser bundle. The `Record` pin buys the drift protection instead.
+ * export (which does exist) because this module is reached from client
+ * components and every `@prisma/client` import in a `'use client'` path in this
+ * repo is type-only — a value import would be the first, and would risk pulling
+ * the Prisma runtime into the browser bundle. The `Record` pin buys the drift
+ * protection instead.
  */
 const PAYMENT_STATUSES: Record<PaymentStatus, true> = {
   pending: true,
@@ -160,14 +174,13 @@ export function isPaymentStatus(value: unknown): value is PaymentStatus {
 }
 
 /**
- * The undo endpoint returns the updated payment. Exported for its unit test.
+ * Reads the status out of the undo endpoint's `{ data: { status } }` envelope.
  *
- * Falls back to 'pending' rather than throwing: the undo already succeeded on
- * the server by the time we get here, so refusing to update local state would
- * leave the row showing "Paid" for a payment that is not. 'pending' is what
- * `unmarkPaymentPaid` writes (services/payments.ts:97).
+ * Returns `null` — not a substituted 'pending' — for anything it cannot read.
+ * The caller decides what an unreadable response should mean and applies its own
+ * `?? 'pending'`, so that decision is visible at the site that makes it.
  */
-export function readUndoStatus(json: unknown): PaymentStatus {
+export function readUndoStatus(json: unknown): PaymentStatus | null {
   if (json !== null && typeof json === 'object' && 'data' in json) {
     const data = json.data;
     if (
@@ -179,34 +192,52 @@ export function readUndoStatus(json: unknown): PaymentStatus {
       return data.status;
     }
   }
-  return 'pending';
+  return null;
 }
 ```
 
 - [ ] **Step 4: Run the unit tests and watch them pass**
 
-Run: `npx vitest run --project unit src/lib/use-payment-actions.test.ts`
+Run: `npx vitest run --project unit src/lib/payment-status.test.ts`
 Expected: PASS, 5 tests.
 
 - [ ] **Step 5: Type the hook's state, and use the reader in `undo`**
 
-Still in `src/lib/use-payment-actions.ts`. The signature and state (currently lines 14-15):
+In `src/lib/use-payment-actions.ts`, import the reader (`import { readUndoStatus } from '@/lib/payment-status';`) and type the signature and state (currently lines 14-15):
 
 ```ts
 export function usePaymentActions(initial: Record<string, PaymentStatus>) {
   const [paymentState, setPaymentState] = useState<Record<string, PaymentStatus>>(initial);
 ```
 
-And in `undo`, replace the cast (currently lines 51-52):
-
-```ts
-        const json: unknown = await res.json();
-        setPaymentState((prev) => ({ ...prev, [paymentId]: readUndoStatus(json) }));
-```
-
 `markPaid`'s `'paid'` on line 30 needs no change — it satisfies `PaymentStatus` as a literal.
 
-- [ ] **Step 6: Tighten `StudentPaymentItem`**
+Then `undo`. The cast goes, and so does the shape it sat in — **revised in review, and this is the load-bearing part of the step, not a tidy-up.** `await res.json()` used to sit inside the same `try` as the fetch, so an `ok` response with an unreadable body (a proxy error page, a truncation on flaky wifi) set `'Network error. Try again.'` and returned `false` — while `unmarkPaymentPaid` had already committed `status: 'pending'`. The row kept `isPaid`, kept "✓ Paid" and its Undo button, and because `isOutstanding` derives from the same stale value the reminder button stayed hidden for a debt that now really existed; a second Undo then got the service's contradictory `Cannot undo: current status is "pending"`.
+
+Follow `send-reminder-button.tsx:71-86`, which handles the identical "server committed, body unreadable" case and states the principle. Only the request is wrapped, so 'Network error' means exactly that; past `res.ok` the mutation has happened, so an unreadable body is **logged** (`console.error('[payment-undo] …', { paymentId })` — the client convention; `lib/log.ts` is pino and server-only) and never surfaced in `error`, local state resolves to `'pending'`, `justMarked` is cleared, and `undo` returns `true` so the caller's `router.refresh()` reconciles.
+
+```ts
+      let status: PaymentStatus | null;
+      try {
+        const json: unknown = await res.json();
+        status = readUndoStatus(json);
+        if (status === null) {
+          console.error('[payment-undo] undone, but the response shape was unreadable', {
+            paymentId,
+          });
+        }
+      } catch (err) {
+        status = null;
+        console.error('[payment-undo] undone, but the response body was unreadable', {
+          paymentId,
+          err,
+        });
+      }
+
+      setPaymentState((prev) => ({ ...prev, [paymentId]: status ?? 'pending' }));
+```
+
+- [ ] **Step 6: Tighten `StudentPaymentItem`, and fix both `?? 'pending'` fallbacks**
 
 In `src/components/students/student-payment-list.tsx`, add the type import and change line 11:
 
@@ -220,13 +251,15 @@ import type { PaymentStatus } from '@prisma/client';
 
 This is not optional. `Object.fromEntries` over items whose `status` is `string` produces `Record<string, string>`, which the hook's new parameter rejects — verified with the compiler, not assumed. The page already passes a real `PaymentStatus` (`students/[id]/page.tsx:152`, `reg.payment!.status`), so only the declaration was widening it.
 
+Then, in that file (`:33`) and in `src/components/class/payment-checklist.tsx` (`:58`), `paymentState[item.paymentId] ?? 'pending'` becomes `?? item.status` — see the struck-through Global Constraint. Each gets a component test (`student-payment-list.test.tsx`, `payment-checklist.test.tsx`) that re-renders with a payment appearing after mount and asserts it shows its own status, because `useState` ignores later arguments and a `router.refresh()` re-renders these without remounting. One per file: reverting either line alone leaves the other's test green.
+
 - [ ] **Step 7: Typecheck, and confirm the two class-surface consumers needed nothing**
 
 ```bash
 npx tsc --noEmit && npm run lint
 ```
 
-Expected: clean. `payment-checklist.tsx` and `outstanding-payment-row.tsx` must **not** need edits — their props are already `PaymentStatus` and their expressions re-derive from the hook. If either reports an error, stop and report it rather than patching: it means an assumption in this plan is wrong.
+Expected: clean. Neither `payment-checklist.tsx` nor `outstanding-payment-row.tsx` must need an edit **for the typing** — their props are already `PaymentStatus` and their expressions re-derive from the hook. If either reports a *type error*, stop and report it rather than patching: it means an assumption in this plan is wrong. (`payment-checklist.tsx` does get one non-type edit, the fallback in Step 6; `outstanding-payment-row.tsx` gets none at all.)
 
 Then confirm `PaymentStatus` is the union this plan assumes, which everything downstream rests on. Add this file temporarily, run `npx tsc --noEmit`, then delete it:
 
@@ -309,17 +342,23 @@ actually committed at `outstanding-payment-row.test.tsx:197-207`.
   });
 ```
 
+Add, from the review, a third: resolve undo with `{ ok: true, json: async () => { throw new SyntaxError(…) } }` and assert the row leaves the paid state, that **no** `role="alert"` appears, that `routerRefresh` was called (so `undo` returned `true`), and that the `[payment-undo] undone, but the response body was unreadable` line was logged. Spy on `console.error` for it, and for the bad-status test above, which now logs the shape case — both to assert the log and to keep the expected noise out of the suite's output.
+
 - [ ] **Step 9: Run the component tests**
 
 Run: `npx vitest run --project components src/components/class/outstanding-payment-row.test.tsx`
-Expected: PASS, 7 tests (5 from #59, 2 new).
+Expected: PASS, 8 tests (5 from #59, 3 new).
 
-- [ ] **Step 10: Mutation-verify both new component tests bite**
+- [ ] **Step 10: Mutation-verify the new component tests bite**
 
 One at a time, confirming with `git diff` that each edit landed before running, and reverting before the next. **The #66 lesson: a mutation you did not confirm landed proves nothing.**
 
-1. In `use-payment-actions.ts`, replace `readUndoStatus(json)` with the literal `'pending'` → `'renders the status the undo response carries'` must FAIL. This is the mutation that matters; if it passes, the round trip is not actually pinned.
-2. In `readUndoStatus`, change the fallback `return 'pending'` to `return 'overdue'` → `'falls back to pending when the undo response carries a bad status'` must FAIL.
+1. In `use-payment-actions.ts`, replace `readUndoStatus(json) ?? 'pending'` with the literal `'pending'` → `'renders the status the undo response carries'` must FAIL. This is the mutation that matters; if it passes, the round trip is not actually pinned.
+2. In `readUndoStatus`, change the fallback `return null` to `return 'overdue'` → `'falls back to pending when the undo response carries a bad status'` must FAIL.
+3. Restore the hook's pre-review `undo` (one `try` around fetch *and* body read, bare `catch` setting 'Network error') → `'treats a committed undo with an unreadable body as the success it is'` must FAIL.
+4. Revert `?? item.status` to `?? 'pending'` in `payment-checklist.tsx`, then in `student-payment-list.tsx` → each file's own new test must FAIL, and only that one.
+
+**Beware `git checkout --` as the revert step while the fix is still uncommitted** — it reverts the fix along with the mutation. Commit first, or restore from a copy.
 
 - [ ] **Step 11: Run the full suites**
 
@@ -329,13 +368,14 @@ npx vitest run --project components
 npx vitest run --project integration
 ```
 
-Expected: unit up by 5, components up by 2, integration unchanged. Integration needs the app on `:3000` — **do not restart it**. If `signup-api` tests fail with `expected 429 to be 201`, that is the local per-IP rate limiter (3/hour and 5/hour, `src/app/api/teachers/route.ts:14` and `src/app/api/auth/student-signup/route.ts:20`) exhausted by repeated runs, not this change. Say so in your report rather than reporting a false failure — and do not re-run repeatedly to "confirm", which only deepens it.
+Expected: unit up by 5, components up by 5 at this point (2 undo round-trip + 1 unreadable body + 2 fallback; Task 3 adds the other 6), integration unchanged. Integration needs the app on `:3000` — **do not restart it**. If `signup-api` tests fail with `expected 429 to be 201`, that is the local per-IP rate limiter (3/hour and 5/hour, `src/app/api/teachers/route.ts:14` and `src/app/api/auth/student-signup/route.ts:20`) exhausted by repeated runs, not this change. Say so in your report rather than reporting a false failure — and do not re-run repeatedly to "confirm", which only deepens it.
 
 - [ ] **Step 12: Commit**
 
 ```bash
-git add src/lib/use-payment-actions.ts src/lib/use-payment-actions.test.ts \
-        src/components/students/student-payment-list.tsx \
+git add src/lib/use-payment-actions.ts src/lib/payment-status.ts src/lib/payment-status.test.ts \
+        src/components/students/student-payment-list.tsx src/components/students/student-payment-list.test.tsx \
+        src/components/class/payment-checklist.tsx src/components/class/payment-checklist.test.tsx \
         src/components/class/outstanding-payment-row.test.tsx
 git commit -m "fix: carry PaymentStatus through usePaymentActions, validate the undo response (#58)"
 ```
@@ -412,15 +452,20 @@ export function paymentStateText(status: PaymentStatus): { label: string; classN
   if (status === 'paid') return { label: '✓ Paid', className: 'text-teal' };
   if (status === 'overdue') return { label: '! Overdue', className: 'text-danger font-medium' };
   if (status === 'pending') return { label: '○ Unpaid', className: '' };
-  // Unreachable for any status the schema can produce. It exists so that adding
-  // a member to the enum fails the build here instead of rendering silently as
-  // "Unpaid", which is what the old catch-all `return` did.
+  // Unreachable for any status the schema can produce, and the `never` is what
+  // keeps it that way: adding a member to the enum fails the *build* here
+  // instead of rendering silently as "Unpaid".
   const unhandled: never = status;
-  throw new Error(`Unhandled payment status: ${String(unhandled)}`);
+  console.error('[payment-state-text] unhandled payment status', { status: String(unhandled) });
+  return { label: '○ Unpaid', className: '' };
 }
 ```
 
-Note `format.ts` is **not** a `'use client'` module, but keep `import type` regardless: nothing here needs the value, and a type-only import cannot accidentally pull the runtime into a client bundle that imports this file.
+**It logs and returns; it does not throw — revised in review.** The first version threw, and that was worse than the unguarded catch-all it replaced. `(student)/bookings/page.tsx` is an async server component with `export const dynamic = 'force-dynamic'` that calls this during render, and the app's only error boundary (`app/error.tsx`, plus `global-error.tsx`) logs nothing: on enum or deploy drift a throw takes down an entire student-facing page on every request with no diagnostic trail, where the catch-all merely mislabelled one row. The `never` — the part with all the value — is untouched. `'○ Unpaid'` is the fallback because it is one of the design system's three payment labels and the only one that cannot overclaim payment.
+
+`console.error`, not `lib/log.ts`: that module is pino and server-only, and `format.ts` is imported by `'use client'` components. Note `format.ts` is **not** itself a `'use client'` module, but keep `import type` regardless: nothing here needs the value, and a type-only import cannot accidentally pull the runtime into a client bundle that imports this file.
+
+There is deliberately **no runtime test for that branch**. It is unreachable for every value the type admits, and reaching it from a test would take the type assertion this project forbids. Step 5 is how it is verified.
 
 - [ ] **Step 4: Typecheck and run**
 
@@ -449,7 +494,7 @@ npx tsc --noEmit
 Expected: **exactly two errors**, and check both are present rather than stopping at the first —
 
 1. `format.ts` — `TS2322: Type '"refunded"' is not assignable to type 'never'`
-2. `use-payment-actions.ts` — `TS2741: Property 'refunded' is missing in type '{ pending: true; paid: true; overdue: true; }' but required in type 'Record<PaymentStatus, true>'`
+2. `payment-status.ts` — `TS2741: Property 'refunded' is missing in type '{ pending: true; paid: true; overdue: true; }' but required in type 'Record<PaymentStatus, true>'` (this was `use-payment-actions.ts` before the guards moved to their own module)
 
 Then revert:
 
@@ -482,17 +527,86 @@ git commit -m "fix: tighten paymentStateText to PaymentStatus and close its exha
 
 ---
 
+### Task 3: Close the fifth widening — `class-list.tsx`'s payment rollup
+
+**Files:**
+- Modify: `src/components/schedule/class-list.tsx:13` and `:74`
+- Create: `src/components/schedule/class-list.test.tsx`
+
+**Interfaces:**
+- Consumes: nothing. `class-list.tsx` neither uses `usePaymentActions` nor calls `paymentStateText`, so this task is independent of Tasks 1 and 2 and can land in any order.
+- Produces: nothing.
+
+**Why this task exists at all.** It was missing from the first version of this plan while the spec documented it fully at `:32` ("**There is a fifth.**") — so an agentic worker following the plan task-by-task completed Tasks 1-2, passed the whole Pre-PR checklist, and shipped a build that still carried the defect. `ClassWithDetails.registrations` (`:13`) declares `{ payment: { status: string } | null }[]` and the `.filter` narrowing (`:74`) repeats the same `string`, while real `PaymentStatus` data flows in from both `(teacher)/page.tsx` and `schedule/past/page.tsx`. A typo or a renamed enum member there silently zeroes out the overdue count on the teacher's home screen with `tsc` reporting nothing.
+
+- [ ] **Step 1: Write the `PaymentRollup` tests first**
+
+Create `src/components/schedule/class-list.test.tsx` (the `components` project's glob is `src/components/**/*.test.tsx`; `src/components/class/outstanding-payment-row.test.tsx` is the house pattern).
+
+`PaymentRollup` has **no coverage anywhere** today — unit, component and e2e all grepped, zero hits — and the type change cannot give it any: what it carries is a priority order (overdue > unpaid > all-paid) and a `payments.length === 0` guard, neither of which a type protects. Swapping the two `if`s reintroduces the exact "false ✓ all paid" bug this branch is named after, with a green build.
+
+Render through `ClassList`, not by exporting `PaymentRollup` — a test-only export is what Task 1's module extraction exists to undo. Type the fixture as `ComponentProps<typeof ClassList>['classes'][number]` so no assertion is needed and a schema change breaks the file. `Decimal` comes from `@prisma/client/runtime/library` (pure JS, no engine), not from `@prisma/client`.
+
+Six tests: overdue ahead of unpaid; the unpaid count with nothing overdue; all paid; the empty-payments guard; a non-completed class rendering no rollup; and `registrations` absent entirely (the prop is optional). Each "renders nothing" test must also assert the card *is* on screen, or it passes vacuously.
+
+- [ ] **Step 2: Mutation-verify all six**
+
+They are characterization tests — they pass against unchanged code, so the red-then-green cycle has to be supplied by mutation. One at a time, `git diff` confirming the edit landed before the run, reverted before the next. Each must kill exactly one test:
+
+| Mutation | Kills |
+|---|---|
+| swap the `overdue` / `unpaid` `if` blocks | reports overdue ahead of unpaid |
+| delete the `unpaid` branch | reports the unpaid count when nothing is overdue |
+| `if (unpaid > 0)` → `if (unpaid >= 0)` | reports all paid only when every payment is paid |
+| `payments.length === 0` → `payments.length < 0` | stays silent when a completed class has no payments yet |
+| drop `cls.status !== 'completed' \|\|` from the guard | renders no rollup for a class that has not completed |
+| drop `\|\| !cls.registrations` from the guard | stays silent when registrations were not loaded at all |
+
+- [ ] **Step 3: Tighten the type**
+
+```tsx
+  /** Charged registrations' payment states — powers the completed-card rollup. */
+  registrations?: { payment: { status: PaymentStatus } | null }[];
+```
+
+and the narrowing at `:74`:
+
+```tsx
+    .filter((p): p is { status: PaymentStatus } => p !== null);
+```
+
+`PaymentStatus` joins the existing `import type` line from `@prisma/client`.
+
+- [ ] **Step 4: Prove the tightening bites**
+
+Change one comparison to `p.status === 'overdu'` and run `npx tsc --noEmit`: expect `TS2367` (this comparison appears unintentional). Against the pre-task `string` it compiled silently. Revert, confirm with `git diff`, re-run clean.
+
+- [ ] **Step 5: Run the full suites and commit**
+
+```bash
+npx tsc --noEmit && npm run lint
+npx vitest run --project unit
+npx vitest run --project components
+git add src/components/schedule/class-list.tsx src/components/schedule/class-list.test.tsx
+git commit -m "fix: close the fifth PaymentStatus widening, found in final review (#58)"
+```
+
+Expected: unit unchanged, components up by 6.
+
+---
+
 ## Pre-PR checklist
 
 - [ ] `npx tsc --noEmit` — clean
 - [ ] `npm run lint` — clean
 - [ ] `npx vitest run --project unit` — 419 + 8 = 427 passing
-- [ ] `npx vitest run --project components` — 37 + 2 = 39 passing
+- [ ] `npx vitest run --project components` — 37 + 11 = 48 passing (3 in `outstanding-payment-row`, 1 each in the two new fallback files, 6 in `class-list`)
 - [ ] `npx vitest run --project integration` — 215 passing (429s are the rate limiter, not this change)
 - [ ] `npx playwright test` — 118 passing
 - [ ] `git status --short` — only `docs/backlog-roadmap.md` untracked; **`prisma/` unchanged**
 - [ ] No `as` added anywhere in the diff — `git diff | grep -n ' as '` reviewed
-- [ ] `payment-checklist.tsx` and `outstanding-payment-row.tsx` have no source edits
+- [ ] `outstanding-payment-row.tsx` has no source edits; `payment-checklist.tsx` has exactly one, the `?? item.status` fallback
 - [ ] `bookings/page.tsx` has no edits
-- [ ] Both Task 1 mutations and both Task 2 `tsc` errors were observed, not assumed
+- [ ] Every mutation in Task 1 Step 10, Task 2 Step 5 and Task 3 Step 2 was observed to land (`git diff`) and to kill the test named for it — not assumed
 - [ ] `src/lib/__probe.ts` deleted
+- [ ] Task 3 was done. It is the one that ships nothing visible and is therefore the one most easily skipped; the spec documents it at `:32` and the plan carried no task for it at all until the review caught that.

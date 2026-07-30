@@ -22,6 +22,11 @@ A typo like `'overdu'`, or a renamed enum member, is not caught by `tsc` at any
 of them. The exhaustiveness that motivated the `string → PaymentStatus` change
 is not realised downstream.
 
+*Line numbers in this section are as of the branch point (`main` at `32e27f3`),
+which is the state being described. They have moved in the shipped files — the
+type imports and comments this change adds push each of the three down a few
+lines. The Design and Testing sections below describe what ships.*
+
 **The issue undercounts the widening.** It lists `student-payment-list.tsx` as a
 file to "verify it still type-checks". In fact its own `StudentPaymentItem.status`
 is declared `string` (`:11`) while `students/[id]/page.tsx:152` hands it
@@ -64,8 +69,20 @@ export function usePaymentActions(initial: Record<string, PaymentStatus>) {
 
 Note that `noUncheckedIndexedAccess` is on, so `paymentState[id]` is
 `PaymentStatus | undefined` and the existing `?? 'pending'` / `?? status`
-fallbacks are load-bearing, not decorative. They keep working unchanged and
-their results become `PaymentStatus`.
+fallbacks are load-bearing, not decorative. Their results become
+`PaymentStatus`.
+
+**They did not all keep working unchanged, as this originally said.** Review
+found the three surfaces disagreeing about what an unknown row means:
+`outstanding-payment-row.tsx:55` reads `?? status`, the row's own
+server-rendered value, while `payment-checklist.tsx` and
+`student-payment-list.tsx` fabricated `'pending'` with `item.status` sitting
+unused in the same scope. The two now match the one. That is reachable, not
+theoretical — `usePaymentActions` seeds from `items` through `useState`, which
+ignores every later argument, and a `router.refresh()` re-renders these
+components without remounting, so a payment appearing after mount has no entry
+in `paymentState` and an overdue one rendered as the calm "○ Unpaid". See
+"Out of scope" below, where this was originally parked.
 
 ### 2. The undo response: validated, not asserted
 
@@ -77,7 +94,9 @@ const json = (await res.json()) as { data: { status: string } };   // :51
 
 An unchecked assertion over a network payload — the least trustworthy value in
 the file, and precisely the "type assertion to silence an error" the project
-forbids. It becomes a real guard:
+forbids. It becomes a real guard, which review moved into a module of its own
+(`src/lib/payment-status.ts`) so that its tests reach a genuine public surface
+rather than exports the hook module carried only for them:
 
 ```ts
 /**
@@ -113,13 +132,34 @@ Four properties, each deliberate:
   downleveled, so the `lib` setting is describing a runtime we have not
   committed to. `Set` is ES2015. It also sidesteps the prototype-chain question
   that makes `in` wrong for this.
-- **The fallback stays `'pending'`.** `unmarkPaymentPaid` writes
-  `status: 'pending'` unconditionally (`services/payments.ts:97`), so a
-  well-behaved server always sends a value the guard accepts; the fallback is
-  for the case where it does not.
+- **The fallback stays `'pending'`, but not inside the reader.**
+  `unmarkPaymentPaid` writes `status: 'pending'` unconditionally
+  (`services/payments.ts:97`), so a well-behaved server always sends a value the
+  guard accepts; the fallback is for the case where it does not. Review moved
+  *where* it is applied: `readUndoStatus` returns `PaymentStatus | null` and
+  `undo` writes `?? 'pending'`. A signature of `(json: unknown) => PaymentStatus`
+  read as "extracts and validates" while quietly substituting a value, and the
+  substitution was invisible at the call site — which is also where it now gets
+  logged.
 
 The read becomes `const json: unknown = await res.json()`, a narrowing of the
-nested shape, then `isPaymentStatus(...) ? ... : 'pending'`.
+nested shape, then `isPaymentStatus(...) ? ... : null` with the caller's
+`?? 'pending'`.
+
+**And that read must not sit in the fetch's `try`** — a review finding, and the
+one real bug on this branch rather than a types question. It did, so an `ok`
+response with an unreadable body (a proxy error page, a truncation on flaky
+wifi) was reported as `'Network error. Try again.'` and `undo` returned `false`,
+*after* the server had already committed `'pending'`. The row kept `isPaid`,
+kept "✓ Paid" and its Undo button, and — because `isOutstanding` derives from
+the same stale value — hid the reminder button for a debt that now really
+existed; a second Undo got the service's contradictory
+`Cannot undo: current status is "pending"`. `send-reminder-button.tsx:71-86`
+already handles the identical "server committed, body unreadable" case and
+states the principle: past the point of commitment, an unreadable body is
+logged, not dressed up as a failure. `undo` follows it — logs, resolves local
+state to `'pending'`, clears `justMarked`, leaves the error banner empty, and
+returns `true` so the caller's `router.refresh()` reconciles.
 
 **Why not drop the round trip entirely.** Considered: `markPaid` sets `'paid'`
 locally without reading the response, and since the server always writes
@@ -180,50 +220,79 @@ touching.
 
 ## Testing
 
-No runtime behaviour changes for any value the app actually produces, so most of
-this is verified by `tsc`. Two things are genuinely new executable code and get
-real tests; one existing gap gets closed because this change lands on top of it.
+Most of this is verified by `tsc`: for the type work proper, no runtime
+behaviour changes for any value the app actually produces. That framing held
+for the spec as designed and no longer describes the whole branch — review
+turned up one real runtime bug (`undo`'s error handling, §2) and two real
+mislabelling paths (the fallbacks, §1), and each of those is pinned by a test
+that fails against the code as it was.
 
-- **`isPaymentStatus` — unit** (`src/lib/use-payment-actions.test.ts`, picked up
+- **`isPaymentStatus` — unit** (`src/lib/payment-status.test.ts`, picked up
   by the `unit` project's `src/**/*.test.ts`; node environment, which is fine
   because the guard is a pure function and nothing renders the hook there).
   Each of the three members; then `'overdu'`, `''`, `'PENDING'`, `null`,
   `undefined`, `42`, and `'constructor'` — the last because it is what
   distinguishes `Set.has` from an `in` check against a plain object, which is
-  the mistake this shape exists to avoid.
+  the mistake this shape exists to avoid. Originally
+  `src/lib/use-payment-actions.test.ts`, importing two functions the hook
+  exported only for it; the file moved with the functions.
 - **`paymentStateText` — unit** (`src/lib/format.test.ts`). It has **no tests
   today**, verified. It gets one per member, asserting label and className,
   since this change rewrites its branch structure and its catch-all is becoming
-  a guard.
+  a guard. Its last branch gets none: it is unreachable for every value the type
+  admits, and reaching it from a test would take the type assertion this project
+  forbids.
 - **The `never` guard is verified by mutation, not by a runtime test.** Add a
   fourth member to the schema enum, confirm `tsc` fails at `paymentStateText`
-  and at `PAYMENT_STATUSES`, remove it. A passing `tsc` on unchanged code
-  demonstrates nothing about a guard — per the #66 lesson, confirm the mutation
-  landed before trusting the result, and do not migrate the schema for this.
+  and at `PAYMENT_STATUSES` (now in `payment-status.ts`), remove it. A passing
+  `tsc` on unchanged code demonstrates nothing about a guard — per the #66
+  lesson, confirm the mutation landed before trusting the result, and do not
+  migrate the schema for this.
 - **The undo round trip — component** (`outstanding-payment-row.test.tsx`). The
   `vi.stubGlobal('fetch', …)` scaffolding is already in that file from #59.
-  **Two** assertions, and the order of importance is the opposite of the
-  obvious one:
+  **Three** assertions — two as designed, the third added in review — and the
+  order of importance is the opposite of the obvious one:
   1. Resolve undo with `status: 'overdue'` and assert the row renders its
      `· ! overdue` marker. This is the one that matters — it proves the server's
      value is *used*. It is also the only one that fails if someone replaces the
      round trip with a hardcoded `'pending'`, which is the simplification §2
      explicitly rejected.
-  2. Resolve undo with a bad status and assert no overdue marker. This pins the
-     fallback.
+  2. Resolve undo with a bad status and assert no overdue marker, and that the
+     shape case was logged. This pins the fallback and where it is applied.
+  3. Resolve undo `ok` with a body that throws on `.json()`: the row leaves the
+     paid state, **no** error banner appears, `router.refresh()` runs, and the
+     body case is logged. This is the one that fails against the pre-review
+     `undo`.
 
   Assertion 2 alone would be near-worthless: a hardcoded `'pending'` passes it.
   Recorded because that is the version this spec first described.
-
-Not added: component tests for `payment-checklist.tsx` or
-`student-payment-list.tsx`. Neither has one today, and this change gives neither
-new runtime behaviour to pin — adding them would be worth doing on its own
-terms, not smuggled in here.
+- **The two fallbacks — component**
+  (`payment-checklist.test.tsx`, `student-payment-list.test.tsx`, both new).
+  Each re-renders its component with a payment that appears after mount and
+  asserts the row shows that payment's own status rather than a fabricated
+  `'pending'`. One per file: reverting either line alone leaves the other's test
+  green. **This reverses what this section said** — "Not added: component tests
+  for `payment-checklist.tsx` or `student-payment-list.tsx` … this change gives
+  neither new runtime behaviour to pin". True as designed; false once review
+  changed a line of behaviour in each.
+- **`PaymentRollup` — component** (`class-list.test.tsx`, new; §"There is a
+  fifth"). It had no coverage anywhere — unit, component and e2e all grepped,
+  zero hits — and the type change gives it none: what it carries is a priority
+  order (overdue > unpaid > all-paid) and a `payments.length === 0` guard,
+  neither of which a type protects. Six tests, rendered through `ClassList`
+  rather than by exporting the rollup, each mutation-verified. The guard's
+  mutation is the one to keep in view: without it a completed class whose
+  registrations have no payment rows reports "✓ all paid", the false all-clear
+  this branch is named for.
 
 ## Out of scope
 
-- **The `?? 'pending'` fallbacks.** Existing behaviour; whether an unknown
-  payment should read as unpaid is a product question, not a types one.
+- ~~**The `?? 'pending'` fallbacks.** Existing behaviour; whether an unknown
+  payment should read as unpaid is a product question, not a types one.~~
+  **Brought back in scope in review**, with the repo owner's approval. It turned
+  out not to be a product question: `item.status` — the server's own value — was
+  in scope at both sites and simply unused, and the third surface already read
+  it. See §1.
 - **`MarkUnpaidButton`'s accessible name** — #128.
 - **The class page's mark-paid label** — #129.
 - **Consolidating `format.ts`'s date formatters** — #96. This touches
