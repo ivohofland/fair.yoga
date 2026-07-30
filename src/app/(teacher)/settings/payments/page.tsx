@@ -114,8 +114,17 @@ export default async function PaymentsOverviewPage() {
             >
               <div className="min-w-0">
                 <p className="text-base text-ink">{studentName(p)}</p>
+                {/*
+                  Same "{type} · {day} · {time}" shape as the Outstanding rows,
+                  and for the same reason (#59): without the start time, two
+                  paid classes of one type on one day read identically for the
+                  same student, and the amount alone does not tell them apart.
+                  This fixes the visible half only — MarkUnpaidButton's
+                  accessible name is the bare "Mark unpaid" for every row, which
+                  is #128 and deliberately not touched here.
+                */}
                 <p className="type-caption">
-                  {p.registration.class.classType} · {formatDay(p.registration.class.date)}
+                  {`${p.registration.class.classType} · ${formatDay(p.registration.class.date)} · ${p.registration.class.startTime}`}
                   {p.paidAt && <> · ✓ paid {formatDay(p.paidAt)}</>}
                 </p>
               </div>
