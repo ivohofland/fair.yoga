@@ -181,10 +181,15 @@ describe('ClassEditForm', () => {
   });
 
   /**
-   * The five economic keys must be *absent*, not present-and-undefined. The
-   * route filters on `data[f] !== undefined` (class-lifecycle.ts:467), so
-   * either would pass server-side — but asserting absence pins the stronger
-   * property and does not depend on that filter staying.
+   * Pins that the five economic keys do not reach the API when settings are
+   * locked, by whatever mechanism the component uses to leave them out.
+   *
+   * This does not distinguish `delete payload[f]` from a hypothetical
+   * `payload[f] = undefined`: `JSON.stringify` produces byte-identical output
+   * for both, and this test only ever observes `JSON.parse(body)`. The route
+   * itself would accept either — it filters on `data[f] !== undefined`
+   * (class-lifecycle.ts:457) — so the two are equivalent over the wire, and no
+   * test here (or possible from outside the component) tells them apart.
    */
   it('omits the economic fields when settings are locked', async () => {
     const body = await saveWith(true);
@@ -272,8 +277,11 @@ Replace the payload builder (currently `:48-61`, the `const payload: Record<stri
       // pins above are what keep that list honest.
       //
       // Spreading cannot flag an extra field — TypeScript's excess-property
-      // check does not survive a spread, which `class-lifecycle.ts:252` records
-      // for the route's own payload. The reverse pin covers that instead.
+      // check does not survive a spread, which `class-lifecycle.ts:242` records
+      // for the route's own payload. The reverse pin covers that instead, but
+      // only against `ClassEditInitial`'s statically declared keys — it can't
+      // see an own-enumerable property `form` happens to carry at runtime that
+      // isn't declared on the type.
       const payload: UpdateClassWire = { ...form, description: form.description || null };
       if (settingsLocked) {
         for (const f of ECONOMIC_FIELDS) delete payload[f];
@@ -281,6 +289,8 @@ Replace the payload builder (currently `:48-61`, the `const payload: Record<stri
 ```
 
 Also delete the now-false line from the component's header comment: `// Mirrors updateClassSchema exactly:` — it is the prose assertion the pins replace. Keep the rest of that comment (details always editable, economic fields only while unlocked, policies not part of the update schema), which is still true.
+
+(Both `class-lifecycle.ts` line citations above — `:457` and `:242` — reflect this branch's Task 1, which removed 11 net lines from that file before Task 2 was written; the plan originally cited `:467` and `:252`.)
 
 - [ ] **Step 5: Typecheck, lint, re-run**
 

@@ -54,10 +54,15 @@ describe('ClassEditForm', () => {
   });
 
   /**
-   * The five economic keys must be *absent*, not present-and-undefined. The
-   * route filters on `data[f] !== undefined` (class-lifecycle.ts:467), so
-   * either would pass server-side — but asserting absence pins the stronger
-   * property and does not depend on that filter staying.
+   * Pins that the five economic keys do not reach the API when settings are
+   * locked, by whatever mechanism the component uses to leave them out.
+   *
+   * This does not distinguish `delete payload[f]` from a hypothetical
+   * `payload[f] = undefined`: `JSON.stringify` produces byte-identical output
+   * for both, and this test only ever observes `JSON.parse(body)`. The route
+   * itself would accept either — it filters on `data[f] !== undefined`
+   * (class-lifecycle.ts:457) — so the two are equivalent over the wire, and no
+   * test here (or possible from outside the component) tells them apart.
    */
   it('omits the economic fields when settings are locked', async () => {
     const body = await saveWith(true);

@@ -78,8 +78,11 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
       // pins above are what keep that list honest.
       //
       // Spreading cannot flag an extra field — TypeScript's excess-property
-      // check does not survive a spread, which `class-lifecycle.ts:252` records
-      // for the route's own payload. The reverse pin covers that instead.
+      // check does not survive a spread, which `class-lifecycle.ts:242` records
+      // for the route's own payload. The reverse pin covers that instead, but
+      // only against `ClassEditInitial`'s statically declared keys — it can't
+      // see an own-enumerable property `form` happens to carry at runtime that
+      // isn't declared on the type.
       const payload: UpdateClassWire = { ...form, description: form.description || null };
       if (settingsLocked) {
         for (const f of ECONOMIC_FIELDS) delete payload[f];
