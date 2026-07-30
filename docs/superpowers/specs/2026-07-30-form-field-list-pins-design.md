@@ -9,10 +9,15 @@ widened template enums folded in)
 
 `#72 → #78 → #79 → #82` hardened both mutating routes: each now carries a
 derived update type, an allowlist, a forbidden list, and compile-time pins.
-Adding a field to `updateClassSchema` trips three pins in
-`class-lifecycle.ts` plus a runtime key-set test; adding one to
-`updateClassTemplateSchema` trips five pins in `class-template-lifecycle.ts`
-plus its own key-set test.
+Adding a field to either update schema trips pins in the matching lifecycle
+service — the column-existence one and the allowlist one — plus a runtime
+key-set test.
+
+No count here, deliberately: not every pin in those files fires on an
+addition. Each file holds pins facing both directions, and the stale-allowlist
+and forbidden-list ones answer a *removal* instead, so a figure for "how many
+trip" is a figure for one direction of one kind of change. `grep -n ': NoneOf<'`
+over the two services is what is current.
 
 The two client forms that mirror those routes were never pinned. They restate
 the same field lists in prose-asserted "mirrors X exactly" comments, and they
@@ -120,9 +125,17 @@ differ — create has required fields and no `.strict()`; update is all-optional
 and strict — but their **key sets are identical**, 13 each, so for a key-set pin
 they are interchangeable as things stand.
 
-Both are pinned anyway. The form sends one body to both endpoints, so the day
-the two schemas' keys diverge, that single body stops satisfying one of them;
-a pin against only one would not notice.
+Both are pinned anyway, in both directions — four pins. The form sends one body
+to both endpoints, so the day the two schemas' keys diverge, that single body
+stops satisfying one of them; a pin against only one would not notice.
+
+The reverse direction needs the create schema more than the update one, which
+is the opposite of what the `.strict()` difference suggests at a glance. A key
+the form sends and `updateClassTemplateSchema` no longer declares gets a 400 —
+loud, findable. The same key against `createClassTemplateSchema`, which has no
+`.strict()`, is *stripped in silence*: the teacher saves, the field vanishes,
+nothing reports it. Pinning only the strict schema would have left the quiet
+failure unguarded.
 
 ### 4. The two widened enums, and why the dropdown becomes the source
 
@@ -185,12 +198,24 @@ still doesn't exist as of this writing — that's Tasks 3-4.
   all ten; locked sends the five details and none of `ECONOMIC_FIELDS`;
   `description: ''` sends `null`.
 - **`TemplateForm`** — one test per mode, asserting the body carries all
-  thirteen fields and that `classType`/`description` are trimmed. Plus the enum
-  guard rejecting a value outside the dropdown.
+  thirteen fields and that `classType`/`description` are trimmed. Plus, per
+  dropdown, that the offered option set equals the Prisma enum.
+
+  That last one is not what this spec originally asked for, and the difference
+  is recorded rather than quietly closed. The ask was "the enum guard rejecting
+  a value outside the dropdown"; Task 4 found no way to write it and documented
+  why at `template-form.test.tsx:146-155`. The guards are module-private, and
+  exporting one only so a test can reach it is the pattern PR #131's review
+  rejected. Driving an invalid value in from outside does not work either: the
+  `<option>`s are the same array the guard reads, so jsdom's `<select>` refuses
+  to take a value the guard would refuse. There is no reachable input for which
+  the guard returns false. Asserting the offered set equals the enum tests the
+  property the guard exists to preserve — a stale dropdown is the failure a
+  teacher would actually meet — and that is what shipped.
 
 Assert on the `fetch` body via `vi.stubGlobal('fetch', …)`, which is this repo's
-established component-test pattern (seven files) and the shape
-`outstanding-payment-row.test.tsx` uses.
+established component-test pattern — every component test that touches the
+network uses it — and the shape `outstanding-payment-row.test.tsx` uses.
 
 ## Out of scope
 
@@ -219,10 +244,13 @@ established component-test pattern (seven files) and the shape
   so a key present with an `undefined` value is not an edit. `delete` and
   `JSON.stringify`'s own dropping of `undefined` are therefore equivalent to the
   route — the design does not depend on which one removes the key.
-- **Ten pins already resolve through `NoneOf`.** This adds six more to the same
-  alias. `type-pins.ts:35` already records that a hollowed-out `NoneOf` defangs
-  all of them at once and carries its own pin for that reason; this change
-  increases what rides on that one guard without changing it.
+- **Every pin in the repo resolves through `NoneOf`, and this change adds
+  more.** `type-pins.ts:35` already records that a hollowed-out `NoneOf`
+  defangs all of them at once and carries its own pin for that reason; this
+  change increases what rides on that one guard without changing it — and
+  widens it past the services, since two of the new dependants are
+  `'use client'` components. Stated without figures on purpose: the ones that
+  were here were wrong before the branch that wrote them finished.
 - **The dropdown arrays become load-bearing types.** They were presentation
   data; after this they define a union. Reordering or relabelling stays safe,
   but deleting an entry to hide an option from teachers would now fail the
