@@ -2,6 +2,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { z } from 'zod';
+import type { updateClassSchema } from '@/lib/schemas';
+import type { NoneOf } from '@/lib/type-pins';
+import { ECONOMIC_FIELDS } from '@/lib/class-fields';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -20,15 +24,38 @@ export interface ClassEditInitial {
   maxStudents: number;
 }
 
+type UpdateClassWire = z.infer<typeof updateClassSchema>;
+
+/**
+ * #81. `ClassEditInitial` is the only enumeration of this form's fields, and
+ * these two pins are what make it safe to have only one. Before them the list
+ * was stated twice and checked nowhere, under a comment asserting it "mirrors
+ * updateClassSchema exactly".
+ *
+ * Forward: a field added to the schema with no form field fails the build,
+ * naming it — the defect #81 reports, where a teacher-editable field looks
+ * shipped with no input rendered.
+ *
+ * Reverse: a field the schema dropped but the form still sends. `.strict()`
+ * would 400 it at runtime; this catches it at compile time instead.
+ *
+ * `NoneOf` resolves to `T` rather than collapsing to `never`, so a failure
+ * reads `Type 'true' is not assignable to type '"waitlistCap"'` instead of
+ * naming no field at all.
+ */
+const _formCoversSchema: NoneOf<Exclude<keyof UpdateClassWire, keyof ClassEditInitial>> = true;
+const _formHasNoExtras: NoneOf<Exclude<keyof ClassEditInitial, keyof UpdateClassWire>> = true;
+void _formCoversSchema;
+void _formHasNoExtras;
+
 interface ClassEditFormProps {
   classId: string;
   settingsLocked: boolean;
   initial: ClassEditInitial;
 }
 
-// Mirrors updateClassSchema exactly: details always editable, the five
-// economic fields only while unlocked. Policies aren't part of the
-// update schema, so they aren't part of this form.
+// Details always editable, the five economic fields only while unlocked.
+// Policies aren't part of the update schema, so they aren't part of this form.
 export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFormProps) {
   const router = useRouter();
   const [form, setForm] = useState(initial);
@@ -46,19 +73,16 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
     setSaved(false);
     setError('');
     try {
-      const payload: Record<string, unknown> = {
-        classType: form.classType,
-        description: form.description || null,
-        date: form.date,
-        startTime: form.startTime,
-        durationMinutes: form.durationMinutes,
-      };
-      if (!settingsLocked) {
-        payload.roomCost = form.roomCost;
-        payload.minRate = form.minRate;
-        payload.targetRate = form.targetRate;
-        payload.minStudents = form.minStudents;
-        payload.maxStudents = form.maxStudents;
+      // Derived from `form`, not restated. The old builder listed all ten
+      // fields a second time; keeping one list is the point of #81, and the
+      // pins above are what keep that list honest.
+      //
+      // Spreading cannot flag an extra field — TypeScript's excess-property
+      // check does not survive a spread, which `class-lifecycle.ts:252` records
+      // for the route's own payload. The reverse pin covers that instead.
+      const payload: UpdateClassWire = { ...form, description: form.description || null };
+      if (settingsLocked) {
+        for (const f of ECONOMIC_FIELDS) delete payload[f];
       }
       const res = await fetch(`/api/classes/${classId}`, {
         method: 'PUT',
