@@ -269,7 +269,7 @@ void _formHasNoExtras;
 
 - [ ] **Step 4: Derive the payload**
 
-Replace the payload builder (currently `:48-61`, the `const payload: Record<string, unknown> = {…}` block and the `if (!settingsLocked) {…}` block that follows it) with:
+Replace the payload builder (currently `:49-62`, the `const payload: Record<string, unknown> = {…}` block and the `if (!settingsLocked) {…}` block that follows it) with:
 
 ```tsx
       // Derived from `form`, not restated. The old builder listed all ten
@@ -378,7 +378,14 @@ describe('TemplateForm', () => {
   function stubFetch() {
     fetchMock.mockResolvedValue({
       ok: true,
-      json: async () => ({ data: [] }),
+      json: async () => ({
+        data: [{
+          id: '11111111-1111-4111-8111-111111111111',
+          capacityOverride: 30,
+          rentalRate: 20,
+          room: { roomName: 'Studio A', venueName: 'Main Venue' },
+        }],
+      }),
     });
     vi.stubGlobal('fetch', fetchMock);
   }
@@ -390,7 +397,8 @@ describe('TemplateForm', () => {
    * the wrong call while every body assertion still passed.
    */
   async function submit(): Promise<{ url: string; method: string; body: Record<string, unknown> }> {
-    fireEvent.click(screen.getByRole('button', { name: /save|create/i }));
+    const button = await screen.findByRole('button', { name: /save|create/i });
+    fireEvent.click(button);
     await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(1));
     const [url, options] = fetchMock.mock.calls.at(-1) ?? [];
     const opts = options as { method: string; body: string };
@@ -445,6 +453,13 @@ describe('TemplateForm', () => {
   it('sends the same thirteen fields when creating', async () => {
     stubFetch();
     render(<TemplateForm mode="create" />);
+    const roomSelect = await screen.findByLabelText('Room');
+    fireEvent.change(roomSelect, {
+      target: { value: '11111111-1111-4111-8111-111111111111' },
+    });
+    fireEvent.change(screen.getByLabelText('Class type'), {
+      target: { value: 'Vinyasa' },
+    });
     const { url, method, body } = await submit();
     expect(url).toBe('/api/class-templates');
     expect(method).toBe('POST');
@@ -465,7 +480,13 @@ Run: `npx vitest run --project components src/components/settings/template-form.
 
 Expected: **all four PASS** against the current implementation — characterization tests, same as Task 2 Step 2.
 
-If the room-fetch stubbing does not hold (for example the component reads a field off the room response that `{ data: [] }` does not provide, and throws before the submit button renders), fix the stub to match what the component actually needs and **say what you changed in your report**. Do not weaken an assertion to make a render problem go away.
+The block above is the harness as it shipped, which is not how it was first written. Three details are load-bearing and each was a red test before it was fixed; a re-executing agent that "simplifies" any of them back will get a harness that cannot run, under a step that says it should be green:
+
+1. **`stubFetch` returns a real room, not `{ data: [] }`.** With an empty list the component renders "No rooms configured." and there is no submit button at all — `submit()` fails on the query, not on an assertion.
+2. **`submit()` uses `await screen.findByRole`, not `screen.getByRole`.** The form gates on `loading` while the room fetch resolves, so the synchronous query runs against "Loading rooms..." and finds no button.
+3. **The create test selects a room and types a class type before submitting.** `handleSubmit` returns early at the `!form.teacherRoomId` guard and never calls `fetch`, so `waitFor` waits out its full timeout for a second call that will never come. Edit mode does not need this — its `initial` supplies both.
+
+If something else in the stubbing does not hold, fix the stub to match what the component actually needs and **say what you changed in your report**. Do not weaken an assertion to make a render problem go away.
 
 - [ ] **Step 3: Introduce the single list**
 
@@ -527,38 +548,65 @@ type UpdateTemplateWire = z.infer<typeof updateClassTemplateSchema>;
 type CreateTemplateWire = z.infer<typeof createClassTemplateSchema>;
 
 /**
- * #85. Both schemas, though their key sets agree today.
+ * #85. Both schemas, both directions — four pins, because this form sends one
+ * body to both endpoints.
  *
  * The issue warned that a pin "has to target the right schema per branch"
  * because create and update differ — they do differ, in optionality and
  * `.strict()`, but not in *keys*: thirteen each, the same thirteen. For a
- * key-set pin they are interchangeable as things stand.
+ * key-set pin they are interchangeable as things stand. The day their keys
+ * diverge, that single body stops satisfying one of them, and a pin against
+ * only the other would not notice.
  *
- * Both are pinned because this form sends one body to both endpoints. The day
- * their keys diverge, that single body stops satisfying one of them, and a pin
- * against only the other would not notice.
+ * Forward (`_formCovers…`): a key the schema has and the form does not — a
+ * field that looks shipped with no input rendered for it.
+ *
+ * Reverse (`_formHasNoExtras…`): a key the form sends and the schema dropped.
+ * The two endpoints punish that differently, which is why both are pinned
+ * rather than just the update one: `updateClassTemplateSchema` is `.strict()`
+ * and would 400 the extra key, while `createClassTemplateSchema` is not, so it
+ * would *silently strip* it — the field-vanishes-without-a-word mode this
+ * change exists to eliminate. Compile time catches both.
  */
 const _formCoversUpdate: NoneOf<Exclude<keyof UpdateTemplateWire, keyof TemplateFormValues>> = true;
 const _formCoversCreate: NoneOf<Exclude<keyof CreateTemplateWire, keyof TemplateFormValues>> = true;
 const _formHasNoExtras: NoneOf<Exclude<keyof TemplateFormValues, keyof UpdateTemplateWire>> = true;
+const _formHasNoExtrasOnCreate: NoneOf<Exclude<keyof TemplateFormValues, keyof CreateTemplateWire>> = true;
 void _formCoversUpdate;
 void _formCoversCreate;
 void _formHasNoExtras;
+void _formHasNoExtrasOnCreate;
 ```
+
+**All four, not three.** The first version of this task pinned the reverse direction against `UpdateTemplateWire` only, under a docblock arguing that a pin against one schema would not notice the other diverging — which described its own state. It was measured: dropping `dayOfWeek` from `createClassTemplateSchema` alone produced no error in the file.
 
 - [ ] **Step 5: Derive the payload**
 
 Replace the `body: JSON.stringify({ … })` literal (currently `:153-167`) with a derivation:
 
 ```tsx
-        body: JSON.stringify({
-          ...form,
-          classType: form.classType.trim(),
-          description: form.description.trim() || null,
-        }),
+      // The intersection, not either half: one body goes to both endpoints, so
+      // it has to satisfy both schemas. The pins above hold the *key sets*
+      // against both; this annotation is what holds the *value types* — without
+      // it the literal is inferred, and retyping a schema field (say
+      // `durationMinutes` to a string) would change what the route expects
+      // while this file kept compiling.
+      const payload: CreateTemplateWire & UpdateTemplateWire = {
+        ...form,
+        classType: form.classType.trim(),
+        description: form.description.trim() || null,
+      };
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
 ```
 
 The two overrides stay explicit because they transform rather than pass through — trimming, and empty-to-`null`. Everything else comes from `form` and is no longer restated.
+
+**Annotate it; do not pass the literal straight into `JSON.stringify`.** That was the first version, and it left the value types unheld: retyping `updateClassTemplateSchema.durationMinutes` to `z.string()` produced zero errors in this file, where the same change against `updateClassSchema` already failed at `class-edit-form.tsx:86`. The intersection compiles clean with no assertion — verified — and it is the honest type for a body sent to two endpoints.
 
 - [ ] **Step 6: Typecheck, lint, re-run**
 
@@ -574,8 +622,10 @@ Expected: clean, four tests still passing with no edits. Also confirm `src/app/(
 One at a time, `git diff`-confirmed before each run, reverted after:
 
 1. Add `waitlistCap: z.number().optional(),` to `updateClassTemplateSchema` → must fail naming `"waitlistCap"`.
-2. Add `waitlistCap: z.number(),` to `createClassTemplateSchema` only → must fail naming `"waitlistCap"`, proving the create pin is not redundant with the update one.
+2. Add `waitlistCap: z.number(),` to `createClassTemplateSchema` only → must fail naming `"waitlistCap"`, proving the forward create pin is not redundant with the update one.
 3. Delete `dayOfWeek` from `TemplateFormValues` → must fail naming `"dayOfWeek"`.
+4. Delete `dayOfWeek` from `createClassTemplateSchema` only → must fail naming `"dayOfWeek"` **from `_formHasNoExtrasOnCreate`**, proving the same for the reverse direction. Check the error's line number, not just the field name: (3) and this one name the same field from different pins.
+5. Retype one value in `updateClassTemplateSchema` (e.g. `durationMinutes` to `z.string().optional()`) → must fail at the `const payload:` line with `Type 'number' is not assignable to type 'string'`. This is the annotation, not a pin; no pin can see a value type.
 
 - [ ] **Step 8: Commit**
 
@@ -721,7 +771,9 @@ function isAutoCancelCheck(v: string): v is AutoCancelCheck {
 }
 ```
 
-and use them at the two `onChange` handlers (currently `:344` and `:355`):
+and use them at the two `onChange` handlers — `:366` (`cancelDeadline`) and `:377` (`autoCancelCheck`).
+
+Those are the line numbers **after Task 3**, which this task must follow. Task 3 adds roughly twenty lines above them (the exported interface, the four pins, their docblock), so the handlers move down: at `:344` you will find the `maxStudents` `setForm` callback and at `:355` a `<PricingPreviewTable>` prop, not these. Match on the handler text rather than the line number.
 
 ```tsx
         onChange={(e) => {
@@ -744,7 +796,7 @@ npx tsc --noEmit && npm run lint
 npx vitest run --project components src/components/settings/template-form.test.tsx
 ```
 
-Expected: clean, six tests passing. `settings/recurring/[id]/page.tsx:50-51` passes `template.cancelDeadline` / `template.autoCancelCheck` straight from Prisma, which are already the enum types, so it should need no edit — confirm rather than assume.
+Expected: clean, six tests passing. `settings/recurring/[id]/page.tsx:49-50` passes `template.cancelDeadline` / `template.autoCancelCheck` straight from Prisma, which are already the enum types, so it should need no edit — confirm rather than assume.
 
 - [ ] **Step 6: Mutation-verify the enum pins**
 
