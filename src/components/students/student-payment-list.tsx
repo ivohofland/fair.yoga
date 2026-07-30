@@ -1,5 +1,6 @@
 'use client';
 
+import type { PaymentStatus } from '@prisma/client';
 import { paymentStateText } from '@/lib/format';
 import { usePaymentActions } from '@/lib/use-payment-actions';
 
@@ -8,7 +9,7 @@ interface StudentPaymentItem {
   classType: string;
   classDate: string;
   amount: number;
-  status: string;
+  status: PaymentStatus;
 }
 
 interface StudentPaymentListProps {

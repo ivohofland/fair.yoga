@@ -193,4 +193,53 @@ describe('OutstandingPaymentRow', () => {
     expect(screen.getByText('Vinyasa · Jun 12 · 09:30')).toBeInTheDocument();
     expect(screen.getByText('Vinyasa · Jun 12 · 18:00')).toBeInTheDocument();
   });
+
+  /**
+   * #58. `undo` reads the post-undo status from the server rather than assuming
+   * 'pending', because undo's result is a service decision and the domain
+   * admits 'overdue' for an aged payment. This test is what makes that real:
+   * it is the only one here that fails if someone "simplifies" the round trip
+   * to a hardcoded 'pending'.
+   */
+  it('renders the status the undo response carries', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: { status: 'overdue' } }) });
+    vi.stubGlobal('fetch', fetchMock);
+    renderCollidingPair();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 09:30' }),
+    );
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Undo marking Ana de Vries as paid for Vinyasa · Jun 12 · 09:30',
+      }),
+    );
+
+    expect(await screen.findByText(/! overdue/)).toBeInTheDocument();
+  });
+
+  /**
+   * The other half: a response the guard rejects falls back to 'pending', so no
+   * overdue marker appears. Weak on its own — a hardcoded 'pending' would pass
+   * it too — which is why the test above exists and is the load-bearing one.
+   */
+  it('falls back to pending when the undo response carries a bad status', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: { status: 'nonsense' } }) });
+    vi.stubGlobal('fetch', fetchMock);
+    renderCollidingPair();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 09:30' }),
+    );
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Undo marking Ana de Vries as paid for Vinyasa · Jun 12 · 09:30',
+      }),
+    );
+
+    expect(
+      await screen.findByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 09:30' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/! overdue/)).not.toBeInTheDocument();
+  });
 });
