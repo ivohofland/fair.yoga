@@ -173,11 +173,20 @@ real tests; one existing gap gets closed because this change lands on top of it.
   and at `PAYMENT_STATUSES`, remove it. A passing `tsc` on unchanged code
   demonstrates nothing about a guard — per the #66 lesson, confirm the mutation
   landed before trusting the result, and do not migrate the schema for this.
-- **The undo fallback — component** (`outstanding-payment-row.test.tsx`). The
+- **The undo round trip — component** (`outstanding-payment-row.test.tsx`). The
   `vi.stubGlobal('fetch', …)` scaffolding is already in that file from #59.
-  Resolve the undo call with a bad status and assert the row falls back to
-  `'pending'`. This pins the guard where it actually runs, which the unit test
-  does not.
+  **Two** assertions, and the order of importance is the opposite of the
+  obvious one:
+  1. Resolve undo with `status: 'overdue'` and assert the row renders its
+     `· ! overdue` marker. This is the one that matters — it proves the server's
+     value is *used*. It is also the only one that fails if someone replaces the
+     round trip with a hardcoded `'pending'`, which is the simplification §2
+     explicitly rejected.
+  2. Resolve undo with a bad status and assert no overdue marker. This pins the
+     fallback.
+
+  Assertion 2 alone would be near-worthless: a hardcoded `'pending'` passes it.
+  Recorded because that is the version this spec first described.
 
 Not added: component tests for `payment-checklist.tsx` or
 `student-payment-list.tsx`. Neither has one today, and this change gives neither

@@ -1,0 +1,486 @@
+# PaymentStatus End To End Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Carry `PaymentStatus` through `usePaymentActions` and its three consumers so the UI-gating comparisons are compiler-checked, and replace the undo response's unchecked cast with a real type guard (#58).
+
+**Architecture:** The hook stops being `Record<string, string>` and becomes `Record<string, PaymentStatus>`. Its one untyped value — the undo response — gets a runtime guard rather than an assertion. Two boundaries that re-widen the same type (`StudentPaymentItem.status`, `paymentStateText`) are tightened in the same change, the second gaining a `never` exhaustiveness guard.
+
+**Tech Stack:** TypeScript strict (`noUncheckedIndexedAccess` on), React client components, Vitest `unit` project (node) and `components` project (jsdom + Testing Library).
+
+## Global Constraints
+
+- **TypeScript `strict: true`.** No `any`, **no type assertions to silence a type error**, no eslint suppressions. This change exists to remove an assertion — do not add one.
+- **`import type` for `@prisma/client` in any `'use client'` file.** Every Prisma import in a client file in this repo is type-only. A value import would be the first and risks pulling the Prisma runtime into the browser bundle.
+- **`Set.has`, not `Object.hasOwn`.** `tsc` accepts `Object.hasOwn` because `lib` includes `esnext`, but `target` is `ES2017` and a library method is not downleveled. `Set` is ES2015.
+- **`paymentStateText`'s labels and classNames must come out byte-identical.** `'✓ Paid'` / `'text-teal'`, `'! Overdue'` / `'text-danger font-medium'`, `'○ Unpaid'` / `''`. Three surfaces render these, one student-facing.
+- **Do not change the `?? 'pending'` / `?? status` fallbacks.** Out of scope — existing behaviour.
+- **Do not modify `prisma/schema.prisma`** except transiently in Task 2's mutation step, which must be reverted. **Never create a migration for it.**
+- **Never restart the dev server on `:3000`.** It is managed manually by the repo owner.
+- **Never `git add -A` or `git add .`** — `docs/backlog-roadmap.md` is deliberately untracked. Stage by explicit path.
+
+---
+
+## File Structure
+
+| File | Change | Task |
+|---|---|---|
+| `src/lib/use-payment-actions.ts` | `PaymentStatus` throughout; add `isPaymentStatus` + `readUndoStatus`; replace the cast | 1 |
+| `src/lib/use-payment-actions.test.ts` | **New** — unit tests for the two new pure functions | 1 |
+| `src/components/students/student-payment-list.tsx` | `StudentPaymentItem.status: string` → `PaymentStatus` | 1 |
+| `src/components/class/outstanding-payment-row.test.tsx` | Two undo round-trip tests | 1 |
+| `src/lib/format.ts` | `paymentStateText(status: PaymentStatus)` + `never` guard | 2 |
+| `src/lib/format.test.ts` | **First** `paymentStateText` tests | 2 |
+
+**Two tasks, and the split is not arbitrary.** Task 1 must land as one commit: tightening the hook makes `student-payment-list.tsx` stop compiling (verified — `Object.fromEntries` over `status: string` yields `Record<string, string>`, which `Record<string, PaymentStatus>` rejects), so the file and the hook are one atomic change. Task 2 is separable and must come *second*: `paymentStateText` is called with the hook's output, so tightening it before Task 1 would break `payment-checklist.tsx`.
+
+`payment-checklist.tsx` and `outstanding-payment-row.tsx` need **no source edits** in either task — their props are already `PaymentStatus` and their expressions re-derive. Verify this rather than assume it; if either needs an edit, something else is wrong.
+
+---
+
+### Task 1: Carry `PaymentStatus` through the hook, and validate the undo response
+
+**Files:**
+- Modify: `src/lib/use-payment-actions.ts`
+- Create: `src/lib/use-payment-actions.test.ts`
+- Modify: `src/components/students/student-payment-list.tsx:11`
+- Modify: `src/components/class/outstanding-payment-row.test.tsx`
+
+**Interfaces:**
+- Produces, for Task 2: nothing directly. Task 2 relies only on the fact that after this task, `payment-checklist.tsx:58` and `student-payment-list.tsx:32` evaluate to `PaymentStatus`, which is what lets `paymentStateText` narrow its parameter.
+- Consumes: nothing.
+
+- [ ] **Step 1: Write the failing unit tests for the two new pure functions**
+
+Create `src/lib/use-payment-actions.test.ts`. The `unit` project's `include` is `src/**/*.test.ts`, so it is picked up with no config change. The environment is node, which is fine: both functions under test are pure, and nothing renders the hook here.
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { isPaymentStatus, readUndoStatus } from './use-payment-actions';
+
+/**
+ * #58. `usePaymentActions` used to read the undo response through
+ * `as { data: { status: string } }` — an unchecked assertion over a network
+ * payload. These two functions replace it. They are exported solely so this
+ * file can reach them; nothing else imports them.
+ */
+describe('isPaymentStatus', () => {
+  it('accepts every member of the schema enum', () => {
+    expect(isPaymentStatus('pending')).toBe(true);
+    expect(isPaymentStatus('paid')).toBe(true);
+    expect(isPaymentStatus('overdue')).toBe(true);
+  });
+
+  it('rejects near-misses and non-strings', () => {
+    expect(isPaymentStatus('overdu')).toBe(false);
+    expect(isPaymentStatus('')).toBe(false);
+    expect(isPaymentStatus('PENDING')).toBe(false); // case-sensitive on purpose
+    expect(isPaymentStatus(null)).toBe(false);
+    expect(isPaymentStatus(undefined)).toBe(false);
+    expect(isPaymentStatus(42)).toBe(false);
+  });
+
+  /**
+   * The reason this is a `Set` and not `value in PAYMENT_STATUSES`: an `in`
+   * check against a plain object walks the prototype chain, so 'constructor'
+   * and 'toString' would both pass. A Set has no such members.
+   */
+  it('rejects inherited Object.prototype keys', () => {
+    expect(isPaymentStatus('constructor')).toBe(false);
+    expect(isPaymentStatus('toString')).toBe(false);
+    expect(isPaymentStatus('hasOwnProperty')).toBe(false);
+  });
+});
+
+describe('readUndoStatus', () => {
+  it('returns the status the server sent', () => {
+    expect(readUndoStatus({ data: { status: 'overdue' } })).toBe('overdue');
+    expect(readUndoStatus({ data: { status: 'pending' } })).toBe('pending');
+  });
+
+  /**
+   * Every malformed shape falls back to 'pending' rather than throwing: an undo
+   * whose response we cannot read still succeeded server-side, so the row must
+   * stop showing "Paid". 'pending' is what `unmarkPaymentPaid` writes
+   * (services/payments.ts:97), so it is the honest guess, not a neutral one.
+   */
+  it('falls back to pending on any shape it cannot read', () => {
+    expect(readUndoStatus({ data: { status: 'nonsense' } })).toBe('pending');
+    expect(readUndoStatus({ data: {} })).toBe('pending');
+    expect(readUndoStatus({ data: null })).toBe('pending');
+    expect(readUndoStatus({})).toBe('pending');
+    expect(readUndoStatus(null)).toBe('pending');
+    expect(readUndoStatus('not json')).toBe('pending');
+  });
+});
+```
+
+- [ ] **Step 2: Run the tests and watch them fail**
+
+Run: `npx vitest run --project unit src/lib/use-payment-actions.test.ts`
+
+Expected: FAIL at import — `isPaymentStatus` and `readUndoStatus` do not exist yet. Vitest reports this as a failed suite, not a failed assertion.
+
+- [ ] **Step 3: Add the guard and the reader to the hook file**
+
+In `src/lib/use-payment-actions.ts`, change the import on line 3-4 area to add the type import, and add the two functions above `usePaymentActions`:
+
+```ts
+import type { PaymentStatus } from '@prisma/client';
+```
+
+```ts
+/**
+ * Requires *every* member of the enum: adding one to the schema breaks this
+ * initializer until it is listed here, which is the point. A
+ * `readonly PaymentStatus[]` would accept a subset silently.
+ *
+ * The values are hand-listed rather than derived from Prisma's runtime enum
+ * export (which does exist) because this is a client module and every
+ * `@prisma/client` import in a `'use client'` file in this repo is type-only —
+ * a value import would be the first, and would risk pulling the Prisma runtime
+ * into the browser bundle. The `Record` pin buys the drift protection instead.
+ */
+const PAYMENT_STATUSES: Record<PaymentStatus, true> = {
+  pending: true,
+  paid: true,
+  overdue: true,
+};
+
+/**
+ * A `Set`, not `Object.hasOwn`: `tsc` accepts `Object.hasOwn` here only because
+ * `lib` includes `esnext`, while `target` is ES2017 and a library method is not
+ * downleveled — the lib setting describes a runtime we have not committed to.
+ * A Set also has no prototype keys, so 'constructor' cannot sneak through.
+ */
+const PAYMENT_STATUS_KEYS: ReadonlySet<string> = new Set(Object.keys(PAYMENT_STATUSES));
+
+export function isPaymentStatus(value: unknown): value is PaymentStatus {
+  return typeof value === 'string' && PAYMENT_STATUS_KEYS.has(value);
+}
+
+/**
+ * The undo endpoint returns the updated payment. Exported for its unit test.
+ *
+ * Falls back to 'pending' rather than throwing: the undo already succeeded on
+ * the server by the time we get here, so refusing to update local state would
+ * leave the row showing "Paid" for a payment that is not. 'pending' is what
+ * `unmarkPaymentPaid` writes (services/payments.ts:97).
+ */
+export function readUndoStatus(json: unknown): PaymentStatus {
+  if (json !== null && typeof json === 'object' && 'data' in json) {
+    const data = json.data;
+    if (
+      data !== null &&
+      typeof data === 'object' &&
+      'status' in data &&
+      isPaymentStatus(data.status)
+    ) {
+      return data.status;
+    }
+  }
+  return 'pending';
+}
+```
+
+- [ ] **Step 4: Run the unit tests and watch them pass**
+
+Run: `npx vitest run --project unit src/lib/use-payment-actions.test.ts`
+Expected: PASS, 5 tests.
+
+- [ ] **Step 5: Type the hook's state, and use the reader in `undo`**
+
+Still in `src/lib/use-payment-actions.ts`. The signature and state (currently lines 14-15):
+
+```ts
+export function usePaymentActions(initial: Record<string, PaymentStatus>) {
+  const [paymentState, setPaymentState] = useState<Record<string, PaymentStatus>>(initial);
+```
+
+And in `undo`, replace the cast (currently lines 51-52):
+
+```ts
+        const json: unknown = await res.json();
+        setPaymentState((prev) => ({ ...prev, [paymentId]: readUndoStatus(json) }));
+```
+
+`markPaid`'s `'paid'` on line 30 needs no change — it satisfies `PaymentStatus` as a literal.
+
+- [ ] **Step 6: Tighten `StudentPaymentItem`**
+
+In `src/components/students/student-payment-list.tsx`, add the type import and change line 11:
+
+```tsx
+import type { PaymentStatus } from '@prisma/client';
+```
+
+```tsx
+  status: PaymentStatus;
+```
+
+This is not optional. `Object.fromEntries` over items whose `status` is `string` produces `Record<string, string>`, which the hook's new parameter rejects — verified with the compiler, not assumed. The page already passes a real `PaymentStatus` (`students/[id]/page.tsx:152`, `reg.payment!.status`), so only the declaration was widening it.
+
+- [ ] **Step 7: Typecheck, and confirm the two class-surface consumers needed nothing**
+
+```bash
+npx tsc --noEmit && npm run lint
+```
+
+Expected: clean. `payment-checklist.tsx` and `outstanding-payment-row.tsx` must **not** need edits — their props are already `PaymentStatus` and their expressions re-derive from the hook. If either reports an error, stop and report it rather than patching: it means an assumption in this plan is wrong.
+
+Then confirm `PaymentStatus` is the union this plan assumes, which everything downstream rests on. Add this file temporarily, run `npx tsc --noEmit`, then delete it:
+
+```ts
+// src/lib/__probe.ts — DELETE after checking
+import type { PaymentStatus } from '@prisma/client';
+declare const s: PaymentStatus;
+export const a: 'pending' | 'paid' | 'overdue' = s;  // must NOT error
+export const b: 'pending' = s;                        // MUST error
+```
+
+Expected: exactly one error, on `b` (`Type 'PaymentStatus' is not assignable to type '"pending"'`). If `a` errors too, `PaymentStatus` is not what this plan assumes.
+
+- [ ] **Step 8: Write the undo round-trip component tests**
+
+In `src/components/class/outstanding-payment-row.test.tsx`. The `fetchMock` / `afterEach` / `renderCollidingPair` scaffolding already exists in that file from #59 — reuse it, do not redeclare it.
+
+Note the mock shape: the existing undo test uses `fetchMock.mockResolvedValue({ ok: true })` because it only ever clicks Mark paid, which never calls `res.json()`. These tests click Undo, so the mock must also supply `json`.
+
+```tsx
+  /**
+   * #58. `undo` reads the post-undo status from the server rather than assuming
+   * 'pending', because undo's result is a service decision and the domain
+   * admits 'overdue' for an aged payment. This test is what makes that real:
+   * it is the only one here that fails if someone "simplifies" the round trip
+   * to a hardcoded 'pending'.
+   */
+  it('renders the status the undo response carries', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: { status: 'overdue' } }) });
+    vi.stubGlobal('fetch', fetchMock);
+    renderCollidingPair();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 09:30' }),
+    );
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Undo marking Ana de Vries as paid for Vinyasa · Jun 12 · 09:30',
+      }),
+    );
+
+    expect(await screen.findByText(/! overdue/)).toBeInTheDocument();
+  });
+
+  /**
+   * The other half: a response the guard rejects falls back to 'pending', so no
+   * overdue marker appears. Weak on its own — a hardcoded 'pending' would pass
+   * it too — which is why the test above exists and is the load-bearing one.
+   */
+  it('falls back to pending when the undo response carries a bad status', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: { status: 'nonsense' } }) });
+    vi.stubGlobal('fetch', fetchMock);
+    renderCollidingPair();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 09:30' }),
+    );
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Undo marking Ana de Vries as paid for Vinyasa · Jun 12 · 09:30',
+      }),
+    );
+
+    expect(
+      await screen.findByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 09:30' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/! overdue/)).not.toBeInTheDocument();
+  });
+```
+
+- [ ] **Step 9: Run the component tests**
+
+Run: `npx vitest run --project components src/components/class/outstanding-payment-row.test.tsx`
+Expected: PASS, 7 tests (5 from #59, 2 new).
+
+- [ ] **Step 10: Mutation-verify both new component tests bite**
+
+One at a time, confirming with `git diff` that each edit landed before running, and reverting before the next. **The #66 lesson: a mutation you did not confirm landed proves nothing.**
+
+1. In `use-payment-actions.ts`, replace `readUndoStatus(json)` with the literal `'pending'` → `'renders the status the undo response carries'` must FAIL. This is the mutation that matters; if it passes, the round trip is not actually pinned.
+2. In `readUndoStatus`, change the fallback `return 'pending'` to `return 'overdue'` → `'falls back to pending when the undo response carries a bad status'` must FAIL.
+
+- [ ] **Step 11: Run the full suites**
+
+```bash
+npx vitest run --project unit
+npx vitest run --project components
+npx vitest run --project integration
+```
+
+Expected: unit up by 5, components up by 2, integration unchanged. Integration needs the app on `:3000` — **do not restart it**. If `signup-api` tests fail with `expected 429 to be 201`, that is the local per-IP rate limiter (3/hour and 5/hour, `src/app/api/teachers/route.ts:14` and `src/app/api/auth/student-signup/route.ts:20`) exhausted by repeated runs, not this change. Say so in your report rather than reporting a false failure — and do not re-run repeatedly to "confirm", which only deepens it.
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add src/lib/use-payment-actions.ts src/lib/use-payment-actions.test.ts \
+        src/components/students/student-payment-list.tsx \
+        src/components/class/outstanding-payment-row.test.tsx
+git commit -m "fix: carry PaymentStatus through usePaymentActions, validate the undo response (#58)"
+```
+
+---
+
+### Task 2: Tighten `paymentStateText` and close its exhaustiveness
+
+**Files:**
+- Modify: `src/lib/format.ts:27-31`
+- Modify: `src/lib/format.test.ts`
+
+**Interfaces:**
+- Consumes from Task 1: that `payment-checklist.tsx:63` and `student-payment-list.tsx:41-42` now pass a `PaymentStatus`. Without Task 1 this task does not compile.
+- Produces: nothing.
+
+**Must run after Task 1.** `paymentStateText` is called with the hook's output; tightening it first breaks `payment-checklist.tsx`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `src/lib/format.test.ts`. It currently imports `formatDayHeader` and `formatHistoricalDate` on line 2 — extend that import rather than adding a second one.
+
+```ts
+/**
+ * #58. These are `paymentStateText`'s first tests. It had none while its
+ * parameter was `string` and its last branch was a catch-all `return`, which is
+ * the combination this change removes: three surfaces render these exact
+ * strings — the class payment checklist, a student's payment history, and the
+ * student-facing bookings page — so the labels are the contract, not an
+ * implementation detail.
+ *
+ * Asserted as whole objects so a className change cannot slip through a
+ * label-only assertion.
+ */
+describe('paymentStateText', () => {
+  it('renders paid in teal with a check', () => {
+    expect(paymentStateText('paid')).toEqual({ label: '✓ Paid', className: 'text-teal' });
+  });
+
+  it('renders overdue in danger, medium weight', () => {
+    expect(paymentStateText('overdue')).toEqual({
+      label: '! Overdue',
+      className: 'text-danger font-medium',
+    });
+  });
+
+  it('renders pending as unstyled unpaid', () => {
+    // No colour class: unpaid is the resting state, not an alarm.
+    expect(paymentStateText('pending')).toEqual({ label: '○ Unpaid', className: '' });
+  });
+});
+```
+
+- [ ] **Step 2: Run the tests and watch them fail**
+
+Run: `npx vitest run --project unit src/lib/format.test.ts`
+
+Expected: FAIL at import — `paymentStateText` is not in the import list yet. Add it to line 2's import, re-run, and expect **PASS**: the current implementation already returns these values.
+
+That is the honest sequence and worth not dressing up. These three tests are characterization tests — they pin behaviour that already works, so that Step 3's rewrite cannot change it silently. The red-then-green cycle belongs to the `never` guard, which Step 5 exercises by mutation because a type-level guarantee cannot be asserted at runtime.
+
+- [ ] **Step 3: Tighten the signature and close the exhaustiveness**
+
+In `src/lib/format.ts`, add the type import at the top of the file (it currently has none from Prisma):
+
+```ts
+import type { PaymentStatus } from '@prisma/client';
+```
+
+Then replace lines 27-31:
+
+```ts
+export function paymentStateText(status: PaymentStatus): { label: string; className: string } {
+  if (status === 'paid') return { label: '✓ Paid', className: 'text-teal' };
+  if (status === 'overdue') return { label: '! Overdue', className: 'text-danger font-medium' };
+  if (status === 'pending') return { label: '○ Unpaid', className: '' };
+  // Unreachable for any status the schema can produce. It exists so that adding
+  // a member to the enum fails the build here instead of rendering silently as
+  // "Unpaid", which is what the old catch-all `return` did.
+  const unhandled: never = status;
+  throw new Error(`Unhandled payment status: ${String(unhandled)}`);
+}
+```
+
+Note `format.ts` is **not** a `'use client'` module, but keep `import type` regardless: nothing here needs the value, and a type-only import cannot accidentally pull the runtime into a client bundle that imports this file.
+
+- [ ] **Step 4: Typecheck and run**
+
+```bash
+npx tsc --noEmit && npm run lint
+npx vitest run --project unit src/lib/format.test.ts
+```
+
+Expected: clean; tests pass with the same three assertions. `bookings/page.tsx:209` must not need an edit — it includes the full Prisma `payment` (`:36`), so it already passes a `PaymentStatus`. If it errors, report it.
+
+- [ ] **Step 5: Mutation-verify the `never` guard**
+
+A passing `tsc` on unchanged code proves nothing about an exhaustiveness guard. Prove it bites:
+
+```bash
+# add a fourth member to the enum — DO NOT create a migration
+```
+
+Edit `prisma/schema.prisma` lines 74-78 to add `refunded` to `enum PaymentStatus`, then:
+
+```bash
+npx prisma generate
+npx tsc --noEmit
+```
+
+Expected: **exactly two errors**, and check both are present rather than stopping at the first —
+
+1. `format.ts` — `TS2322: Type '"refunded"' is not assignable to type 'never'`
+2. `use-payment-actions.ts` — `TS2741: Property 'refunded' is missing in type '{ pending: true; paid: true; overdue: true; }' but required in type 'Record<PaymentStatus, true>'`
+
+Then revert:
+
+```bash
+git checkout -- prisma/schema.prisma
+npx prisma generate
+npx tsc --noEmit   # clean again
+git status --short  # must show no change to prisma/
+```
+
+**Do not commit the schema edit, and do not run `npx prisma migrate dev`.** This is a compiler probe, not a schema change.
+
+- [ ] **Step 6: Run the full suites**
+
+```bash
+npx vitest run --project unit
+npx vitest run --project components
+npx vitest run --project integration
+npx playwright test
+```
+
+Expected: unit up by 3 from Task 1's total, components unchanged from Task 1, integration unchanged, e2e 118 passing. The same `signup-api` 429 note from Task 1 Step 11 applies.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/lib/format.ts src/lib/format.test.ts
+git commit -m "fix: tighten paymentStateText to PaymentStatus and close its exhaustiveness (#58)"
+```
+
+---
+
+## Pre-PR checklist
+
+- [ ] `npx tsc --noEmit` — clean
+- [ ] `npm run lint` — clean
+- [ ] `npx vitest run --project unit` — 419 + 8 = 427 passing
+- [ ] `npx vitest run --project components` — 37 + 2 = 39 passing
+- [ ] `npx vitest run --project integration` — 215 passing (429s are the rate limiter, not this change)
+- [ ] `npx playwright test` — 118 passing
+- [ ] `git status --short` — only `docs/backlog-roadmap.md` untracked; **`prisma/` unchanged**
+- [ ] No `as` added anywhere in the diff — `git diff | grep -n ' as '` reviewed
+- [ ] `payment-checklist.tsx` and `outstanding-payment-row.tsx` have no source edits
+- [ ] `bookings/page.tsx` has no edits
+- [ ] Both Task 1 mutations and both Task 2 `tsc` errors were observed, not assumed
+- [ ] `src/lib/__probe.ts` deleted
