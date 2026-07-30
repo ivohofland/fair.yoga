@@ -12,7 +12,14 @@ interface OutstandingPaymentRowProps {
   paymentId: string;
   studentName: string;
   classId: string;
-  /** "{classType} · {date}" — the row's visible sub-label *and* the reminder aria-label context. */
+  /**
+   * `"{classType} · {date} · {startTime}"` — the row's visible sub-label *and*
+   * the disambiguator in all three button labels. One string on purpose: two
+   * rows for the same student are told apart by this and nothing else, so a
+   * separate aria-only value could drift from what is on screen (#59). The
+   * time is what makes a morning and an evening class of the same type on one
+   * day distinguishable.
+   */
   classContext: string;
   amount: number;
   status: PaymentStatus;
@@ -87,7 +94,7 @@ export function OutstandingPaymentRow({
                   }}
                   disabled={busy}
                   className="type-caption text-teal min-h-[44px] px-1"
-                  aria-label={`Undo marking ${studentName} as paid`}
+                  aria-label={`Undo marking ${studentName} as paid for ${classContext}`}
                 >
                   Undo
                 </button>
@@ -99,7 +106,7 @@ export function OutstandingPaymentRow({
               onClick={() => markPaid(paymentId)}
               disabled={busy}
               className={`h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] border-teal text-teal hover:bg-teal-tint ${busy ? 'opacity-50' : ''}`}
-              aria-label={`Mark ${studentName} payment as paid`}
+              aria-label={`Mark ${studentName}'s payment as paid for ${classContext}`}
             >
               {busy ? 'Saving...' : 'Mark paid'}
             </button>

@@ -37,7 +37,7 @@ export default async function PaymentsOverviewPage() {
               },
             },
           },
-          class: { select: { id: true, classType: true, date: true } },
+          class: { select: { id: true, classType: true, date: true, startTime: true } },
         },
       },
     },
@@ -93,7 +93,7 @@ export default async function PaymentsOverviewPage() {
               paymentId={p.id}
               studentName={studentName(p)}
               classId={p.registration.class.id}
-              classContext={`${p.registration.class.classType} · ${formatDay(p.registration.class.date)}`}
+              classContext={`${p.registration.class.classType} · ${formatDay(p.registration.class.date)} · ${p.registration.class.startTime}`}
               amount={Number(p.amount)}
               status={p.status}
               reminderSentAt={p.reminderSentAt}
