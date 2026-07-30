@@ -327,8 +327,9 @@ export async function updateClassTemplate(
  * drifted): that policy is about shared *implementation*, and this is two
  * fields with no logic to drift.
  *
- * `date` is `Class.date` straight through, and that column is `@db.Date`: a
- * calendar date pinned to midnight UTC, never an instant. That is the one
+ * `date` is `Class.date` or `StudioClass.date` straight through — both
+ * producers supply one — and both columns are `@db.Date`: a calendar date
+ * pinned to midnight UTC, never an instant. That is the one
  * property of this type a producer can actually violate, and it is what
  * licenses `pauseMessage` to render it through `formatDayHeader`, which reads
  * its argument with `getUTC*` accessors (`src/lib/format.ts`). Fill this from
@@ -470,12 +471,18 @@ export async function pauseOrResumeTemplate(
       // and an unchecked `class.create` (`class-generator.ts`): P2003 or
       // P2002, never P2025. So the `update` above really is the only P2025
       // source under here, and the guard says `not_found` about the only
-      // thing that can go missing. Add a `findUniqueOrThrow` or a
-      // single-record `update` inside this transaction and that stops being
-      // true silently — #116 is queued to put `claimTemplateForGeneration`
-      // here, and it opens with a `findUniqueOrThrow`. Whoever does that owes
-      // this comment an enumeration of what it now covers, the way the
-      // sibling guard above already lists both of its statements.
+      // thing that can go missing. Add an *unprotected* `findUniqueOrThrow`
+      // or single-record `update` inside this transaction and that stops
+      // being true silently. Whoever does that owes this comment an
+      // enumeration of what it now covers, the way the sibling guard above
+      // already lists both of its statements.
+      //
+      // #116, the change most likely to add one, happens to be safe: it puts
+      // `claimTemplateForGeneration` here, whose `findUniqueOrThrow` is its
+      // *last* statement and runs under the `FOR UPDATE` its own raw `SELECT`
+      // just took — so on a transaction client that row provably exists and
+      // cannot raise P2025. Safe for the reason the lock gives, not because
+      // it is a read.
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
         return null;
       }

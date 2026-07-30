@@ -77,15 +77,17 @@ statements, which this codebase has repeatedly found attracts false comments
 explaining why they exist.
 
 **Reachability, stated once so nobody re-derives it:** no production path
-deletes a `ClassTemplate` or `StudioClassTemplate` row. Counting by
+deletes a `ClassTemplate` or `StudioClassTemplate` row. Every match of
 `(classTemplate|studioClassTemplate)\.(delete|deleteMany)\(` across `src/` and
-`tests/`: **16 at this branch's HEAD**, 14 on `main` — the two extra are this
-branch's own new tests. Every one is in a test file.
+`tests/` is in a test file. Re-run that regex rather than trusting a number
+here — deliberately, see below.
 
-(This number has now been wrong twice. It was first written as "ten", corrected
-to 14 — which was the count on `main`, already stale because the branch had
-added two tests before the correction was made. Stating a convention is not
-enough if you then run it against the wrong revision.) `gdpr.ts` anonymises
+(**No count, on the fourth attempt.** This sentence said "ten", then 14, then
+16; each was measured, and each was stale before it was committed, because the
+branch kept adding tests that matched. The number was never the claim — the
+claim is *none in production* — and a figure that moves whenever anyone writes
+a test is a maintenance burden that buys nothing. Stating the convention was
+not the fix; carrying a count at all was the mistake.) `gdpr.ts` anonymises
 rather than cascade-deletes and never deletes a `Teacher`, so the `onDelete:
 Cascade` on both templates' teacher relation is unreachable too. Both guards are
 therefore unreachable today and are being added because the window is real and

@@ -220,8 +220,14 @@ Move `syncTemplateInstances` inside the existing `try`, and extend that comment 
     // *did* commit. That is the honest answer rather than a convenient one:
     // the row is gone before the caller is answered, so reporting a
     // successful update of a template that no longer exists would be the lie.
-    // The `sync` counts are lost with it, which costs nothing — there are no
-    // instances left to report on.
+    // The `sync` counts are lost with it, which costs nothing — but NOT for
+    // the reason this line originally gave. `Class.templateId` is
+    // `onDelete: SetNull`, so a template delete ORPHANS its generated classes
+    // rather than removing them: still `open`, still bookable, frozen with
+    // pre-edit settings. What makes the lost counts free is narrower —
+    // `syncTemplateInstances` filters on `templateId`, so after the delete it
+    // matches none of them and would have reported `{0,0,0}` anyway. Write
+    // the shipped version, not this block's first draft.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
       return { ok: false, reason: 'not_found' };
     }
