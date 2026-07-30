@@ -1,11 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { isPaymentStatus, readUndoStatus } from './use-payment-actions';
+import { isPaymentStatus, readUndoStatus } from './payment-status';
 
 /**
  * #58. `usePaymentActions` used to read the undo response through
  * `as { data: { status: string } }` — an unchecked assertion over a network
- * payload. These two functions replace it. They are exported solely so this
- * file can reach them; nothing else imports them.
+ * payload. These two functions replace it.
+ *
+ * They started life inside `use-payment-actions.ts`, exported only so this file
+ * could reach them; the move to `payment-status.ts` (#58 review) is what makes
+ * those exports honest. The tests came with the move rather than being dropped,
+ * because each one below catches a mutation no other test in the repo does —
+ * notably `rejects inherited Object.prototype keys`, which is the only test
+ * anywhere that fails when `PAYMENT_STATUS_KEYS.has(value)` is swapped for
+ * `value in PAYMENT_STATUSES`. The component tests that exercise this path pass
+ * only `'overdue'` and `'nonsense'`, and stay green through that swap.
  */
 describe('isPaymentStatus', () => {
   it('accepts every member of the schema enum', () => {
@@ -42,17 +50,19 @@ describe('readUndoStatus', () => {
   });
 
   /**
-   * Every malformed shape falls back to 'pending' rather than throwing: an undo
-   * whose response we cannot read still succeeded server-side, so the row must
-   * stop showing "Paid". 'pending' is what `unmarkPaymentPaid` writes
-   * (services/payments.ts:97), so it is the honest guess, not a neutral one.
+   * Every malformed shape reads as `null`, not as a substituted 'pending'
+   * (#58 review). The undo has already succeeded server-side by the time this
+   * runs, so the row must still stop showing "Paid" — but choosing 'pending' as
+   * the stand-in is the *caller's* call, made visibly at the call site in
+   * `undo`, which also logs it. Returning it from here hid a fabricated value
+   * behind a signature that promised a validated one.
    */
-  it('falls back to pending on any shape it cannot read', () => {
-    expect(readUndoStatus({ data: { status: 'nonsense' } })).toBe('pending');
-    expect(readUndoStatus({ data: {} })).toBe('pending');
-    expect(readUndoStatus({ data: null })).toBe('pending');
-    expect(readUndoStatus({})).toBe('pending');
-    expect(readUndoStatus(null)).toBe('pending');
-    expect(readUndoStatus('not json')).toBe('pending');
+  it('returns null on any shape it cannot read', () => {
+    expect(readUndoStatus({ data: { status: 'nonsense' } })).toBeNull();
+    expect(readUndoStatus({ data: {} })).toBeNull();
+    expect(readUndoStatus({ data: null })).toBeNull();
+    expect(readUndoStatus({})).toBeNull();
+    expect(readUndoStatus(null)).toBeNull();
+    expect(readUndoStatus('not json')).toBeNull();
   });
 });
