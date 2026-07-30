@@ -93,13 +93,24 @@ if (settingsLocked) for (const f of ECONOMIC_FIELDS) delete payload[f];
 ```
 
 `delete` typechecks because every wire field is optional, and `ECONOMIC_FIELDS`
-(`class-lifecycle.ts:76`) is the canonical naming of the gated five — the form
-stops restating them, which is what #81 asks for.
+(`src/lib/class-fields.ts:13`) is the canonical naming of the gated five — the
+form stops restating them, which is what #81 asks for. Task 1 moved the
+constant there from `class-lifecycle.ts`, which now only re-exports it: the
+new module has zero imports, which is what makes it safe to value-import from
+a `'use client'` component — importing it from `class-lifecycle.ts` directly
+would pull that module's `./notifications` → `@/lib/log` (pino, server-only)
+into the browser bundle.
 
-Note what the spread does *not* buy. `class-lifecycle.ts:252` already records
+Note what the spread does *not* buy. `class-lifecycle.ts:242` already records
 that spreading defeats excess-property checking, so `{ ...form }` cannot flag an
 extra field. The reverse pin is what covers that, which is why both directions
 are present rather than just the forward one.
+
+(This file's `class-lifecycle.ts` line citations were checked against the file
+as it stood when this spec was written, before Task 1 ran. Task 1 removed 11
+net lines from that file — moving `ECONOMIC_FIELDS` out, as above — shifting
+every citation below this point; each has been re-verified against the current
+file rather than adjusted by arithmetic.)
 
 ### 3. Both template schemas get pinned, though they agree today
 
@@ -164,7 +175,9 @@ confirm the build fails **naming that field**, revert. Per the #66 lesson,
 confirm the mutation landed before trusting the result.
 
 The derived payloads are a different matter — they change what is actually sent,
-so they need runtime coverage. Neither form has a component test today.
+so they need runtime coverage. Neither form had a component test when this was
+written; Task 2 has since added `ClassEditForm`'s, below. `TemplateForm`'s
+still doesn't exist as of this writing — that's Tasks 3-4.
 
 - **`ClassEditForm`** — the `settingsLocked` branch decides whether five
   economic fields reach the API, which is a real behavioural fork and the one
@@ -187,16 +200,16 @@ established component-test pattern (seven files) and the shape
   pins rather than a form change.
 - **`attendance-list.tsx`'s `RegistrationStatus` widening** — #132, filed.
 - **Deriving form state types from schemas** — per §5.
-- **`isEconomicFieldLocked` (`class-lifecycle.ts:90`) has no production
+- **`isEconomicFieldLocked` (`class-lifecycle.ts:79`) has no production
   callers** — only its own test imports it. Noticed while confirming where the
-  lock is actually enforced (`:473`). Dead code, not a defect, and deleting it
+  lock is actually enforced (`:462`). Dead code, not a defect, and deleting it
   is unrelated to pinning form field lists; recorded here rather than filed.
 
 ## Risks
 
 - **`delete` on the payload is the only new runtime mechanic.** It replaces
   conditional assignment, so a mistake means economic fields reach the API while
-  locked. The route rejects them — `class-lifecycle.ts:473-475` returns
+  locked. The route rejects them — `class-lifecycle.ts:462-464` returns
   `{ ok: false, reason: 'locked', fields }` naming the offenders — so the
   failure mode is a visible 400, not a bad write. That is a backstop, not a
   reason to be careless: the locked-branch test is what keeps this honest and is
