@@ -106,17 +106,36 @@ There are no component tests under `src/components/class/` today — the
 the first.
 
 The test that matters renders two rows for the same student, same class type,
-same day, different start times, and asserts **all three** accessible names are
-distinct across the pair. That is the assertion that fails before the fix and
-passes after, and it is the one worth writing: a test asserting a single row's
-label proves nothing about a collision.
+same day, different start times, and asserts their accessible names are distinct
+across the pair. A test asserting a single row's label proves nothing about a
+collision.
 
 Specifically:
 
-- two same-type, same-day rows produce six distinct accessible names;
+- the two mark-paid buttons have distinct accessible names;
+- the two reminder buttons do too;
 - the visible caption differs between the two rows as well — the collision is
-  visual, so the fix should be pinned visually;
-- a single row still reads naturally, including the possessive fix.
+  visual, so the fix is pinned visually.
+
+**Corrected after implementation — this section originally overstated what the
+tests do, in three ways a reader could falsify quickly:**
+
+1. It said "all three" accessible names are asserted. **Two are.** The Undo
+   button renders only after a successful `markPaid` network round trip, so
+   covering it means mocking `fetch` purely to claim coverage. It is verified by
+   inspection instead, and that is recorded rather than papered over.
+2. It said that assertion "fails before the fix and passes after". **Only the
+   mark-paid one does.** The fixture hands the component two already-distinct
+   `classContext` values, so the reminder and caption assertions pass against
+   the unfixed component too. They are regression cover for the row continuing
+   to consume `classContext` — worth keeping, but not proof of the fix.
+3. It said a single row is tested for natural reading. **There is no single-row
+   test**; the possessive is covered inside the pair test.
+
+Worth stating plainly given what §2 argues: this is a claim corrected in the
+test file and left standing here — one string, two copies, exactly the drift the
+one-string design exists to avoid. The design was right; the spec's own prose
+was the thing that drifted.
 
 Assert whole accessible names via `getByRole('button', { name: … })` with exact
 strings, not substrings. A substring match would pass on the colliding version,

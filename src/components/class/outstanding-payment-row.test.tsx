@@ -21,7 +21,10 @@ import { OutstandingPaymentRow } from './outstanding-payment-row';
  * tell apart, which is the product bug #59 reports.
  *
  * The other two tests pass before and after. They are not decoration — they are
- * the only thing enforcing "one string, three consumers": the reminder test
+ * what pins the *whole string* reaching each consumer, which nothing else does:
+ * the mark-paid test covers one consumer, and `teacher-journey.spec.ts` pins
+ * only that `context` is non-null (its regex matches the conditional " for "),
+ * not what the value is. Specifically the reminder test
  * pins that the row keeps passing `classContext` into a `context` prop that is
  * `string | null` and that a sibling consumer (`payment-checklist.tsx`)
  * deliberately passes `null` to; the caption test pins that what is on screen

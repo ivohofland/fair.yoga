@@ -8,9 +8,11 @@
  * cleanup activates from `globals: true` in the root config, so no teardown
  * is wired here.
  *
- * The router mock returns both `refresh` and `push`: the template buttons call
- * `refresh()` to re-render the page they are on, the room and student buttons
- * call `push()` to navigate away. Tests that assert on either import them from
+ * The router mock returns both `refresh` and `push`, because components use
+ * both: `refresh()` to re-render the page they are on (the template buttons,
+ * and `OutstandingPaymentRow` after a successful Undo), `push()` to navigate
+ * away (the room and student buttons). Not an exhaustive roster — see the note
+ * above about numbers going stale. Tests that assert on either import them from
  * here.
  */
 import '@testing-library/jest-dom/vitest';

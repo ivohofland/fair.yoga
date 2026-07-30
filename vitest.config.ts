@@ -7,8 +7,13 @@ import path from 'path';
 //   clock-injected sweeps can never touch dev/seed data
 // - integration: talks to the HTTP app on :3000, so its fixtures must
 //   live in the same database that app reads (dev locally, CI's in CI)
-// - components: jsdom rendering with `fetch` and `next/navigation` mocked
-//   (tests/setup/components.ts) — touches no database at all
+// - components: jsdom rendering with `next/navigation` mocked
+//   (tests/setup/components.ts) — touches no database at all. `fetch` is NOT
+//   mocked there: each test that clicks stubs it itself via
+//   `vi.stubGlobal('fetch', …)`. A test that renders fetch-calling code and
+//   never clicks needs no stub; one that clicks and forgets gets a real
+//   relative-URL request, which the components swallow into "Network error"
+//   rather than failing visibly.
 export default defineConfig(({ mode }) => {
   const fileEnv = loadEnv(mode, process.cwd(), '');
   const devUrl = process.env.DATABASE_URL ?? fileEnv.DATABASE_URL ?? '';
