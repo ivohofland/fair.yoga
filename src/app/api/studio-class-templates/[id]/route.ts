@@ -93,10 +93,8 @@ export const PATCH = withErrorHandler(async (
 
     // Exhaustiveness: a new ArchiveStudioTemplateResult reason becomes a
     // compile error here rather than being silently answered with the wrong
-    // status. Narrowed on `result.reason`, matching the class family's
-    // route — the `ok: false` half is one object with a union-typed `reason`
-    // rather than one member per reason.
-    const unhandled: never = result.reason;
+    // status.
+    const unhandled: never = result;
     return unhandled;
   }
 
@@ -123,6 +121,6 @@ export const PATCH = withErrorHandler(async (
 
   // Exhaustiveness: a new PauseStudioTemplateResult reason becomes a compile
   // error here rather than being silently answered with the wrong status.
-  const unhandled: never = result.reason;
+  const unhandled: never = result;
   return unhandled;
 });

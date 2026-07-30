@@ -120,12 +120,7 @@ export const PATCH = withErrorHandler(async (
 
     // Exhaustiveness: a new ArchiveTemplateResult reason becomes a compile
     // error here rather than being silently answered with the wrong status.
-    // Narrowed on `result.reason`, not `result` itself: unlike
-    // UpdateClassTemplateResult, the `ok: false` half of this type is one
-    // object with a union-typed `reason` rather than one member per reason,
-    // so control flow narrows the property to `never` without collapsing
-    // the enclosing object type the same way.
-    const unhandled: never = result.reason;
+    const unhandled: never = result;
     return unhandled;
   }
 
@@ -147,8 +142,7 @@ export const PATCH = withErrorHandler(async (
   }
 
   // Exhaustiveness: a new PauseTemplateResult reason becomes a compile error
-  // here rather than being silently answered with the wrong status. Narrowed
-  // on `result.reason`, same reason as the archive branch above.
-  const unhandled: never = result.reason;
+  // here rather than being silently answered with the wrong status.
+  const unhandled: never = result;
   return unhandled;
 });

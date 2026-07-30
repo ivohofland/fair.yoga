@@ -310,7 +310,9 @@ export type PauseTemplateResult =
     }
   | { ok: true; action: 'active'; template: ClassTemplate }
   | { ok: true; action: 'unchanged'; template: ClassTemplate }
-  | { ok: false; reason: 'not_found' | 'forbidden' | 'archived' };
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'forbidden' }
+  | { ok: false; reason: 'archived' };
 
 /**
  * Archiving and un-archiving are different operations and report different
@@ -322,7 +324,8 @@ export type ArchiveTemplateResult =
   | { ok: true; action: 'archived'; template: ClassTemplate; deleted: number; remaining: number }
   | { ok: true; action: 'unarchived'; template: ClassTemplate }
   | { ok: true; action: 'unchanged'; template: ClassTemplate }
-  | { ok: false; reason: 'not_found' | 'forbidden' };
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'forbidden' };
 
 /**
  * Statuses a generated instance can still be withdrawn or regenerated from.

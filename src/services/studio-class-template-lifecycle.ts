@@ -54,7 +54,9 @@ export type PauseStudioTemplateResult =
     }
   | { ok: true; action: 'active'; template: StudioClassTemplate }
   | { ok: true; action: 'unchanged'; template: StudioClassTemplate }
-  | { ok: false; reason: 'not_found' | 'forbidden' | 'archived' };
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'forbidden' }
+  | { ok: false; reason: 'archived' };
 
 /**
  * Archiving and un-archiving are different operations and report different
@@ -72,7 +74,8 @@ export type ArchiveStudioTemplateResult =
     }
   | { ok: true; action: 'unarchived'; template: StudioClassTemplate }
   | { ok: true; action: 'unchanged'; template: StudioClassTemplate }
-  | { ok: false; reason: 'not_found' | 'forbidden' };
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'forbidden' };
 
 /**
  * Studio classes still on the schedule for a template, from the given
