@@ -195,11 +195,16 @@ describe('OutstandingPaymentRow', () => {
   });
 
   /**
-   * #58. `undo` reads the post-undo status from the server rather than assuming
-   * 'pending', because undo's result is a service decision and the domain
-   * admits 'overdue' for an aged payment. This test is what makes that real:
-   * it is the only one here that fails if someone "simplifies" the round trip
-   * to a hardcoded 'pending'.
+   * #58. `undo` renders whatever status the server's response carries, guard
+   * included, rather than rendering the response verbatim or assuming the
+   * result is always 'pending'. Today `unmarkPaymentPaid`
+   * (services/payments.ts:91-97) always writes 'pending' unconditionally — the
+   * daily dunning sweep re-derives 'overdue' later, from the payment's age —
+   * so the 'overdue' response mocked below is a hypothetical exercising the
+   * read path, not current server behavior. The round trip still earns its
+   * keep: it is what keeps this correct the day `unmarkPaymentPaid` starts
+   * returning a re-derived status itself, and this is the only test here that
+   * fails if someone "simplifies" the round trip to a hardcoded 'pending'.
    */
   it('renders the status the undo response carries', async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: { status: 'overdue' } }) });

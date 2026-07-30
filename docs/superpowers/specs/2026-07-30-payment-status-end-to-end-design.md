@@ -116,10 +116,14 @@ nested shape, then `isPaymentStatus(...) ? ... : 'pending'`.
 locally without reading the response, and since the server always writes
 `'pending'`, `undo` could set `'pending'` and delete the whole problem. Rejected
 because the two are not symmetric. `markPaid`'s result is what the action
-*means*; undo's result is a service decision, and the domain admits `'overdue'`
-for an aged payment. Reading the server's answer keeps the UI correct if
-`unmarkPaymentPaid` ever starts re-deriving it — the guard is what makes reading
-it honest.
+*means*; undo's result is a service decision. `unmarkPaymentPaid` writes
+`'pending'` unconditionally today — the daily dunning sweep re-derives
+`'overdue'` later, from the payment's age — so `'overdue'` is not a
+currently-reachable response from this endpoint. The round trip is a guard
+against a *future* change to that service, not a currently-reachable case: it
+is what keeps the UI correct the day `unmarkPaymentPaid` starts returning a
+re-derived status itself, and the guard is what makes reading it honest in the
+meantime.
 
 ### 3. The other two widening points
 
