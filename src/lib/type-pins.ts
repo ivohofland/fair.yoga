@@ -6,6 +6,20 @@
  * `const _x: NoneOf<…> = true; void _x;`. The const is what instantiates the
  * conditional type — a pin alias that nothing assigns is never evaluated and
  * reports nothing, so deleting the const/void pair removes the check silently.
+ *
+ * That idiom is not free at runtime: `const _x: NoneOf<…> = true; void _x;`
+ * emits two real statements per pin, compiled and shipped like any other
+ * code — measured by compiling and diffing the emitted JS. This file's own
+ * self-tests below (`_noneOfHoldsIsTrue` and friends) use a `type` alias
+ * instead, which erases completely and costs nothing.
+ *
+ * The divergence is deliberate. Service-side pins already use the
+ * `const`+`void` form, including some in `'use client'` components; keeping
+ * one idiom across server and client call sites avoids the "two things that
+ * should agree" problem pins exist to catch elsewhere. If bundle size ever
+ * argues otherwise, the type-only form is the alternative — but it has to
+ * change at every call site at once, not just the client ones, or the pins
+ * themselves become the inconsistency.
  */
 
 /**
