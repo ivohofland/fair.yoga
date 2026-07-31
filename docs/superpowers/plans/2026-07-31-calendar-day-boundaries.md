@@ -319,7 +319,10 @@ describe('ClassList timezone handling', () => {
     vi.setSystemTime(new Date('2026-06-01T20:00:00.000Z'));
     render(
       <ClassList
-        classes={[classRow('cls-1', 'open', [], new Date('2026-06-01T00:00:00.000Z'))]}
+        classes={[classRow('cls-1', 'open', [], {
+          date: new Date('2026-06-01T00:00:00.000Z'),
+          startTime: '19:00',
+        })]}
         timeZone="America/Los_Angeles"
         dimPast
       />,
@@ -337,7 +340,7 @@ describe('ClassList timezone handling', () => {
     vi.setSystemTime(new Date('2026-06-08T03:00:00.000Z'));
     render(
       <ClassList
-        classes={[classRow('cls-1', 'open', [], new Date('2026-06-06T00:00:00.000Z'))]}
+        classes={[classRow('cls-1', 'open', [], { date: new Date('2026-06-06T00:00:00.000Z') })]}
         timeZone="America/Los_Angeles"
       />,
     );
@@ -349,8 +352,9 @@ describe('ClassList timezone handling', () => {
 Two things this needs that the file may not have yet:
 
 1. `vi.setSystemTime` requires `vi.useFakeTimers()` in a `beforeEach` and `vi.useRealTimers()` in an `afterEach`, scoped to this `describe`. Add them, and import `vi`, `beforeEach`, `afterEach` from `vitest`.
-2. `classRow` currently takes `(id, status, payments)`. It needs an optional fourth parameter for the class date, defaulting to whatever it uses today so existing calls are unaffected. Add it; do not change the existing three parameters.
-3. `classRow`'s fixture uses `classType: 'Vinyasa'` and `startTime: '09:30'`. The dim test needs the class to start at 19:00 so the "not yet started" window is wide enough to be unambiguous — pass a `startTime` override or set it on the returned object, and say which you did. Do **not** add a `data-testid` to the component for the test; the `<Link>` is already addressable by role and name.
+2. `classRow` currently takes `(id, status, payments)` and hard-codes `date: new Date('2026-06-12T00:00:00.000Z')` and `startTime: '09:30'`. Add an optional fourth parameter `overrides?: { date?: Date; startTime?: string }`, applied over those two defaults so every existing call is unaffected. Do not change the existing three parameters.
+3. **The `startTime: '19:00'` override in the dim test is required, not decoration.** With the default `09:30`, the class is at 16:30Z in Los Angeles, which is genuinely past the test's 20:00Z system time — so the test would fail against a *correct* implementation. 19:00 local is 02:00Z the next day, comfortably ahead of it. Do not simplify the fixture.
+4. Do **not** add a `data-testid` to the component for the test; the `<Link>` is already addressable by role and name.
 
 - [ ] **Step 2: Run and watch them fail**
 
