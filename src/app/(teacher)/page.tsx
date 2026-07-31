@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { ClassList } from '@/components/schedule/class-list';
 import { GettingStarted } from '@/components/schedule/getting-started';
+import { startOfLocalWeek, startOfLocalDay } from '@/lib/timezone';
 
 /**
  * The home window: the current week so far (completed classes stay in
@@ -10,15 +11,11 @@ import { GettingStarted } from '@/components/schedule/getting-started';
  * templates generate. A strict this-week view hid every newly created
  * class until its week arrived.
  */
-function getScheduleWindow(): { start: Date; end: Date } {
+function getScheduleWindow(timeZone: string): { start: Date; end: Date } {
   const now = new Date();
-  const day = now.getUTCDay();
-  const diffToMonday = day === 0 ? -6 : 1 - day;
-  const start = new Date(now);
-  start.setUTCDate(now.getUTCDate() + diffToMonday);
-  start.setUTCHours(0, 0, 0, 0);
-  const end = new Date(now);
-  end.setUTCDate(now.getUTCDate() + 28);
+  const start = startOfLocalWeek(now, timeZone);
+  const end = startOfLocalDay(now, timeZone);
+  end.setUTCDate(end.getUTCDate() + 28);
   end.setUTCHours(23, 59, 59, 999);
   return { start, end };
 }
@@ -36,10 +33,14 @@ function formatTodayLabel(date: Date): string {
 // weeks as cards. Students, Inbox, and Settings live in their own tabs.
 export default async function TeacherHome() {
   const session = await requireTeacherSession();
-  const { start, end } = getScheduleWindow();
+  const teacher = await prisma.teacher.findUniqueOrThrow({
+    where: { id: session.teacherId },
+    select: { bankIban: true, defaultTimezone: true },
+  });
+  const { start, end } = getScheduleWindow(teacher.defaultTimezone);
   const now = new Date();
 
-  const [classes, studioClasses, teacher, roomCount, classCount] = await Promise.all([
+  const [classes, studioClasses, roomCount, classCount] = await Promise.all([
     prisma.class.findMany({
       where: {
         teacherId: session.teacherId,
@@ -63,10 +64,6 @@ export default async function TeacherHome() {
       },
       orderBy: { date: 'asc' },
     }),
-    prisma.teacher.findUniqueOrThrow({
-      where: { id: session.teacherId },
-      select: { bankIban: true },
-    }),
     prisma.teacherRoom.count({ where: { teacherId: session.teacherId, isArchived: false } }),
     prisma.class.count({ where: { teacherId: session.teacherId } }),
   ]);
@@ -82,7 +79,7 @@ export default async function TeacherHome() {
       <div className="flex items-baseline justify-between gap-3 mb-6">
         <div>
           <h1 className="type-display">Schedule</h1>
-          <p className="type-caption mt-1">{formatTodayLabel(now)}</p>
+          <p className="type-caption mt-1">{formatTodayLabel(startOfLocalDay(now, teacher.defaultTimezone))}</p>
         </div>
         <Link href="/class/new" className="type-label text-teal no-underline shrink-0">
           + Add class

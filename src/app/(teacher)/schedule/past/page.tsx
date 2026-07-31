@@ -2,11 +2,19 @@ import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { PageHeader } from '@/components/layout/page-header';
 import { ClassList } from '@/components/schedule/class-list';
+import { startOfLocalDay } from '@/lib/timezone';
 
 export default async function PastClassesPage() {
   const session = await requireTeacherSession();
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
+  const teacher = await prisma.teacher.findUniqueOrThrow({
+    where: { id: session.teacherId },
+    select: { defaultTimezone: true },
+  });
+  // #101. The teacher's calendar day, not UTC's. West of UTC in the local
+  // evening, UTC has already rolled over, so a `setUTCHours(0,0,0,0)` boundary
+  // is *tomorrow* by the teacher's calendar and lists a class they have not
+  // taught yet as past.
+  const today = startOfLocalDay(new Date(), teacher.defaultTimezone);
 
   const [classes, studioClasses] = await Promise.all([
     prisma.class.findMany({
