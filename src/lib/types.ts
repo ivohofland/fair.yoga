@@ -13,9 +13,10 @@
 // The bar for adding a field here: it must be needed to *compute* something
 // on many surfaces. `defaultTimezone` decides which calendar day a teacher is
 // in — a correctness input, not *only* a display value. `firstName` is read
-// by several session-scoped lookups — a profile edit form, an account route,
-// a booking-page greeting — all display-only, none a computation shared
-// across surfaces, so it stayed where it was (#138).
+// by several session-scoped lookups, but each either shows it or copies it —
+// none computes with it — so it stayed where it was (#138). Deliberately not
+// enumerated here: an inventory in a docblock is wrong the moment someone
+// adds a call site, which is how the sentence this replaced went stale.
 export type SessionUser = { sessionId: string; accountId: string } & (
   | { teacherId: string; defaultTimezone: string; studentId: string | null }
   | { teacherId: null; studentId: string }
