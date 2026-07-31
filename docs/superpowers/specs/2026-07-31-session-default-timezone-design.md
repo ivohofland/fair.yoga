@@ -83,7 +83,15 @@ correctness input behind the whole #101/#115 family — and it is wanted by thre
 pages today plus the payments page next (#140).
 
 `firstName` does not qualify, though `validateSession` could carry it just as
-cheaply: two session-teacher sites, both display-only. It stays where it is.
+cheaply. It is read by several session-scoped lookups — a profile edit form, an
+account route that copies it onto a new student row, a booking-page greeting —
+none of which is a computation shared across surfaces. It stays where it is.
+
+An earlier draft of this paragraph said "two sites, both display-only". Both
+halves were wrong: there are at least three, and the account route copies the
+value rather than displaying it. The count is left out deliberately now — a
+census in prose goes stale the moment someone adds a call site, which is
+precisely what had already happened here.
 
 ### 4. Call sites
 
