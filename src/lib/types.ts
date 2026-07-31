@@ -12,9 +12,10 @@
 //
 // The bar for adding a field here: it must be needed to *compute* something
 // on many surfaces. `defaultTimezone` decides which calendar day a teacher is
-// in — a correctness input, not a display value. Display-only fields stay in
-// page queries; `firstName` is fetched by two session-teacher lookups and
-// deliberately did not qualify (#138).
+// in — a correctness input, not a display value. `firstName` is read by two
+// session-scoped lookups — a profile form and a route that copies it onto a
+// new student row — and neither is a computation shared across surfaces, so
+// it stayed where it was, fetched separately by each (#138).
 export type SessionUser = { sessionId: string; accountId: string } & (
   | { teacherId: string; defaultTimezone: string; studentId: string | null }
   | { teacherId: null; studentId: string }

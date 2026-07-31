@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
+import type { SessionUser, TeacherSession } from '../types';
 import {
   SESSION_COOKIE_NAME,
   createSession,
@@ -27,6 +28,16 @@ let dualStudentId: string;
 function hashToken(token: string): string {
   const bytes = sha256(new TextEncoder().encode(token));
   return encodeHexLowerCase(bytes);
+}
+
+/**
+ * Narrows a `SessionUser` to the teacher branch so `defaultTimezone` is
+ * readable. A named assertion rather than an inline `if (!x) throw`, which
+ * sits among the `expect` calls and reads like one — this is narrowing, not
+ * a check the test is making.
+ */
+function assertTeacherSession(user: SessionUser): asserts user is TeacherSession {
+  if (!user.teacherId) throw new Error('expected a teacher session');
 }
 
 beforeAll(async () => {
@@ -144,7 +155,7 @@ describe('validateSession', () => {
     expect(result!.accountId).toBe(teacherAccountId);
     expect(result!.teacherId).toBe(teacherId);
     expect(result!.studentId).toBeNull();
-    if (!result!.teacherId) throw new Error('expected teacherId');
+    assertTeacherSession(result!);
     expect(result!.defaultTimezone).toBe('America/Los_Angeles');
   });
 
@@ -179,7 +190,7 @@ describe('validateSession', () => {
 
     expect(result!.teacherId).toBe(dualTeacherId);
     expect(result!.studentId).toBe(dualStudentId);
-    if (!result!.teacherId) throw new Error('expected teacherId');
+    assertTeacherSession(result!);
     expect(result!.defaultTimezone).toBe('Asia/Kolkata');
   });
 
