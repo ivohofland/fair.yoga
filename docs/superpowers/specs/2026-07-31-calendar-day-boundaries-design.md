@@ -128,9 +128,21 @@ learned that a number in a comment goes stale (`tests/setup/components.ts`,
 
 ## Testing
 
-The whole defect class is invisible from a UTC host, and CI runs in UTC. Every
-test here must therefore pin a **non-UTC** timezone explicitly, or it proves
-nothing.
+**Corrected while planning — this section originally said every test here must
+pin a non-UTC timezone explicitly, "or it proves nothing".** That was written
+without checking, and the repo had already solved it:
+`vitest.config.ts:60` sets `env: { TZ: 'America/New_York' }` at the **root**, so
+all three projects inherit it. Verified in both the `unit` and `components`
+projects, and the #115 bug is directly observable there — a class dated
+`2026-06-12` renders as `11 Jun 2026` under the current code.
+
+So no test below needs timezone plumbing; it inherits a west-of-UTC zone. The
+config's own comment already makes the argument this section was about to
+re-derive, including why *west* specifically (a local read moves a
+midnight-UTC value back exactly one day west of UTC and moves nothing east of
+it, so an eastern zone would leave the assertions vacuous) and that "deleting
+this line fails nothing — it silently makes those assertions tautological
+again".
 
 - **The two page boundaries — unit.** `startOfLocalDay` is already tested; what
   is untested is that the pages call it. The extractable part is the boundary
@@ -165,10 +177,14 @@ nothing.
 
 ## Risks
 
-- **CI cannot catch a regression here.** Every one of these bugs is invisible at
-  `TZ=UTC`, which is what CI runs. The tests must set a zone explicitly, and the
-  mutation step is what proves they did — otherwise this whole change is
-  unguarded against being undone.
+- **The test suite's timezone pin is what makes this change testable at all,
+  and nothing guards the pin.** CI is `ubuntu-latest`, i.e. UTC, where every
+  bug fixed here is invisible; the suite only sees them because
+  `vitest.config.ts:60` pins `America/New_York`. That line's own comment says
+  deleting it "fails nothing" and silently turns the assertions tautological.
+  This change roughly doubles what rides on it. Not a reason to do anything
+  differently here — but if a future change wants to remove that pin, these
+  tests are among the ones it would quietly hollow out.
 - **A required prop on `ClassList` is a breaking change to a shared component.**
   That is the intent — an optional one would let a caller keep the bug — but it
   means any branch in flight that renders `ClassList` will conflict. Only three
