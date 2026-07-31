@@ -8,7 +8,7 @@ import { Select } from '@/components/ui/select';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
-import { formatRoomLocation } from '@/lib/format';
+import { formatRoomLocation, formatDateWithYear } from '@/lib/format';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -481,7 +481,13 @@ export default function CreateClassPage() {
           <div className="py-2 border-b border-border">
             <span className="type-label">Date &amp; time</span>
             <p className="text-base text-ink">
-              {form.date} at {form.startTime} &middot; {form.durationMinutes} min
+              {/* `form.date` is a date-only ISO string ("2026-06-12") from the
+                  <input type="date">; `new Date(...)` on that shape parses as
+                  UTC midnight, which is what formatDateWithYear's UTC
+                  accessors expect. Step 1's validateStep gates `date` as
+                  required before this step is reachable, so it is never ''
+                  here. */}
+              {formatDateWithYear(new Date(form.date))} at {form.startTime} &middot; {form.durationMinutes} min
             </p>
           </div>
 
