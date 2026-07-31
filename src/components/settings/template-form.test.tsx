@@ -78,11 +78,21 @@ describe('TemplateForm', () => {
     const { url, method, body } = await submit();
     expect(url).toBe('/api/class-templates/tpl-1');
     expect(method).toBe('PUT');
-    expect(Object.keys(body).sort()).toEqual([
-      'autoCancelCheck', 'cancelDeadline', 'classType', 'dayOfWeek', 'description',
-      'durationMinutes', 'maxStudents', 'minRate', 'minStudents', 'roomCost',
-      'startTime', 'targetRate', 'teacherRoomId',
-    ]);
+    expect(body).toEqual({
+      teacherRoomId: '11111111-1111-4111-8111-111111111111',
+      classType: 'Vinyasa',
+      description: 'Bring a mat.',
+      dayOfWeek: 2,
+      startTime: '09:30',
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 4,
+      maxStudents: 12,
+      cancelDeadline: 'HOURS_24',
+      autoCancelCheck: 'HOURS_2',
+    });
   });
 
   it('trims classType and description before sending', async () => {

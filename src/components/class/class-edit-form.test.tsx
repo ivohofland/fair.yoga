@@ -47,10 +47,18 @@ describe('ClassEditForm', () => {
 
   it('sends every editable field when settings are unlocked', async () => {
     const body = await saveWith(false);
-    expect(Object.keys(body).sort()).toEqual([
-      'classType', 'date', 'description', 'durationMinutes', 'maxStudents',
-      'minRate', 'minStudents', 'roomCost', 'startTime', 'targetRate',
-    ]);
+    expect(body).toEqual({
+      classType: 'Vinyasa',
+      description: 'Bring a mat.',
+      date: '2026-06-12',
+      startTime: '09:30',
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 4,
+      maxStudents: 12,
+    });
   });
 
   /**
