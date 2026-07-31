@@ -43,6 +43,18 @@ function dynamicText(page: Page) {
   return [page.locator('.type-caption'), page.locator('.type-label')];
 }
 
+// Month/weekday name lists, factored out once both regexes below needed a
+// third variant of them. Spelled out inline six times across two patterns,
+// the abbreviated-vs-full distinction (see DATE_PATTERN's comment) was easy
+// to lose track of — which is exactly how it got lost once already.
+// DATE_SMELL's lists additionally drop "May": it's an ordinary English word,
+// and DATE_SMELL scans real body text, not formatter output.
+const WEEKDAYS = 'Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday';
+const MONTHS_FULL = 'January|February|March|April|May|June|July|August|September|October|November|December';
+const MONTHS_ABBR = 'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec';
+const MONTHS_FULL_NO_MAY = 'January|February|March|April|June|July|August|September|October|November|December';
+const MONTHS_ABBR_NO_MAY = 'Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec';
+
 // The seeded class sits on "Tuesday of next week", so rendered dates drift
 // as real time advances — and even masked date labels drift, because a
 // mask's box follows the text's pixel width. Freeze every rendered date to
@@ -53,24 +65,45 @@ function dynamicText(page: Page) {
 // (formatDateShort — day-first, abbreviated month, no year, no weekday; no
 // screenshotted screen renders this today, but #96 made it one of three
 // primary formatters, so the freezer has to recognize it regardless).
-// Alternatives are ordered most-specific first — weekday-prefixed, then
-// weekday-less-with-year, then bare — so a less-specific alternative can
-// never match only part of a more-specific one and strand a weekday or a
-// year behind. The schedule's "Week of …" week heading (`class-list.tsx`'s
-// local `weekLabel`, untouched by #96) is avoided by the seed date instead,
-// not matched here — see beforeAll.
-const DATE_PATTERN =
-  /(?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday), (?:(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}(?:, \d{4})?|\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))|\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4}|\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/;
+//
+// The two weekday-less alternatives accept *abbreviated* months only, never
+// full names — deliberately, not an oversight: formatDateWithYear and
+// formatDateShort only ever emit abbreviations (`format.ts` keeps the
+// abbreviated `MONTHS` private and separate from the exported `FULL_MONTHS`
+// for exactly this reason). Restricting these two alternatives to
+// abbreviations means a full month name with no weekday is never matched
+// here — which is what specifically protects the schedule's "Week of 4
+// August" week heading (`class-list.tsx`'s local `weekLabel`, untouched by
+// #96): today it's dormant because the seed date always reads "This/Next/
+// Last week", never the "Week of …" fallback (see beforeAll) — but even if
+// that ever changed, the heading must stay *unmatched* here so it stays
+// visible to DATE_SMELL below, not silently frozen away. A trailing `\b`
+// after the abbreviation stops it matching as a bare prefix of a full month
+// word (e.g. "Aug" inside "August"), which would otherwise strand the
+// remainder ("ust") as leftover text instead of declining to match at all.
+//
+// Alternatives are ordered most-specific first — weekday-prefixed (which
+// legitimately accepts both full and abbreviated months — old-format
+// fixtures may still need it), then weekday-less-with-year, then bare — so
+// a less-specific alternative can never match only part of a more-specific
+// one and strand a weekday or a year behind.
+const DATE_PATTERN = new RegExp(
+  `(?:${WEEKDAYS}), (?:(?:${MONTHS_FULL}|${MONTHS_ABBR}) \\d{1,2}(?:, \\d{4})?|\\d{1,2} (?:${MONTHS_FULL}|${MONTHS_ABBR}))` +
+    `|\\d{1,2} (?:${MONTHS_ABBR})\\b \\d{4}` +
+    `|\\d{1,2} (?:${MONTHS_ABBR})\\b`,
+);
 
 // Looser than DATE_PATTERN on purpose: any weekday/month token that
 // survives freezing — a format DATE_PATTERN doesn't know, a "Week of …"
 // header, a late revert — should fail the run, not drift the baseline.
-// ("May" is omitted: it's an ordinary English word.) The day-first
-// alternative mirrors DATE_PATTERN's bare "21 Jul" shape (formatDateShort);
-// without it, a lone day-first date could escape freezing and drift a
-// baseline silently instead of failing the run.
-const DATE_SMELL =
-  /\b(?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|January|February|March|April|June|July|August|September|October|November|December)\b|\b(?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d|\d{1,2} (?:January|February|March|April|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/;
+// The day-first alternative mirrors DATE_PATTERN's bare "21 Jul" shape
+// (formatDateShort); without it, a lone day-first date could escape
+// freezing and drift a baseline silently instead of failing the run.
+const DATE_SMELL = new RegExp(
+  `\\b(?:${WEEKDAYS}|${MONTHS_FULL_NO_MAY})\\b` +
+    `|\\b(?:${MONTHS_ABBR_NO_MAY}) \\d` +
+    `|\\d{1,2} (?:${MONTHS_FULL_NO_MAY}|${MONTHS_ABBR_NO_MAY})`,
+);
 
 // Runs in the browser via page.evaluate (hence the pattern arriving as a
 // source string); returns true if it rewrote anything.
