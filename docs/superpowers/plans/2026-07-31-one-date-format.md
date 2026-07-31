@@ -14,7 +14,7 @@
 - **Day-first, everywhere.** `12 Jun`, never `Jun 12`. The comma after a weekday stays: `Friday, 12 Jun`.
 - **UTC accessors only.** These formatters take `@db.Date` calendar values (midnight UTC). Never `toLocaleDateString` without an explicit `timeZone` — that reads the host zone and renders the previous day west of UTC.
 - **This change alters rendered copy on purpose.** That is the point, and it is why the visual baselines move. It must alter *nothing else* — no layout, no markup, no logic.
-- **`p.paidAt` keeps its current (wrong) output.** It is an instant rendered as a UTC calendar date — filed as **#140**, deliberately not fixed here. `formatDateShort(p.paidAt)` is byte-identical to today's `formatDay(p.paidAt)`. Do not "fix" it in passing; #140 explains why it waits for #138.
+- **`p.paidAt` keeps its current (wrong) output.** It is an instant rendered as a UTC calendar date — filed as **#140**, deliberately not fixed here. `formatDateShort(p.paidAt)` reads the same instant with the same UTC accessors as today's `formatDay(p.paidAt)` — it adds no timezone reinterpretation, so the defect is preserved exactly even though the string flips day-first like every other date. Do not "fix" it in passing; #140 explains why it waits for #138.
 - **Do not touch `vitest.config.ts`.** Its `TZ` pin is what keeps these assertions honest.
 - **Never restart the dev server on `:3000`.**
 - **Never `git add -A` or `git add .`** — `docs/backlog-roadmap.md` is deliberately untracked. Stage by explicit path.
@@ -542,7 +542,7 @@ Replace `<list them>` with the actual list from Step 1 — the commit message is
 
 - [ ] `npx tsc --noEmit` — clean
 - [ ] `npm run lint` — clean
-- [ ] `npx vitest run --project unit` — 432 + 14 = 446 passing (5 from Task 1, 9 from Task 3)
+- [ ] `npx vitest run --project unit` — 432 + 13 = 445 passing (5 from Task 1, 8 from Task 3)
 - [ ] `npx vitest run --project components` — 61 passing, unchanged
 - [ ] `npx playwright test` — 118 passing
 - [ ] `npx vitest run --project integration` — 215 passing (429s are the rate limiter, not this change)

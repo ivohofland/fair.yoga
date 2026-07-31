@@ -46,13 +46,17 @@ function dynamicText(page: Page) {
 // The seeded class sits on "Tuesday of next week", so rendered dates drift
 // as real time advances — and even masked date labels drift, because a
 // mask's box follows the text's pixel width. Freeze every rendered date to
-// one synthetic constant before screenshotting. Covers the three formats
-// the screenshotted screens render: "Tuesday, Jul 21" (formatDayHeader),
-// "Tuesday, July 21, 2026" (formatClassDate), and "Monday, 20 July" (the
-// schedule's today header). The schedule's "Week of …" week heading is
-// avoided by the seed date instead — see beforeAll.
+// one synthetic constant before screenshotting. Covers the two shapes the
+// screenshotted screens render post-#96: "Tuesday, 21 Jul" (formatDayHeader
+// — weekday, day-first, abbreviated month, no year) and "21 Jul 2026"
+// (formatDateWithYear — day-first, abbreviated month, year, *no* weekday).
+// The weekday-prefixed alternatives are tried first so a weekday-less
+// alternative can't match only the tail of a weekday-prefixed date and
+// leave the weekday behind unfrozen. The schedule's "Week of …" week
+// heading (`class-list.tsx`'s local `weekLabel`, untouched by #96) is
+// avoided by the seed date instead, not matched here — see beforeAll.
 const DATE_PATTERN =
-  /(?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday), (?:(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}(?:, \d{4})?|\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December))/;
+  /(?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday), (?:(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}(?:, \d{4})?|\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))|\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4}/;
 
 // Looser than DATE_PATTERN on purpose: any weekday/month token that
 // survives freezing — a format DATE_PATTERN doesn't know, a "Week of …"
