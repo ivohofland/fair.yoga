@@ -20,6 +20,18 @@
 
 ---
 
+> **This plan is now a historical record, not a live spec.** The code
+> fences below are the state at the end of Tasks 1-4, not the final state
+> of the branch. PR review afterward changed several of these files: the
+> two happy-path payload tests became full-value `toEqual` assertions
+> instead of key-set checks, both forms gained hand-written client-side
+> mirrors of two schema refines, and `TemplateFormValues` lost its
+> `export`. The shipped files are authoritative — re-executing this plan
+> reproduces the four tasks, not the reviewed result. This note exists
+> because keeping the fences byte-identical to the shipped files failed
+> four times on this branch; a re-executable plan and a historical record
+> are different artifacts, and this one is now explicitly the latter.
+
 ## File Structure
 
 | File | Change | Task |
