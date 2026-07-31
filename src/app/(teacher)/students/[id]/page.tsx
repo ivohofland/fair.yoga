@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
-import { formatStudentName } from '@/lib/format';
+import { formatStudentName, formatHistoricalDate } from '@/lib/format';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -94,7 +94,16 @@ export default async function StudentDetailPage({
             {showBirthday && student.birthday && (
               <div>
                 <span className="type-label">Birthday</span>
-                <p className="text-base text-ink">{new Date(student.birthday).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}</p>
+                {/*
+                  `timeZone: 'UTC'`, not `formatHistoricalDate`: this field omits
+                  the year on purpose (a birth *year* is a different disclosure
+                  than a birth *date* on a privacy-first page), and
+                  `formatHistoricalDate` always appends one. Adding `timeZone`
+                  fixes the same host-local-shifts-the-day bug as the two class
+                  dates below without picking a formatter for this field, which
+                  is what keeps #96's consolidation decision open.
+                */}
+                <p className="text-base text-ink">{new Date(student.birthday).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', timeZone: 'UTC' })}</p>
               </div>
             )}
             {showAddress && student.address && (
@@ -123,7 +132,7 @@ export default async function StudentDetailPage({
                   <div>
                     <p className="text-base text-ink">{reg.class.classType}</p>
                     <p className="type-caption">
-                      {new Date(reg.class.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      {formatHistoricalDate(reg.class.date)}
                       {' · '}{reg.class.startTime}
                     </p>
                   </div>
@@ -147,7 +156,7 @@ export default async function StudentDetailPage({
               .map((reg) => ({
                 paymentId: reg.payment!.id,
                 classType: reg.class.classType,
-                classDate: new Date(reg.class.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+                classDate: formatHistoricalDate(reg.class.date),
                 amount: Number(reg.payment!.amount),
                 status: reg.payment!.status,
               }))}
