@@ -6,6 +6,19 @@
  * (Teacher.defaultTimezone) — computing deadlines and lifecycle transitions
  * in raw UTC would shift every decision by the UTC offset and drift across
  * DST transitions.
+ *
+ * The rule this module exists to enforce, stated once because the codebase
+ * relies on it everywhere and had never written it down:
+ *
+ *   - A `@db.Date` column is a *calendar date*, stored at midnight UTC. Read
+ *     it with UTC accessors. Never hand it to `toLocaleDateString` without an
+ *     explicit `timeZone` — that reads it in whatever zone the host is in.
+ *   - A `new Date()` is an *instant*. Run it through `startOfLocalDay` (or
+ *     `startOfLocalWeek`) before comparing it against a calendar date.
+ *
+ * Both failures look identical in a UTC host and are invisible in CI, which is
+ * why the suite pins a west-of-UTC zone (`vitest.config.ts`). #101 broke the
+ * second rule in five places; #115 broke the first in three.
  */
 
 import { log } from '@/lib/log';
@@ -75,6 +88,25 @@ export function startOfLocalDay(instant: Date, timeZone: string): Date {
     utc.setUTCHours(0, 0, 0, 0);
     return utc;
   }
+}
+
+/**
+ * UTC-midnight Monday of the week containing `instant`, in `timeZone`.
+ *
+ * Built on `startOfLocalDay` rather than repeating its `Intl` work: the local
+ * calendar day is the only timezone-sensitive part, and once you have it as a
+ * midnight-UTC value the Monday is plain UTC arithmetic on a calendar date —
+ * which is rule one, and correct.
+ *
+ * Monday-first, matching the `dayOfWeek` schema convention (0 = Monday).
+ * `getUTCDay()` is Sunday-first, so Sunday maps back six days rather than
+ * forward one.
+ */
+export function startOfLocalWeek(instant: Date, timeZone: string): Date {
+  const day = startOfLocalDay(instant, timeZone);
+  const jsDay = day.getUTCDay();
+  day.setUTCDate(day.getUTCDate() + (jsDay === 0 ? -6 : 1 - jsDay));
+  return day;
 }
 
 /**

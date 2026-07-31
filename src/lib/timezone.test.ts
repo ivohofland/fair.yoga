@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { classStartInstant, startOfLocalDay } from './timezone';
+import { classStartInstant, startOfLocalDay, startOfLocalWeek } from './timezone';
 import { log } from '@/lib/log';
 
 /**
@@ -122,5 +122,53 @@ describe('classStartInstant', () => {
       expect.objectContaining({ timeZone: 'Not/AZone' }),
       expect.stringContaining('falling back to UTC'),
     );
+  });
+});
+
+/**
+ * #101. The teacher's week, not UTC's. Both the Schedule tab's query window and
+ * the "This week" labels below it derived their Monday from `new Date()` read
+ * with `getUTCDay`, so for a teacher west of UTC in their local evening — when
+ * UTC has already rolled into the next day, and on Sundays into the next week —
+ * the boundary landed a day or a week off.
+ *
+ * These fixtures use `America/Los_Angeles` (UTC-7 in June) and are all
+ * instants where the UTC calendar day and the LA calendar day disagree.
+ */
+describe('startOfLocalWeek', () => {
+  it('returns the Monday of the local week, not the UTC week', () => {
+    // Sunday 20:00 LA = Monday 03:00 UTC. UTC has entered the next week; LA has not.
+    const instant = new Date('2026-06-08T03:00:00.000Z');
+    expect(startOfLocalWeek(instant, 'America/Los_Angeles').toISOString())
+      .toBe('2026-06-01T00:00:00.000Z');
+  });
+
+  it('agrees with UTC when the two calendar days agree', () => {
+    // Wednesday 12:00 UTC = Wednesday 05:00 LA — same calendar day, same week.
+    const instant = new Date('2026-06-10T12:00:00.000Z');
+    expect(startOfLocalWeek(instant, 'America/Los_Angeles').toISOString())
+      .toBe('2026-06-08T00:00:00.000Z');
+  });
+
+  it('treats Monday as the first day of the week', () => {
+    // Monday 09:00 LA — the week starts today, not six days ago.
+    const instant = new Date('2026-06-08T16:00:00.000Z');
+    expect(startOfLocalWeek(instant, 'America/Los_Angeles').toISOString())
+      .toBe('2026-06-08T00:00:00.000Z');
+  });
+
+  it('rolls Sunday back to the Monday six days earlier', () => {
+    // Sunday 09:00 LA. JS getUTCDay() is 0 for Sunday; the schema convention is
+    // Monday-first, so this is the case a naive `1 - day` gets wrong by a week.
+    const instant = new Date('2026-06-14T16:00:00.000Z');
+    expect(startOfLocalWeek(instant, 'America/Los_Angeles').toISOString())
+      .toBe('2026-06-08T00:00:00.000Z');
+  });
+
+  it('works east of UTC too', () => {
+    // Monday 00:30 Amsterdam = Sunday 22:30 UTC. UTC is still last week.
+    const instant = new Date('2026-06-07T22:30:00.000Z');
+    expect(startOfLocalWeek(instant, 'Europe/Amsterdam').toISOString())
+      .toBe('2026-06-08T00:00:00.000Z');
   });
 });
