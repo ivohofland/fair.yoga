@@ -129,9 +129,11 @@ Expected: FAIL. The two `toBe(...)` assertions fail because `defaultTimezone` is
 //
 // The bar for adding a field here: it must be needed to *compute* something
 // on many surfaces. `defaultTimezone` decides which calendar day a teacher is
-// in — a correctness input, not a display value. Display-only fields stay in
-// page queries; `firstName` is fetched by two session-teacher lookups and
-// deliberately did not qualify (#138).
+// in — a correctness input, not *only* a display value. `firstName` is read
+// by several session-scoped lookups, but each either shows it or copies it —
+// none computes with it — so it stayed where it was (#138). Deliberately not
+// enumerated here: an inventory in a docblock is wrong the moment someone
+// adds a call site, which is how the sentence this replaced went stale.
 export type SessionUser = { sessionId: string; accountId: string } & (
   | { teacherId: string; defaultTimezone: string; studentId: string | null }
   | { teacherId: null; studentId: string }
@@ -172,11 +174,17 @@ npx vitest run --project unit src/lib/auth/session.test.ts
 npx tsc --noEmit
 ```
 
-Expected: the session tests pass. `tsc` **fails** at this point, on `src/lib/api-utils.test.ts` — two teacher-branch session fakes now lack a required field. That failure is expected and is fixed in Step 7. If `tsc` reports errors in any file other than `api-utils.test.ts`, stop and report: the plan predicted exactly two break sites and a third means something else constructs a session.
+Expected: the session tests pass. `tsc` **fails** at this point, on `src/lib/api-utils.test.ts` — four teacher-branch session fakes now lack a required field. That failure is expected and is fixed in Step 7.
+
+The signal to stop and report is a **file** the plan did not name, not a count within `api-utils.test.ts`. Report the count if it differs from four, but keep going: a differing count means this plan miscounted that file, whereas an error in a *different* file means something else constructs a session and the plan's model is wrong.
 
 - [ ] **Step 7: Fix the two session fakes the compiler found**
 
-`src/lib/api-utils.test.ts` has three hand-built session objects. The two with `teacherId: 'teacher-1'` (around `:139` and `:184`) each need the field; the one with `teacherId: null` must **not** get it.
+`src/lib/api-utils.test.ts` has **six** hand-built session objects, spread across four `describe` blocks — `isErrorResponse`, `requireSession`, `requireTeacher` and `requireStudent`. The last two hold **two each**, which is what makes a quick scan of the file undercount.
+
+The **four** with `teacherId: 'teacher-1'` each need the field. The **two** with `teacherId: null` must **not** get it — adding it there would not compile, which is the union doing its job.
+
+Do not trust these line numbers over the file: find them by their `teacherId` value.
 
 Add to both teacher-branch objects:
 

@@ -62,9 +62,17 @@ inherits it and **no consumer null-checks**.
 **Required, not optional.** An optional field would let a construction site
 silently omit it and a consumer silently read `undefined` into a timezone
 argument. Required means the compiler enumerates every site instead. There are
-exactly two that break, both teacher-branch fakes in `src/lib/api-utils.test.ts`;
-the student-branch fake and `src/lib/auth/account.ts:52` (which returns the
-student branch) are unaffected.
+**six** hand-built session literals in `src/lib/api-utils.test.ts`, of which the
+**four** teacher-branch ones break and the **two** student-branch ones do not.
+`src/lib/auth/account.ts:52` is unaffected for a different reason: it returns a
+`ResolvedAccount`, a looser pre-session type, not a `SessionUser` at all.
+
+An earlier draft of this paragraph said "exactly two that break, both teacher-branch
+fakes... the student-branch fake". Every number in it was wrong. The cause is worth
+recording because it recurred: the sweep behind it ran
+`grep -n -A6 "sessionId:" … | head -24`, whose own flag truncated after the first
+three literals, and the truncated output was written down as a census. **A grep with
+a `head` limit is not a count.**
 
 **The name stays `defaultTimezone`,** matching the column. A second name for one
 value is how the drift in #96 started.
@@ -160,8 +168,9 @@ because a future reader will assume the problem exists.
   Use a timezone other than the schema default (`Europe/Amsterdam`) in at least
   one fixture, so an implementation that hard-codes the default rather than
   reading the column fails.
-- **`src/lib/api-utils.test.ts`**'s two teacher-branch fakes gain the field. They
-  will fail to compile until they do, which is the mechanism working.
+- **`src/lib/api-utils.test.ts`**'s four teacher-branch fakes gain the field; its
+  two student-branch fakes must not. They will fail to compile until they do,
+  which is the mechanism working.
 - **The three pages have no unit seam** — `vitest.config.ts` scopes its projects
   to `src/**/*.test.ts` and `src/components/**/*.test.tsx`, so nothing matches
   `src/app/**`. That gap is **#143** and is not in scope here. Their correctness
@@ -185,7 +194,7 @@ because a future reader will assume the problem exists.
 - **`SessionUser` is depended on by every authenticated surface.** This is the
   risk PR #137's spec named when it deferred the work, and it has not gone away
   — it is only bounded. Making the field required converts it from a runtime
-  risk into a compile-time one, and the two break sites are both tests.
+  risk into a compile-time one, and all four break sites are tests.
 - **The row-teacher joins are the trap.** Twenty-five call sites use a
   superficially identical `select: { defaultTimezone: true }` and must not be
   touched. A reviewer skimming for "duplication" will find them. §5 exists to be

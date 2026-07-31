@@ -159,6 +159,28 @@ describe('validateSession', () => {
     expect(result!.defaultTimezone).toBe('America/Los_Angeles');
   });
 
+  /**
+   * Pins the teacher branch's key set. The bar for what may live on
+   * `SessionUser` (see its docblock in `src/lib/types.ts`) is prose, and prose
+   * is not enforced — this makes adding a field show up as a diff to an
+   * explicit list instead. If this fails, read that bar before updating the
+   * list: the question is whether the new field *computes* something on many
+   * surfaces, or is merely cheap to carry.
+   */
+  it('the teacher branch carries exactly these keys', async () => {
+    const token = await createSession(db, teacherAccountId);
+
+    const result = await validateSession(db, token);
+
+    expect(Object.keys(result!).sort()).toEqual([
+      'accountId',
+      'defaultTimezone',
+      'sessionId',
+      'studentId',
+      'teacherId',
+    ]);
+  });
+
   it('resolves a student-only account: studentId set, teacherId null', async () => {
     const token = await createSession(db, studentAccountId);
 
@@ -201,12 +223,15 @@ describe('validateSession', () => {
       data: { deletedAt: new Date() },
     });
 
-    const result = await validateSession(db, token);
+    try {
+      const result = await validateSession(db, token);
 
-    expect(result).not.toBeNull();
-    expect(result!.teacherId).toBe(dualTeacherId);
-    expect(result!.studentId).toBeNull();
-    await db.student.update({ where: { id: dualStudentId }, data: { deletedAt: null } });
+      expect(result).not.toBeNull();
+      expect(result!.teacherId).toBe(dualTeacherId);
+      expect(result!.studentId).toBeNull();
+    } finally {
+      await db.student.update({ where: { id: dualStudentId }, data: { deletedAt: null } });
+    }
   });
 
   /**
@@ -223,24 +248,30 @@ describe('validateSession', () => {
       data: { deletedAt: new Date() },
     });
 
-    const result = await validateSession(db, token);
+    try {
+      const result = await validateSession(db, token);
 
-    expect(result).not.toBeNull();
-    expect(result!.teacherId).toBeNull();
-    expect(result!.studentId).toBe(dualStudentId);
-    expect(result).not.toHaveProperty('defaultTimezone');
-    await db.teacher.update({ where: { id: dualTeacherId }, data: { deletedAt: null } });
+      expect(result).not.toBeNull();
+      expect(result!.teacherId).toBeNull();
+      expect(result!.studentId).toBe(dualStudentId);
+      expect(result).not.toHaveProperty('defaultTimezone');
+    } finally {
+      await db.teacher.update({ where: { id: dualTeacherId }, data: { deletedAt: null } });
+    }
   });
 
   it('kills the session when every profile is soft-deleted', async () => {
     const token = await createSession(db, teacherAccountId);
     await db.teacher.update({ where: { id: teacherId }, data: { deletedAt: new Date() } });
 
-    const result = await validateSession(db, token);
+    try {
+      const result = await validateSession(db, token);
 
-    expect(result).toBeNull();
-    expect(await db.session.findUnique({ where: { id: hashToken(token) } })).toBeNull();
-    await db.teacher.update({ where: { id: teacherId }, data: { deletedAt: null } });
+      expect(result).toBeNull();
+      expect(await db.session.findUnique({ where: { id: hashToken(token) } })).toBeNull();
+    } finally {
+      await db.teacher.update({ where: { id: teacherId }, data: { deletedAt: null } });
+    }
   });
 
   it('invalidates a session whose account has no profiles left', async () => {

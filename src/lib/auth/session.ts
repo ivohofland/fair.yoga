@@ -34,6 +34,20 @@ export async function createSession(
   return token;
 }
 
+/**
+ * Resolves a session token to its account's live profiles, on every
+ * authenticated request.
+ *
+ * **This function is deliberately uncached, and `SessionUser`'s contract
+ * depends on that.** It carries `defaultTimezone` (see `src/lib/types.ts`),
+ * which pages use to decide which calendar day a teacher is in — so a teacher
+ * who edits their timezone sees the change on their next request, with nothing
+ * to invalidate. Adding a cache here is a plausible optimisation (this is a
+ * database round trip per authenticated request) but it would silently change
+ * the freshness guarantee of every field on the teacher branch, not just the
+ * performance. The type gives no signal if that happens; this comment is the
+ * signal. Invalidate on teacher write, or leave it uncached.
+ */
 export async function validateSession(
   db: PrismaClient,
   token: string
