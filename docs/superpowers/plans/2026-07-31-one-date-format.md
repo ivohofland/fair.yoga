@@ -15,7 +15,7 @@
 - **UTC accessors only.** These formatters take `@db.Date` calendar values (midnight UTC). Never `toLocaleDateString` without an explicit `timeZone` — that reads the host zone and renders the previous day west of UTC.
 - **This change alters rendered copy on purpose.** That is the point, and it is why the visual baselines move. It must alter *nothing else* — no layout, no markup, no logic.
 - **`p.paidAt` keeps its current (wrong) output.** It is an instant rendered as a UTC calendar date — filed as **#140**, deliberately not fixed here. `formatDateShort(p.paidAt)` reads the same instant with the same UTC accessors as today's `formatDay(p.paidAt)` — it adds no timezone reinterpretation, so the defect is preserved exactly even though the string flips day-first like every other date. Do not "fix" it in passing; #140 explains why it waits for #138.
-- **Do not touch `vitest.config.ts`.** Its `TZ` pin is what keeps these assertions honest.
+- **Do not change `vitest.config.ts`'s `TZ` pin.** It is what keeps these assertions honest; correcting a stale comment elsewhere in the file is fine, the pin itself must not move.
 - **Never restart the dev server on `:3000`.**
 - **Never `git add -A` or `git add .`** — `docs/backlog-roadmap.md` is deliberately untracked. Stage by explicit path.
 
@@ -302,7 +302,7 @@ The two detail pages lose their weekday. That is the design decision from the sp
 
 `:96` and `:127` take `p.registration.class.date`, a `@db.Date`. Correct.
 
-**`:128` takes `p.paidAt`, which is a `DateTime` — an instant, not a calendar date.** Rendering it with UTC accessors shows the UTC day rather than the teacher's, so a payment marked paid at 18:00 Pacific on the 12th displays the 13th. That is **#140**, filed and deliberately out of scope here: `formatDateShort(p.paidAt)` is byte-identical to today's `formatDay(p.paidAt)`, so this change preserves the behaviour exactly rather than half-fixing it inside a refactor.
+**`:128` takes `p.paidAt`, which is a `DateTime` — an instant, not a calendar date.** Rendering it with UTC accessors shows the UTC day rather than the teacher's, so a payment marked paid at 18:00 Pacific on the 12th displays the 13th. That is **#140**, filed and deliberately out of scope here: `formatDateShort(p.paidAt)` reads that same instant with the same UTC accessors as today's `formatDay(p.paidAt)`, so the defect is preserved exactly — even though the rendered string still flips day-first like every other date on this branch. Do not "fix" it in passing.
 
 Add a brief comment at `:128` naming #140, so the next reader does not think it was missed:
 
@@ -566,8 +566,8 @@ Replace `<list them>` with the actual list from Step 1 — the commit message is
 - [ ] `grep -rn "formatHistoricalDate" src/` — **no matches**
 - [ ] `grep -rn "FULL_MONTHS" src/` — declared **once**, in `format.ts`
 - [ ] `git status --short` — only `docs/backlog-roadmap.md` untracked
-- [ ] `vitest.config.ts` untouched
-- [ ] `p.paidAt` renders exactly as before, with the #140 comment beside it
+- [ ] `vitest.config.ts`'s `TZ` pin untouched (comment corrections are fine)
+- [ ] `p.paidAt`'s #140 defect (UTC day, not the teacher's) is preserved exactly, with the #140 comment beside it — the rendered string still flips day-first like every other date
 - [ ] `class-list.tsx`'s `weekLabel` still local, its string unchanged
 - [ ] The design brief's dates section reads as a rule, not a changelog
 - [ ] Task 4's commit message names the screens that moved
