@@ -25,14 +25,14 @@ function getScheduleWindow(timeZone: string): { start: Date; end: Date } {
 // weeks as cards. Students, Inbox, and Settings live in their own tabs.
 export default async function TeacherHome() {
   const session = await requireTeacherSession();
-  const teacher = await prisma.teacher.findUniqueOrThrow({
-    where: { id: session.teacherId },
-    select: { bankIban: true },
-  });
   const { start, end } = getScheduleWindow(session.defaultTimezone);
   const now = new Date();
 
-  const [classes, studioClasses, roomCount, classCount] = await Promise.all([
+  const [teacher, classes, studioClasses, roomCount, classCount] = await Promise.all([
+    prisma.teacher.findUniqueOrThrow({
+      where: { id: session.teacherId },
+      select: { bankIban: true },
+    }),
     prisma.class.findMany({
       where: {
         teacherId: session.teacherId,
