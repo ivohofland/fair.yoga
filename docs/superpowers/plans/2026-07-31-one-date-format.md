@@ -482,6 +482,22 @@ git commit -m "test: cover format.ts's three remaining exports (#96)"
 
 **This task exists as its own commit because a regenerated PNG is a diff nobody can read.** Isolating it means a reviewer can confirm the screens that moved are exactly the ones the code change predicts, and that nothing else came along.
 
+> **Correction, recorded after Task 4 ran (not rewriting the prediction above):**
+> the prediction of 6 moved PNGs (`schedule`, `public-page`, `class-detail-open` ×
+> 2 projects) was wrong. Measured result: **zero baselines moved** —
+> `--update-snapshots` rewrote 0 bytes across all 12. Every date this suite
+> recognizes is rewritten to one synthetic constant (`'Someday, Mmm 0'`) before
+> the screenshot is taken, regardless of which formatter or shape produced it,
+> and two of the three predicted screens additionally mask the date region
+> outright — so a baseline here never contains a real rendered date format, and
+> no date-format change can move a pixel. The task's actual, load-bearing
+> deliverable turned out to be a harness fix, not a PNG diff: the freeze
+> regex (`DATE_PATTERN` in `tests/e2e/visual.spec.ts`) predated #96's date
+> shapes, so without fixing it first the visual suite could not complete a
+> single run on this branch — it aborted before any screenshot, on every
+> screen that rendered a date. See `task-4-report.md` for the full
+> before/after measurement.
+
 - [ ] **Step 1: See which baselines actually fail**
 
 ```bash

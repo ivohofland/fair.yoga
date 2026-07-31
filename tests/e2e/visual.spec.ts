@@ -46,24 +46,31 @@ function dynamicText(page: Page) {
 // The seeded class sits on "Tuesday of next week", so rendered dates drift
 // as real time advances — and even masked date labels drift, because a
 // mask's box follows the text's pixel width. Freeze every rendered date to
-// one synthetic constant before screenshotting. Covers the two shapes the
-// screenshotted screens render post-#96: "Tuesday, 21 Jul" (formatDayHeader
-// — weekday, day-first, abbreviated month, no year) and "21 Jul 2026"
-// (formatDateWithYear — day-first, abbreviated month, year, *no* weekday).
-// The weekday-prefixed alternatives are tried first so a weekday-less
-// alternative can't match only the tail of a weekday-prefixed date and
-// leave the weekday behind unfrozen. The schedule's "Week of …" week
-// heading (`class-list.tsx`'s local `weekLabel`, untouched by #96) is
-// avoided by the seed date instead, not matched here — see beforeAll.
+// one synthetic constant before screenshotting. Covers the three shapes
+// #96 renders across the app: "Tuesday, 21 Jul" (formatDayHeader — weekday,
+// day-first, abbreviated month, no year), "21 Jul 2026" (formatDateWithYear
+// — day-first, abbreviated month, year, *no* weekday), and bare "21 Jul"
+// (formatDateShort — day-first, abbreviated month, no year, no weekday; no
+// screenshotted screen renders this today, but #96 made it one of three
+// primary formatters, so the freezer has to recognize it regardless).
+// Alternatives are ordered most-specific first — weekday-prefixed, then
+// weekday-less-with-year, then bare — so a less-specific alternative can
+// never match only part of a more-specific one and strand a weekday or a
+// year behind. The schedule's "Week of …" week heading (`class-list.tsx`'s
+// local `weekLabel`, untouched by #96) is avoided by the seed date instead,
+// not matched here — see beforeAll.
 const DATE_PATTERN =
-  /(?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday), (?:(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}(?:, \d{4})?|\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))|\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4}/;
+  /(?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday), (?:(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}(?:, \d{4})?|\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))|\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4}|\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/;
 
 // Looser than DATE_PATTERN on purpose: any weekday/month token that
 // survives freezing — a format DATE_PATTERN doesn't know, a "Week of …"
 // header, a late revert — should fail the run, not drift the baseline.
-// ("May" is omitted: it's an ordinary English word.)
+// ("May" is omitted: it's an ordinary English word.) The day-first
+// alternative mirrors DATE_PATTERN's bare "21 Jul" shape (formatDateShort);
+// without it, a lone day-first date could escape freezing and drift a
+// baseline silently instead of failing the run.
 const DATE_SMELL =
-  /\b(?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|January|February|March|April|June|July|August|September|October|November|December)\b|\b(?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d/;
+  /\b(?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|January|February|March|April|June|July|August|September|October|November|December)\b|\b(?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d|\d{1,2} (?:January|February|March|April|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/;
 
 // Runs in the browser via page.evaluate (hence the pattern arriving as a
 // source string); returns true if it rewrote anything.
