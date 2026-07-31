@@ -1,5 +1,14 @@
-import { describe, it, expect } from 'vitest';
-import { formatDayHeader, formatDateWithYear, formatDateShort, formatMonthLabel, paymentStateText } from './format';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  formatDayHeader,
+  formatDateWithYear,
+  formatDateShort,
+  formatMonthLabel,
+  paymentStateText,
+  formatRoomLocation,
+  formatStudentName,
+  timeAgo,
+} from './format';
 
 /**
  * `formatDayHeader` had no tests while it was a private copy inside one
@@ -172,5 +181,74 @@ describe('paymentStateText', () => {
   it('renders pending as unstyled unpaid', () => {
     // No colour class: unpaid is the resting state, not an alarm.
     expect(paymentStateText('pending')).toEqual({ label: '○ Unpaid', className: '' });
+  });
+});
+
+describe('formatRoomLocation', () => {
+  it('joins room and venue when both are present', () => {
+    expect(formatRoomLocation('Main Studio', 'De Yogaschool')).toBe('Main Studio at De Yogaschool');
+  });
+
+  it('falls back to the venue alone when the room is unnamed', () => {
+    // Rooms are optional-name: a one-room venue has nothing to disambiguate.
+    expect(formatRoomLocation('', 'De Yogaschool')).toBe('De Yogaschool');
+  });
+});
+
+/**
+ * The privacy default. `StudentPrivacy` is per-teacher and defaults to maximum
+ * privacy, so `shareFullName` is false unless a student has opted in with that
+ * specific teacher — which makes the *default* branch the one that protects
+ * someone, and the one worth pinning hardest.
+ */
+describe('formatStudentName', () => {
+  it('abbreviates the surname by default', () => {
+    expect(formatStudentName('Ana', 'de Vries')).toBe('Ana d.');
+  });
+
+  it('gives the full name only when sharing is on', () => {
+    expect(formatStudentName('Ana', 'de Vries', true)).toBe('Ana de Vries');
+  });
+
+  it('handles a missing surname on both branches', () => {
+    expect(formatStudentName('Ana', '')).toBe('Ana');
+    expect(formatStudentName('Ana', '', true)).toBe('Ana');
+  });
+});
+
+/**
+ * `timeAgo` reads elapsed milliseconds, never a calendar field, so it is
+ * correct in any timezone — unlike everything else in this file. The clock is
+ * faked so the assertions are about the thresholds rather than about how long
+ * the suite took to reach them.
+ */
+describe('timeAgo', () => {
+  const NOW = new Date('2026-06-12T12:00:00.000Z');
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('says "just now" under a minute', () => {
+    expect(timeAgo(new Date(NOW.getTime() - 30_000))).toBe('just now');
+  });
+
+  it('counts whole minutes, then whole hours, then whole days', () => {
+    expect(timeAgo(new Date(NOW.getTime() - 5 * 60_000))).toBe('5m ago');
+    expect(timeAgo(new Date(NOW.getTime() - 3 * 3_600_000))).toBe('3h ago');
+    expect(timeAgo(new Date(NOW.getTime() - 2 * 86_400_000))).toBe('2d ago');
+  });
+
+  it('rounds down at each boundary', () => {
+    // 59 minutes is still minutes; 60 becomes an hour.
+    expect(timeAgo(new Date(NOW.getTime() - 59 * 60_000))).toBe('59m ago');
+    expect(timeAgo(new Date(NOW.getTime() - 60 * 60_000))).toBe('1h ago');
+    expect(timeAgo(new Date(NOW.getTime() - 23 * 3_600_000))).toBe('23h ago');
+    expect(timeAgo(new Date(NOW.getTime() - 24 * 3_600_000))).toBe('1d ago');
   });
 });
