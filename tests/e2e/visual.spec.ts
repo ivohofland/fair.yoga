@@ -71,24 +71,40 @@ const MONTHS_ABBR_NO_MAY = 'Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec';
 // formatDateShort only ever emit abbreviations (`format.ts` keeps the
 // abbreviated `MONTHS` private and separate from the exported `FULL_MONTHS`
 // for exactly this reason). Restricting these two alternatives to
-// abbreviations means a full month name with no weekday is never matched
-// here — which is what specifically protects the schedule's "Week of 4
-// August" week heading (`class-list.tsx`'s local `weekLabel`, untouched by
-// #96): today it's dormant because the seed date always reads "This/Next/
-// Last week", never the "Week of …" fallback (see beforeAll) — but even if
-// that ever changed, the heading must stay *unmatched* here so it stays
-// visible to DATE_SMELL below, not silently frozen away. A trailing `\b`
-// after the abbreviation stops it matching as a bare prefix of a full month
-// word (e.g. "Aug" inside "August"), which would otherwise strand the
-// remainder ("ust") as leftover text instead of declining to match at all.
+// abbreviations is what protects the schedule's "Week of 4 August" week
+// heading (`class-list.tsx`'s local `weekLabel`, untouched by #96) in eleven
+// months of twelve — today it's dormant because the seed date always reads
+// "This/Next/Last week", never the "Week of …" fallback (see beforeAll) —
+// but even if that ever changed, the heading must stay *unmatched* here so
+// it stays visible to DATE_SMELL below, not silently frozen away.
+//
+// The exception is May: `MONTHS_ABBR` includes "May" because it is also its
+// own three-letter abbreviation, so a genuine "Week of 4 May" heading *is*
+// matched and frozen here ("Someday, Mmm 0"), unprotected. Do not "fix" this
+// by excluding May from the weekday-less alternatives — a real
+// `formatDateShort` output of "12 May" would then escape freezing, and
+// DATE_SMELL drops "May" too (see above), so it would drift a baseline
+// silently instead of failing the run. That trade — one month's week
+// heading goes unprotected rather than a real date escaping — is deliberate.
+//
+// A trailing `\b` after the abbreviation stops it matching as a bare prefix
+// of a full month word (e.g. "Aug" inside "August"), which would otherwise
+// strand the remainder ("ust") as leftover text instead of declining to
+// match at all.
 //
 // Alternatives are ordered most-specific first — weekday-prefixed (which
-// legitimately accepts both full and abbreviated months — old-format
-// fixtures may still need it), then weekday-less-with-year, then bare — so
-// a less-specific alternative can never match only part of a more-specific
-// one and strand a weekday or a year behind.
+// legitimately accepts both full and abbreviated months, and both a
+// month-first and a day-first shape — old-format fixtures may still need
+// the former), then weekday-less-with-year, then bare. That ordering
+// guarantees the weekday is never stranded: once the weekday-prefixed
+// alternative starts consuming a match, nothing hands off mid-string to a
+// less-specific one. It does not, by itself, guarantee a year is never
+// stranded — the weekday-prefixed alternative's day-first branch needs its
+// own optional year tail, matching its month-first sibling's, or
+// "Friday, 12 Jun 2026" matches only "Friday, 12 Jun" and leaves " 2026"
+// stranded behind it.
 const DATE_PATTERN = new RegExp(
-  `(?:${WEEKDAYS}), (?:(?:${MONTHS_FULL}|${MONTHS_ABBR}) \\d{1,2}(?:, \\d{4})?|\\d{1,2} (?:${MONTHS_FULL}|${MONTHS_ABBR}))` +
+  `(?:${WEEKDAYS}), (?:(?:${MONTHS_FULL}|${MONTHS_ABBR}) \\d{1,2}(?:, \\d{4})?|\\d{1,2} (?:${MONTHS_FULL}|${MONTHS_ABBR})(?: \\d{4})?)` +
     `|\\d{1,2} (?:${MONTHS_ABBR})\\b \\d{4}` +
     `|\\d{1,2} (?:${MONTHS_ABBR})\\b`,
 );
