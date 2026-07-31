@@ -189,7 +189,10 @@ describe('ClassEditForm', () => {
    * for both, and this test only ever observes `JSON.parse(body)`. The route
    * itself would accept either — it filters on `data[f] !== undefined`
    * (class-lifecycle.ts:457) — so the two are equivalent over the wire, and no
-   * test here (or possible from outside the component) tells them apart.
+   * test here tells them apart. Not that none could: a spy on
+   * `JSON.stringify` sees the object before it is serialized, where the two
+   * differ. It would be testing the mechanism rather than what is sent, which
+   * is why this file does not.
    */
   it('omits the economic fields when settings are locked', async () => {
     const body = await saveWith(true);
@@ -814,7 +817,7 @@ npx vitest run --project components
 npx playwright test
 ```
 
-Expected: unit unchanged, components up by 9 (3 + 4 + 2), e2e 118 passing. The e2e matters here: `teacher-journey.spec.ts` and `studio-classes.spec.ts` drive these forms through the browser, and they are the only coverage of the create path end to end.
+Expected: unit unchanged, components up by 9 (3 + 4 + 2), e2e 118 passing. The e2e matters here: `recurring.spec.ts` (`'creates a template through settings'`) and `class-edit.spec.ts` drive these forms through the browser, and they are the only coverage of the create path end to end.
 
 Do NOT run `npx vitest run --project integration` — its `signup-api` tests are rate-limited per IP (3/hour and 5/hour) and are routinely exhausted. If you run it by accident and see `expected 429 to be 201`, that is the limiter, not this change; report it and do not re-run to confirm.
 
@@ -835,8 +838,8 @@ git commit -m "fix: tighten TemplateForm's two schema enums, dropdown as source 
 - [ ] `npx vitest run --project components` — 48 + 9 = 57 passing
 - [ ] `npx playwright test` — 118 passing
 - [ ] `git status --short` — only `docs/backlog-roadmap.md` untracked; **`prisma/` unchanged**
-- [ ] No `as` assertion added — `git diff main...HEAD | grep -n ' as '` reviewed (`as const` is expected; `as SomeType` is not)
-- [ ] Every mutation in Steps 2/6/7 was **observed**, with its `git diff` confirmed first
+- [ ] Review the diff's `as` assertions — none exists to silence a type error. `as const` is fine, and so are the narrowing casts on untyped `fetch` mock args in the test files (`options as { body: string }` and similar); that is pre-existing repo convention, not new here.
+- [ ] Every mutation step was **observed**, with its `git diff` confirmed first: Task 2 Step 6, Task 3 Step 7, Task 4 Step 6. (Step 2 in each task is a characterization run, not a mutation — it isn't part of this check.)
 - [ ] Neither form's markup, labels, or field order changed
 - [ ] `src/app/(teacher)/settings/recurring/[id]/page.tsx` needed no edit
 - [ ] The `// Mirrors updateClassSchema exactly` comment is gone from `class-edit-form.tsx`
