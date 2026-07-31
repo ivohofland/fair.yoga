@@ -209,6 +209,29 @@ describe('validateSession', () => {
     await db.student.update({ where: { id: dualStudentId }, data: { deletedAt: null } });
   });
 
+  /**
+   * The soft-deleted-student case above is the trivially-safe path: the
+   * student branch simply has no `defaultTimezone` to leak. This is the case
+   * the field actually creates — a real teacher row with a real timezone
+   * exists, and the session must degrade to the student branch without
+   * carrying it along.
+   */
+  it('resolves only live profiles: a soft-deleted teacher side disappears, and defaultTimezone goes with it', async () => {
+    const token = await createSession(db, dualAccountId);
+    await db.teacher.update({
+      where: { id: dualTeacherId },
+      data: { deletedAt: new Date() },
+    });
+
+    const result = await validateSession(db, token);
+
+    expect(result).not.toBeNull();
+    expect(result!.teacherId).toBeNull();
+    expect(result!.studentId).toBe(dualStudentId);
+    expect(result).not.toHaveProperty('defaultTimezone');
+    await db.teacher.update({ where: { id: dualTeacherId }, data: { deletedAt: null } });
+  });
+
   it('kills the session when every profile is soft-deleted', async () => {
     const token = await createSession(db, teacherAccountId);
     await db.teacher.update({ where: { id: teacherId }, data: { deletedAt: new Date() } });
