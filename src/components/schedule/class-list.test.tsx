@@ -181,10 +181,16 @@ describe('ClassList payment rollup', () => {
 });
 
 /**
- * #101. Both of these were wrong by the UTC offset, and both are invisible from
- * a UTC host — the suite sees them only because `vitest.config.ts` pins a
- * west-of-UTC zone. `America/Los_Angeles` is used here rather than the pinned
- * zone so the assertion does not silently change meaning if that pin ever moves.
+ * #101. Both of these were wrong by the UTC offset. Unlike `format.ts`'s
+ * `formatDayHeader` / `formatHistoricalDate` — which is what `vitest.config.ts`'s
+ * `TZ` pin exists to protect, because they read local accessors off the host
+ * clock — `classStartInstant` and `startOfLocalWeek` take `timeZone` as an
+ * explicit argument and resolve it via `Intl.DateTimeFormat({ timeZone })`.
+ * They never consult `process.env.TZ`, so these two tests pin the teacher's-
+ * timezone behaviour regardless of the host zone; the pin is not what makes
+ * them meaningful. `America/Los_Angeles` is used here rather than a zone that
+ * happens to match the host so the assertion stays meaningful independent of
+ * whatever zone the suite runs under.
  */
 describe('ClassList timezone handling', () => {
   beforeEach(() => {
@@ -210,7 +216,7 @@ describe('ClassList timezone handling', () => {
         dimPast
       />,
     );
-    // The card is the `<Link href="/class/{id}">` (class-list.tsx:95-97); `past`
+    // The card is the `<Link href="/class/{id}">` (class-list.tsx:96-99); `past`
     // adds `opacity-70` to its className. Addressed by role+name because that is
     // how the rest of this file reaches rendered output — no test id exists and
     // none should be added for a test.
