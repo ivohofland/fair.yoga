@@ -69,6 +69,28 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
   }
 
   async function handleSave() {
+    // Mirrors two of updateClassSchema's refines (schemas.ts) so a teacher
+    // sees the message immediately instead of after a round trip. This
+    // restates rules that live in schemas.ts — the exact defect class this
+    // PR exists to remove — and the pins above cannot help: they compare key
+    // sets, not predicates, so a refine added or changed there fails no
+    // build here. The tests in class-edit-form.test.tsx are the only thing
+    // holding this mirror true.
+    //
+    // Only checked while unlocked: locked economics are stripped from the
+    // payload below and so are never sent for the schema to validate either,
+    // whatever their stored values are.
+    if (!settingsLocked) {
+      if (form.minStudents > form.maxStudents) {
+        setError('Min students cannot exceed max students');
+        return;
+      }
+      if (form.minRate > form.targetRate) {
+        setError('Min rate cannot exceed target rate');
+        return;
+      }
+    }
+
     setSaving(true);
     setSaved(false);
     setError('');

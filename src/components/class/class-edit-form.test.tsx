@@ -101,4 +101,26 @@ describe('ClassEditForm', () => {
     const body = JSON.parse((options as { body: string }).body) as Record<string, unknown>;
     expect(body.description).toBeNull();
   });
+
+  /**
+   * `updateClassSchema`'s minRate/targetRate refine (schemas.ts) is mirrored
+   * by hand in `handleSave`, because a client form cannot value-import zod
+   * without shipping it to the browser. The pins in the source file cannot
+   * guard that mirror — they compare key sets, not predicates — so this test
+   * is the only thing that would notice it drifting from the schema.
+   */
+  it('rejects a min rate above target rate before any request is sent', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <ClassEditForm
+        classId="cls-1"
+        settingsLocked={false}
+        initial={{ ...initial, minRate: 30, targetRate: 25 }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await screen.findByText(/min rate cannot exceed target rate/i)).toBeInTheDocument();
+  });
 });

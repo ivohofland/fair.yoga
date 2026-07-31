@@ -180,4 +180,32 @@ describe('TemplateForm', () => {
     const values = Array.from(select.querySelectorAll('option')).map((o) => o.getAttribute('value'));
     expect(values.sort()).toEqual(['HOURS_1', 'HOURS_2', 'HOURS_4']);
   });
+
+  /**
+   * `createClassTemplateSchema`'s and `updateClassTemplateSchema`'s
+   * minRate/targetRate refine (schemas.ts) is mirrored by hand in
+   * `handleSubmit`, because a client form cannot value-import zod without
+   * shipping it to the browser. The pins in the source file cannot guard
+   * that mirror — they compare key sets, not predicates — so this test is
+   * the only thing that would notice it drifting from the schema.
+   *
+   * The room fetch fires on mount, so the fetch-not-called assertion checks
+   * the call count did not increase across the click rather than that fetch
+   * was never called at all.
+   */
+  it('rejects a min rate above target rate before any request is sent', async () => {
+    stubFetch();
+    render(
+      <TemplateForm
+        mode="edit"
+        templateId="tpl-1"
+        initial={{ ...initial, minRate: 30, targetRate: 25 }}
+      />,
+    );
+    const button = await screen.findByRole('button', { name: /save|create/i });
+    const callsBeforeSubmit = fetchMock.mock.calls.length;
+    fireEvent.click(button);
+    expect(fetchMock.mock.calls.length).toBe(callsBeforeSubmit);
+    expect(await screen.findByText(/min rate cannot exceed target rate/i)).toBeInTheDocument();
+  });
 });
