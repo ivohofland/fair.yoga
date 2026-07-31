@@ -76,13 +76,13 @@ describe('OutstandingPaymentRow', () => {
           {...base}
           paymentId="pay-morning"
           classId="cls-morning"
-          classContext="Vinyasa · Jun 12 · 09:30"
+          classContext="Vinyasa · 12 Jun · 09:30"
         />
         <OutstandingPaymentRow
           {...base}
           paymentId="pay-evening"
           classId="cls-evening"
-          classContext="Vinyasa · Jun 12 · 18:00"
+          classContext="Vinyasa · 12 Jun · 18:00"
         />
       </>,
     );
@@ -92,10 +92,10 @@ describe('OutstandingPaymentRow', () => {
     renderCollidingPair();
 
     expect(
-      screen.getByRole('button', { name: 'Send reminder to Ana de Vries for Vinyasa · Jun 12 · 09:30' }),
+      screen.getByRole('button', { name: 'Send reminder to Ana de Vries for Vinyasa · 12 Jun · 09:30' }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Send reminder to Ana de Vries for Vinyasa · Jun 12 · 18:00' }),
+      screen.getByRole('button', { name: 'Send reminder to Ana de Vries for Vinyasa · 12 Jun · 18:00' }),
     ).toBeInTheDocument();
   });
 
@@ -111,10 +111,10 @@ describe('OutstandingPaymentRow', () => {
     renderCollidingPair();
 
     expect(
-      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 09:30' }),
+      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 18:00' }),
+      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · 12 Jun · 18:00' }),
     ).toBeInTheDocument();
   });
 
@@ -166,19 +166,19 @@ describe('OutstandingPaymentRow', () => {
     renderCollidingPair();
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 09:30' }),
+      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
     );
     fireEvent.click(
-      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 18:00' }),
+      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · 12 Jun · 18:00' }),
     );
 
     const morningUndo = await screen.findByRole('button', {
-      name: 'Undo marking Ana de Vries as paid for Vinyasa · Jun 12 · 09:30',
+      name: 'Undo marking Ana de Vries as paid for Vinyasa · 12 Jun · 09:30',
     });
     expect(morningUndo).toBeInTheDocument();
     expect(
       await screen.findByRole('button', {
-        name: 'Undo marking Ana de Vries as paid for Vinyasa · Jun 12 · 18:00',
+        name: 'Undo marking Ana de Vries as paid for Vinyasa · 12 Jun · 18:00',
       }),
     ).toBeInTheDocument();
     // Undo's half of the 2.5.3 relation the test above pins for the other two.
@@ -194,8 +194,8 @@ describe('OutstandingPaymentRow', () => {
   it('renders distinct visible captions', () => {
     renderCollidingPair();
 
-    expect(screen.getByText('Vinyasa · Jun 12 · 09:30')).toBeInTheDocument();
-    expect(screen.getByText('Vinyasa · Jun 12 · 18:00')).toBeInTheDocument();
+    expect(screen.getByText('Vinyasa · 12 Jun · 09:30')).toBeInTheDocument();
+    expect(screen.getByText('Vinyasa · 12 Jun · 18:00')).toBeInTheDocument();
   });
 
   /**
@@ -216,11 +216,11 @@ describe('OutstandingPaymentRow', () => {
     renderCollidingPair();
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 09:30' }),
+      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
     );
     fireEvent.click(
       await screen.findByRole('button', {
-        name: 'Undo marking Ana de Vries as paid for Vinyasa · Jun 12 · 09:30',
+        name: 'Undo marking Ana de Vries as paid for Vinyasa · 12 Jun · 09:30',
       }),
     );
 
@@ -245,16 +245,16 @@ describe('OutstandingPaymentRow', () => {
     renderCollidingPair();
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 09:30' }),
+      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
     );
     fireEvent.click(
       await screen.findByRole('button', {
-        name: 'Undo marking Ana de Vries as paid for Vinyasa · Jun 12 · 09:30',
+        name: 'Undo marking Ana de Vries as paid for Vinyasa · 12 Jun · 09:30',
       }),
     );
 
     expect(
-      await screen.findByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 09:30' }),
+      await screen.findByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
     ).toBeInTheDocument();
     expect(screen.queryByText(/! overdue/)).not.toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith(
@@ -294,16 +294,16 @@ describe('OutstandingPaymentRow', () => {
     renderCollidingPair();
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 09:30' }),
+      screen.getByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
     );
     fireEvent.click(
       await screen.findByRole('button', {
-        name: 'Undo marking Ana de Vries as paid for Vinyasa · Jun 12 · 09:30',
+        name: 'Undo marking Ana de Vries as paid for Vinyasa · 12 Jun · 09:30',
       }),
     );
 
     expect(
-      await screen.findByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · Jun 12 · 09:30' }),
+      await screen.findByRole('button', { name: 'Mark paid — Ana de Vries, Vinyasa · 12 Jun · 09:30' }),
     ).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(routerRefresh).toHaveBeenCalled();
