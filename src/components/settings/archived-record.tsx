@@ -1,4 +1,4 @@
-import { formatHistoricalDate } from '@/lib/format';
+import { formatDateWithYear } from '@/lib/format';
 import { startOfLocalDay } from '@/lib/timezone';
 
 interface ArchivedRecordProps {
@@ -22,16 +22,16 @@ interface ArchivedRecordProps {
  *
  * `archivedAt` is a true instant (written as `now` at click time), not a
  * `@db.Date` calendar date — so it is converted to the teacher's calendar day
- * with `startOfLocalDay` before `formatHistoricalDate` ever sees it. What that
+ * with `startOfLocalDay` before `formatDateWithYear` ever sees it. What that
  * returns is *midnight UTC of the teacher's local calendar day*, not local
  * midnight: local midnight is a different instant, and reading that one with
  * UTC accessors would produce exactly the off-by-a-day this paragraph exists
- * to prevent. `formatHistoricalDate` reads with UTC accessors because midnight
+ * to prevent. `formatDateWithYear` reads with UTC accessors because midnight
  * UTC is the shape it is handed; feeding it the raw instant instead would let
  * the teacher's UTC offset shift the displayed date, as `startOfLocalDay`'s own
  * doc warns.
  *
- * `formatHistoricalDate`, not `formatDayHeader`: this date has no natural
+ * `formatDateWithYear`, not `formatDayHeader`: this date has no natural
  * expiry, so it carries a year (`12 Jun 2025`) rather than omitting one the way
  * a date near enough to be unambiguous can. Not a claim about what the two
  * formatters' callers actually do — `formatDayHeader` is used for past dates
@@ -52,7 +52,7 @@ export function ArchivedRecord({ archivedAt, withdrawnCount, timeZone }: Archive
 
   return (
     <p className="type-caption">
-      {`Archived ${formatHistoricalDate(startOfLocalDay(archivedAt, timeZone))}${withdrawn}`}
+      {`Archived ${formatDateWithYear(startOfLocalDay(archivedAt, timeZone))}${withdrawn}`}
     </p>
   );
 }

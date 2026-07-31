@@ -82,7 +82,7 @@ describe('ToggleStudioTemplateButton', () => {
     // prefix-only regex.
     expect(
       await screen.findByText(
-        'No new classes will be added to your schedule. The last one still scheduled is Friday, Jun 12 · 09:30.',
+        'No new classes will be added to your schedule. The last one still scheduled is Friday, 12 Jun · 09:30.',
       ),
     ).toBeInTheDocument();
     await waitFor(() => expect(routerRefresh).toHaveBeenCalled());

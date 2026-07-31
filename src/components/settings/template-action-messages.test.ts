@@ -12,7 +12,7 @@ describe('pauseMessage', () => {
     // Fixed date, not new Date() — 2026-08-17 is a Monday, so this also pins
     // formatDayHeader's UTC-accessor behavior rather than drifting with today.
     expect(pauseMessage({ date: new Date('2026-08-17T00:00:00.000Z'), startTime: '08:15' })).toBe(
-      'No new classes will be added to your schedule. The last one still scheduled is Monday, Aug 17 · 08:15.',
+      'No new classes will be added to your schedule. The last one still scheduled is Monday, 17 Aug · 08:15.',
     );
   });
 
@@ -115,7 +115,7 @@ describe('resolveTemplateConfirmation', () => {
         lastScheduled: { date: '2026-06-12T00:00:00.000Z', startTime: '09:30' },
       }),
     ).toBe(
-      'No new classes will be added to your schedule. The last one still scheduled is Friday, Jun 12 · 09:30.',
+      'No new classes will be added to your schedule. The last one still scheduled is Friday, 12 Jun · 09:30.',
     );
   });
 
@@ -144,7 +144,7 @@ describe('resolveStudioConfirmation', () => {
         lastScheduled: { date: '2026-06-12T00:00:00.000Z', startTime: '09:30' },
       }),
     ).toBe(
-      'No new classes will be added to your schedule. The last one still scheduled is Friday, Jun 12 · 09:30.',
+      'No new classes will be added to your schedule. The last one still scheduled is Friday, 12 Jun · 09:30.',
     );
   });
 

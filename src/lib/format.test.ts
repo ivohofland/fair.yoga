@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatDayHeader, formatHistoricalDate, paymentStateText } from './format';
+import { formatDayHeader, formatDateWithYear, formatDateShort, formatMonthLabel, paymentStateText } from './format';
 
 /**
  * `formatDayHeader` had no tests while it was a private copy inside one
@@ -11,16 +11,16 @@ import { formatDayHeader, formatHistoricalDate, paymentStateText } from './forma
  */
 describe('formatDayHeader', () => {
   it('renders weekday, abbreviated month, and day-of-month', () => {
-    expect(formatDayHeader(new Date('2026-06-12T00:00:00.000Z'))).toBe('Friday, Jun 12');
+    expect(formatDayHeader(new Date('2026-06-12T00:00:00.000Z'))).toBe('Friday, 12 Jun');
   });
 
   it('does not pad the day-of-month', () => {
     // "Jan 1", not "Jan 01" — the schedule reads as prose, not a timestamp.
-    expect(formatDayHeader(new Date('2026-01-01T00:00:00.000Z'))).toBe('Thursday, Jan 1');
+    expect(formatDayHeader(new Date('2026-01-01T00:00:00.000Z'))).toBe('Thursday, 1 Jan');
   });
 
   it('handles the year boundary', () => {
-    expect(formatDayHeader(new Date('2026-12-31T00:00:00.000Z'))).toBe('Thursday, Dec 31');
+    expect(formatDayHeader(new Date('2026-12-31T00:00:00.000Z'))).toBe('Thursday, 31 Dec');
   });
 
   /**
@@ -42,7 +42,7 @@ describe('formatDayHeader', () => {
    * one exists to say why, and to fail under a name that names the guarantee.
    */
   it('reads the date in UTC, not the local zone', () => {
-    expect(formatDayHeader(new Date('2026-03-01T00:00:00.000Z'))).toBe('Sunday, Mar 1');
+    expect(formatDayHeader(new Date('2026-03-01T00:00:00.000Z'))).toBe('Sunday, 1 Mar');
   });
 
   it('accepts a Date-like value without mutating the caller’s Date', () => {
@@ -63,17 +63,17 @@ describe('formatDayHeader', () => {
  * UTC-accessors reasoning, so the same year-boundary and no-mutation cases
  * apply here too.
  */
-describe('formatHistoricalDate', () => {
+describe('formatDateWithYear', () => {
   it('renders day-of-month, abbreviated month, and year', () => {
-    expect(formatHistoricalDate(new Date('2026-06-12T00:00:00.000Z'))).toBe('12 Jun 2026');
+    expect(formatDateWithYear(new Date('2026-06-12T00:00:00.000Z'))).toBe('12 Jun 2026');
   });
 
   it('does not pad the day-of-month', () => {
-    expect(formatHistoricalDate(new Date('2026-01-01T00:00:00.000Z'))).toBe('1 Jan 2026');
+    expect(formatDateWithYear(new Date('2026-01-01T00:00:00.000Z'))).toBe('1 Jan 2026');
   });
 
   it('carries a year from before the current one, not just any year', () => {
-    expect(formatHistoricalDate(new Date('2025-12-31T00:00:00.000Z'))).toBe('31 Dec 2025');
+    expect(formatDateWithYear(new Date('2025-12-31T00:00:00.000Z'))).toBe('31 Dec 2025');
   });
 
   /**
@@ -86,16 +86,57 @@ describe('formatHistoricalDate', () => {
    * year as well as the day.
    */
   it('reads the date in UTC, not the local zone', () => {
-    expect(formatHistoricalDate(new Date('2025-01-01T00:00:00.000Z'))).toBe('1 Jan 2025');
+    expect(formatDateWithYear(new Date('2025-01-01T00:00:00.000Z'))).toBe('1 Jan 2025');
   });
 
   it('accepts a Date-like value without mutating the caller’s Date', () => {
     const original = new Date('2026-06-12T00:00:00.000Z');
     const snapshot = original.getTime();
 
-    formatHistoricalDate(original);
+    formatDateWithYear(original);
 
     expect(original.getTime()).toBe(snapshot);
+  });
+});
+
+/**
+ * #96. The compact form, for a date sitting inline in a row beside other text —
+ * a payments caption, a student's last-seen. No weekday, no year: the row has
+ * no space for them and its neighbours supply the context.
+ */
+describe('formatDateShort', () => {
+  it('renders day then abbreviated month', () => {
+    expect(formatDateShort(new Date('2026-06-12T00:00:00.000Z'))).toBe('12 Jun');
+  });
+
+  it('does not pad the day-of-month', () => {
+    expect(formatDateShort(new Date('2026-01-01T00:00:00.000Z'))).toBe('1 Jan');
+  });
+
+  /**
+   * Reads its argument with UTC accessors. `Class.date` is a `@db.Date` stored
+   * at midnight UTC, so a local read renders the previous day west of UTC —
+   * which the suite's `TZ` pin makes visible rather than theoretical.
+   */
+  it('reads the calendar date, not the host-local one', () => {
+    expect(formatDateShort(new Date('2026-06-12T00:00:00.000Z'))).toBe('12 Jun');
+  });
+});
+
+/**
+ * #96. A heading over a *set* of months in the reporting view, not a rendering
+ * of any one class's date — which is why it takes numbers rather than a `Date`.
+ * Its caller already holds year and month as separate values, having split them
+ * out of a grouping key.
+ */
+describe('formatMonthLabel', () => {
+  it('renders the full month name and year', () => {
+    expect(formatMonthLabel(2026, 5)).toBe('June 2026');
+  });
+
+  it('treats the month as zero-indexed, matching getUTCMonth', () => {
+    expect(formatMonthLabel(2026, 0)).toBe('January 2026');
+    expect(formatMonthLabel(2026, 11)).toBe('December 2026');
   });
 });
 

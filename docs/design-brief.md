@@ -61,6 +61,22 @@ Sentence case everywhere. Georgia never below 18px; sans never in heading slots.
 - Controls 48px (`min-h-12`), list rows ≥56px (`min-h-14`), tab bar 64px, progress bar 8px.
 - Focus: `shadow-focus` (teal inset line + teal-tint halo) on every interactive element. Disabled = 50% opacity.
 
+## Dates
+
+Day-first, always: `12 Jun`, never `Jun 12`. Three formats, all in
+`src/lib/format.ts`:
+
+- `formatDayHeader` — `Friday, 12 Jun`. Lists and headers where the weekday
+  earns its space: the schedule, bookings, the public pages.
+- `formatDateWithYear` — `12 Jun 2026`. Detail pages, and any record that
+  outlives the current month.
+- `formatDateShort` — `12 Jun`. Inline in a row, where neighbouring copy
+  already supplies the context.
+
+Never `toLocaleDateString` without an explicit `timeZone`. Class dates are
+`@db.Date` columns stored at midnight UTC; a host-local read renders the
+previous day west of UTC. See `src/lib/timezone.ts` for the rule in full.
+
 ## 3. Navigation
 
 **Bottom tab bar** (`src/components/layout/tab-bar.tsx`): 64px, exactly 4 tabs — Schedule (`/`), Students, Inbox, Settings. Active = teal icon + label in a teal-tint pill; inactive brown; gold 8px dot on Inbox when unread. iOS safe-area padded.

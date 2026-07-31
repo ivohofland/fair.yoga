@@ -71,7 +71,24 @@ const MONTHS = [
 ];
 
 /**
- * A class's day, as the schedule and bookings views render it: `Thursday, Jun 12`.
+ * Full month names, for `formatMonthLabel`'s heading-over-a-set-of-months —
+ * unlike `MONTHS` above, exported: `class-list.tsx` declares a byte-identical
+ * array for its own week-heading label, and this lets that copy point here
+ * instead of existing twice. `MONTHS` stays private; nothing outside this
+ * file needs the abbreviated form.
+ */
+export const FULL_MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/**
+ * A class's day, as the schedule and bookings views render it: `Friday, 12 Jun`.
+ *
+ * Day-first (#96). The app previously rendered this three ways — `Jun 12`,
+ * `12 June`, `June 12, 2026` — and a teacher saw two of them one tap apart.
+ * Day-first is the international convention, which `CLAUDE.md`'s "international
+ * from day one" implies and which will not need undoing when i18n arrives.
  *
  * UTC accessors throughout: `Class.date` is a `@db.Date` (midnight UTC) and the
  * time of day lives separately in `startTime`, so reading it in local time would
@@ -80,16 +97,17 @@ const MONTHS = [
 export function formatDayHeader(date: Date): string {
   const d = new Date(date);
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  return `${days[d.getUTCDay()]}, ${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+  return `${days[d.getUTCDay()]}, ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
 }
 
 /**
- * A past, historical date, where the year matters: `12 Jun 2025`.
+ * A date where the year matters: `12 Jun 2026`.
  *
- * Use this for records meant to survive indefinitely, where dropping the year
- * lets a date from last year read identically to one from last month with
- * nothing to tell them apart. `formatDayHeader` omits the year, which is safe
- * while a date is near enough that "Friday, Jun 12" can only mean one day.
+ * Detail pages and any record meant to survive indefinitely, where dropping the
+ * year lets a date from last year read identically to one from last month.
+ * Named for what it renders rather than when it was added — it was
+ * `formatHistoricalDate` until #96 pointed the class and studio detail pages at
+ * it, and those show upcoming classes too.
  *
  * That split is the intent, not a description of the callers. `formatDayHeader`
  * is not confined to upcoming dates, in at least two places:
@@ -111,7 +129,35 @@ export function formatDayHeader(date: Date): string {
  * shifts the calendar day back one day *west* of UTC, and moves nothing at or
  * east of it — see `vitest.config.ts` for why the test run is pinned west.
  */
-export function formatHistoricalDate(date: Date): string {
+export function formatDateWithYear(date: Date): string {
   const d = new Date(date);
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+/**
+ * The compact form: `12 Jun`. No weekday, no year.
+ *
+ * For a date sitting inline in a row beside other text, where the surrounding
+ * copy supplies the context a weekday would otherwise give. Same UTC-accessor
+ * reasoning as the two above.
+ */
+export function formatDateShort(date: Date): string {
+  const d = new Date(date);
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+}
+
+/**
+ * A heading over a set of months: `June 2026`.
+ *
+ * Takes year and zero-indexed month rather than a `Date`, because its only
+ * caller has already split them out of a grouping key and has no `Date` to
+ * hand. Zero-indexed to match `getUTCMonth`, so a caller that does hold a date
+ * can pass its accessors straight through.
+ *
+ * The full month name, not the abbreviation the date formatters use: this
+ * labels a period rather than a day, and there is no adjacent day number for it
+ * to crowd.
+ */
+export function formatMonthLabel(year: number, monthIndex: number): string {
+  return `${FULL_MONTHS[monthIndex] ?? ''} ${year}`;
 }
