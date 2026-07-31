@@ -5,10 +5,25 @@ const prisma = new PrismaClient();
 // ---------------------------------------------------------------------------
 // Helper: relative dates
 // ---------------------------------------------------------------------------
+/**
+ * A calendar date `days` from today, as midnight UTC.
+ *
+ * UTC accessors, not local ones. These values go into `@db.Date` columns
+ * (`Class.date`, `StudioClass.date`, `Student.birthday`), which store a
+ * calendar date and take it from the *UTC* portion of the timestamp — so
+ * building local midnight lands a day early for anyone east of UTC. On
+ * `Europe/Amsterdam` this returned `2026-07-30T22:00:00Z` for "today",
+ * which Postgres stored as the 30th while the calendar said the 31st, and
+ * every relative date in this file inherited the error.
+ *
+ * That is the same rule `src/lib/timezone.ts` states, tripped from the other
+ * side: #101 and #115 broke west of UTC by reading a calendar date locally,
+ * and this broke east of UTC by writing one locally.
+ */
 function daysFromNow(days: number): Date {
   const d = new Date();
-  d.setDate(d.getDate() + days);
-  d.setHours(0, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() + days);
+  d.setUTCHours(0, 0, 0, 0);
   return d;
 }
 
@@ -83,6 +98,36 @@ async function main() {
       paymentLevel: 'LEVEL_1',
       bankIban: 'GB29NWBK60161331926819',
       bankAccountName: 'S. Mitchell',
+    },
+  });
+
+  // A teacher **west of UTC**, which the other two are not (Amsterdam +2,
+  // London +1). Every date bug this app has had is invisible east of UTC: a
+  // calendar date read in local time moves back exactly one day west of the
+  // meridian and moves nothing at or east of it. Without a teacher here, the
+  // whole family — #101's boundaries, #115's renderings, and whatever #96
+  // decides about formats — can only be exercised in tests, never by opening
+  // the app. Maya exists so a developer can log in and look.
+  //
+  // `America/Los_Angeles` specifically: a large offset (UTC-7/-8) so the
+  // divergence is obvious rather than an edge case, and a DST-observing zone
+  // so the offset is not a constant anyone can hard-code by accident.
+  const maya = await prisma.teacher.create({
+    data: {
+      firstName: 'Maya',
+      lastName: 'Chen',
+      email: 'maya@fairyoga.dev',
+      account: { create: { email: 'maya@fairyoga.dev' } },
+      bio: 'Slow flow and breathwork in Portland. Small classes, sliding scale, no rush.',
+      pageSlug: 'maya',
+      defaultCurrency: 'USD',
+      defaultTimezone: 'America/Los_Angeles',
+      defaultReminder: 'evening_before',
+      paymentLevel: 'LEVEL_1',
+      // Null rather than a fabricated IBAN: she is in the US, and `bankIban`
+      // is nullable precisely because not every teacher has one.
+      bankIban: null,
+      bankAccountName: 'M. Chen',
     },
   });
 
@@ -353,6 +398,29 @@ async function main() {
     },
   });
 
+  const portlandStudio = await prisma.room.create({
+    data: {
+      venueName: 'Rose City Yoga',
+      address: '1420 SE Division St',
+      city: 'Portland',
+      postcode: '97202',
+      roomName: 'Back Room',
+      maxCapacity: 12,
+      equipment: JSON.parse('["mats", "blocks", "bolsters", "blankets"]'),
+      isPublic: false,
+      createdById: maya.id,
+    },
+  });
+
+  const mayaPortland = await prisma.teacherRoom.create({
+    data: {
+      teacherId: maya.id,
+      roomId: portlandStudio.id,
+      capacityOverride: 10,
+      rentalRate: new Prisma.Decimal('30.00'),
+    },
+  });
+
   // ==========================================================================
   // CLASS TEMPLATE
   // ==========================================================================
@@ -526,6 +594,95 @@ async function main() {
       autoCancelCheck: 'HOURS_2',
       status: 'cancelled',
       settingsLocked: true,
+    },
+  });
+
+  // --------------------------------------------------------------------------
+  // Maya's classes — the ones that make the timezone boundary visible
+  // --------------------------------------------------------------------------
+  // The point of these three is what they look like *from Portland*, which is
+  // only interesting because the server and the developer's laptop are almost
+  // certainly not there.
+  //
+  // The 19:00 class dated today is the load-bearing one, and the hour you look
+  // at it decides what it shows. Measured against the pre-#101 code:
+  //
+  //   12:00–19:00 Pacific  the card dimmed as already-taught, because the
+  //                        start was read as 19:00 *UTC* rather than Pacific
+  //   17:00–23:59 Pacific  it also appeared under Past classes, because UTC
+  //                        had rolled past midnight and the boundary was
+  //                        `setUTCHours(0,0,0,0)` on an instant
+  //   17:00–19:00 Pacific  both at once — the clearest window
+  //
+  // After the fix it does neither until 19:00 Pacific, when it genuinely
+  // starts, and it never reaches Past classes on its own day. Outside those
+  // hours the row looks correct either way, so a developer checking at 10:00
+  // Pacific — or from Europe, where these bugs do not manifest at all — will
+  // see nothing wrong and should not conclude the seed is pointless.
+  await prisma.class.create({
+    data: {
+      teacherId: maya.id,
+      teacherRoomId: mayaPortland.id,
+      classType: 'Slow Flow',
+      description: 'Evening slow flow. Bring a blanket.',
+      date: today,
+      startTime: '19:00',
+      durationMinutes: 75,
+      roomCost: new Prisma.Decimal('30.00'),
+      minRate: new Prisma.Decimal('10.00'),
+      targetRate: new Prisma.Decimal('18.00'),
+      minStudents: 3,
+      maxStudents: 10,
+      cancelDeadline: 'HOURS_12',
+      autoCancelCheck: 'HOURS_2',
+      status: 'open',
+    },
+  });
+
+  // Yesterday, completed: gives Past classes something that genuinely belongs
+  // there, so the page is not empty and the boundary has two sides to get right.
+  await prisma.class.create({
+    data: {
+      teacherId: maya.id,
+      teacherRoomId: mayaPortland.id,
+      classType: 'Breathwork',
+      description: 'Pranayama and long holds.',
+      date: daysAgo(1),
+      startTime: '07:00',
+      durationMinutes: 45,
+      roomCost: new Prisma.Decimal('30.00'),
+      minRate: new Prisma.Decimal('10.00'),
+      targetRate: new Prisma.Decimal('18.00'),
+      minStudents: 2,
+      maxStudents: 8,
+      cancelDeadline: 'HOURS_12',
+      autoCancelCheck: 'HOURS_2',
+      status: 'completed',
+      effectiveTeacherRate: new Prisma.Decimal('14.00'),
+      totalStudents: 4,
+      totalRevenue: new Prisma.Decimal('44.00'),
+    },
+  });
+
+  // Next week, so the Schedule tab has a "Next week" heading to render for her
+  // and the week grouping is exercised, not just the day boundary.
+  await prisma.class.create({
+    data: {
+      teacherId: maya.id,
+      teacherRoomId: mayaPortland.id,
+      classType: 'Slow Flow',
+      description: 'Evening slow flow. Bring a blanket.',
+      date: nextWeek,
+      startTime: '19:00',
+      durationMinutes: 75,
+      roomCost: new Prisma.Decimal('30.00'),
+      minRate: new Prisma.Decimal('10.00'),
+      targetRate: new Prisma.Decimal('18.00'),
+      minStudents: 3,
+      maxStudents: 10,
+      cancelDeadline: 'HOURS_12',
+      autoCancelCheck: 'HOURS_2',
+      status: 'open',
     },
   });
 
@@ -910,12 +1067,12 @@ async function main() {
   });
 
   console.log('Seed data created successfully');
-  console.log(`  Teachers: 2 (Ivo, Sarah)`);
+  console.log(`  Teachers: 3 (Ivo, Sarah, Maya — Maya is west of UTC)`);
   console.log(`  Students: 12 (10 claimed with classes, 2 CRM-only unlinked)`);
   console.log(`  TeacherStudents: 15 (12 for Ivo, 3 for Sarah)`);
-  console.log(`  Rooms: 2, TeacherRooms: 3`);
+  console.log(`  Rooms: 3, TeacherRooms: 4`);
   console.log(`  ClassTemplate: 1`);
-  console.log(`  Classes: 8 (draft, open, open+full, in_progress, 3 completed, cancelled)`);
+  console.log(`  Classes: 11 (8 for Ivo across every lifecycle state, 3 for Maya)`);
   console.log(`  StudioClassTemplate: 1`);
   console.log(`  StudioClasses: 3 (1 past, 1 upcoming, 1 one-off)`);
   console.log(`  Registrations: 42`);
