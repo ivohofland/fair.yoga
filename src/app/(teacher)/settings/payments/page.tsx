@@ -120,8 +120,8 @@ export default async function PaymentsOverviewPage() {
                 <p className="type-caption">
                   {`${p.registration.class.classType} · ${formatDateShort(p.registration.class.date)} · ${p.registration.class.startTime}`}
                   {/* #140: `paidAt` is an instant, not a calendar date — this renders the UTC
-                      day, not the teacher's. Left exactly as it was; the fix needs the teacher's
-                      timezone, which #138 puts on the session. */}
+                      day, not the teacher's. The defect is left exactly as it was; the fix
+                      needs the teacher's timezone, which #138 puts on the session. */}
                   {p.paidAt && <> · ✓ paid {formatDateShort(p.paidAt)}</>}
                 </p>
               </div>
