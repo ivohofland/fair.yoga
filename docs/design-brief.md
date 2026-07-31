@@ -54,14 +54,7 @@ Utilities `type-display` … `type-number` in globals.css. Headings Georgia bold
 
 Sentence case everywhere. Georgia never below 18px; sans never in heading slots. Money: always `€` + two decimals, ranges with en-dash, tabular figures.
 
-### Spacing, radii, sizes
-
-- 4px grid (`4 8 12 16 20 24 32 40 48`). Page margins 16 mobile / 24 desktop (`px-4 sm:px-6`). Card padding 20 (`p-5`), cards 12 apart (`gap-3`), sections 32 apart.
-- Radii utilities: `rounded-pill` (buttons), `rounded-card` (16), `rounded-field` (12 — inputs *and* badges), `rounded-sheet` (20, reserved).
-- Controls 48px (`min-h-12`), list rows ≥56px (`min-h-14`), tab bar 64px, progress bar 8px.
-- Focus: `shadow-focus` (teal inset line + teal-tint halo) on every interactive element. Disabled = 50% opacity.
-
-## Dates
+### Dates
 
 Day-first, always: `12 Jun`, never `Jun 12`. Three formats, all in
 `src/lib/format.ts`:
@@ -76,6 +69,13 @@ Day-first, always: `12 Jun`, never `Jun 12`. Three formats, all in
 Never `toLocaleDateString` without an explicit `timeZone`. Class dates are
 `@db.Date` columns stored at midnight UTC; a host-local read renders the
 previous day west of UTC. See `src/lib/timezone.ts` for the rule in full.
+
+### Spacing, radii, sizes
+
+- 4px grid (`4 8 12 16 20 24 32 40 48`). Page margins 16 mobile / 24 desktop (`px-4 sm:px-6`). Card padding 20 (`p-5`), cards 12 apart (`gap-3`), sections 32 apart.
+- Radii utilities: `rounded-pill` (buttons), `rounded-card` (16), `rounded-field` (12 — inputs *and* badges), `rounded-sheet` (20, reserved).
+- Controls 48px (`min-h-12`), list rows ≥56px (`min-h-14`), tab bar 64px, progress bar 8px.
+- Focus: `shadow-focus` (teal inset line + teal-tint halo) on every interactive element. Disabled = 50% opacity.
 
 ## 3. Navigation
 
