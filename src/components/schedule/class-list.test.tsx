@@ -181,16 +181,15 @@ describe('ClassList payment rollup', () => {
 });
 
 /**
- * #101. Both of these were wrong by the UTC offset. Unlike `format.ts`'s
- * `formatDayHeader` / `formatHistoricalDate` — which is what `vitest.config.ts`'s
- * `TZ` pin exists to protect, because they read local accessors off the host
- * clock — `classStartInstant` and `startOfLocalWeek` take `timeZone` as an
- * explicit argument and resolve it via `Intl.DateTimeFormat({ timeZone })`.
- * They never consult `process.env.TZ`, so these two tests pin the teacher's-
- * timezone behaviour regardless of the host zone; the pin is not what makes
- * them meaningful. `America/Los_Angeles` is used here rather than a zone that
- * happens to match the host so the assertion stays meaningful independent of
- * whatever zone the suite runs under.
+ * #101. Both behaviours were wrong by the UTC offset: `dimPast` treated a
+ * class's wall-clock start as UTC, and `weekLabel` derived its Monday from a
+ * UTC reading of `now`. `classStartInstant` and `startOfLocalWeek` take
+ * `timeZone` as an explicit argument and resolve it through
+ * `Intl.DateTimeFormat({ timeZone })`, never consulting `process.env.TZ`, so
+ * these assertions hold regardless of the zone the suite runs in.
+ * `America/Los_Angeles` is used deliberately rather than a zone that happens
+ * to match the host, so the assertions stay meaningful whatever that zone is.
+ * (See `vitest.config.ts` for the suite's own timezone pin.)
  */
 describe('ClassList timezone handling', () => {
   beforeEach(() => {

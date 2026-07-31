@@ -306,16 +306,15 @@ Add to `src/components/schedule/class-list.test.tsx`. The file already has a `cl
 
 ```tsx
 /**
- * #101. Both of these were wrong by the UTC offset. Unlike `format.ts`'s
- * `formatDayHeader` / `formatHistoricalDate` — which is what `vitest.config.ts`'s
- * `TZ` pin exists to protect, because they read local accessors off the host
- * clock — `classStartInstant` and `startOfLocalWeek` take `timeZone` as an
- * explicit argument and resolve it via `Intl.DateTimeFormat({ timeZone })`.
- * They never consult `process.env.TZ`, so these two tests pin the teacher's-
- * timezone behaviour regardless of the host zone; the pin is not what makes
- * them meaningful. `America/Los_Angeles` is used here rather than a zone that
- * happens to match the host so the assertion stays meaningful independent of
- * whatever zone the suite runs under.
+ * #101. Both behaviours were wrong by the UTC offset: `dimPast` treated a
+ * class's wall-clock start as UTC, and `weekLabel` derived its Monday from a
+ * UTC reading of `now`. `classStartInstant` and `startOfLocalWeek` take
+ * `timeZone` as an explicit argument and resolve it through
+ * `Intl.DateTimeFormat({ timeZone })`, never consulting `process.env.TZ`, so
+ * these assertions hold regardless of the zone the suite runs in.
+ * `America/Los_Angeles` is used deliberately rather than a zone that happens
+ * to match the host, so the assertions stay meaningful whatever that zone is.
+ * (See `vitest.config.ts` for the suite's own timezone pin.)
  */
 describe('ClassList timezone handling', () => {
   it('does not dim a class that has not started in the teacher\'s zone', () => {
@@ -333,7 +332,7 @@ describe('ClassList timezone handling', () => {
         dimPast
       />,
     );
-    // The card is the `<Link href="/class/{id}">` (class-list.tsx:95-97); `past`
+    // The card is the `<Link href="/class/{id}">` (class-list.tsx:96-99); `past`
     // adds `opacity-70` to its className. Addressed by role+name because that is
     // how the rest of this file reaches rendered output — no test id exists and
     // none should be added for a test.
