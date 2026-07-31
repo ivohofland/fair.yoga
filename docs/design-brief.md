@@ -66,6 +66,12 @@ Day-first, always: `12 Jun`, never `Jun 12`. Three formats, all in
 - `formatDateShort` — `12 Jun`. Inline in a row, where neighbouring copy
   already supplies the context.
 
+Two grouping labels use the full month name instead, for a heading over a
+*set* of dates rather than one: `formatMonthLabel` (`June 2026`, the
+reporting page's month grouping) and `class-list.tsx`'s local `weekLabel`
+(`Week of 4 August`, the schedule's week fallback). A new grouping label
+needs a reason, same as a new per-date one would.
+
 Never `toLocaleDateString` without an explicit `timeZone`. Class dates are
 `@db.Date` columns stored at midnight UTC; a host-local read renders the
 previous day west of UTC. See `src/lib/timezone.ts` for the rule in full.
