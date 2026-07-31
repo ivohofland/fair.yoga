@@ -72,10 +72,9 @@ const MONTHS = [
 
 /**
  * Full month names, for `formatMonthLabel`'s heading-over-a-set-of-months —
- * unlike `MONTHS` above, exported: `class-list.tsx` declares a byte-identical
- * array for its own week-heading label, and this lets that copy point here
- * instead of existing twice. `MONTHS` stays private; nothing outside this
- * file needs the abbreviated form.
+ * unlike `MONTHS` above, exported: `class-list.tsx` imports this for its own
+ * week-heading label, which is why it stays public while `MONTHS` stays
+ * private; nothing outside this file needs the abbreviated form.
  */
 export const FULL_MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',

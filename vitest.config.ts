@@ -42,11 +42,11 @@ export default defineConfig(({ mode }) => {
       // TZ=UTC — and green under Europe/Amsterdam, the zone it was written in —
       // while failing most of it under this pin.
       //
-      // West of UTC specifically. Both formatters are handed values already
-      // pinned to midnight UTC (`@db.Date` columns, `startOfLocalDay` output),
-      // and for those a local read moves the calendar day back exactly one day
-      // west of UTC while moving nothing at or east of it. A zone east of UTC
-      // would leave the same assertions vacuous.
+      // West of UTC specifically. Each of these formatters is handed values
+      // already pinned to midnight UTC (`@db.Date` columns, `startOfLocalDay`
+      // output), and for those a local read moves the calendar day back
+      // exactly one day west of UTC while moving nothing at or east of it.
+      // A zone east of UTC would leave the same assertions vacuous.
       //
       // Deleting this line fails nothing. It silently makes those assertions
       // tautological again, which is why it is a comment and not a bare option.
