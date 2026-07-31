@@ -12,11 +12,16 @@ import {
 
 /**
  * `formatDayHeader` had no tests while it was a private copy inside one
- * component. #86 promoted it to `src/lib/format.ts` and pointed five files
- * at it — the schedule list, the student bookings page, both public booking
- * pages, and the settings confirmation copy — so a change here now moves text
- * on the teacher's schedule, a student's bookings, and a public booking page
- * at once. That blast radius is what earns it a test.
+ * component. #86 promoted it to `src/lib/format.ts` and pointed several call
+ * sites at it — the schedule list, the schedule home header, the student
+ * bookings page, both public booking pages, and the settings confirmation copy
+ * — so a change here moves text on the teacher's schedule, a student's
+ * bookings, and a public booking page at once. That blast radius is what earns
+ * it a test.
+ *
+ * No literal count here on purpose: #96 added the home header to that list and
+ * left the count behind, which is how this sentence came to understate the very
+ * blast radius it exists to justify.
  */
 describe('formatDayHeader', () => {
   it('renders weekday, abbreviated month, and day-of-month', () => {
@@ -87,8 +92,11 @@ describe('formatDateWithYear', () => {
 
   /**
    * Same reasoning as `formatDayHeader`'s equivalent case, and the same shape:
-   * this function's one caller hands it `startOfLocalDay` output, which is
-   * midnight UTC of the teacher's calendar day. `vitest.config.ts` pins the run
+   * `archived-record.tsx` hands this function `startOfLocalDay` output, which is
+   * midnight UTC of the teacher's calendar day. Its other callers pass a
+   * `@db.Date` column straight through, which is already midnight UTC — either
+   * way the value reaching here is a calendar date, never a raw instant.
+   * `vitest.config.ts` pins the run
    * west of UTC, where a local read of a midnight-UTC value renders the
    * *previous* day — so reading this in local time (or with
    * `toLocaleDateString`, unqualified) would print 31 Dec 2024, rolling the
@@ -220,6 +228,15 @@ describe('formatRoomLocation', () => {
 describe('formatStudentName', () => {
   it('abbreviates the surname by default', () => {
     expect(formatStudentName('Ana', 'de Vries')).toBe('Ana d.');
+  });
+
+  /**
+   * A capitalised surname, because the case above cannot see this: `de Vries`
+   * already starts lowercase, so it passes against an implementation with the
+   * `.toLowerCase()` deleted. This one fails.
+   */
+  it('lower-cases the initial', () => {
+    expect(formatStudentName('Ana', 'Vries')).toBe('Ana v.');
   });
 
   it('gives the full name only when sharing is on', () => {
