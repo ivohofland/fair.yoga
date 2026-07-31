@@ -55,7 +55,7 @@ export function paymentStateText(status: PaymentStatus): { label: string; classN
 }
 
 /**
- * Shared by both date formatters below, which want the same abbreviations —
+ * Shared by the three date formatters below, which want the same abbreviations —
  * `Jun`, not `June` and not a locale's idea of either. Module level rather than
  * a `const` inside each: it was declared twice, twenty lines apart, and rebuilt
  * on every call.
