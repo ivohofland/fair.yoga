@@ -16,10 +16,6 @@ function monthKey(date: Date): string {
 // shown to students — transparent, no charts, no growth talk.
 export default async function ReportingPage() {
   const session = await requireTeacherSession();
-  const teacher = await prisma.teacher.findUniqueOrThrow({
-    where: { id: session.teacherId },
-    select: { defaultTimezone: true },
-  });
   // #101. `StudioClass.date` is a `@db.Date` calendar date; `new Date()` is an
   // instant. Comparing them directly meant that west of UTC, in the teacher's
   // local evening, UTC had already rolled over and a studio class dated
@@ -27,7 +23,7 @@ export default async function ReportingPage() {
   // their earnings and their class count — this page reports classes, students
   // and earnings, and a studio class contributes to all three. The end of the
   // teacher's today is the boundary that belongs here.
-  const endOfToday = startOfLocalDay(new Date(), teacher.defaultTimezone);
+  const endOfToday = startOfLocalDay(new Date(), session.defaultTimezone);
   endOfToday.setUTCHours(23, 59, 59, 999);
 
   const [completedClasses, studioClasses, distinctStudents] = await Promise.all([

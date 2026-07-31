@@ -27,9 +27,9 @@ export default async function TeacherHome() {
   const session = await requireTeacherSession();
   const teacher = await prisma.teacher.findUniqueOrThrow({
     where: { id: session.teacherId },
-    select: { bankIban: true, defaultTimezone: true },
+    select: { bankIban: true },
   });
-  const { start, end } = getScheduleWindow(teacher.defaultTimezone);
+  const { start, end } = getScheduleWindow(session.defaultTimezone);
   const now = new Date();
 
   const [classes, studioClasses, roomCount, classCount] = await Promise.all([
@@ -71,7 +71,7 @@ export default async function TeacherHome() {
       <div className="flex items-baseline justify-between gap-3 mb-6">
         <div>
           <h1 className="type-display">Schedule</h1>
-          <p className="type-caption mt-1">{formatDayHeader(startOfLocalDay(now, teacher.defaultTimezone))}</p>
+          <p className="type-caption mt-1">{formatDayHeader(startOfLocalDay(now, session.defaultTimezone))}</p>
         </div>
         <Link href="/class/new" className="type-label text-teal no-underline shrink-0">
           + Add class
@@ -89,7 +89,7 @@ export default async function TeacherHome() {
       <ClassList
         classes={classes}
         studioClasses={studioClasses}
-        timeZone={teacher.defaultTimezone}
+        timeZone={session.defaultTimezone}
         emptyMessage="No classes this week"
         showAddLink={false}
         dimPast

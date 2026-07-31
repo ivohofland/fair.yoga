@@ -6,15 +6,11 @@ import { startOfLocalDay } from '@/lib/timezone';
 
 export default async function PastClassesPage() {
   const session = await requireTeacherSession();
-  const teacher = await prisma.teacher.findUniqueOrThrow({
-    where: { id: session.teacherId },
-    select: { defaultTimezone: true },
-  });
   // #101. The teacher's calendar day, not UTC's. West of UTC in the local
   // evening, UTC has already rolled over, so a `setUTCHours(0,0,0,0)` boundary
   // is *tomorrow* by the teacher's calendar and lists a class they have not
   // taught yet as past.
-  const today = startOfLocalDay(new Date(), teacher.defaultTimezone);
+  const today = startOfLocalDay(new Date(), session.defaultTimezone);
 
   const [classes, studioClasses] = await Promise.all([
     prisma.class.findMany({
@@ -39,7 +35,7 @@ export default async function PastClassesPage() {
   return (
     <>
       <PageHeader title="Past classes" backHref="/schedule" backLabel="Schedule" />
-      <ClassList classes={classes} studioClasses={studioClasses} timeZone={teacher.defaultTimezone} emptyMessage="No past classes." showAddLink={false} sortDesc />
+      <ClassList classes={classes} studioClasses={studioClasses} timeZone={session.defaultTimezone} emptyMessage="No past classes." showAddLink={false} sortDesc />
     </>
   );
 }
