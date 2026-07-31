@@ -61,7 +61,7 @@ export async function validateSession(
     where: { id: session.accountId },
     select: {
       id: true,
-      teacher: { select: { id: true, deletedAt: true } },
+      teacher: { select: { id: true, deletedAt: true, defaultTimezone: true } },
       student: { select: { id: true, deletedAt: true } },
     },
   });
@@ -84,7 +84,12 @@ export async function validateSession(
 
   const base = { sessionId: session.id, accountId: account.id };
   if (liveTeacher) {
-    return { ...base, teacherId: liveTeacher.id, studentId: liveStudent?.id ?? null };
+    return {
+      ...base,
+      teacherId: liveTeacher.id,
+      defaultTimezone: liveTeacher.defaultTimezone,
+      studentId: liveStudent?.id ?? null,
+    };
   }
   if (liveStudent) {
     return { ...base, teacherId: null, studentId: liveStudent.id };

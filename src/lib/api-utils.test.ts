@@ -139,6 +139,7 @@ describe('isErrorResponse', () => {
       sessionId: 'sess-1',
       accountId: 'acct-tea',
       teacherId: 'teacher-1',
+      defaultTimezone: 'Europe/Amsterdam',
       studentId: null,
     };
     expect(isErrorResponse(user)).toBe(false);
@@ -184,6 +185,7 @@ describe('requireSession', () => {
       sessionId: 'sess-abc',
       accountId: 'acct-tea',
       teacherId: 'teacher-1',
+      defaultTimezone: 'Europe/Amsterdam',
       studentId: null,
     };
     mockedGetSessionToken.mockReturnValue('valid-token');
@@ -228,6 +230,7 @@ describe('requireTeacher', () => {
       sessionId: 'sess-tea',
       accountId: 'acct-tea',
       teacherId: 'teacher-1',
+      defaultTimezone: 'Europe/Amsterdam',
       studentId: null,
     };
     mockedGetSessionToken.mockReturnValue('valid-token');
@@ -251,6 +254,7 @@ describe('requireStudent', () => {
       sessionId: 'sess-tea',
       accountId: 'acct-tea',
       teacherId: 'teacher-1',
+      defaultTimezone: 'Europe/Amsterdam',
       studentId: null,
     };
     mockedGetSessionToken.mockReturnValue('valid-token');

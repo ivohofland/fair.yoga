@@ -44,6 +44,7 @@ beforeAll(async () => {
       email: teacherAccount.email,
       bio: 'Teacher for session tests',
       pageSlug: `session-teacher-${uniqueSuffix}`,
+      defaultTimezone: 'America/Los_Angeles',
     },
   });
   teacherId = teacher.id;
@@ -75,6 +76,7 @@ beforeAll(async () => {
       email: dualAccount.email,
       bio: 'Dual-role account for session tests',
       pageSlug: `session-dual-${uniqueSuffix}`,
+      defaultTimezone: 'Asia/Kolkata',
     },
   });
   dualTeacherId = dualTeacher.id;
@@ -142,6 +144,8 @@ describe('validateSession', () => {
     expect(result!.accountId).toBe(teacherAccountId);
     expect(result!.teacherId).toBe(teacherId);
     expect(result!.studentId).toBeNull();
+    if (!result!.teacherId) throw new Error('expected teacherId');
+    expect(result!.defaultTimezone).toBe('America/Los_Angeles');
   });
 
   it('resolves a student-only account: studentId set, teacherId null', async () => {
@@ -153,6 +157,21 @@ describe('validateSession', () => {
     expect(result!.studentId).toBe(studentId);
   });
 
+  /**
+   * The union puts `defaultTimezone` on the teacher branch, so a student-only
+   * session must not carry the key at all. Assert its *absence*, not that it is
+   * `undefined` — the latter passes whether the key is missing or present and
+   * empty, and the guarantee here is about the key.
+   */
+  it('omits defaultTimezone entirely for a student-only account', async () => {
+    const token = await createSession(db, studentAccountId);
+
+    const result = await validateSession(db, token);
+
+    expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty('defaultTimezone');
+  });
+
   it('resolves a dual account: both profile ids set', async () => {
     const token = await createSession(db, dualAccountId);
 
@@ -160,6 +179,8 @@ describe('validateSession', () => {
 
     expect(result!.teacherId).toBe(dualTeacherId);
     expect(result!.studentId).toBe(dualStudentId);
+    if (!result!.teacherId) throw new Error('expected teacherId');
+    expect(result!.defaultTimezone).toBe('Asia/Kolkata');
   });
 
   it('resolves only live profiles: a soft-deleted student side disappears', async () => {

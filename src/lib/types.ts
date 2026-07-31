@@ -2,8 +2,21 @@
 // teacher surfaces require teacherId, student surfaces studentId. Dual
 // accounts carry both — there is no "active role" state. The union makes
 // "neither profile" unrepresentable: at least one id is always a string.
+//
+// `defaultTimezone` sits on the teacher branch, not at the top level, so
+// reading it requires having narrowed to a teacher — which every guard
+// (`requireTeacherSession`, `requireTeacher`) already does. It rides along
+// because `validateSession` already loads the teacher row for its GDPR
+// liveness check, so this costs one column on a query that runs anyway, and
+// nothing at all for student-only accounts, whose teacher relation is null.
+//
+// The bar for adding a field here: it must be needed to *compute* something
+// on many surfaces. `defaultTimezone` decides which calendar day a teacher is
+// in — a correctness input, not a display value. Display-only fields stay in
+// page queries; `firstName` is fetched by two session-teacher lookups and
+// deliberately did not qualify (#138).
 export type SessionUser = { sessionId: string; accountId: string } & (
-  | { teacherId: string; studentId: string | null }
+  | { teacherId: string; defaultTimezone: string; studentId: string | null }
   | { teacherId: null; studentId: string }
 );
 
