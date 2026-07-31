@@ -195,7 +195,7 @@ Replace lines 8-9:
   today.setUTCHours(0, 0, 0, 0);
 ```
 
-with a teacher lookup and a local boundary. Put the lookup inside the existing `Promise.all` — it must not become a third serialised round trip:
+with a teacher lookup and a local boundary. The lookup is a **standalone `await` before** the `Promise.all`, not a third entry inside it: `today` appears in the `where` clause of both queries in that array, so it must already be resolved when they are constructed. That costs one serialised round trip and there is no way around it.
 
 ```ts
   const teacher = await prisma.teacher.findUniqueOrThrow({
