@@ -1,6 +1,8 @@
 # Form Field List Pins Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **Read the note above the File Structure table first — this plan has already been executed and is now a historical record.** The instruction above is the template's, and it is kept so the document stays a valid plan; it is not an invitation to re-run this one.
 
 **Goal:** Give each of the two edit forms a single field list, pinned to its schema in both directions, so a schema field with no form input fails the build naming that field (#81 + #85).
 
