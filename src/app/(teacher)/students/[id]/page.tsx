@@ -99,10 +99,10 @@ export default async function StudentDetailPage({
                   the year on purpose (a birth *year* is a different disclosure
                   than a birth *date* on a privacy-first page), and
                   `formatDateWithYear` always appends one. `formatDateShort`
-                  reads with UTC accessors, which fixes the same
+                  reads with UTC accessors, which avoids the same
                   host-local-shifts-the-day bug as the two class dates below.
                 */}
-                <p className="text-base text-ink">{formatDateShort(new Date(student.birthday))}</p>
+                <p className="text-base text-ink">{formatDateShort(student.birthday)}</p>
               </div>
             )}
             {showAddress && student.address && (
