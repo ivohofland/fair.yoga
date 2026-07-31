@@ -25,8 +25,9 @@ export default async function ReportingPage() {
   // instant. Comparing them directly meant that west of UTC, in the teacher's
   // local evening, UTC had already rolled over and a studio class dated
   // *tomorrow* satisfied `lte` — putting a class they have not taught into
-  // their reported hours and income. The end of the teacher's today is the
-  // boundary that belongs here.
+  // their earnings and their class count — this page reports classes, students
+  // and earnings, and a studio class contributes to all three. The end of the
+  // teacher's today is the boundary that belongs here.
   const endOfToday = startOfLocalDay(new Date(), teacher.defaultTimezone);
   endOfToday.setUTCHours(23, 59, 59, 999);
 
