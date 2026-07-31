@@ -125,10 +125,13 @@ describe('formatDateShort', () => {
   /**
    * Reads its argument with UTC accessors. `Class.date` is a `@db.Date` stored
    * at midnight UTC, so a local read renders the previous day west of UTC —
-   * which the suite's `TZ` pin makes visible rather than theoretical.
+   * which the suite's `TZ` pin makes visible rather than theoretical. Unlike
+   * the two cases above, this fixture crosses a month (and would cross a
+   * weekday too, were one rendered): a local read west of UTC would give
+   * '28 Feb', not just a different day number of the same month.
    */
   it('reads the calendar date, not the host-local one', () => {
-    expect(formatDateShort(new Date('2026-06-12T00:00:00.000Z'))).toBe('12 Jun');
+    expect(formatDateShort(new Date('2026-03-01T00:00:00.000Z'))).toBe('1 Mar');
   });
 });
 
@@ -146,6 +149,19 @@ describe('formatMonthLabel', () => {
   it('treats the month as zero-indexed, matching getUTCMonth', () => {
     expect(formatMonthLabel(2026, 0)).toBe('January 2026');
     expect(formatMonthLabel(2026, 11)).toBe('December 2026');
+  });
+
+  /**
+   * Unlike `paymentStateText`'s enum, `monthIndex` is a plain `number` —
+   * there is no closed set a `never` check could enforce, and no type
+   * assertion is needed to call this with an out-of-range value, so
+   * (unlike that unreachable branch) this one can be pinned by a test
+   * instead of guarded at runtime. `FULL_MONTHS[monthIndex]` is `undefined`
+   * out of range, and the `?? ''` renders a leading space with no month name.
+   */
+  it('renders a leading space with no month name when the index is out of range', () => {
+    expect(formatMonthLabel(2026, 12)).toBe(' 2026');
+    expect(formatMonthLabel(2026, -1)).toBe(' 2026');
   });
 });
 

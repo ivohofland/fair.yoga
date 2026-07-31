@@ -156,6 +156,14 @@ export function formatDateShort(date: Date): string {
  * The full month name, not the abbreviation the date formatters use: this
  * labels a period rather than a day, and there is no adjacent day number for it
  * to crowd.
+ *
+ * Out of range (`monthIndex` outside 0–11), `FULL_MONTHS[monthIndex]` is
+ * `undefined` and the `?? ''` below renders e.g. `" 2026"` — a leading space,
+ * no month name. Unreachable from the single caller. Unlike
+ * `paymentStateText`'s enum in this same file, `monthIndex` is a plain
+ * `number` with no closed set a `never` check could enforce at compile time,
+ * and no type assertion is needed to call this out of range — so that
+ * behaviour is pinned by a test (`format.test.ts`) rather than guarded here.
  */
 export function formatMonthLabel(year: number, monthIndex: number): string {
   return `${FULL_MONTHS[monthIndex] ?? ''} ${year}`;
