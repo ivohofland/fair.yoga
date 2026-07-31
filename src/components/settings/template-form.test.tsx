@@ -116,12 +116,14 @@ describe('TemplateForm', () => {
    * Create sends the same body to a different endpoint, and
    * `createClassTemplateSchema` requires fields the update one leaves optional
    * — so a body good enough for PUT can still be rejected by POST. Asserting
-   * the key set on both modes is what makes the one create-side pin in the
-   * source file (`_formCoversCreate`, checked against `CreateTemplateWire`)
-   * mean something at runtime: the pin only guards the *key set*, and the
-   * create and update schemas agree on keys while differing in optionality
-   * and `.strict()` — differences a key-set pin can't see, which is exactly
-   * what this runtime assertion adds.
+   * the key set on both modes is what makes the create-side pins in the source
+   * file mean something at runtime: a forward pin (`_formCoversCreate`) that
+   * every `CreateTemplateWire` field is in the form, and a reverse pin
+   * (`_formHasNoExtrasOnCreate`) that the form sends nothing create would
+   * silently strip. Both only guard the *key set* — the create and update
+   * schemas agree on keys while differing in optionality and `.strict()` —
+   * differences a key-set pin can't see, which is exactly what this runtime
+   * assertion adds.
    */
   it('sends the same thirteen fields when creating', async () => {
     stubFetch();

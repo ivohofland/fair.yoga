@@ -24,7 +24,7 @@ interface TeacherRoomOption {
  * nothing reconciled: this prop's inline type, `INITIAL_VALUES`, and the
  * request body. The pins below hold it against the wire schema.
  */
-export interface TemplateFormValues {
+interface TemplateFormValues {
   teacherRoomId: string;
   classType: string;
   description: string;
