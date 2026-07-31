@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
+import { startOfLocalDay } from '@/lib/timezone';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 
@@ -16,6 +17,18 @@ function monthKey(date: Date): string {
 // shown to students — transparent, no charts, no growth talk.
 export default async function ReportingPage() {
   const session = await requireTeacherSession();
+  const teacher = await prisma.teacher.findUniqueOrThrow({
+    where: { id: session.teacherId },
+    select: { defaultTimezone: true },
+  });
+  // #101. `StudioClass.date` is a `@db.Date` calendar date; `new Date()` is an
+  // instant. Comparing them directly meant that west of UTC, in the teacher's
+  // local evening, UTC had already rolled over and a studio class dated
+  // *tomorrow* satisfied `lte` — putting a class they have not taught into
+  // their reported hours and income. The end of the teacher's today is the
+  // boundary that belongs here.
+  const endOfToday = startOfLocalDay(new Date(), teacher.defaultTimezone);
+  endOfToday.setUTCHours(23, 59, 59, 999);
 
   const [completedClasses, studioClasses, distinctStudents] = await Promise.all([
     prisma.class.findMany({
@@ -24,7 +37,7 @@ export default async function ReportingPage() {
       orderBy: { date: 'desc' },
     }),
     prisma.studioClass.findMany({
-      where: { teacherId: session.teacherId, cancelledAt: null, date: { lte: new Date() } },
+      where: { teacherId: session.teacherId, cancelledAt: null, date: { lte: endOfToday } },
       select: { date: true, durationMinutes: true, hourlyRate: true, studentCount: true },
       orderBy: { date: 'desc' },
     }),

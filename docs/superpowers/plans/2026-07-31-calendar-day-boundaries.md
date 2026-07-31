@@ -13,7 +13,7 @@
 - **TypeScript `strict: true`, `noUncheckedIndexedAccess` on.** No `any`, **no type assertions to silence a type error**, no eslint suppressions.
 - **The rule, which every change here follows.** A `@db.Date` value is a *calendar date* — read it with UTC accessors, never `toLocaleDateString` without an explicit `timeZone`. A `new Date()` is an *instant* — convert it with `startOfLocalDay(instant, timeZone)` before comparing it to a calendar date.
 - **Do not change any rendered copy.** Every label, date format and string must come out byte-identical. The only intended change is *which* day those strings describe.
-- **The test suite already runs west of UTC.** `vitest.config.ts:60` pins `env: { TZ: 'America/New_York' }` at the root and all three projects inherit it (verified). **Do not add timezone plumbing to any test** — it inherits a zone in which these bugs are visible. Do not touch that config line.
+- **The test suite already runs west of UTC.** `vitest.config.ts:60` pins `env: { TZ: 'America/New_York' }` at the root and all three projects inherit it (verified). **Do not add timezone plumbing to any test**, and do not touch that config line. Note the pin matters for #115's sites (a host-local read) and is irrelevant to #101's (which are host-independent — they use UTC as the teacher's day, and are equally wrong on every host). Do not restate what the pin protects beyond that; two attempts to characterise it during this branch were both false.
 - **Do not modify `prisma/schema.prisma`**; no migration.
 - **Never restart the dev server on `:3000`.** It is managed manually by the repo owner.
 - **Never `git add -A` or `git add .`** — `docs/backlog-roadmap.md` is deliberately untracked. Stage by explicit path.

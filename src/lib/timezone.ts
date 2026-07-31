@@ -16,9 +16,20 @@
  *   - A `new Date()` is an *instant*. Run it through `startOfLocalDay` (or
  *     `startOfLocalWeek`) before comparing it against a calendar date.
  *
- * Both failures look identical in a UTC host and are invisible in CI, which is
- * why the suite pins a west-of-UTC zone (`vitest.config.ts`). #101 broke the
- * second rule in five places; #115 broke the first in three.
+ * The two failures do not hide in the same way, and it is worth not conflating
+ * them — an earlier draft of this comment did.
+ *
+ *   - Breaking rule one is *host*-dependent: `toLocaleDateString` with no
+ *     `timeZone` reads whatever zone the process runs in, so west of UTC it
+ *     renders the previous day and at UTC it looks perfect. Measured: the same
+ *     `@db.Date` value renders `11 Jun 2026` under `America/New_York` and
+ *     `12 Jun 2026` under both `UTC` and `Asia/Kolkata`.
+ *   - Breaking rule two is *not*. `new Date()` read with `setUTCHours` or
+ *     `getUTCDay` gives the same answer on every host; it is wrong because it
+ *     uses UTC as the *teacher's* day, which is wrong for every teacher who is
+ *     not in UTC no matter where the server sits.
+ *
+ * #101 broke the second rule; #115 broke the first.
  */
 
 import { log } from '@/lib/log';
