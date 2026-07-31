@@ -13,7 +13,7 @@
 - **TypeScript `strict: true`, `noUncheckedIndexedAccess` on.** No `any`, **no type assertions to silence a type error**, no eslint suppressions.
 - **The field is REQUIRED on the teacher branch of the union, never optional.** An optional field lets a construction site omit it and a consumer read `undefined` into a timezone argument. Required means the compiler enumerates every site.
 - **The name stays `defaultTimezone`**, matching the Prisma column. A second name for one value is how the drift in #96 started.
-- **The 27 row-teacher joins must NOT change.** `include: { teacher: { select: { defaultTimezone: true } } }` hanging off a class, template or registration row needs *that row's* teacher, which is not necessarily the session user — and the cron routes have no session at all. **Session-teacher lookups are duplication; row-teacher joins are not.**
+- **The 25 row-teacher joins must NOT change.** `include: { teacher: { select: { defaultTimezone: true } } }` hanging off a class, template or registration row needs *that row's* teacher, which is not necessarily the session user — and the cron routes have no session at all. **Session-teacher lookups are duplication; row-teacher joins are not.**
 - **Zero rendered output changes.** This is the reviewable invariant for the whole PR. Any diff in a rendered string is a defect, not an improvement.
 - **#140 is out of scope.** This change makes `p.paidAt` on the payments page a one-line fix and deliberately does not make it.
 - **Never restart the dev server on `:3000`.**
@@ -283,7 +283,7 @@ Then confirm the total is unchanged where it should be:
 grep -rn "defaultTimezone: true" src/ | grep -v "\.test\." | wc -l
 ```
 
-Expected: **27**, down from 30 — the three session-teacher selects are gone and every row-teacher join survives. If the number is below 27 you have deleted a join that was doing real work.
+Expected: **28** — 30 on `main`, +1 from Task 1's session-select column, −3 from these three deletions — with every row-teacher join surviving. If the number is below 28 you have deleted a join that was doing real work.
 
 - [ ] **Step 5: Verify**
 
@@ -328,7 +328,7 @@ git commit -m "refactor: read the timezone off the session, not a repeat query (
 - [ ] `npx vitest run --project unit` — 448 passing (447 + 1)
 - [ ] `npx vitest run --project components` — 61 passing, unchanged
 - [ ] `npx playwright test` — 118 passing
-- [ ] `grep -rn "defaultTimezone: true" src/ | grep -v "\.test\." | wc -l` — **27** (was 30)
+- [ ] `grep -rn "defaultTimezone: true" src/ | grep -v "\.test\." | wc -l` — **28** (30 on `main`, +1 from Task 1's session column, −3 from Task 2's deletions)
 - [ ] No `select: { defaultTimezone: true }` keyed on `session.teacherId` remains
 - [ ] `src/lib/types.ts` — the field is on the teacher branch, required, and the docblock states the bar for future additions
 - [ ] All six `teacher.defaultTimezone` reads repointed — 2 in `schedule/past`, 1 in

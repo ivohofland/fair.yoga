@@ -95,16 +95,28 @@ cheaply: two session-teacher sites, both display-only. It stays where it is.
 
 ### 5. What must not change
 
-`src/` carries **30** non-test occurrences of `defaultTimezone: true`. Three are
-the session-teacher selects in §4. The other **27** are
+`src/` carries **30** non-test occurrences of `defaultTimezone: true` on `main`
+(before this branch). Three are the session-teacher selects in §4, which this
+branch deletes. Of the remaining 27, only **25** are
 `include: { teacher: { select: { defaultTimezone: true } } }` joins across
 `src/services/` and `src/app/api/`, and they are correct. They hang off a
 *class*, *template* or *registration* row and need **that row's** teacher, which
 is not necessarily the session user — and the cron routes have no session at
-all.
+all. The other two are not row-teacher joins and must not be folded into that
+count: `src/app/(public)/[slug]/page.tsx` is a standalone teacher-by-slug
+lookup with no row to join against, and
+`src/services/class-template-lifecycle.ts:410` is a doc comment that contains
+the literal string `defaultTimezone: true`, not a query.
 
-That arithmetic (30 − 3 = 27) is stated so it can be re-run rather than trusted:
-`grep -rn "defaultTimezone: true" src/ | grep -v "\.test\."`.
+This branch's own edits move the total: Task 1 adds one occurrence (the
+session select), and Task 2 deletes three (the page-level lookups), so
+30 → 31 → 28. **28, not 27 and not 30, is the count once both tasks land.**
+
+That arithmetic is stated so it can be re-run rather than trusted:
+`grep -rn "defaultTimezone: true" src/ | grep -v "\.test\."`. But the grep only
+gives a count — classifying each hit as a session select, a row-teacher join,
+a standalone lookup, or a doc comment is what actually verifies the claim,
+and is the step this document skipped the first time.
 
 The distinction is the whole point: **session-teacher lookups are duplication;
 row-teacher joins are not.** Anyone tempted to consolidate them should stop.
