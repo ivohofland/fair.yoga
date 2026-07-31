@@ -4,7 +4,7 @@ import { StatusBadge, deriveBadgeVariant, type BadgeVariant } from '@/components
 import { RegistrationProgress } from '@/components/ui/registration-progress';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
-import { formatRoomLocation, formatDayHeader } from '@/lib/format';
+import { formatRoomLocation, formatDayHeader, FULL_MONTHS } from '@/lib/format';
 import { classStartInstant, startOfLocalWeek } from '@/lib/timezone';
 
 type ClassWithDetails = Class & {
@@ -25,10 +25,6 @@ interface ClassListProps {
 }
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-const FULL_MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
 
 /** UTC-midnight Monday of the week containing `date`. */
 function mondayOf(date: Date): number {

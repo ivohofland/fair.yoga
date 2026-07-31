@@ -4,15 +4,9 @@ import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { MarkUnpaidButton } from '@/components/class/mark-unpaid-button';
 import { OutstandingPaymentRow } from '@/components/class/outstanding-payment-row';
-import { formatStudentName } from '@/lib/format';
+import { formatStudentName, formatDateShort } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
-
-function formatDay(date: Date): string {
-  const d = new Date(date);
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
-}
 
 // Cross-class payment overview: who still owes what, and what came in.
 // Unpaid is brown — a fact, not an alarm.
@@ -93,7 +87,7 @@ export default async function PaymentsOverviewPage() {
               paymentId={p.id}
               studentName={studentName(p)}
               classId={p.registration.class.id}
-              classContext={`${p.registration.class.classType} · ${formatDay(p.registration.class.date)} · ${p.registration.class.startTime}`}
+              classContext={`${p.registration.class.classType} · ${formatDateShort(p.registration.class.date)} · ${p.registration.class.startTime}`}
               amount={Number(p.amount)}
               status={p.status}
               reminderSentAt={p.reminderSentAt}
@@ -124,8 +118,11 @@ export default async function PaymentsOverviewPage() {
                   is #128 and deliberately not touched here.
                 */}
                 <p className="type-caption">
-                  {`${p.registration.class.classType} · ${formatDay(p.registration.class.date)} · ${p.registration.class.startTime}`}
-                  {p.paidAt && <> · ✓ paid {formatDay(p.paidAt)}</>}
+                  {`${p.registration.class.classType} · ${formatDateShort(p.registration.class.date)} · ${p.registration.class.startTime}`}
+                  {/* #140: `paidAt` is an instant, not a calendar date — this renders the UTC
+                      day, not the teacher's. Left exactly as it was; the fix needs the teacher's
+                      timezone, which #138 puts on the session. */}
+                  {p.paidAt && <> · ✓ paid {formatDateShort(p.paidAt)}</>}
                 </p>
               </div>
               <div className="flex items-center gap-3 shrink-0">

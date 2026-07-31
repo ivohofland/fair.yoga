@@ -31,9 +31,9 @@ export default defineConfig(({ mode }) => {
       fileParallelism: false,
       // Pinned, not inherited from whatever machine happens to run the suite.
       //
-      // `formatDayHeader` and `formatHistoricalDate` (src/lib/format.ts) read
-      // their argument with `getUTC*` accessors, and every test that names that
-      // guarantee can only observe it in a zone where the local and the UTC
+      // The date formatters in `src/lib/format.ts` read their argument with
+      // `getUTC*` accessors, and every test that names that guarantee can
+      // only observe it in a zone where the local and the UTC
       // accessors disagree. CI is `ubuntu-latest` — UTC — where `getDate()` and
       // `getUTCDate()` return the same number for every input. Unpinned, those
       // tests therefore pass against a local-time implementation on the one

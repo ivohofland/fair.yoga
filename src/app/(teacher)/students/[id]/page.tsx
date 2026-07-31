@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
-import { formatStudentName, formatDateWithYear } from '@/lib/format';
+import { formatStudentName, formatDateWithYear, formatDateShort } from '@/lib/format';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -95,15 +95,14 @@ export default async function StudentDetailPage({
               <div>
                 <span className="type-label">Birthday</span>
                 {/*
-                  `timeZone: 'UTC'`, not `formatDateWithYear`: this field omits
+                  `formatDateShort`, not `formatDateWithYear`: this field omits
                   the year on purpose (a birth *year* is a different disclosure
                   than a birth *date* on a privacy-first page), and
-                  `formatDateWithYear` always appends one. Adding `timeZone`
-                  fixes the same host-local-shifts-the-day bug as the two class
-                  dates below without picking a formatter for this field, which
-                  is what keeps #96's consolidation decision open.
+                  `formatDateWithYear` always appends one. `formatDateShort`
+                  reads with UTC accessors, which fixes the same
+                  host-local-shifts-the-day bug as the two class dates below.
                 */}
-                <p className="text-base text-ink">{new Date(student.birthday).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', timeZone: 'UTC' })}</p>
+                <p className="text-base text-ink">{formatDateShort(new Date(student.birthday))}</p>
               </div>
             )}
             {showAddress && student.address && (

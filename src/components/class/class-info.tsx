@@ -1,7 +1,7 @@
 import type { Class, TeacherRoom, Room } from '@prisma/client';
 import { StatusBadge, deriveBadgeVariant } from '@/components/ui/status-badge';
 import { RegistrationProgress } from '@/components/ui/registration-progress';
-import { formatRoomLocation } from '@/lib/format';
+import { formatRoomLocation, formatDateWithYear } from '@/lib/format';
 
 type ClassWithRoom = Class & {
   teacherRoom: TeacherRoom & { room: Room };
@@ -11,20 +11,6 @@ interface ClassInfoProps {
   cls: ClassWithRoom;
   registrationCount: number;
   waitlistCount: number;
-}
-
-function formatClassDate(date: Date): string {
-  const d = new Date(date);
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
-  ];
-  const dayName = days[d.getUTCDay()];
-  const monthName = months[d.getUTCMonth()];
-  const dayNum = d.getUTCDate();
-  const year = d.getUTCFullYear();
-  return `${dayName ?? ''}, ${monthName ?? ''} ${dayNum}, ${year}`;
 }
 
 // Class header block: when/where, count, status badge, and the
@@ -39,7 +25,7 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
         <StatusBadge variant={variant} />
       </div>
       <p className="type-body text-ink">
-        {formatClassDate(cls.date)} &middot; {cls.startTime} &middot; {cls.durationMinutes} min
+        {formatDateWithYear(cls.date)} &middot; {cls.startTime} &middot; {cls.durationMinutes} min
       </p>
       <p className="type-body">
         {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}

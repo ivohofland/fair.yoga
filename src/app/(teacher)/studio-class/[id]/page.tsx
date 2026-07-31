@@ -5,16 +5,7 @@ import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
 import { StudentCountEditor } from '@/components/studio-class/student-count-editor';
 import { CancelStudioClassButton } from '@/components/studio-class/cancel-studio-class-button';
-
-function formatDate(date: Date): string {
-  const d = new Date(date);
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
-  ];
-  return `${days[d.getUTCDay()]}, ${months[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
-}
+import { formatDateWithYear } from '@/lib/format';
 
 export default async function StudioClassDetailPage({
   params,
@@ -40,7 +31,7 @@ export default async function StudioClassDetailPage({
       <div className="mb-6">
         <div className="min-h-14 py-2 border-b border-border">
           <span className="type-label">Date</span>
-          <p className="text-base text-ink">{formatDate(studioClass.date)}</p>
+          <p className="text-base text-ink">{formatDateWithYear(studioClass.date)}</p>
         </div>
 
         <div className="min-h-14 py-2 border-b border-border">

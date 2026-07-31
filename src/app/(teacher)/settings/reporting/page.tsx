@@ -3,10 +3,9 @@ import { requireTeacherSession } from '@/lib/session';
 import { startOfLocalDay } from '@/lib/timezone';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
+import { formatMonthLabel } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
-
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 function monthKey(date: Date): string {
   const d = new Date(date);
@@ -84,7 +83,7 @@ export default async function ReportingPage() {
     .slice(0, 6)
     .map(([key, v]) => {
       const [year, month] = key.split('-');
-      return { label: `${MONTHS[Number(month)]} ${year}`, ...v };
+      return { label: formatMonthLabel(Number(year), Number(month)), ...v };
     });
 
   const nothingYet = completedClasses.length === 0 && studioClasses.length === 0;

@@ -4,6 +4,7 @@ import { requireTeacherSession } from '@/lib/session';
 import { ClassList } from '@/components/schedule/class-list';
 import { GettingStarted } from '@/components/schedule/getting-started';
 import { startOfLocalWeek, startOfLocalDay } from '@/lib/timezone';
+import { formatDayHeader } from '@/lib/format';
 
 /**
  * The home window: the current week so far (completed classes stay in
@@ -18,15 +19,6 @@ function getScheduleWindow(timeZone: string): { start: Date; end: Date } {
   end.setUTCDate(end.getUTCDate() + 28);
   end.setUTCHours(23, 59, 59, 999);
   return { start, end };
-}
-
-function formatTodayLabel(date: Date): string {
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
-  ];
-  return `${days[date.getUTCDay()]}, ${date.getUTCDate()} ${months[date.getUTCMonth()]}`;
 }
 
 // The Schedule tab is the home base: this week plus the coming four
@@ -79,7 +71,7 @@ export default async function TeacherHome() {
       <div className="flex items-baseline justify-between gap-3 mb-6">
         <div>
           <h1 className="type-display">Schedule</h1>
-          <p className="type-caption mt-1">{formatTodayLabel(startOfLocalDay(now, teacher.defaultTimezone))}</p>
+          <p className="type-caption mt-1">{formatDayHeader(startOfLocalDay(now, teacher.defaultTimezone))}</p>
         </div>
         <Link href="/class/new" className="type-label text-teal no-underline shrink-0">
           + Add class

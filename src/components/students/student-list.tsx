@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
-import { formatStudentName } from '@/lib/format';
+import { formatStudentName, formatDateShort } from '@/lib/format';
 import type { Student, Registration, Class } from '@prisma/client';
 
 type StudentWithDetails = Student & {
@@ -13,18 +13,6 @@ type StudentWithDetails = Student & {
 
 interface StudentListProps {
   students: StudentWithDetails[];
-}
-
-
-function formatDate(date: Date): string {
-  const d = new Date(date);
-  const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
-  const monthName = months[d.getUTCMonth()];
-  const dayNum = d.getUTCDate();
-  return `${monthName} ${dayNum}`;
 }
 
 export function StudentList({ students }: StudentListProps) {
@@ -41,7 +29,7 @@ export function StudentList({ students }: StudentListProps) {
       {sorted.map((student) => {
         const latestReg = student.registrations[0];
         const lastClassDate = latestReg
-          ? formatDate(latestReg.class.date)
+          ? formatDateShort(latestReg.class.date)
           : 'No classes';
 
         return (
