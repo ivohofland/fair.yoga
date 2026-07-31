@@ -1,5 +1,5 @@
 import type { ComponentProps } from 'react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import type { PaymentStatus } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
@@ -74,6 +74,7 @@ function classRow(
   id: string,
   status: ClassRow['status'],
   payments: (PaymentStatus | null)[] | undefined,
+  overrides?: { date?: Date; startTime?: string },
 ): ClassRow {
   return {
     id,
@@ -82,8 +83,8 @@ function classRow(
     templateId: null,
     classType: 'Vinyasa',
     description: null,
-    date: new Date('2026-06-12T00:00:00.000Z'),
-    startTime: '09:30',
+    date: overrides?.date ?? new Date('2026-06-12T00:00:00.000Z'),
+    startTime: overrides?.startTime ?? '09:30',
     durationMinutes: 60,
     roomCost: new Decimal(20),
     minRate: new Decimal(40),
@@ -106,7 +107,7 @@ function classRow(
 }
 
 function renderOne(status: ClassRow['status'], payments: (PaymentStatus | null)[] | undefined) {
-  render(<ClassList classes={[classRow('cls-1', status, payments)]} />);
+  render(<ClassList classes={[classRow('cls-1', status, payments)]} timeZone="America/Los_Angeles" />);
 }
 
 /** The three rollup markers, so a "renders nothing" test cannot pass vacuously. */
@@ -176,5 +177,56 @@ describe('ClassList payment rollup', () => {
     renderOne('completed', undefined);
 
     expectNoRollup();
+  });
+});
+
+/**
+ * #101. Both of these were wrong by the UTC offset, and both are invisible from
+ * a UTC host — the suite sees them only because `vitest.config.ts` pins a
+ * west-of-UTC zone. `America/Los_Angeles` is used here rather than the pinned
+ * zone so the assertion does not silently change meaning if that pin ever moves.
+ */
+describe('ClassList timezone handling', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('does not dim a class that has not started in the teacher\'s zone', () => {
+    // 19:00 in Los Angeles on 2026-06-01 is 2026-06-02T02:00Z. At 2026-06-01T20:00Z
+    // — 13:00 local — the class is still hours away. The old `itemDateTime` read
+    // the wall clock as UTC, making it "19:00Z", already past by then.
+    vi.setSystemTime(new Date('2026-06-01T20:00:00.000Z'));
+    render(
+      <ClassList
+        classes={[classRow('cls-1', 'open', [], {
+          date: new Date('2026-06-01T00:00:00.000Z'),
+          startTime: '19:00',
+        })]}
+        timeZone="America/Los_Angeles"
+        dimPast
+      />,
+    );
+    // The card is the `<Link href="/class/{id}">` (class-list.tsx:95-97); `past`
+    // adds `opacity-70` to its className. Addressed by role+name because that is
+    // how the rest of this file reaches rendered output — no test id exists and
+    // none should be added for a test.
+    expect(screen.getByRole('link', { name: /Vinyasa/ }).className).not.toContain('opacity-70');
+  });
+
+  it('labels a class as "This week" using the teacher\'s week, not UTC\'s', () => {
+    // Sunday 20:00 LA = Monday 03:00 UTC. UTC has entered the next week; the
+    // teacher has not, so a class dated that Saturday is still "This week".
+    vi.setSystemTime(new Date('2026-06-08T03:00:00.000Z'));
+    render(
+      <ClassList
+        classes={[classRow('cls-1', 'open', [], { date: new Date('2026-06-06T00:00:00.000Z') })]}
+        timeZone="America/Los_Angeles"
+      />,
+    );
+    expect(screen.getByText('This week')).toBeInTheDocument();
   });
 });

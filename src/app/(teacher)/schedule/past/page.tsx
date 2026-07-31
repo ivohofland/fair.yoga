@@ -39,7 +39,7 @@ export default async function PastClassesPage() {
   return (
     <>
       <PageHeader title="Past classes" backHref="/schedule" backLabel="Schedule" />
-      <ClassList classes={classes} studioClasses={studioClasses} emptyMessage="No past classes." showAddLink={false} sortDesc />
+      <ClassList classes={classes} studioClasses={studioClasses} timeZone={teacher.defaultTimezone} emptyMessage="No past classes." showAddLink={false} sortDesc />
     </>
   );
 }

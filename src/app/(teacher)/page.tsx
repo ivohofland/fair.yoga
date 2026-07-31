@@ -97,6 +97,7 @@ export default async function TeacherHome() {
       <ClassList
         classes={classes}
         studioClasses={studioClasses}
+        timeZone={teacher.defaultTimezone}
         emptyMessage="No classes this week"
         showAddLink={false}
         dimPast

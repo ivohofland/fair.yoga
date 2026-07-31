@@ -5,6 +5,7 @@ import { RegistrationProgress } from '@/components/ui/registration-progress';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatRoomLocation, formatDayHeader } from '@/lib/format';
+import { classStartInstant, startOfLocalWeek } from '@/lib/timezone';
 
 type ClassWithDetails = Class & {
   _count: { registrations: number };
@@ -16,6 +17,7 @@ type ClassWithDetails = Class & {
 interface ClassListProps {
   classes: ClassWithDetails[];
   studioClasses?: StudioClass[];
+  timeZone: string;
   emptyMessage?: string;
   showAddLink?: boolean;
   dimPast?: boolean;
@@ -37,9 +39,8 @@ function mondayOf(date: Date): number {
 }
 
 /** "This week" / "Next week" / "Last week" / "Week of 4 August". */
-function weekLabel(itemDate: Date, now: Date): string {
+function weekLabel(itemDate: Date, thisMonday: number): string {
   const itemMonday = mondayOf(itemDate);
-  const thisMonday = mondayOf(now);
   if (itemMonday === thisMonday) return 'This week';
   if (itemMonday === thisMonday + WEEK_MS) return 'Next week';
   if (itemMonday === thisMonday - WEEK_MS) return 'Last week';
@@ -166,19 +167,13 @@ type ScheduleItem =
   | { type: 'class'; data: ClassWithDetails; dateTime: Date }
   | { type: 'studio'; data: StudioClass; dateTime: Date };
 
-function itemDateTime(date: Date, startTime: string): Date {
-  const d = new Date(date);
-  const [hours, minutes] = startTime.split(':').map(Number);
-  d.setUTCHours(hours!, minutes!, 0, 0);
-  return d;
-}
-
-export function ClassList({ classes, studioClasses = [], emptyMessage = 'No classes yet', showAddLink = true, dimPast = false, sortDesc = false }: ClassListProps) {
+export function ClassList({ classes, studioClasses = [], timeZone, emptyMessage = 'No classes yet', showAddLink = true, dimPast = false, sortDesc = false }: ClassListProps) {
   const now = new Date();
+  const thisMonday = startOfLocalWeek(now, timeZone).getTime();
 
   const items: ScheduleItem[] = [
-    ...classes.map((c) => ({ type: 'class' as const, data: c, dateTime: itemDateTime(c.date, c.startTime) })),
-    ...studioClasses.map((sc) => ({ type: 'studio' as const, data: sc, dateTime: itemDateTime(sc.date, sc.startTime) })),
+    ...classes.map((c) => ({ type: 'class' as const, data: c, dateTime: classStartInstant(c.date, c.startTime, timeZone) })),
+    ...studioClasses.map((sc) => ({ type: 'studio' as const, data: sc, dateTime: classStartInstant(sc.date, sc.startTime, timeZone) })),
   ].sort((a, b) => sortDesc
     ? b.dateTime.getTime() - a.dateTime.getTime()
     : a.dateTime.getTime() - b.dateTime.getTime(),
@@ -204,7 +199,7 @@ export function ClassList({ classes, studioClasses = [], emptyMessage = 'No clas
         (() => {
           const groups: { label: string; items: ScheduleItem[] }[] = [];
           for (const item of items) {
-            const label = weekLabel(item.data.date, now);
+            const label = weekLabel(item.data.date, thisMonday);
             const last = groups[groups.length - 1];
             if (last && last.label === label) last.items.push(item);
             else groups.push({ label, items: [item] });
