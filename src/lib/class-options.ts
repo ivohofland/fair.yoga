@@ -2,9 +2,17 @@ import type { CancelDeadline, AutoCancelCheck } from '@prisma/client';
 import type { NoneOf } from '@/lib/type-pins';
 
 /**
- * The cancellation options a teacher is offered, and the single home for them.
- * `template-form.tsx` and `class/new/page.tsx` both read them from here, so
- * the pins below guarantee every screen that renders these choices.
+ * The cancellation options a teacher is offered, and the single home for the
+ * teacher-facing pickers: `template-form.tsx` and `class/new/page.tsx` both
+ * read them from here, so the pins below guarantee every screen that renders
+ * these choices *for teacher input*.
+ *
+ * Not the only place these four labels are rendered, full stop:
+ * `cancel-booking-button.tsx` has its own `DEADLINE_LABELS`, unpinned. That
+ * copy is display-only and student-facing — it shows a student the deadline
+ * a class already has, not a set of choices — so it is out of scope here,
+ * but it means an enum member added above is not guaranteed to get a matching
+ * label there.
  *
  * The dropdown is the list. An enum member with no option here fails the build,
  * so no consumer of this module can offer a stale set of choices.
