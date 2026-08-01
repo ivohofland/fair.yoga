@@ -2,6 +2,9 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { z } from 'zod';
+import type { createStudentSchema } from '@/lib/schemas';
+import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
@@ -11,6 +14,25 @@ interface EditStudentFormProps {
   initialLastName: string;
   initialEmail: string;
 }
+
+type CreateStudentWire = z.infer<typeof createStudentSchema>;
+type EditStudentBody = { firstName: string; lastName: string; email: string };
+
+/**
+ * #136. Pinned against `createStudentSchema`, not `updateStudentSchema`,
+ * which is not the obvious choice: `PUT /api/students/[id]` picks its schema
+ * by *caller identity*, not by method. `session.studentId === id` (a student
+ * editing themselves) parses with `updateStudentSchema`; every other caller —
+ * including this teacher-facing CRM form — parses with `createStudentSchema`.
+ * See `src/app/api/students/[id]/route.ts`, the two `parseBody` calls in `PUT`.
+ *
+ * Both directions apply here because this form owns its branch's schema
+ * outright: three keys, three inputs.
+ */
+const _formCoversSchema: NoneOf<Exclude<keyof CreateStudentWire, keyof EditStudentBody>> = true;
+const _formHasNoExtras: NoneOf<Exclude<keyof EditStudentBody, keyof CreateStudentWire>> = true;
+void _formCoversSchema;
+void _formHasNoExtras;
 
 export function EditStudentForm({
   studentId,

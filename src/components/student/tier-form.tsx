@@ -1,6 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import type { z } from 'zod';
+import type { updateStudentSchema } from '@/lib/schemas';
+import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
 import { TIER_INFO, TIER_QUOTE } from '@/lib/tiers';
 
@@ -8,6 +11,20 @@ interface TierFormProps {
   studentId: string;
   currentTier: number;
 }
+
+type UpdateStudentWire = z.infer<typeof updateStudentSchema>;
+
+interface TierBody {
+  incomeTier: number;
+}
+
+/**
+ * #136. Reverse pin only — one key, and this form shares
+ * `updateStudentSchema` with `notifications-form.tsx`. See that file for why
+ * there is no forward pin.
+ */
+const _formHasNoExtras: NoneOf<Exclude<keyof TierBody, keyof UpdateStudentWire>> = true;
+void _formHasNoExtras;
 
 // Tier selection. Your tier applies to every class you book; changing it
 // is normal, not an event.

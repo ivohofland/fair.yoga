@@ -1,6 +1,10 @@
 'use client';
 
 import { useState } from 'react';
+import type { z } from 'zod';
+import type { StudentReminderPref } from '@prisma/client';
+import type { updateStudentSchema } from '@/lib/schemas';
+import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
 
@@ -9,6 +13,49 @@ interface NotificationsFormProps {
   emailNotifications: boolean;
   reminderPref: string;
 }
+
+type UpdateStudentWire = z.infer<typeof updateStudentSchema>;
+
+interface NotificationsBody {
+  emailNotifications: boolean;
+  reminderPref: StudentReminderPref;
+}
+
+/**
+ * #136. Reverse pin only, deliberately. This form shares
+ * `updateStudentSchema` with `tier-form.tsx`, and between them they cover
+ * three of its eight keys — `firstName`, `lastName`, `phone`, `birthday` and
+ * `address` have no student-facing input anywhere. A forward pin would name
+ * six fields this form has no business rendering.
+ *
+ * What the reverse pin still buys: `updateStudentSchema` is `.strict()`, so a
+ * key it dropped would 400 at runtime. This catches that at compile time.
+ *
+ * Whether those five fields *should* have inputs is a product question about
+ * student self-service, not a pinning one, and is out of #136's scope.
+ */
+const _formHasNoExtras: NoneOf<Exclude<keyof NotificationsBody, keyof UpdateStudentWire>> = true;
+void _formHasNoExtras;
+
+/**
+ * `StudentReminderPref`, not `ReminderPref` — the codebase carries both, and
+ * the other one (`morning_of | evening_before | one_hour_before`) governs the
+ * *teacher's* `defaultReminder`. Nothing but this pin connects these four
+ * option values to the right enum, and the two are one careless import apart.
+ */
+const REMINDER_OPTIONS = [
+  { value: 'eve', label: 'Evening before' },
+  { value: 'morning', label: 'Morning of class' },
+  { value: 'one_hour', label: 'One hour before' },
+  { value: 'off', label: 'No reminders' },
+] as const;
+
+type ReminderOption = (typeof REMINDER_OPTIONS)[number]['value'];
+
+const _offersEveryReminder: NoneOf<Exclude<StudentReminderPref, ReminderOption>> = true;
+const _noStaleReminder: NoneOf<Exclude<ReminderOption, StudentReminderPref>> = true;
+void _offersEveryReminder;
+void _noStaleReminder;
 
 export function NotificationsForm({
   studentId,
@@ -68,10 +115,11 @@ export function NotificationsForm({
             value={reminder}
             onChange={(e) => { setReminder(e.target.value); setSaved(false); }}
           >
-            <option value="eve">Evening before</option>
-            <option value="morning">Morning of class</option>
-            <option value="one_hour">One hour before</option>
-            <option value="off">No reminders</option>
+            {REMINDER_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </Select>
         </div>
       </section>
