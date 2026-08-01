@@ -361,7 +361,7 @@ npx vitest run --project components
 npx vitest run --project unit
 ```
 
-Expected: clean; components 62 (+1).
+Expected: clean; components rises by the new file's tests.
 
 - [ ] **Step 9: Commit**
 
@@ -479,7 +479,7 @@ npx tsc --noEmit && npm run lint
 npx vitest run --project components
 ```
 
-Expected: clean; components 64 (+2).
+Expected: clean; components rises by the two new files' tests.
 
 - [ ] **Step 6: Commit**
 
@@ -589,7 +589,7 @@ npx tsc --noEmit && npm run lint
 npx vitest run --project components
 ```
 
-Expected: clean; components 68 (+4).
+Expected: clean; components rises by the four new files' tests.
 
 - [ ] **Step 8: Commit**
 
@@ -723,7 +723,7 @@ void _formHasNoExtras;
 
 - [ ] **Step 4: Prove the pins bite**
 
-Five pins across three files. Reverse pins are proved by **adding** a bogus key (a forward-pin break would not fire on a reverse-only form — confirm that too, and say so in your report: adding a missing schema field must *not* break `notifications-form`, which is the whole point of omitting the forward pin).
+**Six** pins across three files — one reverse pin each on `notifications-form` and `tier-form`, plus two enum pins on `notifications-form`, plus two on `edit-student-form`. (An earlier draft said five; it forgot the enum pair.) Reverse pins are proved by **adding** a bogus key (a forward-pin break would not fire on a reverse-only form — confirm that too, and say so in your report: adding a missing schema field must *not* break `notifications-form`, which is the whole point of omitting the forward pin).
 
 - [ ] **Step 5: Write three key-set tests**
 
@@ -749,7 +749,7 @@ npx vitest run --project unit
 npx playwright test
 ```
 
-Expected: clean; components 71 (+3); unit 450 unchanged; e2e 118.
+Expected: clean; components **82** after this task's three new files; unit 450 unchanged; e2e 118.
 
 - [ ] **Step 7: Commit**
 
@@ -767,7 +767,7 @@ git commit -m "fix: reverse-pin the forms that share updateStudentSchema (#136)"
 - [ ] `npx tsc --noEmit` — clean
 - [ ] `npm run lint` — clean
 - [ ] `npx vitest run --project unit` — 450, unchanged
-- [ ] `npx vitest run --project components` — **71** (61 + 10 new files)
+- [ ] `npx vitest run --project components` — **82**. An earlier draft said 71, having counted one test per new file; a file carries several. Ten new *files* is the number to check.
 - [ ] `npx playwright test` — 118
 - [ ] `grep -rn "CANCEL_DEADLINE_OPTIONS" src/` — declared **once**, in `src/lib/class-options.ts`
 - [ ] Every pin has a `void _pinName;` line
