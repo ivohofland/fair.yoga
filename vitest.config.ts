@@ -84,10 +84,11 @@ export default defineConfig(({ mode }) => {
           test: {
             name: 'components',
             // jsdom, overriding the root's `environment: 'node'`. The `.tsx`
-            // glob is what keeps this disjoint from `unit`'s `src/**/*.test.ts`
-            // — no file is collected by both.
+            // glob — covering both src/components and src/app — is what keeps
+            // this disjoint from `unit`'s `src/**/*.test.ts`: no file is
+            // collected by both.
             environment: 'jsdom',
-            include: ['src/components/**/*.test.tsx'],
+            include: ['src/components/**/*.test.tsx', 'src/app/**/*.test.tsx'],
             setupFiles: ['./tests/setup/components.ts'],
           },
         },

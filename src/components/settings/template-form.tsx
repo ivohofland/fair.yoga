@@ -11,6 +11,7 @@ import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
 import { formatRoomLocation } from '@/lib/format';
+import { CANCEL_DEADLINE_OPTIONS, AUTO_CANCEL_OPTIONS } from '@/lib/class-options';
 
 interface TeacherRoomOption {
   id: string;
@@ -88,40 +89,6 @@ const DAY_OPTIONS = [
   { value: 5, label: 'Saturday' },
   { value: 6, label: 'Sunday' },
 ];
-
-const CANCEL_DEADLINE_OPTIONS = [
-  { value: 'HOURS_48', label: '48 hours' },
-  { value: 'HOURS_24', label: '24 hours' },
-  { value: 'HOURS_12', label: '12 hours' },
-  { value: 'HOURS_6', label: '6 hours' },
-] as const;
-
-const AUTO_CANCEL_OPTIONS = [
-  { value: 'HOURS_4', label: '4 hours before' },
-  { value: 'HOURS_2', label: '2 hours before' },
-  { value: 'HOURS_1', label: '1 hour before' },
-] as const;
-
-type CancelDeadlineOption = (typeof CANCEL_DEADLINE_OPTIONS)[number]['value'];
-type AutoCancelOption = (typeof AUTO_CANCEL_OPTIONS)[number]['value'];
-
-/**
- * The dropdown is the list. An enum member with no option here fails the build,
- * so a teacher can never be offered a stale set of choices — the same defect as
- * the field-list pins above, one level down.
- *
- * Consequence worth knowing before deleting an entry: removing an option to
- * hide a choice from teachers now fails the build. Hiding a choice means
- * removing it from the enum, or gating it at render.
- */
-const _offersEveryDeadline: NoneOf<Exclude<CancelDeadline, CancelDeadlineOption>> = true;
-const _noStaleDeadline: NoneOf<Exclude<CancelDeadlineOption, CancelDeadline>> = true;
-const _offersEveryCheck: NoneOf<Exclude<AutoCancelCheck, AutoCancelOption>> = true;
-const _noStaleCheck: NoneOf<Exclude<AutoCancelOption, AutoCancelCheck>> = true;
-void _offersEveryDeadline;
-void _noStaleDeadline;
-void _offersEveryCheck;
-void _noStaleCheck;
 
 /**
  * `<select>` hands back `e.target.value` as `string`; these narrow it without
