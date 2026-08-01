@@ -23,10 +23,11 @@ interface NotificationsBody {
 
 /**
  * #136. Reverse pin only, deliberately. This form shares
- * `updateStudentSchema` with `tier-form.tsx`, and between them they cover
- * three of its eight keys — `firstName`, `lastName`, `phone`, `birthday` and
- * `address` have no student-facing input anywhere. A forward pin would name
- * six fields this form has no business rendering.
+ * `updateStudentSchema` with `tier-form.tsx`. The schema has eight keys:
+ * this form sends two, `tier-form.tsx` sends a third, and the other five —
+ * `firstName`, `lastName`, `phone`, `birthday` and `address` — have no
+ * student-facing input anywhere. A forward pin would name six fields this
+ * form has no business rendering.
  *
  * What the reverse pin still buys: `updateStudentSchema` is `.strict()`, so a
  * key it dropped would 400 at runtime. This catches that at compile time.
@@ -57,13 +58,26 @@ const _noStaleReminder: NoneOf<Exclude<ReminderOption, StudentReminderPref>> = t
 void _offersEveryReminder;
 void _noStaleReminder;
 
+/**
+ * `reminderPref` arrives as `string` — both the prop (Prisma's enum flows
+ * through the server component as a plain string) and `e.target.value` off
+ * the `<select>`. This narrows either to `ReminderOption` without an
+ * assertion, reading the options array rather than a second list, the same
+ * way `template-form.tsx`'s `isCancelDeadline`/`isAutoCancelCheck` do.
+ */
+function isReminderOption(v: string): v is ReminderOption {
+  return REMINDER_OPTIONS.some((o) => o.value === v);
+}
+
 export function NotificationsForm({
   studentId,
   emailNotifications,
   reminderPref,
 }: NotificationsFormProps) {
   const [emails, setEmails] = useState(emailNotifications);
-  const [reminder, setReminder] = useState(reminderPref);
+  const [reminder, setReminder] = useState<ReminderOption>(
+    isReminderOption(reminderPref) ? reminderPref : REMINDER_OPTIONS[0].value,
+  );
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -73,13 +87,14 @@ export function NotificationsForm({
     setSaved(false);
     setError('');
     try {
+      const payload: NotificationsBody = {
+        emailNotifications: emails,
+        reminderPref: reminder,
+      };
       const res = await fetch(`/api/students/${studentId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          emailNotifications: emails,
-          reminderPref: reminder,
-        }),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         setSaved(true);
@@ -113,7 +128,12 @@ export function NotificationsForm({
           <Select
             label="Class reminder"
             value={reminder}
-            onChange={(e) => { setReminder(e.target.value); setSaved(false); }}
+            onChange={(e) => {
+              if (isReminderOption(e.target.value)) {
+                setReminder(e.target.value);
+                setSaved(false);
+              }
+            }}
           >
             {REMINDER_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
