@@ -26,18 +26,20 @@ interface StudioClassFormValues {
 type CreateStudioClassWire = z.infer<typeof createStudioClassSchema>;
 
 /**
- * #136. Two keys are excluded from the forward pin, and unlike the class
- * wizard's exclusions neither is a tracked gap — both are schema surface the
- * route never reads:
+ * #136. Two keys are excluded from the forward pin. Neither belongs in this
+ * form, but not because the route ignores them — it does not.
  *
- * - `studentCount` — set after the fact by `student-count-editor.tsx`, because
- *   a studio class's attendance is not known when it is created.
- * - `templateId` — server-set when a studio template materialises a class.
+ * - `studentCount` — a studio class's attendance is not known when it is
+ *   created; `student-count-editor.tsx` sets it afterwards.
+ * - `templateId` — server-set when a studio template materialises a class,
+ *   and absent from this UI entirely.
  *
- * `POST /api/studio-classes` accepts both and writes neither; its
- * `prisma.studioClass.create` data block references neither key. Excluded here
- * rather than added to the form, since sending a value the route discards
- * would be worse than not sending it.
+ * `POST /api/studio-classes` destructures `{ date, ...rest }` and spreads
+ * `rest` straight into `prisma.studioClass.create`, so both keys reach the
+ * database if a caller sends them — with no ownership check on `templateId`.
+ * That is #148, the sibling of #146. Excluded here so this pin does not
+ * certify either as a field this form ought to send, and so the exclusion
+ * points at the tracked issue rather than at a claim that the route is safe.
  */
 const _formCoversCreate: NoneOf<
   Exclude<Exclude<keyof CreateStudioClassWire, 'studentCount' | 'templateId'>, keyof StudioClassFormValues>
