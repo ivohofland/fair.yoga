@@ -2,6 +2,9 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { z } from 'zod';
+import type { createStudentSchema } from '@/lib/schemas';
+import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
@@ -10,6 +13,23 @@ interface FormErrors {
   lastName?: string;
   email?: string;
 }
+
+/**
+ * #136. The one enumeration of this form's body. Nothing previously checked
+ * it against `createStudentSchema`.
+ */
+interface CreateStudentValues {
+  firstName: string;
+  lastName: string;
+  email: string;
+}
+
+type CreateStudentWire = z.infer<typeof createStudentSchema>;
+
+const _formCoversCreate: NoneOf<Exclude<keyof CreateStudentWire, keyof CreateStudentValues>> = true;
+const _formHasNoExtras: NoneOf<Exclude<keyof CreateStudentValues, keyof CreateStudentWire>> = true;
+void _formCoversCreate;
+void _formHasNoExtras;
 
 export function CreateStudentForm() {
   const router = useRouter();
@@ -40,10 +60,16 @@ export function CreateStudentForm() {
     setSubmitError('');
 
     try {
+      const payload: CreateStudentValues = {
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        email: email.trim(),
+      };
+
       const res = await fetch('/api/students', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ firstName: firstName.trim(), lastName: lastName.trim(), email: email.trim() }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {

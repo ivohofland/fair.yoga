@@ -1,6 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import type { z } from 'zod';
+import type { updatePrivacySchema } from '@/lib/schemas';
+import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
 
 export interface TeacherPrivacyValues {
@@ -11,6 +14,19 @@ export interface TeacherPrivacyValues {
   shareAddress: boolean;
   receiveComms: boolean;
 }
+
+type UpdatePrivacyWire = z.infer<typeof updatePrivacySchema>;
+type PrivacyBody = TeacherPrivacyValues & { teacherId: string };
+
+/**
+ * #136. The body is already `{ teacherId, ...values }`, spread-derived from
+ * `TeacherPrivacyValues` above — only the pins against `updatePrivacySchema`
+ * were missing.
+ */
+const _formCoversUpdate: NoneOf<Exclude<keyof UpdatePrivacyWire, keyof PrivacyBody>> = true;
+const _formHasNoExtras: NoneOf<Exclude<keyof PrivacyBody, keyof UpdatePrivacyWire>> = true;
+void _formCoversUpdate;
+void _formHasNoExtras;
 
 interface TeacherPrivacyCardProps {
   studentId: string;

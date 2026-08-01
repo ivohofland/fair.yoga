@@ -2,6 +2,9 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { z } from 'zod';
+import type { createRoomSchema, createTeacherRoomSchema } from '@/lib/schemas';
+import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { formatRoomLocation } from '@/lib/format';
@@ -18,6 +21,48 @@ interface RoomResult {
 }
 
 type Step = 'search' | 'create' | 'settings';
+
+/**
+ * #136. This form's two enumerations of its request bodies — one for the new
+ * room, one for the teacher-room link. Nothing previously checked either
+ * against its schema.
+ */
+interface NewRoomValues {
+  venueName: string;
+  address: string;
+  city: string;
+  postcode: string;
+  floor: string;
+  roomName: string;
+  maxCapacity: number;
+  equipment: string[];
+  notes: string | null;
+  isPublic: boolean;
+}
+
+interface NewTeacherRoomValues {
+  roomId: string;
+  capacityOverride: number;
+  rentalRate: number;
+  equipmentNotes: string | null;
+}
+
+type CreateRoomWire = z.infer<typeof createRoomSchema>;
+type CreateTeacherRoomWire = z.infer<typeof createTeacherRoomSchema>;
+
+/**
+ * #136. Two bodies, two endpoints, four pins — this form creates a room and
+ * then attaches the teacher to it, and the two payloads have nothing in
+ * common. Each is pinned to its own schema in both directions.
+ */
+const _roomCoversCreate: NoneOf<Exclude<keyof CreateRoomWire, keyof NewRoomValues>> = true;
+const _roomHasNoExtras: NoneOf<Exclude<keyof NewRoomValues, keyof CreateRoomWire>> = true;
+const _linkCoversCreate: NoneOf<Exclude<keyof CreateTeacherRoomWire, keyof NewTeacherRoomValues>> = true;
+const _linkHasNoExtras: NoneOf<Exclude<keyof NewTeacherRoomValues, keyof CreateTeacherRoomWire>> = true;
+void _roomCoversCreate;
+void _roomHasNoExtras;
+void _linkCoversCreate;
+void _linkHasNoExtras;
 
 export function AddRoomFlow() {
   const router = useRouter();
@@ -120,21 +165,23 @@ export function AddRoomFlow() {
         .filter(([, v]) => v)
         .map(([k]) => k);
 
+      const newRoom: NewRoomValues = {
+        venueName: venueName.trim(),
+        address: street.trim(),
+        city: city.trim(),
+        postcode: postcode.trim(),
+        floor: floor.trim(),
+        roomName: roomName.trim(),
+        maxCapacity: cap,
+        equipment: equipmentArray,
+        notes: notes.trim() || null,
+        isPublic,
+      };
+
       const res = await fetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          venueName: venueName.trim(),
-          address: street.trim(),
-          city: city.trim(),
-          postcode: postcode.trim(),
-          floor: floor.trim(),
-          roomName: roomName.trim(),
-          maxCapacity: cap,
-          equipment: equipmentArray,
-          notes: notes.trim() || null,
-          isPublic,
-        }),
+        body: JSON.stringify(newRoom),
       });
 
       if (!res.ok) {
@@ -180,15 +227,17 @@ export function AddRoomFlow() {
     setSettingsError('');
 
     try {
+      const newTeacherRoom: NewTeacherRoomValues = {
+        roomId: selectedRoom.id,
+        capacityOverride: cap,
+        rentalRate: rate,
+        equipmentNotes: equipmentNotes.trim() || null,
+      };
+
       const res = await fetch('/api/teacher-rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          roomId: selectedRoom.id,
-          capacityOverride: cap,
-          rentalRate: rate,
-          equipmentNotes: equipmentNotes.trim() || null,
-        }),
+        body: JSON.stringify(newTeacherRoom),
       });
 
       if (!res.ok) {

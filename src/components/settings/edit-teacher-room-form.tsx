@@ -2,6 +2,9 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { z } from 'zod';
+import type { updateTeacherRoomSchema } from '@/lib/schemas';
+import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
@@ -13,6 +16,18 @@ interface EditTeacherRoomFormProps {
     equipmentNotes: string;
   };
 }
+
+type UpdateTeacherRoomWire = z.infer<typeof updateTeacherRoomSchema>;
+type EditTeacherRoomValues = EditTeacherRoomFormProps['initial'];
+
+/**
+ * #136. The `initial` prop's field list is the one enumeration of this
+ * form's body; nothing previously checked it against `updateTeacherRoomSchema`.
+ */
+const _formCoversUpdate: NoneOf<Exclude<keyof UpdateTeacherRoomWire, keyof EditTeacherRoomValues>> = true;
+const _formHasNoExtras: NoneOf<Exclude<keyof EditTeacherRoomValues, keyof UpdateTeacherRoomWire>> = true;
+void _formCoversUpdate;
+void _formHasNoExtras;
 
 export function EditTeacherRoomForm({
   teacherRoomId,
@@ -45,14 +60,16 @@ export function EditTeacherRoomForm({
     setSuccess('');
 
     try {
+      const payload: UpdateTeacherRoomWire = {
+        capacityOverride: cap,
+        rentalRate: rate,
+        equipmentNotes: equipmentNotes.trim() || null,
+      };
+
       const res = await fetch(`/api/teacher-rooms/${teacherRoomId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          capacityOverride: cap,
-          rentalRate: rate,
-          equipmentNotes: equipmentNotes.trim() || null,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
