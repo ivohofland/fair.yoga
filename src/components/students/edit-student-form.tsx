@@ -28,6 +28,12 @@ type EditStudentBody = { firstName: string; lastName: string; email: string };
  *
  * Both directions apply here because this form owns its branch's schema
  * outright: three keys, three inputs.
+ *
+ * `createStudentSchema` is not `.strict()`, unlike `updateStudentSchema` —
+ * which the sibling student forms post to. So an extra key sent here would
+ * not 400; Zod would silently strip it, and the field would vanish without a
+ * word. That is the exact failure mode #136 exists to eliminate, which makes
+ * this reverse pin worth more on this form than on the strict ones, not less.
  */
 const _formCoversSchema: NoneOf<Exclude<keyof CreateStudentWire, keyof EditStudentBody>> = true;
 const _formHasNoExtras: NoneOf<Exclude<keyof EditStudentBody, keyof CreateStudentWire>> = true;
