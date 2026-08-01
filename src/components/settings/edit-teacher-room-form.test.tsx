@@ -3,11 +3,12 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { EditTeacherRoomForm } from './edit-teacher-room-form';
 
 /**
- * #136. This form's `initial` prop shape is its one enumeration of the PUT
- * body; nothing previously checked it against `updateTeacherRoomSchema`. The
- * pins in the source file hold the key set at compile time; this test holds
- * what a pin cannot see, which is what actually reaches the API — including
- * that the `equipmentNotes` trim survives the move into a typed value.
+ * #136. `EditTeacherRoomValues` (the `initial` prop's field list) and the
+ * payload literal are two separate enumerations of this form's PUT body; the
+ * pins and the `Required<UpdateTeacherRoomWire>` annotation in the source
+ * file hold them together at compile time. This test holds what neither can
+ * see: the keys that actually reach the API — including that the
+ * `equipmentNotes` trim survives the move into a typed value.
  *
  * Nothing fetches on mount, so the submit is the first (and only) call.
  */
