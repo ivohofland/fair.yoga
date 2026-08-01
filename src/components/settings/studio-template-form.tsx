@@ -2,21 +2,48 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { z } from 'zod';
+import type { createStudioClassTemplateSchema, updateStudioClassTemplateSchema } from '@/lib/schemas';
+import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 
+/**
+ * #136. The one enumeration of this form's fields. It replaced three that
+ * nothing reconciled: this prop's inline type, `INITIAL_VALUES`, and the
+ * request body. The pins below hold it against both wire schemas.
+ */
+export interface StudioTemplateFormValues {
+  classType: string;
+  dayOfWeek: number;
+  startTime: string;
+  durationMinutes: number;
+  location: string;
+  hourlyRate: number;
+}
+
+type CreateStudioTemplateWire = z.infer<typeof createStudioClassTemplateSchema>;
+type UpdateStudioTemplateWire = z.infer<typeof updateStudioClassTemplateSchema>;
+
+/**
+ * #136. Four pins, because one body serves both endpoints — the shape
+ * `template-form.tsx` established. The two schemas agree on keys today; the
+ * day they diverge, a pin against only one would not notice.
+ */
+const _formCoversCreate: NoneOf<Exclude<keyof CreateStudioTemplateWire, keyof StudioTemplateFormValues>> = true;
+const _formCoversUpdate: NoneOf<Exclude<keyof UpdateStudioTemplateWire, keyof StudioTemplateFormValues>> = true;
+const _formHasNoExtrasOnCreate: NoneOf<Exclude<keyof StudioTemplateFormValues, keyof CreateStudioTemplateWire>> = true;
+const _formHasNoExtras: NoneOf<Exclude<keyof StudioTemplateFormValues, keyof UpdateStudioTemplateWire>> = true;
+void _formCoversCreate;
+void _formCoversUpdate;
+void _formHasNoExtrasOnCreate;
+void _formHasNoExtras;
+
 interface StudioTemplateFormProps {
   mode: 'create' | 'edit';
   templateId?: string;
-  initial?: {
-    classType: string;
-    dayOfWeek: number;
-    startTime: string;
-    durationMinutes: number;
-    location: string;
-    hourlyRate: number;
-  };
+  initial?: StudioTemplateFormValues;
 }
 
 const DAY_OPTIONS = [
@@ -29,7 +56,7 @@ const DAY_OPTIONS = [
   { value: 6, label: 'Sunday' },
 ];
 
-const INITIAL_VALUES = {
+const INITIAL_VALUES: StudioTemplateFormValues = {
   classType: '',
   dayOfWeek: 0,
   startTime: '09:00',
@@ -67,17 +94,19 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         : `/api/studio-class-templates/${templateId}`;
       const method = mode === 'create' ? 'POST' : 'PUT';
 
+      // The intersection, not either half: one body goes to both endpoints, so
+      // it has to satisfy both schemas. See template-form.tsx's identical
+      // payload annotation for why this matters beyond the key-set pins above.
+      const payload: CreateStudioTemplateWire & UpdateStudioTemplateWire = {
+        ...form,
+        classType: form.classType.trim(),
+        location: form.location.trim(),
+      };
+
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          classType: form.classType.trim(),
-          dayOfWeek: form.dayOfWeek,
-          startTime: form.startTime,
-          durationMinutes: form.durationMinutes,
-          location: form.location.trim(),
-          hourlyRate: form.hourlyRate,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {

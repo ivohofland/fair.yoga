@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
-import { StudioTemplateForm } from '@/components/settings/studio-template-form';
+import { StudioTemplateForm, type StudioTemplateFormValues } from '@/components/settings/studio-template-form';
 import { ToggleStudioTemplateButton } from '@/components/settings/toggle-studio-template-button';
 import { ArchiveStudioTemplateButton } from '@/components/settings/archive-studio-template-button';
 import { ArchivedRecord } from '@/components/settings/archived-record';
@@ -24,6 +24,15 @@ export default async function EditStudioTemplatePage({
     redirect('/settings/studio-classes');
   }
 
+  const initial: StudioTemplateFormValues = {
+    classType: template.classType,
+    dayOfWeek: template.dayOfWeek,
+    startTime: template.startTime,
+    durationMinutes: template.durationMinutes,
+    location: template.location,
+    hourlyRate: Number(template.hourlyRate),
+  };
+
   return (
     <>
       <PageHeader title={template.location} backHref="/settings/studio-classes" backLabel="Studio classes" />
@@ -31,14 +40,7 @@ export default async function EditStudioTemplatePage({
       <StudioTemplateForm
         mode="edit"
         templateId={template.id}
-        initial={{
-          classType: template.classType,
-          dayOfWeek: template.dayOfWeek,
-          startTime: template.startTime,
-          durationMinutes: template.durationMinutes,
-          location: template.location,
-          hourlyRate: Number(template.hourlyRate),
-        }}
+        initial={initial}
       />
 
       <section className="mt-8 pt-6 border-t border-border flex flex-col gap-4">

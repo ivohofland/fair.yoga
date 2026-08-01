@@ -1,0 +1,61 @@
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import NewStudioClassPage from './page';
+
+/**
+ * #136. This page restated its six fields across separate `useState` hooks
+ * and the POST body, with nothing checking the two agreed with
+ * `createStudioClassSchema`. The compile-time pins in the source file hold
+ * `StudioClassFormValues` against the schema — excluding `studentCount` and
+ * `templateId`, dead schema surface this form deliberately does not send —
+ * this test holds what a pin cannot see, which is what actually reaches the
+ * API.
+ *
+ * The page fetches nothing on mount, so the submit request is the first (and
+ * only) `fetch` call.
+ */
+describe('NewStudioClassPage', () => {
+  const fetchMock = vi.fn();
+
+  afterEach(() => {
+    fetchMock.mockReset();
+    vi.unstubAllGlobals();
+  });
+
+  function stubFetch() {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: { id: 'studio-class-1' } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+  }
+
+  it('sends exactly these six fields', async () => {
+    stubFetch();
+    render(<NewStudioClassPage />);
+
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+
+    const button = screen.getByRole('button', { name: /log class/i });
+    fireEvent.click(button);
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(0));
+
+    const [url, options] = fetchMock.mock.calls.at(-1) ?? [];
+    const opts = options as { method: string; body: string };
+    const body = JSON.parse(opts.body) as Record<string, unknown>;
+
+    expect(url).toBe('/api/studio-classes');
+    expect(opts.method).toBe('POST');
+    expect(Object.keys(body).sort()).toEqual([
+      'classType',
+      'date',
+      'durationMinutes',
+      'hourlyRate',
+      'location',
+      'startTime',
+    ]);
+  });
+});

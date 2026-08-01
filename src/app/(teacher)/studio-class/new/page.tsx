@@ -3,9 +3,48 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import type { z } from 'zod';
+import type { createStudioClassSchema } from '@/lib/schemas';
+import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/layout/page-header';
+
+/**
+ * #136. The one enumeration of this form's fields — what actually reaches
+ * the request body, post-transform, below.
+ */
+interface StudioClassFormValues {
+  classType: string;
+  location: string;
+  date: string;
+  startTime: string;
+  durationMinutes: number;
+  hourlyRate: number;
+}
+
+type CreateStudioClassWire = z.infer<typeof createStudioClassSchema>;
+
+/**
+ * #136. Two keys are excluded from the forward pin, and unlike the class
+ * wizard's exclusions neither is a tracked gap — both are schema surface the
+ * route never reads:
+ *
+ * - `studentCount` — set after the fact by `student-count-editor.tsx`, because
+ *   a studio class's attendance is not known when it is created.
+ * - `templateId` — server-set when a studio template materialises a class.
+ *
+ * `POST /api/studio-classes` accepts both and writes neither; its
+ * `prisma.studioClass.create` data block references neither key. Excluded here
+ * rather than added to the form, since sending a value the route discards
+ * would be worse than not sending it.
+ */
+const _formCoversCreate: NoneOf<
+  Exclude<Exclude<keyof CreateStudioClassWire, 'studentCount' | 'templateId'>, keyof StudioClassFormValues>
+> = true;
+const _formHasNoExtras: NoneOf<Exclude<keyof StudioClassFormValues, keyof CreateStudioClassWire>> = true;
+void _formCoversCreate;
+void _formHasNoExtras;
 
 export default function NewStudioClassPage() {
   const router = useRouter();
@@ -33,17 +72,19 @@ export default function NewStudioClassPage() {
     setError('');
 
     try {
+      const values: StudioClassFormValues = {
+        classType: classType.trim(),
+        location: location.trim(),
+        date,
+        startTime,
+        durationMinutes: Number(durationMinutes),
+        hourlyRate: Number(hourlyRate),
+      };
+
       const res = await fetch('/api/studio-classes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          classType: classType.trim(),
-          location: location.trim(),
-          date,
-          startTime,
-          durationMinutes: Number(durationMinutes),
-          hourlyRate: Number(hourlyRate),
-        }),
+        body: JSON.stringify(values),
       });
 
       if (!res.ok) {
