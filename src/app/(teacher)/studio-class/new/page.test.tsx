@@ -7,9 +7,9 @@ import NewStudioClassPage from './page';
  * and the POST body, with nothing checking the two agreed with
  * `createStudioClassSchema`. The compile-time pins in the source file hold
  * `StudioClassFormValues` against the schema — excluding `studentCount` and
- * `templateId`, dead schema surface this form deliberately does not send —
- * this test holds what a pin cannot see, which is what actually reaches the
- * API.
+ * `templateId` because neither belongs in this form, for the reasons at
+ * `page.tsx:28-43` (not because the route ignores them; see #148) — this
+ * test holds what a pin cannot see, which is what actually reaches the API.
  *
  * The page fetches nothing on mount, so the submit request is the first (and
  * only) `fetch` call.

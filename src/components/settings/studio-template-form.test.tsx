@@ -4,11 +4,14 @@ import { StudioTemplateForm } from './studio-template-form';
 
 /**
  * #136. This form enumerated its six fields four times — the `initial` prop's
- * inline type, `INITIAL_VALUES`, and the POST/PUT body — and nothing checked
- * that they agreed with each other or with `createStudioClassTemplateSchema` /
- * `updateStudioClassTemplateSchema`. The compile-time pins in the source file
- * hold `StudioTemplateFormValues` against both wire schemas; this test holds
- * what a pin cannot see, which is what actually reaches the API in each mode.
+ * inline type, `INITIAL_VALUES`, the POST/PUT body, and the caller's own
+ * inline literal in `settings/studio-classes/[id]/page.tsx` — and nothing
+ * checked that they agreed with each other or with
+ * `createStudioClassTemplateSchema` / `updateStudioClassTemplateSchema`.
+ * That fourth copy is why `StudioTemplateFormValues` is exported rather than
+ * kept module-private. The compile-time pins in the source file hold it
+ * against both wire schemas; this test holds what a pin cannot see, which is
+ * what actually reaches the API in each mode.
  *
  * Neither mode fetches anything on mount, so the submit request is the first
  * (and only) `fetch` call.
