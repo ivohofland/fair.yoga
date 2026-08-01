@@ -2,12 +2,14 @@ import type { CancelDeadline, AutoCancelCheck } from '@prisma/client';
 import type { NoneOf } from '@/lib/type-pins';
 
 /**
- * The cancellation options a teacher is offered, shared by every form that
- * renders them — `template-form.tsx` and the class-creation wizard, which
- * carried byte-identical private copies until #136 (one pinned, one not).
+ * The cancellation options a teacher is offered, and the single home for them.
+ * `template-form.tsx` reads them from here. `class/new/page.tsx` still carries
+ * a byte-identical private copy — removing it is the rest of #136 — so until
+ * then the pins below guarantee only this module's consumers, not every
+ * screen that renders these choices.
  *
  * The dropdown is the list. An enum member with no option here fails the build,
- * so a teacher can never be offered a stale set of choices.
+ * so no consumer of this module can offer a stale set of choices.
  *
  * Consequence worth knowing before deleting an entry: removing an option to
  * hide a choice from teachers now fails the build. Hiding a choice means
