@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { z } from 'zod';
+import type { createClassSchema } from '@/lib/schemas';
+import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
@@ -9,6 +12,7 @@ import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
 import { formatRoomLocation, formatDateWithYear } from '@/lib/format';
+import { CANCEL_DEADLINE_OPTIONS, AUTO_CANCEL_OPTIONS } from '@/lib/class-options';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -46,24 +50,40 @@ interface FormData {
   autoCancelCheck: string;
 }
 
+type CreateClassWire = z.infer<typeof createClassSchema>;
+
+/**
+ * #136. `FormData` is the list; the body is `form` itself, so the two cannot
+ * drift. These pins tie that list to the schema.
+ *
+ * Two keys are excluded from the forward pin, each for its own reason:
+ *
+ * - `description` — `createClassSchema` accepts it and `POST /api/classes`
+ *   writes it, but this wizard renders no input for it, so a teacher can only
+ *   describe a class by editing it afterwards. That is a real gap, filed as
+ *   #147, not something to paper over by adding a field inside a pinning
+ *   change.
+ * - `templateId` — server-set by `class-generator.ts` when a template
+ *   materialises a class; it appears nowhere in this UI. The route passes a
+ *   client-supplied value straight through with no ownership check, filed as
+ *   #146. Excluded so this pin does not certify it as a field this form ought
+ *   to be sending.
+ *
+ * Both exclusions are deliberate and both are tracked. Narrow them when the
+ * issues close.
+ */
+const _formCoversCreate: NoneOf<
+  Exclude<Exclude<keyof CreateClassWire, 'description' | 'templateId'>, keyof FormData>
+> = true;
+const _formHasNoExtras: NoneOf<Exclude<keyof FormData, keyof CreateClassWire>> = true;
+void _formCoversCreate;
+void _formHasNoExtras;
+
 type StepErrors = Record<string, string>;
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-const CANCEL_DEADLINE_OPTIONS = [
-  { value: 'HOURS_48', label: '48 hours' },
-  { value: 'HOURS_24', label: '24 hours' },
-  { value: 'HOURS_12', label: '12 hours' },
-  { value: 'HOURS_6', label: '6 hours' },
-];
-
-const AUTO_CANCEL_OPTIONS = [
-  { value: 'HOURS_4', label: '4 hours before' },
-  { value: 'HOURS_2', label: '2 hours before' },
-  { value: 'HOURS_1', label: '1 hour before' },
-];
 
 const INITIAL_FORM: FormData = {
   teacherRoomId: '',
@@ -219,20 +239,7 @@ export default function CreateClassPage() {
       const res = await fetch('/api/classes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          teacherRoomId: form.teacherRoomId,
-          classType: form.classType,
-          date: form.date,
-          startTime: form.startTime,
-          durationMinutes: form.durationMinutes,
-          roomCost: form.roomCost,
-          minRate: form.minRate,
-          targetRate: form.targetRate,
-          minStudents: form.minStudents,
-          maxStudents: form.maxStudents,
-          cancelDeadline: form.cancelDeadline,
-          autoCancelCheck: form.autoCancelCheck,
-        }),
+        body: JSON.stringify(form),
       });
 
       if (!res.ok) {

@@ -3,10 +3,8 @@ import type { NoneOf } from '@/lib/type-pins';
 
 /**
  * The cancellation options a teacher is offered, and the single home for them.
- * `template-form.tsx` reads them from here. `class/new/page.tsx` still carries
- * a byte-identical private copy — removing it is the rest of #136 — so until
- * then the pins below guarantee only this module's consumers, not every
- * screen that renders these choices.
+ * `template-form.tsx` and `class/new/page.tsx` both read them from here, so
+ * the pins below guarantee every screen that renders these choices.
  *
  * The dropdown is the list. An enum member with no option here fails the build,
  * so no consumer of this module can offer a stale set of choices.
