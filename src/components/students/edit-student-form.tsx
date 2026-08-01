@@ -63,14 +63,15 @@ export function EditStudentForm({
     setError('');
 
     try {
+      const payload: EditStudentBody = {
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        email: email.trim(),
+      };
       const res = await fetch(`/api/students/${studentId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          firstName: firstName.trim(),
-          lastName: lastName.trim(),
-          email: email.trim(),
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {

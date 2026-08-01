@@ -64,10 +64,11 @@ export function TeacherPrivacyCard({
     setSaved(false);
     setError('');
     try {
+      const payload: PrivacyBody = { teacherId, ...values };
       const res = await fetch(`/api/students/${studentId}/privacy`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teacherId, ...values }),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         setSaved(true);

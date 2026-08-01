@@ -39,10 +39,11 @@ export function TierForm({ studentId, currentTier }: TierFormProps) {
     setSaved(false);
     setError('');
     try {
+      const payload: TierBody = { incomeTier: tier };
       const res = await fetch(`/api/students/${studentId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ incomeTier: tier }),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         setSaved(true);
