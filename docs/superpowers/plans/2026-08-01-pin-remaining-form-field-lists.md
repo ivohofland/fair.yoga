@@ -62,7 +62,9 @@ Measured before writing this plan; do not rediscover it at the first `tsc` run.
 - **`description`** — the schema accepts it, `POST /api/classes` writes it, `class-edit-form.tsx` renders an input for it, and this wizard renders nothing. A teacher can describe a class only after creating it. **#147.**
 - **`templateId`** — server-set by `class-generator.ts`, zero occurrences in the wizard's UI, and the route passes a client value into `prisma.class.create` with no ownership check. **#146.**
 
-**`studio-class/new/page.tsx`** — `createStudioClassSchema` has 8 keys, the form sends 6. Both extras are **dead schema surface**: `POST /api/studio-classes` accepts `studentCount` and `templateId` and never reads either (verified — neither appears in its `prisma.studioClass.create` data block). `studentCount` is set later by `student-count-editor.tsx`. No issue filed; the exclusion comment is the record.
+**`studio-class/new/page.tsx`** — `createStudioClassSchema` has 8 keys, the form sends 6. Both extras are excluded because they do not belong in this form: `studentCount` is set afterwards by `student-count-editor.tsx`, and `templateId` is server-set by the studio generator.
+
+**Correction.** An earlier draft called these "dead schema surface" the route "never reads". That was wrong. `POST /api/studio-classes` destructures `{ date, ...rest }` and spreads `rest` into `prisma.studioClass.create`, so both keys reach the database if sent — with no ownership check on `templateId`. Filed as **#148**, the sibling of #146. The cause of the error is worth keeping: I grepped the handler for both key names, found none, and reported that as a measurement. **A grep for key names cannot see a rest spread.**
 
 **Every other form in scope matches its schema exactly.** Verified key-by-key.
 
@@ -426,24 +428,26 @@ void _formHasNoExtras;
 
 - [ ] **Step 2: `studio-class/new/page.tsx` — two pins, two exclusions**
 
-The form sends six keys (`classType`, `location`, `date`, `startTime`, `durationMinutes`, `hourlyRate`); `createStudioClassSchema` has eight. Both extras are dead schema surface — `POST /api/studio-classes` accepts and never reads them.
+The form sends six keys (`classType`, `location`, `date`, `startTime`, `durationMinutes`, `hourlyRate`); `createStudioClassSchema` has eight. Both extras are excluded because they do not belong in this form — **not** because the route ignores them, which it does not: it spreads them into `prisma.studioClass.create` (see the correction above, and #148).
 
 ```ts
 type CreateStudioClassWire = z.infer<typeof createStudioClassSchema>;
 
 /**
- * #136. Two keys are excluded from the forward pin, and unlike the class
- * wizard's exclusions neither is a tracked gap — both are schema surface the
- * route never reads:
+ * #136. Two keys are excluded from the forward pin. Neither belongs in this
+ * form, but the reason is not that the route ignores them — it does not.
  *
- * - `studentCount` — set after the fact by `student-count-editor.tsx`, because
- *   a studio class's attendance is not known when it is created.
- * - `templateId` — server-set when a studio template materialises a class.
+ * - `studentCount` — a studio class's attendance is not known when it is
+ *   created; `student-count-editor.tsx` sets it afterwards.
+ * - `templateId` — server-set when a studio template materialises a class,
+ *   and absent from this UI entirely.
  *
- * `POST /api/studio-classes` accepts both and writes neither; its
- * `prisma.studioClass.create` data block references neither key. Excluded here
- * rather than added to the form, since sending a value the route discards
- * would be worse than not sending it.
+ * `POST /api/studio-classes` destructures `{ date, ...rest }` and spreads
+ * `rest` into `prisma.studioClass.create`, so both keys reach the database if
+ * a caller sends them — with no ownership check on `templateId`. That is
+ * #148, the sibling of #146. Excluded here so this pin does not certify
+ * either as a field this form ought to send, and so the exclusion points at
+ * the issue rather than at a claim that the route is safe.
  */
 const _formCoversCreate: NoneOf<
   Exclude<Exclude<keyof CreateStudioClassWire, 'studentCount' | 'templateId'>, keyof StudioClassFormValues>
