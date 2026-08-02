@@ -121,8 +121,7 @@ describe('calculateClassPricing', () => {
     expect(result.effectiveTeacherRate).toBe(0);
     expect(result.totalCost).toBe(0);
     expect(result.studentCount).toBe(0);
-    expect(result.studentPrices).toEqual([]);
-    expect(result.studentTierRatios).toEqual([]);
+    expect(result.students).toEqual([]);
   });
 
   it('calculates seed data scenario correctly', () => {
@@ -142,18 +141,18 @@ describe('calculateClassPricing', () => {
 
     // base = 56.25 / 9.20 ≈ 6.114; exact shares floor to whole cents and
     // the 4 leftover cents go to the largest remainders (T4 pair, T1 pair).
-    expect(result.studentPrices[0]).toBeCloseTo(3.98, 2); // T1 (+1c remainder)
-    expect(result.studentPrices[1]).toBeCloseTo(3.98, 2); // T1 (+1c remainder)
-    expect(result.studentPrices[2]).toBeCloseTo(4.89, 2); // T2
-    expect(result.studentPrices[3]).toBeCloseTo(6.11, 2); // T3
-    expect(result.studentPrices[4]).toBeCloseTo(6.11, 2); // T3
-    expect(result.studentPrices[5]).toBeCloseTo(7.34, 2); // T4 (+1c remainder)
-    expect(result.studentPrices[6]).toBeCloseTo(7.34, 2); // T4 (+1c remainder)
-    expect(result.studentPrices[7]).toBeCloseTo(8.25, 2); // T5
-    expect(result.studentPrices[8]).toBeCloseTo(8.25, 2); // T5
+    expect(result.students[0]?.price).toBeCloseTo(3.98, 2); // T1 (+1c remainder)
+    expect(result.students[1]?.price).toBeCloseTo(3.98, 2); // T1 (+1c remainder)
+    expect(result.students[2]?.price).toBeCloseTo(4.89, 2); // T2
+    expect(result.students[3]?.price).toBeCloseTo(6.11, 2); // T3
+    expect(result.students[4]?.price).toBeCloseTo(6.11, 2); // T3
+    expect(result.students[5]?.price).toBeCloseTo(7.34, 2); // T4 (+1c remainder)
+    expect(result.students[6]?.price).toBeCloseTo(7.34, 2); // T4 (+1c remainder)
+    expect(result.students[7]?.price).toBeCloseTo(8.25, 2); // T5
+    expect(result.students[8]?.price).toBeCloseTo(8.25, 2); // T5
 
     // Prices must sum EXACTLY to totalCost — the teacher's books reconcile.
-    const sumCents = result.studentPrices.reduce((a, b) => a + Math.round(b * 100), 0);
+    const sumCents = result.students.reduce((a, s) => a + Math.round(s.price * 100), 0);
     expect(sumCents).toBe(Math.round(result.totalCost * 100));
   });
 
@@ -175,7 +174,7 @@ describe('calculateClassPricing', () => {
         maxStudents: 12,
         studentTiers,
       });
-      const sumCents = result.studentPrices.reduce((a, b) => a + Math.round(b * 100), 0);
+      const sumCents = result.students.reduce((a, s) => a + Math.round(s.price * 100), 0);
       expect(sumCents).toBe(Math.round(result.totalCost * 100));
     }
   });
@@ -193,7 +192,7 @@ describe('calculateClassPricing', () => {
     expect(result.studentCount).toBe(1);
     expect(result.effectiveTeacherRate).toBe(15);
     expect(result.totalCost).toBe(50);
-    expect(result.studentPrices).toEqual([50]);
+    expect(result.students.map((s) => s.price)).toEqual([50]);
   });
 
   it('handles all same tier', () => {
@@ -211,8 +210,8 @@ describe('calculateClassPricing', () => {
     // total = 35 + 16.25 = 51.25
     expect(result.totalCost).toBeCloseTo(51.25, 2);
     // Each pays 51.25 / 5 = 10.25 (all same tier, ratio 1.0)
-    for (const price of result.studentPrices) {
-      expect(price).toBeCloseTo(10.25, 2);
+    for (const s of result.students) {
+      expect(s.price).toBeCloseTo(10.25, 2);
     }
   });
 
@@ -269,7 +268,7 @@ describe('calculateClassPricing', () => {
       studentTiers: [3, 1, 5, 2, 4],
     });
 
-    expect(result.studentTierRatios).toEqual([1.0, 0.65, 1.35, 0.8, 1.2]);
+    expect(result.students.map((s) => s.ratio)).toEqual([1.0, 0.65, 1.35, 0.8, 1.2]);
   });
 
   it('validates pricing simulator scenario', () => {
@@ -288,7 +287,21 @@ describe('calculateClassPricing', () => {
     expect(result.totalCost).toBeCloseTo(92.5, 2);
 
     // Sum of prices should approximate totalCost
-    const sum = result.studentPrices.reduce((a, b) => a + b, 0);
+    const sum = result.students.reduce((a, s) => a + s.price, 0);
     expect(Math.abs(sum - result.totalCost)).toBeLessThan(0.1);
+  });
+
+  it('pairs each price with the tier and ratio it was computed from', () => {
+    const result = calculateClassPricing({
+      roomCost: 35, minRate: 15, targetRate: 25,
+      minStudents: 4, maxStudents: 12,
+      studentTiers: [1, 5, 3],
+    });
+
+    // The pairing is the point of the shape: a record cannot carry tier 1's
+    // price under tier 5's ratio, which two index-correlated arrays could.
+    expect(result.students.map((s) => s.tier)).toEqual([1, 5, 3]);
+    expect(result.students.map((s) => s.ratio)).toEqual([0.65, 1.35, 1.0]);
+    expect(result.students.every((s) => s.price > 0)).toBe(true);
   });
 });

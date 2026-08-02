@@ -40,14 +40,28 @@ export interface ClassPricingInput {
   studentTiers: number[];
 }
 
+export interface PricedStudent {
+  /** The tier this student was charged at. */
+  tier: number;
+  /** The tier ratio applied — TIER_RATIOS[tier]. */
+  ratio: number;
+  /** This student's price, in whole cents after largest-remainder allocation. */
+  price: number;
+}
+
 export interface PricingResult {
   effectiveTeacherRate: number;
   totalCost: number;
   studentCount: number;
-  /** Price per student, same order as input tiers. */
-  studentPrices: number[];
-  /** Ratio per student, same order as input tiers. */
-  studentTierRatios: number[];
+  /**
+   * One record per charged student, in the same order as the input tiers.
+   *
+   * One array of records rather than parallel `studentPrices` /
+   * `studentTierRatios`: those were held in correspondence by a shared index,
+   * and a skew between them in the billing loop would charge a student
+   * another student's price.
+   */
+  students: ReadonlyArray<PricedStudent>;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,8 +114,7 @@ export function calculateClassPricing(
       effectiveTeacherRate: 0,
       totalCost: 0,
       studentCount: 0,
-      studentPrices: [],
-      studentTierRatios: [],
+      students: [],
     };
   }
 
@@ -152,13 +165,16 @@ export function calculateClassPricing(
     leftover--;
   }
 
-  const studentPrices = flooredCents.map((c) => c / 100);
+  const students: PricedStudent[] = studentTiers.map((tier, i) => ({
+    tier,
+    ratio: studentTierRatios[i]!,
+    price: flooredCents[i]! / 100,
+  }));
 
   return {
     effectiveTeacherRate,
     totalCost,
     studentCount,
-    studentPrices,
-    studentTierRatios,
+    students,
   };
 }

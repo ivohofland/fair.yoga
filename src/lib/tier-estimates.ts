@@ -39,8 +39,13 @@ export function estimateTierPrices(input: TierEstimateInput): TierPrices {
       maxStudents: input.maxStudents,
       studentTiers: tiers,
     });
-    // The joining student is at index registeredTiers.length.
-    return pricing.studentPrices[input.registeredTiers.length]!;
+    // The joining student is at index registeredTiers.length. This assertion
+    // survives the #39 restructure deliberately: no type can prove an index
+    // is in range, and the alternatives (a generic payload through the engine,
+    // or reordering the input so the viewer lands last) either complicate the
+    // core signature or move which student gets the leftover cent. This site
+    // reads only a price, never a paired ratio, so it carries no skew risk.
+    return pricing.students[input.registeredTiers.length]!.price;
   };
   return [priceForTier(1), priceForTier(2), priceForTier(3), priceForTier(4), priceForTier(5)];
 }
@@ -84,7 +89,7 @@ export function estimateAttendanceSpread(input: AttendanceSpreadInput): Attendan
       maxStudents: input.maxStudents,
       studentTiers: tiers,
     });
-    return pricing.studentPrices[input.registeredTiers.length]!;
+    return pricing.students[input.registeredTiers.length]!.price;
   };
 
   const floor = Math.min(

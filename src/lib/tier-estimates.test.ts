@@ -39,7 +39,7 @@ describe('estimateTierPrices', () => {
         minStudents: 2,
         maxStudents: 10,
         studentTiers: [tier, 3],
-      }).studentPrices[0]!;
+      }).students[0]!.price;
       expect(prices[tier - 1]!).toBe(expected);
     }
   });
@@ -55,7 +55,7 @@ describe('estimateTierPrices', () => {
       minStudents: 2,
       maxStudents: 10,
       studentTiers: [2, 4, 1],
-    }).studentPrices[2]!;
+    }).students[2]!.price;
     expect(prices[0]!).toBe(expected);
   });
 
@@ -72,10 +72,10 @@ describe('estimateTierPrices', () => {
       minStudents: 2,
       maxStudents: 10,
       studentTiers: [5, 1, 3],
-    }).studentPrices;
-    expect(prices[2]!).toBe(engine[2]!);
-    expect(prices[2]!).not.toBe(engine[0]!);
-    expect(prices[2]!).not.toBe(engine[1]!);
+    }).students;
+    expect(prices[2]!).toBe(engine[2]!.price);
+    expect(prices[2]!).not.toBe(engine[0]!.price);
+    expect(prices[2]!).not.toBe(engine[1]!.price);
   });
 
   it('clamps a pathological stored minimum to MAX_CLASS_SIZE', () => {

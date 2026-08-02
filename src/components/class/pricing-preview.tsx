@@ -1,5 +1,6 @@
 import type { Class, Registration, Student } from '@prisma/client';
-import { calculateClassPricing, TIER_RATIOS } from '@/services/pricing';
+import { calculateClassPricing } from '@/services/pricing';
+import { INCOME_TIERS } from '@/lib/tiers';
 
 type RegistrationWithStudent = Registration & { student: Student };
 
@@ -38,20 +39,16 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
     studentTiers,
   });
 
-  // Build a summary by tier for preview display
+  // Build a summary by tier for preview display. Each priced record carries
+  // its own tier and ratio, so there is no index to match up and no undefined
+  // to guard — the two checks this replaced existed only because the price
+  // and the ratio came from different places.
   const tierSummary: { tier: number; ratio: number; price: number; count: number }[] = [];
-  for (let tier = 1; tier <= 5; tier++) {
-    const indices = studentTiers
-      .map((t, i) => (t === tier ? i : -1))
-      .filter((i) => i !== -1);
-
-    if (indices.length > 0) {
-      const firstIndex = indices[0]!;
-      const ratio = TIER_RATIOS[tier];
-      const price = pricing.studentPrices[firstIndex];
-      if (ratio !== undefined && price !== undefined) {
-        tierSummary.push({ tier, ratio, price, count: indices.length });
-      }
+  for (const tier of INCOME_TIERS) {
+    const forTier = pricing.students.filter((s) => s.tier === tier);
+    const first = forTier[0];
+    if (first) {
+      tierSummary.push({ tier, ratio: first.ratio, price: first.price, count: forTier.length });
     }
   }
 
