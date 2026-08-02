@@ -2,8 +2,8 @@ import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
-import { MarkUnpaidButton } from '@/components/class/mark-unpaid-button';
 import { OutstandingPaymentRow } from '@/components/class/outstanding-payment-row';
+import { ReceivedPaymentRow } from '@/components/class/received-payment-row';
 import { formatStudentName, formatDateShort } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
@@ -102,34 +102,15 @@ export default async function PaymentsOverviewPage() {
           <EmptyState title="Nothing received yet" body="Paid classes appear here." />
         ) : (
           received.map((p) => (
-            <div
+            <ReceivedPaymentRow
               key={p.id}
-              className="flex items-center justify-between gap-3 min-h-14 py-2 border-b border-border last:border-b-0"
-            >
-              <div className="min-w-0">
-                <p className="text-base text-ink">{studentName(p)}</p>
-                {/*
-                  Same "{type} · {day} · {time}" shape as the Outstanding rows,
-                  and for the same reason (#59): without the start time, two
-                  paid classes of one type on one day read identically for the
-                  same student, and the amount alone does not tell them apart.
-                  This fixes the visible half only — MarkUnpaidButton's
-                  accessible name is the bare "Mark unpaid" for every row, which
-                  is #128 and deliberately not touched here.
-                */}
-                <p className="type-caption">
-                  {`${p.registration.class.classType} · ${formatDateShort(p.registration.class.date)} · ${p.registration.class.startTime}`}
-                  {/* #140: `paidAt` is an instant, not a calendar date — this renders the UTC
-                      day, not the teacher's. The defect is left exactly as it was; the fix
-                      needs the teacher's timezone, which #138 puts on the session. */}
-                  {p.paidAt && <> · ✓ paid {formatDateShort(p.paidAt)}</>}
-                </p>
-              </div>
-              <div className="flex items-center gap-3 shrink-0">
-                <span className="type-number">€{Number(p.amount).toFixed(2)}</span>
-                <MarkUnpaidButton paymentId={p.id} />
-              </div>
-            </div>
+              paymentId={p.id}
+              studentName={studentName(p)}
+              classContext={`${p.registration.class.classType} · ${formatDateShort(p.registration.class.date)} · ${p.registration.class.startTime}`}
+              paidAt={p.paidAt}
+              timeZone={session.defaultTimezone}
+              amount={Number(p.amount)}
+            />
           ))
         )}
       </section>
