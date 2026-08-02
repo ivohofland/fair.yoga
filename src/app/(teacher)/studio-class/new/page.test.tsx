@@ -58,4 +58,41 @@ describe('NewStudioClassPage', () => {
       'startTime',
     ]);
   });
+
+  /**
+   * The key-set test above uses inputs with no whitespace and numeric fields
+   * that happen to look the same whether or not `Number(...)` runs, so it
+   * cannot see `classType.trim()`, `location.trim()`, or the `Number(...)`
+   * calls on `durationMinutes`/`hourlyRate` in `page.tsx`'s `handleSubmit`.
+   * This test feeds padded text and asserts the full body by value —
+   * including `typeof` via `toEqual`, which distinguishes `75` from `'75'`.
+   */
+  it('trims text fields and sends duration and rate as numbers', async () => {
+    stubFetch();
+    render(<NewStudioClassPage />);
+
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: '  Vinyasa  ' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: '  Studio A  ' } });
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '10:15' } });
+    fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '75' } });
+    fireEvent.change(screen.getByLabelText('Hourly rate'), { target: { value: '22.5' } });
+
+    const button = screen.getByRole('button', { name: /log class/i });
+    fireEvent.click(button);
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(0));
+
+    const [, options] = fetchMock.mock.calls.at(-1) ?? [];
+    const opts = options as { method: string; body: string };
+    const body = JSON.parse(opts.body) as Record<string, unknown>;
+
+    expect(body).toEqual({
+      classType: 'Vinyasa',
+      location: 'Studio A',
+      date: '2026-08-10',
+      startTime: '10:15',
+      durationMinutes: 75,
+      hourlyRate: 22.5,
+    });
+  });
 });

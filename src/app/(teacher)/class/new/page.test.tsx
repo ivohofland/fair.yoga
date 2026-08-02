@@ -83,24 +83,42 @@ describe('NewClassPage', () => {
     return submit();
   }
 
-  it('sends exactly these twelve fields', async () => {
+  /**
+   * A key-set assertion alone cannot see a value transposed between two
+   * same-typed fields — e.g. `minRate` and `targetRate` swapped — because
+   * both are still numbers, in a body with the same twelve keys. That matters
+   * more here than anywhere else in this batch: this is the one form in scope
+   * carrying pricing fields, and `createClassSchema`'s refinements
+   * (`minRate <= targetRate`, `minRate >= -roomCost`) reject some wrong
+   * combinations but would happily accept plenty of wrong-but-well-typed
+   * ones. `toEqual` on the whole body subsumes the key-set check and catches
+   * value drift too, so it replaces that check rather than sitting beside it.
+   *
+   * `fillAndSubmit` only types `classType`, `date`, and `startTime` (via the
+   * room select, `teacherRoomId`); `roomCost`, `maxStudents`, and
+   * `minStudents` come from `handleRoomChange` reacting to the selected
+   * room's `rentalRate` (20) and `capacityOverride` (30) — see `stubFetch`
+   * above — and everything else is `INITIAL_FORM`'s default, untouched by
+   * step 2 and step 3's no-op "Next" clicks.
+   */
+  it('sends exactly these twelve fields, with the values the wizard actually produces', async () => {
     stubFetch();
     const { url, method, body } = await fillAndSubmit();
     expect(url).toBe('/api/classes');
     expect(method).toBe('POST');
-    expect(Object.keys(body).sort()).toEqual([
-      'autoCancelCheck',
-      'cancelDeadline',
-      'classType',
-      'date',
-      'durationMinutes',
-      'maxStudents',
-      'minRate',
-      'minStudents',
-      'roomCost',
-      'startTime',
-      'targetRate',
-      'teacherRoomId',
-    ]);
+    expect(body).toEqual({
+      teacherRoomId: ROOM_ID,
+      classType: 'Vinyasa',
+      date: '2026-08-10',
+      startTime: '09:00',
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 4,
+      maxStudents: 12,
+      cancelDeadline: 'HOURS_24',
+      autoCancelCheck: 'HOURS_2',
+    });
   });
 });

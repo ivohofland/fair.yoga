@@ -92,4 +92,25 @@ describe('StudioTemplateForm', () => {
     expect(updated.method).toBe('PUT');
     expect(Object.keys(updated.body).sort()).toEqual(SIX_KEYS);
   });
+
+  /**
+   * The key-set test above uses inputs with no whitespace, so it cannot see
+   * `form.classType.trim()` / `form.location.trim()` in `handleSubmit`'s
+   * payload construction. This asserts the full body by value.
+   */
+  it('trims classType and location before sending', async () => {
+    stubFetch();
+    render(<StudioTemplateForm mode="create" />);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: '  Vinyasa  ' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: '  Studio A  ' } });
+    const created = await submit();
+    expect(created.body).toEqual({
+      classType: 'Vinyasa',
+      dayOfWeek: 0,
+      startTime: '09:00',
+      durationMinutes: 60,
+      location: 'Studio A',
+      hourlyRate: 0,
+    });
+  });
 });

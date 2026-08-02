@@ -42,7 +42,10 @@ the defect. It is included because it *shares* `updateStudentSchema` with
 `notifications-form`, and the reverse pin is what proves its one key is a key the
 schema accepts — the same guarantee its neighbour gets. Counting it as an
 instance would inflate the inventory; leaving it out would leave one of the three
-sharers of a branched schema unpinned.
+forms that touch a branched route unpinned. (Three forms touch it —
+`notifications-form`, `tier-form`, `edit-student-form` — but only the first two
+*share* `updateStudentSchema`; see §1 for why `edit-student-form` gets both pins
+instead of the reverse pin.)
 
 So: **twelve instances of the defect, ten forms changed** — nine instances, plus
 `tier-form`, minus the three set aside below.
@@ -66,7 +69,7 @@ has no business rendering.
 
 ### 1. Both pins where a form owns its schema; the reverse pin only where it shares
 
-Seven forms own a schema (or a create/update pair) and take the full treatment,
+Eight forms own a schema (or a create/update pair) and take the full treatment,
 copying `template-form.tsx`:
 
 ```ts
@@ -78,7 +81,7 @@ Where one body serves two endpoints, all **four** pins — `template-form.tsx`
 carries exactly this, and PR #135 shipped with the create-direction reverse pin
 missing, which let an extra key be silently stripped rather than rejected.
 
-Three forms share `updateStudentSchema` and get the **reverse pin only**:
+Two forms share `updateStudentSchema` and get the **reverse pin only**:
 
 ```ts
 // Shares `updateStudentSchema` with `tier-form.tsx`; five further keys
@@ -162,7 +165,7 @@ production with no `<Input>`; it just has to get past a compile error naming it.
 The key-set tests are what catch that last step, which is why every form gets
 one.
 
-For the three reverse-pin-only forms, even that is partial: nothing proves the
+For the two reverse-pin-only forms, even that is partial: nothing proves the
 five uncovered `updateStudentSchema` fields *should* have inputs. Deciding that
 means deciding whether a student may self-edit their own name and address, which
 is a product question and not in scope here.
