@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isIncomeTier } from '@/lib/tiers';
 
 // ---------------------------------------------------------------------------
 // Shared field validators
@@ -136,7 +137,13 @@ export const updateStudentSchema = z.object({
   phone: z.string().nullable().optional(),
   birthday: z.string().nullable().optional(), // ISO date string
   address: z.string().nullable().optional(),
-  incomeTier: z.number().int().min(1).max(5).optional(),
+  // `.refine` with a type predicate narrows the inferred type to IncomeTier
+  // (verified by compiling both directions), so the wire type carries the
+  // same constraint as the column and the engine. A literal union would
+  // narrow too, but would replace this message with "invalid literal value".
+  incomeTier: z.number().int().refine(isIncomeTier, {
+    message: 'Income tier must be 1-5',
+  }).optional(),
   reminderPref: z.enum(['eve', 'morning', 'one_hour', 'off']).optional(),
   emailNotifications: z.boolean().optional(),
 }).strict();

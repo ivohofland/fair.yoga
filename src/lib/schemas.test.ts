@@ -7,6 +7,7 @@ import {
   updateClassSchema,
   updateClassTemplateSchema,
   updateTeacherSchema,
+  updateStudentSchema,
   isSafeRelativePath,
   MAX_CLASS_SIZE,
 } from './schemas';
@@ -186,6 +187,30 @@ describe('updateTeacherSchema.defaultTimezone', () => {
   it('rejects strings Intl cannot resolve', () => {
     expect(updateTeacherSchema.safeParse({ defaultTimezone: 'Not/AZone' }).success).toBe(false);
     expect(updateTeacherSchema.safeParse({ defaultTimezone: '' }).success).toBe(false);
+  });
+});
+
+describe('updateStudentSchema.incomeTier', () => {
+  it('accepts every tier in range', () => {
+    for (const tier of [1, 2, 3, 4, 5]) {
+      expect(updateStudentSchema.safeParse({ incomeTier: tier }).success).toBe(true);
+    }
+  });
+
+  it('rejects out-of-range and non-integer tiers', () => {
+    for (const bad of [0, 6, -1, 3.5]) {
+      expect(updateStudentSchema.safeParse({ incomeTier: bad }).success).toBe(false);
+    }
+  });
+
+  it('keeps a message that names the range', () => {
+    // A literal union would say "invalid literal value" instead. The wire
+    // type is narrowed with .refine precisely to keep this readable.
+    const result = updateStudentSchema.safeParse({ incomeTier: 9 });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toContain('1-5');
+    }
   });
 });
 

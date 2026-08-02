@@ -15,7 +15,7 @@ interface TierFormProps {
 type UpdateStudentWire = z.infer<typeof updateStudentSchema>;
 
 interface TierBody {
-  incomeTier: number;
+  incomeTier: IncomeTier;
 }
 
 /**
