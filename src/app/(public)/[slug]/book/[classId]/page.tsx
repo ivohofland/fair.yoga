@@ -9,7 +9,6 @@ import { PriceRange, PersonalPriceRange } from '@/components/booking/price-range
 import { BookingFlow } from '@/components/booking/booking-flow';
 import { BookingSignIn } from '@/components/booking/booking-sign-in';
 import { JoinAsStudent } from '@/components/booking/join-as-student';
-import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
 import { toIncomeTier } from '@/lib/tiers.server';
 
 export const dynamic = 'force-dynamic';
@@ -65,8 +64,13 @@ export default async function BookClassPage({
       })
     : null;
   // One conversion serves both the attendance-spread estimate and BookingFlow's
-  // initial picker value — they read the same column.
-  const viewerProfileTier = student ? toIncomeTier(student.incomeTier) : null;
+  // initial picker value — they read the same column. Carrying `student`
+  // alongside its converted tier (rather than a standalone const) lets
+  // narrowing `viewer` for truthiness also narrow `viewer.tier`, which
+  // TypeScript could not do across two separate consts.
+  const viewer = student
+    ? { ...student, tier: toIncomeTier(student.incomeTier) }
+    : null;
   // The viewer's own charged row, if any. They are already in the pool,
   // so the personal spread must quote them from that row — not append a
   // second copy of them ("+1 joining"). A late_cancel row also stays
@@ -102,7 +106,7 @@ export default async function BookClassPage({
       <p className="type-caption mt-0.5">
         {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
       </p>
-      {student && student.tierSelectedAt ? (
+      {viewer && viewer.tierSelectedAt ? (
         // Their tier is settled — turnout is the remaining uncertainty.
         <PersonalPriceRange
           spread={estimateAttendanceSpread({
@@ -118,7 +122,7 @@ export default async function BookClassPage({
             // registration; everyone else would join at their current one.
             viewerTier: alreadyBooked && ownRegistration
               ? toIncomeTier(ownRegistration.tierAtBooking)
-              : viewerProfileTier ?? DEFAULT_INCOME_TIER,
+              : viewer.tier,
           })}
           className="mt-2 mb-6"
         />
@@ -126,19 +130,19 @@ export default async function BookClassPage({
         <PriceRange estimates={estimates} className="mt-2 mb-6" />
       )}
 
-      {student ? (
+      {viewer ? (
         <BookingFlow
           classId={cls.id}
           slug={slug}
           isFull={isFull}
           alreadyBooked={alreadyBooked}
-          currentTier={viewerProfileTier ?? DEFAULT_INCOME_TIER}
-          studentId={student.id}
+          currentTier={viewer.tier}
+          studentId={viewer.id}
           tierPrices={estimates}
           // The income-selection moment belongs to the student: the picker
           // shows until they have chosen a tier themselves, no matter what
           // registrations teachers created on their behalf.
-          isFirstBooking={student.tierSelectedAt === null}
+          isFirstBooking={viewer.tierSelectedAt === null}
         />
       ) : guestTeacher ? (
         <JoinAsStudent firstName={guestTeacher.firstName} />
