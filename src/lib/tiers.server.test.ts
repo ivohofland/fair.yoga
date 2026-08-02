@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { toIncomeTier } from './tiers.server';
+import { toIncomeTier, toIncomeTierOrThrow } from './tiers.server';
 import { DEFAULT_INCOME_TIER } from './tiers';
 import { log } from '@/lib/log';
 
@@ -34,5 +34,24 @@ describe('toIncomeTier', () => {
       expect.objectContaining({ tier: 0 }),
       expect.stringContaining('outside 1-5'),
     );
+  });
+});
+
+describe('toIncomeTierOrThrow', () => {
+  it('passes every in-range tier through unchanged', () => {
+    expect([1, 2, 3, 4, 5].map(toIncomeTierOrThrow)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('throws rather than guessing, naming the offending value', () => {
+    // The billing path writes a Payment from this. A substituted tier is a
+    // silent mis-charge; a throw rolls the transaction back instead.
+    expect(() => toIncomeTierOrThrow(0)).toThrow(/0 is outside 1-5/);
+    expect(() => toIncomeTierOrThrow(6)).toThrow(/6 is outside 1-5/);
+  });
+
+  it('does not warn — unlike its degrading sibling, the throw is the signal', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    expect(() => toIncomeTierOrThrow(0)).toThrow();
+    expect(warn).not.toHaveBeenCalled();
   });
 });

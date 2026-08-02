@@ -24,3 +24,29 @@ export function toIncomeTier(n: number): IncomeTier {
   log.warn({ tier: n }, 'income tier outside 1-5; DB constraint bypassed');
   return DEFAULT_INCOME_TIER;
 }
+
+/**
+ * Narrow a tier on the billing path, where a wrong value must not be guessed.
+ *
+ * The sibling `toIncomeTier` degrades to the median tier so a public booking
+ * page renders rather than 500s over one bad row. That trade is wrong here:
+ * `completeClass` writes the resulting price to `Registration`, creates a
+ * `Payment` for it, and notifies the student — so a substituted tier is a
+ * silent mis-charge, recoverable only by hand.
+ *
+ * Throwing is free at that call site: `completeClass`'s body is a single
+ * interactive transaction, so this rolls it back, the class stays
+ * `in_progress`, and the completion is retried.
+ *
+ * Unreachable in normal operation. `Registration.tierAtBooking` carries a
+ * CHECK constraint (the income_tier_range_check migration), and it is stamped
+ * once at booking time from `Student.incomeTier`, which carries the same
+ * constraint — a student changing their tier later never rewrites it. If this
+ * ever throws, the constraint was bypassed and that is the bug to chase.
+ */
+export function toIncomeTierOrThrow(n: number): IncomeTier {
+  if (isIncomeTier(n)) return n;
+  throw new Error(
+    `Income tier ${n} is outside 1-5 — refusing to price a class from it.`,
+  );
+}

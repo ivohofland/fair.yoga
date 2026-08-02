@@ -12,7 +12,7 @@ import type { z } from 'zod';
 import type { updateClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { ECONOMIC_FIELDS, type EconomicField } from '@/lib/class-fields';
-import { toIncomeTier } from '@/lib/tiers.server';
+import { toIncomeTierOrThrow } from '@/lib/tiers.server';
 import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 
@@ -180,7 +180,7 @@ export async function completeClass(
       targetRate: Number(cls.targetRate),
       minStudents: cls.minStudents,
       maxStudents: cls.maxStudents,
-      studentTiers: chargedRegistrations.map((r) => toIncomeTier(r.tierAtBooking)),
+      studentTiers: chargedRegistrations.map((r) => toIncomeTierOrThrow(r.tierAtBooking)),
     });
 
     await tx.class.update({
