@@ -250,16 +250,17 @@ describe('DELETE /api/account', () => {
 
     // Make the teacher half throw, using real data rather than a mock: the
     // route's erasure of a teacher completes their in-progress classes first
-    // (gdpr.ts, uncaught), and pricing throws on a tier outside 1-5
-    // (pricing.ts, "Invalid tier"). `tierAtBooking` is a bare Int with no DB
-    // constraint, so an out-of-range value is writable today.
+    // (gdpr.ts, uncaught), and `completeClass` creates one Payment per charged
+    // registration inside its transaction. `Payment.registrationId` is @unique,
+    // so a Payment that already exists makes that create throw P2002.
     //
-    // Engineered state, deliberately: no normal flow creates tier 0. #39 is
-    // about making an out-of-range tier unrepresentable — when that lands,
-    // this setup stops compiling or stops throwing, and this test should be
-    // re-pointed at another failure inside `deleteTeacherAccount` rather than
-    // deleted. It failing loudly is the point; silently ceasing to cover the
-    // branch is the thing to avoid.
+    // It has to throw rather than return a failure: deleteTeacherAccount
+    // catches `{ok: false}` from completeClass and falls through (gdpr.ts:318-326),
+    // so a merely-failing completion would not produce PARTIAL_ERASURE at all.
+    //
+    // This injection replaced `tierAtBooking: 0` when #39 added a CHECK
+    // constraint making that value unwritable. Same three properties: real
+    // data, uncaught, and reversible so the retry can succeed.
     const room = await prisma.room.create({
       data: {
         venueName: 'Erasure Venue',
@@ -299,7 +300,11 @@ describe('DELETE /api/account', () => {
     });
     seededStudentIds.push(attendee.id);
     const registration = await prisma.registration.create({
-      data: { classId: cls.id, studentId: attendee.id, tierAtBooking: 0 },
+      data: { classId: cls.id, studentId: attendee.id, tierAtBooking: 3 },
+    });
+    // The row that makes completeClass's payment.create collide.
+    const blockingPayment = await prisma.payment.create({
+      data: { registrationId: registration.id, amount: 1, status: 'pending' },
     });
 
     const del = () =>
@@ -325,10 +330,7 @@ describe('DELETE /api/account', () => {
     expect(await prisma.session.count({ where: { accountId: acc.accountId } })).toBe(1);
 
     // Clear the failure and press Delete again, as the message instructs.
-    await prisma.registration.update({
-      where: { id: registration.id },
-      data: { tierAtBooking: 3 },
-    });
+    await prisma.payment.delete({ where: { id: blockingPayment.id } });
 
     const second = await del();
     expect(second.status).toBe(200);
