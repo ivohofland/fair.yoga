@@ -138,24 +138,27 @@ export function calculateClassPricing(
   // to whole cents and hand the leftover cents to the students whose
   // exact shares lost the most in flooring (ties broken by queue order).
   const baseUnit = totalCost / sumOfTierRatios;
-  const exactCents = studentTierRatios.map((ratio) => baseUnit * ratio * 100);
-  const flooredCents = exactCents.map((c) => Math.floor(c + 1e-9));
-  const totalCents = Math.round(totalCost * 100);
-  let leftover = totalCents - flooredCents.reduce((sum, c) => sum + c, 0);
+  const allocations = studentTiers.map((tier, i) => {
+    const ratio = TIER_RATIOS[tier];
+    const exact = baseUnit * ratio * 100;
+    const floored = Math.floor(exact + 1e-9);
+    return { i, tier, ratio, remainder: exact - floored, cents: floored };
+  });
 
-  const byRemainder = exactCents
-    .map((c, i) => ({ i, remainder: c - flooredCents[i]! }))
-    .sort((a, b) => b.remainder - a.remainder || a.i - b.i);
-  for (const { i } of byRemainder) {
+  let leftover =
+    Math.round(totalCost * 100) - allocations.reduce((sum, a) => sum + a.cents, 0);
+  for (const a of [...allocations].sort(
+    (x, y) => y.remainder - x.remainder || x.i - y.i,
+  )) {
     if (leftover <= 0) break;
-    flooredCents[i]!++;
+    a.cents++; // through the shared object reference — no index, no assertion
     leftover--;
   }
 
-  const students: PricedStudent[] = studentTiers.map((tier, i) => ({
-    tier,
-    ratio: studentTierRatios[i]!,
-    price: flooredCents[i]! / 100,
+  const students: PricedStudent[] = allocations.map((a) => ({
+    tier: a.tier,
+    ratio: a.ratio,
+    price: a.cents / 100,
   }));
 
   return {
