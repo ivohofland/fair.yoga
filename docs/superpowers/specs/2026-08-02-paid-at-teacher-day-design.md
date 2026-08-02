@@ -82,15 +82,28 @@ mirrors a pattern the codebase already has, and creates the seam this fix needs.
 
 It takes over the row's markup and its `MarkUnpaidButton`.
 
-### 3. `paidAt` is passed raw — a deliberate divergence from the sibling
+### 3. `paidAt` is passed raw — following the codebase's convention
 
-`OutstandingPaymentRow` receives `classContext` as a **pre-formatted string**,
-and that is correct for it: #59 requires that string byte-identical across the
-visible caption and three button labels, so a separate aria value could drift
-from what is on screen.
+An earlier draft called this "a deliberate divergence from the sibling". That
+was backwards. The convention already exists and it is the raw one:
 
-`paidAt` has no such constraint, and pre-formatting it would defeat the
-extraction:
+| Component | Receives | Formats |
+|---|---|---|
+| `class-list.tsx` | `classes`, `studioClasses`, **`timeZone`** | internally |
+| `archived-record.tsx` | `archivedAt`, **`timeZone`** | internally |
+| `outstanding-payment-row.tsx` | **`classContext`** (pre-formatted) | the page does it |
+
+Two components take raw values plus a timezone; one takes a pre-formatted
+string. `ReceivedPaymentRow` follows the majority, and `classContext` is the
+lone exception — tracked as **#154**, which converts it so the component builds
+its own labels. That is filed rather than folded in here because it rebuilds
+three `aria-label`s #59 fixed for WCAG 2.5.3, and a one-character difference
+regresses conformance silently.
+
+`classContext` on this row stays pre-formatted for now, matching its sibling
+until #154 changes both.
+
+Pre-formatting `paidAt` would defeat the extraction:
 
 ```ts
 interface ReceivedPaymentRowProps {
@@ -108,7 +121,8 @@ and the timezone conversion would remain untestable — the extraction would buy
 nothing. Passing the instant puts the conversion **inside** the tested unit.
 
 `classContext` keeps its pre-formatted `@db.Date` rendering, which is correct
-and unchanged.
+and unchanged — `Class.date` is a calendar date, so UTC accessors are right and
+`startOfLocalDay` must **not** be applied to it. Only `paidAt` is an instant.
 
 ## Testing
 
