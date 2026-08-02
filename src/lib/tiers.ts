@@ -21,6 +21,27 @@ export function isIncomeTier(n: number): n is IncomeTier {
 // erased profiles are reset to.
 export const DEFAULT_INCOME_TIER: IncomeTier = 3;
 
+/**
+ * Income tier ratios. Tier 3 is baseline (1.0). Max spread ~2.08×.
+ *
+ * A `Record<IncomeTier, number>` rather than `Record<number, number>`: with a
+ * finite key type, `TIER_RATIOS[tier]` is `number`, not `number | undefined`,
+ * even under `noUncheckedIndexedAccess`. That is what let the engine's
+ * per-student `Invalid tier` throw be deleted rather than relocated.
+ *
+ * Lives here rather than in `services/pricing.ts` so that
+ * `pricing-preview-table.tsx` — a `'use client'` component — can import the
+ * ratios without pulling the engine into the browser bundle. See
+ * `src/lib/class-fields.ts` for the same reasoning applied to ECONOMIC_FIELDS.
+ */
+export const TIER_RATIOS: Record<IncomeTier, number> = {
+  1: 0.65,
+  2: 0.80,
+  3: 1.00,
+  4: 1.20,
+  5: 1.35,
+};
+
 /** Tier display copy — accessible language, inviting, never guilt-inducing. */
 export const TIER_INFO = [
   { tier: 1, label: 'Getting by', caption: 'Money is tight right now' },

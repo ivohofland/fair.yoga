@@ -5,11 +5,11 @@ import type { z } from 'zod';
 import type { updateStudentSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
-import { TIER_INFO, TIER_QUOTE } from '@/lib/tiers';
+import { TIER_INFO, TIER_QUOTE, type IncomeTier } from '@/lib/tiers';
 
 interface TierFormProps {
   studentId: string;
-  currentTier: number;
+  currentTier: IncomeTier;
 }
 
 type UpdateStudentWire = z.infer<typeof updateStudentSchema>;

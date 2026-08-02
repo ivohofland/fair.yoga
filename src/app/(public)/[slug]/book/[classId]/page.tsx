@@ -9,6 +9,8 @@ import { PriceRange, PersonalPriceRange } from '@/components/booking/price-range
 import { BookingFlow } from '@/components/booking/booking-flow';
 import { BookingSignIn } from '@/components/booking/booking-sign-in';
 import { JoinAsStudent } from '@/components/booking/join-as-student';
+import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
+import { toIncomeTier } from '@/lib/tiers.server';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,7 +49,7 @@ export default async function BookClassPage({
     targetRate: Number(cls.targetRate),
     minStudents: cls.minStudents,
     maxStudents: cls.maxStudents,
-    registeredTiers: cls.registrations.map((r) => r.tierAtBooking),
+    registeredTiers: cls.registrations.map((r) => toIncomeTier(r.tierAtBooking)),
   });
 
   const session = await getSession();
@@ -62,6 +64,9 @@ export default async function BookClassPage({
         },
       })
     : null;
+  // One conversion serves both the attendance-spread estimate and BookingFlow's
+  // initial picker value — they read the same column.
+  const viewerProfileTier = student ? toIncomeTier(student.incomeTier) : null;
   // The viewer's own charged row, if any. They are already in the pool,
   // so the personal spread must quote them from that row — not append a
   // second copy of them ("+1 joining"). A late_cancel row also stays
@@ -108,12 +113,12 @@ export default async function BookClassPage({
             maxStudents: cls.maxStudents,
             registeredTiers: cls.registrations
               .filter((r) => r !== ownRegistration)
-              .map((r) => r.tierAtBooking),
+              .map((r) => toIncomeTier(r.tierAtBooking)),
             // A booked viewer is billed at the tier stamped on their
             // registration; everyone else would join at their current one.
             viewerTier: alreadyBooked && ownRegistration
-              ? ownRegistration.tierAtBooking
-              : student.incomeTier,
+              ? toIncomeTier(ownRegistration.tierAtBooking)
+              : viewerProfileTier ?? DEFAULT_INCOME_TIER,
           })}
           className="mt-2 mb-6"
         />
@@ -127,7 +132,7 @@ export default async function BookClassPage({
           slug={slug}
           isFull={isFull}
           alreadyBooked={alreadyBooked}
-          currentTier={student.incomeTier}
+          currentTier={viewerProfileTier ?? DEFAULT_INCOME_TIER}
           studentId={student.id}
           tierPrices={estimates}
           // The income-selection moment belongs to the student: the picker

@@ -5,18 +5,7 @@
  * This is the economic heart of the platform.
  */
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** Income tier ratios. Tier 3 is baseline (1.0). Max spread ~2.08×. */
-export const TIER_RATIOS: Record<number, number> = {
-  1: 0.65,
-  2: 0.80,
-  3: 1.00,
-  4: 1.20,
-  5: 1.35,
-};
+import { TIER_RATIOS, type IncomeTier } from '@/lib/tiers';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -36,13 +25,13 @@ export interface ClassPricingInput {
   targetRate: number;
   minStudents: number;
   maxStudents: number;
-  /** Array of tier values (1-5), one per charged student. */
-  studentTiers: number[];
+  /** One tier per charged student. */
+  studentTiers: IncomeTier[];
 }
 
 export interface PricedStudent {
   /** The tier this student was charged at. */
-  tier: number;
+  tier: IncomeTier;
   /** The tier ratio applied — TIER_RATIOS[tier]. */
   ratio: number;
   /** This student's price, in whole cents after largest-remainder allocation. */
@@ -132,14 +121,12 @@ export function calculateClassPricing(
   // 2. Total class cost (teacher rate is per-class, not per-student)
   const totalCost = roomCost + effectiveTeacherRate;
 
-  // 3. Look up tier ratios for each student
-  const studentTierRatios = studentTiers.map((tier) => {
-    const ratio = TIER_RATIOS[tier];
-    if (ratio === undefined) {
-      throw new Error(`Invalid tier: ${tier}. Must be 1-5.`);
-    }
-    return ratio;
-  });
+  // 3. Look up tier ratios for each student. Total by construction —
+  // TIER_RATIOS is keyed by IncomeTier, so there is no undefined branch and
+  // no runtime check. The `Invalid tier` throw that used to live here is
+  // gone, not moved: the type makes it unreachable and the database's
+  // income_tier_range_check makes the type honest.
+  const studentTierRatios = studentTiers.map((tier) => TIER_RATIOS[tier]);
 
   // 4. Sum of all tier ratios
   const sumOfTierRatios = studentTierRatios.reduce((sum, r) => sum + r, 0);

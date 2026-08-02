@@ -18,6 +18,7 @@ import { CancelClassButton } from '@/components/class/cancel-class-button';
 import { ShareBookingLink } from '@/components/class/share-booking-link';
 import { AddWalkIn } from '@/components/class/add-walk-in';
 import { SendAnnouncement } from '@/components/class/send-announcement';
+import { toIncomeTier } from '@/lib/tiers.server';
 
 export default async function ClassDetailPage({
   params,
@@ -92,7 +93,7 @@ export default async function ClassDetailPage({
   // Actual tier prices for completed class pricing breakdown
   const tierPrices = activeRegistrations
     .filter((r) => r.price !== null)
-    .map((r) => ({ tier: r.tierAtBooking, price: Number(r.price) }));
+    .map((r) => ({ tier: toIncomeTier(r.tierAtBooking), price: Number(r.price) }));
 
   // Check-in available: in_progress, or open within 15 min of start
   // (class start resolved in the teacher's timezone)

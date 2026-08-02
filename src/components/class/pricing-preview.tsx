@@ -1,6 +1,7 @@
 import type { Class, Registration, Student } from '@prisma/client';
 import { calculateClassPricing } from '@/services/pricing';
-import { INCOME_TIERS } from '@/lib/tiers';
+import { INCOME_TIERS, type IncomeTier } from '@/lib/tiers';
+import { toIncomeTier } from '@/lib/tiers.server';
 
 type RegistrationWithStudent = Registration & { student: Student };
 
@@ -28,7 +29,7 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
     );
   }
 
-  const studentTiers = activeRegistrations.map((r) => r.tierAtBooking);
+  const studentTiers = activeRegistrations.map((r) => toIncomeTier(r.tierAtBooking));
 
   const pricing = calculateClassPricing({
     roomCost: Number(cls.roomCost),
@@ -43,7 +44,7 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
   // its own tier and ratio, so there is no index to match up and no undefined
   // to guard — the two checks this replaced existed only because the price
   // and the ratio came from different places.
-  const tierSummary: { tier: number; ratio: number; price: number; count: number }[] = [];
+  const tierSummary: { tier: IncomeTier; ratio: number; price: number; count: number }[] = [];
   for (const tier of INCOME_TIERS) {
     const forTier = pricing.students.filter((s) => s.tier === tier);
     const first = forTier[0];

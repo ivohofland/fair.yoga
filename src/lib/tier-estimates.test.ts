@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { estimateTierPrices, estimateAttendanceSpread, type TierEstimateInput } from './tier-estimates';
 import { calculateClassPricing } from '@/services/pricing';
+import { INCOME_TIERS, type IncomeTier } from '@/lib/tiers';
 
 // The layer between the pricing engine and the public price quote: the
 // engine itself is covered in services/pricing.test.ts, so these tests pin
@@ -31,7 +32,7 @@ describe('estimateTierPrices', () => {
 
     // With no sign-ups the quoted roster must be [you, 3] — the engine run
     // on that roster, priced at your index — never the solo price.
-    for (let tier = 1; tier <= 5; tier++) {
+    for (const tier of INCOME_TIERS) {
       const expected = calculateClassPricing({
         roomCost: 20,
         minRate: 15,
@@ -159,7 +160,8 @@ describe('estimateAttendanceSpread', () => {
   });
 
   it('never inverts', () => {
-    for (const viewerTier of [1, 3, 5]) {
+    const viewerTiers: IncomeTier[] = [1, 3, 5];
+    for (const viewerTier of viewerTiers) {
       const spread = estimateAttendanceSpread({ ...base, registeredTiers: [2, 4], viewerTier });
       expect(spread.low).toBeLessThanOrEqual(spread.high);
     }

@@ -1,10 +1,8 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import {
-  calculateEffectiveTeacherRate,
-  TIER_RATIOS,
-} from '@/services/pricing';
+import { calculateEffectiveTeacherRate } from '@/services/pricing';
+import { INCOME_TIERS, TIER_RATIOS } from '@/lib/tiers';
 
 interface PricingPreviewTableProps {
   roomCost: number;
@@ -60,13 +58,7 @@ function shuffleMix(n: number): number[] {
 // Pricing calculation
 // ---------------------------------------------------------------------------
 
-const TIER_RATIO_VALUES = [
-  TIER_RATIOS[1]!,
-  TIER_RATIOS[2]!,
-  TIER_RATIOS[3]!,
-  TIER_RATIOS[4]!,
-  TIER_RATIOS[5]!,
-];
+const TIER_RATIO_VALUES = INCOME_TIERS.map((t) => TIER_RATIOS[t]);
 
 function calculateTierPrices(
   total: number,

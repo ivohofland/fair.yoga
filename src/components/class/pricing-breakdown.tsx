@@ -1,7 +1,8 @@
 import type { Class } from '@prisma/client';
+import { INCOME_TIERS, type IncomeTier } from '@/lib/tiers';
 
 interface TierPrice {
-  tier: number;
+  tier: IncomeTier;
   price: number;
 }
 
@@ -17,11 +18,12 @@ export function PricingBreakdown({ cls, tierPrices }: PricingBreakdownProps) {
   const totalStudents = cls.totalStudents ?? 0;
 
   // Group by tier, using the actual stored price
-  const tierSummary: { tier: number; price: number; count: number }[] = [];
-  for (let tier = 1; tier <= 5; tier++) {
+  const tierSummary: { tier: IncomeTier; price: number; count: number }[] = [];
+  for (const tier of INCOME_TIERS) {
     const entries = tierPrices.filter((tp) => tp.tier === tier);
-    if (entries.length > 0) {
-      tierSummary.push({ tier, price: entries[0]!.price, count: entries.length });
+    const first = entries[0];
+    if (first) {
+      tierSummary.push({ tier, price: first.price, count: entries.length });
     }
   }
 

@@ -1,5 +1,6 @@
 import { calculateClassPricing } from '@/services/pricing';
 import { MAX_CLASS_SIZE } from '@/lib/schemas';
+import { DEFAULT_INCOME_TIER, type IncomeTier } from '@/lib/tiers';
 
 export interface TierEstimateInput {
   roomCost: number;
@@ -8,7 +9,7 @@ export interface TierEstimateInput {
   minStudents: number;
   maxStudents: number;
   /** Tiers of everyone currently registered (charged statuses). */
-  registeredTiers: number[];
+  registeredTiers: IncomeTier[];
 }
 
 /** One estimated price per income tier 1..5 — always exactly five. */
@@ -26,10 +27,10 @@ export function estimateTierPrices(input: TierEstimateInput): TierPrices {
   // The schema caps minStudents, but this runs on a public page — never
   // trust a stored value enough to size an allocation loop with it.
   const paddedMin = Math.min(input.minStudents, MAX_CLASS_SIZE);
-  const priceForTier = (tier: number): number => {
-    const tiers = [...input.registeredTiers, tier];
+  const priceForTier = (tier: IncomeTier): number => {
+    const tiers: IncomeTier[] = [...input.registeredTiers, tier];
     while (tiers.length < paddedMin) {
-      tiers.push(3);
+      tiers.push(DEFAULT_INCOME_TIER);
     }
     const pricing = calculateClassPricing({
       roomCost: input.roomCost,
@@ -52,7 +53,7 @@ export function estimateTierPrices(input: TierEstimateInput): TierPrices {
 
 export interface AttendanceSpreadInput extends TierEstimateInput {
   /** The signed-in student's own (already chosen) tier. */
-  viewerTier: number;
+  viewerTier: IncomeTier;
 }
 
 export interface AttendanceSpread {
@@ -77,9 +78,9 @@ export interface AttendanceSpread {
  */
 export function estimateAttendanceSpread(input: AttendanceSpreadInput): AttendanceSpread {
   const priceAt = (attendance: number): number => {
-    const tiers = [...input.registeredTiers, input.viewerTier];
+    const tiers: IncomeTier[] = [...input.registeredTiers, input.viewerTier];
     while (tiers.length < attendance) {
-      tiers.push(3);
+      tiers.push(DEFAULT_INCOME_TIER);
     }
     const pricing = calculateClassPricing({
       roomCost: input.roomCost,

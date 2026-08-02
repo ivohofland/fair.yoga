@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { Icon } from '@/components/ui/icon';
 import { TierForm } from '@/components/student/tier-form';
+import { toIncomeTier } from '@/lib/tiers.server';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,7 +28,7 @@ export default async function TierSettingsPage() {
         Settings
       </Link>
       <h1 className="type-title mb-6">Your tier</h1>
-      <TierForm studentId={student.id} currentTier={student.incomeTier} />
+      <TierForm studentId={student.id} currentTier={toIncomeTier(student.incomeTier)} />
     </div>
   );
 }

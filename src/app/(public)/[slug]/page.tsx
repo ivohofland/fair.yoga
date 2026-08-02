@@ -10,6 +10,7 @@ import { estimateTierPrices } from '@/lib/tier-estimates';
 import { formatRoomLocation, formatDayHeader } from '@/lib/format';
 import { startOfLocalDay } from '@/lib/timezone';
 import { PriceRange } from '@/components/booking/price-range';
+import { toIncomeTier } from '@/lib/tiers.server';
 
 export const dynamic = 'force-dynamic';
 
@@ -110,7 +111,7 @@ export default async function TeacherBookingPage({
               targetRate: Number(cls.targetRate),
               minStudents: cls.minStudents,
               maxStudents: cls.maxStudents,
-              registeredTiers: cls.registrations.map((r) => r.tierAtBooking),
+              registeredTiers: cls.registrations.map((r) => toIncomeTier(r.tierAtBooking)),
             });
 
             return (

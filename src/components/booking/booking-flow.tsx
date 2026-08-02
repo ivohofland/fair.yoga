@@ -4,14 +4,14 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { readErrorMessage } from '@/lib/client-errors';
-import { TIER_INFO, TIER_QUOTE } from '@/lib/tiers';
+import { TIER_INFO, TIER_QUOTE, type IncomeTier } from '@/lib/tiers';
 
 interface BookingFlowProps {
   classId: string;
   slug: string;
   isFull: boolean;
   alreadyBooked: boolean;
-  currentTier: number;
+  currentTier: IncomeTier;
   studentId: string;
   /** Estimated price per tier 1..5 if the class ran with today's sign-ups plus you. */
   tierPrices: number[];

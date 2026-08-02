@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
-  TIER_RATIOS,
   calculateEffectiveTeacherRate,
   calculateClassPricing,
 } from './pricing';
+import { TIER_RATIOS, type IncomeTier } from '@/lib/tiers';
 
 describe('TIER_RATIOS', () => {
   it('has 5 tiers with compressed 2x spread', () => {
@@ -157,7 +157,7 @@ describe('calculateClassPricing', () => {
   });
 
   it('prices always sum exactly to total cost (no penny drift)', () => {
-    const scenarios: number[][] = [
+    const scenarios: IncomeTier[][] = [
       [1, 1, 2, 3, 3, 4, 4, 5, 5],
       [1, 5],
       [2, 2, 3],
