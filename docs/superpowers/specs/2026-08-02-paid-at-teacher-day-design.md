@@ -142,8 +142,13 @@ and unchanged — `Class.date` is a calendar date, so UTC accessors are right an
   opposite directions also rules out an implementation that always subtracts.
 - **`paidAt: null`** renders no "✓ paid" caption at all.
 
-The suite's `TZ` pin (`vitest.config.ts`, `America/New_York`) means a
-regression to host-local time is visible rather than theoretical.
+The suite's `TZ` pin (`vitest.config.ts`, `America/New_York`) guards a
+**different** mutant than the three tests above, and the two are easy to
+conflate. The tests above fail under *any* host zone, because `startOfLocalDay`
+takes an explicit IANA zone and `formatDateShort` reads with `getUTC*` —
+neither consults the host. What the `TZ` pin catches is `formatDateShort`
+itself regressing from `getUTC*` to local accessors, which under `TZ=UTC` would
+pass by coincidence. Both protections are real; they are not the same one.
 
 ## Out of scope
 
@@ -151,8 +156,12 @@ regression to host-local time is visible rather than theoretical.
   creates one seam for one row; it does not solve the class.
 - **#128** — `MarkUnpaidButton`'s accessible name is the bare "Mark unpaid" for
   every row. It moves into the new component unchanged.
-- **The 45 other instant columns.** None is rendered through a calendar-date
-  formatter today (verified above). This fixes the one that is.
+- **The other instant columns.** The schema has 48 `DateTime` fields, of which
+  3 are `@db.Date`; `paidAt` is one of the remaining 45, so **44** others stay
+  untouched. (The arithmetic is spelled out because an earlier draft said "45
+  other", counting `paidAt` twice.) None of the 44 reaches a calendar-date
+  formatter today — the 22 call sites above are the whole surface. This fixes
+  the one that did.
 
 ## Risks
 

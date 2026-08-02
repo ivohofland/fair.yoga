@@ -60,7 +60,7 @@ export function ReceivedPaymentRow({
 
             `classContext`'s date is the opposite case: `Class.date` is a
             `@db.Date` calendar value already at midnight UTC, so it must *not*
-            be converted. Same page, two kinds of date — see
+            be converted. Two kinds of date in this one caption — see
             `src/lib/timezone.ts` for the rule.
           */}
           {paidAt && <> · ✓ paid {formatDateShort(startOfLocalDay(paidAt, timeZone))}</>}
