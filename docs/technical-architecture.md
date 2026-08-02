@@ -119,29 +119,35 @@ This separation means services are independently testable (no HTTP mocking neede
 The most critical piece of logic. Takes a class's economic settings and its registrations, returns the price each student pays.
 
 ```typescript
-interface PricingInput {
+// One of five discrete income bands — not a bare number. See src/lib/tiers.ts.
+type IncomeTier = 1 | 2 | 3 | 4 | 5;
+
+interface ClassPricingInput {
   roomCost: number;
   minRate: number;
   targetRate: number;
   minStudents: number;
   maxStudents: number;
-  registrations: Array<{ tierAtBooking: number }>; // 1-5
+  studentTiers: IncomeTier[]; // one tier per charged student
 }
 
-interface PricingOutput {
+interface PricedStudent {
+  tier: IncomeTier;       // the tier this student was charged at
+  ratio: number;          // the tier ratio applied
+  price: number;          // this student's price, after largest-remainder allocation
+}
+
+interface PricingResult {
   effectiveTeacherRate: number;
-  totalRevenue: number;
-  studentPrices: Array<{
-    tier: number;
-    price: number;
-    tierRatio: number;
-  }>;
+  totalCost: number;
+  studentCount: number;
+  students: ReadonlyArray<PricedStudent>; // one record per charged student, same order as studentTiers
 }
 
-function calculatePricing(input: PricingInput): PricingOutput {
+function calculateClassPricing(input: ClassPricingInput): PricingResult {
   // Step 1: Calculate effective teacher rate
   //   Linear interpolation between minRate and targetRate
-  //   based on registration count between minStudents and maxStudents
+  //   based on student count between minStudents and maxStudents
 
   // Step 2: Calculate total class cost
   //   roomCost + effectiveTeacherRate (teacher rate is per-class, not per-student)
@@ -150,7 +156,8 @@ function calculatePricing(input: PricingInput): PricingOutput {
   //   Tier ratios: [0.65, 0.80, 1.00, 1.20, 1.35]
   //   Each student's share = totalCost × (theirRatio / sumOfAllRatios)
 
-  // Step 4: Return per-student prices
+  // Step 4: Return per-student records, each pairing a price with the tier
+  //   and ratio it was computed from
 }
 ```
 

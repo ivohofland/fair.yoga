@@ -29,9 +29,11 @@ export const DEFAULT_INCOME_TIER: IncomeTier = 3;
  * even under `noUncheckedIndexedAccess`. That is what let the engine's
  * per-student `Invalid tier` throw be deleted rather than relocated.
  *
- * Lives here rather than in `services/pricing.ts` so that
- * `pricing-preview-table.tsx` — a `'use client'` component — can import the
- * ratios without pulling the engine into the browser bundle. See
+ * Lives here rather than in `services/pricing.ts` so that a client component
+ * can read the ratios from a module with no imports at all — this file has
+ * none. (`pricing-preview-table.tsx` also imports `calculateEffectiveTeacherRate`
+ * from `services/pricing.ts` directly, so the engine itself is in the browser
+ * bundle regardless; that is not what living here buys.) See
  * `src/lib/class-fields.ts` for the same reasoning applied to ECONOMIC_FIELDS.
  */
 export const TIER_RATIOS: Record<IncomeTier, number> = {
