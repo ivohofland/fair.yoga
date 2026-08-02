@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -60,5 +60,115 @@ describe('income tier range constraints', () => {
       studentIds.push(student.id);
       expect(student.incomeTier).toBe(tier);
     }
+  });
+});
+
+/**
+ * `Registration.tierAtBooking` — not `Student.incomeTier` — is the column
+ * that feeds the pricing engine, and the one the deleted per-student
+ * `Invalid tier` throw used to guard. This is the more important of the two
+ * constraints to cover with an automated test.
+ */
+describe('Registration.tierAtBooking constraint', () => {
+  const regSuffix = `tier-check-reg-${Date.now()}`;
+  let teacherId: string;
+  let roomId: string;
+  let studentId: string;
+  let classId: string;
+  let registrationId: string;
+
+  beforeAll(async () => {
+    const teacherEmail = `tier-teacher-${regSuffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Tier',
+        lastName: 'Teacher',
+        email: teacherEmail,
+        account: { create: { email: teacherEmail } },
+        bio: 'Teacher for the tierAtBooking constraint test',
+        pageSlug: `tier-teacher-${regSuffix}`,
+      },
+    });
+    teacherId = teacher.id;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Tier Venue',
+        address: `${regSuffix} Tier St`,
+        city: 'Testville',
+        postcode: '1234TC',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 10,
+        createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 8, rentalRate: 15 },
+    });
+
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId: teacherRoom.id,
+        classType: 'Tier Check Flow',
+        date: new Date('2099-06-01'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 8,
+        status: 'open',
+      },
+    });
+    classId = cls.id;
+
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Booking',
+        lastName: 'Student',
+        email: `tier-reg-student-${regSuffix}@test.local`,
+        incomeTier: 3,
+      },
+    });
+    studentId = student.id;
+
+    const registration = await prisma.registration.create({
+      data: { classId, studentId, tierAtBooking: 3, status: 'registered' },
+    });
+    registrationId = registration.id;
+  });
+
+  afterAll(async () => {
+    await prisma.registration.deleteMany({ where: { classId } });
+    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.student.deleteMany({ where: { id: studentId } });
+    const t = await prisma.teacher.findUniqueOrThrow({
+      where: { id: teacherId },
+      select: { email: true },
+    });
+    await prisma.teacher.delete({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { email: t.email } });
+  });
+
+  it('rejects an out-of-range Registration.tierAtBooking on update', async () => {
+    await expect(
+      prisma.registration.update({
+        where: { id: registrationId },
+        data: { tierAtBooking: 0 },
+      }),
+    ).rejects.toThrow();
+
+    // The row is untouched — a rejected write is not a partial write.
+    const after = await prisma.registration.findUniqueOrThrow({
+      where: { id: registrationId },
+    });
+    expect(after.tierAtBooking).toBe(3);
   });
 });
