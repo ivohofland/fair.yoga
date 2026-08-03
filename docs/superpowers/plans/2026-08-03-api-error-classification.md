@@ -199,7 +199,9 @@ Expected: PASS, 8 tests (4 named + 4 from the `it.each` table).
 
 - [ ] **Step 5: Prove the P2002 guard bites**
 
-Temporarily change `error.code === 'P2002'` to `error.code === 'P9999'` in `src/lib/api-errors.ts`, re-run the command from Step 4, and confirm the first three tests fail (409 → 500, warn → error, detail → undefined). Record the failure text in the commit body. Restore the line and re-run to confirm green again.
+Temporarily change `error.code === 'P2002'` to `error.code === 'P9999'` in `src/lib/api-errors.ts`, re-run the command from Step 4, and confirm **the first test** ("maps P2002 to a 409 logged at warn…") fails. Record the failure text in the commit body. Restore the line and re-run to confirm green again.
+
+Expect exactly one failing test, and within it only the `status` assertion in the output: `expect` throws on its first failure, so that test's `level` and `detail` assertions never execute. The other tests legitimately stay green — the `logMessage`/`message` test passes under a broken guard because the 500 branch also has two distinct strings, and the remaining cases never touched the P2002 branch. One deterministic red→green flip is the proof required here; more failures would not add to it.
 
 This matters because a classifier that returns the 500 for everything would pass a test suite that only ever checked the 500 path.
 
