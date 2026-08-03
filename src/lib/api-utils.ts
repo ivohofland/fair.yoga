@@ -102,41 +102,36 @@ export function pick<T extends Record<string, unknown>>(
  * behaviour lives in `classifyApiError` (src/lib/api-errors.ts), so adding a
  * case cannot skip the logger the way the old P2002 early return did (#121).
  *
- * `Args` is constrained rather than narrowed at runtime: every one of the 76
- * wrapped handlers takes the NextRequest first, so `args[0]` types without a
- * cast. The constraint rejects a params-first handler, but TypeScript still
- * accepts a zero-parameter one, and nothing stops a JavaScript caller — hence
- * the optional chaining. A TypeError thrown inside this catch would leak the
- * very stack trace the wrapper exists to contain.
+ * The request is named positionally and only the trailing arguments are
+ * generic. So `request` types as a NextRequest without a cast, and nothing a
+ * handler declares can widen it: a params-first handler is rejected, and the
+ * produced wrapper demands a NextRequest first even when the handler names no
+ * parameters or types it as a plain `Request`. The optional chaining is
+ * therefore not defending against TypeScript — it is defending against an
+ * untyped JavaScript caller, which the types cannot see. A TypeError thrown
+ * inside this catch would leak the very stack trace the wrapper exists to
+ * contain.
  *
  * `path` is `nextUrl.pathname` only, never `search`/`href` — the privacy
- * guard against query strings (tokens, search terms) reaching the log. A
- * second, stronger reason: in Next's static-generation request proxies,
- * accessing `nextUrl.href`, `.search`, `.searchParams`, `.url`, `.origin`,
- * `toJSON`, or `toString` throws a `StaticGenBailoutError`, while `method`
- * and `pathname` are not in that throwing set. So logging `href` or `search`
- * here could throw inside this very catch block — the exact failure the
- * optional chaining above exists to prevent.
+ * guard against query strings (tokens, search terms) reaching the log.
  */
-export function withErrorHandler<Args extends [NextRequest, ...unknown[]]>(
-  handler: (...args: Args) => Promise<NextResponse>,
-): (...args: Args) => Promise<NextResponse> {
-  return async (...args: Args): Promise<NextResponse> => {
+export function withErrorHandler<Rest extends unknown[]>(
+  handler: (request: NextRequest, ...rest: Rest) => Promise<NextResponse>,
+): (request: NextRequest, ...rest: Rest) => Promise<NextResponse> {
+  return async (request: NextRequest, ...rest: Rest): Promise<NextResponse> => {
     try {
-      return await handler(...args);
+      return await handler(request, ...rest);
     } catch (error) {
       const failure = classifyApiError(error);
       log[failure.level](
         {
           // `...failure.detail` spreads FIRST so the literal keys below always
-          // win. #113 is queued to add classifyApiError cases returning
-          // detail: { path } / { method } / { err } — a classification case
-          // must never be able to displace the request context this wrapper
-          // exists to guarantee.
+          // win: a classification's `detail` must never be able to displace
+          // the request context this wrapper guarantees on every error.
           ...failure.detail,
           err: error,
-          method: args[0]?.method,
-          path: args[0]?.nextUrl?.pathname,
+          method: request?.method,
+          path: request?.nextUrl?.pathname,
         },
         failure.logMessage,
       );
