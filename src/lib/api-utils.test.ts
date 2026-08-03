@@ -436,7 +436,8 @@ describe('withErrorHandler', () => {
    * `throw 'boom'` is legal JavaScript and reaches the wrapper as-is. Pino
    * logs a non-Error `err` verbatim but drops the key entirely when the value
    * is `undefined`, so the classification carries `thrownType` to keep the
-   * line naming something whatever was thrown.
+   * line naming something whatever was thrown — including `throw undefined`,
+   * which would otherwise log no error at all.
    */
   it('still names what was thrown when it is not an Error', async () => {
     const handler = withErrorHandler(async () => {

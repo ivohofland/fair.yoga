@@ -251,9 +251,7 @@ in Evidence below.
 
 ## Evidence already gathered
 
-Run against the real tree, then reverted (`git status` clean before writing this spec).
-
-Run against the real tree with `npx tsc --noEmit --incremental false`. The `--incremental
+Run against the real tree and then reverted, with `npx tsc --noEmit --incremental false`. The `--incremental
 false` is not decoration: `tsconfig.json` includes `.next/types/**` and `.next/dev/types/**`,
 so a running dev server moves the compiler's file set underneath it and produces errors that
 look exactly like a guard firing. Without it, the output is not evidence.
