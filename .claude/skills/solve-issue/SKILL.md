@@ -158,12 +158,26 @@ your own errors.
 
 ## 7. Fold, file, or let it go — and the default is let it go
 
-**Three outcomes, not two.** "Fold or file" quietly makes filing the default for anything
-not trivially foldable, and that is how a backlog compounds. #86 closed one issue and spun
-out eight. This process finds far more than it fixes, which is a property of reviewing well
-— but a tracker that grows faster than it drains stops being a plan and becomes a graveyard.
+**First, the floor: a defect a user will actually hit is fixed or filed, every time.**
+No test below applies to it. Not "is it a leaf", not "did this change make it worse", not
+"does it attach to something existing" — if a teacher or a student will encounter it, it
+gets recorded. A wrong price, a broken booking, a 500 on a real page, data a user can lose,
+an accessible name a screen-reader user cannot act on. Discovering a pre-existing bug in
+passing does not make it someone else's problem; the person hitting it does not care which
+PR was open when it was found.
 
-Before filing, all four must hold:
+The roadmap already draws this line — it tracks "live bugs, not just cleanup" and
+"someone is currently worse off" separately from everything else. Everything below governs
+that *everything else*: debt, taste, coverage gaps, design questions, and observations that
+are true but may cost nobody anything.
+
+**Then, for review findings: three outcomes, not two.** "Fold or file" quietly makes filing
+the default for anything not trivially foldable, and that is how a backlog compounds. #86
+closed one issue and spun out eight. This process finds far more than it fixes, which is a
+property of reviewing well — but a tracker that grows faster than it drains stops being a
+plan and becomes a graveyard.
+
+Before filing a non-defect finding, all four must hold:
 
 1. **Would a future maintainer be materially worse off if this were never written down?**
    Not "is it true" — most review findings are true. Would its absence cost someone real time
@@ -171,10 +185,11 @@ Before filing, all four must hold:
 2. **Is it a leaf?** If the issue needs a design decision before anyone can start, it will
    spin out its own three. Either resolve the decision now with the user, or file it *as* a
    decision with the options laid out — not as work.
-3. **Did this change make it worse, or merely make it visible?** Pre-existing debt you noticed
-   while passing through is usually not this issue's spin-out. `prisma/seed.ts` hard-coding
-   the tier ratios was visible from #39 and is not #39's problem. Filing it because you
-   happened to see it inflates the ratio for no gain.
+3. **Did this change make it worse, or merely make it visible?** Pre-existing *debt* you
+   noticed while passing through is usually not this issue's spin-out. `prisma/seed.ts`
+   hard-coding the tier ratios was visible from #39 and is not #39's problem. Filing it
+   because you happened to see it inflates the ratio for no gain. **This test never applies
+   to a live bug** — a pre-existing defect is still a defect someone will hit.
 4. **Can it attach to something that already exists?** Prefer extending — #143 absorbed an
    e2e coverage finding rather than spawning a fourth coverage issue. Adding an "Update" to a
    live issue keeps it in one place with its history.
