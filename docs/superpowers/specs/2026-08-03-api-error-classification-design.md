@@ -2,7 +2,9 @@
 
 **Issue:** #121 — `withErrorHandler` logs unhandled errors with no request context, and 409s with none at all
 **Date:** 2026-08-03
-**Related:** #113 (maps lock-race losers to 503 in the same handler — owns *status*, this owns *logging shape*)
+**Related:** #113 (an archive that loses the lock race reports "Internal server error" — it is
+the same 500 this design gives context to, but it proposes to fix it in the *service result
+unions*, not here; see "Out of scope")
 
 ## What the issue reported, and what measurement found
 
@@ -37,8 +39,8 @@ The issue asserts "handlers all receive `NextRequest` as `args[0]`". A parse of 
 
 It lists "no route, no method, **no id**" as three gaps. `nextUrl.pathname` is the
 *concrete* path — `/api/classes/clx…/transition` — so the id arrives free for all 38
-`[id]` handlers. Threading `params` through (it is a `Promise` in Next 15, so this would
-mean awaiting inside a `catch`) is unnecessary.
+`[id]` handlers. Threading `params` through (it is a `Promise` in the Next version this repo
+runs, 16.2.10, so this would mean awaiting inside a `catch`) is unnecessary.
 
 ### ...but the issue's headline scenario is only partly delivered
 
@@ -103,8 +105,10 @@ account.
 
 The filed symptom is missing context. The shape underneath is that **`withErrorHandler` has
 two exits and only one of them logs.** The `P2002` branch is silent by *position*, not by
-decision. #113 wants to add `P2028`/`55P03` to this same function; under today's shape that
-is a third `if`-with-its-own-`return`, i.e. a third chance to reintroduce this bug.
+decision — nobody decided that a 409 needs no trace, they just wrote the `return` above the
+log line. Any third special case is a third `if`-with-its-own-`return`, i.e. a third chance
+to reintroduce this bug, and the reviewer of that change would have to notice the position of
+a `return` to catch it.
 
 So the fix is not "add two lines" but "make it structurally impossible to return without
 logging".
@@ -116,12 +120,20 @@ logging".
 Pure classification. No `next/server` import, no pino import — testable with plain objects.
 
 ```ts
+export type ApiLogDetail = Record<string, unknown> & {
+  // pino writes level/time/msg before the merge object; err/method/path are
+  // the wrapper's guaranteed request context. Either way a duplicate key
+  // wins on JSON.parse, so no case may contribute one.
+  err?: never; method?: never; path?: never;
+  level?: never; time?: never; msg?: never;
+};
+
 export type ApiFailure = {
-  status: number;
-  message: string;       // client-facing, goes in the response body
-  logMessage: string;    // operator-facing — deliberately NOT the same string
-  level: 'warn' | 'error';
-  detail?: Record<string, unknown>;  // extra log fields, spread flat
+  readonly status: 409 | 500;  // reaches the Response constructor: RangeError outside 200-599
+  readonly message: string;    // client-facing, goes in the response body
+  readonly logMessage: string; // operator-facing — deliberately NOT the same string
+  readonly level: 'warn' | 'error';
+  readonly detail?: ApiLogDetail;  // extra log fields, spread flat
 };
 
 export function classifyApiError(error: unknown): ApiFailure;
@@ -131,7 +143,10 @@ Two cases today:
 
 - `PrismaClientKnownRequestError` with `code === 'P2002'` → status 409, message
   `'Resource already exists'`, level `warn`, `detail: { target: error.meta?.target }`.
-- Everything else → status 500, message `'Internal server error'`, level `error`.
+- Everything else → status 500, message `'Internal server error'`, level `error`, plus
+  `detail: { thrownType: typeof error }` when the throwable is not an `Error` — pino drops an
+  `err` key whose value is `undefined`, so `throw undefined` would otherwise log a line
+  naming no error at all.
 
 **Why `warn` for `P2002`:** the existing comment already calls these "client conflicts, not
 server bugs", and every deliberate duplicate path in the codebase pre-checks and returns its
@@ -143,8 +158,9 @@ the log says something already existed but not what, which is the same failure t
 about, one level in.
 
 **Why a separate module:** `api-utils.ts` is already a grab-bag (responses, session guards,
-body parsing, `pick`, the wrapper). Classification is pure and framework-free, and it is the
-obvious home for #113's mapping without that issue having to touch the logging code.
+body parsing, `pick`, the wrapper). Classification is pure and framework-free — it can be
+unit-tested with plain objects, no HTTP and no mocks — and a future mapping can be added
+without touching the logging code at all.
 
 **Why `logMessage` is separate from `message`:** `'Resource already exists'` is a reasonable
 thing to tell a client and a useless thing to find in a log.
@@ -152,20 +168,21 @@ thing to tell a client and a useless thing to find in a log.
 ### `withErrorHandler` becomes single-exit
 
 ```ts
-export function withErrorHandler<Args extends [NextRequest, ...unknown[]]>(
-  handler: (...args: Args) => Promise<NextResponse>,
-): (...args: Args) => Promise<NextResponse> {
-  return async (...args: Args): Promise<NextResponse> => {
+export function withErrorHandler<Rest extends unknown[]>(
+  handler: (request: NextRequest, ...rest: Rest) => Promise<NextResponse>,
+): (request: NextRequest, ...rest: Rest) => Promise<NextResponse> {
+  return async (request: NextRequest, ...rest: Rest): Promise<NextResponse> => {
     try {
-      return await handler(...args);
+      return await handler(request, ...rest);
     } catch (error) {
       const failure = classifyApiError(error);
       log[failure.level](
         {
-          err: error,
-          method: args[0]?.method,
-          path: args[0]?.nextUrl?.pathname,
+          // spread FIRST so the literal keys below always win
           ...failure.detail,
+          err: error,
+          method: request?.method,
+          path: request?.nextUrl?.pathname,
         },
         failure.logMessage,
       );
@@ -175,18 +192,23 @@ export function withErrorHandler<Args extends [NextRequest, ...unknown[]]>(
 }
 ```
 
-Four properties, each already verified against the real tree (see Evidence):
+Five properties, each already verified against the real tree (see Evidence):
 
 1. **One log call, one response.** No branch can early-return past the logger.
-2. **Constrained generic**, so `args[0]` is typed `NextRequest` — no cast, no runtime
-   narrowing, and zero edits at any of the 76 call sites.
-3. **Optional chaining regardless of the type.** The type cannot see a JS caller or a
-   zero-parameter wrapped handler. A `TypeError` thrown *inside the `catch`* would make this
-   wrapper leak the stack trace it exists to contain — strictly worse than the bug being fixed.
+2. **The request is positional, not a generic slot.** Only the trailing arguments are
+   generic, so `request` is typed `NextRequest` with no cast, no runtime narrowing, and zero
+   edits at any of the 76 call sites — and no handler signature can widen it, not even one
+   that types its first parameter `any`.
+3. **Optional chaining anyway.** The types cannot see an untyped JavaScript caller. A
+   `TypeError` thrown *inside the `catch`* would make this wrapper leak the stack trace it
+   exists to contain — strictly worse than the bug being fixed.
 4. **`pathname` only, never `search`/`href`.** Nine routes under `src/app/api` read
    `searchParams`; logging only the path keeps any future secret out of the logs by
    construction rather than by review. (Today's magic-link token travels in the request
    *body*, not the query string — so this is a guard against regression, not a live leak.)
+5. **`detail` spreads first.** A classification contributes log fields; it must not be able
+   to displace the request context this wrapper guarantees. `ApiLogDetail` makes the attempt
+   a compile error and the spread order makes it a no-op at runtime.
 
 ### What does not change
 
@@ -199,17 +221,22 @@ exactly as they are. This is an observability change; no route's behaviour moves
 
 **`src/lib/api-errors.test.ts` (new)** — `classifyApiError` over:
 - a `P2002` `PrismaClientKnownRequestError` → 409 / `warn` / `detail.target`
-- a `PrismaClientKnownRequestError` with some other code → 500 / `error`
-- a plain `Error` → 500 / `error`
-- non-`Error` throwables (`'boom'`, `null`) → 500 / `error`, which today's code handles only
-  by accident of the `instanceof` check failing
+- a `PrismaClientKnownRequestError` with some other code → 500 / `error` / no `detail`
+- a plain `Error` → 500 / `error` / no `detail`
+- non-`Error` throwables (`'boom'`, `null`, `undefined`, a plain object) → 500 / `error`,
+  which today's code handles only by accident of the `instanceof` check failing, each
+  carrying the `thrownType` that keeps the log line naming something
 
 **`src/lib/api-utils.test.ts` (extended)** — using the file's existing `makeRequest` helper,
 which already builds real `NextRequest` objects with a chosen URL and method:
 - a handler that throws a plain `Error` → 500 body, and `log.error` called once with
-  `method` and `path` matching the request actually passed
+  `method` and `path` matching the request actually passed, and `err` the *same object* that
+  was thrown (identity, not `expect.any(Error)`, which a substituted Error would satisfy)
 - a handler that throws `P2002` → 409 body unchanged, and `log.warn` (not `log.error`)
-  called with the constraint target
+  called with the constraint target and the same identity assertion on `err`
+- a classification whose `detail` clobbers all three of `err`/`method`/`path` → the real
+  request context survives; the literal needs a `@ts-expect-error`, which inverts the guard
+- a handler that throws a non-`Error` → 500 body, and a log line that still names it
 - a wrapped handler invoked with no arguments → still returns 500, does not propagate a
   `TypeError`
 - a handler that returns normally → log not called at all
@@ -226,31 +253,49 @@ in Evidence below.
 
 Run against the real tree, then reverted (`git status` clean before writing this spec).
 
-- Constraining the generic to `Args extends [NextRequest, ...unknown[]]` and dereferencing
-  `args[0].method` / `args[0].nextUrl.pathname`: `npx tsc --noEmit` exits **0**. All 76 call
-  sites compile unchanged.
-- `log[lvl]` with `lvl: 'warn' | 'error'` is callable under `strict` against pino's types.
-- Optional-chained `args[0]?.method` / `args[0]?.nextUrl?.pathname`: `tsc` clean and
-  `eslint src/lib/api-utils.ts` clean (no `no-unnecessary-condition` complaint).
-- **The constraint bites — but less broadly than "it guarantees a `NextRequest`".** Of three
-  deliberately wrong handlers:
-  - first parameter typed `{ params }` with the request second → **rejected**:
-    `error TS2345: … Types of parameters '_ctx' and 'args_0' are incompatible. Property
-    'params' is missing in type 'NextRequest' but required in type '{ params: Promise<{ id:
-    string; }>; }'.`
-  - a zero-parameter handler → **accepted** (TS arity rule).
-  - a handler typed `(r: Request)` → **accepted** (`NextRequest extends Request`).
+Run against the real tree with `npx tsc --noEmit --incremental false`. The `--incremental
+false` is not decoration: `tsconfig.json` includes `.next/types/**` and `.next/dev/types/**`,
+so a running dev server moves the compiler's file set underneath it and produces errors that
+look exactly like a guard firing. Without it, the output is not evidence.
 
-  Both accepted cases are runtime-safe for route handlers, since Next.js always passes a
-  `NextRequest`. The honest claim is therefore: *the constraint prevents a handler from
-  treating `args[0]` as anything but a `NextRequest` or a supertype* — which is why property
-  3 (optional chaining) is not redundant with property 2.
+- Naming the request positionally (`handler: (request: NextRequest, ...rest: Rest)`) and
+  dereferencing `request.method` / `request.nextUrl.pathname`: `tsc` exits **0**. All 76 call
+  sites compile unchanged; `git diff --stat` shows one file.
+- `log[lvl]` with `lvl: 'warn' | 'error'` is callable under `strict` against pino's types.
+- Optional-chained `request?.method` / `request?.nextUrl?.pathname`: `tsc` clean and
+  `eslint src/lib/api-utils.ts` clean. That lint run is *not* evidence the chaining is
+  necessary — `@typescript-eslint/no-unnecessary-condition` is not configured in this repo
+  (`npx eslint --print-config` reports it NOT CONFIGURED), so it could never have fired.
+- **What the signature actually rules out.** Four deliberately wrong handlers, measured on a
+  throwaway probe module:
+  - first parameter typed `{ params }` with the request second → **rejected**:
+    `error TS2345: … Argument of type '(_ctx: { params: Promise<{ id: string; }>; }, _req:
+    Request) => Promise<NextResponse>' is not assignable to parameter of type '(request:
+    NextRequest, _req: Request) => Promise<NextResponse<unknown>>'.`
+  - a zero-parameter handler → accepted, but `Rest` has no inference site, so it falls back
+    to its constraint and the *produced wrapper still demands a `NextRequest`*: calling it
+    with nothing is `TS2554`, with a plain `Request` is `TS2345`.
+  - a handler typed `(r: Request)` → same: accepted (ordinary contravariance — asking for
+    less than it will be given), produced wrapper unchanged.
+  - a handler typed `(r: any)` → accepted, and the produced wrapper **still** demands a
+    `NextRequest`. This is the case the earlier tuple encoding got wrong: `Args extends
+    [NextRequest, ...unknown[]]` made the request an inference site, `[any]` *satisfied* the
+    constraint without falling back to it, and `withErrorHandler(async (_r: any) => res)('not
+    a request')` compiled clean.
+
+  So no handler signature can make the request argument non-`NextRequest` at any call site.
+  Property 3 (optional chaining) is therefore not redundant with property 2 for one reason
+  only: an untyped JavaScript caller, which no type can see.
 
 ## Out of scope
 
-- **#113's status mapping** (`P2028`/`55P03` → 503 with actionable copy). `classifyApiError`
-  is shaped so that lands as a new case in a pure function, but the mapping and its user-facing
-  copy belong to #113.
+- **#113's 503 for the lock-race loser.** Nothing about it lands here. #113's Suggested fix
+  puts the mapping in the *service result unions* — `return { ok: false, reason: 'busy' }` in
+  `archiveOrUnarchiveTemplate` and `archiveOrUnarchiveStudioTemplate` — precisely because
+  "the API routes narrow on these exhaustively, so a new variant is a compile error until it
+  is handled". A catch-all classifier at the boundary cannot offer that guarantee, so the two
+  are alternatives rather than a plan: `classifyApiError` is *a* home such a mapping could
+  take, not one anything is queued to use.
 - **Request ids / `AsyncLocalStorage`.** Correlating the other `log.error` sites — those in
   `services/gdpr.ts`, `services/class-transitions.ts`, `services/email-fallback.ts` and
   friends — with the request that caused them is a real want, but it is additive on top of
@@ -269,6 +314,7 @@ Run against the real tree, then reverted (`git status` clean before writing this
 - `withErrorHandler` contains exactly one `log` call and one `return` in its `catch`.
 - Every unhandled error logs `method` and `path`; an escaped `P2002` logs at `warn` with its
   constraint target and still returns an unchanged 409.
-- `npx tsc --noEmit` clean; `npx eslint` clean; `npx vitest run src/lib/api-errors.test.ts
-  src/lib/api-utils.test.ts` green.
-- Each new guard has a recorded break-and-restore proving it can fail.
+- `npx tsc --noEmit --incremental false` clean; `npx eslint` clean; `npx vitest run
+  --project unit src/lib/api-errors.test.ts src/lib/api-utils.test.ts` green.
+- Each new guard has a recorded break-and-restore proving it can fail, run with
+  `--incremental false` so `.next/types` cannot masquerade as the guard firing.
