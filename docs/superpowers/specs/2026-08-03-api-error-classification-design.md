@@ -40,6 +40,28 @@ It lists "no route, no method, **no id**" as three gaps. `nextUrl.pathname` is t
 `[id]` handlers. Threading `params` through (it is a `Promise` in Next 15, so this would
 mean awaiting inside a `catch`) is unnecessary.
 
+### ...but the issue's headline scenario is only partly delivered
+
+Issue #121's own example is an operator "paging on a `P2028` transaction timeout" who "now
+cannot tell a studio resume from an archive from an account deletion." This design does
+not fully close that gap, and the rest of the spec reads as though it does. It does not.
+
+Method + path get one of the three: account deletion is `DELETE /api/account`,
+distinguishable on sight from everything else. The other two do not separate. Studio
+archive and studio resume are both `PATCH /api/studio-class-templates/[id]` — the same
+method, the same path, the same id — and the only discriminator between them is
+`?state=archived` vs `?state=active`, read from `nextUrl.searchParams`. That is exactly
+what this spec's own `pathname`-only rule excludes from the log. The same shape recurs on
+`class-templates/[id]`. So today, an operator staring at a `P2028` logged from either PATCH
+sees identical `method`/`path` for a resume and an archive; #121's headline scenario is
+one-third solved, not solved.
+
+This is not a reason to widen the rule. `GET /api/students?search=<name>` would put a
+student's name in the log the moment the rule stretched from `pathname` to `search` — the
+`pathname`-only line is still right, and stays as designed above. What closes the
+remainder is out of scope here: #113, which gives the lock-race loser its own 503 and its
+own copy, is what actually lets an operator tell resume from archive apart.
+
 ### Two things the issue does not mention
 
 **`withErrorHandler` has no tests.** `src/lib/api-utils.test.ts` (290 lines) covers
@@ -48,18 +70,34 @@ mean awaiting inside a `catch`) is unnecessary.
 and `pick`. No test anywhere asserts the 409: the string `Resource already exists` appears
 once in source and once in a comment, never in an assertion.
 
-**The `P2002` branch is reachable today, via check-then-create races.** The issue says it
-is "not reachable from #118's path today", which is true but narrower than the facts.
-Two routes check-then-create against a unique constraint with no `P2002` catch of their own:
+**The `P2002` branch is reachable today, via check-then-create races — and this section's
+first count was wrong.** The issue says the branch is "not reachable from #118's path
+today", which is true but narrower than the facts. An earlier draft of this spec called it
+"two routes." That was an undercount: re-checking every check-then-create sequence against
+a unique constraint in the API routes turns up **at least four routes, five windows** —
+stated as a floor, not a fresh exhaustive census; no exhaustive sweep of every route was
+redone to produce this correction.
 
 | Route | Constraint | Its own conflict response |
 |---|---|---|
-| `src/app/api/teacher-rooms/route.ts:55-69` | `@@unique([teacherId, roomId])` (schema `:253`) | 409 `DUPLICATE` |
-| `src/app/api/students/route.ts:112-124` | `@@unique([teacherId, studentId])` (schema `:208`) | 409 `ALREADY_LINKED` |
+| `src/app/api/teacher-rooms/route.ts:55-69` | `TeacherRoom @@unique([teacherId, roomId])` | 409 `DUPLICATE` |
+| `src/app/api/students/route.ts:112-124` | `TeacherStudent @@unique([teacherId, studentId])` | 409 `ALREADY_LINKED` |
+| `src/app/api/students/route.ts:126-134` | `Student.email @unique` — the *other* branch, `tx.student.create` | none |
+| `src/app/api/teachers/route.ts:31-50` | `Account.email @unique`, `Teacher.pageSlug @unique` | 409 `EMAIL_TAKEN` / `SLUG_TAKEN` |
+| `src/app/api/auth/student-signup/route.ts:34-50` | `Account.email @unique`, `Student.email @unique` | none — returns 200 on the no-op path |
 
-Lose that TOCTOU race — a double-tapped "Add room" — and the loser falls through to the
-wrapper's generic 409 instead of the route's own coded one, leaving no trace at all. Rare,
+Lose one of these TOCTOU races — a double-tapped "Add room" is the easy example, but the
+same shape recurs across all five — and the loser falls through to the wrapper's generic
+409 instead of the route's own coded one, leaving no trace beyond this branch's log. Rare,
 but that is exactly the case where a log is the only way anyone learns it fires.
+
+The two **signup/creation** paths — `teachers/route.ts` and `auth/student-signup/route.ts`
+— are the worse instance of the five. Both windows guard `Account.email`, the identity the
+account is keyed on, and neither has a `P2002` catch of its own. Lose that race and a
+stranger who signed up with an email already in use is told "Resource already exists"
+rather than "Email already in use" — the generic message, landing on exactly the path
+where the specific one is load-bearing for someone trying to recover access to their own
+account.
 
 ## Root cause, and why the fix is shaped this way
 
