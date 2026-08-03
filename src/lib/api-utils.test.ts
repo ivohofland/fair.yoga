@@ -14,6 +14,12 @@ vi.mock('./db', () => ({
   prisma: {},
 }));
 
+// First log mock in the repo. api-utils.ts imports '@/lib/log'; the alias
+// resolves to ./src via vitest.config.ts, so the specifier must match.
+vi.mock('@/lib/log', () => ({
+  log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
+
 import {
   respondOk,
   respondError,
@@ -22,8 +28,11 @@ import {
   requireStudent,
   parseBody,
   isErrorResponse,
+  withErrorHandler,
 } from './api-utils';
 import { getSessionToken, validateSession } from './auth';
+import { Prisma } from '@prisma/client';
+import { log } from '@/lib/log';
 
 const mockedGetSessionToken = vi.mocked(getSessionToken);
 const mockedValidateSession = vi.mocked(validateSession);
@@ -287,4 +296,135 @@ describe('requireStudent', () => {
     expect(result).not.toBeInstanceOf(NextResponse);
     expect(result).toEqual(studentUser);
   });
+});
+
+describe('withErrorHandler', () => {
+  beforeEach(() => {
+    vi.mocked(log.error).mockClear();
+    vi.mocked(log.warn).mockClear();
+  });
+
+  it('logs the failing request method and path, then returns 500', async () => {
+    const handler = withErrorHandler(async () => {
+      throw new Error('kaboom');
+    });
+
+    const res = await handler(
+      makeRequest('http://localhost/api/classes/abc123/transition', { method: 'POST' }),
+    );
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: { message: 'Internal server error' } });
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        err: expect.any(Error),
+        method: 'POST',
+        path: '/api/classes/abc123/transition',
+      }),
+      'unhandled API error',
+    );
+  });
+
+  /**
+   * The bug this file's coverage was added for: the P2002 branch used to
+   * return *above* the log line, so this 409 reached a teacher with no
+   * server-side trace whatsoever.
+   */
+  it('logs an escaped P2002 at warn with its constraint, and still returns 409', async () => {
+    const handler = withErrorHandler(async () => {
+      throw new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+        meta: { target: ['teacherId', 'roomId'] },
+      });
+    });
+
+    const res = await handler(
+      makeRequest('http://localhost/api/teacher-rooms', { method: 'POST' }),
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: { message: 'Resource already exists' } });
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'POST',
+        path: '/api/teacher-rooms',
+        target: ['teacherId', 'roomId'],
+      }),
+      expect.any(String),
+    );
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Nine routes under src/app/api read searchParams. Logging nextUrl.href or
+   * .search instead of .pathname would put every one of their query values in
+   * the log; this pins the narrow choice so a future edit cannot widen it
+   * quietly.
+   */
+  it('logs the path without the query string', async () => {
+    const handler = withErrorHandler(async () => {
+      throw new Error('kaboom');
+    });
+
+    await handler(
+      makeRequest('http://localhost/api/students?search=alice&token=sensitive', {
+        method: 'GET',
+      }),
+    );
+
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/api/students' }),
+      'unhandled API error',
+    );
+    expect(JSON.stringify(vi.mocked(log.error).mock.calls)).not.toContain('sensitive');
+  });
+
+  /**
+   * The wrapper exists to stop stack traces leaking. If reading args[0] could
+   * throw, a TypeError raised *inside* the catch would escape the wrapper —
+   * strictly worse than the bug being fixed. TypeScript forbids this call, so
+   * the cast simulates a JavaScript caller, which the types cannot see.
+   */
+  it('still returns 500 when invoked with no request at all', async () => {
+    const handler = withErrorHandler(async () => {
+      throw new Error('kaboom');
+    }) as unknown as () => Promise<NextResponse>;
+
+    const res = await handler();
+
+    expect(res.status).toBe(500);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ method: undefined, path: undefined }),
+      'unhandled API error',
+    );
+  });
+
+  it('does not log when the handler returns normally', async () => {
+    const handler = withErrorHandler(async () => respondOk({ fine: true }));
+
+    const res = await handler(makeRequest('http://localhost/api/classes'));
+
+    expect(res.status).toBe(200);
+    expect(log.error).not.toHaveBeenCalled();
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Bound to a const first, so the whole call fits on one line: TypeScript
+   * reports the assignability error at the *argument's* position, and a
+   * @ts-expect-error only suppresses errors on the line directly after it. An
+   * inline multi-line arrow would put the error on a different line than the
+   * directive, and the directive would read as unused.
+   */
+  const paramsFirstHandler = async (
+    _ctx: { params: Promise<{ id: string }> },
+    _req: Request,
+  ): Promise<NextResponse> => respondOk({});
+
+  // @ts-expect-error — args[0] must be the NextRequest. A params-first handler
+  // is rejected by the constraint; if the generic is ever loosened back to
+  // `unknown[]`, this line stops erroring and the unused directive becomes a
+  // compile error itself. That inversion is the guard.
+  withErrorHandler(paramsFirstHandler);
 });

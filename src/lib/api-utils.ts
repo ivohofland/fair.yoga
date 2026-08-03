@@ -1,8 +1,8 @@
-import { Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { validateSession, getSessionToken } from './auth';
 import { prisma } from './db';
+import { classifyApiError } from './api-errors';
 import type { SessionUser, TeacherSession, StudentSession } from './types';
 import { log } from '@/lib/log';
 
@@ -97,20 +97,36 @@ export function pick<T extends Record<string, unknown>>(
 /**
  * Wraps an API route handler in a try-catch to prevent unhandled exceptions
  * from leaking stack traces to the client.
+ *
+ * Exactly one log call and one response, both unconditional. Error-specific
+ * behaviour lives in `classifyApiError` (src/lib/api-errors.ts), so adding a
+ * case cannot skip the logger the way the old P2002 early return did (#121).
+ *
+ * `Args` is constrained rather than narrowed at runtime: every one of the 76
+ * wrapped handlers takes the NextRequest first, so `args[0]` types without a
+ * cast. The constraint rejects a params-first handler, but TypeScript still
+ * accepts a zero-parameter one, and nothing stops a JavaScript caller — hence
+ * the optional chaining. A TypeError thrown inside this catch would leak the
+ * very stack trace the wrapper exists to contain.
  */
-export function withErrorHandler<Args extends unknown[]>(
+export function withErrorHandler<Args extends [NextRequest, ...unknown[]]>(
   handler: (...args: Args) => Promise<NextResponse>,
 ): (...args: Args) => Promise<NextResponse> {
   return async (...args: Args): Promise<NextResponse> => {
     try {
       return await handler(...args);
     } catch (error) {
-      // Unique-constraint violations are client conflicts, not server bugs
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        return respondError('Resource already exists', 409);
-      }
-      log.error({ err: error }, 'unhandled API error');
-      return respondError('Internal server error', 500);
+      const failure = classifyApiError(error);
+      log[failure.level](
+        {
+          err: error,
+          method: args[0]?.method,
+          path: args[0]?.nextUrl?.pathname,
+          ...failure.detail,
+        },
+        failure.logMessage,
+      );
+      return respondError(failure.message, failure.status);
     }
   };
 }
