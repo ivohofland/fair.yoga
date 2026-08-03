@@ -36,10 +36,7 @@ describe('classifyApiError', () => {
     expect(failure.logMessage.length).toBeGreaterThan(0);
   });
 
-  /**
-   * P2025 stands in for "some other Prisma error". #113 will add P2028 and
-   * 55P03 as their own cases here; until it does, they land in this default.
-   */
+  /** P2025 stands in for "some other Prisma error". */
   it('maps a non-P2002 Prisma error to a 500 logged at error', () => {
     const failure = classifyApiError(prismaError('P2025'));
 
@@ -49,26 +46,32 @@ describe('classifyApiError', () => {
     expect(failure.detail).toBeUndefined();
   });
 
-  it('maps a plain Error to a 500 logged at error', () => {
+  it('maps a plain Error to a 500 logged at error, adding nothing to the log', () => {
     const failure = classifyApiError(new Error('kaboom'));
 
     expect(failure.status).toBe(500);
     expect(failure.level).toBe('error');
+    // pino serializes an Error under `err` with its type and stack; there is
+    // nothing left for the classification to say about it.
+    expect(failure.detail).toBeUndefined();
   });
 
   /**
    * `throw 'boom'` is legal JavaScript and reaches this function as-is. The
-   * classifier must not assume it was handed an Error.
+   * classifier must not assume it was handed an Error — and must still let
+   * the operator see what *was* thrown, because pino drops an `err` key whose
+   * value is `undefined`, leaving a log line that names no error at all.
    */
-  it.each([
-    ['a string', 'boom'],
-    ['null', null],
-    ['undefined', undefined],
-    ['a plain object', { code: 'P2002' }],
-  ])('maps %s to a 500 rather than throwing', (_label, thrown) => {
+  it.each<[string, unknown, string]>([
+    ['a string', 'boom', 'string'],
+    ['null', null, 'object'],
+    ['undefined', undefined, 'undefined'],
+    ['a plain object', { code: 'P2002' }, 'object'],
+  ])('maps %s to a 500 that records what was thrown', (_label, thrown, thrownType) => {
     const failure = classifyApiError(thrown);
 
     expect(failure.status).toBe(500);
     expect(failure.level).toBe('error');
+    expect(failure.detail).toEqual({ thrownType });
   });
 });

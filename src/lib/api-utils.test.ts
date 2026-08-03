@@ -24,6 +24,8 @@ vi.mock('@/lib/log', () => ({
 // `mockReturnValueOnce` — the default implementation delegates to the actual
 // `classifyApiError`, so this mock is transparent to every other
 // `withErrorHandler` test in the file, which depend on real classification.
+// The describe's `beforeEach` resets it back to that implementation, so the
+// transparency does not depend on every override being consumed.
 vi.mock('./api-errors', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./api-errors')>();
   return {
@@ -311,15 +313,32 @@ describe('requireStudent', () => {
   });
 });
 
+/**
+ * The merge object of the first log call. Needed because `objectContaining`
+ * compares an Error structurally: it cannot tell the thrown error from a
+ * same-message replica, and the whole value of `err` is the real stack.
+ */
+function firstLoggedMerge(fn: typeof log.error): Record<string, unknown> {
+  const call = vi.mocked(fn).mock.calls[0];
+  return (call?.[0] ?? {}) as unknown as Record<string, unknown>;
+}
+
 describe('withErrorHandler', () => {
   beforeEach(() => {
     vi.mocked(log.error).mockClear();
     vi.mocked(log.warn).mockClear();
+    // Also reset classifyApiError, which `mockReset` returns to the
+    // delegating implementation it was constructed with. Clearing only the
+    // log mocks would leave a `mockReturnValueOnce` that its own test failed
+    // to consume queued for the next test, silently falsifying the claim at
+    // the mock factory that this mock is transparent to every other test.
+    vi.mocked(classifyApiError).mockReset();
   });
 
   it('logs the failing request method and path, then returns 500', async () => {
+    const thrown = new Error('kaboom');
     const handler = withErrorHandler(async () => {
-      throw new Error('kaboom');
+      throw thrown;
     });
 
     const res = await handler(
@@ -330,12 +349,14 @@ describe('withErrorHandler', () => {
     expect(await res.json()).toEqual({ error: { message: 'Internal server error' } });
     expect(log.error).toHaveBeenCalledWith(
       expect.objectContaining({
-        err: expect.any(Error),
         method: 'POST',
         path: '/api/classes/abc123/transition',
       }),
       'unhandled API error',
     );
+    // Identity, not `expect.any(Error)`: substituting a fresh Error loses the
+    // operator's only stack trace and would satisfy a class-level assertion.
+    expect(firstLoggedMerge(log.error)['err']).toBe(thrown);
   });
 
   /**
@@ -344,12 +365,13 @@ describe('withErrorHandler', () => {
    * server-side trace whatsoever.
    */
   it('logs an escaped P2002 at warn with its constraint, and still returns 409', async () => {
+    const thrown = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+      code: 'P2002',
+      clientVersion: 'test',
+      meta: { target: ['teacherId', 'roomId'] },
+    });
     const handler = withErrorHandler(async () => {
-      throw new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-        code: 'P2002',
-        clientVersion: 'test',
-        meta: { target: ['teacherId', 'roomId'] },
-      });
+      throw thrown;
     });
 
     const res = await handler(
@@ -366,28 +388,34 @@ describe('withErrorHandler', () => {
       }),
       expect.any(String),
     );
+    expect(firstLoggedMerge(log.warn)['err']).toBe(thrown);
     expect(log.error).not.toHaveBeenCalled();
   });
 
   /**
    * Pins the spread order in the log call: `...failure.detail` must come
-   * FIRST so the literal `method`/`path`/`err` keys win. #113 is queued to
-   * add classifyApiError cases returning `detail: { path }` / `{ method }` —
-   * if the spread ever moved after those keys, a classification case could
-   * silently clobber the real request context this whole branch exists to
-   * guarantee.
+   * FIRST so the literal `err`/`method`/`path` keys win. Move the spread
+   * below them and a classification's `detail` displaces the request context
+   * this branch exists to guarantee — `err` included, which is why all three
+   * are clobbered here rather than the two a partial reorder would leave.
+   *
+   * `ApiLogDetail` now rejects such a `detail` outright, hence the directive.
+   * The two guards invert each other: relax the type and the directive goes
+   * unused and `tsc` fails; move the spread and this assertion fails.
    */
   it('keeps the real request context even when classifyApiError returns a clobbering detail', async () => {
+    const thrown = new Error('kaboom');
     vi.mocked(classifyApiError).mockReturnValueOnce({
       status: 500,
       message: 'Internal server error',
       logMessage: 'unhandled API error',
       level: 'error',
-      detail: { path: 'CLOBBERED', method: 'CLOBBERED' },
+      // @ts-expect-error — ApiLogDetail forbids exactly these keys.
+      detail: { err: 'CLOBBERED', method: 'CLOBBERED', path: 'CLOBBERED' },
     });
 
     const handler = withErrorHandler(async () => {
-      throw new Error('kaboom');
+      throw thrown;
     });
 
     await handler(
@@ -398,6 +426,33 @@ describe('withErrorHandler', () => {
       expect.objectContaining({
         method: 'POST',
         path: '/api/classes/abc123/transition',
+      }),
+      'unhandled API error',
+    );
+    expect(firstLoggedMerge(log.error)['err']).toBe(thrown);
+  });
+
+  /**
+   * `throw 'boom'` is legal JavaScript and reaches the wrapper as-is. Pino
+   * logs a non-Error `err` verbatim but drops the key entirely when the value
+   * is `undefined`, so the classification carries `thrownType` to keep the
+   * line naming something whatever was thrown.
+   */
+  it('still names what was thrown when it is not an Error', async () => {
+    const handler = withErrorHandler(async () => {
+      throw 'boom';
+    });
+
+    const res = await handler(makeRequest('http://localhost/api/students', { method: 'GET' }));
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: { message: 'Internal server error' } });
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        err: 'boom',
+        thrownType: 'string',
+        method: 'GET',
+        path: '/api/students',
       }),
       'unhandled API error',
     );
@@ -428,10 +483,11 @@ describe('withErrorHandler', () => {
   });
 
   /**
-   * The wrapper exists to stop stack traces leaking. If reading args[0] could
-   * throw, a TypeError raised *inside* the catch would escape the wrapper —
-   * strictly worse than the bug being fixed. TypeScript forbids this call, so
-   * the cast simulates a JavaScript caller, which the types cannot see.
+   * The wrapper exists to stop stack traces leaking. If reading the request
+   * could throw, a TypeError raised *inside* the catch would escape the
+   * wrapper — strictly worse than the bug being fixed. TypeScript forbids
+   * this call, so the cast simulates a JavaScript caller, which the types
+   * cannot see. That caller is the only thing the optional chaining guards.
    */
   it('still returns 500 when invoked with no request at all', async () => {
     const handler = withErrorHandler(async () => {
@@ -469,9 +525,9 @@ describe('withErrorHandler', () => {
     _req: Request,
   ): Promise<NextResponse> => respondOk({});
 
-  // @ts-expect-error — args[0] must be the NextRequest. A params-first handler
-  // is rejected by the constraint; if the generic is ever loosened back to
-  // `unknown[]`, this line stops erroring and the unused directive becomes a
-  // compile error itself. That inversion is the guard.
+  // @ts-expect-error — the first parameter must be the NextRequest. A
+  // params-first handler is rejected by the signature; make the whole
+  // parameter list generic again and this line stops erroring, turning the
+  // unused directive into a compile error itself. That inversion is the guard.
   withErrorHandler(paramsFirstHandler);
 });
