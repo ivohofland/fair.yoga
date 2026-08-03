@@ -15,6 +15,13 @@ afterAll(async () => {
  * guard does. `toIncomeTier` degrades rather than throwing precisely
  * because it trusts these constraints; if they are absent, that fallback
  * silently becomes load-bearing and nobody finds out.
+ *
+ * The `toThrow` calls assert the constraint's own name, not just that
+ * *something* threw — a masking failure (a unique-email collision, an FK
+ * violation from stale rows) would satisfy a bare `rejects.toThrow()` with
+ * the constraint absent. The names are this repo's own identifiers, set in
+ * the income_tier_range_check migration, not a Prisma internal, so they are
+ * safe to assert on.
  */
 describe('income tier range constraints', () => {
   it('rejects an out-of-range Student.incomeTier on create', async () => {
@@ -26,7 +33,7 @@ describe('income tier range constraints', () => {
           incomeTier: 0,
         },
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/Student_income_tier_check/);
   });
 
   it('rejects an out-of-range Student.incomeTier on update', async () => {
@@ -41,7 +48,7 @@ describe('income tier range constraints', () => {
 
     await expect(
       prisma.student.update({ where: { id: student.id }, data: { incomeTier: 6 } }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/Student_income_tier_check/);
 
     // The row is untouched — a rejected write is not a partial write.
     const after = await prisma.student.findUniqueOrThrow({ where: { id: student.id } });
@@ -74,6 +81,7 @@ describe('Registration.tierAtBooking constraint', () => {
   let teacherId: string;
   let roomId: string;
   let studentId: string;
+  let createStudentId: string;
   let classId: string;
   let registrationId: string;
 
@@ -141,6 +149,20 @@ describe('Registration.tierAtBooking constraint', () => {
       data: { classId, studentId, tierAtBooking: 3, status: 'registered' },
     });
     registrationId = registration.id;
+
+    // A second student so the create-side test below has a fresh
+    // (classId, studentId) pair — reusing `studentId` would collide with the
+    // @@unique([classId, studentId]) constraint and mask the CHECK violation
+    // this test exists to prove.
+    const createStudent = await prisma.student.create({
+      data: {
+        firstName: 'Create',
+        lastName: 'Student',
+        email: `tier-reg-create-student-${regSuffix}@test.local`,
+        incomeTier: 3,
+      },
+    });
+    createStudentId = createStudent.id;
   });
 
   afterAll(async () => {
@@ -148,7 +170,7 @@ describe('Registration.tierAtBooking constraint', () => {
     await prisma.class.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.deleteMany({ where: { id: roomId } });
-    await prisma.student.deleteMany({ where: { id: studentId } });
+    await prisma.student.deleteMany({ where: { id: { in: [studentId, createStudentId] } } });
     const t = await prisma.teacher.findUniqueOrThrow({
       where: { id: teacherId },
       select: { email: true },
@@ -163,12 +185,28 @@ describe('Registration.tierAtBooking constraint', () => {
         where: { id: registrationId },
         data: { tierAtBooking: 0 },
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/Registration_tier_at_booking_check/);
 
     // The row is untouched — a rejected write is not a partial write.
     const after = await prisma.registration.findUniqueOrThrow({
       where: { id: registrationId },
     });
     expect(after.tierAtBooking).toBe(3);
+  });
+
+  it('rejects an out-of-range Registration.tierAtBooking on create', async () => {
+    // The existing coverage above is update-only; create is the path a bad
+    // row would actually arrive through (the initial stamp at booking).
+    await expect(
+      prisma.registration.create({
+        data: { classId, studentId: createStudentId, tierAtBooking: 0, status: 'registered' },
+      }),
+    ).rejects.toThrow(/Registration_tier_at_booking_check/);
+
+    // The rejected create must not have left a row behind.
+    const count = await prisma.registration.count({
+      where: { classId, studentId: createStudentId },
+    });
+    expect(count).toBe(0);
   });
 });
