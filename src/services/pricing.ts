@@ -34,7 +34,7 @@ export interface PricedStudent {
   tier: IncomeTier;
   /** The tier ratio applied — TIER_RATIOS[tier]. */
   ratio: number;
-  /** This student's price, in whole cents after largest-remainder allocation. */
+  /** This student's price, after largest-remainder allocation. */
   price: number;
 }
 

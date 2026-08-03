@@ -90,6 +90,7 @@ export function estimateAttendanceSpread(input: AttendanceSpreadInput): Attendan
       maxStudents: input.maxStudents,
       studentTiers: tiers,
     });
+    // Same non-null assertion, same reason: see estimateTierPrices above.
     return pricing.students[input.registeredTiers.length]!.price;
   };
 
