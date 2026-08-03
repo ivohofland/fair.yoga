@@ -18,10 +18,15 @@ import { DEFAULT_INCOME_TIER, isIncomeTier, type IncomeTier } from '@/lib/tiers'
  * This file is separate from `tiers.ts` solely because it imports `@/lib/log`
  * (pino, server-only) and `tiers.ts` is value-imported by two `'use client'`
  * components. Do not move it, and do not import it from a client component.
+ *
+ * `context` is merged into the log payload and named in the error message —
+ * pass whichever id is in hand at the call site (`registrationId` when a
+ * registration is in hand, `studentId` on a profile read) so a warning or
+ * throw points at the row, not just the bad value.
  */
-export function toIncomeTier(n: number): IncomeTier {
+export function toIncomeTier(n: number, context?: Record<string, string>): IncomeTier {
   if (isIncomeTier(n)) return n;
-  log.warn({ tier: n }, 'income tier outside 1-5; DB constraint bypassed');
+  log.warn({ tier: n, ...context }, 'income tier outside 1-5; DB constraint bypassed');
   return DEFAULT_INCOME_TIER;
 }
 
@@ -35,8 +40,8 @@ export function toIncomeTier(n: number): IncomeTier {
  * silent mis-charge, recoverable only by hand.
  *
  * Throwing is free at that call site: `completeClass`'s body is a single
- * interactive transaction, so this rolls it back, the class stays
- * `in_progress`, and the completion is retried.
+ * interactive transaction, so this rolls it back — the class reverts to
+ * whatever status it was in before the call — and the completion is retried.
  *
  * Unreachable in normal operation. `Registration.tierAtBooking` carries a
  * CHECK constraint (the income_tier_range_check migration). Every write to it
@@ -44,10 +49,18 @@ export function toIncomeTier(n: number): IncomeTier {
  * registration is reactivated (in `activateRegistration`) — is sourced from
  * `Student.incomeTier`, which carries the same constraint. If this ever throws,
  * the constraint was bypassed and that is the bug to chase.
+ *
+ * `context` is merged into the log payload and named in the error message —
+ * see `toIncomeTier` above.
  */
-export function toIncomeTierOrThrow(n: number): IncomeTier {
+export function toIncomeTierOrThrow(n: number, context?: Record<string, string>): IncomeTier {
   if (isIncomeTier(n)) return n;
+  const where = context
+    ? ` (${Object.entries(context)
+        .map(([key, value]) => `${key}=${value}`)
+        .join(', ')})`
+    : '';
   throw new Error(
-    `Income tier ${n} is outside 1-5 — refusing to price a class from it.`,
+    `Income tier ${n} is outside 1-5 — refusing to price a class from it.${where}`,
   );
 }

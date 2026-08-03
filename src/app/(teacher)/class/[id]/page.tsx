@@ -93,7 +93,10 @@ export default async function ClassDetailPage({
   // Actual tier prices for completed class pricing breakdown
   const tierPrices = activeRegistrations
     .filter((r) => r.price !== null)
-    .map((r) => ({ tier: toIncomeTier(r.tierAtBooking), price: Number(r.price) }));
+    .map((r) => ({
+      tier: toIncomeTier(r.tierAtBooking, { registrationId: r.id }),
+      price: Number(r.price),
+    }));
 
   // Check-in available: in_progress, or open within 15 min of start
   // (class start resolved in the teacher's timezone)

@@ -51,7 +51,7 @@ export default async function TeacherBookingPage({
       teacherRoom: { include: { room: true } },
       registrations: {
         where: { status: { in: ['registered', 'attended', 'no_show', 'late_cancel'] } },
-        select: { tierAtBooking: true, status: true },
+        select: { id: true, tierAtBooking: true, status: true },
       },
     },
   });
@@ -111,7 +111,9 @@ export default async function TeacherBookingPage({
               targetRate: Number(cls.targetRate),
               minStudents: cls.minStudents,
               maxStudents: cls.maxStudents,
-              registeredTiers: cls.registrations.map((r) => toIncomeTier(r.tierAtBooking)),
+              registeredTiers: cls.registrations.map((r) =>
+                toIncomeTier(r.tierAtBooking, { registrationId: r.id }),
+              ),
             });
 
             return (

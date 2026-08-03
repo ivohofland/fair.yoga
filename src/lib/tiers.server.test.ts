@@ -9,7 +9,7 @@ afterEach(() => {
 
 describe('toIncomeTier', () => {
   it('passes every in-range tier through unchanged', () => {
-    expect([1, 2, 3, 4, 5].map(toIncomeTier)).toEqual([1, 2, 3, 4, 5]);
+    expect([1, 2, 3, 4, 5].map((n) => toIncomeTier(n))).toEqual([1, 2, 3, 4, 5]);
   });
 
   it('does not warn for a value the database permits', () => {
@@ -39,7 +39,7 @@ describe('toIncomeTier', () => {
 
 describe('toIncomeTierOrThrow', () => {
   it('passes every in-range tier through unchanged', () => {
-    expect([1, 2, 3, 4, 5].map(toIncomeTierOrThrow)).toEqual([1, 2, 3, 4, 5]);
+    expect([1, 2, 3, 4, 5].map((n) => toIncomeTierOrThrow(n))).toEqual([1, 2, 3, 4, 5]);
   });
 
   it('throws rather than guessing, naming the offending value', () => {

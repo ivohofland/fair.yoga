@@ -30,7 +30,7 @@ export default async function BookClassPage({
       teacherRoom: { include: { room: true } },
       registrations: {
         where: { status: { in: ['registered', 'attended', 'no_show', 'late_cancel'] } },
-        select: { tierAtBooking: true, status: true, studentId: true },
+        select: { id: true, tierAtBooking: true, status: true, studentId: true },
       },
     },
   });
@@ -48,7 +48,9 @@ export default async function BookClassPage({
     targetRate: Number(cls.targetRate),
     minStudents: cls.minStudents,
     maxStudents: cls.maxStudents,
-    registeredTiers: cls.registrations.map((r) => toIncomeTier(r.tierAtBooking)),
+    registeredTiers: cls.registrations.map((r) =>
+      toIncomeTier(r.tierAtBooking, { registrationId: r.id }),
+    ),
   });
 
   const session = await getSession();
@@ -69,7 +71,7 @@ export default async function BookClassPage({
   // narrowing `viewer` for truthiness also narrow `viewer.tier`, which
   // TypeScript could not do across two separate consts.
   const viewer = student
-    ? { ...student, tier: toIncomeTier(student.incomeTier) }
+    ? { ...student, tier: toIncomeTier(student.incomeTier, { studentId: student.id }) }
     : null;
   // The viewer's own charged row, if any. They are already in the pool,
   // so the personal spread must quote them from that row — not append a
@@ -117,11 +119,11 @@ export default async function BookClassPage({
             maxStudents: cls.maxStudents,
             registeredTiers: cls.registrations
               .filter((r) => r !== ownRegistration)
-              .map((r) => toIncomeTier(r.tierAtBooking)),
+              .map((r) => toIncomeTier(r.tierAtBooking, { registrationId: r.id })),
             // A booked viewer is billed at the tier stamped on their
             // registration; everyone else would join at their current one.
             viewerTier: alreadyBooked && ownRegistration
-              ? toIncomeTier(ownRegistration.tierAtBooking)
+              ? toIncomeTier(ownRegistration.tierAtBooking, { registrationId: ownRegistration.id })
               : viewer.tier,
           })}
           className="mt-2 mb-6"

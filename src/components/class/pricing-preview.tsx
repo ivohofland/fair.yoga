@@ -29,7 +29,9 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
     );
   }
 
-  const studentTiers = activeRegistrations.map((r) => toIncomeTier(r.tierAtBooking));
+  const studentTiers = activeRegistrations.map((r) =>
+    toIncomeTier(r.tierAtBooking, { registrationId: r.id }),
+  );
 
   const pricing = calculateClassPricing({
     roomCost: Number(cls.roomCost),

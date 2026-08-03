@@ -180,7 +180,9 @@ export async function completeClass(
       targetRate: Number(cls.targetRate),
       minStudents: cls.minStudents,
       maxStudents: cls.maxStudents,
-      studentTiers: chargedRegistrations.map((r) => toIncomeTierOrThrow(r.tierAtBooking)),
+      studentTiers: chargedRegistrations.map((r) =>
+        toIncomeTierOrThrow(r.tierAtBooking, { registrationId: r.id }),
+      ),
     });
 
     await tx.class.update({
@@ -194,8 +196,9 @@ export async function completeClass(
     });
 
     // Iterating the priced records rather than indexing two arrays: price and
-    // ratio arrive together, so they cannot skew apart. The one assertion left
-    // is on chargedRegistrations, this function's own array.
+    // ratio arrive together, so they cannot skew apart. What assertions remain
+    // are on chargedRegistrations, this function's own array — never on the
+    // pricing engine's output.
     for (const [i, s] of pricing.students.entries()) {
       const reg = chargedRegistrations[i]!;
       await tx.registration.update({

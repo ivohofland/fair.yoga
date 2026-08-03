@@ -28,7 +28,10 @@ export default async function TierSettingsPage() {
         Settings
       </Link>
       <h1 className="type-title mb-6">Your tier</h1>
-      <TierForm studentId={student.id} currentTier={toIncomeTier(student.incomeTier)} />
+      <TierForm
+        studentId={student.id}
+        currentTier={toIncomeTier(student.incomeTier, { studentId: student.id })}
+      />
     </div>
   );
 }
