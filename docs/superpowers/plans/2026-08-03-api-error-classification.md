@@ -462,7 +462,9 @@ Expected: both clean. A clean `tsc` here is also the proof that all 76 call site
 
 Temporarily change the generic back to `<Args extends unknown[]>` and run `npx tsc --noEmit`.
 
-Expected: two failures — the `@ts-expect-error` line reports `Unused '@ts-expect-error' directive`, and `args[0]?.method` / `args[0]?.nextUrl?.pathname` error because `args[0]` is `unknown`. Record both texts in the commit body, then restore the constraint and re-run to confirm clean.
+Expected: compilation fails, and the `@ts-expect-error` line reports `Unused '@ts-expect-error' directive` — that inversion is the guard. Record the **actual** output in the commit body rather than matching it against a prediction.
+
+Measured when this step was run: more errors than the two originally predicted here. `args[0]` resolves to `{}`, not `unknown`, so the property-access errors read differently than expected, and four further `TS2554` arity errors surface in the test file. The guard bites either way; the original prediction of "two failures" was wrong, and the verbatim text lives in `task-2-report.md`.
 
 - [ ] **Step 7: Prove the single-exit shape bites**
 
