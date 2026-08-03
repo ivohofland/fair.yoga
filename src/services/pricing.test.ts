@@ -291,6 +291,26 @@ describe('calculateClassPricing', () => {
     expect(Math.abs(sum - result.totalCost)).toBeLessThan(0.1);
   });
 
+  it('breaks leftover-cent ties by input order, not by tier', () => {
+    // Three tier-3 students tie on remainder but only one leftover cent
+    // exists, so WHICH of them receives it is observable — unlike the seed
+    // scenario above, where every tie is a complete pair and reversing the
+    // tie-break changes nothing. This is the only test that fails if
+    // `x.i - y.i` is ever flipped.
+    const result = calculateClassPricing({
+      roomCost: 1,
+      minRate: 10,
+      targetRate: 10,
+      minStudents: 4,
+      maxStudents: 4,
+      studentTiers: [1, 3, 3, 3],
+    });
+
+    expect(result.students.map((s) => Math.round(s.price * 100))).toEqual([
+      196, 302, 301, 301,
+    ]);
+  });
+
   it('pairs each price with the tier and ratio it was computed from', () => {
     const result = calculateClassPricing({
       roomCost: 35, minRate: 15, targetRate: 25,
