@@ -108,6 +108,15 @@ export function pick<T extends Record<string, unknown>>(
  * accepts a zero-parameter one, and nothing stops a JavaScript caller — hence
  * the optional chaining. A TypeError thrown inside this catch would leak the
  * very stack trace the wrapper exists to contain.
+ *
+ * `path` is `nextUrl.pathname` only, never `search`/`href` — the privacy
+ * guard against query strings (tokens, search terms) reaching the log. A
+ * second, stronger reason: in Next's static-generation request proxies,
+ * accessing `nextUrl.href`, `.search`, `.searchParams`, `.url`, `.origin`,
+ * `toJSON`, or `toString` throws a `StaticGenBailoutError`, while `method`
+ * and `pathname` are not in that throwing set. So logging `href` or `search`
+ * here could throw inside this very catch block — the exact failure the
+ * optional chaining above exists to prevent.
  */
 export function withErrorHandler<Args extends [NextRequest, ...unknown[]]>(
   handler: (...args: Args) => Promise<NextResponse>,
@@ -119,10 +128,15 @@ export function withErrorHandler<Args extends [NextRequest, ...unknown[]]>(
       const failure = classifyApiError(error);
       log[failure.level](
         {
+          // `...failure.detail` spreads FIRST so the literal keys below always
+          // win. #113 is queued to add classifyApiError cases returning
+          // detail: { path } / { method } / { err } — a classification case
+          // must never be able to displace the request context this wrapper
+          // exists to guarantee.
+          ...failure.detail,
           err: error,
           method: args[0]?.method,
           path: args[0]?.nextUrl?.pathname,
-          ...failure.detail,
         },
         failure.logMessage,
       );

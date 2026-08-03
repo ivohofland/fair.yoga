@@ -20,6 +20,18 @@ vi.mock('@/lib/log', () => ({
   log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+// Real classification for every test except the one that overrides it with
+// `mockReturnValueOnce` — the default implementation delegates to the actual
+// `classifyApiError`, so this mock is transparent to every other
+// `withErrorHandler` test in the file, which depend on real classification.
+vi.mock('./api-errors', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./api-errors')>();
+  return {
+    ...actual,
+    classifyApiError: vi.fn(actual.classifyApiError),
+  };
+});
+
 import {
   respondOk,
   respondError,
@@ -31,6 +43,7 @@ import {
   withErrorHandler,
 } from './api-utils';
 import { getSessionToken, validateSession } from './auth';
+import { classifyApiError } from './api-errors';
 import { Prisma } from '@prisma/client';
 import { log } from '@/lib/log';
 
@@ -354,6 +367,40 @@ describe('withErrorHandler', () => {
       expect.any(String),
     );
     expect(log.error).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Pins the spread order in the log call: `...failure.detail` must come
+   * FIRST so the literal `method`/`path`/`err` keys win. #113 is queued to
+   * add classifyApiError cases returning `detail: { path }` / `{ method }` —
+   * if the spread ever moved after those keys, a classification case could
+   * silently clobber the real request context this whole branch exists to
+   * guarantee.
+   */
+  it('keeps the real request context even when classifyApiError returns a clobbering detail', async () => {
+    vi.mocked(classifyApiError).mockReturnValueOnce({
+      status: 500,
+      message: 'Internal server error',
+      logMessage: 'unhandled API error',
+      level: 'error',
+      detail: { path: 'CLOBBERED', method: 'CLOBBERED' },
+    });
+
+    const handler = withErrorHandler(async () => {
+      throw new Error('kaboom');
+    });
+
+    await handler(
+      makeRequest('http://localhost/api/classes/abc123/transition', { method: 'POST' }),
+    );
+
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'POST',
+        path: '/api/classes/abc123/transition',
+      }),
+      'unhandled API error',
+    );
   });
 
   /**
