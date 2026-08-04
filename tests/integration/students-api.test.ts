@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor } from '../helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -224,7 +224,20 @@ describe('POST /api/students', () => {
         where: { teacherId_studentId: { teacherId, studentId: existing.id } },
       });
       expect(link).toBeNull();
+
+      // `existing` is a registered Student, so this POST also fired
+      // `notifyInvitee` (#166 task 8) fire-and-forget from the route (F1,
+      // review). Waiting for its `Notification` here, before `finally`
+      // deletes `existing`, is what lets the cleanup below actually catch
+      // the row instead of racing it (`Notification.recipientId` has no FK
+      // to `Student`, so a delete that runs first leaves it behind for good).
+      await waitFor(() =>
+        prisma.notification.findFirst({
+          where: { recipientId: existing.id, type: 'teacher_invitation' },
+        }),
+      );
     } finally {
+      await prisma.notification.deleteMany({ where: { recipientId: existing.id } });
       await prisma.teacherStudent.deleteMany({ where: { studentId: existing.id } });
       await prisma.student.delete({ where: { id: existing.id } });
       await prisma.account.delete({ where: { id: existing.accountId! } });
@@ -415,11 +428,26 @@ describe('POST /api/students — the enumeration oracle is closed (#166)', () =>
         // invitation beside it would satisfy every assertion above.
         expect(body.data.id).toBe(inv.id);
       }
+
+      // `victim` is a registered Student, so `POST /api/students` above also
+      // fired `notifyInvitee` (#166 task 8) — fire-and-forget from the route
+      // (F1, review), so its `Notification` write can still be in flight
+      // here. Waiting for it before `finally` runs is what lets that block's
+      // `notification.deleteMany` actually catch the row instead of racing
+      // it: `Notification.recipientId` has no FK to `Student`
+      // (schema.prisma), so a delete that runs first leaves the row behind
+      // forever, not merely late.
+      await waitFor(() =>
+        prisma.notification.findFirst({
+          where: { recipientId: victim!.id, type: 'teacher_invitation' },
+        }),
+      );
     } finally {
       if (teacherId) {
         await prisma.invitation.deleteMany({ where: { teacherId } });
       }
       if (victim) {
+        await prisma.notification.deleteMany({ where: { recipientId: victim.id } });
         await prisma.teacherStudent.deleteMany({ where: { studentId: victim.id } });
         await prisma.student.delete({ where: { id: victim.id } });
         if (victim.accountId) {
@@ -905,6 +933,7 @@ describe('POST /api/students — response disclosure (#162)', () => {
       await prisma.teacher.delete({ where: { id: strangerId } });
     }
     if (victimId) {
+      await prisma.notification.deleteMany({ where: { recipientId: victimId } });
       await prisma.student.delete({ where: { id: victimId } });
     }
     const accountIds = [victimAccountId, strangerAccountId].filter(Boolean);
@@ -953,6 +982,18 @@ describe('POST /api/students — response disclosure (#162)', () => {
       where: { teacherId_studentId: { teacherId: strangerId, studentId: victimId } },
     });
     expect(link).toBeNull();
+
+    // `victim` is a registered Student, so this POST also fired
+    // `notifyInvitee` (#166 task 8) fire-and-forget from the route (F1,
+    // review). Waiting for its `Notification` here, before this block's
+    // `afterAll` deletes `victim`, is what lets that cleanup actually find
+    // the row instead of racing it — same reasoning as the oracle test
+    // above (`Notification.recipientId` has no FK to `Student`).
+    await waitFor(() =>
+      prisma.notification.findFirst({
+        where: { recipientId: victimId, type: 'teacher_invitation' },
+      }),
+    );
   });
 
   // Fixture creation sits inside the `try` in the three tests below so a throw

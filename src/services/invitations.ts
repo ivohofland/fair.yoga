@@ -146,21 +146,28 @@ export async function inviteContact(
  * that skips the gate turns this into exactly the harassment channel the
  * block exists to close.
  *
- * `delivered` is computed once, at `inviteContact`'s create time. Nothing
- * about the invitation's route from there to here re-checks `TeacherBlock`
- * — the only door that can move `delivered` after creation is
- * `PUT /api/invitations/[id]`, which edits `email` on a pending row without
- * recomputing it. That PUT does not call this function (it does not send
- * anything at all), so no send in this codebase currently trusts a stale
- * `delivered`. Any future send path that isn't `inviteContact`'s own
- * create-time call — a resend, a retry, anything PUT-adjacent — must
- * re-query `TeacherBlock` itself rather than reuse a value read earlier.
+ * `delivered` (the caller's gate, above) is computed once, at
+ * `inviteContact`'s create time, and can go stale — the only door that can
+ * move it after creation is `PUT /api/invitations/[id]`, which edits `email`
+ * on a pending row without recomputing it. This function does not lean on
+ * the caller having read a fresh value: it re-queries `TeacherBlock` itself,
+ * below, so the guard travels with the send rather than living only in
+ * whichever caller remembers to check it. Keep the caller's own gate too —
+ * belt and braces, and it skips a query on the common (unblocked) path.
  *
- * The `Student` lookup below runs after the caller's response is already
- * decided (`POST /api/students` answers 201 with `{ id }` before this ever
- * runs) and feeds only which delivery channel to use — never the response.
- * Restructuring this so the route's status or body depends on it would
- * reopen the enumeration oracle #166 closed.
+ * `POST /api/students` (route.ts) does not await this function — it is
+ * called fire-and-forget, after the response's status and body are already
+ * fully decided, with its own `.catch` for the rejection path. That is
+ * deliberate: whatever this function reads, or how long it takes, must
+ * never become the response's status code or its latency. An earlier
+ * version of this function was awaited by its caller, and that reopened the
+ * exact oracle #166 closed: a Resend outage turned an unregistered
+ * address's failure into a 500 while a registered address's plain INSERT
+ * still answered 201, and even with Resend healthy, "no work" (blocked) vs.
+ * "one SELECT + one INSERT" (registered) vs. "one HTTPS round trip"
+ * (stranger) is a timing channel carrying the same bit. A future caller
+ * that awaits this — even just to inspect success or failure — reopens it
+ * again.
  *
  * `teacher_invitation` is deliberately NOT in `ESSENTIAL_NOTIFICATION_TYPES`
  * (`services/notification-policy.ts`), so `shouldEmailStudent` falls
@@ -180,6 +187,15 @@ export async function notifyInvitee(
   // already did, the same way every other email-comparing function in this
   // file does (acceptInvitation, unlinkTeacher, resolveInvitationOnLink).
   const email = input.email.toLowerCase();
+
+  // Structural, not comment-enforced (F3, #166 review): re-check the block
+  // here instead of trusting the caller's `delivered` to still be fresh.
+  // See this function's docblock for why `delivered` can go stale.
+  const blocked = await db.teacherBlock.findUnique({
+    where: { teacherId_email: { teacherId: input.teacherId, email } },
+    select: { id: true },
+  });
+  if (blocked) return;
 
   const student = await db.student.findUnique({
     where: { email },

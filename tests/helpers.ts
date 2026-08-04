@@ -87,3 +87,34 @@ export async function seedSession(db: PrismaClient, accountId: string): Promise<
   });
   return token;
 }
+
+/**
+ * Polls `check` until it returns a truthy value, then returns it — for
+ * asserting on a side effect the route under test deliberately does NOT
+ * await before responding (e.g. `POST /api/students`' fire-and-forget
+ * invitee notification, #166 task 8 F1). A fixed `await new Promise(...)`
+ * sleep is either too short (flaky under load) or wastefully long on every
+ * green run; this returns as soon as the condition is met and only pays the
+ * full `timeoutMs` when it genuinely never happens — which is exactly the
+ * failure this exists to surface as a clear timeout rather than a mystery
+ * missing row.
+ *
+ * Not for waiting on the ABSENCE of something: a negative can't be proven by
+ * polling for it, only bounded by a fixed wait long enough for the
+ * background work to have finished either way (see the callers that check a
+ * count instead of a row for why they don't need this at all).
+ */
+export async function waitFor<T>(
+  check: () => Promise<T | null | undefined | false>,
+  { timeoutMs = 2000, intervalMs = 25 }: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const result = await check();
+    if (result) return result;
+    if (Date.now() >= deadline) {
+      throw new Error(`waitFor: condition not met within ${timeoutMs}ms`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}

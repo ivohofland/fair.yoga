@@ -6,6 +6,33 @@ import { checkStudentWriteLimit } from '@/lib/rate-limit';
 import { inviteContact, notifyInvitee, REFUSAL_MESSAGES } from '@/services/invitations';
 import { log } from '@/lib/log';
 
+/**
+ * Loads the inviting teacher's display name and notifies the invitee — the
+ * whole "decide + deliver" tail of a successful, unblocked invite.
+ *
+ * Deliberately never awaited by `POST` below (F1, #166 review): this SELECT
+ * plus whatever `notifyInvitee` does — a plain INSERT for a registered
+ * invitee, an HTTPS call to Resend for anyone else — must not sit on the
+ * request's critical path. Awaited, it turns a Resend outage into a 500 for
+ * an unregistered address while a registered one still answers 201, and even
+ * with Resend healthy it is a timing channel (blocked: nothing, registered:
+ * one query, stranger: one network round trip) — both carry the exact bit
+ * `POST /api/students` exists to withhold. Fire-and-forget is safe here: this
+ * is a long-lived Node process on a single VPS, not a serverless function
+ * that could be frozen mid-request.
+ */
+async function deliverInvitation(teacherId: string, email: string): Promise<void> {
+  const teacher = await prisma.teacher.findUniqueOrThrow({
+    where: { id: teacherId },
+    select: { firstName: true, lastName: true },
+  });
+  await notifyInvitee(prisma, {
+    teacherId,
+    email,
+    teacherName: `${teacher.firstName} ${teacher.lastName}`,
+  });
+}
+
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
@@ -141,18 +168,16 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // address (services/invitations.ts) — the invitation row is still real,
   // only delivery is withheld. Gating on it here is what stops this from
   // emailing the exact person who unlinked to get away from this teacher.
+  //
+  // Fire-and-forget, on purpose — see `deliverInvitation`'s docblock above.
+  // The explicit `.catch` is required, not optional: without it, a rejection
+  // here becomes an unhandled promise rejection instead of a log line.
   if (result.value.delivered) {
-    const teacher = await prisma.teacher.findUniqueOrThrow({
-      where: { id: session.teacherId },
-      select: { firstName: true, lastName: true },
-    });
-    await notifyInvitee(prisma, {
-      teacherId: session.teacherId,
-      // Same transform `inviteContact` applies before storing `Invitation.email`
-      // — recomputed here rather than read back off `result`, since the
-      // service returns only `{ id, delivered }` on the wire-shaped success path.
-      email: parsed.data.email.toLowerCase(),
-      teacherName: `${teacher.firstName} ${teacher.lastName}`,
+    // Same transform `inviteContact` applies before storing `Invitation.email`
+    // — recomputed here rather than read back off `result`, since the
+    // service returns only `{ id, delivered }` on the wire-shaped success path.
+    void deliverInvitation(session.teacherId, parsed.data.email.toLowerCase()).catch((err) => {
+      log.error({ err, teacherId: session.teacherId }, 'failed to notify invitee');
     });
   }
 

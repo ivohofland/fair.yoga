@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { inviteContact, notifyInvitee } from '@/services/invitations';
 import { promoteNext } from '@/services/waitlist';
-import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor } from '../helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -1103,6 +1103,19 @@ describe('POST /api/students notifies the invitee (#166 task 8)', () => {
       });
       expect(res.status).toBe(201);
 
+      // The route calls `notifyInvitee` fire-and-forget (F1, #166 review) —
+      // it is not on the request's critical path on purpose, so the write
+      // below can still be in flight when `fetch` above resolves. `waitFor`
+      // polls with `findFirst` (null until the row lands, unlike `findMany`,
+      // which would return a truthy `[]` on the very first check and defeat
+      // the poll) rather than asserting immediately — the same way this
+      // would have to work if it were driving the real app instead of
+      // calling it in-process.
+      await waitFor(() =>
+        prisma.notification.findFirst({
+          where: { recipientType: 'student', recipientId: student!.id, type: 'teacher_invitation' },
+        }),
+      );
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
       });
