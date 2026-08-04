@@ -22,6 +22,9 @@
 - **Session shape:** `requireTeacher(request)` returns `TeacherSession` (`{ sessionId, accountId, teacherId, defaultTimezone, studentId: string | null }`) **or** a `NextResponse` — always narrow with `isErrorResponse` first. `requireStudent` returns `StudentSession` (`studentId: string`).
 - **Test idiom:** `import { BASE_URL, cookie, seedSession, uniqueSuffix } from '../helpers'`. Fixtures are always self-built under a `uniqueSuffix()`; never rely on seed data.
 - **Design system:** teal `#1A5653` primary, cream page bg, sand-soft surfaces, radius 16, 1px borders, **no shadows** outside sheets/modals, no transitions. Type styles only: `type-display/title/subtitle/body/label/caption/number`. Words before icons.
+- **A red integration run strands rows in the shared dev database.** Learned in Task 3: a suite that dies mid-file skips its `afterAll`, leaving `Student`/`Account`/`Invitation` rows behind. Sweep `@test.local` rows after any red run. It does **not** cause a next-run collision — `uniqueSuffix()` is `Date.now()` plus random bytes (`tests/helpers.ts:64-66`), so fixtures never clash across runs. Task 3's report claimed otherwise and its reviewer caught it; the debris is real, that mechanism was not.
+- **Create fixtures inside the `try`, not before it.** `students-api.test.ts` states this convention in its own comments and it is the reason the rule above matters less than it could — a test that creates rows outside `try`/`finally` strands them on every failure, which hurts most in the tests you care about most.
+- **A throwing `finally` masks the assertion that actually failed.** Also Task 3: a test whose teardown deletes a row the change no longer creates reports the teardown error, not the defect. When a test fails somewhere surprising, read its cleanup block before believing the message.
 - **Commit per task.** Conventional-commit subject, body explaining *why*.
 
 ## Task Dependency Order
@@ -500,8 +503,10 @@ Update the imports: drop `createStudentSchema`, add `createInvitationSchema`, an
 Run: `npx vitest run --project integration tests/integration/students-api.test.ts`
 Run: `npx vitest run --project unit src/lib/schemas.test.ts`
 
-Expected: the oracle test PASSES. Five pre-existing tests now FAIL, and these are the ones the classification predicted — fix them in the next step, do not touch anything else:
-`:146` `'creates a new student and TeacherStudent link'`, `:168` `'returns 409 when student already in contacts'`, `:183` `'links existing student to teacher without creating duplicate'`, `:726` `'gives a teacher who knows only the email nothing but the id'`, `:763` `'refuses a 51st addition within the hour'`.
+Expected: the oracle test PASSES, and pre-existing tests FAIL. **The predicted list was off by one, corrected here after execution:**
+
+- Actually broke: `:146`, `:168`, `:183`, `:726`, and — unpredicted — `:814` `'spends one shared budget across POST and the teacher PUT'`. The POST no longer creates a `Student`, so that test's 49 follow-up PUTs 404'd, and its `finally` block then threw on `student.delete`, **masking the real assertion error behind a cleanup failure**. Watch for that shape: a test whose teardown throws reports the teardown, not the defect.
+- Did **not** break: `:763` `'refuses a 51st addition within the hour'`. Repeating one address still produced `[201, 409×49, 429]` — the 409s merely changed code. Rewrite it to 51 distinct addresses anyway; that rewrite is what actually tests the limiter, and the version that passed was passing for the wrong reason.
 
 - [ ] **Step 7: Rewrite those five, and do not delete `:726`**
 
@@ -1378,13 +1383,15 @@ Only now, once nothing creates one and the UI points elsewhere.
 
 Remove the teacher branch of `PUT` (`:107-164`), leaving the self-edit branch and the trailing `respondError('Access denied', 403)` at `:166`. Remove the entire `DELETE` export (`:169-210`), **including the orphan cascade at `:201-206`** — that cascade is the only precedent in the codebase for deleting a `Student` row as a side effect of removing a link, and Task 6's route must not be written by copying it.
 
-Drop the now-unused `createStudentSchema` import.
+**Delete `createStudentSchema` from `src/lib/schemas.ts`, not merely its import here.** Task 3 kept it alive solely for this route's PUT branch, with a docblock saying so. Once the branch is gone it has no caller.
+
+**The trap Task 3 flagged, verbatim:** `createStudentSchema` and `createInvitationSchema` differ *only* by `.strict()`. "Deduplicating" them — pointing the old PUT at the new schema instead of deleting — is a behaviour change dressed as a refactor: it would start 400ing bodies that previously had their extra keys silently stripped. Delete; do not merge.
 
 - [ ] **Step 2: Fix the four tests the classification named**
 
 - `students-api.test.ts:950` — delete. It pins a response shape that no longer exists.
 - `students-api.test.ts:984` — delete. The link check it guarded is gone.
-- `students-api.test.ts:814` — rewrite against `POST /api/students` alone; the shared budget now has one spender. Update `checkStudentWriteLimit`'s docblock (`src/lib/rate-limit.ts:65-72`), which describes a POST/PUT pair that no longer exists.
+- `students-api.test.ts:814` — **already rewritten in Task 3**, which is where it actually broke. Task 3 reseeded its `Student` via Prisma so the PUTs still had a target; now that the PUT branch is gone, rewrite it again against `POST /api/students` alone. Update `checkStudentWriteLimit`'s docblock (`src/lib/rate-limit.ts:65-72`), which describes a POST/PUT pair that no longer exists.
 - `students-api.test.ts:355` (`'a teacher cannot edit a claimed student'`) — **delete, do not leave green.** It asserts only `403`, which it still gets from the catch-all rather than from the `claimedAt` guard it was written for. A passing test whose name is a lie is worse than no test.
 - `tier-selected-at.test.ts:194` — delete. The branch whose behaviour it pinned is gone.
 
