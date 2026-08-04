@@ -1111,10 +1111,12 @@ describe('POST /api/students notifies the invitee (#166 task 8)', () => {
       // the poll) rather than asserting immediately — the same way this
       // would have to work if it were driving the real app instead of
       // calling it in-process.
-      await waitFor(() =>
-        prisma.notification.findFirst({
-          where: { recipientType: 'student', recipientId: student!.id, type: 'teacher_invitation' },
-        }),
+      await waitFor(
+        () =>
+          prisma.notification.findFirst({
+            where: { recipientType: 'student', recipientId: student!.id, type: 'teacher_invitation' },
+          }),
+        { description: 'registered invitee teacher_invitation notification (#166 task 8 delivery)' },
       );
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
@@ -1132,14 +1134,22 @@ describe('POST /api/students notifies the invitee (#166 task 8)', () => {
 
   it('creates no notification for an address with no Student row, and still answers 201', async () => {
     const strangerEmail = `notify-stranger-${suffix}@test.local`;
-    // Delta rather than an absolute count: `notifyInvitee`'s no-Student
-    // branch never calls `createNotification` — there is no `recipientId`
-    // to hang one off — so any pre-existing rows from earlier tests in this
-    // file are not this test's concern. `fileParallelism: false`
-    // (vitest.config.ts) is what makes a bracketing count safe here: no
-    // other test in this project can write a `teacher_invitation` row
-    // between the two reads below.
+    // No `recipientId` exists for a stranger to check an absence against
+    // directly, so this can only prove "no notification" via a bracketing
+    // count — and a count read immediately after `fetch` resolves proved
+    // nothing on its own (F6, review): delivery is fire-and-forget (F1), so
+    // a stray write, if a regression produced one, could simply not have
+    // landed by the time the count is re-read.
+    //
+    // Fix: invite a second, CONTROL address with its own Student row, issued
+    // strictly after the stranger's, and `waitFor` the control's own
+    // notification before taking the final count. Delivery runs
+    // sequentially from this single process, so once the later-issued
+    // control's write is confirmed, the stranger's — if it existed — would
+    // have landed too.
+    const controlEmail = `notify-stranger-control-${suffix}@test.local`;
     const before = await prisma.notification.count({ where: { type: 'teacher_invitation' } });
+    let controlStudent: { id: string } | undefined;
     try {
       const res = await fetch(`${BASE_URL}/api/students`, {
         method: 'POST',
@@ -1148,23 +1158,72 @@ describe('POST /api/students notifies the invitee (#166 task 8)', () => {
       });
       expect(res.status).toBe(201);
 
+      controlStudent = await prisma.student.create({
+        data: { firstName: 'Notify', lastName: 'StrangerControl', email: controlEmail },
+        select: { id: true },
+      });
+      const controlRes = await fetch(`${BASE_URL}/api/students`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+        body: JSON.stringify({ firstName: 'A', lastName: 'B', email: controlEmail }),
+      });
+      expect(controlRes.status).toBe(201);
+      await waitFor(
+        () =>
+          prisma.notification.findFirst({
+            where: {
+              recipientType: 'student',
+              recipientId: controlStudent!.id,
+              type: 'teacher_invitation',
+            },
+          }),
+        { description: "stranger test's control teacher_invitation notification (#166 task 8 F6)" },
+      );
+
+      // Only the control's own row exists — the stranger contributed none,
+      // even though a stray write from it has now had at least as long to
+      // land as the control's confirmed one did.
       const after = await prisma.notification.count({ where: { type: 'teacher_invitation' } });
-      expect(after).toBe(before);
+      expect(after).toBe(before + 1);
     } finally {
-      await prisma.invitation.deleteMany({ where: { teacherId, email: strangerEmail } });
+      await prisma.invitation.deleteMany({
+        where: { teacherId, email: { in: [strangerEmail, controlEmail] } },
+      });
+      if (controlStudent) {
+        await prisma.notification.deleteMany({ where: { recipientId: controlStudent.id } });
+        await prisma.student.delete({ where: { id: controlStudent.id } });
+      }
     }
   });
 
   it('withholds delivery entirely from a blocked address, even when it belongs to a registered student', async () => {
-    // The strongest fixture for this guard: a blocked address that ALSO
-    // has a Student row. If route.ts's `if (result.value.delivered)` gate
-    // (src/app/api/students/route.ts) were ever dropped, this is the one
-    // case that leaves a Notification row behind to prove it — a stranger
-    // address can't, since notifyInvitee's own no-Student branch has no
-    // recipientId to attach a Notification to either way.
+    // The strongest fixture for this guard: a blocked address that ALSO has
+    // a Student row — the one case that can leave a Notification row behind
+    // to prove a dropped guard, since a stranger address has no recipientId
+    // to attach one to either way.
+    //
+    // Reading `notifications` immediately after `fetch` resolves proved
+    // nothing on its own (F6, review): delivery is fire-and-forget (F1), so
+    // a dropped guard's write would very likely still be in flight at that
+    // point, passing this test by accident.
+    //
+    // Fix: invite a second, CONTROL address with its own Student row and no
+    // block, issued strictly after the blocked one, and `waitFor` the
+    // control's own notification before asserting the blocked one's
+    // absence. Delivery runs sequentially from this single process, so once
+    // the control's write is confirmed, the blocked one's would have landed
+    // too, if it were ever going to.
+    //
+    // Two independent gates stand between a blocked address and a send now
+    // (F3, review): route.ts's `if (result.value.delivered)` and
+    // `notifyInvitee`'s own `TeacherBlock` re-check. Both must be removed
+    // together for this test to fail — see this branch's mutation record
+    // (task-8-report.md) for the confirmed failure.
     const blockedRegisteredEmail = `notify-blocked-registered-${suffix}@test.local`;
+    const controlEmail = `notify-blocked-control-${suffix}@test.local`;
     let student: { id: string } | undefined;
     let block: { id: string } | undefined;
+    let controlStudent: { id: string } | undefined;
     try {
       student = await prisma.student.create({
         data: { firstName: 'Notify', lastName: 'BlockedRegistered', email: blockedRegisteredEmail },
@@ -1184,16 +1243,44 @@ describe('POST /api/students notifies the invitee (#166 task 8)', () => {
       // the invitation's creation (inviteContact, services/invitations.ts).
       expect(res.status).toBe(201);
 
+      controlStudent = await prisma.student.create({
+        data: { firstName: 'Notify', lastName: 'BlockedControl', email: controlEmail },
+        select: { id: true },
+      });
+      const controlRes = await fetch(`${BASE_URL}/api/students`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+        body: JSON.stringify({ firstName: 'A', lastName: 'B', email: controlEmail }),
+      });
+      expect(controlRes.status).toBe(201);
+      await waitFor(
+        () =>
+          prisma.notification.findFirst({
+            where: {
+              recipientType: 'student',
+              recipientId: controlStudent!.id,
+              type: 'teacher_invitation',
+            },
+          }),
+        { description: "blocked-address test's control teacher_invitation notification (#166 task 8 F6)" },
+      );
+
       const notifications = await prisma.notification.findMany({
         where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
       });
       expect(notifications).toHaveLength(0);
     } finally {
       if (block) await prisma.teacherBlock.deleteMany({ where: { id: block.id } });
-      await prisma.invitation.deleteMany({ where: { teacherId, email: blockedRegisteredEmail } });
+      await prisma.invitation.deleteMany({
+        where: { teacherId, email: { in: [blockedRegisteredEmail, controlEmail] } },
+      });
       if (student) {
         await prisma.notification.deleteMany({ where: { recipientId: student.id } });
         await prisma.student.delete({ where: { id: student.id } });
+      }
+      if (controlStudent) {
+        await prisma.notification.deleteMany({ where: { recipientId: controlStudent.id } });
+        await prisma.student.delete({ where: { id: controlStudent.id } });
       }
     }
   });

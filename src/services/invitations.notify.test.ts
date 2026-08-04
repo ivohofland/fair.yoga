@@ -21,10 +21,10 @@ const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', () => {
   const savedApiKey = process.env.RESEND_API_KEY;
   const savedDryRun = process.env.EMAIL_DRY_RUN;
-  // A real row, unlike the ids the two send-channel tests below invent —
-  // `notifyInvitee`'s own `TeacherBlock` re-check (F3) only ever READS this
-  // id (`findUnique`, no FK needed), but the blocked-address test writes a
-  // `TeacherBlock` row as its fixture, and that write DOES enforce the FK.
+  // A real row: `notifyInvitee`'s own `TeacherBlock` re-check (F3) only ever
+  // READS this id (`findUnique`, no FK needed), but the blocked-address test
+  // below writes a `TeacherBlock` row as its fixture, and that write DOES
+  // enforce the FK.
   let teacherId: string;
 
   beforeAll(async () => {

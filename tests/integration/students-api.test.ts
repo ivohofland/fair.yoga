@@ -224,19 +224,25 @@ describe('POST /api/students', () => {
         where: { teacherId_studentId: { teacherId, studentId: existing.id } },
       });
       expect(link).toBeNull();
-
-      // `existing` is a registered Student, so this POST also fired
-      // `notifyInvitee` (#166 task 8) fire-and-forget from the route (F1,
-      // review). Waiting for its `Notification` here, before `finally`
-      // deletes `existing`, is what lets the cleanup below actually catch
-      // the row instead of racing it (`Notification.recipientId` has no FK
-      // to `Student`, so a delete that runs first leaves it behind for good).
-      await waitFor(() =>
-        prisma.notification.findFirst({
-          where: { recipientId: existing.id, type: 'teacher_invitation' },
-        }),
-      );
     } finally {
+      // `existing` is a registered Student, so the POST above also fired
+      // `notifyInvitee` (#166 task 8) fire-and-forget from the route (F1,
+      // review) — regardless of whether the assertions above passed. The
+      // wait lives HERE, not in `try` (F7, review): a `try`-only wait is
+      // skipped by an earlier assertion failure, and it is exactly a
+      // failing run that most needs this cleanup to actually land rather
+      // than race the in-flight write and leave it stranded. `.catch`
+      // swallows a genuine timeout so it can never replace — `finally`
+      // throwing does override an in-flight exception from `try` in JS —
+      // the real assertion failure with an unrelated one.
+      await waitFor(
+        () =>
+          prisma.notification.findFirst({
+            where: { recipientId: existing.id, type: 'teacher_invitation' },
+          }),
+        { description: "existing student's teacher_invitation notification (#166 task 8 delivery)" },
+      ).catch(() => {});
+
       await prisma.notification.deleteMany({ where: { recipientId: existing.id } });
       await prisma.teacherStudent.deleteMany({ where: { studentId: existing.id } });
       await prisma.student.delete({ where: { id: existing.id } });
@@ -428,21 +434,29 @@ describe('POST /api/students — the enumeration oracle is closed (#166)', () =>
         // invitation beside it would satisfy every assertion above.
         expect(body.data.id).toBe(inv.id);
       }
-
-      // `victim` is a registered Student, so `POST /api/students` above also
-      // fired `notifyInvitee` (#166 task 8) — fire-and-forget from the route
-      // (F1, review), so its `Notification` write can still be in flight
-      // here. Waiting for it before `finally` runs is what lets that block's
-      // `notification.deleteMany` actually catch the row instead of racing
-      // it: `Notification.recipientId` has no FK to `Student`
-      // (schema.prisma), so a delete that runs first leaves the row behind
-      // forever, not merely late.
-      await waitFor(() =>
-        prisma.notification.findFirst({
-          where: { recipientId: victim!.id, type: 'teacher_invitation' },
-        }),
-      );
     } finally {
+      // `victim` is a registered Student, so `POST /api/students` above also
+      // fired `notifyInvitee` (#166 task 8) fire-and-forget from the route
+      // (F1, review) — regardless of whether the assertions above passed.
+      // The wait lives HERE, not in `try` (F7, review): a `try`-only wait is
+      // skipped by an earlier assertion failure, which is exactly the run
+      // most likely to leave the shared database dirty if this cleanup
+      // races the in-flight write instead of catching it.
+      // `Notification.recipientId` has no FK to `Student` (schema.prisma),
+      // so a delete that runs first leaves the row behind forever, not
+      // merely late. `.catch` swallows a genuine timeout here so it can
+      // never override — `finally` throwing does replace an in-flight
+      // exception from `try` in JS — the real assertion failure above.
+      if (victim) {
+        await waitFor(
+          () =>
+            prisma.notification.findFirst({
+              where: { recipientId: victim!.id, type: 'teacher_invitation' },
+            }),
+          { description: "victim's teacher_invitation notification (Task 3 oracle, #166 task 8 delivery)" },
+        ).catch(() => {});
+      }
+
       if (teacherId) {
         await prisma.invitation.deleteMany({ where: { teacherId } });
       }
@@ -933,6 +947,20 @@ describe('POST /api/students — response disclosure (#162)', () => {
       await prisma.teacher.delete({ where: { id: strangerId } });
     }
     if (victimId) {
+      // `victim` is a registered Student, so the `it()` below's POST also
+      // fires `notifyInvitee` (#166 task 8) fire-and-forget from the route
+      // (F1, review) — regardless of whether that test's own assertions
+      // passed. The wait lives HERE, in `afterAll`, not in the `it()` body
+      // (F7, review): vitest runs `afterAll` even when the test failed, and
+      // a wait that only ran on the test's own success path would be
+      // skipped by exactly the failing run most likely to leave this row
+      // stranded. `.catch` swallows a genuine timeout so it can never
+      // replace the original test failure with an unrelated one.
+      await waitFor(
+        () =>
+          prisma.notification.findFirst({ where: { recipientId: victimId, type: 'teacher_invitation' } }),
+        { description: "victim's teacher_invitation notification (#162 disclosure, #166 task 8 delivery)" },
+      ).catch(() => {});
       await prisma.notification.deleteMany({ where: { recipientId: victimId } });
       await prisma.student.delete({ where: { id: victimId } });
     }
@@ -982,18 +1010,11 @@ describe('POST /api/students — response disclosure (#162)', () => {
       where: { teacherId_studentId: { teacherId: strangerId, studentId: victimId } },
     });
     expect(link).toBeNull();
-
-    // `victim` is a registered Student, so this POST also fired
-    // `notifyInvitee` (#166 task 8) fire-and-forget from the route (F1,
-    // review). Waiting for its `Notification` here, before this block's
-    // `afterAll` deletes `victim`, is what lets that cleanup actually find
-    // the row instead of racing it — same reasoning as the oracle test
-    // above (`Notification.recipientId` has no FK to `Student`).
-    await waitFor(() =>
-      prisma.notification.findFirst({
-        where: { recipientId: victimId, type: 'teacher_invitation' },
-      }),
-    );
+    // The wait for this POST's fire-and-forget `Notification` (#166 task 8,
+    // F1) lives in this describe's `afterAll` now, not here — see F7 in the
+    // round-2 review: a wait that only ran after every assertion in this
+    // `it()` passed would be skipped by exactly the failing run most likely
+    // to leave the row stranded.
   });
 
   // Fixture creation sits inside the `try` in the three tests below so a throw

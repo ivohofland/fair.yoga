@@ -96,24 +96,34 @@ export async function seedSession(db: PrismaClient, accountId: string): Promise<
  * sleep is either too short (flaky under load) or wastefully long on every
  * green run; this returns as soon as the condition is met and only pays the
  * full `timeoutMs` when it genuinely never happens — which is exactly the
- * failure this exists to surface as a clear timeout rather than a mystery
- * missing row.
+ * failure this exists to surface as a clear timeout, naming what it was
+ * waiting for via `description`, rather than a mystery missing row.
  *
- * Not for waiting on the ABSENCE of something: a negative can't be proven by
- * polling for it, only bounded by a fixed wait long enough for the
- * background work to have finished either way (see the callers that check a
- * count instead of a row for why they don't need this at all).
+ * Not for waiting on the ABSENCE of something directly: a negative can't be
+ * proven by polling for it. Callers that need a provable absence (not just a
+ * probable one) instead invite a second, CONTROL address known to produce
+ * the side effect, `waitFor` the control's, and only then assert the first
+ * is still absent — delivery is sequential from a single process, so once a
+ * later-issued control's side effect is confirmed, an earlier one's would
+ * have landed too, if it were ever going to
+ * (`tests/integration/invitations-api.test.ts`'s blocked-address and
+ * stranger tests, #166 task 8 F6).
  */
 export async function waitFor<T>(
   check: () => Promise<T | null | undefined | false>,
-  { timeoutMs = 2000, intervalMs = 25 }: { timeoutMs?: number; intervalMs?: number } = {},
+  {
+    timeoutMs = 2000,
+    intervalMs = 25,
+    description,
+  }: { timeoutMs?: number; intervalMs?: number; description?: string } = {},
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const result = await check();
     if (result) return result;
     if (Date.now() >= deadline) {
-      throw new Error(`waitFor: condition not met within ${timeoutMs}ms`);
+      const suffix = description ? ` (${description})` : '';
+      throw new Error(`waitFor: condition not met within ${timeoutMs}ms${suffix}`);
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }

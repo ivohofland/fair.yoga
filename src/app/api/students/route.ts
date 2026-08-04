@@ -166,8 +166,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // `result.value.delivered` is false when a `TeacherBlock` exists for this
   // address (services/invitations.ts) — the invitation row is still real,
-  // only delivery is withheld. Gating on it here is what stops this from
-  // emailing the exact person who unlinked to get away from this teacher.
+  // only delivery is withheld. Gating on it here is one of two things that
+  // stop this from emailing the exact person who unlinked to get away from
+  // this teacher — `notifyInvitee` re-checks the same block itself (F3,
+  // #166 review), belt and braces, so this gate only saves a query on the
+  // common (unblocked) path rather than being the sole guard.
   //
   // Fire-and-forget, on purpose — see `deliverInvitation`'s docblock above.
   // The explicit `.catch` is required, not optional: without it, a rejection

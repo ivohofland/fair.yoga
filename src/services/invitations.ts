@@ -21,10 +21,13 @@ export interface InviteResult {
    * False when a `TeacherBlock` exists for this (teacher, email) pair, true
    * otherwise. Not a detail — it is the field that stops a caller from
    * notifying on every `ok: true`. `POST /api/students` (route.ts) gates its
-   * `notifyInvitee` call (below) on `delivered === true`; that gate is what
-   * keeps this from becoming a channel back to the exact person who unlinked
-   * to get away from this teacher. The invitation itself is created either
-   * way — only delivery is withheld (#166 task 6c; wired in task 8).
+   * `notifyInvitee` call (below) on `delivered === true`; that gate is one of
+   * two things that keep this from becoming a channel back to the exact
+   * person who unlinked to get away from this teacher — `notifyInvitee`
+   * re-checks `TeacherBlock` itself too (F3, #166 review), since this value
+   * is computed once, here, and can go stale by the time a caller reads it.
+   * The invitation itself is created either way — only delivery is withheld
+   * (#166 task 6c; wired in task 8).
    */
   delivered: boolean;
 }
