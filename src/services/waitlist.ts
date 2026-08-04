@@ -347,6 +347,18 @@ export async function promoteNext(
       tierAtBooking: student.incomeTier,
     });
 
+    // #166: joining a waitlist is a student-initiated act aimed at one
+    // teacher, exactly like booking — so it earns the roster link on the
+    // same terms. Without it the student is registered but unmanageable:
+    // absent from the CRM, and unable to create the StudentPrivacy row
+    // that would mute this teacher's announcements, which reach them
+    // through the registration regardless.
+    await tx.teacherStudent.upsert({
+      where: { teacherId_studentId: { teacherId: cls.teacherId, studentId: nextEntry.studentId } },
+      update: {},
+      create: { teacherId: cls.teacherId, studentId: nextEntry.studentId },
+    });
+
     // Update the waitlist entry: promoted status, promotedAt, link to registration
     const updatedEntry = await tx.waitlistEntry.update({
       where: { id: nextEntry.id },
@@ -444,6 +456,15 @@ export async function claimSpot(
       classId,
       studentId,
       tierAtBooking: student.incomeTier,
+    });
+
+    // #166: see promoteNext above — claiming a spot is the same
+    // student-initiated act aimed at one teacher, so it earns the same
+    // roster link.
+    await tx.teacherStudent.upsert({
+      where: { teacherId_studentId: { teacherId: cls.teacherId, studentId } },
+      update: {},
+      create: { teacherId: cls.teacherId, studentId },
     });
 
     const updatedEntry = await tx.waitlistEntry.update({

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { promoteNext } from '@/services/waitlist';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 
 const prisma = new PrismaClient();
@@ -11,6 +12,7 @@ let teacherToken: string; // non-student session, for the 403 case
 let teacherId: string;
 let studentId: string;
 let roomId: string;
+let teacherRoomId: string;
 let farFutureClassId: string;
 let freedSpotClassId: string;
 
@@ -60,7 +62,7 @@ beforeAll(async () => {
   const teacherRoom = await prisma.teacherRoom.create({
     data: { teacherId, roomId, capacityOverride: 8, rentalRate: 15 },
   });
-  const teacherRoomId = teacherRoom.id;
+  teacherRoomId = teacherRoom.id;
 
   const student = await prisma.student.create({
     data: {
@@ -257,5 +259,167 @@ describe('POST /api/waitlist/claim', () => {
 
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toMatch(/already been claimed/i);
+  });
+});
+
+describe('waitlist promotion joins the teacher roster (#166)', () => {
+  // Dedicated students and classes rather than reusing studentId /
+  // freedSpotClassId above: those are already consumed (registered,
+  // promoted, or asserted-full) by the describe block above, and this one
+  // needs a clean waiting entry in each of the two promotion windows.
+  let waitlistStudentId: string;
+  let waitlistStudentToken: string;
+  let claimStudentId: string;
+  let claimStudentToken: string;
+  let promoteClassId: string;
+  let claimClassId: string;
+
+  beforeAll(async () => {
+    const waitlistStudent = await prisma.student.create({
+      data: {
+        firstName: 'Roster',
+        lastName: 'Promoted',
+        email: `waitlistapi-roster-promoted-${suffix}@test.local`,
+        claimedAt: new Date(),
+        account: { create: { email: `waitlistapi-roster-promoted-${suffix}@test.local` } },
+        incomeTier: 3,
+      },
+    });
+    waitlistStudentId = waitlistStudent.id;
+    waitlistStudentToken = await seedSession(prisma, waitlistStudent.accountId!);
+
+    const claimStudent = await prisma.student.create({
+      data: {
+        firstName: 'Roster',
+        lastName: 'Claimed',
+        email: `waitlistapi-roster-claimed-${suffix}@test.local`,
+        claimedAt: new Date(),
+        account: { create: { email: `waitlistapi-roster-claimed-${suffix}@test.local` } },
+        incomeTier: 3,
+      },
+    });
+    claimStudentId = claimStudent.id;
+    claimStudentToken = await seedSession(prisma, claimStudent.accountId!);
+
+    // auto_promote window — same "far in the future" trick as
+    // farFutureClassId above, so promoteNext's own window check never
+    // trips: nowhere near the cancel deadline.
+    const promoteClass = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Waitlist API Roster Promote',
+        date: new Date('2099-06-01'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 1,
+        maxStudents: 2,
+        status: 'open',
+      },
+    });
+    promoteClassId = promoteClass.id;
+    await prisma.waitlistEntry.create({
+      data: { classId: promoteClassId, studentId: waitlistStudentId, position: 1, status: 'waiting' },
+    });
+
+    // first_come_first_claimed window — same timing derivation as
+    // freedSpotClassId above (6h50m out with a HOURS_6 deadline: cutoff
+    // now-10m, deadline now+50m).
+    const now = new Date();
+    const classStart = new Date(now.getTime() + (6 * 60 + 50) * 60 * 1000);
+    const claimDate = new Date(
+      Date.UTC(classStart.getUTCFullYear(), classStart.getUTCMonth(), classStart.getUTCDate()),
+    );
+    const claimStartTime = `${String(classStart.getUTCHours()).padStart(2, '0')}:${String(
+      classStart.getUTCMinutes(),
+    ).padStart(2, '0')}`;
+
+    const claimClass = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Waitlist API Roster Claim',
+        date: claimDate,
+        startTime: claimStartTime,
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 1,
+        maxStudents: 1,
+        cancelDeadline: 'HOURS_6',
+        status: 'open',
+      },
+    });
+    claimClassId = claimClass.id;
+    await prisma.waitlistEntry.create({
+      data: { classId: claimClassId, studentId: claimStudentId, position: 1, status: 'waiting' },
+    });
+  });
+
+  afterAll(async () => {
+    const classIds = [promoteClassId, claimClassId];
+    const studentIds = [waitlistStudentId, claimStudentId];
+    await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
+    await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
+    // claimSpot/promoteNext each write a notification with no FK to clean up
+    // via cascade — same reasoning as the outer afterAll above.
+    await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
+    await prisma.teacherStudent.deleteMany({ where: { teacherId, studentId: { in: studentIds } } });
+    await prisma.studentPrivacy.deleteMany({ where: { teacherId, studentId: { in: studentIds } } });
+    await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+
+    for (const id of studentIds) {
+      const record = await prisma.student.findUniqueOrThrow({
+        where: { id },
+        select: { accountId: true, email: true },
+      });
+      await prisma.session.deleteMany({ where: { accountId: record.accountId! } });
+      await prisma.student.delete({ where: { id } });
+      await prisma.account.deleteMany({ where: { email: record.email } });
+    }
+  });
+
+  it('creates the TeacherStudent link when a waiting student is promoted', async () => {
+    await promoteNext(prisma, promoteClassId);
+
+    const link = await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId, studentId: waitlistStudentId } },
+    });
+    expect(link).not.toBeNull();
+  });
+
+  it('creates the link when a student claims an open spot', async () => {
+    const res = await fetch(`${BASE_URL}/api/waitlist/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(claimStudentToken) },
+      body: JSON.stringify({ classId: claimClassId }),
+    });
+    expect(res.status).toBe(201);
+
+    const link = await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId, studentId: claimStudentId } },
+    });
+    expect(link).not.toBeNull();
+  });
+
+  it('lets a promoted student set per-teacher privacy', async () => {
+    // The consequence that makes this a bug and not a tidiness issue:
+    // announcements reach them through the registration regardless, and the
+    // opt-out needs the TeacherStudent row this describe block proves gets
+    // created — PUT rejects with TEACHER_NOT_LINKED without it.
+    const res = await fetch(`${BASE_URL}/api/students/${waitlistStudentId}/privacy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(waitlistStudentToken) },
+      body: JSON.stringify({
+        teacherId,
+        shareFullName: false, shareEmail: false, sharePhone: false,
+        shareBirthday: false, shareAddress: false, receiveComms: false,
+      }),
+    });
+    expect(res.status).toBe(200);
   });
 });
