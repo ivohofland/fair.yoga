@@ -8,6 +8,7 @@
  * teacher already owns.
  */
 
+import { randomUUID } from 'crypto';
 import type { PrismaClient } from '@prisma/client';
 
 export type InviteRefusal = 'ALREADY_INVITED' | 'ALREADY_LINKED' | 'DECLINED';
@@ -69,10 +70,25 @@ export async function inviteContact(
 
   const existing = await db.invitation.findUnique({
     where: { teacherId_email: { teacherId, email } },
-    select: { status: true },
+    select: { status: true, origin: true },
   });
   if (existing) {
-    if (existing.status === 'declined') return { ok: false, reason: 'DECLINED' };
+    if (existing.status === 'declined') {
+      // A tombstone the STUDENT wrote by unlinking. Refusing would confirm
+      // that this address belongs to someone who was this teacher's student
+      // and left — an address `shareEmail` withheld, on a person the roster
+      // still shows as "Anna d.". So answer exactly as a fresh invitation
+      // does and do nothing. The teacher is misled; that is the trade.
+      //
+      // Do NOT "simplify" this by returning the tombstone's own id — that
+      // id is stable across probes, so two requests would betray it.
+      if (existing.origin === 'student_block') return { ok: true, value: { id: randomUUID() } };
+
+      // The teacher typed this address themselves, so 409 tells them nothing
+      // they did not already have, and silence here would be cruelty rather
+      // than protection.
+      return { ok: false, reason: 'DECLINED' };
+    }
     if (existing.status === 'accepted') return { ok: false, reason: 'ALREADY_LINKED' };
     return { ok: false, reason: 'ALREADY_INVITED' };
   }

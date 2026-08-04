@@ -777,16 +777,18 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
     const list = await fetch(`${BASE_URL}/api/invitations`, { headers: cookie(teacherToken) });
     expect(await list.text()).not.toContain(studentEmail);
 
-    // Same ordering reason in the other direction: this has to run before
-    // the DB read too, so a missing tombstone (no row at all, not just the
-    // wrong origin) fails HERE with the re-invite wrongly succeeding,
-    // rather than as a not-found error out of `findUniqueOrThrow` below.
+    // Since task 6b, a re-invite to a student_block address is answered
+    // silently, exactly like a fresh one — 409 here would hand back the same
+    // bit the list filter above exists to withhold, so a 201 no longer tells
+    // us the tombstone is intact. That proof moved to the read below: a
+    // missing tombstone falls through to a REAL invitation getting created
+    // underneath this same 201, which the status/origin checks below catch.
     const reinvite = await fetch(`${BASE_URL}/api/students`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
       body: JSON.stringify({ firstName: 'A', lastName: 'B', email: studentEmail }),
     });
-    expect(reinvite.status).toBe(409);
+    expect(reinvite.status).toBe(201);
 
     const tombstone = await prisma.invitation.findUniqueOrThrow({
       where: { teacherId_email: { teacherId, email: studentEmail } },
@@ -819,5 +821,97 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
       method: 'DELETE', headers: cookie(studentToken),
     });
     expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /api/students — the block oracle (#166 task 6b)', () => {
+  // Stateless, so shared by both tests below rather than redefined per test —
+  // each supplies its own target address and its own fixture.
+  const post = (email: string) =>
+    fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({ firstName: 'Zzz', lastName: 'Qqq', email }),
+    });
+
+  it('answers a silently-blocked address exactly as a fresh one', async () => {
+    // The student unlinked, so a student_block tombstone exists for this
+    // (teacher, email) pair — carrying an address this teacher never had,
+    // because shareEmail defaults false. A 409 here would hand it to them.
+    // Created directly via Prisma rather than through
+    // DELETE /api/teacher-links/[teacherId]: that route's own tombstone-write
+    // behaviour is already exercised end-to-end above, so this only needs
+    // the row shape it leaves behind, not a second trip through unlinking.
+    const blockedEmail = `inv-silent-blocked-${suffix}@test.local`;
+    const freshEmail = `inv-silent-fresh-${suffix}@test.local`;
+    let blocked: { id: string } | undefined;
+    try {
+      blocked = await prisma.invitation.create({
+        data: {
+          teacherId, email: blockedEmail,
+          status: 'declined', origin: 'student_block', respondedAt: new Date(),
+        },
+        select: { id: true },
+      });
+
+      const [blockedRes, freshRes] = await Promise.all([post(blockedEmail), post(freshEmail)]);
+
+      expect(blockedRes.status).toBe(freshRes.status);
+      expect(blockedRes.status).toBe(201);
+      const blockedJson = (await blockedRes.json()) as { data: { id: string } };
+      const freshJson = (await freshRes.json()) as { data: { id: string } };
+      expect(Object.keys(blockedJson.data)).toEqual(Object.keys(freshJson.data));
+
+      // Not the tombstone's own id — a stable id across probes would itself
+      // be the oracle this task removes. A second probe of the same blocked
+      // address proves it: two different random ids, not one repeating one.
+      const secondRes = await post(blockedEmail);
+      expect(secondRes.status).toBe(201);
+      const secondJson = (await secondRes.json()) as { data: { id: string } };
+      expect(blockedJson.data.id).not.toBe(blocked.id);
+      expect(secondJson.data.id).not.toBe(blocked.id);
+      expect(blockedJson.data.id).not.toBe(secondJson.data.id);
+
+      // ...and nothing was written for the blocked one. The tombstone still
+      // stands, unchanged, still `declined`, still `student_block`.
+      const tombstone = await prisma.invitation.findUniqueOrThrow({
+        where: { teacherId_email: { teacherId, email: blockedEmail } },
+      });
+      expect(tombstone.id).toBe(blocked.id);
+      expect(tombstone.status).toBe('declined');
+      expect(tombstone.origin).toBe('student_block');
+      expect(tombstone.respondedAt).not.toBeNull();
+    } finally {
+      if (blocked) await prisma.invitation.deleteMany({ where: { id: blocked.id } });
+      // The control call for `freshEmail` really does create a pending
+      // invitation — that is the point of the comparison — so it needs its
+      // own cleanup, or it leaks into the next test that reuses this address
+      // space.
+      await prisma.invitation.deleteMany({ where: { teacherId, email: freshEmail } });
+    }
+  });
+
+  it('still refuses a declined teacher_invite honestly', async () => {
+    // Contrast case, and the reason this is not a blanket change: the
+    // teacher typed THIS address themselves, so 409 discloses nothing new —
+    // and a teacher deserves to know their invitation is dead rather than
+    // re-sending into silence.
+    const declinedInviteEmail = `inv-silent-honest-${suffix}@test.local`;
+    let declined: { id: string } | undefined;
+    try {
+      declined = await prisma.invitation.create({
+        data: {
+          teacherId, email: declinedInviteEmail,
+          status: 'declined', origin: 'teacher_invite', respondedAt: new Date(),
+        },
+        select: { id: true },
+      });
+
+      const res = await post(declinedInviteEmail);
+      expect(res.status).toBe(409);
+      expect((await res.json()).error.code).toBe('DECLINED');
+    } finally {
+      if (declined) await prisma.invitation.deleteMany({ where: { id: declined.id } });
+    }
   });
 });
