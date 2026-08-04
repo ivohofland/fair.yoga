@@ -53,6 +53,7 @@ const STUDENT_INTROS: Record<NotificationType, string> = {
   reminder: 'A gentle reminder.',
   missed_you: 'We missed you.',
   announcement: 'A message from your teacher.',
+  teacher_invitation: 'A teacher would like to connect with you.',
 };
 
 const TEACHER_INTROS: Partial<Record<NotificationType, string>> = {

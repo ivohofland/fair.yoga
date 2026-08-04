@@ -92,6 +92,22 @@ enum NotificationType {
   reminder
   missed_you
   announcement
+  teacher_invitation
+}
+
+enum InvitationStatus {
+  pending
+  accepted
+  declined
+}
+
+// Who created the row. A link made by booking gives the teacher no access
+// to the student's address — shareEmail defaults false — so a tombstone
+// written when that student unlinks must never be listed back to the
+// teacher, or leaving would disclose more than staying did.
+enum InvitationOrigin {
+  teacher_invite
+  student_block
 }
 
 // ============================================================================
@@ -147,6 +163,7 @@ model Teacher {
   studentPrivacy  StudentPrivacy[]
   createdRooms    Room[]           @relation("RoomCreator")
   teacherStudents TeacherStudent[]
+  invitations     Invitation[]
 }
 
 model Student {
@@ -206,6 +223,28 @@ model TeacherStudent {
   student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@unique([teacherId, studentId])
+}
+
+// A teacher's CRM contact and its consent state. Deliberately NOT a
+// Student row: POST /api/students must behave identically whether or not
+// the address is already on the platform, and it cannot, if it writes to
+// a table with a unique email column.
+model Invitation {
+  id          String           @id @default(uuid())
+  teacherId   String
+  email       String
+  firstName   String           @default("")
+  lastName    String           @default("")
+  status      InvitationStatus @default(pending)
+  origin      InvitationOrigin @default(teacher_invite)
+  isArchived  Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+  respondedAt DateTime?
+
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([teacherId, email])
+  @@index([email])
 }
 
 // ============================================================================
