@@ -258,7 +258,7 @@ Three arrival states, all of which the surface must handle:
 | `PUT /api/students/[id]` teacher branch (`:107-164`) | **Removed.** It refuses claimed students at `:133`, so its only purpose was editing unclaimed contacts; contacts are now `Invitation` rows, edited through their own route. This is the unmetered twin oracle the #165 PR review found — deleted outright rather than left metered. `edit-student-form.tsx` repoints to the invitation route. |
 | `DELETE /api/students/[id]` | **Removed, for the same reason.** It refuses claimed students at `:188-190`, so it too served only unclaimed contacts. Removing a *contact* is `DELETE /api/invitations/[id]`; parting with a *linked* student is `PATCH ?state=archived`, which is already the mechanism and already works for claimed students. `remove-student-button.tsx` repoints to the invitation route. This also deletes the orphan cascade at `:201-206` (delete the `Student` row when its last link goes) — not because it could fire on the student-side unlink, it is a different handler, but because it is the only precedent in the codebase for that behaviour and the new route must not be written by copying it. |
 | `GET /api/invitations` | Teacher's contacts, for the CRM "Contacts" section. Separate from `GET /api/students` rather than a union — paginating and searching across two tables for one list is not worth the complexity, and the two-section directory matches the existing row-based pattern. |
-| `PUT`/`DELETE /api/invitations/[id]` | Teacher edits or removes a contact. **`DELETE` is refused on a `declined` row** — see below. |
+| `PUT`/`DELETE /api/invitations/[id]` | Teacher edits or removes a contact. **Both are refused on a `declined` row** — see below. `PUT` as well as `DELETE`, because the tombstone is keyed on `(teacherId, email)`: editing the address on a declined row moves the tombstone off the person who declined and frees their address for a fresh invitation. Deleting and editing are the same hole through two doors. |
 | `PATCH /api/invitations/[id]` | Teacher archives/unarchives, mirroring `PATCH /api/students/[id]?state=` exactly. |
 | `POST /api/invitations/[id]/accept`, `/decline` | Student-authed. Accept creates the link; decline writes the tombstone. |
 | `DELETE /api/teacher-links/[teacherId]` | Student-authed unlink. Deletes the `TeacherStudent` row for the session's `studentId`, then upserts the tombstone: **update** an existing row to `declined` (keeping `origin: teacher_invite`, since the teacher typed that address), or **create** one with `origin: student_block` when the link came from a booking and no invitation ever existed. The student's own `Student` row survives unconditionally — unlinking a last teacher must not orphan-delete an account. (The one code path that did that, `students/[id]/route.ts:201-206`, is removed by the row above; this route must not reintroduce it.) |
@@ -272,10 +272,18 @@ row.** A teacher stuck with a declined contact cluttering their CRM forever is b
 UX, so they may **archive** it (`isArchived`, mirroring `TeacherStudent.isArchived`)
 — hidden from the list, row surviving as the tombstone.
 
-This is called out explicitly because it is the shape of defect this project keeps
-finding at review: a guard that exists and cannot fail. The plan must include a
-test that deletes a declined invitation, confirms the refusal, and confirms a
-subsequent `POST /api/students` for the same address is still refused.
+**The same hole has a second door.** The tombstone is keyed on
+`(teacherId, email)`, so *editing* the address on a declined row moves it off the
+person who declined and frees that address for a fresh invitation. `PUT` is
+refused on a declined row for the same reason `DELETE` is. This was found while
+writing the plan, not while designing — the route table originally guarded only
+the delete.
+
+Both are called out explicitly because this is the shape of defect the project
+keeps finding at review: a guard that exists and cannot fail. The plan includes a
+test that deletes a declined invitation, confirms the refusal, archives it, and
+confirms a subsequent `POST /api/students` for the same address is *still*
+refused — archiving must hide the row without disarming it.
 
 ### The oracle, stated precisely
 
