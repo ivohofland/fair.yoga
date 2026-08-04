@@ -55,9 +55,11 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma.teacherStudent.deleteMany({
-    where: { teacherId },
-  });
+  if (teacherId) {
+    await prisma.teacherStudent.deleteMany({
+      where: { teacherId },
+    });
+  }
   if (teacherAccountId) {
     await prisma.session.deleteMany({
       where: { accountId: teacherAccountId },

@@ -150,8 +150,10 @@ export const PUT = withErrorHandler(async (
     // #162: same treatment as POST /api/students. Lower stakes here — this
     // branch only fires for an unclaimed student already in the teacher's
     // contacts, and Student_claim_link_check makes accountId provably null on
-    // that path — so what leaked was shape, not secrets. Narrowed anyway: the
-    // raw row standing here is what tells the next reader the pattern is fine.
+    // that path — true together with createStudentSchema admitting only
+    // firstName/lastName/email, so nothing in the request body can set it —
+    // so what leaked was shape, not secrets. Narrowed anyway: the raw row
+    // standing here is what tells the next reader the pattern is fine.
     const updated = await prisma.student.update({
       where: { id },
       data: updateData,

@@ -145,10 +145,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const { firstName, lastName, email } = parsed.data;
 
   // #162: select the id and nothing else. Narrowing here rather than at the
-  // response is deliberate — `existing` is typed `{ id: string }`, so a future
-  // edit that tries to return more is a compile error, not something review
-  // has to catch. This route answered any teacher who knew an email with the
-  // student's phone, birthday, home address and income tier.
+  // response is deliberate — `existing` is typed `{ id: string }`, so reading
+  // any field beyond `.id` off it is a compile error, not something review
+  // has to catch. (Returning more still compiles if a later edit also widens
+  // the `select` — `respondOk` is generically typed, so nothing pins response
+  // shape to query shape. The exhaustive key-set assertions in the
+  // integration tests are the backstop for that case.) This route answered
+  // any teacher who knew an email with the student's phone, birthday, home
+  // address and income tier.
   const existing = await prisma.student.findUnique({
     where: { email },
     select: { id: true },
