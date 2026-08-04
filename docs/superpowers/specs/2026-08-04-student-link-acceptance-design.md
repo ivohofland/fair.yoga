@@ -356,12 +356,27 @@ middle one is the branch this change removes; the other two both stamp
 Invitation acceptance adds no fourth site — accepting requires a session that
 already has a `studentId`, so it creates the link and nothing else. The
 adopt-an-unclaimed-row branch at `student-profile/route.ts:41-51` goes dead for
-the same reason as the bypasses. That leaves six full-disclosure bypasses that
-can no longer fire: `students/[id]/route.ts:51` (used at `:56`, `:63-66`),
-`students/route.ts:87-88`, `(teacher)/class/[id]/page.tsx:62`,
-`(teacher)/students/[id]/page.tsx:47-52`, `(teacher)/settings/payments/page.tsx:52`,
-plus the synthesized defaults at `students/[id]/privacy/route.ts:75-86`. Removing
-them means also removing the claim path (`lib/auth/account.ts:34-50`), the
+the same reason as the bypasses.
+
+**Five privacy bypasses go dead, plus one UI affordance** — enumerated by
+`grep -rn 'isUnclaimed\|!student.claimedAt\|claimedAt ||' src/` excluding tests,
+which returns 13 lines across 6 files:
+
+1. `api/students/route.ts:86` (`isUnclaimed`, used at `:87-88`)
+2. `api/students/[id]/route.ts:51` (used at `:56`, `:63-66`)
+3. `(teacher)/students/[id]/page.tsx:42` (named `isUnlinked` here, used at `:46-51`)
+4. `(teacher)/class/[id]/page.tsx:62`
+5. `(teacher)/settings/payments/page.tsx:52`
+6. `components/students/student-directory.tsx:129` — renders an "unlinked" caption. Not a privacy bypass; a label that can never show.
+
+Two citations that were wrong in an earlier draft of this document and are
+corrected here: site 3 is at `:42`, not `:47-52`, and the variable is `isUnlinked`
+rather than `isUnclaimed`; and `students/[id]/privacy/route.ts:75-86` was listed
+as a seventh bypass — **it is not one.** That block synthesizes maximally-private
+defaults when no `StudentPrivacy` row exists, which is unrelated to `claimedAt`
+and stays live and load-bearing.
+
+Removing these means also removing the claim path (`lib/auth/account.ts:34-50`), the
 `Student_claim_link_check` CHECK constraint and `Student.claimedAt`, and reworking
 GDPR anonymisation — a second feature riding on this one. **Each site gets a
 comment saying the branch is unreachable for rows created after this change, and
