@@ -1403,6 +1403,17 @@ it('booking a declined teacher\'s class re-establishes the link and clears the t
 it('a teacher-initiated registration does not resolve anything', async () => {
   // Only the student's OWN act is consent. A roster add or a walk-in must
   // not launder itself into acceptance.
+  //
+  // THE FIXTURE'S STARTING STATUS IS THE WHOLE TEST. An earlier draft seeded
+  // it `accepted`, which made this test incapable of catching the mutation it
+  // exists for: a guard broken to resolve unconditionally would write
+  // accepted → accepted, and nothing observable changes. Seed it `declined`,
+  // which both catches the mutation and exercises the case that actually
+  // matters — a teacher resurrecting a tombstone the student set deliberately.
+  await prisma.invitation.update({
+    where: { teacherId_email: { teacherId, email: rosterStudentEmail } },
+    data: { status: 'declined', respondedAt: new Date() },
+  });
   const before = await prisma.invitation.findUniqueOrThrow({
     where: { teacherId_email: { teacherId, email: rosterStudentEmail } },
   });
@@ -1471,6 +1482,14 @@ All three call sites need the student's email. `registrations/route.ts` already 
 - [ ] **Step 5: Prove the guard bites**
 
 Move the `resolveInvitationOnLink` call outside the `if (!isTeacher)` block in `registrations/route.ts`. Expected: `'a teacher-initiated registration does not resolve anything'` fails. Restore. This mutation matters because the same policy applied to the wrong call site is the exact defect shape #39's whole-branch review caught.
+
+**Two more, and both had to be repaired during execution because the draft asked for the impossible:**
+
+2. Delete the `teacherBlock.deleteMany`. A student who unlinked and then re-books must still be undeliverable. **Do not assert this through `inviteContact` on the just-rebooked pair** — it short-circuits on `ALREADY_LINKED` before it ever reaches the block check, so it answers 409 whether or not the block was cleared. Delete the freshly-created roster link first to isolate the property, and query `TeacherBlock` directly as a second check.
+
+3. Delete the `invitation.updateMany`. A declined invitation must fail to become accepted after a booking.
+
+Also: `registrations/route.ts`'s student lookup has **no `select` at all**, so `email` is already present — the widening this plan asked for at `:84` was unnecessary. Only the two `waitlist.ts` lookups needed `email: true` added.
 
 - [ ] **Step 6: Commit**
 
