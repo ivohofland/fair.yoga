@@ -5,11 +5,12 @@ import { RemoveStudentButton } from './remove-student-button';
 
 /**
  * #166. This component had no test file before this one — the gap the task
- * brief calls out by name: Task 10 deletes `DELETE /api/students/[id]`, the
- * route this button used to call, and nothing else in the suite would have
- * noticed a bad repoint. It now fetches `DELETE /api/invitations/[id]`
- * instead; these tests pin that URL, the confirm step, and that a declined
- * contact's 409 arrives on screen through `readErrorMessage` unmodified.
+ * brief calls out by name: `DELETE /api/students/[id]`, the route this
+ * button used to call, is gone (Task 10), and nothing else in the suite
+ * would have noticed a bad repoint. It now fetches `DELETE
+ * /api/invitations/[id]` instead; these tests pin that URL, the confirm
+ * step, and that a declined contact's 409 arrives on screen through
+ * `readErrorMessage` unmodified.
  */
 describe('RemoveStudentButton', () => {
   const fetchMock = vi.fn();

@@ -60,7 +60,7 @@ export default async function StudentDetailPage({
 
       {isUnlinked && (
         <p className="type-caption mb-6">
-          This student hasn&apos;t created an account yet. You can edit their details.
+          This student hasn&apos;t created an account yet.
         </p>
       )}
 

@@ -12,8 +12,8 @@ interface RemoveStudentButtonProps {
 
 /**
  * #166: repointed at `DELETE /api/invitations/[id]` — its former target,
- * `DELETE /api/students/[id]`, is Task 10's to remove now that nothing
- * creates the unclaimed `Student` row it served. The 409 a declined
+ * `DELETE /api/students/[id]`, is gone (Task 10 deleted it, along with the
+ * unclaimed `Student` row it served). The 409 a declined
  * invitation answers with (`DECLINED_IS_PERMANENT`) arrives through
  * `readErrorMessage` below unchanged; the caller is what decides whether
  * this button renders at all for that case (see

@@ -6,11 +6,10 @@ import { ContactForm, ArchiveContactButton } from './contact-form';
 /**
  * #166. `ContactForm` pins against `updateInvitationSchema` (see the source
  * file's `#136` comment) — this test holds what the pin cannot see, which is
- * what actually reaches `PUT /api/invitations/[id]`, plus the one thing this
- * route does differently from its `edit-student-form.tsx` sibling: a
- * declined contact's PUT 409s with `DECLINED_IS_PERMANENT`, and that specific
- * message — not a generic retry prompt — is what must reach the screen. The
- * precedent is `teacher-privacy-card.tsx:75-84`'s own handling of its 403.
+ * what actually reaches `PUT /api/invitations/[id]`: a declined contact's
+ * PUT 409s with `DECLINED_IS_PERMANENT`, and that specific message — not a
+ * generic retry prompt — is what must reach the screen. The precedent is
+ * `teacher-privacy-card.tsx:75-84`'s own handling of its 403.
  *
  * Nothing fetches on mount, so the first submit/toggle is the only call.
  */
