@@ -829,7 +829,7 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
     expect(student!.deletedAt).toBeNull();
   });
 
-  it('blocks a booking-only unlink without writing an Invitation row, and a re-invite is a normal, visible one', async () => {
+  it('blocks a booking-only unlink without writing an Invitation row, and a re-invite is a normal, undelivered one', async () => {
     // This link came from a booking — no Invitation row was ever created for
     // (teacherId, studentEmail) — so `unlinkTeacher`'s `updateMany` matched
     // nothing above. The block it wrote is the only trace this unlink left.
@@ -840,12 +840,17 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
       where: { teacherId_email: { teacherId, email: studentEmail } },
     })).not.toBeNull();
 
-    const reinvite = await fetch(`${BASE_URL}/api/students`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
-      body: JSON.stringify({ firstName: 'A', lastName: 'B', email: studentEmail }),
+    // Through the service directly, not the HTTP route, so the re-invite
+    // this unlink is supposed to silently defang can be checked end to
+    // end — `delivered` never reaches the wire (POST /api/students returns
+    // only `id`), so this is the only way to prove the chain from a REAL
+    // unlink through to an undelivered re-invite, rather than from a block
+    // fabricated directly via Prisma the way the block-oracle describe does.
+    const reinvite = await inviteContact(prisma, {
+      teacherId, email: studentEmail, firstName: 'A', lastName: 'B',
     });
-    expect(reinvite.status).toBe(201);
+    if (!reinvite.ok) throw new Error('expected the re-invite to succeed');
+    expect(reinvite.value.delivered).toBe(false);
 
     // Unlike the design this replaces, the row this creates is completely
     // ordinary — listed, not a tombstone — because the block that makes it
@@ -854,13 +859,11 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
     const json = (await list.json()) as { data: { invitations: Array<{ email: string }> } };
     expect(json.data.invitations.map((i) => i.email)).toContain(studentEmail);
 
-    const row = await prisma.invitation.findUniqueOrThrow({
-      where: { teacherId_email: { teacherId, email: studentEmail } },
-    });
+    const row = await prisma.invitation.findUniqueOrThrow({ where: { id: reinvite.value.id } });
     expect(row.status).toBe('pending');
 
     // And the block itself is untouched — this is what actually withholds
-    // delivery, checked directly since `delivered` never reaches the wire.
+    // delivery.
     expect(await prisma.teacherBlock.findUnique({
       where: { teacherId_email: { teacherId, email: studentEmail } },
     })).not.toBeNull();
