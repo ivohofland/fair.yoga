@@ -446,6 +446,13 @@ describe('/api/studio-classes', () => {
     const created = await prisma.studioClass.findUniqueOrThrow({ where: { id: data.id } });
     expect(created.templateId).toBeNull();
 
+    // Both assertions rest on an absence, and `StudioClass.templateId` is
+    // `onDelete: SetNull` — so a cascaded template delete would produce the
+    // same null and the same zero count. Not reachable today; this removes the
+    // ambiguity anyway.
+    expect(
+      await prisma.studioClassTemplate.findUnique({ where: { id: victimTemplate.id } }),
+    ).not.toBeNull();
     expect(
       await prisma.studioClass.count({ where: { templateId: victimTemplate.id } }),
     ).toBe(0);

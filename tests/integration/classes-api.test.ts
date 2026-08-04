@@ -421,27 +421,90 @@ describe('PUT /api/classes/[id]', () => {
 });
 
 describe('POST /api/classes', () => {
+  // otherTeacherId's TeacherRoom and ClassTemplate, playing the victim in the
+  // cross-tenant tests below. Created once here rather than inside one `it`
+  // because two tests need the room: the templateId test and the
+  // teacherRoomId test.
+  let victimRoomId: string;
+  let victimTemplateId: string;
+
+  beforeAll(async () => {
+    const victimRoom = await prisma.teacherRoom.create({
+      data: { teacherId: otherTeacherId, roomId, capacityOverride: 8, rentalRate: 15 },
+    });
+    victimRoomId = victimRoom.id;
+    const victimTemplate = await prisma.classTemplate.create({
+      data: {
+        teacherId: otherTeacherId,
+        teacherRoomId: victimRoom.id,
+        classType: 'Victim Recurring',
+        dayOfWeek: 3,
+        startTime: '18:00',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 8,
+      },
+    });
+    victimTemplateId = victimTemplate.id;
+  });
+
   // The tests below create real Class rows against `teacherRoomId` (the
-  // owner's fixture from the top-level beforeAll) and, in the second test, a
-  // dedicated TeacherRoom/ClassTemplate for otherTeacherId to play the victim.
-  // None of that is covered by `allClassIds` or the top-level afterAll above,
-  // so left behind it FK-blocks that afterAll's own
+  // owner's fixture from the top-level beforeAll) and the beforeAll above
+  // creates a dedicated TeacherRoom/ClassTemplate for otherTeacherId to play
+  // the victim. None of that is covered by `allClassIds` or the top-level
+  // afterAll above, so left behind it FK-blocks that afterAll's own
   // `teacherRoom.deleteMany({ where: { teacherId: ownerId } })` (still
   // referenced by the Class rows here) and, transitively, the room delete and
   // otherTeacherId's teardown (still referenced by the victim TeacherRoom).
   // Cleaned up here by the deterministic values the tests below set — not by
   // capturing ids — so the `it` bodies stay exactly as specified.
+  //
+  // Each delete is isolated for the same reason the top-level afterAll guards
+  // every one of its deletes (see its comment, "keeps teardown running to
+  // completion instead of stopping partway"): a throw in the first would skip
+  // the other two, and the top-level hook would then FK-violate on
+  // `teacherRoom.deleteMany` — the exact failure this hook exists to prevent.
   afterAll(async () => {
-    if (teacherRoomId) {
-      await prisma.class.deleteMany({ where: { teacherRoomId, classType: 'Create Route' } });
+    const failures: unknown[] = [];
+    const steps: Array<() => Promise<unknown>> = [
+      // Both rooms, not just the owner's: if the teacherRoomId guard ever
+      // regresses, the test that catches it will have left a Class bound to
+      // the victim room, and a filter on the owner's room alone would miss it
+      // and FK-block the victim TeacherRoom delete two steps down. Measured
+      // that exact leak while proving the guard bites.
+      () => {
+        const roomIds = [teacherRoomId, victimRoomId].filter(Boolean);
+        return roomIds.length > 0
+          ? prisma.class.deleteMany({
+              where: { teacherRoomId: { in: roomIds }, classType: 'Create Route' },
+            })
+          : Promise.resolve();
+      },
+      () =>
+        otherTeacherId
+          ? prisma.classTemplate.deleteMany({
+              where: { teacherId: otherTeacherId, classType: 'Victim Recurring' },
+            })
+          : Promise.resolve(),
+      () =>
+        otherTeacherId && roomId
+          ? prisma.teacherRoom.deleteMany({ where: { teacherId: otherTeacherId, roomId } })
+          : Promise.resolve(),
+    ];
+    for (const step of steps) {
+      try {
+        await step();
+      } catch (err) {
+        failures.push(err);
+      }
     }
-    if (otherTeacherId) {
-      await prisma.classTemplate.deleteMany({
-        where: { teacherId: otherTeacherId, classType: 'Victim Recurring' },
-      });
-    }
-    if (otherTeacherId && roomId) {
-      await prisma.teacherRoom.deleteMany({ where: { teacherId: otherTeacherId, roomId } });
+    // Reported, not swallowed — a teardown that fails silently leaves the next
+    // run's fixtures to collide with rows nobody knows are there.
+    if (failures.length > 0) {
+      throw new AggregateError(failures, 'POST /api/classes teardown left rows behind');
     }
   });
 
@@ -480,33 +543,42 @@ describe('POST /api/classes', () => {
   // pair, which silently stops the victim's generator from ever filling that
   // date.
   it("ignores another teacher's templateId instead of attaching it", async () => {
-    const victimRoom = await prisma.teacherRoom.create({
-      data: { teacherId: otherTeacherId, roomId, capacityOverride: 8, rentalRate: 15 },
-    });
-    const victimTemplate = await prisma.classTemplate.create({
-      data: {
-        teacherId: otherTeacherId,
-        teacherRoomId: victimRoom.id,
-        classType: 'Victim Recurring',
-        dayOfWeek: 3,
-        startTime: '18:00',
-        durationMinutes: 60,
-        roomCost: 15,
-        minRate: 10,
-        targetRate: 20,
-        minStudents: 1,
-        maxStudents: 8,
-      },
-    });
-
-    const res = await post(ownerToken, { ...baseBody(), templateId: victimTemplate.id });
+    const res = await post(ownerToken, { ...baseBody(), templateId: victimTemplateId });
     expect(res.status).toBe(201);
 
     const { data } = (await res.json()) as { data: { id: string } };
     const created = await prisma.class.findUniqueOrThrow({ where: { id: data.id } });
     expect(created.templateId).toBeNull();
 
-    // The victim's own generation window is untouched.
-    expect(await prisma.class.count({ where: { templateId: victimTemplate.id } })).toBe(0);
+    // The victim's own generation window is untouched. Both assertions here
+    // rest on an absence, and `Class.templateId` is `onDelete: SetNull` — so a
+    // cascaded template delete would produce the same null and the same zero
+    // count. Not reachable today; this removes the ambiguity anyway.
+    expect(
+      await prisma.classTemplate.findUnique({ where: { id: victimTemplateId } }),
+    ).not.toBeNull();
+    expect(await prisma.class.count({ where: { templateId: victimTemplateId } })).toBe(0);
+  });
+
+  // The route's `teacherRoom.teacherId !== session.teacherId` check is this
+  // endpoint's only ownership guard, and the server-owned-fields register
+  // explicitly disclaims `teacherRoomId` — so nothing else covers it. Weakened
+  // to `if (!teacherRoom)` every other test in this file still passed, while a
+  // teacher could bind a class to another teacher's TeacherRoom, whose
+  // `rentalRate` is never shared between teachers and which
+  // `class/[id]/page.tsx` renders via `teacherRoom → room`.
+  it("refuses another teacher's teacherRoomId", async () => {
+    const res = await post(ownerToken, { ...baseBody(), teacherRoomId: victimRoomId });
+    expect(res.status).toBe(400);
+    expect(await prisma.class.count({ where: { teacherRoomId: victimRoomId } })).toBe(0);
+  });
+
+  // The sibling route treats the two arms as distinct
+  // (class-templates-api.test.ts), and so does this one: an unknown id and a
+  // known id owned by someone else fail on different halves of the same
+  // condition.
+  it('refuses an unknown teacherRoomId', async () => {
+    const res = await post(ownerToken, { ...baseBody(), teacherRoomId: UNKNOWN_CLASS_ID });
+    expect(res.status).toBe(400);
   });
 });

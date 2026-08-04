@@ -11,6 +11,7 @@ let studentToken: string;
 let otherStudentId: string;
 let teacherId: string;
 let unlinkedTeacherId: string;
+let archivedTeacherId: string;
 
 describe('students privacy API', () => {
   beforeAll(async () => {
@@ -63,6 +64,23 @@ describe('students privacy API', () => {
       },
     });
     unlinkedTeacherId = unlinked.id;
+
+    // Archived link, for the "existence, not isArchived" test below.
+    const archivedTeacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Archived',
+        lastName: 'Teacher',
+        email: `privacy-archived-${suffix}@test.local`,
+        account: { create: { email: `privacy-archived-${suffix}@test.local` } },
+        bio: 'Privacy fixture — archived TeacherStudent link',
+        pageSlug: `privacy-archived-${suffix}`,
+      },
+    });
+    archivedTeacherId = archivedTeacher.id;
+    await prisma.teacherStudent.create({
+      data: { teacherId: archivedTeacher.id, studentId: student.id, isArchived: true },
+    });
+
     studentToken = await seedSession(prisma, studentAccountId);
   });
 
@@ -80,6 +98,7 @@ describe('students privacy API', () => {
     // below would FK-violate on this teacher's account if its Teacher row
     // were still present.
     if (unlinkedTeacherId) await prisma.teacher.delete({ where: { id: unlinkedTeacherId } });
+    if (archivedTeacherId) await prisma.teacher.delete({ where: { id: archivedTeacherId } });
     await prisma.account.deleteMany({
       where: { email: { contains: `-${suffix}@test.local` } },
     });
@@ -187,6 +206,25 @@ describe('students privacy API', () => {
       where: { studentId_teacherId: { studentId, teacherId: unlinkedTeacherId } },
     });
     expect(row).toBeNull();
+  });
+
+  // The one *behavioural* decision the new guard makes: it checks the link
+  // exists, not that it is unarchived. Archiving is the teacher's filing
+  // action, and a student must still be able to revoke shares from a teacher
+  // who filed them away. Adding `isArchived: false` to hasTeacherLink's `where`
+  // passes every other test in this file — this is the only one that fails.
+  it('accepts a PUT for a teacher whose link is archived', async () => {
+    const res = await fetch(`${BASE_URL}/api/students/${studentId}/privacy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(studentToken) },
+      body: JSON.stringify({ teacherId: archivedTeacherId, shareEmail: false }),
+    });
+    expect(res.status).toBe(200);
+
+    const row = await prisma.studentPrivacy.findUnique({
+      where: { studentId_teacherId: { studentId, teacherId: archivedTeacherId } },
+    });
+    expect(row?.shareEmail).toBe(false);
   });
 
   it('rejects a GET for a teacher the student has no link to', async () => {

@@ -440,6 +440,9 @@ describe('server-owned fields', () => {
     // Exact equality in both directions. A new declaration fails naming the
     // schema; deleting a legitimate one fails too, so the reasons above cannot
     // rot into a list of names nobody re-reads.
-    expect(actual).toEqual(expected);
+    expect(
+      actual,
+      'A schema declares a server-owned field. Either stop declaring it, or add it to EXPECTED with a reason. See the docblock above.',
+    ).toEqual(expected);
   });
 });
