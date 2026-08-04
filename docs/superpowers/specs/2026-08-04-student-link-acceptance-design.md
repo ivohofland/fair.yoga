@@ -302,6 +302,41 @@ database oracle — acceptance is necessarily observable anyway (the student app
 in the CRM), so surfacing "declined" adds no new class of information. The
 enumeration bit #165 metered at 50/hour is gone.
 
+### The block oracle, found during the build
+
+**Filtering the list was not enough, and the refusal code reopened the same hole.**
+`origin: 'student_block'` keeps a student's address out of `GET /api/invitations`
+(§"Why `origin` exists"). But `inviteContact` refuses *any* declined row with 409
+`DECLINED` — and a `student_block` row is declined. So a teacher probing addresses
+got 409 for the one belonging to a student who unlinked, and 201 for everything
+else. They already know *someone* left: the class roster and payment history still
+show "Anna d." The 409 hands them the address `shareEmail` withheld. Rate-limited,
+and it needs a correct guess — but a former student's address is guessable when you
+know their name, which the roster gives you.
+
+**Decision: silent block, for `student_block` rows only.** Such an invite answers
+exactly as a fresh one does — 201 with an id — and creates nothing, sends nothing.
+The teacher sees "invitation sent"; it never arrives. This is the standard
+anti-harassment pattern, and it is the same principle the rest of the feature rests
+on: the response must not depend on what the database knows.
+
+`teacher_invite` rows that were declined keep their honest 409. That address is one
+the teacher typed themselves, so refusing discloses nothing they did not already
+have, and a teacher who invited someone deserves to know the invitation is dead
+rather than re-sending into silence.
+
+**The cost, stated rather than glossed:** the teacher is genuinely misled. If they
+follow up in person, the student may face a conversation they were trying to avoid.
+That is the accepted trade — the alternative hands a person's contact details to
+someone they deliberately walked away from.
+
+**How this was found is worth recording.** Not by a reviewer reading the diff — the
+refusal lives in `inviteContact`, which no task after Task 3 touched, so every
+task-scoped review was structurally blind to it. It surfaced from a whole-repo sweep
+of every `Invitation` consumer, run to resolve a reviewer's "cannot verify from
+diff" note. The lesson generalises: a property enforced in one file is not verified
+by reviewing the file that depends on it.
+
 `POST /api/auth/student-signup` is the model to follow. Its docblock already
 states the property this route is adopting: *"The response is identical whether
 the email was new, an existing student, or a teacher — no account enumeration."*

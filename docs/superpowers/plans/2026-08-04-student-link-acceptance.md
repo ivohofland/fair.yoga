@@ -1135,6 +1135,109 @@ git commit -m "feat: a student can sever a teacher link without deleting their a
 
 ---
 
+### Task 6b: Silent-block a `student_block` tombstone
+
+Added during the build, after a whole-repo sweep of `Invitation` consumers found that
+`origin: 'student_block'` protected the *list* while the refusal code leaked the same
+bit. See the spec's "The block oracle, found during the build".
+
+**Files:**
+- Modify: `src/services/invitations.ts` (`inviteContact`)
+- Test: `tests/integration/invitations-api.test.ts`
+
+**Interfaces:**
+- Consumes: `unlinkTeacher` (Task 6), which creates the `student_block` rows.
+- Produces: no signature change. `inviteContact` gains a branch, not a parameter.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+it('answers a silently-blocked address exactly as a fresh one', async () => {
+  // The student unlinked, so a student_block tombstone exists for this
+  // (teacher, email) pair — carrying an address this teacher never had,
+  // because shareEmail defaults false. A 409 here would hand it to them.
+  const post = (email: string) =>
+    fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({ firstName: 'Zzz', lastName: 'Qqq', email }),
+    });
+
+  const [blocked, fresh] = await Promise.all([post(blockedEmail), post(freshEmail)]);
+
+  expect(blocked.status).toBe(fresh.status);
+  expect(blocked.status).toBe(201);
+  const blockedJson = await blocked.json();
+  const freshJson = await fresh.json();
+  expect(Object.keys(blockedJson.data)).toEqual(Object.keys(freshJson.data));
+
+  // ...and nothing was written for the blocked one. The tombstone still
+  // stands, unchanged, still `declined`, still `student_block`.
+  const tombstone = await prisma.invitation.findUniqueOrThrow({
+    where: { teacherId_email: { teacherId, email: blockedEmail } },
+  });
+  expect(tombstone.status).toBe('declined');
+  expect(tombstone.origin).toBe('student_block');
+  expect(tombstone.respondedAt).not.toBeNull();
+});
+
+it('still refuses a declined teacher_invite honestly', async () => {
+  // Contrast case, and the reason this is not a blanket change: the teacher
+  // typed THIS address themselves, so 409 discloses nothing new — and a
+  // teacher deserves to know their invitation is dead rather than
+  // re-sending into silence.
+  const res = await post(declinedInviteEmail);
+  expect(res.status).toBe(409);
+  expect((await res.json()).error.code).toBe('DECLINED');
+});
+```
+
+- [ ] **Step 2: Run and confirm failure** — the first test fails `expected 409 to be 201`.
+
+- [ ] **Step 3: Branch on origin in `inviteContact`**
+
+The existing `if (existing.status === 'declined') return { ok: false, reason: 'DECLINED' }` splits:
+
+```ts
+  if (existing) {
+    if (existing.status === 'declined') {
+      // A tombstone the STUDENT wrote by unlinking. Refusing would confirm
+      // that this address belongs to someone who was this teacher's student
+      // and left — an address `shareEmail` withheld, on a person the roster
+      // still shows as "Anna d.". So answer exactly as a fresh invitation
+      // does and do nothing. The teacher is misled; that is the trade.
+      //
+      // Do NOT "simplify" this by returning the tombstone's own id — that
+      // id is stable across probes, so two requests would betray it.
+      if (existing.origin === 'student_block') return { ok: true, value: { id: randomUUID() } };
+
+      // The teacher typed this address themselves, so 409 tells them nothing
+      // they did not already have, and silence here would be cruelty rather
+      // than protection.
+      return { ok: false, reason: 'DECLINED' };
+    }
+    ...
+```
+
+Widen the `select` at the `existing` lookup to include `origin`.
+
+- [ ] **Step 4: Run the tests** — both pass, plus the whole file.
+
+- [ ] **Step 5: Prove the guard bites**
+
+Change `existing.origin === 'student_block'` to `existing.origin === 'teacher_invite'`. Expected: the silent-block test fails `expected 409 to be 201` **and** the honest-refusal test fails `expected 201 to be 409`. Both must fail — one alone means the two cases are not actually distinguished. Record both.
+
+Then re-run Task 3's oracle test (`'answers identically for a registered address and a free one'`) — it must still pass. This branch adds a third path through the same response, and it is the test that governs all of them.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/services/invitations.ts tests/integration/invitations-api.test.ts
+git commit -m "fix: a blocked address answered 409 where a fresh one answered 201 (#166)"
+```
+
+---
+
 ### Task 7: Booking and waitlisting resolve invitations and clear tombstones
 
 The student's way back in. This is what stops "declined" being a trap.
