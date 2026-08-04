@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { inviteContact } from '@/services/invitations';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 
 const prisma = new PrismaClient();
@@ -912,6 +913,41 @@ describe('POST /api/students — the block oracle (#166 task 6b)', () => {
       expect((await res.json()).error.code).toBe('DECLINED');
     } finally {
       if (declined) await prisma.invitation.deleteMany({ where: { id: declined.id } });
+    }
+  });
+
+  it('marks the silent path undelivered and a real invite delivered', async () => {
+    // `delivered` is not on the HTTP wire (POST /api/students returns only
+    // `id`) — it exists for the caller Task 8 adds, which wires a
+    // notify/email send in after `inviteContact` succeeds. So this calls the
+    // service directly rather than through `post` above: that is where the
+    // field this guards actually lives.
+    const blockedEmail = `inv-delivered-blocked-${suffix}@test.local`;
+    const freshEmail = `inv-delivered-fresh-${suffix}@test.local`;
+    let blocked: { id: string } | undefined;
+    try {
+      blocked = await prisma.invitation.create({
+        data: {
+          teacherId, email: blockedEmail,
+          status: 'declined', origin: 'student_block', respondedAt: new Date(),
+        },
+        select: { id: true },
+      });
+
+      const blockedResult = await inviteContact(prisma, {
+        teacherId, email: blockedEmail, firstName: 'Zzz', lastName: 'Qqq',
+      });
+      const freshResult = await inviteContact(prisma, {
+        teacherId, email: freshEmail, firstName: 'Zzz', lastName: 'Qqq',
+      });
+
+      if (!blockedResult.ok) throw new Error('expected the silent path to succeed');
+      if (!freshResult.ok) throw new Error('expected a fresh invite to succeed');
+      expect(blockedResult.value.delivered).toBe(false);
+      expect(freshResult.value.delivered).toBe(true);
+    } finally {
+      if (blocked) await prisma.invitation.deleteMany({ where: { id: blocked.id } });
+      await prisma.invitation.deleteMany({ where: { teacherId, email: freshEmail } });
     }
   });
 });

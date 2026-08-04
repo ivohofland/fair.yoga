@@ -15,6 +15,16 @@ export type InviteRefusal = 'ALREADY_INVITED' | 'ALREADY_LINKED' | 'DECLINED';
 
 export interface InviteResult {
   id: string;
+  /**
+   * False for the silent `student_block` answer, true for a real invitation.
+   * Not a detail — it is the field that stops a future caller from notifying
+   * on every `ok: true`. Task 8 wires a notify/email send in after
+   * `inviteContact` succeeds; gating that send on `delivered === true` is
+   * what keeps this from becoming a channel back to the exact person who
+   * unlinked to get away from this teacher. `id` alone can't carry that
+   * distinction — it's a fresh random value on both paths (#166 task 6b).
+   */
+  delivered: boolean;
 }
 
 export const REFUSAL_MESSAGES: Record<InviteRefusal, string> = {
@@ -39,7 +49,11 @@ export const REFUSAL_MESSAGES: Record<InviteRefusal, string> = {
  *
  * One residual channel is knowingly left open: the "Student exists but is not
  * on this teacher's roster" path issues one extra query, so it is marginally
- * slower than the path where no Student row exists. That is outside the
+ * slower than the path where no Student row exists. The `student_block`
+ * silent-answer path below is the same shape in the other direction, only
+ * wider — it returns after a single `findUnique`, skipping the `Student`/
+ * `TeacherStudent` lookups AND the `Invitation` insert that a fresh invite
+ * performs, so the timing delta there is larger still. That is outside the
  * property this function claims — identical status, identical body, identical
  * side effects — and closing it would mean issuing dummy queries to flatten
  * the timing, which is not worth the contortion at this threat level.
@@ -82,7 +96,9 @@ export async function inviteContact(
       //
       // Do NOT "simplify" this by returning the tombstone's own id — that
       // id is stable across probes, so two requests would betray it.
-      if (existing.origin === 'student_block') return { ok: true, value: { id: randomUUID() } };
+      if (existing.origin === 'student_block') {
+        return { ok: true, value: { id: randomUUID(), delivered: false } };
+      }
 
       // The teacher typed this address themselves, so 409 tells them nothing
       // they did not already have, and silence here would be cruelty rather
@@ -114,7 +130,7 @@ export async function inviteContact(
     data: { teacherId, email, firstName, lastName },
     select: { id: true },
   });
-  return { ok: true, value: { id: created.id } };
+  return { ok: true, value: { id: created.id, delivered: true } };
 }
 
 /**

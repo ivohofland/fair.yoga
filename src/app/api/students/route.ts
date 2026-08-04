@@ -137,5 +137,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return respondError(REFUSAL_MESSAGES[result.reason], 409, result.reason);
   }
 
+  // `result.value.delivered` is false when this was the silent student_block
+  // answer (services/invitations.ts) rather than a real invitation. Nothing
+  // here reads it yet — but whichever change wires a notify/email send in
+  // after this success MUST gate it on `delivered === true`, or it emails
+  // the exact person who unlinked to get away from this teacher.
   return respondOk({ id: result.value.id }, 201);
 });
