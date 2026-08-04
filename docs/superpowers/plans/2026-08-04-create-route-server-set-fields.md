@@ -563,7 +563,7 @@ git commit -m "fix: POST /api/studio-classes spread an unchecked templateId into
 
 **This task has a trap.** The existing fixture creates a teacher and **never links them to
 the student** — `grep teacherStudent tests/integration/privacy-api.test.ts` returns
-nothing. All four existing tests therefore exercise the unlinked path, which is the
+nothing. All five existing tests therefore exercise the unlinked path, which is the
 vulnerability. Adding the check without fixing the fixture breaks all four.
 
 - [ ] **Step 1: Link the fixture teacher, and add an unlinked one**
@@ -636,7 +636,7 @@ Append inside the same `describe`:
 
 Run: `npx vitest run --project integration tests/integration/privacy-api.test.ts`
 
-Expected: the four existing tests **pass** (Step 1 gave them the link they need). The two
+Expected: the five existing tests **pass** (Step 1 gave them the link they need). The two
 new tests **fail** — the PUT returns 200 and writes a row (`expected 200 to be 403`, then
 the row assertion), and the GET returns 200 (`expected 200 to be 403`).
 
@@ -762,7 +762,8 @@ const SERVER_OWNED_FIELDS = [
  */
 const EXPECTED: Record<string, readonly string[]> = {
   // A teacher registers a student from their own roster; ownership is checked
-  // in src/services/waitlist.ts (the studentId is session-or-roster-checked).
+  // in src/app/api/registrations/route.ts:87-92 (the TeacherStudent link is
+  // looked up and a missing link 403s before the registration is created).
   createRegistrationSchema: ['studentId'],
   // Whether a newly created room is shared is legitimately the creator's call.
   createRoomSchema: ['isPublic'],

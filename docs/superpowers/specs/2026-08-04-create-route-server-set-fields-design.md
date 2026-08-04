@@ -257,7 +257,7 @@ branch the two create schemas drop out, leaving eight documented exceptions:
 
 | schema | field | why it stays |
 |---|---|---|
-| `createRegistrationSchema` | `studentId` | a teacher registers a roster student; checked in `waitlist.ts:88-93` |
+| `createRegistrationSchema` | `studentId` | a teacher registers a roster student; checked in `src/app/api/registrations/route.ts:87-92` |
 | `createRoomSchema` | `isPublic` | a create-time choice, legitimately the client's |
 | `transitionClassSchema` | `status` | the state machine's own input; `'completed'` deliberately absent |
 | `updatePrivacySchema` | `teacherId` | the student chooses the teacher; the link is checked as of this branch |
