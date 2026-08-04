@@ -121,11 +121,29 @@ issue's dilemma bites: no harassment vector, and no trap.
 **Q3 — Does registering constitute acceptance?** Yes. See "Corrections" §1.
 
 **Q4 — Unlink.** A student-side route deletes the `TeacherStudent` row and writes
-the same declined tombstone. Registrations and payments survive — they are facts,
-and money may be owed; the teacher continues to see them through the
-registration-scoped surfaces. This matches #167's decision that privacy flags win
-even when payment is owed, because reminders are in-app and blocking is the
-escalation.
+the block. Registrations and payments survive — they are facts, and money may be
+owed; the teacher continues to see them through the registration-scoped surfaces.
+This matches #167's decision that privacy flags win even when payment is owed,
+because reminders are in-app and blocking is the escalation.
+
+**Waitlist entries do not survive, and the line between them and registrations is
+the point.** Found during the build: a `waiting` entry outliving an unlink is a
+route by which the *teacher* clears the student's block. Student joins the
+teacher's waitlist → student unlinks → the teacher cancels any other registration
+in that class → `promoteNext` promotes the student → the promotion, being
+student-originated, clears the block. The student's older intent overrides their
+newer one, at a moment the teacher chooses.
+
+So `unlinkTeacher` withdraws that student's `waiting` entries for that teacher's
+classes. The carve-out is principled rather than arbitrary: **a registration is a
+commitment that may carry money owed; a waitlist entry is neither.** Retiring one
+costs nobody anything, and leaving it live lets a teacher reach past a decision the
+student already made.
+
+Rejected alternative: having `promoteNext` skip candidates with a block. It closes
+the same hole but leaves a zombie entry that keeps trying and keeps failing, and it
+puts the check in the path rather than in the act — so the next promotion path
+added would need to remember it.
 
 **Q5 — Migration.** No *data* migration. The system is not in production, so the
 schema change ships as a plain create-table migration that touches no existing
