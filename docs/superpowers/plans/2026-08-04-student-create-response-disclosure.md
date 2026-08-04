@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Stop `POST /api/students` and the teacher branch of `PUT /api/students/[id]` from returning raw `Student` rows, and meter the create route so it is not an unlimited account-existence oracle.
+**Goal:** Stop `POST /api/students` and the teacher branch of `PUT /api/students/[id]` from returning raw `Student` rows, and meter both routes — they share one budget, see Task 2's correction — so neither is an unlimited probe for whether a `Student` row exists for an address.
 
-**Architecture:** Narrow at the Prisma query with `select: { id: true }`, not at the response. The row never enters the handler's scope, so `existing` is typed `{ id: string }` and returning any other field becomes a compile error rather than something review has to catch. Add an in-process fixed-window rate limit keyed on the teacher.
+**Architecture:** Narrow at the Prisma query with `select: { id: true }`, not at the response. The row never enters the handler's scope, so `existing` is typed `{ id: string }` and reading any field beyond `.id` off it becomes a compile error rather than something review has to catch — reading, not returning: widening the `select` itself still compiles cleanly, because `respondOk` is generically typed over whatever it is handed. Query-level narrowing is still the better fix over projecting at the response; the exhaustive `Object.keys(...)` key-set assertions in the integration tests are what actually catches a widened `select`. Add an in-process fixed-window rate limit keyed on the teacher, shared across both write routes.
 
 **Tech Stack:** Next.js 14 App Router route handlers, Prisma, Vitest integration tests over HTTP against the dev server on `:3000`.
 
@@ -34,7 +34,7 @@
 
 - [ ] **Step 1: Write the failing test**
 
-Add a new `describe` block at the end of `tests/integration/students-api.test.ts`. It needs its own fixtures — a **claimed** student with personal data and no `StudentPrivacy` row, and a teacher with no link to them. The file's existing students are all unclaimed, and unclaimed is precisely the case the route deliberately does not gate, so a test built on them would pass against the bug.
+Add a new `describe` block at the end of `tests/integration/students-api.test.ts`. It needs its own fixtures — a **claimed** student with personal data and no `StudentPrivacy` row, and a teacher with no link to them. This isn't about dodging a gate: `POST /api/students` never reads `claimedAt` at all, so any existing fixture would exercise the bug just as well. It's about the fields. The file's top-level fixtures (the 25-student loop and `unlinked`) are all unclaimed, but that's incidental — what actually rules them out is that none of them has `phone`, `birthday` or `address` set, so a test built on them could not demonstrate what this route actually leaks.
 
 ```ts
 describe('POST /api/students — response disclosure (#162)', () => {
@@ -125,10 +125,14 @@ In `src/app/api/students/route.ts`, replace the body of the `POST` handler from 
 
 ```ts
   // #162: select the id and nothing else. Narrowing here rather than at the
-  // response is deliberate — `existing` is typed `{ id: string }`, so a future
-  // edit that tries to return more is a compile error, not something review
-  // has to catch. This route answered any teacher who knew an email with the
-  // student's phone, birthday, home address and income tier.
+  // response is deliberate — `existing` is typed `{ id: string }`, so reading
+  // any field beyond `.id` off it is a compile error, not something review
+  // has to catch. (Returning more still compiles if a later edit also widens
+  // the `select` — `respondOk` is generically typed, so nothing pins response
+  // shape to query shape. The exhaustive key-set assertions in the
+  // integration tests are the backstop for that case.) This route answered
+  // any teacher who knew an email with the student's phone, birthday, home
+  // address and income tier.
   const existing = await prisma.student.findUnique({
     where: { email },
     select: { id: true },
@@ -191,24 +195,39 @@ git commit -m "fix: POST /api/students returned a stranger's full row (#162)"
 
 ---
 
-### Task 2: Rate-limit `POST /api/students` per teacher
+### Task 2: Rate-limit `POST /api/students` and the teacher `PUT` — one shared budget
+
+**Correction — as originally scoped, this task left the sibling route unbounded.**
+This task was first written as "rate-limit `POST /api/students` per teacher," 30/hour,
+alone. A PR review found, and it was confirmed by running it, that the teacher
+branch of `PUT /api/students/[id]` (Task 3) is an **unmetered** twin of the
+same oracle: `createStudentSchema` requires `email`, so that branch always
+writes a client-supplied email into the same `@unique` column with no
+pre-check, and the `P2002` collision surfaces as a plain `409` — 409 means
+taken, 200 means free, exactly like the `POST`'s 200-vs-201. Metering only the
+`POST` leaves that door wide open: 40 consecutive probes against the `PUT`
+alone returned 20×409 / 20×200 and zero 429s. Full writeup in the spec's
+Design §2. The steps below build the corrected, shared design directly rather
+than the `POST`-only version and a later patch.
 
 **Files:**
+- Modify: `src/lib/rate-limit.ts` (new `checkStudentWriteLimit` helper)
 - Modify: `src/app/api/students/route.ts` (imports, and the top of the `POST` handler)
+- Modify: `src/app/api/students/[id]/route.ts` (imports, and the top of the teacher branch of `PUT`, ahead of Task 3's response-narrowing change)
 - Test: `tests/integration/students-api.test.ts`
 
 **Interfaces:**
-- Consumes: `checkRateLimit(key: string, limit: number, windowMs: number): { allowed: boolean; retryAfterSeconds: number }` from `@/lib/rate-limit`. Do **not** import `clientIp` — this route keys on the teacher.
-- Produces: a 31st POST within an hour from one teacher returns 429.
+- Consumes: `checkRateLimit(key: string, limit: number, windowMs: number): { allowed: boolean; retryAfterSeconds: number }` from `@/lib/rate-limit`, wrapped by the new `checkStudentWriteLimit(teacherId: string): RateLimitResult`. Do **not** import `clientIp` — this route keys on the teacher.
+- Produces: a 51st write within an hour from one teacher — `POST /api/students` or the teacher branch of `PUT /api/students/[id]`, since they share a bucket — returns 429.
 
 - [ ] **Step 1: Write the failing test**
 
 Append this test inside the `describe('POST /api/students — response disclosure (#162)')` block from Task 1.
 
-It POSTs the **same** email 31 times on purpose. The first creates the student, the next 29 return `409 ALREADY_LINKED` — and a 409 still counts a hit, because the limiter runs before the body is even parsed — so the whole burst leaves exactly one row to clean up instead of thirty.
+It POSTs the **same** email 51 times on purpose. The first creates the student, the next 49 return `409 ALREADY_LINKED` — and a 409 still counts a hit, because the limiter runs before the body is even parsed — so the whole burst leaves exactly one row to clean up instead of fifty.
 
 ```ts
-  it('refuses a 31st addition within the hour', async () => {
+  it('refuses a 51st addition within the hour', async () => {
     const burst = await prisma.teacher.create({
       data: {
         firstName: 'Burst',
@@ -223,7 +242,7 @@ It POSTs the **same** email 31 times on purpose. The first creates the student, 
     const targetEmail = `crm-burst-target-${suffix}@test.local`;
 
     const statuses: number[] = [];
-    for (let i = 0; i < 31; i++) {
+    for (let i = 0; i < 51; i++) {
       const res = await fetch(`${BASE_URL}/api/students`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...cookie(burstToken) },
@@ -233,8 +252,8 @@ It POSTs the **same** email 31 times on purpose. The first creates the student, 
     }
 
     expect(statuses[0]).toBe(201);
-    expect(statuses.slice(1, 30)).toEqual(Array(29).fill(409));
-    expect(statuses[30]).toBe(429);
+    expect(statuses.slice(1, 50)).toEqual(Array(49).fill(409));
+    expect(statuses[50]).toBe(429);
 
     const created = await prisma.student.findUnique({ where: { email: targetEmail } });
     await prisma.teacherStudent.deleteMany({ where: { teacherId: burst.id } });
@@ -247,21 +266,37 @@ It POSTs the **same** email 31 times on purpose. The first creates the student, 
 
 The fresh teacher is load-bearing: the limiter is an in-memory map inside the dev-server process, so an integration test cannot reset it over HTTP. A teacher created in this test has a brand-new uuid and therefore a brand-new bucket, every run.
 
+Add two more tests alongside it, both required by the shared-budget correction above — without them, giving the `PUT` its own separate bucket would pass every other test in this task unnoticed: one that spends the 50-hit budget as 1 `POST` plus 49 `PUT`s against the same contact (each `PUT` moving that contact's email to a fresh candidate) and confirms the 51st write of either kind is refused; and one that repeats the invalid-body case 50 times to confirm a hit is spent even when the body 400s, then confirms a flawless 51st request is refused anyway.
+
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run: `npx vitest run --project integration tests/integration/students-api.test.ts -t '31st addition'`
+Run: `npx vitest run --project integration tests/integration/students-api.test.ts -t '51st addition'`
 
-Expected: FAIL on `expect(statuses[30]).toBe(429)` — received `409`, because nothing throttles the route yet.
+Expected: FAIL on `expect(statuses[50]).toBe(429)` — received `409`, because nothing throttles the route yet.
 
-- [ ] **Step 3: Add the limiter**
+- [ ] **Step 3: Add the shared limiter**
 
-Add the import at the top of `src/app/api/students/route.ts`:
+In `src/lib/rate-limit.ts`, add the helper both routes will call:
 
 ```ts
-import { checkRateLimit } from '@/lib/rate-limit';
+/**
+ * Shared hourly budget for teacher-initiated student writes that carry a
+ * client-supplied email: POST /api/students and the teacher branch of
+ * PUT /api/students/[id]. Both write `email` to a `@unique` column, so both
+ * answer "is this address taken?" — the POST through 200-vs-201, the PUT
+ * through 200-vs-409 on the P2002 fallback. Metering only one leaves the pair
+ * unbounded, so they share a bucket.
+ */
+export function checkStudentWriteLimit(teacherId: string): RateLimitResult {
+  return checkRateLimit(`students:${teacherId}`, 50, 60 * 60 * 1000);
+}
 ```
 
-Then, in the `POST` handler, immediately after the `requireTeacher` guard and **before** `parseBody`:
+Then, in `src/app/api/students/route.ts`, add the import and call it in the `POST` handler, immediately after the `requireTeacher` guard and **before** `parseBody`:
+
+```ts
+import { checkStudentWriteLimit } from '@/lib/rate-limit';
+```
 
 ```ts
   // Keyed on the teacher, not the IP. The caller is authenticated, so an IP key
@@ -272,52 +307,76 @@ Then, in the `POST` handler, immediately after the `requireTeacher` guard and **
   // per-email limit; `teachers/route.ts` has no second limit and is genuinely
   // unthrottled in that case. A teacher key needs no fallback at all.
   //
-  // 30/hour clears any realistic workshop roster from today's single-add UI.
+  // The ceiling — and the bucket this route shares with the teacher branch of
+  // PUT /api/students/[id] — lives in `checkStudentWriteLimit`. See that
+  // helper and the spec's Design §2 correction for why they share one budget.
+  //
   // Issue #51 (bulk/CSV student import) will exceed it by design — raise the
   // ceiling or exempt the import path when that lands; do not assume this
   // number still fits.
   //
-  // What it buys: this route is still an account-existence oracle (200 = the
-  // address was registered, 201 = it was not, and a follow-up GET recovers the
-  // same bit either way), and every miss creates a real Student row. The limit
-  // meters that at ~14 days and ~10,000 junk rows per 10,000 addresses. The
-  // wall is requiring the student's acceptance before a link exists at all;
-  // this holds until that lands.
-  const limit = checkRateLimit(`students:${session.teacherId}`, 30, 60 * 60 * 1000);
+  // What it buys: this route still tells a caller whether a Student row exists
+  // for an address — 200 if one does, 201 if it did not. "Student row", not
+  // "account": an unclaimed contact sitting in another teacher's CRM answers
+  // 200 with no Account behind it, so the bit leaks CRM membership as well as
+  // self-registration. A follow-up GET recovers the same bit through the
+  // returned name, since this branch ignores the names the caller submitted.
+  //
+  // The limit meters bulk probing rather than stopping it: 50/hour is ~8.3 days
+  // per 10,000 addresses. Treat that as an order of magnitude, not a guarantee
+  // — the limiter is in-process, so a deploy or restart hands back a fresh
+  // budget, and its shared 10,000-key map can evict a live bucket under
+  // pressure. The wall is requiring the student's acceptance before a link
+  // exists at all; this holds until that lands.
+  const limit = checkStudentWriteLimit(session.teacherId);
   if (!limit.allowed) {
-    return respondError('Too many student additions. Try again later.', 429);
+    const minutes = Math.ceil(limit.retryAfterSeconds / 60);
+    return respondError(
+      `Too many student requests. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+      429,
+    );
   }
 ```
+
+Add the matching call to the teacher branch of `PUT /api/students/[id]` at the same time — see Task 3, which narrows that branch's response and now also carries this limiter check at its top, ahead of the claimed-student pre-check.
 
 - [ ] **Step 4: Run the whole file**
 
 Run: `npx vitest run --project integration tests/integration/students-api.test.ts`
 
-Expected: PASS. The pre-existing tests consume only 3 hits on their shared teacher — `:136` (create), `:158` (409) and `:210` (invalid body). `:187` uses a second teacher, and `:219` sends no session so it never reaches the limiter. Note that `:210` counts even though it 400s, because the limiter runs before `parseBody`; if that surprises a later reader, it is intentional.
+Expected: PASS. The pre-existing `POST` tests consume only 3 hits on their shared teacher — `:136` (create), `:158` (409) and `:210` (invalid body) — plus 2 more spent by the `PUT` describes later in the file, well inside 50. `:187` uses a second teacher, and `:219` sends no session so neither reaches the limiter. Note that `:210` counts even though it 400s, because the limiter runs before `parseBody`; if that surprises a later reader, it is intentional.
 
 - [ ] **Step 5: Break the guard**
 
-Comment out the `if (!limit.allowed)` block and re-run the Step 2 test. Expected: FAIL with received `409` at `statuses[30]`. Record the text, restore, re-run green.
+Comment out the `if (!limit.allowed)` block in the `POST` handler and re-run the Step 2 test. Expected: FAIL with received `409` at `statuses[50]`. Record the text, restore, re-run green. Repeat the same break/restore against the `PUT` branch's copy of the check once Task 3 has added it, to confirm the shared-budget test (Step 1) catches that side too.
 
 - [ ] **Step 6: Typecheck and commit**
 
 ```bash
 npm run typecheck
-git add src/app/api/students/route.ts tests/integration/students-api.test.ts
+git add src/lib/rate-limit.ts src/app/api/students/route.ts tests/integration/students-api.test.ts
 git commit -m "fix: POST /api/students was an unmetered account-existence oracle (#162)"
 ```
 
+This commit message is what the branch's history actually carries for the
+first, `POST`-only pass (commit `cfdd118`) — it predates the correction above
+and repeats the same "account-existence" imprecision the spec corrects. It
+cannot be fixed without rewriting history. The shared-budget change this task
+now describes needs a follow-up commit once Task 3 adds the `PUT` side; give
+it a subject that does not repeat the error, e.g. "fix: meter the teacher PUT
+— it was an unmetered twin of the POST oracle (#162)".
+
 ---
 
-### Task 3: Teacher `PUT /api/students/[id]` returns only the id
+### Task 3: Teacher `PUT /api/students/[id]` returns only the id, and shares Task 2's rate limit
 
 **Files:**
-- Modify: `src/app/api/students/[id]/route.ts:106-131`
+- Modify: `src/app/api/students/[id]/route.ts:106-131` (response narrowing) and the top of the same branch (the shared limiter added below)
 - Test: `tests/integration/students-api.test.ts`
 
 **Interfaces:**
-- Consumes: nothing from Tasks 1-2; this is a different file and a different handler.
-- Produces: the teacher branch of `PUT /api/students/[id]` responds `{ data: { id: string } }`.
+- Consumes: `checkStudentWriteLimit` from `@/lib/rate-limit`, added by Task 2 — this branch is the second of the two call sites that budget shares.
+- Produces: the teacher branch of `PUT /api/students/[id]` responds `{ data: { id: string } }`, and — per Task 2's correction — refuses with 429 once the teacher's shared budget with `POST /api/students` is spent.
 
 **Do not touch the self-edit branch at `:81-103`.** It returns the caller's own row to the caller, which is not a disclosure at any boundary. It is left alone deliberately.
 
@@ -366,7 +425,38 @@ Run: `npx vitest run --project integration tests/integration/students-api.test.t
 
 Expected: FAIL showing the full 16-key array. This test has **two** ways to pass vacuously — a claimed fixture 403s at `:109`, an unlinked one 403s at `:116` — so a `403` here means the fixture is wrong, not that the guard works. Confirm the received value is the wide key set before going on.
 
-- [ ] **Step 3: Narrow both queries in the teacher branch**
+- [ ] **Step 3: Add the shared rate limit**
+
+Per Task 2's correction, this branch writes a client-supplied `email` to the
+same `@unique` column as `POST /api/students`, with no pre-check — a `P2002`
+here surfaces as a `409` exactly like the `POST`'s 200-vs-201, which is what
+makes it an unmetered twin of that oracle if left unguarded. In
+`src/app/api/students/[id]/route.ts`, add the import and, at the very top of
+the teacher branch of `PUT` — before the pre-check load, so a probe that never
+gets past the 403s below still spends a hit:
+
+```ts
+import { checkStudentWriteLimit } from '@/lib/rate-limit';
+```
+
+```ts
+    // Shares one bucket with POST /api/students — see `checkStudentWriteLimit`.
+    // This branch writes a client-supplied `email` to a `@unique` column with
+    // no pre-check, so a 409 from the P2002 fallback answers "is this address
+    // taken?" exactly as the POST's 200-vs-201 does. Metered at the very top so
+    // the 403 and 404 refusals below cost a hit too: probing that never gets
+    // past them still probes.
+    const limit = checkStudentWriteLimit(session.teacherId);
+    if (!limit.allowed) {
+      const minutes = Math.ceil(limit.retryAfterSeconds / 60);
+      return respondError(
+        `Too many student requests. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+        429,
+      );
+    }
+```
+
+- [ ] **Step 4: Narrow both queries in the teacher branch**
 
 In `src/app/api/students/[id]/route.ts`, the teacher branch of `PUT`. Change the pre-check load to select only what it reads:
 
@@ -394,26 +484,34 @@ and the update to return only the id:
     return respondOk({ id: updated.id });
 ```
 
-- [ ] **Step 4: Run the two files that exercise this handler**
+- [ ] **Step 5: Run the two files that exercise this handler**
 
 ```bash
 npx vitest run --project integration tests/integration/students-api.test.ts
 npx vitest run --project integration tests/integration/tier-selected-at.test.ts
 ```
 
-Expected: both PASS. `tier-selected-at.test.ts:187-199` drives this exact branch but asserts only `res.status` and then reads the row back from the database — it never touches the response body, so it should be unaffected. If it fails, that assumption was wrong; report it rather than editing that test to fit.
+Expected: both PASS. `tier-selected-at.test.ts:187-199` drives this exact branch but asserts only `res.status` and then reads the row back from the database — it never touches the response body, so it should be unaffected. If it fails, that assumption was wrong; report it rather than editing that test to fit. This run also exercises Step 3's limiter for the first time against the file's real fixtures — if it trips a stray 429, that is the shared-budget accounting from Task 2 Step 4 being wrong, not this task's response narrowing.
 
-- [ ] **Step 5: Break the guard**
+- [ ] **Step 6: Break both guards**
 
-Remove `select: { id: true },` from the `update` and change the return to `respondOk(updated)`. Re-run the Step 2 test, record the exact failure, restore, re-run green.
+Remove `select: { id: true },` from the `update` and change the return to `respondOk(updated)`. Re-run the Task 3 Step 2 test, record the exact failure, restore, re-run green. Then comment out Step 3's `if (!limit.allowed)` block and re-run Task 2's shared-budget test (that task's Step 1); record the exact failure, restore, re-run green — this is the other half of confirming that test actually exercises the `PUT` side of the shared bucket.
 
-- [ ] **Step 6: Typecheck and commit**
+- [ ] **Step 7: Typecheck and commit**
 
 ```bash
 npm run typecheck
 git add "src/app/api/students/[id]/route.ts" tests/integration/students-api.test.ts
 git commit -m "fix: the teacher PUT returned a raw student row too (#162)"
 ```
+
+As with Task 2's commit, this is the message the branch's history actually
+carries (commit `c1ef272`) for the response-narrowing half alone — it
+predates the shared-budget correction, which landed in a later commit. If
+Steps 3 and 6 are done as part of the same pass rather than a follow-up, fold
+the rate-limit change into this commit and say so in the message instead;
+don't silently attribute the limiter to a commit subject that doesn't mention
+it.
 
 ---
 
@@ -470,10 +568,10 @@ Expected: the `POST` prints `{"data":{"id":"…"}}` and nothing else, where befo
 Both carry a decision already made, so file them as work with the decision stated — not as open questions.
 
 1. **Linking a student requires that student's acceptance.** Copy the six open design questions verbatim from the spec's "Filed, not folded" §1. Note that it is what actually closes the existence oracle and the `incomeTier` residual, and that it needs its own brainstorm rather than a plan.
-2. **Honour `StudentPrivacy` in the payment and registration routes.** Record the decision: flags are honoured even when payment is owed, because reminders go through the app and blocking a non-paying student is the escalation. Name the sites — `services/payments.ts:202-206` and `:239-242`, the four route files that consume them, and `students/[id]/route.ts:140`'s sibling concerns — and that the shape is one shared `projectStudentForTeacher` helper, not a fourth inline copy. Note that it subsumes the `incomeTier` question.
+2. **Honour `StudentPrivacy` in the payment and registration routes.** Record the decision: flags are honoured even when payment is owed, because reminders go through the app and blocking a non-paying student is the escalation. Name the sites — `services/payments.ts:202-206` and `:239-242`, the four route files that consume them, and `students/[id]/route.ts:51-66`'s (as of `c12e388`) sibling concerns — that is the `GET` handler's own inline, field-by-field privacy projection (`isUnclaimed` / `shareEmail` / `sharePhone` / `shareBirthday` / `shareAddress`), which is itself one of the copies the shared helper would replace, not a separate concern — and that the shape is one shared `projectStudentForTeacher` helper, not a fourth inline copy. Note that it subsumes the `incomeTier` question.
 
 Then update `docs/backlog-roadmap.md` with 1 closed / 2 opened and re-check the open count against `gh issue list --limit 200`. Leave that file untracked.
 
 - [ ] **Step 6: Report what was measured**
 
-For the PR body: the exact key sets before and after, the three commands above with their results, the exact failure text recorded from each of the three break-the-guard steps, and what this branch does **not** do — the existence oracle is metered rather than closed, and `incomeTier` stays readable by any linked teacher.
+For the PR body: the exact key sets before and after, the three commands above with their results, the exact failure text recorded from each break-the-guard step across Tasks 1-3 (query-narrowing on the `POST`, the shared limiter on the `POST`, query-narrowing on the `PUT`, and the shared limiter on the `PUT`), and what this branch does **not** do — the existence oracle is metered rather than closed, and `incomeTier` stays readable by any linked teacher.

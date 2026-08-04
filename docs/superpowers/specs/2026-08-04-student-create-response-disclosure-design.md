@@ -143,23 +143,41 @@ transaction. Both branches then return `respondOk({ id }, …)`.
 
 **Why the query and not the response.** A response-side projection is a guard an
 unrelated edit can widen, and nothing fails when it does. A `select` makes
-`existing` typed `{ id: string }`, so returning any other field is a **compile
-error** under `strict`. The fix cannot silently regress.
+`existing` typed `{ id: string }`, so an edit that tries to *read* any other
+field off it — `existing.email`, say — is a **compile error** under `strict`.
+That is narrower than it sounds: an edit that widens the `select` and then
+returns the wider `existing` compiles cleanly, because `respondOk` is generic
+over whatever it is handed, so nothing pins the response shape to the query
+shape at the type level. What actually catches a widened `select` is the
+exhaustive `Object.keys(...)` assertions in the integration tests (see
+Testing), not the compiler. Query-level narrowing is still the better fix over
+projecting at the response — it just is not the unconditional compile-time
+guarantee this made it sound like.
 
 Nothing in the branch reads any other field of `existing` — only `existing.id`,
 at the `teacherStudent.create` and the response.
 
-### 2. Rate limit, keyed per teacher
+### 2. Rate limit, keyed per teacher — shared across both write routes
 
 ```ts
-const limit = checkRateLimit(`students:${session.teacherId}`, 30, 60 * 60 * 1000);
-if (!limit.allowed) {
-  return respondError('Too many student additions. Try again later.', 429);
+// src/lib/rate-limit.ts
+export function checkStudentWriteLimit(teacherId: string): RateLimitResult {
+  return checkRateLimit(`students:${teacherId}`, 50, 60 * 60 * 1000);
 }
 ```
 
-Placed after `requireTeacher` and before `parseBody`, matching
-`teachers/route.ts:12-18`.
+```ts
+const limit = checkStudentWriteLimit(session.teacherId);
+if (!limit.allowed) {
+  return respondError(`Too many student requests. Try again in ${minutes} minute(s).`, 429);
+}
+```
+
+Placed after `requireTeacher`/`requireSession` and before `parseBody`, matching
+`teachers/route.ts:12-18`. Called from two sites: `POST /api/students`, and the
+teacher branch of `PUT /api/students/[id]` (Design §3) — same key
+(`students:${teacherId}`), so the two routes spend from one bucket. See the
+correction below for why.
 
 **Why per teacher rather than per IP.** The caller is authenticated, so IP keying
 is strictly weaker — evadable by rotating IPs, and it punishes teachers sharing a
@@ -169,12 +187,45 @@ case, which drops the IP limit entirely when no proxy header is present.
 unconditional per-email limit; `teachers/route.ts` has no second limit and is
 genuinely unthrottled in that case. A teacher key needs no fallback at all.
 
-**Why 30/hour.** A teacher entering a workshop roster in one sitting must not hit
-it; 25-30 is a realistic upper bound for that. At 30/hour a sweep over 10,000
-candidate addresses costs `10000 / 30 = 333 hours = 13.9 days` and leaves ~10,000
-junk `Student` rows behind — a real price and a loud signal, not a wall. The wall
-is the invitation flow (see "Filed, not folded"); this limit is what holds until
-it lands.
+**Correction — this section originally left the sibling route unbounded.** As
+first written, this design put the limiter only on `POST /api/students`, at
+30/hour, and treated that as a bound on the disclosure. It was not one. A PR
+review found, and it was confirmed by running it, that the teacher branch of
+`PUT /api/students/[id]` is an **unmetered** twin of the same oracle:
+`createStudentSchema` requires `email`, so every call into that branch writes
+one straight into the `@unique` `email` column with no pre-check, and Prisma's
+`P2002` on the collision surfaces through `classifyApiError`
+(`src/lib/api-errors.ts:74-82`) as a plain `409` — no different in kind from
+the `POST`'s 200-vs-201. A single throwaway unclaimed contact, `PUT` repeatedly
+with a new candidate email each time, probes indefinitely: `409` means taken,
+`200` means free, and each `200` moves that same contact's email to the next
+candidate. No new `Student` row is ever created, so the probe trips neither the
+`POST` limiter nor the junk-row signal described below — it is invisible to
+both. Measured: 40 consecutive probes returned 20×409 / 20×200 and zero 429s.
+
+**Resolution.** Both routes write a client-supplied `email` to the same
+`@unique` column, so metering one and not the other leaves the pair unbounded.
+They now share a single hourly budget, keyed on the teacher, via
+`checkStudentWriteLimit` in `src/lib/rate-limit.ts`. Raised from 30/hour to
+**50/hour** in the same change, since the shared budget now has to cover a
+teacher's corrections through the `PUT` path in the same sitting a roster is
+entered through `POST`, not only the adds.
+
+**Why 50/hour.** A teacher entering a workshop roster, then fixing a few typos
+in it, in one sitting must not hit it. At 50/hour a sweep over 10,000 candidate
+addresses costs `10000 / 50 = 200 hours = 8.3 days`. Run through `POST` that
+also leaves ~10,000 junk `Student` rows behind — a real price and a loud
+signal; run through the `PUT` twin instead it leaves no rows at all, so time is
+the only cost that variant pays. Neither is a wall. The wall is the invitation
+flow (see "Filed, not folded"); this limit is what holds until it lands.
+
+**This is an order of magnitude, not a guarantee.** The limiter
+(`src/lib/rate-limit.ts`) is in-process: a deploy or restart hands every bucket
+a fresh budget, so "8.3 days" assumes a server that runs that long without one.
+Its backing map is also shared across every rate-limited key in the app, capped
+at 10,000 entries (`MAX_KEYS`), and evicts the oldest-inserted bucket once
+full — so a teacher's bucket can be reset by unrelated load elsewhere in the
+app, not only by the window elapsing.
 
 ### 3. The sibling in the same family: teacher `PUT`
 
@@ -186,13 +237,26 @@ is the only field it reads.
 **Its severity, stated honestly rather than inflated to match.** This branch fires
 only for an **unclaimed** student the teacher is already linked to, and the
 reference `GET` at `:49` states that unclaimed carries no privacy restrictions —
-so `firstName`, `lastName` and `email` are legitimately the teacher's to see here.
-What actually escapes the `GET` contract is `reminderPref`, `emailNotifications`,
-`incomeTier`, `tierSelectedAt`, `deletedAt`, and `accountId` — which is provably
-always `null` on this path, because `Student_claim_link_check`
+so `firstName`, `lastName`, `email` and `incomeTier` are legitimately the
+teacher's to see here; `incomeTier` is already part of the `GET` contract
+unconditionally (`:55`), so this branch adds nothing new on that field. What
+actually escapes the `GET` contract is `reminderPref`, `emailNotifications`,
+`tierSelectedAt`, `deletedAt`, and `accountId`.
+
+`accountId` being always `null` on this path takes two things together, not
+one. `Student_claim_link_check`
 (`prisma/migrations/20260721061528_student_claim_link_check/migration.sql`)
 enforces `("claimedAt" IS NULL) = ("accountId" IS NULL)` and `:109` has already
-403'd every claimed student.
+403'd every claimed student — that proves it for the row as read. The
+load-bearing other half is that nothing in the request can subvert it from the
+write side: this branch parses the body with `createStudentSchema`, not
+`updateStudentSchema`, and that schema admits only `firstName`, `lastName` and
+`email` — there is no field a caller could submit that would land in
+`accountId`. Worth noting separately: the pre-check load at `:107` and the
+`update` at `:126` are two separate statements, not one transaction. Nothing
+writes to this row between them today, so the gap is inert, but it is a gap —
+a future edit that adds a second write in between should not assume the
+claimed-check still holds by the time the update runs.
 
 So this is a **shape inconsistency, not a disclosure**. It is folded in because it
 is the same defect shape in the same file: leaving it signals to the next reader
@@ -210,14 +274,27 @@ not a defect, not because it was overlooked.
 ### 4. Status codes stay as they are
 
 200 for an already-existing student, 201 for a created one. Unifying them was
-considered and rejected: it does not close the account-existence oracle. See
-"What this does not do" below for the measurement that rejected it.
+considered and rejected: it does not close the Student-row-existence oracle —
+the disclosure is that a **Student row** exists for the address, not that an
+**Account** does, and unifying the status would not touch the channel that
+actually carries that bit. See "What this does not do" below for the
+measurement that rejected it.
 
 ## What this does not do
 
-**The oracle is metered, not closed.** After the fix, a teacher still learns
-whether an email is registered — and unifying the status would not change that,
-which was measured rather than assumed:
+**The oracle is metered, not closed — and it is not the "account-existence"
+oracle the name suggests.** After the fix, a teacher still learns whether a
+**Student row** exists for an email — not whether an `Account` does, and the
+two are not the same thing. This route's own 201 branch creates a `Student`
+row with no `Account` behind it at all, and any other teacher's unclaimed CRM
+contact (`accountId: null`) answers the existing-branch's 200 exactly the same
+way a self-registered address does. So the 200/201 split, and the follow-up
+`GET` that recovers it, bundle two distinct leaks into one bit: whether the
+address has ever self-registered, **and**, separately, whether it is already
+sitting in some *other* teacher's contacts — CRM membership the address's
+owner is never told about. That second leak has no name elsewhere in this
+document; call it the **CRM-membership leak**. Unifying the status would not
+close either half, which was measured rather than assumed:
 
 ```
 POST {firstName:"Zzz", lastName:"Qqq", email:<target>}   → 200
@@ -228,23 +305,40 @@ then GET /api/students as the same teacher:
 ```
 
 The already-exists branch ignores the submitted names, so the pre-existing
-student surfaces under their real name with `claimedAt` set. One follow-up `GET`
-recovers the bit either way. A unified status would have been a guard that could
-not fail — exactly the shape this project keeps finding at review.
+student surfaces under their real name — that returned **name** is the channel
+that recovers the row-exists bit on its own, independent of the status code.
+`claimedAt` is a *different* bit riding along in the same response: whether
+that row's owner has actually claimed an account, not whether the row exists
+at all. This measurement shows both changing together only because the chosen
+`target` happened to be a claimed student; a `target` that was instead an
+unclaimed CRM contact would answer 200 with `claimedAt=null` too — identical to
+the freshly-created row on that field — and the name would still be what gives
+it away. A unified status would have removed one guard that could not fail,
+not the leak itself — exactly the shape this project keeps finding at review.
+
+(Commit `cfdd118`'s subject — "POST /api/students was an unmetered
+account-existence oracle" — carries this same imprecision. It already sits on
+this branch's history and cannot be corrected without rewriting it; this
+document is the correction.)
 
 The real control is whether a teacher may create the link at all knowing only an
 email. That question **has** been answered — acceptance will be required — but the
 answer is a feature, not a guard, so it ships separately. Until it does, the rate
 limit is what stands between this route and a bulk sweep.
 
-**A probe's link is permanent, and the student cannot remove it.** A successful
-probe leaves a `TeacherStudent` row, and the only paths that delete one are the
-teacher's own `DELETE /api/students/[id]` (`students/[id]/route.ts:170`, teacher-
-gated) and full account erasure (`services/gdpr.ts:223`). The student sees the
-stranger listed on their privacy settings and can remove them only by deleting
-their entire account. This is the sharpest remaining consequence of "metered,
-not closed", and the invitation-flow issue must decide unlink semantics, not
-only link semantics.
+**A probe's link is permanent, and the student cannot remove just it.** A
+successful probe leaves a `TeacherStudent` row, and there are three paths that
+delete one: the teacher's own `DELETE /api/students/[id]`
+(`students/[id]/route.ts:161`, teacher-gated), the student's own account
+erasure (`services/gdpr.ts:223`, `deleteStudentAccount`), and teacher-account
+erasure (`services/gdpr.ts:363`, `deleteTeacherAccount` — a teacher who deletes
+their own account takes every link with them, including to students they never
+had a real relationship with). Of the three, only the student's own erasure is
+theirs to invoke, and it is total, not surgical: the student sees the stranger
+listed on their privacy settings and can remove them only by deleting their
+entire account, not just that one link. This is the sharpest remaining
+consequence of "metered, not closed", and the invitation-flow issue must
+decide unlink semantics, not only link semantics.
 
 **`incomeTier` remains readable by any linked teacher.** Not fixed here, and the
 reason is worth writing down rather than rediscovering. Prices are
@@ -274,9 +368,15 @@ the fix: today the response carries 16 keys.
    `incomeTier: 5` set and no `StudentPrivacy` row; a second teacher with no link
    POSTs that email. Assert `Object.keys(json.data)` deep-equals `['id']`.
 
-   A new fixture is required: every student in this file today is created without
-   `claimedAt`, and unclaimed is precisely the case the code deliberately does not
-   gate — a test built on the existing fixtures would pass against the bug.
+   A new fixture is required, but not for the reason it first looks like. `POST
+   /api/students` never reads `claimedAt` at all — there is no unclaimed-only
+   gate here for a test to fall vacuously against, so any existing fixture
+   would exercise the bug just as well. What actually rules out the file's
+   *top-level* fixtures (the 25-student loop and `unlinked`, all created
+   without `claimedAt`) is that none of them has `phone`, `birthday` or
+   `address` set — the fields this disclosure actually needs to demonstrate.
+   The new fixture exists to show what leaked, not to dodge a gate that isn't
+   there.
 
    The assertion is **exhaustive on keys**, not field-by-field absence. A test
    asserting `phone === undefined` and three siblings cannot fail when someone
@@ -286,16 +386,29 @@ the fix: today the response carries 16 keys.
    assertion at `:147` (`json.data.firstName`); the `expect(res.status).toBe(201)`
    at `:145` stays valid.
 
-3. **Rate limit.** Its own teacher, so the bucket key is fresh — the limiter is
-   in-process on the server and integration tests cannot reset it over HTTP. 30
-   POSTs succeed, the 31st returns 429.
+3. **Rate limit — one shared budget.** Its own teacher, so the bucket key is
+   fresh — the limiter is in-process on the server and integration tests cannot
+   reset it over HTTP. 50 `POST`s succeed, the 51st returns 429.
+
+   Because the fix now shares one bucket between `POST /api/students` and the
+   teacher branch of `PUT /api/students/[id]` (Design §2's correction), a
+   second test spends it across both on purpose — one `POST` to create a real
+   contact, then 49 `PUT`s against that same contact's id, each moving its
+   email to a fresh candidate — and confirms the 51st write of either kind is
+   refused. Giving the `PUT` its own separate bucket would pass every other
+   test in the file unnoticed; only this one would catch it. A third test
+   confirms an invalid body still spends a hit, because the limiter runs
+   before `parseBody`: 50 rejected bodies, then a flawless 51st request
+   refused anyway.
 
    Budget check on the shared teacher's bucket: the file's existing POSTs are at
-   `:136` (create), `:158` (409) and `:210` (invalid body) = **3**. `:187` uses a
-   second teacher and `:219` sends no session, so it never reaches the limiter —
-   the check sits after `requireTeacher`. The new disclosure test also uses its
-   own stranger-teacher. 3 of 30 leaves ample headroom, but note that the invalid
-   body at `:210` *does* count a hit, because the limiter runs before `parseBody`.
+   `:136` (create), `:158` (409) and `:210` (invalid body) = **3**, plus 2 more
+   spent by the `PUT` describes later in the file. `:187` uses a second teacher
+   and `:219` sends no session, so neither reaches the limiter — the check sits
+   after `requireTeacher`/`requireSession`. The new disclosure test also uses
+   its own stranger-teacher. A handful of hits out of 50 leaves ample headroom,
+   but note that the invalid body at `:210` *does* count a hit, because the
+   limiter runs before `parseBody`.
 
    The existing `expect(json.data.id).toBe(createdStudentId)` at `:201` stays
    valid unchanged — it already asserts only the id.
