@@ -107,7 +107,7 @@ describe('waitlist promotion joins the teacher roster (#166)', () => {
       headers: { 'Content-Type': 'application/json', ...cookie(claimStudentToken) },
       body: JSON.stringify({ classId: claimClassId }),
     });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
 
     const link = await prisma.teacherStudent.findUnique({
       where: { teacherId_studentId: { teacherId, studentId: claimStudentId } },
@@ -1567,4 +1567,4 @@ PR body must record: what was measured and where the numbers came from; that the
 
 **Type consistency.** `inviteContact`, `acceptInvitation`, `declineInvitation`, `unlinkTeacher`, `resolveInvitationOnLink`, `notifyInvitee` are each defined once and referenced with the same names and shapes throughout. `InviteRefusal` values (`ALREADY_INVITED | ALREADY_LINKED | DECLINED`) match `REFUSAL_MESSAGES`' keys and the codes asserted in Task 3 and 4 tests. `DECLINED_IS_PERMANENT` and `ALREADY_ANSWERED` are route-level codes, deliberately not in `InviteRefusal`.
 
-**Known soft spots, stated rather than hidden.** Task 1's test snippet uses fixture names (`waitlistStudentId`, `fullClassId`, `claimStudentToken`) that must be reconciled with what `waitlist-api.test.ts` actually defines — read its `beforeAll` first. Task 9 and 11's UI steps are specified by behaviour and copy rather than by markup; that is deliberate, since the design system is the constraint and the component tests pin the wiring.
+**Known soft spots, stated rather than hidden.** Task 1's test snippet uses fixture names (`waitlistStudentId`, `fullClassId`, `claimStudentToken`) that must be reconciled with what `waitlist-api.test.ts` actually defines — read its `beforeAll` first. **Resolved during execution, and worse than "rename a few variables":** the file's shared fixtures are deliberately exhausted and mutated by the pre-existing describe block, so reusing them would have order-coupled the new tests to it. The new block owns two students and two classes of its own. The snippet also asserted `200` on the claim route, which returns `201` — corrected above. Task 9 and 11's UI steps are specified by behaviour and copy rather than by markup; that is deliberate, since the design system is the constraint and the component tests pin the wiring.
