@@ -77,7 +77,11 @@ export function CreateStudentForm() {
 
       if (!res.ok) {
         const json: { error?: { message?: string } } = await res.json();
-        setSubmitError(json.error?.message ?? 'Failed to create student');
+        // #166: this route no longer creates a student, it sends an
+        // invitation. The fallback only shows when the server sent no
+        // message of its own — the 409 refusals all carry theirs, from
+        // REFUSAL_MESSAGES.
+        setSubmitError(json.error?.message ?? 'Failed to send the invitation');
         return;
       }
 

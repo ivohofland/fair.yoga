@@ -35,12 +35,37 @@ export const REFUSAL_MESSAGES: Record<InviteRefusal, string> = {
  * The Student lookup below is deliberately AFTER the outcome is fixed and
  * feeds only the roster-link check. Do not hoist it, and do not add a
  * branch on `student === null`.
+ *
+ * One residual channel is knowingly left open: the "Student exists but is not
+ * on this teacher's roster" path issues one extra query, so it is marginally
+ * slower than the path where no Student row exists. That is outside the
+ * property this function claims — identical status, identical body, identical
+ * side effects — and closing it would mean issuing dummy queries to flatten
+ * the timing, which is not worth the contortion at this threat level.
  */
 export async function inviteContact(
   db: PrismaClient,
   input: { teacherId: string; email: string; firstName: string; lastName: string },
 ): Promise<{ ok: true; value: InviteResult } | { ok: false; reason: InviteRefusal }> {
-  const { teacherId, email, firstName, lastName } = input;
+  const { teacherId, firstName, lastName } = input;
+
+  // The CRM is the one place in this app where one human types ANOTHER
+  // human's address, and a case slip here fails silently: the teacher sees a
+  // pending invitation, the student never sees anything. So invitation emails
+  // are normalised on write, and this column is lowercase by construction.
+  //
+  // Normalised here rather than in `createInvitationSchema`, because a
+  // `.transform()` there would hide the schema's `.shape` from the
+  // server-owned-field walk in `src/lib/schemas.test.ts:412-453`.
+  //
+  // Deliberately scoped to Invitation. Account and Student emails are stored
+  // as typed and compared case-sensitively throughout this app (magic-link
+  // send looks accounts up with the raw string) — a systemic, pre-existing
+  // bug, filed separately, not one to half-fix from in here. Later tasks
+  // match an account to an invitation by lowercasing the account's email in
+  // JS before querying, which stays index-friendly exactly because this
+  // column is always lowercase.
+  const email = input.email.toLowerCase();
 
   const existing = await db.invitation.findUnique({
     where: { teacherId_email: { teacherId, email } },
@@ -55,6 +80,11 @@ export async function inviteContact(
   // A link with no invitation row: this student booked a class instead of
   // being invited. Their being on this teacher's roster is the teacher's
   // own data, so refusing here discloses nothing new.
+  //
+  // The lookup uses the normalised address, so it misses a Student row stored
+  // with different case. That fails toward creating an invitation, never
+  // toward a disclosure, and it is the same systemic case-sensitivity noted
+  // above rather than anything this branch introduces.
   const student = await db.student.findUnique({ where: { email }, select: { id: true } });
   if (student) {
     const link = await db.teacherStudent.findUnique({

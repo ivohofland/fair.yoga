@@ -134,14 +134,14 @@ describe('GET /api/students', () => {
 describe('POST /api/students', () => {
   // Budget accounting: POST /api/students and the teacher branch of
   // PUT /api/students/[id] share one 50-per-hour bucket keyed on the teacher
-  // (`checkStudentWriteLimit`). `teacherToken` spends four hits in this
-  // describe, two in the oracle describe immediately below, and more in the
-  // PUT describes at the bottom of the file — Task 10 of #166 removes those,
-  // so a running total written here would go stale before it was read. The
-  // 401 cases cost nothing: auth runs before the limiter. What matters to
-  // anyone adding requests on `teacherToken` is the ceiling, 50, and that the
-  // burst tests below each mint their own teacher precisely so they get a
-  // fresh bucket.
+  // (`checkStudentWriteLimit`). `teacherToken` spends one hit per request in
+  // this describe, two more in the oracle describe immediately below, and
+  // more again in the PUT describes at the bottom of the file — Task 10 of
+  // #166 removes those, so a running total written here would go stale before
+  // it was read. The 401 cases cost nothing: auth runs before the limiter.
+  // What matters to anyone adding requests on `teacherToken` is the ceiling,
+  // 50, and that the burst tests below each mint their own teacher precisely
+  // so they get a fresh bucket.
   const newEmail = `crm-new-${suffix}@test.local`;
 
   it('creates an invitation and no student row', async () => {
@@ -232,6 +232,90 @@ describe('POST /api/students', () => {
     }
   });
 
+  // The roster-link refusal — the other arm of the branch above, and the one
+  // nothing covered until now. It matters more than an ordinary coverage gap:
+  // that block in `inviteContact` is exactly where a future edit would
+  // reintroduce a Student-existence branch, and the docblock's "do not add a
+  // branch on `student === null`" is prose, which no test can enforce. Delete
+  // the student/link block outright and this is the test that goes red.
+  it('returns 409 ALREADY_LINKED for a student already on the roster', async () => {
+    // One of the 25 seeded in the file's beforeAll: linked to this teacher
+    // and carrying no invitation row, which is precisely the "booked a class
+    // instead of being invited" case the branch exists for. Refusing tells
+    // the teacher only about their own roster.
+    const linked = await prisma.student.findUniqueOrThrow({
+      where: { id: studentIds[0]! },
+      select: { email: true },
+    });
+
+    const res = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({ firstName: 'Already', lastName: 'Mine', email: linked.email }),
+    });
+
+    expect(res.status).toBe(409);
+    const json = await res.json();
+    expect(json.error.code).toBe('ALREADY_LINKED');
+
+    // A refusal, not a refusal-shaped success: no invitation was written
+    // beside it.
+    expect(
+      await prisma.invitation.findUnique({
+        where: { teacherId_email: { teacherId, email: linked.email } },
+      }),
+    ).toBeNull();
+  });
+
+  // #166 made `createInvitationSchema` `.strict()`, and that is the one
+  // user-visible behaviour change on this route besides the status codes.
+  // Drop the `.strict()` and this is the only test that fails: `incomeTier`
+  // would be stripped in silence and the request would 201. `incomeTier`
+  // deliberately — it is a real Student column, it used to live on this
+  // schema, and it is the student's own choice to make, never the teacher's.
+  it('rejects an unknown key rather than stripping it', async () => {
+    const strictEmail = `crm-strict-${suffix}@test.local`;
+
+    const res = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({
+        firstName: 'Strict',
+        lastName: 'Body',
+        email: strictEmail,
+        incomeTier: 1,
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(
+      await prisma.invitation.findUnique({
+        where: { teacherId_email: { teacherId, email: strictEmail } },
+      }),
+    ).toBeNull();
+  });
+
+  // The CRM is the one place in this app where one human types ANOTHER
+  // human's address, so a case slip is silent: the teacher sees a pending
+  // invitation and the student never sees a thing. `inviteContact`
+  // normalises on write, which is what lets later tasks match an account to
+  // an invitation by lowercasing in JS instead of reaching for
+  // `mode: 'insensitive'`.
+  it('stores the invitation email lowercased', async () => {
+    const typed = `CRM-Mixed-${suffix}@Test.Local`;
+
+    const res = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({ firstName: 'Mixed', lastName: 'Case', email: typed }),
+    });
+    expect(res.status).toBe(201);
+    const { data } = (await res.json()) as { data: { id: string } };
+
+    const invitation = await prisma.invitation.findUniqueOrThrow({ where: { id: data.id } });
+    expect(invitation.email).toBe(typed.toLowerCase());
+  });
+
   it('returns 400 for invalid input', async () => {
     const res = await fetch(`${BASE_URL}/api/students`, {
       method: 'POST',
@@ -265,60 +349,94 @@ describe('POST /api/students', () => {
 });
 
 describe('POST /api/students — the enumeration oracle is closed (#166)', () => {
+  // Fixtures inside the `try` and cleanup in the `finally`, per the
+  // convention this file states at the burst tests below: a throw between
+  // `student.create` and the cleanup would otherwise strand a Student and an
+  // Account on the unique `victim-…` address, and the NEXT run's create would
+  // then fail in here rather than where the real problem is. That matters
+  // more for this test than for most — it is the one that goes red while
+  // somebody is still getting `inviteContact` right.
   it('answers identically for a registered address and a free one', async () => {
-    // A real, claimed student belonging to nobody in this test.
     const victimEmail = `victim-${suffix}@test.local`;
-    const victim = await prisma.student.create({
-      data: {
-        firstName: 'Real', lastName: 'Person', email: victimEmail,
-        claimedAt: new Date(), account: { create: { email: victimEmail } },
-      },
-      select: { id: true, accountId: true },
-    });
     const freeEmail = `never-seen-${suffix}@test.local`;
+    let victim: { id: string; accountId: string | null } | undefined;
 
-    const post = (email: string) =>
-      fetch(`${BASE_URL}/api/students`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
-        body: JSON.stringify({ firstName: 'Zzz', lastName: 'Qqq', email }),
+    try {
+      // A real, claimed student belonging to nobody in this test.
+      victim = await prisma.student.create({
+        data: {
+          firstName: 'Real', lastName: 'Person', email: victimEmail,
+          claimedAt: new Date(), account: { create: { email: victimEmail } },
+        },
+        select: { id: true, accountId: true },
       });
 
-    const [taken, free] = await Promise.all([post(victimEmail), post(freeEmail)]);
+      const post = (email: string) =>
+        fetch(`${BASE_URL}/api/students`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+          body: JSON.stringify({ firstName: 'Zzz', lastName: 'Qqq', email }),
+        });
 
-    // Same status.
-    expect(taken.status).toBe(free.status);
-    expect(taken.status).toBe(201);
+      const [taken, free] = await Promise.all([post(victimEmail), post(freeEmail)]);
 
-    // Same body shape, and no field that could carry the bit.
-    const takenJson = await taken.json();
-    const freeJson = await free.json();
-    expect(Object.keys(takenJson.data)).toEqual(['id']);
-    expect(Object.keys(freeJson.data)).toEqual(Object.keys(takenJson.data));
+      // Same status.
+      expect(taken.status).toBe(free.status);
+      expect(taken.status).toBe(201);
 
-    // And no side effect that distinguishes them: no link, no Student row
-    // for the free address, and the victim's row untouched.
-    const link = await prisma.teacherStudent.findUnique({
-      where: { teacherId_studentId: { teacherId, studentId: victim.id } },
-    });
-    expect(link).toBeNull();
-    expect(await prisma.student.findUnique({ where: { email: freeEmail } })).toBeNull();
-    const after = await prisma.student.findUniqueOrThrow({ where: { id: victim.id } });
-    expect(after.firstName).toBe('Real');
+      // Same body shape, and no field that could carry the bit.
+      type Body = { data: { id: string } };
+      const takenJson = (await taken.json()) as Body;
+      const freeJson = (await free.json()) as Body;
+      expect(Object.keys(takenJson.data)).toEqual(['id']);
+      expect(Object.keys(freeJson.data)).toEqual(Object.keys(takenJson.data));
 
-    // Both produced an invitation in the same state.
-    for (const email of [victimEmail, freeEmail]) {
-      const inv = await prisma.invitation.findUniqueOrThrow({
-        where: { teacherId_email: { teacherId, email } },
+      // And no side effect that distinguishes them: no link, no Student row
+      // for the free address, and the victim's row untouched.
+      const link = await prisma.teacherStudent.findUnique({
+        where: { teacherId_studentId: { teacherId, studentId: victim.id } },
       });
-      expect(inv.status).toBe('pending');
-      expect(inv.origin).toBe('teacher_invite');
-      expect(inv.firstName).toBe('Zzz');
+      expect(link).toBeNull();
+      expect(await prisma.student.findUnique({ where: { email: freeEmail } })).toBeNull();
+      const after = await prisma.student.findUniqueOrThrow({ where: { id: victim.id } });
+      expect(after.firstName).toBe('Real');
+
+      // Both produced an invitation in the same state.
+      for (const [email, body] of [
+        [victimEmail, takenJson],
+        [freeEmail, freeJson],
+      ] as const) {
+        const inv = await prisma.invitation.findUniqueOrThrow({
+          where: { teacherId_email: { teacherId, email } },
+        });
+        expect(inv.status).toBe('pending');
+        expect(inv.origin).toBe('teacher_invite');
+        expect(inv.firstName).toBe('Zzz');
+        // And the id in the body is THIS row's. Without this, a regression
+        // that handed back the victim's Student id while still creating an
+        // invitation beside it would satisfy every assertion above.
+        expect(body.data.id).toBe(inv.id);
+      }
+    } finally {
+      if (teacherId) {
+        await prisma.invitation.deleteMany({ where: { teacherId } });
+      }
+      if (victim) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId: victim.id } });
+        await prisma.student.delete({ where: { id: victim.id } });
+        if (victim.accountId) {
+          await prisma.account.delete({ where: { id: victim.accountId } });
+        }
+      }
+      // Only exists if the pre-#166 create-a-Student-from-an-email behaviour
+      // has come back; swept anyway so a reappearing regression cannot strand
+      // it on a unique address and break the next run's fixtures.
+      const stray = await prisma.student.findUnique({ where: { email: freeEmail } });
+      if (stray) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId: stray.id } });
+        await prisma.student.delete({ where: { id: stray.id } });
+      }
     }
-
-    await prisma.invitation.deleteMany({ where: { teacherId } });
-    await prisma.student.delete({ where: { id: victim.id } });
-    await prisma.account.delete({ where: { id: victim.accountId! } });
   });
 });
 
