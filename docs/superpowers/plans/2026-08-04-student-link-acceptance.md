@@ -1024,6 +1024,18 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
   it('keeps the teacher_invite origin when one already existed', async () => {
     // The teacher typed that address; they already have it. Downgrading
     // the row to student_block would hide a contact they are entitled to.
+    //
+    // NOTE — this snippet was missing its action when written: it asserted
+    // on state without performing the unlink that produces it, so it would
+    // have passed on whatever a neighbouring test happened to leave behind.
+    // A test that asserts without acting is the exact defect this branch
+    // exists to hunt, sitting in the plan that hunts it. Drive it explicitly.
+    const res = await fetch(`${BASE_URL}/api/teacher-links/${invitingTeacherId}`, {
+      method: 'DELETE',
+      headers: cookie(studentToken),
+    });
+    expect(res.status).toBe(200);
+
     const row = await prisma.invitation.findUniqueOrThrow({
       where: { teacherId_email: { teacherId: invitingTeacherId, email: studentEmail } },
     });
@@ -1107,6 +1119,8 @@ The route reads the account email exactly as Task 5's does and calls this.
 - [ ] **Step 4: Run the tests** — expected PASS.
 
 - [ ] **Step 5: Prove the guards bite**
+
+**Assertion order inside `'writes an invisible tombstone'` is load-bearing, and the snippet above gets it wrong.** Put the raw-body check on `GET /api/invitations` *first*, before the DB-level `origin` and `findUniqueOrThrow` checks. Written in the snippet's order, mutation 1 fails on a plain field mismatch rather than naming the leaked address, and mutation 2 throws a Prisma not-found error instead of producing the 201-vs-409 the guard is supposed to demonstrate. Both mutations would still go red — but red for the wrong reason teaches the next reader nothing, and a mutation test whose failure message doesn't name the defect is only half a guard.
 
 1. Change the `create` branch's `origin` to `teacher_invite`. Expected: `'writes an invisible tombstone'` fails on the raw-body assertion, naming the leaked address.
 2. Delete the whole `invitation.upsert`. Expected: the re-invite assertion fails with `201` instead of `409`.
