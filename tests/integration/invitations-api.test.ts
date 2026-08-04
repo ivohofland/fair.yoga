@@ -9,10 +9,21 @@ let teacherId: string;
 let teacherAccountId: string;
 let teacherToken: string;
 
-// A second teacher who owns nothing in `teacherId`'s tests below — the
-// non-owner fixture for the 404-not-403 ownership tests (#166).
+// A second teacher who owns nothing in `teacherId`'s tests below.
 let otherTeacherId: string;
 let otherTeacherAccountId: string;
+
+// This row exists purely so GET's isolation test has something under a
+// different teacherId to prove it does NOT return. It is read-only for the
+// rest of the file: DELETE/PUT/PATCH's own 404-not-403 ownership tests each
+// create and clean up a dedicated row via `createOtherTeacherInvitation`
+// below, rather than sharing this one. A shared row would make only the
+// FIRST of those three describes to run a genuine proof against
+// `ownedInvitation`'s guard — under a broken guard, that describe's own
+// mutating call would consume the row for real, leaving the other two
+// describes' "another teacher's invitation" tests passing for the mundane
+// reason the row was already gone, not because their own call sites were
+// exercised.
 let otherTeacherInvitationId: string;
 
 // A single pending contact, present for the whole file: the GET suite reads
@@ -70,11 +81,17 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // FK order: invitation -> session -> teacher. Scoped by `in: [...]` over
-  // both teachers' ids/accountIds rather than one delete per known row, so
-  // this also sweeps anything a single `it()` created inline (the
-  // `student_block` tombstone, the declined rows) without that test needing
-  // its own afterAll.
+  // FK order: invitation -> session -> teacher -> account. Scoped by
+  // `in: [...]` over both teachers' ids/accountIds rather than one delete
+  // per known row, so this also sweeps anything a single `it()` created
+  // inline (the `student_block` tombstone, the declined rows) without that
+  // test needing its own afterAll.
+  //
+  // Account is included, unlike the primary fixture in
+  // students-api.test.ts:1-73 which leaves it behind: `otherTeacherAccountId`
+  // here plays the same role as the *nested* ownership fixtures in that file
+  // (students-api.test.ts:508-517, :892-914), which do delete their account.
+  // Omitting it was this file's own defect, not a precedent to follow.
   const teacherIds = [teacherId, otherTeacherId].filter(Boolean);
   const accountIds = [teacherAccountId, otherTeacherAccountId].filter(Boolean);
   if (teacherIds.length) {
@@ -86,50 +103,86 @@ afterAll(async () => {
   if (teacherIds.length) {
     await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
   }
+  if (accountIds.length) {
+    await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+  }
   await prisma.$disconnect();
 });
+
+/**
+ * A fresh invitation under `otherTeacherId`, for a single ownership test to
+ * attempt a mutation against and expect 404. Each of DELETE/PUT/PATCH's
+ * "refuses another teacher's invitation" tests calls this itself rather
+ * than sharing one row — see the comment on `otherTeacherInvitationId`
+ * above for why a shared row would only prove the guard for whichever
+ * describe happens to run first.
+ */
+async function createOtherTeacherInvitation(label: string) {
+  return prisma.invitation.create({
+    data: {
+      teacherId: otherTeacherId,
+      email: `inv-other-${label}-${suffix}@test.local`,
+      firstName: 'Other',
+      lastName: 'Contact',
+    },
+    select: { id: true },
+  });
+}
 
 describe('GET /api/invitations', () => {
   it('returns this teacher\'s contacts and never another teacher\'s', async () => {
     const res = await fetch(`${BASE_URL}/api/invitations`, { headers: cookie(teacherToken) });
     expect(res.status).toBe(200);
-    const json = (await res.json()) as { data: { invitations: Array<{ email: string }>; total: number } };
+    const json = (await res.json()) as {
+      data: { invitations: Array<{ id: string; email: string }>; total: number };
+    };
     expect(json.data.invitations.map((i) => i.email)).toEqual([pendingEmail]);
     expect(json.data.total).toBe(1);
+    // `otherTeacherInvitationId` exists in the database at this point
+    // (created under `otherTeacherId` in beforeAll) — its absence above is
+    // the teacherId filter working, not an empty table making the equality
+    // check above vacuous.
+    expect(json.data.invitations.some((i) => i.id === otherTeacherInvitationId)).toBe(false);
   });
 
   it('never returns a student_block row', async () => {
     // The tombstone a student writes by unlinking carries an address the
     // teacher may never have had — shareEmail defaults false.
     const blockedEmail = `inv-blocked-${suffix}@test.local`;
-    const blocked = await prisma.invitation.create({
-      data: {
-        teacherId, email: blockedEmail, status: 'declined', origin: 'student_block',
-      },
-    });
+    let blocked: { id: string } | undefined;
     try {
+      blocked = await prisma.invitation.create({
+        data: {
+          teacherId, email: blockedEmail, status: 'declined', origin: 'student_block',
+        },
+        select: { id: true },
+      });
+
       const res = await fetch(`${BASE_URL}/api/invitations`, { headers: cookie(teacherToken) });
       const body = await res.text();
       // Assert on the raw body, not the parsed row count: a future select
       // that leaks the address through some other field still fails here.
       expect(body).not.toContain(blockedEmail);
     } finally {
-      await prisma.invitation.delete({ where: { id: blocked.id } });
+      if (blocked) await prisma.invitation.delete({ where: { id: blocked.id } });
     }
   });
 
   it('returns archived contacts only under ?archived=true', async () => {
     const archivedEmail = `inv-archived-${suffix}@test.local`;
-    const archived = await prisma.invitation.create({
-      data: { teacherId, email: archivedEmail, isArchived: true },
-    });
+    let archived: { id: string } | undefined;
     try {
+      archived = await prisma.invitation.create({
+        data: { teacherId, email: archivedEmail, isArchived: true },
+        select: { id: true },
+      });
+
       const res = await fetch(`${BASE_URL}/api/invitations?archived=true`, { headers: cookie(teacherToken) });
       expect(res.status).toBe(200);
       const json = (await res.json()) as { data: { invitations: Array<{ email: string }> } };
       expect(json.data.invitations.map((i) => i.email)).toEqual([archivedEmail]);
     } finally {
-      await prisma.invitation.delete({ where: { id: archived.id } });
+      if (archived) await prisma.invitation.delete({ where: { id: archived.id } });
     }
   });
 });
@@ -171,13 +224,22 @@ describe('DELETE /api/invitations/[id]', () => {
   });
 
   it('refuses another teacher\'s invitation', async () => {
-    const res = await fetch(`${BASE_URL}/api/invitations/${otherTeacherInvitationId}`, {
-      method: 'DELETE', headers: cookie(teacherToken),
-    });
-    expect(res.status).toBe(404);
-    // And it truly wasn't touched — a 404 that quietly deleted the row
-    // anyway would still pass a status-only assertion.
-    expect(await prisma.invitation.findUnique({ where: { id: otherTeacherInvitationId } })).not.toBeNull();
+    let other: { id: string } | undefined;
+    try {
+      other = await createOtherTeacherInvitation('delete-target');
+      const res = await fetch(`${BASE_URL}/api/invitations/${other.id}`, {
+        method: 'DELETE', headers: cookie(teacherToken),
+      });
+      expect(res.status).toBe(404);
+      // And it truly wasn't touched — a 404 that quietly deleted the row
+      // anyway would still pass a status-only assertion.
+      expect(await prisma.invitation.findUnique({ where: { id: other.id } })).not.toBeNull();
+    } finally {
+      // `deleteMany`, not `delete`: under a broken ownership guard this
+      // test's own DELETE call may already have removed the row for real,
+      // and cleanup must not throw over that.
+      if (other) await prisma.invitation.deleteMany({ where: { id: other.id } });
+    }
   });
 });
 
@@ -223,10 +285,13 @@ describe('PUT /api/invitations/[id]', () => {
 
   it('refuses to update a declined row with the same 409 DELETE uses, because an edited address would sidestep the tombstone', async () => {
     const putDeclinedEmail = `inv-put-declined-${suffix}@test.local`;
-    const declined = await prisma.invitation.create({
-      data: { teacherId, email: putDeclinedEmail, status: 'declined', respondedAt: new Date() },
-    });
+    let declined: { id: string } | undefined;
     try {
+      declined = await prisma.invitation.create({
+        data: { teacherId, email: putDeclinedEmail, status: 'declined', respondedAt: new Date() },
+        select: { id: true },
+      });
+
       const res = await fetch(`${BASE_URL}/api/invitations/${declined.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
@@ -241,17 +306,26 @@ describe('PUT /api/invitations/[id]', () => {
       const row = await prisma.invitation.findUniqueOrThrow({ where: { id: declined.id } });
       expect(row.email).toBe(putDeclinedEmail);
     } finally {
-      await prisma.invitation.delete({ where: { id: declined.id } });
+      if (declined) await prisma.invitation.delete({ where: { id: declined.id } });
     }
   });
 
   it('refuses another teacher\'s invitation', async () => {
-    const res = await fetch(`${BASE_URL}/api/invitations/${otherTeacherInvitationId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
-      body: JSON.stringify({ firstName: 'Hijack' }),
-    });
-    expect(res.status).toBe(404);
+    let other: { id: string } | undefined;
+    try {
+      other = await createOtherTeacherInvitation('put-target');
+      const res = await fetch(`${BASE_URL}/api/invitations/${other.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+        body: JSON.stringify({ firstName: 'Hijack' }),
+      });
+      expect(res.status).toBe(404);
+      // And it truly wasn't touched.
+      const row = await prisma.invitation.findUniqueOrThrow({ where: { id: other.id } });
+      expect(row.firstName).toBe('Other');
+    } finally {
+      if (other) await prisma.invitation.deleteMany({ where: { id: other.id } });
+    }
   });
 });
 
@@ -283,10 +357,19 @@ describe('PATCH /api/invitations/[id]', () => {
   });
 
   it("refuses another teacher's invitation, even for the state it's already in", async () => {
-    const res = await fetch(`${BASE_URL}/api/invitations/${otherTeacherInvitationId}?state=unarchived`, {
-      method: 'PATCH', headers: cookie(teacherToken),
-    });
-    expect(res.status).toBe(404);
+    let other: { id: string } | undefined;
+    try {
+      other = await createOtherTeacherInvitation('patch-target');
+      const res = await fetch(`${BASE_URL}/api/invitations/${other.id}?state=unarchived`, {
+        method: 'PATCH', headers: cookie(teacherToken),
+      });
+      expect(res.status).toBe(404);
+      // And it truly wasn't touched.
+      const row = await prisma.invitation.findUniqueOrThrow({ where: { id: other.id } });
+      expect(row.isArchived).toBe(false);
+    } finally {
+      if (other) await prisma.invitation.deleteMany({ where: { id: other.id } });
+    }
   });
 
   it('sets the state it names, and repeating it is a no-op that reports unchanged', async () => {
@@ -320,15 +403,18 @@ describe('PATCH /api/invitations/[id]', () => {
   // Archiving is allowed on a declined row — that is the escape hatch DELETE
   // and PUT both point to instead of removing the tombstone outright.
   it('archives a declined row', async () => {
-    const declined = await prisma.invitation.create({
-      data: {
-        teacherId,
-        email: `inv-patch-declined-${suffix}@test.local`,
-        status: 'declined',
-        respondedAt: new Date(),
-      },
-    });
+    let declined: { id: string } | undefined;
     try {
+      declined = await prisma.invitation.create({
+        data: {
+          teacherId,
+          email: `inv-patch-declined-${suffix}@test.local`,
+          status: 'declined',
+          respondedAt: new Date(),
+        },
+        select: { id: true },
+      });
+
       const res = await fetch(`${BASE_URL}/api/invitations/${declined.id}?state=archived`, {
         method: 'PATCH', headers: cookie(teacherToken),
       });
@@ -337,7 +423,7 @@ describe('PATCH /api/invitations/[id]', () => {
       expect(body.data.isArchived).toBe(true);
       expect(body.data.action).toBe('archived');
     } finally {
-      await prisma.invitation.delete({ where: { id: declined.id } });
+      if (declined) await prisma.invitation.delete({ where: { id: declined.id } });
     }
   });
 });
