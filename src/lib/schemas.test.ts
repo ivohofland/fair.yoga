@@ -4,6 +4,7 @@ import {
   magicLinkSendSchema,
   passkeyAuthVerifySchema,
   createClassSchema,
+  createStudioClassSchema,
   updateClassSchema,
   updateClassTemplateSchema,
   updateTeacherSchema,
@@ -126,6 +127,21 @@ describe('createClassSchema', () => {
       'startTime',
       'targetRate',
       'teacherRoomId',
+    ]);
+  });
+});
+
+describe('createStudioClassSchema', () => {
+  // #148. templateId and studentCount reached prisma.studioClass.create through
+  // a rest spread, so neither name appeared in the handler at all.
+  it('accepts exactly the client-settable studio create field set', () => {
+    expect(Object.keys(createStudioClassSchema.shape).sort()).toEqual([
+      'classType',
+      'date',
+      'durationMinutes',
+      'hourlyRate',
+      'location',
+      'startTime',
     ]);
   });
 });

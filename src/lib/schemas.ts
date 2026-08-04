@@ -368,8 +368,6 @@ export const createStudioClassSchema = z.object({
   durationMinutes: z.number().int().positive(),
   location: z.string().min(1),
   hourlyRate: z.number().nonnegative(),
-  studentCount: z.number().int().nonnegative().nullable().optional(),
-  templateId: z.string().uuid().nullable().optional(),
 });
 
 export const updateStudioClassSchema = z.object({

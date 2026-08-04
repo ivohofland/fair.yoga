@@ -6,10 +6,10 @@ import NewStudioClassPage from './page';
  * #136. This page restated its six fields across separate `useState` hooks
  * and the POST body, with nothing checking the two agreed with
  * `createStudioClassSchema`. The compile-time pins in the source file hold
- * `StudioClassFormValues` against the schema — excluding `studentCount` and
- * `templateId` because neither belongs in this form, for the reasons at
- * `page.tsx:28-43` (not because the route ignores them; see #148) — this
- * test holds what a pin cannot see, which is what actually reaches the API.
+ * `StudioClassFormValues` against the schema with no exclusions — `studentCount`
+ * and `templateId` are gone from the create schema entirely as of #148, for
+ * the reasons at `page.tsx:28-40` — this test holds what a pin cannot see,
+ * which is what actually reaches the API.
  *
  * The page fetches nothing on mount, so the submit request is the first (and
  * only) `fetch` call.

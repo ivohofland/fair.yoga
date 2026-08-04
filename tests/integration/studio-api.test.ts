@@ -425,6 +425,52 @@ describe('/api/studio-classes', () => {
     expect(data.teacherId).toBe(ownerId);
   });
 
+  // #148. Both keys reached prisma.studioClass.create through a `{ date, ...rest }`
+  // spread, so neither name appeared anywhere in the handler — a grep for the
+  // key names found nothing, which is how this stayed hidden.
+  it("ignores another teacher's templateId instead of attaching it", async () => {
+    const victimTemplate = await makeTemplate(otherId, 'Victim Studio Template');
+
+    const res = await send('POST', ownerToken, '/api/studio-classes', {
+      classType: 'Squat Attempt',
+      date: '2099-07-02',
+      startTime: '19:00',
+      durationMinutes: 45,
+      location: 'Guest Studio',
+      hourlyRate: 55,
+      templateId: victimTemplate.id,
+    });
+    expect(res.status).toBe(201);
+
+    const { data } = (await res.json()) as { data: { id: string } };
+    const created = await prisma.studioClass.findUniqueOrThrow({ where: { id: data.id } });
+    expect(created.templateId).toBeNull();
+
+    expect(
+      await prisma.studioClass.count({ where: { templateId: victimTemplate.id } }),
+    ).toBe(0);
+  });
+
+  // Not a security gap — a teacher can set this on their own row via
+  // PUT /api/studio-classes/[id]. It is dead surface at create time: the form
+  // does not send it and student-count-editor.tsx sets it afterwards.
+  it('ignores studentCount at create time', async () => {
+    const res = await send('POST', ownerToken, '/api/studio-classes', {
+      classType: 'Count At Create',
+      date: '2099-07-03',
+      startTime: '19:00',
+      durationMinutes: 45,
+      location: 'Guest Studio',
+      hourlyRate: 55,
+      studentCount: 12,
+    });
+    expect(res.status).toBe(201);
+
+    const { data } = (await res.json()) as { data: { id: string } };
+    const created = await prisma.studioClass.findUniqueOrThrow({ where: { id: data.id } });
+    expect(created.studentCount).toBeNull();
+  });
+
   it("another teacher cannot read or edit the owner's studio class", async () => {
     for (const [method, body] of [
       ['GET', undefined],

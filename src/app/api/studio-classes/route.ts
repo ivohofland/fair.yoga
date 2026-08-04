@@ -21,13 +21,21 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const parsed = await parseBody(request, createStudioClassSchema);
   if ('error' in parsed) return parsed.error;
-  const { date, ...rest } = parsed.data;
+  const body = parsed.data;
 
+  // Fields are named rather than spread. The spread was not the vulnerability —
+  // Zod strips undeclared keys, so only declared keys ever rode it — but it did
+  // make `templateId` and `studentCount` invisible: neither name appeared in
+  // this handler, so grepping for them found nothing (#148).
   const studioClass = await prisma.studioClass.create({
     data: {
       teacherId: session.teacherId,
-      date: new Date(date),
-      ...rest,
+      classType: body.classType,
+      date: new Date(body.date),
+      startTime: body.startTime,
+      durationMinutes: body.durationMinutes,
+      location: body.location,
+      hourlyRate: body.hourlyRate,
     },
   });
 
