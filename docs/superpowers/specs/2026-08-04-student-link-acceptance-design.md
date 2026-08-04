@@ -156,13 +156,19 @@ enum InvitationStatus {
   declined
 }
 
+enum InvitationOrigin {
+  teacher_invite  // a contact the teacher typed — theirs to see and manage
+  student_block   // a block the student created by unlinking — never listed
+}
+
 model Invitation {
   id          String           @id @default(uuid())
   teacherId   String
   email       String
-  firstName   String
+  firstName   String           @default("")
   lastName    String           @default("")
   status      InvitationStatus @default(pending)
+  origin      InvitationOrigin @default(teacher_invite)
   isArchived  Boolean          @default(false)
   createdAt   DateTime         @default(now())
   respondedAt DateTime?
@@ -175,6 +181,21 @@ model Invitation {
 
 `TeacherStudent` is **not modified**. It keeps meaning exactly what it means
 today: an accepted link.
+
+**Why `origin` exists, and why it is not optional.** A link created by booking
+gives the teacher no access to the student's address — `shareEmail` defaults to
+false (`(student)/account/privacy/page.tsx:14-21`). If that student later unlinks
+and the tombstone is written as an ordinary `Invitation` row, `GET /api/invitations`
+hands the teacher an email address they never had. The student's act of leaving
+would disclose more than staying did.
+
+So `origin` records who created the row. `student_block` rows are **never returned
+by any teacher-facing query** — they exist only to be hit by the uniqueness check
+on re-invite. Rows that started as `teacher_invite` and were later declined stay
+visible, because the teacher typed that address themselves and already has it.
+
+This was found while planning, not while designing; it is recorded here rather
+than only in the plan because the spec is what the next reader will trust.
 
 ### Why a separate table rather than a pending state on `TeacherStudent`
 
@@ -240,7 +261,7 @@ Three arrival states, all of which the surface must handle:
 | `PUT`/`DELETE /api/invitations/[id]` | Teacher edits or removes a contact. **`DELETE` is refused on a `declined` row** — see below. |
 | `PATCH /api/invitations/[id]` | Teacher archives/unarchives, mirroring `PATCH /api/students/[id]?state=` exactly. |
 | `POST /api/invitations/[id]/accept`, `/decline` | Student-authed. Accept creates the link; decline writes the tombstone. |
-| `DELETE /api/teacher-links/[teacherId]` | Student-authed unlink. Deletes the `TeacherStudent` row for the session's `studentId` and upserts the declined tombstone. The student's own `Student` row survives unconditionally — unlinking a last teacher must not orphan-delete an account. (The one code path that did that, `students/[id]/route.ts:201-206`, is removed by the row above; this route must not reintroduce it.) |
+| `DELETE /api/teacher-links/[teacherId]` | Student-authed unlink. Deletes the `TeacherStudent` row for the session's `studentId`, then upserts the tombstone: **update** an existing row to `declined` (keeping `origin: teacher_invite`, since the teacher typed that address), or **create** one with `origin: student_block` when the link came from a booking and no invitation ever existed. The student's own `Student` row survives unconditionally — unlinking a last teacher must not orphan-delete an account. (The one code path that did that, `students/[id]/route.ts:201-206`, is removed by the row above; this route must not reintroduce it.) |
 | `services/waitlist.ts:344`, `:443` | Gain the same link upsert `registrations/route.ts:201` has, and the same invitation resolution. |
 
 ### The tombstone hole, and the fix
@@ -365,6 +386,11 @@ Integration (`tests/integration/`), run by explicit file path — never
   exists for; it must be written so it fails if either branch diverges.
 - **The tombstone bites.** Decline, then `POST /api/students` again → refused.
   Delete the declined invitation → refused. Archive it → still refused.
+- **A `student_block` tombstone is invisible and still blocks.** Student books a
+  class (link, no invitation row), then unlinks. `GET /api/invitations` must not
+  return the row — assert the teacher's email address does not appear anywhere in
+  the response body, not merely that the row count is unchanged — and
+  `POST /api/students` for that address must still be refused.
 - **The student's way back.** After declining, the student books that teacher's
   class → link exists, tombstone cleared.
 - **Waitlist promotion and claim create the link**, and the promoted student can
