@@ -101,15 +101,6 @@ enum InvitationStatus {
   declined
 }
 
-// Who created the row. A link made by booking gives the teacher no access
-// to the student's address — shareEmail defaults false — so a tombstone
-// written when that student unlinks must never be listed back to the
-// teacher, or leaving would disclose more than staying did.
-enum InvitationOrigin {
-  teacher_invite
-  student_block
-}
-
 // ============================================================================
 // PEOPLE
 // ============================================================================
@@ -164,6 +155,7 @@ model Teacher {
   createdRooms    Room[]           @relation("RoomCreator")
   teacherStudents TeacherStudent[]
   invitations     Invitation[]
+  teacherBlocks   TeacherBlock[]
 }
 
 model Student {
@@ -236,7 +228,6 @@ model Invitation {
   firstName   String           @default("")
   lastName    String           @default("")
   status      InvitationStatus @default(pending)
-  origin      InvitationOrigin @default(teacher_invite)
   isArchived  Boolean          @default(false)
   createdAt   DateTime         @default(now())
   respondedAt DateTime?
@@ -245,6 +236,23 @@ model Invitation {
 
   @@unique([teacherId, email])
   @@index([email])
+}
+
+// A student's standing refusal of one teacher, kept out of `Invitation` on
+// purpose. Held here, invitation rows behave identically for a blocked and
+// an unblocked address — listed, edited, archived, deleted, re-created — so
+// there is no observable difference for a teacher to read. Held *in* the
+// invitation row, every one of those operations needs a special case, and
+// each is a place the block can be silently lost.
+model TeacherBlock {
+  id        String   @id @default(uuid())
+  teacherId String
+  email     String
+  createdAt DateTime @default(now())
+
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([teacherId, email])
 }
 
 // ============================================================================

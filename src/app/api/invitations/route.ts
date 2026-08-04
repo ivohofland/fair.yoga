@@ -8,13 +8,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 
   const archived = request.nextUrl.searchParams.get('archived') === 'true';
 
-  // `origin: 'teacher_invite'` is a security filter, not a display
-  // preference. A `student_block` row is a tombstone the STUDENT wrote by
-  // unlinking, and it carries their email — an address this teacher may
-  // never have been given, since shareEmail defaults to false. Returning
-  // it would mean that leaving disclosed more than staying did.
   const invitations = await prisma.invitation.findMany({
-    where: { teacherId: session.teacherId, origin: 'teacher_invite', isArchived: archived },
+    where: { teacherId: session.teacherId, isArchived: archived },
     select: {
       id: true, email: true, firstName: true, lastName: true,
       status: true, isArchived: true, createdAt: true,

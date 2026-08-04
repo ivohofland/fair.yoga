@@ -82,11 +82,11 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // FK order: invitation -> session -> teacher -> account. Scoped by
-  // `in: [...]` over both teachers' ids/accountIds rather than one delete
-  // per known row, so this also sweeps anything a single `it()` created
-  // inline (the `student_block` tombstone, the declined rows) without that
-  // test needing its own afterAll.
+  // FK order: invitation/teacherBlock -> session -> teacher -> account.
+  // Scoped by `in: [...]` over both teachers' ids/accountIds rather than one
+  // delete per known row, so this also sweeps anything a single `it()`
+  // created inline (declined rows, blocks) without that test needing its
+  // own afterAll.
   //
   // Account is included, unlike the primary fixture in
   // students-api.test.ts:1-73 which leaves it behind: `otherTeacherAccountId`
@@ -97,6 +97,7 @@ afterAll(async () => {
   const accountIds = [teacherAccountId, otherTeacherAccountId].filter(Boolean);
   if (teacherIds.length) {
     await prisma.invitation.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    await prisma.teacherBlock.deleteMany({ where: { teacherId: { in: teacherIds } } });
   }
   if (accountIds.length) {
     await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
@@ -146,26 +147,30 @@ describe('GET /api/invitations', () => {
     expect(json.data.invitations.some((i) => i.id === otherTeacherInvitationId)).toBe(false);
   });
 
-  it('never returns a student_block row', async () => {
-    // The tombstone a student writes by unlinking carries an address the
-    // teacher may never have had — shareEmail defaults false.
+  it('lists an invitation for a blocked address exactly like any other', async () => {
+    // The block lives in `TeacherBlock` now, not on this row (#166 task
+    // 6c) — there is no filter left in GET to prove absent. What is left
+    // to prove is the point of moving it: a blocked address's invitation
+    // is not merely un-filtered, it is completely ordinary.
     const blockedEmail = `inv-blocked-${suffix}@test.local`;
-    let blocked: { id: string } | undefined;
+    let block: { id: string } | undefined;
+    let invitation: { id: string } | undefined;
     try {
-      blocked = await prisma.invitation.create({
-        data: {
-          teacherId, email: blockedEmail, status: 'declined', origin: 'student_block',
-        },
+      block = await prisma.teacherBlock.create({
+        data: { teacherId, email: blockedEmail },
+        select: { id: true },
+      });
+      invitation = await prisma.invitation.create({
+        data: { teacherId, email: blockedEmail, firstName: 'Blocked', lastName: 'Contact' },
         select: { id: true },
       });
 
       const res = await fetch(`${BASE_URL}/api/invitations`, { headers: cookie(teacherToken) });
-      const body = await res.text();
-      // Assert on the raw body, not the parsed row count: a future select
-      // that leaks the address through some other field still fails here.
-      expect(body).not.toContain(blockedEmail);
+      const json = (await res.json()) as { data: { invitations: Array<{ email: string }> } };
+      expect(json.data.invitations.map((i) => i.email)).toContain(blockedEmail);
     } finally {
-      if (blocked) await prisma.invitation.delete({ where: { id: blocked.id } });
+      if (invitation) await prisma.invitation.delete({ where: { id: invitation.id } });
+      if (block) await prisma.teacherBlock.delete({ where: { id: block.id } });
     }
   });
 
@@ -587,6 +592,61 @@ describe('POST /api/invitations/[id]/respond', () => {
     })).toBeNull();
   });
 
+  it('refuses to accept when a block exists for the address, even with a valid id and the rightful account', async () => {
+    // Defence in depth (#166 task 6c): Task 11's student-side pending query
+    // is supposed to keep a blocked pair off this student's list entirely,
+    // so this id should never reach a real caller this way. But the id
+    // travels in a URL, not a secret, and this proves `acceptInvitation`
+    // refuses on its own — same 404 as an unknown id, so a probing caller
+    // learns nothing a stranger's id wouldn't also tell them.
+    const blockedRespondEmail = `inv-respond-blocked-${suffix}@test.local`;
+    let blockedInvite: { id: string } | undefined;
+    let block: { id: string } | undefined;
+    let blockedStudentId: string | undefined;
+    let blockedAccountId: string | undefined;
+    try {
+      const blockedStudent = await prisma.student.create({
+        data: {
+          firstName: 'Blocked', lastName: 'Responder',
+          email: blockedRespondEmail, claimedAt: new Date(),
+          account: { create: { email: blockedRespondEmail } },
+        },
+        select: { id: true, accountId: true },
+      });
+      blockedStudentId = blockedStudent.id;
+      blockedAccountId = blockedStudent.accountId as string;
+      const blockedToken = await seedSession(prisma, blockedAccountId);
+
+      block = await prisma.teacherBlock.create({
+        data: { teacherId, email: blockedRespondEmail },
+        select: { id: true },
+      });
+      blockedInvite = await prisma.invitation.create({
+        data: { teacherId, email: blockedRespondEmail, firstName: 'Blocked', lastName: 'Responder' },
+        select: { id: true },
+      });
+
+      const res = await respond(blockedInvite.id, blockedToken, 'accept');
+      expect(res.status).toBe(404);
+      expect(await prisma.teacherStudent.findUnique({
+        where: { teacherId_studentId: { teacherId, studentId: blockedStudentId } },
+      })).toBeNull();
+      const inv = await prisma.invitation.findUniqueOrThrow({ where: { id: blockedInvite.id } });
+      expect(inv.status).toBe('pending');
+    } finally {
+      if (blockedInvite) await prisma.invitation.deleteMany({ where: { id: blockedInvite.id } });
+      if (block) await prisma.teacherBlock.deleteMany({ where: { id: block.id } });
+      if (blockedStudentId) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId: blockedStudentId } });
+      }
+      if (blockedAccountId) {
+        await prisma.session.deleteMany({ where: { accountId: blockedAccountId } });
+      }
+      if (blockedStudentId) await prisma.student.deleteMany({ where: { id: blockedStudentId } });
+      if (blockedAccountId) await prisma.account.deleteMany({ where: { id: blockedAccountId } });
+    }
+  });
+
   it('refuses to decline an invitation addressed to someone else', async () => {
     // declineInvitation has its own copy of the email match — this is the
     // test that can actually fail it, since every other decline test in
@@ -636,11 +696,12 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
   // The link this student severs first, under the file's own `teacherId`
   // fixture. No Invitation row is ever created for (teacherId, studentEmail)
   // — this link exists purely because the student booked a class, which is
-  // exactly the shape that must produce a `student_block` tombstone.
+  // the shape `unlinkTeacher` must turn into a `TeacherBlock` with no
+  // Invitation side effect at all.
   //
   // A second teacher who separately typed this same address into their own
-  // CRM before the student ever unlinked — this is what proves the
-  // tombstone does NOT downgrade a row the teacher is entitled to.
+  // CRM before the student ever unlinked — this is what proves an existing
+  // invitation is marked honestly declined rather than left untouched.
   let invitingTeacherId: string;
   let invitingTeacherAccountId: string;
 
@@ -671,7 +732,7 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
         firstName: 'Inviting', lastName: 'Teacher',
         email: `unlink-inviting-${suffix}@test.local`,
         account: { create: { email: `unlink-inviting-${suffix}@test.local` } },
-        bio: 'Second-teacher fixture for the origin-preserving unlink test',
+        bio: 'Second-teacher fixture for the existing-invitation unlink test',
         pageSlug: `unlink-inviting-${suffix}`,
       },
     });
@@ -680,13 +741,13 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
 
     // A real, already-accepted Invitation — what an existing
     // (teacherId, email) row looks like when the teacher genuinely typed
-    // the address themselves, as opposed to the tombstone `unlinkTeacher`
-    // writes when no such row exists.
+    // the address themselves, as opposed to the booking-only link under
+    // `teacherId` above, which has no Invitation row at all.
     await prisma.invitation.create({
       data: {
         teacherId: invitingTeacherId, email: studentEmail,
         firstName: 'Unlink', lastName: 'Student',
-        status: 'accepted', origin: 'teacher_invite', respondedAt: new Date(),
+        status: 'accepted', respondedAt: new Date(),
       },
     });
     await prisma.teacherStudent.create({ data: { teacherId: invitingTeacherId, studentId } });
@@ -731,13 +792,14 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
     if (teacherRoomId) await prisma.teacherRoom.deleteMany({ where: { id: teacherRoomId } });
     if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
 
-    // The file's top-level afterAll sweeps Invitation/Teacher/Account for
-    // `teacherId` (this describe reuses that fixture), including whatever
-    // tombstone this describe wrote under it. `invitingTeacherId` is local
-    // to this describe, so its own Invitation/Teacher/Account rows are not
-    // in that sweep and are cleaned up here instead.
+    // The file's top-level afterAll sweeps Invitation/TeacherBlock/Teacher/
+    // Account for `teacherId` (this describe reuses that fixture), including
+    // whatever block this describe wrote under it. `invitingTeacherId` is
+    // local to this describe, so its own rows are not in that sweep and are
+    // cleaned up here instead.
     await prisma.teacherStudent.deleteMany({ where: { studentId } });
     await prisma.invitation.deleteMany({ where: { teacherId: invitingTeacherId } });
+    await prisma.teacherBlock.deleteMany({ where: { teacherId: invitingTeacherId } });
     if (studentAccountId) {
       await prisma.session.deleteMany({ where: { accountId: studentAccountId } });
     }
@@ -767,23 +829,17 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
     expect(student!.deletedAt).toBeNull();
   });
 
-  it('writes an invisible tombstone when the link came from a booking', async () => {
-    // Raw body, not the parsed row list or a DB-level field read: a leak
-    // through some other field (or a route that stops filtering by origin)
-    // fails here, printing the address in the failure diff, where a
-    // row-count or single-field assertion would not. This has to run
-    // before the field-level checks below — a wrong `origin` on write would
-    // otherwise be caught by the DB read first, which proves the write is
-    // wrong but not that it leaked.
-    const list = await fetch(`${BASE_URL}/api/invitations`, { headers: cookie(teacherToken) });
-    expect(await list.text()).not.toContain(studentEmail);
+  it('blocks a booking-only unlink without writing an Invitation row, and a re-invite is a normal, visible one', async () => {
+    // This link came from a booking — no Invitation row was ever created for
+    // (teacherId, studentEmail) — so `unlinkTeacher`'s `updateMany` matched
+    // nothing above. The block it wrote is the only trace this unlink left.
+    expect(await prisma.invitation.findUnique({
+      where: { teacherId_email: { teacherId, email: studentEmail } },
+    })).toBeNull();
+    expect(await prisma.teacherBlock.findUnique({
+      where: { teacherId_email: { teacherId, email: studentEmail } },
+    })).not.toBeNull();
 
-    // Since task 6b, a re-invite to a student_block address is answered
-    // silently, exactly like a fresh one — 409 here would hand back the same
-    // bit the list filter above exists to withhold, so a 201 no longer tells
-    // us the tombstone is intact. That proof moved to the read below: a
-    // missing tombstone falls through to a REAL invitation getting created
-    // underneath this same 201, which the status/origin checks below catch.
     const reinvite = await fetch(`${BASE_URL}/api/students`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
@@ -791,26 +847,44 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
     });
     expect(reinvite.status).toBe(201);
 
-    const tombstone = await prisma.invitation.findUniqueOrThrow({
+    // Unlike the design this replaces, the row this creates is completely
+    // ordinary — listed, not a tombstone — because the block that makes it
+    // undeliverable no longer lives inside it.
+    const list = await fetch(`${BASE_URL}/api/invitations`, { headers: cookie(teacherToken) });
+    const json = (await list.json()) as { data: { invitations: Array<{ email: string }> } };
+    expect(json.data.invitations.map((i) => i.email)).toContain(studentEmail);
+
+    const row = await prisma.invitation.findUniqueOrThrow({
       where: { teacherId_email: { teacherId, email: studentEmail } },
     });
-    expect(tombstone.status).toBe('declined');
-    expect(tombstone.origin).toBe('student_block');
+    expect(row.status).toBe('pending');
+
+    // And the block itself is untouched — this is what actually withholds
+    // delivery, checked directly since `delivered` never reaches the wire.
+    expect(await prisma.teacherBlock.findUnique({
+      where: { teacherId_email: { teacherId, email: studentEmail } },
+    })).not.toBeNull();
   });
 
-  it('keeps the teacher_invite origin when one already existed', async () => {
+  it('marks an existing invitation honestly declined, and blocks it too', async () => {
     const res = await fetch(`${BASE_URL}/api/teacher-links/${invitingTeacherId}`, {
       method: 'DELETE', headers: cookie(studentToken),
     });
     expect(res.status).toBe(200);
 
-    // The teacher typed that address; they already have it. Downgrading
-    // the row to student_block would hide a contact they are entitled to.
+    // The teacher typed that address; their own invitation stays theirs to
+    // see, now honestly declined. There is no origin left to preserve or
+    // downgrade — every Invitation row behaves the same way now.
     const row = await prisma.invitation.findUniqueOrThrow({
       where: { teacherId_email: { teacherId: invitingTeacherId, email: studentEmail } },
     });
-    expect(row.origin).toBe('teacher_invite');
     expect(row.status).toBe('declined');
+
+    // The block is written regardless of whether an invitation existed —
+    // it is what actually stops a re-invite, invitation or not.
+    expect(await prisma.teacherBlock.findUnique({
+      where: { teacherId_email: { teacherId: invitingTeacherId, email: studentEmail } },
+    })).not.toBeNull();
   });
 
   it('leaves registrations and payments alone', async () => {
@@ -825,8 +899,8 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
   });
 });
 
-describe('POST /api/students — the block oracle (#166 task 6b)', () => {
-  // Stateless, so shared by both tests below rather than redefined per test —
+describe('POST /api/students — the block oracle (#166 task 6b, mechanism moved in 6c)', () => {
+  // Stateless, so shared by the tests below rather than redefined per test —
   // each supplies its own target address and its own fixture.
   const post = (email: string) =>
     fetch(`${BASE_URL}/api/students`, {
@@ -835,23 +909,18 @@ describe('POST /api/students — the block oracle (#166 task 6b)', () => {
       body: JSON.stringify({ firstName: 'Zzz', lastName: 'Qqq', email }),
     });
 
-  it('answers a silently-blocked address exactly as a fresh one', async () => {
-    // The student unlinked, so a student_block tombstone exists for this
-    // (teacher, email) pair — carrying an address this teacher never had,
-    // because shareEmail defaults false. A 409 here would hand it to them.
-    // Created directly via Prisma rather than through
-    // DELETE /api/teacher-links/[teacherId]: that route's own tombstone-write
-    // behaviour is already exercised end-to-end above, so this only needs
-    // the row shape it leaves behind, not a second trip through unlinking.
+  it('answers a blocked address exactly as a fresh one, including on a repeat POST', async () => {
+    // The block now lives in `TeacherBlock`, not as a row shape to simulate
+    // in Invitation — there is no tombstone to construct here, only the
+    // block itself. Created directly via Prisma rather than through
+    // DELETE /api/teacher-links/[teacherId]: that route's own block-write
+    // behaviour is already exercised end-to-end above.
     const blockedEmail = `inv-silent-blocked-${suffix}@test.local`;
     const freshEmail = `inv-silent-fresh-${suffix}@test.local`;
-    let blocked: { id: string } | undefined;
+    let block: { id: string } | undefined;
     try {
-      blocked = await prisma.invitation.create({
-        data: {
-          teacherId, email: blockedEmail,
-          status: 'declined', origin: 'student_block', respondedAt: new Date(),
-        },
+      block = await prisma.teacherBlock.create({
+        data: { teacherId, email: blockedEmail },
         select: { id: true },
       });
 
@@ -863,48 +932,42 @@ describe('POST /api/students — the block oracle (#166 task 6b)', () => {
       const freshJson = (await freshRes.json()) as { data: { id: string } };
       expect(Object.keys(blockedJson.data)).toEqual(Object.keys(freshJson.data));
 
-      // Not the tombstone's own id — a stable id across probes would itself
-      // be the oracle this task removes. A second probe of the same blocked
-      // address proves it: two different random ids, not one repeating one.
-      const secondRes = await post(blockedEmail);
-      expect(secondRes.status).toBe(201);
-      const secondJson = (await secondRes.json()) as { data: { id: string } };
-      expect(blockedJson.data.id).not.toBe(blocked.id);
-      expect(secondJson.data.id).not.toBe(blocked.id);
-      expect(blockedJson.data.id).not.toBe(secondJson.data.id);
+      // Unlike the design this replaces, the first POST to a blocked address
+      // really does create a row — so a second POST to either address now
+      // refuses the same way, for the same reason: both are already invited.
+      const [blockedAgain, freshAgain] = await Promise.all([post(blockedEmail), post(freshEmail)]);
+      expect(blockedAgain.status).toBe(freshAgain.status);
+      expect(blockedAgain.status).toBe(409);
+      expect((await blockedAgain.json()).error.code).toBe('ALREADY_INVITED');
+      expect((await freshAgain.json()).error.code).toBe('ALREADY_INVITED');
 
-      // ...and nothing was written for the blocked one. The tombstone still
-      // stands, unchanged, still `declined`, still `student_block`.
-      const tombstone = await prisma.invitation.findUniqueOrThrow({
-        where: { teacherId_email: { teacherId, email: blockedEmail } },
+      // The row the first POST created is real and ordinary — pending —
+      // and the block that makes it undeliverable sits beside it, untouched.
+      const created = await prisma.invitation.findUniqueOrThrow({
+        where: { id: blockedJson.data.id },
       });
-      expect(tombstone.id).toBe(blocked.id);
-      expect(tombstone.status).toBe('declined');
-      expect(tombstone.origin).toBe('student_block');
-      expect(tombstone.respondedAt).not.toBeNull();
+      expect(created.status).toBe('pending');
+      expect(await prisma.teacherBlock.findUnique({
+        where: { teacherId_email: { teacherId, email: blockedEmail } },
+      })).not.toBeNull();
     } finally {
-      if (blocked) await prisma.invitation.deleteMany({ where: { id: blocked.id } });
-      // The control call for `freshEmail` really does create a pending
-      // invitation — that is the point of the comparison — so it needs its
-      // own cleanup, or it leaks into the next test that reuses this address
-      // space.
-      await prisma.invitation.deleteMany({ where: { teacherId, email: freshEmail } });
+      if (block) await prisma.teacherBlock.deleteMany({ where: { id: block.id } });
+      await prisma.invitation.deleteMany({
+        where: { teacherId, email: { in: [blockedEmail, freshEmail] } },
+      });
     }
   });
 
-  it('still refuses a declined teacher_invite honestly', async () => {
+  it('still refuses a declined invitation honestly', async () => {
     // Contrast case, and the reason this is not a blanket change: the
     // teacher typed THIS address themselves, so 409 discloses nothing new —
     // and a teacher deserves to know their invitation is dead rather than
-    // re-sending into silence.
+    // re-sending into silence. No block involved at all.
     const declinedInviteEmail = `inv-silent-honest-${suffix}@test.local`;
     let declined: { id: string } | undefined;
     try {
       declined = await prisma.invitation.create({
-        data: {
-          teacherId, email: declinedInviteEmail,
-          status: 'declined', origin: 'teacher_invite', respondedAt: new Date(),
-        },
+        data: { teacherId, email: declinedInviteEmail, status: 'declined', respondedAt: new Date() },
         select: { id: true },
       });
 
@@ -916,7 +979,7 @@ describe('POST /api/students — the block oracle (#166 task 6b)', () => {
     }
   });
 
-  it('marks the silent path undelivered and a real invite delivered', async () => {
+  it('marks a blocked address undelivered and a fresh one delivered', async () => {
     // `delivered` is not on the HTTP wire (POST /api/students returns only
     // `id`) — it exists for the caller Task 8 adds, which wires a
     // notify/email send in after `inviteContact` succeeds. So this calls the
@@ -924,13 +987,10 @@ describe('POST /api/students — the block oracle (#166 task 6b)', () => {
     // field this guards actually lives.
     const blockedEmail = `inv-delivered-blocked-${suffix}@test.local`;
     const freshEmail = `inv-delivered-fresh-${suffix}@test.local`;
-    let blocked: { id: string } | undefined;
+    let block: { id: string } | undefined;
     try {
-      blocked = await prisma.invitation.create({
-        data: {
-          teacherId, email: blockedEmail,
-          status: 'declined', origin: 'student_block', respondedAt: new Date(),
-        },
+      block = await prisma.teacherBlock.create({
+        data: { teacherId, email: blockedEmail },
         select: { id: true },
       });
 
@@ -941,13 +1001,54 @@ describe('POST /api/students — the block oracle (#166 task 6b)', () => {
         teacherId, email: freshEmail, firstName: 'Zzz', lastName: 'Qqq',
       });
 
-      if (!blockedResult.ok) throw new Error('expected the silent path to succeed');
+      if (!blockedResult.ok) throw new Error('expected the blocked address to succeed');
       if (!freshResult.ok) throw new Error('expected a fresh invite to succeed');
       expect(blockedResult.value.delivered).toBe(false);
       expect(freshResult.value.delivered).toBe(true);
     } finally {
-      if (blocked) await prisma.invitation.deleteMany({ where: { id: blocked.id } });
-      await prisma.invitation.deleteMany({ where: { teacherId, email: freshEmail } });
+      if (block) await prisma.teacherBlock.deleteMany({ where: { id: block.id } });
+      await prisma.invitation.deleteMany({
+        where: { teacherId, email: { in: [blockedEmail, freshEmail] } },
+      });
+    }
+  });
+
+  it('survives deleting the invitation it made: re-inviting a blocked address after deletion is still undelivered', async () => {
+    // The case the old design's four special cases would have existed to
+    // handle: under it, `inviteContact` never created a real row for a
+    // blocked address, so there was nothing here to delete and re-create.
+    // With the block held separately, deleting the invitation is just
+    // deleting a row — the block underneath it is a different table and
+    // does not move.
+    const blockedEmail = `inv-block-survives-delete-${suffix}@test.local`;
+    let block: { id: string } | undefined;
+    try {
+      block = await prisma.teacherBlock.create({
+        data: { teacherId, email: blockedEmail },
+        select: { id: true },
+      });
+
+      const first = await inviteContact(prisma, {
+        teacherId, email: blockedEmail, firstName: 'Zzz', lastName: 'Qqq',
+      });
+      if (!first.ok) throw new Error('expected the first invite to succeed');
+      expect(first.value.delivered).toBe(false);
+
+      const res = await fetch(`${BASE_URL}/api/invitations/${first.value.id}`, {
+        method: 'DELETE', headers: cookie(teacherToken),
+      });
+      expect(res.status).toBe(200);
+      expect(await prisma.invitation.findUnique({ where: { id: first.value.id } })).toBeNull();
+
+      const second = await inviteContact(prisma, {
+        teacherId, email: blockedEmail, firstName: 'Zzz', lastName: 'Qqq',
+      });
+      if (!second.ok) throw new Error('expected the re-invite to succeed');
+      expect(second.value.id).not.toBe(first.value.id);
+      expect(second.value.delivered).toBe(false);
+    } finally {
+      if (block) await prisma.teacherBlock.deleteMany({ where: { id: block.id } });
+      await prisma.invitation.deleteMany({ where: { teacherId, email: blockedEmail } });
     }
   });
 });

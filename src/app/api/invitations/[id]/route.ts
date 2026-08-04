@@ -16,14 +16,11 @@ import { updateInvitationSchema, archiveStateQuerySchema } from '@/lib/schemas';
  * `findFirst` with `teacherId` in the `where`, not `findUnique` by id
  * followed by a separate ownership check — the ownership condition belongs
  * in the query itself, which is the shape this project's gate model calls
- * for (#162 was a PUT that skipped exactly this). `origin: 'teacher_invite'`
- * excludes a `student_block` tombstone for the same reason GET does: it is
- * not this teacher's row to read, edit, delete, or archive, even though its
- * `teacherId` matches.
+ * for (#162 was a PUT that skipped exactly this).
  */
 async function ownedInvitation(teacherId: string, id: string) {
   return prisma.invitation.findFirst({
-    where: { id, teacherId, origin: 'teacher_invite' },
+    where: { id, teacherId },
     select: { id: true, status: true, isArchived: true },
   });
 }

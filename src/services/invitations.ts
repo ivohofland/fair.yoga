@@ -8,7 +8,6 @@
  * teacher already owns.
  */
 
-import { randomUUID } from 'crypto';
 import type { PrismaClient } from '@prisma/client';
 
 export type InviteRefusal = 'ALREADY_INVITED' | 'ALREADY_LINKED' | 'DECLINED';
@@ -16,13 +15,13 @@ export type InviteRefusal = 'ALREADY_INVITED' | 'ALREADY_LINKED' | 'DECLINED';
 export interface InviteResult {
   id: string;
   /**
-   * False for the silent `student_block` answer, true for a real invitation.
-   * Not a detail — it is the field that stops a future caller from notifying
-   * on every `ok: true`. Task 8 wires a notify/email send in after
-   * `inviteContact` succeeds; gating that send on `delivered === true` is
-   * what keeps this from becoming a channel back to the exact person who
-   * unlinked to get away from this teacher. `id` alone can't carry that
-   * distinction — it's a fresh random value on both paths (#166 task 6b).
+   * False when a `TeacherBlock` exists for this (teacher, email) pair, true
+   * otherwise. Not a detail — it is the field that stops a future caller
+   * from notifying on every `ok: true`. Task 8 wires a notify/email send in
+   * after `inviteContact` succeeds; gating that send on `delivered === true`
+   * is what keeps this from becoming a channel back to the exact person who
+   * unlinked to get away from this teacher. The invitation itself is created
+   * either way — only delivery is withheld (#166 task 6c).
    */
   delivered: boolean;
 }
@@ -49,14 +48,15 @@ export const REFUSAL_MESSAGES: Record<InviteRefusal, string> = {
  *
  * One residual channel is knowingly left open: the "Student exists but is not
  * on this teacher's roster" path issues one extra query, so it is marginally
- * slower than the path where no Student row exists. The `student_block`
- * silent-answer path below is the same shape in the other direction, only
- * wider — it returns after a single `findUnique`, skipping the `Student`/
- * `TeacherStudent` lookups AND the `Invitation` insert that a fresh invite
- * performs, so the timing delta there is larger still. That is outside the
+ * slower than the path where no Student row exists. That is outside the
  * property this function claims — identical status, identical body, identical
  * side effects — and closing it would mean issuing dummy queries to flatten
  * the timing, which is not worth the contortion at this threat level.
+ *
+ * The block check below runs unconditionally, after the invitation is
+ * already created — a blocked and a fresh address run the exact same query
+ * sequence, differing only in the `delivered` value neither response ever
+ * carries on the wire.
  */
 export async function inviteContact(
   db: PrismaClient,
@@ -84,27 +84,14 @@ export async function inviteContact(
 
   const existing = await db.invitation.findUnique({
     where: { teacherId_email: { teacherId, email } },
-    select: { status: true, origin: true },
+    select: { status: true },
   });
   if (existing) {
-    if (existing.status === 'declined') {
-      // A tombstone the STUDENT wrote by unlinking. Refusing would confirm
-      // that this address belongs to someone who was this teacher's student
-      // and left — an address `shareEmail` withheld, on a person the roster
-      // still shows as "Anna d.". So answer exactly as a fresh invitation
-      // does and do nothing. The teacher is misled; that is the trade.
-      //
-      // Do NOT "simplify" this by returning the tombstone's own id — that
-      // id is stable across probes, so two requests would betray it.
-      if (existing.origin === 'student_block') {
-        return { ok: true, value: { id: randomUUID(), delivered: false } };
-      }
-
-      // The teacher typed this address themselves, so 409 tells them nothing
-      // they did not already have, and silence here would be cruelty rather
-      // than protection.
-      return { ok: false, reason: 'DECLINED' };
-    }
+    // Every Invitation row left standing is now one the teacher typed
+    // themselves — the block that used to live in here has moved to
+    // `TeacherBlock` — so a 409 here tells them nothing they did not
+    // already have, and silence would be cruelty rather than protection.
+    if (existing.status === 'declined') return { ok: false, reason: 'DECLINED' };
     if (existing.status === 'accepted') return { ok: false, reason: 'ALREADY_LINKED' };
     return { ok: false, reason: 'ALREADY_INVITED' };
   }
@@ -130,7 +117,17 @@ export async function inviteContact(
     data: { teacherId, email, firstName, lastName },
     select: { id: true },
   });
-  return { ok: true, value: { id: created.id, delivered: true } };
+
+  // A block makes this invitation undeliverable, not un-creatable. The row
+  // is real, the teacher sees it, edits it, archives it — everything behaves
+  // exactly as it does for an address that was never blocked, which is the
+  // point. Only delivery is withheld. See `delivered` on InviteResult.
+  const blocked = await db.teacherBlock.findUnique({
+    where: { teacherId_email: { teacherId, email } },
+    select: { id: true },
+  });
+
+  return { ok: true, value: { id: created.id, delivered: blocked === null } };
 }
 
 /**
@@ -150,16 +147,31 @@ export async function inviteContact(
  * but `Account.email` is stored exactly as typed at sign-up. Comparing the
  * two without normalising this side would hide a pending invitation from
  * anyone whose account email carries any uppercase.
+ *
+ * The block check below is defence in depth, not the primary gate — the
+ * student-side pending query (Task 11) already excludes a blocked pair, so
+ * this id should never reach here for one. But the id travels in a URL, not
+ * a secret, and this whole function exists because that can't be trusted.
+ * It returns the same `NOT_FOUND` as an unknown id, not a distinct code: a
+ * distinct code would tell a probing caller that a block exists, which is
+ * the exact bit `inviteContact` above withholds.
  */
 export async function acceptInvitation(
   db: PrismaClient,
   input: { invitationId: string; studentId: string; accountEmail: string },
 ): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_PENDING' }> {
+  const email = input.accountEmail.toLowerCase();
   const invitation = await db.invitation.findFirst({
-    where: { id: input.invitationId, email: input.accountEmail.toLowerCase() },
+    where: { id: input.invitationId, email },
     select: { id: true, teacherId: true },
   });
   if (!invitation) return { ok: false, reason: 'NOT_FOUND' };
+
+  const blocked = await db.teacherBlock.findUnique({
+    where: { teacherId_email: { teacherId: invitation.teacherId, email } },
+    select: { id: true },
+  });
+  if (blocked) return { ok: false, reason: 'NOT_FOUND' };
 
   // The pending check lives in this `updateMany`'s `where`, not in a read
   // beforehand — a concurrent accept and decline from the same account
@@ -244,28 +256,27 @@ export async function unlinkTeacher(
   await db.$transaction(async (tx) => {
     await tx.teacherStudent.delete({ where: { id: link.id } });
 
-    // Update-or-create, and the origin differs by case. An existing row
-    // means the teacher typed this address themselves, so it stays theirs
-    // to see. A missing row means the link came from a booking and the
-    // teacher may never have had the address — shareEmail defaults false —
-    // so the tombstone is written as student_block and never listed back.
-    // Lowercased on both branches, for the same reason `acceptInvitation`
-    // lowercases: invitation emails are always stored lowercase, `Account.email`
-    // never is. A raw address here would miss the existing row and create a
-    // duplicate tombstone under a different casing — which then fails to block
-    // the re-invite it exists to block, because `inviteContact` looks up the
-    // lowercased form.
+    // Lowercased for the same reason `acceptInvitation` lowercases:
+    // `Invitation.email` and `TeacherBlock.email` are always stored
+    // lowercase, `Account.email` never is. A raw address here would miss an
+    // existing invitation row and write the block under a different casing
+    // than `inviteContact` looks it up by.
     const email = input.accountEmail.toLowerCase();
-    await tx.invitation.upsert({
+
+    // An invitation the teacher created keeps its honest declined state —
+    // they typed that address, so telling them it is dead discloses nothing
+    // and saves them re-sending into silence. `updateMany`, because most
+    // links come from bookings and have no invitation at all.
+    await tx.invitation.updateMany({
+      where: { teacherId: input.teacherId, email },
+      data: { status: 'declined', respondedAt: new Date() },
+    });
+
+    // The block is what actually holds, invitation or not.
+    await tx.teacherBlock.upsert({
       where: { teacherId_email: { teacherId: input.teacherId, email } },
-      update: { status: 'declined', respondedAt: new Date() },
-      create: {
-        teacherId: input.teacherId,
-        email,
-        status: 'declined',
-        origin: 'student_block',
-        respondedAt: new Date(),
-      },
+      update: {},
+      create: { teacherId: input.teacherId, email },
     });
   });
   return { ok: true };

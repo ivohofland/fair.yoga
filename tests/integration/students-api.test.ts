@@ -166,7 +166,6 @@ describe('POST /api/students', () => {
     expect(invitation.teacherId).toBe(teacherId);
     expect(invitation.email).toBe(newEmail);
     expect(invitation.status).toBe('pending');
-    expect(invitation.origin).toBe('teacher_invite');
 
     // #166: the point of the change. Typing an address creates an invitation
     // and nothing else — no Student row appears out of thin air, and the
@@ -410,7 +409,6 @@ describe('POST /api/students — the enumeration oracle is closed (#166)', () =>
           where: { teacherId_email: { teacherId, email } },
         });
         expect(inv.status).toBe('pending');
-        expect(inv.origin).toBe('teacher_invite');
         expect(inv.firstName).toBe('Zzz');
         // And the id in the body is THIS row's. Without this, a regression
         // that handed back the victim's Student id while still creating an
