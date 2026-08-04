@@ -432,11 +432,17 @@ describe('POST /api/classes', () => {
   // Cleaned up here by the deterministic values the tests below set — not by
   // capturing ids — so the `it` bodies stay exactly as specified.
   afterAll(async () => {
-    await prisma.class.deleteMany({ where: { teacherRoomId, classType: 'Create Route' } });
-    await prisma.classTemplate.deleteMany({
-      where: { teacherId: otherTeacherId, classType: 'Victim Recurring' },
-    });
-    await prisma.teacherRoom.deleteMany({ where: { teacherId: otherTeacherId, roomId } });
+    if (teacherRoomId) {
+      await prisma.class.deleteMany({ where: { teacherRoomId, classType: 'Create Route' } });
+    }
+    if (otherTeacherId) {
+      await prisma.classTemplate.deleteMany({
+        where: { teacherId: otherTeacherId, classType: 'Victim Recurring' },
+      });
+    }
+    if (otherTeacherId && roomId) {
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: otherTeacherId, roomId } });
+    }
   });
 
   const baseBody = () => ({
