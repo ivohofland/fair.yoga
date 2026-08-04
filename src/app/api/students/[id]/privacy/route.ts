@@ -10,6 +10,27 @@ import {
 } from '@/lib/api-utils';
 import { updatePrivacySchema } from '@/lib/schemas';
 
+/**
+ * A student may only read or write privacy settings for a teacher they are
+ * actually connected to. Both handlers proved the *student* side
+ * (`session.studentId !== id`) and never the teacher side, so `teacherId` was a
+ * cross-tenant id taken from the request with no check — the same defect as
+ * #146/#148 one route over, with the field kept rather than dropped because
+ * here the student legitimately chooses the teacher.
+ *
+ * Existence, not `isArchived: false`. Archiving is the teacher's filing action;
+ * a student does not lose control over their own privacy settings because a
+ * teacher tidied them away. `account/privacy/page.tsx` renders cards only for
+ * non-archived links, so no UI path reaches the looser case either way.
+ */
+async function hasTeacherLink(studentId: string, teacherId: string): Promise<boolean> {
+  const link = await prisma.teacherStudent.findUnique({
+    where: { teacherId_studentId: { teacherId, studentId } },
+    select: { id: true },
+  });
+  return link !== null;
+}
+
 export const GET = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -25,6 +46,10 @@ export const GET = withErrorHandler(async (
   const teacherId = request.nextUrl.searchParams.get('teacherId');
   if (!teacherId) {
     return respondError('Missing teacherId query parameter', 400);
+  }
+
+  if (!(await hasTeacherLink(id, teacherId))) {
+    return respondError('Access denied', 403);
   }
 
   const privacy = await prisma.studentPrivacy.findUnique({
@@ -67,6 +92,10 @@ export const PUT = withErrorHandler(async (
   const parsed = await parseBody(request, updatePrivacySchema);
   if ('error' in parsed) return parsed.error;
   const { teacherId, ...privacyFields } = parsed.data;
+
+  if (!(await hasTeacherLink(id, teacherId))) {
+    return respondError('Access denied', 403);
+  }
 
   const privacy = await prisma.studentPrivacy.upsert({
     where: {

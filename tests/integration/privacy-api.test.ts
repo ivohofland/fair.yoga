@@ -10,6 +10,7 @@ let studentAccountId: string;
 let studentToken: string;
 let otherStudentId: string;
 let teacherId: string;
+let unlinkedTeacherId: string;
 
 describe('students privacy API', () => {
   beforeAll(async () => {
@@ -43,6 +44,25 @@ describe('students privacy API', () => {
       },
     });
     teacherId = teacher.id;
+
+    // The four tests below all PUT/GET privacy for this teacher. Until #146's
+    // branch they passed with no TeacherStudent row at all — the route never
+    // checked the teacher side, so the suite was exercising the hole.
+    await prisma.teacherStudent.create({
+      data: { teacherId: teacher.id, studentId: student.id },
+    });
+
+    const unlinked = await prisma.teacher.create({
+      data: {
+        firstName: 'Unlinked',
+        lastName: 'Teacher',
+        email: `privacy-unlinked-${suffix}@test.local`,
+        account: { create: { email: `privacy-unlinked-${suffix}@test.local` } },
+        bio: 'Privacy fixture — no TeacherStudent link',
+        pageSlug: `privacy-unlinked-${suffix}`,
+      },
+    });
+    unlinkedTeacherId = unlinked.id;
     studentToken = await seedSession(prisma, studentAccountId);
   });
 
@@ -56,6 +76,10 @@ describe('students privacy API', () => {
     }
     if (otherStudentId) await prisma.student.delete({ where: { id: otherStudentId } });
     if (teacherId) await prisma.teacher.delete({ where: { id: teacherId } });
+    // Teacher_accountId_fkey is ON DELETE RESTRICT — the account.deleteMany
+    // below would FK-violate on this teacher's account if its Teacher row
+    // were still present.
+    if (unlinkedTeacherId) await prisma.teacher.delete({ where: { id: unlinkedTeacherId } });
     await prisma.account.deleteMany({
       where: { email: { contains: `-${suffix}@test.local` } },
     });
@@ -136,6 +160,33 @@ describe('students privacy API', () => {
   it("rejects touching another student's privacy", async () => {
     const res = await fetch(
       `${BASE_URL}/api/students/${otherStudentId}/privacy?teacherId=${teacherId}`,
+      { headers: cookie(studentToken) },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  // A student could write privacy flags for any teacher, including one they
+  // have no relationship with — the route proved the student side and never
+  // touched the teacher side. Combined with #162 (a teacher can create the link
+  // unilaterally knowing only an email), that pre-authorises disclosure to a
+  // stranger.
+  it('rejects a PUT for a teacher the student has no link to', async () => {
+    const res = await fetch(`${BASE_URL}/api/students/${studentId}/privacy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(studentToken) },
+      body: JSON.stringify({ teacherId: unlinkedTeacherId, shareAddress: true }),
+    });
+    expect(res.status).toBe(403);
+
+    const row = await prisma.studentPrivacy.findUnique({
+      where: { studentId_teacherId: { studentId, teacherId: unlinkedTeacherId } },
+    });
+    expect(row).toBeNull();
+  });
+
+  it('rejects a GET for a teacher the student has no link to', async () => {
+    const res = await fetch(
+      `${BASE_URL}/api/students/${studentId}/privacy?teacherId=${unlinkedTeacherId}`,
       { headers: cookie(studentToken) },
     );
     expect(res.status).toBe(403);
