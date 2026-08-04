@@ -58,6 +58,20 @@ export function checkRateLimit(
   return { allowed: true, retryAfterSeconds: 0 };
 }
 
+/**
+ * Shared hourly budget for teacher-initiated student writes that carry a
+ * client-supplied email: `POST /api/students` and the teacher branch of
+ * `PUT /api/students/[id]`. Both write `email` to a `@unique` column, so both
+ * answer "is this address taken?" — the POST through 200-vs-201, the PUT
+ * through 200-vs-409 on the P2002 fallback. Metering only one leaves the pair
+ * unbounded, so they share a bucket.
+ *
+ * 50/hour fits a workshop roster plus corrections in one sitting.
+ */
+export function checkStudentWriteLimit(teacherId: string): RateLimitResult {
+  return checkRateLimit(`students:${teacherId}`, 50, 60 * 60 * 1000);
+}
+
 /** Test helper: forget all recorded hits. */
 export function resetRateLimits(): void {
   buckets.clear();

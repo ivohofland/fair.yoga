@@ -9,6 +9,8 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { updateStudentSchema, createStudentSchema, archiveStateQuerySchema } from '@/lib/schemas';
+import { checkStudentWriteLimit } from '@/lib/rate-limit';
+import { log } from '@/lib/log';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -104,6 +106,25 @@ export const PUT = withErrorHandler(async (
 
   // Teachers can edit unclaimed students in their contacts
   if (session.teacherId) {
+    // Shares one bucket with POST /api/students — see `checkStudentWriteLimit`.
+    // This branch writes a client-supplied `email` to a `@unique` column with
+    // no pre-check, so a 409 from the P2002 fallback answers "is this address
+    // taken?" exactly as the POST's 200-vs-201 does. Metered at the very top so
+    // the 403 and 404 refusals below cost a hit too: probing that never gets
+    // past them still probes.
+    const limit = checkStudentWriteLimit(session.teacherId);
+    if (!limit.allowed) {
+      log.warn(
+        { studentId: id, teacherId: session.teacherId },
+        'student write refused: rate limit exceeded',
+      );
+      const minutes = Math.ceil(limit.retryAfterSeconds / 60);
+      return respondError(
+        `Too many student requests. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+        429,
+      );
+    }
+
     const student = await prisma.student.findUnique({
       where: { id },
       select: { id: true, claimedAt: true },
@@ -118,13 +139,13 @@ export const PUT = withErrorHandler(async (
     });
     if (!link) return respondError('Student not in your contacts', 403);
 
+    // No empty-body guard here, unlike the self-edit branch above:
+    // `createStudentSchema` requires `firstName` and `email` and defaults
+    // `lastName`, so a successful parse always yields three keys and a failing
+    // one already returned 400 on the line above.
     const parsed = await parseBody(request, createStudentSchema);
     if ('error' in parsed) return parsed.error;
     const updateData = parsed.data;
-
-    if (Object.keys(updateData).length === 0) {
-      return respondError('No valid fields to update', 400);
-    }
 
     // #162: same treatment as POST /api/students. Lower stakes here — this
     // branch only fires for an unclaimed student already in the teacher's
@@ -155,7 +176,12 @@ export const DELETE = withErrorHandler(async (
     return respondError('Access denied', 403);
   }
 
-  const student = await prisma.student.findUnique({ where: { id } });
+  // Narrowed for the same reason as the PUT above: this pre-check reads
+  // `claimedAt` and nothing else, and the rest of the handler works off `id`.
+  const student = await prisma.student.findUnique({
+    where: { id },
+    select: { id: true, claimedAt: true },
+  });
   if (!student) return respondError('Student not found', 404);
   if (student.claimedAt) {
     return respondError('Cannot remove a student who has claimed their account', 403);

@@ -2,7 +2,8 @@ import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { respondOk, respondError, requireTeacher, isErrorResponse, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { createStudentSchema, studentListQuerySchema } from '@/lib/schemas';
-import { checkRateLimit } from '@/lib/rate-limit';
+import { checkStudentWriteLimit } from '@/lib/rate-limit';
+import { log } from '@/lib/log';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -105,28 +106,38 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  // Keyed on the teacher, not the IP. The caller is authenticated, so an IP key
-  // is both evadable by rotation and unfair to teachers behind one NAT — and it
-  // would need the `ip === 'unknown'` fallback its siblings carry, which drops
-  // the IP limit entirely when no proxy header is present. `magic-link/send`
-  // and `student-signup` survive that because each also keeps an unconditional
-  // per-email limit; `teachers/route.ts` has no second limit and is genuinely
-  // unthrottled in that case. A teacher key needs no fallback at all.
+  // Keyed on the teacher, not the IP: the caller is authenticated, so an IP key
+  // would be evadable by rotation, unfair to teachers behind one NAT, and would
+  // need an `ip === 'unknown'` escape hatch that buys nothing.
   //
-  // 30/hour clears any realistic workshop roster from today's single-add UI.
+  // The ceiling — and the bucket this route shares with the teacher branch of
+  // PUT /api/students/[id] — lives in `checkStudentWriteLimit`.
+  //
   // Issue #51 (bulk/CSV student import) will exceed it by design — raise the
   // ceiling or exempt the import path when that lands; do not assume this
   // number still fits.
   //
-  // What it buys: this route is still an account-existence oracle (200 = the
-  // address was registered, 201 = it was not, and a follow-up GET recovers the
-  // same bit either way), and every miss creates a real Student row. The limit
-  // meters that at ~14 days and ~10,000 junk rows per 10,000 addresses. The
-  // wall is requiring the student's acceptance before a link exists at all;
-  // this holds until that lands.
-  const limit = checkRateLimit(`students:${session.teacherId}`, 30, 60 * 60 * 1000);
+  // What it buys: this route still tells a caller whether a Student row exists
+  // for an address — 200 if one does, 201 if it did not. "Student row", not
+  // "account": an unclaimed contact sitting in another teacher's CRM answers
+  // 200 with no Account behind it, so the bit leaks CRM membership as well as
+  // self-registration. A follow-up GET recovers the same bit through the
+  // returned name, since this branch ignores the names the caller submitted.
+  //
+  // The limit meters bulk probing rather than stopping it: 50/hour is ~8.3 days
+  // per 10,000 addresses. Treat that as an order of magnitude, not a guarantee
+  // — the limiter is in-process, so a deploy or restart hands back a fresh
+  // budget, and its shared 10,000-key map can evict a live bucket under
+  // pressure. The wall is requiring the student's acceptance before a link
+  // exists at all (#166); this holds until that lands.
+  const limit = checkStudentWriteLimit(session.teacherId);
   if (!limit.allowed) {
-    return respondError('Too many student additions. Try again later.', 429);
+    log.warn({ teacherId: session.teacherId }, 'student write refused: rate limit exceeded');
+    const minutes = Math.ceil(limit.retryAfterSeconds / 60);
+    return respondError(
+      `Too many student requests. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+      429,
+    );
   }
 
   const parsed = await parseBody(request, createStudentSchema);

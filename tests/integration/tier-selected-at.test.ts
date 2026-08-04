@@ -176,6 +176,13 @@ describe('tierSelectedAt stamping', () => {
     const res = await api(`/api/students/${sNoStamp.id}`, 'PUT', { reminderPref: 'morning' }, sNoStamp.token);
     expect(res.status).toBe(200);
     expect(await tierSelectedAt(sNoStamp.id)).toBeNull();
+
+    // Deliberate: unlike the teacher branch — narrowed to `{ id }` by #162 —
+    // the self-edit branch returns the whole row. This is the caller's own
+    // profile, not a disclosure. Narrowing it for "consistency" would be a
+    // behaviour change, so pin it rather than leaving it to prose.
+    const body = (await res.json()) as { data: { email?: string } };
+    expect(body.data.email).toBe(`tiersel-nostamp-${suffix}@test.local`);
   });
 
   it('a self-selected tier stamps', async () => {

@@ -130,6 +130,15 @@ describe('GET /api/students', () => {
 });
 
 describe('POST /api/students', () => {
+  // Budget accounting: POST /api/students and the teacher branch of
+  // PUT /api/students/[id] share one 50-per-hour bucket keyed on the teacher
+  // (`checkStudentWriteLimit`). `teacherToken` spends 3 hits here — the create,
+  // the 409 repeat, and the invalid body — plus 2 in the PUT describes at the
+  // bottom of the file. The 401 cases cost nothing: auth runs before the
+  // limiter. Anyone adding a run of requests on `teacherToken` should count
+  // them against 50 rather than be surprised by a 429 unrelated to the
+  // assertion under test; the burst tests below each mint their own teacher
+  // precisely so they get a fresh bucket.
   let createdStudentId: string;
 
   it('creates a new student and TeacherStudent link', async () => {
@@ -687,13 +696,29 @@ describe('POST /api/students — response disclosure (#162)', () => {
   });
 
   afterAll(async () => {
-    await prisma.teacherStudent.deleteMany({ where: { teacherId: strangerId } });
-    await prisma.session.deleteMany({ where: { accountId: strangerAccountId } });
-    await prisma.teacher.delete({ where: { id: strangerId } });
-    await prisma.student.delete({ where: { id: victimId } });
-    await prisma.account.deleteMany({
-      where: { id: { in: [victimAccountId, strangerAccountId] } },
-    });
+    // Guards, same shape as the two blocks above: on a failed beforeAll these
+    // ids are undefined, an undefined filter turns deleteMany into delete-all
+    // — every TeacherStudent row and every Session in the database, which logs
+    // the developer out of the very server this suite talks to — and delete()
+    // throws. Vitest runs afterAll even when beforeAll threw, and beforeAll
+    // throwing is reachable: a crashed earlier run strands the victim Account,
+    // so the next run's create fails on the unique email.
+    if (strangerId) {
+      await prisma.teacherStudent.deleteMany({ where: { teacherId: strangerId } });
+    }
+    if (strangerAccountId) {
+      await prisma.session.deleteMany({ where: { accountId: strangerAccountId } });
+    }
+    if (strangerId) {
+      await prisma.teacher.delete({ where: { id: strangerId } });
+    }
+    if (victimId) {
+      await prisma.student.delete({ where: { id: victimId } });
+    }
+    const accountIds = [victimAccountId, strangerAccountId].filter(Boolean);
+    if (accountIds.length) {
+      await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+    }
   });
 
   it('gives a teacher who knows only the email nothing but the id', async () => {
@@ -714,25 +739,44 @@ describe('POST /api/students — response disclosure (#162)', () => {
     // adds a new sensitive column to Student. This one can.
     expect(Object.keys(json.data)).toEqual(['id']);
     expect(json.data.id).toBe(victimId);
+
+    // The 200 has to mean the link was made, not merely that a row exists.
+    // Delete the `teacherStudent.create` from that branch and every other
+    // assertion in this file still passes, while the teacher gets a 200 with an
+    // id, is redirected to that student, and lands on 403 Student not in your
+    // contacts.
+    const link = await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId: strangerId, studentId: victimId } },
+    });
+    expect(link).not.toBeNull();
   });
 
-  it('refuses a 31st addition within the hour', async () => {
-    const burst = await prisma.teacher.create({
-      data: {
-        firstName: 'Burst',
-        lastName: 'Teacher',
-        email: `crm-burst-${suffix}@test.local`,
-        account: { create: { email: `crm-burst-${suffix}@test.local` } },
-        bio: 'Fresh limiter bucket',
-        pageSlug: `crm-burst-${suffix}`,
-      },
-    });
-    const burstToken = await seedSession(prisma, burst.accountId);
+  // Fixture creation sits inside the `try` in the three tests below so a throw
+  // in `teacher.create` or `seedSession` cannot strand a Teacher and Account —
+  // and the finally deletes the Student before the Teacher, so a failing
+  // teacher delete cannot leave the student row behind (and replace the real
+  // assertion failure with a cleanup error).
+  type Fixture = { id: string; accountId: string };
+
+  it('refuses a 51st addition within the hour', async () => {
     const targetEmail = `crm-burst-target-${suffix}@test.local`;
+    let burst: Fixture | undefined;
 
     try {
+      burst = await prisma.teacher.create({
+        data: {
+          firstName: 'Burst',
+          lastName: 'Teacher',
+          email: `crm-burst-${suffix}@test.local`,
+          account: { create: { email: `crm-burst-${suffix}@test.local` } },
+          bio: 'Fresh limiter bucket',
+          pageSlug: `crm-burst-${suffix}`,
+        },
+      });
+      const burstToken = await seedSession(prisma, burst.accountId);
+
       const statuses: number[] = [];
-      for (let i = 0; i < 31; i++) {
+      for (let i = 0; i < 51; i++) {
         const res = await fetch(`${BASE_URL}/api/students`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...cookie(burstToken) },
@@ -742,36 +786,124 @@ describe('POST /api/students — response disclosure (#162)', () => {
       }
 
       expect(statuses[0]).toBe(201);
-      expect(statuses.slice(1, 30)).toEqual(Array(29).fill(409));
-      expect(statuses[30]).toBe(429);
+      expect(statuses.slice(1, 50)).toEqual(Array(49).fill(409));
+      expect(statuses[50]).toBe(429);
     } finally {
       const created = await prisma.student.findUnique({ where: { email: targetEmail } });
-      await prisma.teacherStudent.deleteMany({ where: { teacherId: burst.id } });
-      await prisma.session.deleteMany({ where: { accountId: burst.accountId } });
-      await prisma.teacher.delete({ where: { id: burst.id } });
-      if (created) await prisma.student.delete({ where: { id: created.id } });
-      await prisma.account.deleteMany({ where: { id: burst.accountId } });
+      if (created) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId: created.id } });
+        await prisma.student.delete({ where: { id: created.id } });
+      }
+      if (burst) {
+        await prisma.teacherStudent.deleteMany({ where: { teacherId: burst.id } });
+        await prisma.session.deleteMany({ where: { accountId: burst.accountId } });
+        await prisma.teacher.delete({ where: { id: burst.id } });
+        await prisma.account.deleteMany({ where: { id: burst.accountId } });
+      }
+    }
+  });
+
+  // The budget is shared across POST /api/students and the teacher branch of
+  // PUT /api/students/[id] on purpose: the PUT writes a client-supplied email
+  // to the same `@unique` column with no pre-check, so its 200-vs-409 answers
+  // "is this address taken?" exactly as the POST's 200-vs-201 does. Give the
+  // PUT its own bucket and the pair is unbounded again — and nothing else in
+  // this file would notice.
+  it('spends one shared budget across POST and the teacher PUT', async () => {
+    let shared: Fixture | undefined;
+    let studentId: string | undefined;
+
+    try {
+      shared = await prisma.teacher.create({
+        data: {
+          firstName: 'Shared',
+          lastName: 'Teacher',
+          email: `crm-shared-${suffix}@test.local`,
+          account: { create: { email: `crm-shared-${suffix}@test.local` } },
+          bio: 'Fresh limiter bucket',
+          pageSlug: `crm-shared-${suffix}`,
+        },
+      });
+      const headers = {
+        'Content-Type': 'application/json',
+        ...cookie(await seedSession(prisma, shared.accountId)),
+      };
+
+      // Hit 1 of 50: one real contact, the only Student row this test creates.
+      const created = await fetch(`${BASE_URL}/api/students`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          firstName: 'Shared',
+          lastName: 'Budget',
+          email: `crm-shared-0-${suffix}@test.local`,
+        }),
+      });
+      expect(created.status).toBe(201);
+      studentId = ((await created.json()) as { data: { id: string } }).data.id;
+
+      // Hits 2..50: each PUT moves the contact's email to a fresh address, the
+      // exact shape of the probe this budget exists to bound.
+      for (let i = 1; i <= 49; i++) {
+        const res = await fetch(`${BASE_URL}/api/students/${studentId}`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify({
+            firstName: 'Shared',
+            lastName: 'Budget',
+            email: `crm-shared-${i}-${suffix}@test.local`,
+          }),
+        });
+        expect(res.status).toBe(200);
+      }
+
+      const refused = await fetch(`${BASE_URL}/api/students/${studentId}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          firstName: 'Shared',
+          lastName: 'Budget',
+          email: `crm-shared-50-${suffix}@test.local`,
+        }),
+      });
+      expect(refused.status).toBe(429);
+    } finally {
+      if (studentId) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId } });
+        await prisma.student.delete({ where: { id: studentId } });
+      }
+      if (shared) {
+        await prisma.teacherStudent.deleteMany({ where: { teacherId: shared.id } });
+        await prisma.session.deleteMany({ where: { accountId: shared.accountId } });
+        await prisma.teacher.delete({ where: { id: shared.id } });
+        await prisma.account.deleteMany({ where: { id: shared.accountId } });
+      }
     }
   });
 
   it('spends budget on invalid bodies, because the limiter runs before parseBody', async () => {
-    const gate = await prisma.teacher.create({
-      data: {
-        firstName: 'Gate',
-        lastName: 'Teacher',
-        email: `crm-gate-${suffix}@test.local`,
-        account: { create: { email: `crm-gate-${suffix}@test.local` } },
-        bio: 'Fresh limiter bucket',
-        pageSlug: `crm-gate-${suffix}`,
-      },
-    });
-    const gateToken = await seedSession(prisma, gate.accountId);
-    const headers = { 'Content-Type': 'application/json', ...cookie(gateToken) };
+    const targetEmail = `crm-gate-target-${suffix}@test.local`;
+    let gate: Fixture | undefined;
 
     try {
-      // 30 rejected bodies. Each 400s without creating anything, and each still
+      gate = await prisma.teacher.create({
+        data: {
+          firstName: 'Gate',
+          lastName: 'Teacher',
+          email: `crm-gate-${suffix}@test.local`,
+          account: { create: { email: `crm-gate-${suffix}@test.local` } },
+          bio: 'Fresh limiter bucket',
+          pageSlug: `crm-gate-${suffix}`,
+        },
+      });
+      const headers = {
+        'Content-Type': 'application/json',
+        ...cookie(await seedSession(prisma, gate.accountId)),
+      };
+
+      // 50 rejected bodies. Each 400s without creating anything, and each still
       // consumes a hit — that is the whole claim under test.
-      for (let i = 0; i < 30; i++) {
+      for (let i = 0; i < 50; i++) {
         const res = await fetch(`${BASE_URL}/api/students`, {
           method: 'POST',
           headers,
@@ -780,7 +912,7 @@ describe('POST /api/students — response disclosure (#162)', () => {
         expect(res.status).toBe(400);
       }
 
-      // A flawless 31st request is refused anyway. Move the limiter below
+      // A flawless 51st request is refused anyway. Move the limiter below
       // parseBody and this returns 201 instead.
       const res = await fetch(`${BASE_URL}/api/students`, {
         method: 'POST',
@@ -788,7 +920,7 @@ describe('POST /api/students — response disclosure (#162)', () => {
         body: JSON.stringify({
           firstName: 'Valid',
           lastName: 'Payload',
-          email: `crm-gate-target-${suffix}@test.local`,
+          email: targetEmail,
         }),
       });
       expect(res.status).toBe(429);
@@ -797,14 +929,17 @@ describe('POST /api/students — response disclosure (#162)', () => {
       // under correct behaviour every request is refused and no Student is
       // ever created. Clean it up anyway so a reappearing regression can't
       // strand it in the shared dev database.
-      const created = await prisma.student.findUnique({
-        where: { email: `crm-gate-target-${suffix}@test.local` },
-      });
-      await prisma.teacherStudent.deleteMany({ where: { teacherId: gate.id } });
-      await prisma.session.deleteMany({ where: { accountId: gate.accountId } });
-      await prisma.teacher.delete({ where: { id: gate.id } });
-      if (created) await prisma.student.delete({ where: { id: created.id } });
-      await prisma.account.deleteMany({ where: { id: gate.accountId } });
+      const created = await prisma.student.findUnique({ where: { email: targetEmail } });
+      if (created) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId: created.id } });
+        await prisma.student.delete({ where: { id: created.id } });
+      }
+      if (gate) {
+        await prisma.teacherStudent.deleteMany({ where: { teacherId: gate.id } });
+        await prisma.session.deleteMany({ where: { accountId: gate.accountId } });
+        await prisma.teacher.delete({ where: { id: gate.id } });
+        await prisma.account.deleteMany({ where: { id: gate.accountId } });
+      }
     }
   });
 });
@@ -837,5 +972,40 @@ describe('PUT /api/students/[id] — teacher response shape (#162)', () => {
     const json = await res.json();
     expect(Object.keys(json.data)).toEqual(['id']);
     expect(json.data.id).toBe(target.id);
+  });
+
+  // The unclaimed arm of the teacher branch's ownership gate. Its sibling — a
+  // teacher editing a *claimed* student — is pinned above ("a teacher cannot
+  // edit a claimed student"), but that 403 fires on `claimedAt` and returns
+  // before the link check ever runs, so nothing until now could fail if the
+  // link check were deleted.
+  it("refuses a teacher editing an unclaimed student outside their contacts", async () => {
+    const stranger = await prisma.student.create({
+      data: {
+        firstName: 'Not',
+        lastName: 'Mine',
+        email: `crm-put-unlinked-${suffix}@test.local`,
+      },
+    });
+    studentIds.push(stranger.id); // cleaned up by the file's top-level afterAll
+
+    const res = await fetch(`${BASE_URL}/api/students/${stranger.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({
+        firstName: 'Hijacked',
+        lastName: 'Mine',
+        email: `crm-put-hijacked-${suffix}@test.local`,
+      }),
+    });
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toBe('Student not in your contacts');
+
+    // And the write did not land.
+    const after = await prisma.student.findUniqueOrThrow({ where: { id: stranger.id } });
+    expect(after.firstName).toBe('Not');
+    expect(after.email).toBe(`crm-put-unlinked-${suffix}@test.local`);
   });
 });
