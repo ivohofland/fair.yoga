@@ -56,13 +56,10 @@ So the issue's central claim — *"this is the only student read path in the
 codebase that does not filter"* — holds, and is in fact stronger than stated: it
 is the only such path in the API at all.
 
-One adjacent case, named here so it is not mistaken for an oversight:
-`students/[id]/route.ts:131` (teacher `PUT`) also returns a bare `Student` row
-belonging to another person. It is not in the same class — it fires only for an
-**unclaimed** student the teacher is already linked to, and the reference `GET`
-at `:49` states that unclaimed carries no privacy restrictions. It does still
-return `accountId` and `deletedAt`, which the `GET` filter omits. Out of scope
-here; it belongs to the privacy-helper issue below.
+One adjacent case: `students/[id]/route.ts:131` (teacher `PUT`) also returns a
+bare `Student` row belonging to another person. It is **folded into this branch**
+— see Design §3 — though its severity is much lower and the spec says so rather
+than inflating it to match.
 
 One correction to the contrast the issue draws, though. `StudentPrivacy` is
 consulted in **3 of 52** route files (`students/route.ts`,
@@ -167,7 +164,38 @@ junk `Student` rows behind — a real price and a loud signal, not a wall. The w
 is the invitation flow (see "Filed, not folded"); this limit is what holds until
 it lands.
 
-### 3. Status codes stay as they are
+### 3. The sibling in the same family: teacher `PUT`
+
+`students/[id]/route.ts:126-131` returns the raw updated row. Same treatment:
+`select: { id: true }` on the update, return `{ id }`. The pre-check load at
+`:107` narrows too — to `select: { id: true, claimedAt: true }`, since `claimedAt`
+is the only field it reads.
+
+**Its severity, stated honestly rather than inflated to match.** This branch fires
+only for an **unclaimed** student the teacher is already linked to, and the
+reference `GET` at `:49` states that unclaimed carries no privacy restrictions —
+so `firstName`, `lastName` and `email` are legitimately the teacher's to see here.
+What actually escapes the `GET` contract is `reminderPref`, `emailNotifications`,
+`incomeTier`, `tierSelectedAt`, `deletedAt`, and `accountId` — which is provably
+always `null` on this path, because `Student_claim_link_check`
+(`prisma/migrations/20260721061528_student_claim_link_check/migration.sql`)
+enforces `("claimedAt" IS NULL) = ("accountId" IS NULL)` and `:109` has already
+403'd every claimed student.
+
+So this is a **shape inconsistency, not a disclosure**. It is folded in because it
+is the same defect shape in the same file: leaving it signals to the next reader
+that returning the raw row is fine here, which is how the pattern spread.
+
+**Consumer check:** `edit-student-form.tsx:83` ignores the response body entirely
+and calls `router.refresh()`. Nothing reads it.
+
+**Deliberately not changed — the self-edit branch at `:102`.** It returns the
+caller's own row to the caller, which is not a disclosure at any boundary.
+`tier-form.tsx:48` and `notifications-form.tsx:99` check only `res.ok` and never
+read the body, so narrowing it *would* be safe — it is left alone because it is
+not a defect, not because it was overlooked.
+
+### 4. Status codes stay as they are
 
 200 for an already-existing student, 201 for a created one. Unifying them was
 considered and rejected: it does not close the account-existence oracle. See
@@ -251,10 +279,26 @@ the fix: today the response carries 16 keys.
    The existing `expect(json.data.id).toBe(createdStudentId)` at `:201` stays
    valid unchanged — it already asserts only the id.
 
+4. **Teacher `PUT` returns `{ id }`.** Same exhaustive key assertion.
+
+   **Fixture warning.** Do *not* reach for the `GET/PUT /api/students/[id] —
+   profile-presence authorization` block at `:240`: its `rosterStudent` is created
+   with `claimedAt: new Date()`, so the teacher branch 403s at `:109` before ever
+   reaching the response — the test would pass against the bug. This test needs an
+   **unclaimed** student linked to the teacher. Create a dedicated one in the test
+   body and push its id onto `studentIds` so the existing `afterAll` cleans it up;
+   do not reuse `studentIds[0]`, which the `GET` search tests assert on by name.
+
 **Every guard gets broken before it is trusted.** Per guard: remove or invert it,
 record the exact failure text, restore, re-run. Specifically — delete the
-`select: { id: true }` and confirm test 1 fails with the 16-key set; delete the
-rate-limit block and confirm test 3 gets a 2xx where it expects 429.
+`select: { id: true }` on the `findUnique` and confirm test 1 fails with the
+16-key set; delete the rate-limit block and confirm test 3 gets a 2xx where it
+expects 429; delete the `select` on the `PUT`'s update and confirm test 4 fails.
+
+Test 4 needs its falsifiability checked twice over, because it has *two* ways to
+pass vacuously: against a claimed fixture the route 403s before responding, and
+against an unlinked one it 403s at `:116`. Confirm the un-fixed route returns the
+wide key set for this exact fixture before trusting the test.
 
 ## Filed, not folded
 
@@ -290,8 +334,8 @@ Open design questions that issue must answer before anyone starts:
 the user during this brainstorm: the flags are honoured even when payment is
 owed, because reminders go through the app and blocking a non-paying student is
 the escalation. That makes it a leaf, but not this branch's leaf — it touches
-`services/payments.ts:202-206` and `:239-242` plus four route files, and the
-`PUT` noted above, and doing it properly means
+`services/payments.ts:202-206` and `:239-242` plus four route files, and doing it
+properly means
 extracting one shared `projectStudentForTeacher` helper rather than a fourth
 inline copy of the gating rule. Folding it here would turn a one-file fix into a
 privacy-model refactor. It subsumes the `incomeTier` question above.
