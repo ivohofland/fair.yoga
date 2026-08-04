@@ -72,6 +72,16 @@ export function TeacherPrivacyCard({
       });
       if (res.ok) {
         setSaved(true);
+      } else if (res.status === 403) {
+        // The route 403s a teacher this student has no TeacherStudent link to,
+        // and `eraseTeacher` in services/gdpr.ts hard-deletes every one of a
+        // teacher's links — regardless of whether the student has claimed
+        // their account — so this card can be on screen when its link
+        // disappears. "Try again" would be advice for a state no retry can
+        // reach. (The CRM-removal route cannot produce this: it refuses to
+        // remove a student with `claimedAt` set, and any student who can see
+        // this page is signed in and therefore claimed.)
+        setError('This teacher is no longer connected to your account, so these settings no longer apply.');
       } else {
         setError('Could not save. Try again.');
       }

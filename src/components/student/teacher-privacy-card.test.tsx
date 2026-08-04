@@ -84,4 +84,41 @@ describe('TeacherPrivacyCard', () => {
     const { body } = await save();
     expect(body.sharePhone).toBe(true);
   });
+
+  function stubFailure(status: number) {
+    fetchMock.mockResolvedValue({ ok: false, status, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+  }
+
+  function renderCard() {
+    render(
+      <TeacherPrivacyCard
+        studentId="student-1"
+        teacherId="teacher-1"
+        teacherName="Jane Teacher"
+        initial={initial}
+      />,
+    );
+  }
+
+  // The route started 403ing unlinked teachers on the #146/#148 branch, and
+  // `eraseTeacher` hard-deletes every link a teacher has — so a card on screen
+  // can outlive its link. Retry advice for a state no retry can reach is the
+  // defect; these two pin that only the retryable failure says "try again".
+  it('403 says the link is gone, and does not suggest retrying', async () => {
+    stubFailure(403);
+    renderCard();
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/no longer connected to your account/i)).toBeTruthy(),
+    );
+    expect(screen.queryByText(/try again/i)).toBeNull();
+  });
+
+  it('keeps the retry message for failures a retry can fix', async () => {
+    stubFailure(500);
+    renderCard();
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => expect(screen.getByText('Could not save. Try again.')).toBeTruthy());
+  });
 });

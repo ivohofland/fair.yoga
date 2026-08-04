@@ -9,6 +9,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { updatePrivacySchema } from '@/lib/schemas';
+import { log } from '@/lib/log';
 
 /**
  * A student may only read or write privacy settings for a teacher they are
@@ -18,10 +19,19 @@ import { updatePrivacySchema } from '@/lib/schemas';
  * #146/#148 one route over, with the field kept rather than dropped because
  * here the student legitimately chooses the teacher.
  *
- * Existence, not `isArchived: false`. Archiving is the teacher's filing action;
- * a student does not lose control over their own privacy settings because a
- * teacher tidied them away. `account/privacy/page.tsx` renders cards only for
- * non-archived links, so no UI path reaches the looser case either way.
+ * Existence, not `isArchived: false`. Archiving is the teacher's filing action,
+ * and the looser check is the one that would not strip a student of control
+ * over their own settings because a teacher tidied them away. That is the
+ * reason for the choice, not a benefit the product currently delivers:
+ * `account/privacy/page.tsx` renders cards only for non-archived links, so no
+ * UI path reaches the looser case either way. It becomes real the day anything
+ * renders an archived link.
+ *
+ * The two 403s below have different causes and different remedies, so they
+ * carry distinct codes. Splitting them leaks nothing: the link check runs only
+ * after `session.studentId === id`, so the only caller who can reach it is the
+ * student themselves, and what it reveals is already rendered on their own
+ * /account/privacy page.
  */
 async function hasTeacherLink(studentId: string, teacherId: string): Promise<boolean> {
   const link = await prisma.teacherStudent.findUnique({
@@ -40,7 +50,7 @@ export const GET = withErrorHandler(async (
   if (isErrorResponse(session)) return session;
 
   if (session.studentId !== id) {
-    return respondError('Access denied', 403);
+    return respondError('Access denied', 403, 'NOT_YOUR_PROFILE');
   }
 
   const teacherId = request.nextUrl.searchParams.get('teacherId');
@@ -49,7 +59,8 @@ export const GET = withErrorHandler(async (
   }
 
   if (!(await hasTeacherLink(id, teacherId))) {
-    return respondError('Access denied', 403);
+    log.warn({ studentId: id, teacherId }, 'privacy read refused: no TeacherStudent link');
+    return respondError('Access denied', 403, 'TEACHER_NOT_LINKED');
   }
 
   const privacy = await prisma.studentPrivacy.findUnique({
@@ -86,7 +97,7 @@ export const PUT = withErrorHandler(async (
   if (isErrorResponse(session)) return session;
 
   if (session.studentId !== id) {
-    return respondError('Access denied', 403);
+    return respondError('Access denied', 403, 'NOT_YOUR_PROFILE');
   }
 
   const parsed = await parseBody(request, updatePrivacySchema);
@@ -94,7 +105,8 @@ export const PUT = withErrorHandler(async (
   const { teacherId, ...privacyFields } = parsed.data;
 
   if (!(await hasTeacherLink(id, teacherId))) {
-    return respondError('Access denied', 403);
+    log.warn({ studentId: id, teacherId }, 'privacy write refused: no TeacherStudent link');
+    return respondError('Access denied', 403, 'TEACHER_NOT_LINKED');
   }
 
   const privacy = await prisma.studentPrivacy.upsert({

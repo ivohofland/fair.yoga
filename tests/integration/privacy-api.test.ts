@@ -163,6 +163,7 @@ describe('students privacy API', () => {
       { headers: cookie(studentToken) },
     );
     expect(res.status).toBe(403);
+    expect((await res.json()).error.code).toBe('NOT_YOUR_PROFILE');
   });
 
   // A student could write privacy flags for any teacher, including one they
@@ -177,6 +178,10 @@ describe('students privacy API', () => {
       body: JSON.stringify({ teacherId: unlinkedTeacherId, shareAddress: true }),
     });
     expect(res.status).toBe(403);
+    // Distinct from the "not your profile" 403 above: different cause,
+    // different remedy, and teacher-privacy-card.tsx renders a different
+    // message for it. Pinned so the two cannot collapse back into one.
+    expect((await res.json()).error.code).toBe('TEACHER_NOT_LINKED');
 
     const row = await prisma.studentPrivacy.findUnique({
       where: { studentId_teacherId: { studentId, teacherId: unlinkedTeacherId } },
@@ -190,5 +195,6 @@ describe('students privacy API', () => {
       { headers: cookie(studentToken) },
     );
     expect(res.status).toBe(403);
+    expect((await res.json()).error.code).toBe('TEACHER_NOT_LINKED');
   });
 });
