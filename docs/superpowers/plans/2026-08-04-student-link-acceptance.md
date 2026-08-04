@@ -1151,17 +1151,21 @@ bit. See the spec's "The block oracle, found during the build".
 
 - [ ] **Step 1: Write the failing test**
 
+**Two things this snippet gets wrong, corrected during execution:** `post` is declared inside the first `it()` and referenced from the second, which does not work across sibling Vitest tests — hoist it to describe scope. And Task 6's existing test `'writes an invisible tombstone when the link came from a booking'` asserts the 409 this task removes; it must be updated, and updating it is the riskiest edit here (see Step 5).
+
 ```ts
+// Hoisted to describe scope — the second test needs it too.
+const post = (email: string) =>
+  fetch(`${BASE_URL}/api/students`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+    body: JSON.stringify({ firstName: 'Zzz', lastName: 'Qqq', email }),
+  });
+
 it('answers a silently-blocked address exactly as a fresh one', async () => {
   // The student unlinked, so a student_block tombstone exists for this
   // (teacher, email) pair — carrying an address this teacher never had,
   // because shareEmail defaults false. A 409 here would hand it to them.
-  const post = (email: string) =>
-    fetch(`${BASE_URL}/api/students`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
-      body: JSON.stringify({ firstName: 'Zzz', lastName: 'Qqq', email }),
-    });
 
   const [blocked, fresh] = await Promise.all([post(blockedEmail), post(freshEmail)]);
 
@@ -1228,6 +1232,8 @@ Widen the `select` at the `existing` lookup to include `origin`.
 Change `existing.origin === 'student_block'` to `existing.origin === 'teacher_invite'`. Expected: the silent-block test fails `expected 409 to be 201` **and** the honest-refusal test fails `expected 201 to be 409`. Both must fail — one alone means the two cases are not actually distinguished. Record both.
 
 Then re-run Task 3's oracle test (`'answers identically for a registered address and a free one'`) — it must still pass. This branch adds a third path through the same response, and it is the test that governs all of them.
+
+**And handle Task 6's existing test carefully — this is the riskiest edit in the task.** `'writes an invisible tombstone when the link came from a booking'` asserts a 409 on re-invite, which is exactly the behaviour being removed, so it must change. It must NOT be reduced to asserting 201: 201 is now indistinguishable from success, so a test asserting only that proves nothing and the "blocks" half of Task 6's guarantee silently evaporates. Keep an assertion on an observable *consequence* of the block — that no new `Invitation` row exists for that address, and that the tombstone still stands with `status: 'declined'` and `origin: 'student_block'`. Updating a regression test to match new behaviour is how regression tests get neutered; the bar is that the rewritten test would still fail if the block stopped working.
 
 - [ ] **Step 6: Commit**
 
