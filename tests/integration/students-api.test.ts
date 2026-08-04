@@ -715,4 +715,40 @@ describe('POST /api/students — response disclosure (#162)', () => {
     expect(Object.keys(json.data)).toEqual(['id']);
     expect(json.data.id).toBe(victimId);
   });
+
+  it('refuses a 31st addition within the hour', async () => {
+    const burst = await prisma.teacher.create({
+      data: {
+        firstName: 'Burst',
+        lastName: 'Teacher',
+        email: `crm-burst-${suffix}@test.local`,
+        account: { create: { email: `crm-burst-${suffix}@test.local` } },
+        bio: 'Fresh limiter bucket',
+        pageSlug: `crm-burst-${suffix}`,
+      },
+    });
+    const burstToken = await seedSession(prisma, burst.accountId);
+    const targetEmail = `crm-burst-target-${suffix}@test.local`;
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 31; i++) {
+      const res = await fetch(`${BASE_URL}/api/students`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(burstToken) },
+        body: JSON.stringify({ firstName: 'Burst', lastName: 'Target', email: targetEmail }),
+      });
+      statuses.push(res.status);
+    }
+
+    expect(statuses[0]).toBe(201);
+    expect(statuses.slice(1, 30)).toEqual(Array(29).fill(409));
+    expect(statuses[30]).toBe(429);
+
+    const created = await prisma.student.findUnique({ where: { email: targetEmail } });
+    await prisma.teacherStudent.deleteMany({ where: { teacherId: burst.id } });
+    await prisma.session.deleteMany({ where: { accountId: burst.accountId } });
+    await prisma.teacher.delete({ where: { id: burst.id } });
+    if (created) await prisma.student.delete({ where: { id: created.id } });
+    await prisma.account.deleteMany({ where: { id: burst.accountId } });
+  });
 });

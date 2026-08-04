@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { respondOk, respondError, requireTeacher, isErrorResponse, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { createStudentSchema, studentListQuerySchema } from '@/lib/schemas';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -103,6 +104,22 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
+
+  // Keyed on the teacher, not the IP. The caller is authenticated, so an IP key
+  // is both evadable by rotation and unfair to teachers behind one NAT — and it
+  // would need the `ip !== 'unknown'` escape hatch the three existing call sites
+  // carry, which silently disables the limit when no proxy header is present.
+  //
+  // 30/hour clears any realistic workshop roster. What it buys: this route is
+  // still an account-existence oracle (200 = the address was registered, 201 =
+  // it was not, and a follow-up GET recovers the same bit either way), and every
+  // miss creates a real Student row. The limit meters that at ~14 days and
+  // ~10,000 junk rows per 10,000 addresses. The wall is requiring the student's
+  // acceptance before a link exists at all; this holds until that lands.
+  const limit = checkRateLimit(`students:${session.teacherId}`, 30, 60 * 60 * 1000);
+  if (!limit.allowed) {
+    return respondError('Too many student additions. Try again later.', 429);
+  }
 
   const parsed = await parseBody(request, createStudentSchema);
   if ('error' in parsed) return parsed.error;
