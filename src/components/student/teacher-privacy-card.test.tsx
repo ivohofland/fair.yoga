@@ -102,7 +102,7 @@ describe('TeacherPrivacyCard', () => {
   }
 
   // The route started 403ing unlinked teachers on the #146/#148 branch, and
-  // `eraseTeacher` hard-deletes every link a teacher has — so a card on screen
+  // `deleteTeacherAccount` hard-deletes every link a teacher has — so a card
   // can outlive its link. Retry advice for a state no retry can reach is the
   // defect; these two pin that only the retryable failure says "try again".
   it('403 says the link is gone, and does not suggest retrying', async () => {
