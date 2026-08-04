@@ -7,6 +7,9 @@
 Everything below was reproduced against the running dev server, not read off the
 source. Two throwaway scripts drove real HTTP requests through real sessions.
 
+Line references throughout this spec are as of `c12e388`, the commit this branch
+started from — they describe the code as measured, not as it stands after the fix.
+
 ### The disclosure
 
 A teacher with no relationship to a student, knowing only that student's email,
@@ -43,8 +46,8 @@ any other write path's response." It has now been measured, across response
 bodies rather than writes.
 
 `find src/app/api -name route.ts` → **52 files**. Within them,
-`respondOk|NextResponse.json` matches 139 lines, of which 46 are import
-statements, leaving **93 response call sites**. Classifying each by what it
+`respondOk|NextResponse.json` matches 139 lines, of which 49 are import
+statements, leaving **90 response call sites**. Classifying each by what it
 returns and who owns that row relative to the caller:
 
 `src/app/api/students/route.ts:123` is the **only** site that hands a caller a
@@ -62,13 +65,16 @@ bare `Student` row belonging to another person. It is **folded into this branch*
 than inflating it to match.
 
 One correction to the contrast the issue draws, though. `StudentPrivacy` is
-consulted in **3 of 52** route files (`students/route.ts`,
-`students/[id]/route.ts`, `announcements/route.ts`). The payment and registration
-routes return un-redacted `lastName` to the owning teacher regardless of
-`shareFullName` (`services/payments.ts:202-206` and `:239-242`), and the first of
-those two also returns `email` regardless of `shareEmail`. So "the codebase
-filters everywhere except here" is true of the *student* routes, not of the app.
-That is now its own decided issue (see "Filed, not folded").
+consulted in **4 of 52** route files (`students/route.ts`,
+`students/[id]/route.ts`, `announcements/route.ts`,
+`students/[id]/privacy/route.ts`) — but the fourth of those is the settings CRUD
+for those flags, not a route that filters output by them, so 3 is the number
+that actually filters. The payment and registration routes return un-redacted
+`lastName` to the owning teacher regardless of `shareFullName`
+(`services/payments.ts:202-206` and `:239-242`), and the first of those two
+also returns `email` regardless of `shareEmail`. So "the codebase filters
+everywhere except here" is true of the *student* routes, not of the app. That
+is now its own decided issue (see "Filed, not folded").
 
 ## Corrections to the issue's premise
 
@@ -113,9 +119,13 @@ else. Same family, different mechanism: there is no id to check ownership of, so
 the remedy is not "add an ownership check" but "never load the fields in the
 first place".
 
-This is also why `SERVER_OWNED_FIELDS` in `src/lib/schemas.test.ts` does not and
-should not catch it — its curation note puts client-supplied cross-tenant
-selectors out of scope explicitly.
+This is also why `SERVER_OWNED_FIELDS` in `src/lib/schemas.test.ts` does not
+catch it, though not for the reason it might look like. The nearest curation
+note (`:298-304`) scopes out client-supplied cross-tenant **foreign keys** —
+`classId`, `roomId`, `teacherRoomId` — not natural-key selectors. `email` is a
+natural-key selector, not a foreign key, so that note does not literally cover
+this case; it falls outside the register by omission, not by an explicit
+carve-out.
 
 ## Design
 
@@ -153,9 +163,11 @@ Placed after `requireTeacher` and before `parseBody`, matching
 
 **Why per teacher rather than per IP.** The caller is authenticated, so IP keying
 is strictly weaker — evadable by rotating IPs, and it punishes teachers sharing a
-network. It also avoids the escape hatch all three existing call sites carry:
-they wrap the check in `if (ip !== 'unknown')`, so the limit silently does not
-apply whenever no proxy header is present.
+network. It also avoids the fallback its siblings carry for the `ip === 'unknown'`
+case, which drops the IP limit entirely when no proxy header is present.
+`magic-link/send` and `student-signup` survive that because each also keeps an
+unconditional per-email limit; `teachers/route.ts` has no second limit and is
+genuinely unthrottled in that case. A teacher key needs no fallback at all.
 
 **Why 30/hour.** A teacher entering a workshop roster in one sitting must not hit
 it; 25-30 is a realistic upper bound for that. At 30/hour a sweep over 10,000
@@ -224,6 +236,15 @@ The real control is whether a teacher may create the link at all knowing only an
 email. That question **has** been answered — acceptance will be required — but the
 answer is a feature, not a guard, so it ships separately. Until it does, the rate
 limit is what stands between this route and a bulk sweep.
+
+**A probe's link is permanent, and the student cannot remove it.** A successful
+probe leaves a `TeacherStudent` row, and the only paths that delete one are the
+teacher's own `DELETE /api/students/[id]` (`students/[id]/route.ts:170`, teacher-
+gated) and full account erasure (`services/gdpr.ts:223`). The student sees the
+stranger listed on their privacy settings and can remove them only by deleting
+their entire account. This is the sharpest remaining consequence of "metered,
+not closed", and the invitation-flow issue must decide unlink semantics, not
+only link semantics.
 
 **`incomeTier` remains readable by any linked teacher.** Not fixed here, and the
 reason is worth writing down rather than rediscovering. Prices are

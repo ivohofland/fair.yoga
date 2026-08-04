@@ -730,26 +730,74 @@ describe('POST /api/students — response disclosure (#162)', () => {
     const burstToken = await seedSession(prisma, burst.accountId);
     const targetEmail = `crm-burst-target-${suffix}@test.local`;
 
-    const statuses: number[] = [];
-    for (let i = 0; i < 31; i++) {
+    try {
+      const statuses: number[] = [];
+      for (let i = 0; i < 31; i++) {
+        const res = await fetch(`${BASE_URL}/api/students`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...cookie(burstToken) },
+          body: JSON.stringify({ firstName: 'Burst', lastName: 'Target', email: targetEmail }),
+        });
+        statuses.push(res.status);
+      }
+
+      expect(statuses[0]).toBe(201);
+      expect(statuses.slice(1, 30)).toEqual(Array(29).fill(409));
+      expect(statuses[30]).toBe(429);
+    } finally {
+      const created = await prisma.student.findUnique({ where: { email: targetEmail } });
+      await prisma.teacherStudent.deleteMany({ where: { teacherId: burst.id } });
+      await prisma.session.deleteMany({ where: { accountId: burst.accountId } });
+      await prisma.teacher.delete({ where: { id: burst.id } });
+      if (created) await prisma.student.delete({ where: { id: created.id } });
+      await prisma.account.deleteMany({ where: { id: burst.accountId } });
+    }
+  });
+
+  it('spends budget on invalid bodies, because the limiter runs before parseBody', async () => {
+    const gate = await prisma.teacher.create({
+      data: {
+        firstName: 'Gate',
+        lastName: 'Teacher',
+        email: `crm-gate-${suffix}@test.local`,
+        account: { create: { email: `crm-gate-${suffix}@test.local` } },
+        bio: 'Fresh limiter bucket',
+        pageSlug: `crm-gate-${suffix}`,
+      },
+    });
+    const gateToken = await seedSession(prisma, gate.accountId);
+    const headers = { 'Content-Type': 'application/json', ...cookie(gateToken) };
+
+    try {
+      // 30 rejected bodies. Each 400s without creating anything, and each still
+      // consumes a hit — that is the whole claim under test.
+      for (let i = 0; i < 30; i++) {
+        const res = await fetch(`${BASE_URL}/api/students`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ firstName: '', lastName: '', email: 'not-an-email' }),
+        });
+        expect(res.status).toBe(400);
+      }
+
+      // A flawless 31st request is refused anyway. Move the limiter below
+      // parseBody and this returns 201 instead.
       const res = await fetch(`${BASE_URL}/api/students`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...cookie(burstToken) },
-        body: JSON.stringify({ firstName: 'Burst', lastName: 'Target', email: targetEmail }),
+        headers,
+        body: JSON.stringify({
+          firstName: 'Valid',
+          lastName: 'Payload',
+          email: `crm-gate-target-${suffix}@test.local`,
+        }),
       });
-      statuses.push(res.status);
+      expect(res.status).toBe(429);
+    } finally {
+      // This test creates no Student rows at all — every request was refused.
+      await prisma.session.deleteMany({ where: { accountId: gate.accountId } });
+      await prisma.teacher.delete({ where: { id: gate.id } });
+      await prisma.account.deleteMany({ where: { id: gate.accountId } });
     }
-
-    expect(statuses[0]).toBe(201);
-    expect(statuses.slice(1, 30)).toEqual(Array(29).fill(409));
-    expect(statuses[30]).toBe(429);
-
-    const created = await prisma.student.findUnique({ where: { email: targetEmail } });
-    await prisma.teacherStudent.deleteMany({ where: { teacherId: burst.id } });
-    await prisma.session.deleteMany({ where: { accountId: burst.accountId } });
-    await prisma.teacher.delete({ where: { id: burst.id } });
-    if (created) await prisma.student.delete({ where: { id: created.id } });
-    await prisma.account.deleteMany({ where: { id: burst.accountId } });
   });
 });
 

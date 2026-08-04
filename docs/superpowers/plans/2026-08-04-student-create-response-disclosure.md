@@ -266,15 +266,23 @@ Then, in the `POST` handler, immediately after the `requireTeacher` guard and **
 ```ts
   // Keyed on the teacher, not the IP. The caller is authenticated, so an IP key
   // is both evadable by rotation and unfair to teachers behind one NAT — and it
-  // would need the `ip !== 'unknown'` escape hatch the three existing call sites
-  // carry, which silently disables the limit when no proxy header is present.
+  // would need the `ip === 'unknown'` fallback its siblings carry, which drops
+  // the IP limit entirely when no proxy header is present. `magic-link/send`
+  // and `student-signup` survive that because each also keeps an unconditional
+  // per-email limit; `teachers/route.ts` has no second limit and is genuinely
+  // unthrottled in that case. A teacher key needs no fallback at all.
   //
-  // 30/hour clears any realistic workshop roster. What it buys: this route is
-  // still an account-existence oracle (200 = the address was registered, 201 =
-  // it was not, and a follow-up GET recovers the same bit either way), and every
-  // miss creates a real Student row. The limit meters that at ~14 days and
-  // ~10,000 junk rows per 10,000 addresses. The wall is requiring the student's
-  // acceptance before a link exists at all; this holds until that lands.
+  // 30/hour clears any realistic workshop roster from today's single-add UI.
+  // Issue #51 (bulk/CSV student import) will exceed it by design — raise the
+  // ceiling or exempt the import path when that lands; do not assume this
+  // number still fits.
+  //
+  // What it buys: this route is still an account-existence oracle (200 = the
+  // address was registered, 201 = it was not, and a follow-up GET recovers the
+  // same bit either way), and every miss creates a real Student row. The limit
+  // meters that at ~14 days and ~10,000 junk rows per 10,000 addresses. The
+  // wall is requiring the student's acceptance before a link exists at all;
+  // this holds until that lands.
   const limit = checkRateLimit(`students:${session.teacherId}`, 30, 60 * 60 * 1000);
   if (!limit.allowed) {
     return respondError('Too many student additions. Try again later.', 429);
@@ -462,7 +470,7 @@ Expected: the `POST` prints `{"data":{"id":"…"}}` and nothing else, where befo
 Both carry a decision already made, so file them as work with the decision stated — not as open questions.
 
 1. **Linking a student requires that student's acceptance.** Copy the six open design questions verbatim from the spec's "Filed, not folded" §1. Note that it is what actually closes the existence oracle and the `incomeTier` residual, and that it needs its own brainstorm rather than a plan.
-2. **Honour `StudentPrivacy` in the payment and registration routes.** Record the decision: flags are honoured even when payment is owed, because reminders go through the app and blocking a non-paying student is the escalation. Name the sites — `services/payments.ts:202-206` and `:239-242`, the four route files that consume them, and `students/[id]/route.ts:131`'s sibling concerns — and that the shape is one shared `projectStudentForTeacher` helper, not a fourth inline copy. Note that it subsumes the `incomeTier` question.
+2. **Honour `StudentPrivacy` in the payment and registration routes.** Record the decision: flags are honoured even when payment is owed, because reminders go through the app and blocking a non-paying student is the escalation. Name the sites — `services/payments.ts:202-206` and `:239-242`, the four route files that consume them, and `students/[id]/route.ts:140`'s sibling concerns — and that the shape is one shared `projectStudentForTeacher` helper, not a fourth inline copy. Note that it subsumes the `incomeTier` question.
 
 Then update `docs/backlog-roadmap.md` with 1 closed / 2 opened and re-check the open count against `gh issue list --limit 200`. Leave that file untracked.
 

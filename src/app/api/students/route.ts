@@ -107,15 +107,23 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // Keyed on the teacher, not the IP. The caller is authenticated, so an IP key
   // is both evadable by rotation and unfair to teachers behind one NAT — and it
-  // would need the `ip !== 'unknown'` escape hatch the three existing call sites
-  // carry, which silently disables the limit when no proxy header is present.
+  // would need the `ip === 'unknown'` fallback its siblings carry, which drops
+  // the IP limit entirely when no proxy header is present. `magic-link/send`
+  // and `student-signup` survive that because each also keeps an unconditional
+  // per-email limit; `teachers/route.ts` has no second limit and is genuinely
+  // unthrottled in that case. A teacher key needs no fallback at all.
   //
-  // 30/hour clears any realistic workshop roster. What it buys: this route is
-  // still an account-existence oracle (200 = the address was registered, 201 =
-  // it was not, and a follow-up GET recovers the same bit either way), and every
-  // miss creates a real Student row. The limit meters that at ~14 days and
-  // ~10,000 junk rows per 10,000 addresses. The wall is requiring the student's
-  // acceptance before a link exists at all; this holds until that lands.
+  // 30/hour clears any realistic workshop roster from today's single-add UI.
+  // Issue #51 (bulk/CSV student import) will exceed it by design — raise the
+  // ceiling or exempt the import path when that lands; do not assume this
+  // number still fits.
+  //
+  // What it buys: this route is still an account-existence oracle (200 = the
+  // address was registered, 201 = it was not, and a follow-up GET recovers the
+  // same bit either way), and every miss creates a real Student row. The limit
+  // meters that at ~14 days and ~10,000 junk rows per 10,000 addresses. The
+  // wall is requiring the student's acceptance before a link exists at all;
+  // this holds until that lands.
   const limit = checkRateLimit(`students:${session.teacherId}`, 30, 60 * 60 * 1000);
   if (!limit.allowed) {
     return respondError('Too many student additions. Try again later.', 429);
