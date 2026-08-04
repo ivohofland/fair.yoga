@@ -144,7 +144,7 @@ describe('POST /api/students', () => {
     });
     expect(res.status).toBe(201);
     const json = await res.json();
-    expect(json.data.firstName).toBe('New');
+    expect(Object.keys(json.data)).toEqual(['id']);
     createdStudentId = json.data.id;
 
     // Verify TeacherStudent link was created
@@ -639,5 +639,80 @@ describe('PATCH /api/students/[id]', () => {
 
     const after = await prisma.teacherStudent.findUniqueOrThrow({ where: { id: linkId } });
     expect(after.isArchived).toBe(false);
+  });
+});
+
+describe('POST /api/students — response disclosure (#162)', () => {
+  let strangerId: string;
+  let strangerAccountId: string;
+  let strangerToken: string;
+  let victimId: string;
+  let victimAccountId: string;
+  const victimEmail = `crm-victim-${suffix}@test.local`;
+
+  beforeAll(async () => {
+    // Account created first so `accountId` is a plain string here — the
+    // Student_claim_link_check constraint needs claimedAt and accountId set
+    // together, and this avoids a non-null assertion on victim.accountId.
+    const victimAccount = await prisma.account.create({ data: { email: victimEmail } });
+    victimAccountId = victimAccount.id;
+    const victim = await prisma.student.create({
+      data: {
+        firstName: 'Victim',
+        lastName: 'Surname',
+        email: victimEmail,
+        incomeTier: 5,
+        phone: '+31 6 12345678',
+        birthday: new Date('1988-03-14'),
+        address: 'Kerkstraat 1, 1017 GA Amsterdam',
+        claimedAt: new Date(),
+        accountId: victimAccount.id,
+      },
+    });
+    victimId = victim.id;
+
+    const stranger = await prisma.teacher.create({
+      data: {
+        firstName: 'Stranger',
+        lastName: 'Teacher',
+        email: `crm-stranger-${suffix}@test.local`,
+        account: { create: { email: `crm-stranger-${suffix}@test.local` } },
+        bio: 'No relationship with the victim',
+        pageSlug: `crm-stranger-${suffix}`,
+      },
+    });
+    strangerId = stranger.id;
+    strangerAccountId = stranger.accountId;
+    strangerToken = await seedSession(prisma, strangerAccountId);
+  });
+
+  afterAll(async () => {
+    await prisma.teacherStudent.deleteMany({ where: { teacherId: strangerId } });
+    await prisma.session.deleteMany({ where: { accountId: strangerAccountId } });
+    await prisma.teacher.delete({ where: { id: strangerId } });
+    await prisma.student.delete({ where: { id: victimId } });
+    await prisma.account.deleteMany({
+      where: { id: { in: [victimAccountId, strangerAccountId] } },
+    });
+  });
+
+  it('gives a teacher who knows only the email nothing but the id', async () => {
+    const res = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(strangerToken) },
+      body: JSON.stringify({
+        firstName: 'Anything',
+        lastName: 'AtAll',
+        email: victimEmail,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    // Exhaustive on keys, not field-by-field absence: a test that asserts
+    // `phone === undefined` and three siblings cannot fail when someone later
+    // adds a new sensitive column to Student. This one can.
+    expect(Object.keys(json.data)).toEqual(['id']);
+    expect(json.data.id).toBe(victimId);
   });
 });

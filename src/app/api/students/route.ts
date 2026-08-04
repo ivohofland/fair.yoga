@@ -108,7 +108,15 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if ('error' in parsed) return parsed.error;
   const { firstName, lastName, email } = parsed.data;
 
-  const existing = await prisma.student.findUnique({ where: { email } });
+  // #162: select the id and nothing else. Narrowing here rather than at the
+  // response is deliberate — `existing` is typed `{ id: string }`, so a future
+  // edit that tries to return more is a compile error, not something review
+  // has to catch. This route answered any teacher who knew an email with the
+  // student's phone, birthday, home address and income tier.
+  const existing = await prisma.student.findUnique({
+    where: { email },
+    select: { id: true },
+  });
 
   if (existing) {
     const link = await prisma.teacherStudent.findUnique({
@@ -120,12 +128,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     await prisma.teacherStudent.create({
       data: { teacherId: session.teacherId, studentId: existing.id },
     });
-    return respondOk(existing, 200);
+    return respondOk({ id: existing.id }, 200);
   }
 
   const student = await prisma.$transaction(async (tx) => {
     const created = await tx.student.create({
       data: { firstName, lastName, email },
+      select: { id: true },
     });
     await tx.teacherStudent.create({
       data: { teacherId: session.teacherId, studentId: created.id },
@@ -133,5 +142,5 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return created;
   });
 
-  return respondOk(student, 201);
+  return respondOk({ id: student.id }, 201);
 });
