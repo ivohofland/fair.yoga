@@ -568,7 +568,9 @@ git commit -m "feat: POST /api/students creates an invitation, closing the enume
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `tests/integration/invitations-api.test.ts`. Follow `students-api.test.ts:1-73` exactly for setup — module-scope `new PrismaClient()`, `uniqueSuffix()`, a `beforeAll` that creates a teacher with a nested account and `pageSlug: \`inv-teacher-${suffix}\``, `seedSession`, and an `afterAll` deleting in FK order (`invitation` → `session` → `teacher`).
+Create `tests/integration/invitations-api.test.ts`. Follow `students-api.test.ts:1-73` exactly for setup — module-scope `new PrismaClient()`, `uniqueSuffix()`, a `beforeAll` that creates a teacher with a nested account and `pageSlug: \`inv-teacher-${suffix}\``, `seedSession`, and an `afterAll` deleting in FK order: **`invitation` → `session` → `teacher` → `account`**.
+
+**That last step was missing from an earlier draft and the omission shipped**, leaking two `Account` rows per run — 16 orphans after 8 runs before anyone noticed. Deleting a `Teacher` does not take its `Account` with it. The precedent is genuinely mixed: `students-api.test.ts`'s top-level teacher leaks its account too, but its *nested* ownership fixtures (`:508-517`, `:892-914`) clean theirs up. Follow the nested ones.
 
 ```ts
 describe('GET /api/invitations', () => {
