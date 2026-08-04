@@ -59,6 +59,11 @@ export default async function ClassDetailPage({
 
   // Serialize registrations for client components (Prisma Dates/Decimals are not serializable)
   function getStudentDisplayName(student: { firstName: string; lastName: string; claimedAt: Date | null; studentPrivacy: { shareFullName: boolean }[] }): string {
+    // #166: unreachable for rows created after acceptance-gated linking —
+    // nothing creates an unclaimed Student any more. Kept because removing
+    // it means removing the claim path (lib/auth/account.ts:34-50), the
+    // Student_claim_link_check constraint and Student.claimedAt together.
+    // Filed as a leaf. Do NOT treat this branch as a live privacy rule.
     const shareFullName = !student.claimedAt || (student.studentPrivacy[0]?.shareFullName ?? false);
     return formatStudentName(student.firstName, student.lastName, shareFullName);
   }

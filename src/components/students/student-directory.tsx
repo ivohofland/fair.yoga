@@ -126,6 +126,14 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
                       </span>
                     )}
                   </div>
+                  {/*
+                    #166: unreachable for rows created after acceptance-gated
+                    linking — nothing creates an unclaimed Student any more.
+                    Kept because removing it means removing the claim path
+                    (lib/auth/account.ts:34-50), the Student_claim_link_check
+                    constraint and Student.claimedAt together. Filed as a
+                    leaf. Do NOT treat this as a live UI affordance.
+                  */}
                   {!student.claimedAt && (
                     <span className="type-caption">unlinked</span>
                   )}

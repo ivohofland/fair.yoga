@@ -59,12 +59,17 @@ export function checkRateLimit(
 }
 
 /**
- * Shared hourly budget for teacher-initiated student writes that carry a
- * client-supplied email: `POST /api/students` and the teacher branch of
- * `PUT /api/students/[id]`. Both write `email` to a `@unique` column, so both
- * answer "is this address taken?" — the POST through 200-vs-201, the PUT
- * through 200-vs-409 on the P2002 fallback. Metering only one leaves the pair
- * unbounded, so they share a bucket.
+ * Hourly budget for `POST /api/students`, keyed on the inviting teacher.
+ * #166 closed the enumeration oracle this used to guard against by
+ * construction — the route no longer branches on whether the address
+ * already exists — so what remains is a spam brake: a teacher can still
+ * cause an email to be sent to an arbitrary address, once per request.
+ *
+ * There used to be a second caller, the teacher branch of
+ * `PUT /api/students/[id]`, which wrote a client-supplied `email` to the
+ * same `@unique` column with no pre-check and so needed the same budget.
+ * Task 10 of #166 deleted that branch outright rather than leaving it
+ * metered, so this is a single-caller budget again.
  *
  * 50/hour fits a workshop roster plus corrections in one sitting.
  */

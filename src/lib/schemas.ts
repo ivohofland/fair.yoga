@@ -157,19 +157,6 @@ export const respondToInvitationSchema = z.object({
   response: z.enum(['accept', 'decline']),
 }).strict();
 
-/**
- * #166 left this alive for one caller only: the teacher branch of
- * `PUT /api/students/[id]`, which still edits an unclaimed contact by
- * firstName/lastName/email. `POST /api/students` no longer uses it — that
- * route parses `createInvitationSchema` above. Deleted when the PUT is
- * reworked to edit an Invitation instead of a Student.
- */
-export const createStudentSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().optional().default(''),
-  email: z.string().email(),
-});
-
 export const updateStudentSchema = z.object({
   firstName: z.string().min(1).optional(),
   lastName: z.string().min(1).optional(),

@@ -60,6 +60,8 @@ async function main() {
   await prisma.studentPrivacy.deleteMany();
   await prisma.teacherStudent.deleteMany();
   await prisma.student.deleteMany();
+  await prisma.invitation.deleteMany();
+  await prisma.teacherBlock.deleteMany();
   await prisma.teacher.deleteMany();
   // Accounts last: Teacher.accountId RESTRICTs while a profile still points at one.
   await prisma.account.deleteMany();
@@ -239,24 +241,6 @@ async function main() {
     ),
   );
 
-  // CRM-only students (teacher-created, no account yet)
-  const crmOnlyStudents = await Promise.all([
-    prisma.student.create({
-      data: {
-        firstName: 'Lena',
-        lastName: 'Visser',
-        email: 'lena@example.com',
-      },
-    }),
-    prisma.student.create({
-      data: {
-        firstName: 'Max',
-        lastName: 'Dekker',
-        email: 'max@example.com',
-      },
-    }),
-  ]);
-
   // ==========================================================================
   // STUDENT PRIVACY (per-teacher, for Ivo)
   // ==========================================================================
@@ -289,9 +273,11 @@ async function main() {
   // ==========================================================================
   // TEACHER-STUDENT LINKS (CRM contacts)
   // ==========================================================================
-  // All 10 claimed students + 2 CRM-only students are in Ivo's contacts
+  // All claimed students are in Ivo's contacts. Nothing creates an unclaimed
+  // Student any more (#166) — the CRM-only fixtures below are Invitation rows
+  // instead, not Student + TeacherStudent pairs.
   await Promise.all(
-    [...students, ...crmOnlyStudents].map((student) =>
+    students.map((student) =>
       prisma.teacherStudent.create({
         data: {
           teacherId: ivo.id,
@@ -310,6 +296,24 @@ async function main() {
       },
     });
   }
+
+  // ==========================================================================
+  // INVITATIONS (CRM pending contacts, #166)
+  // ==========================================================================
+  // Two pending (Lena, Max) and one declined (Nadia). `accepted` needs no
+  // fixture of its own here: an accepted invitation is exactly a claimed
+  // Student with a TeacherStudent link, and the seed already has ten.
+  await prisma.invitation.createMany({
+    data: [
+      { teacherId: ivo.id, email: 'lena@example.com', firstName: 'Lena', lastName: 'Visser' },
+      { teacherId: ivo.id, email: 'max@example.com', firstName: 'Max', lastName: 'Dekker' },
+      {
+        teacherId: ivo.id, email: 'declined@example.com',
+        firstName: 'Nadia', lastName: 'Bakker',
+        status: 'declined', respondedAt: daysAgo(3),
+      },
+    ],
+  });
 
   // ==========================================================================
   // ROOMS
@@ -1068,8 +1072,9 @@ async function main() {
 
   console.log('Seed data created successfully');
   console.log(`  Teachers: 3 (Ivo, Sarah, Maya — Maya is west of UTC)`);
-  console.log(`  Students: 12 (10 claimed with classes, 2 CRM-only unlinked)`);
-  console.log(`  TeacherStudents: 15 (12 for Ivo, 3 for Sarah)`);
+  console.log(`  Students: 10 (all claimed, with classes)`);
+  console.log(`  TeacherStudents: 13 (10 for Ivo, 3 for Sarah)`);
+  console.log(`  Invitations: 3 (2 pending, 1 declined)`);
   console.log(`  Rooms: 3, TeacherRooms: 4`);
   console.log(`  ClassTemplate: 1`);
   console.log(`  Classes: 11 (8 for Ivo across every lifecycle state, 3 for Maya)`);

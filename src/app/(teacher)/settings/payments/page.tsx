@@ -46,6 +46,11 @@ export default async function PaymentsOverviewPage() {
 
   const studentName = (p: (typeof payments)[number]) => {
     const s = p.registration.student;
+    // #166: unreachable for rows created after acceptance-gated linking —
+    // nothing creates an unclaimed Student any more. Kept because removing
+    // it means removing the claim path (lib/auth/account.ts:34-50), the
+    // Student_claim_link_check constraint and Student.claimedAt together.
+    // Filed as a leaf. Do NOT treat this branch as a live privacy rule.
     return formatStudentName(
       s.firstName,
       s.lastName,

@@ -191,24 +191,6 @@ describe('tierSelectedAt stamping', () => {
     expect(await tierSelectedAt(sChooser.id)).not.toBeNull();
   });
 
-  it('a teacher edit of an unclaimed CRM student can neither set the tier nor stamp', async () => {
-    const res = await api(
-      `/api/students/${crmStudentId}`,
-      'PUT',
-      {
-        firstName: 'Renamed',
-        lastName: 'Student',
-        email: `tiersel-crm-${suffix}@test.local`,
-        incomeTier: 5,
-      },
-      teacherToken,
-    );
-    expect(res.status).toBe(200);
-    const row = await prisma.student.findUniqueOrThrow({ where: { id: crmStudentId } });
-    expect(row.incomeTier).toBe(3); // teacher branch strips incomeTier
-    expect(row.tierSelectedAt).toBeNull();
-  });
-
   it('a self-booking stamps — booking past the picker is the choice', async () => {
     const res = await api('/api/registrations', 'POST', { classId: openClassId }, sBooker.token);
     expect(res.status).toBe(201);

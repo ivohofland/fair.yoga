@@ -111,6 +111,11 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 
   const result = students.map((s) => {
     const privacy = s.studentPrivacy[0];
+    // #166: unreachable for rows created after acceptance-gated linking —
+    // nothing creates an unclaimed Student any more. Kept because removing
+    // it means removing the claim path (lib/auth/account.ts:34-50), the
+    // Student_claim_link_check constraint and Student.claimedAt together.
+    // Filed as a leaf. Do NOT treat this branch as a live privacy rule.
     const isUnclaimed = !s.claimedAt;
     const shareFullName = isUnclaimed || (privacy?.shareFullName ?? false);
     const shareEmail = isUnclaimed || (privacy?.shareEmail ?? false);
