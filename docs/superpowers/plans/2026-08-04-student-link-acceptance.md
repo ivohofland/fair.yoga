@@ -787,6 +787,8 @@ git commit -m "feat: teacher-side invitation management, with an undeletable tom
 
 - [ ] **Step 1: Write the failing tests**
 
+**The fixtures below are wrong as written, and were corrected during execution.** They give the accept and decline tests one shared `{teacherId, studentId}` pair, which `@@unique([teacherId, email])` makes impossible — and even if it were possible, the decline test would be asserting against the accept test's side effect. Use **two separate students**, one per test, so each proves what its name claims. Treat the snippet as intent, not as code.
+
 ```ts
 describe('POST /api/invitations/[id]/respond', () => {
   it('accepting creates the link and stamps the row', async () => {
@@ -878,8 +880,14 @@ export async function acceptInvitation(
   db: PrismaClient,
   input: { invitationId: string; studentId: string; accountEmail: string },
 ): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_PENDING' }> {
+  // `.toLowerCase()` is load-bearing, not defensive. Invitation emails are
+  // written lowercased (`inviteContact`, `PUT /api/invitations/[id]`), but
+  // `Account.email` is normalized NOWHERE in this app — it is stored exactly
+  // as the person typed it at signup. Compare raw and a student whose address
+  // carries any uppercase never sees an invitation addressed to them: no
+  // error, no hint, the row just sits pending forever.
   const invitation = await db.invitation.findFirst({
-    where: { id: input.invitationId, email: input.accountEmail },
+    where: { id: input.invitationId, email: input.accountEmail.toLowerCase() },
     select: { id: true, teacherId: true, status: true },
   });
   if (!invitation) return { ok: false, reason: 'NOT_FOUND' };
@@ -1071,14 +1079,19 @@ export async function unlinkTeacher(
     // to see. A missing row means the link came from a booking and the
     // teacher may never have had the address — shareEmail defaults false —
     // so the tombstone is written as student_block and never listed back.
+    // Lowercased on both branches, for the same reason `acceptInvitation`
+    // lowercases: invitation emails are always stored lowercase, `Account.email`
+    // never is. A raw address here would miss the existing row and create a
+    // duplicate tombstone under a different casing — which then fails to block
+    // the re-invite it exists to block, because `inviteContact` looks up the
+    // lowercased form.
+    const email = input.accountEmail.toLowerCase();
     await tx.invitation.upsert({
-      where: {
-        teacherId_email: { teacherId: input.teacherId, email: input.accountEmail },
-      },
+      where: { teacherId_email: { teacherId: input.teacherId, email } },
       update: { status: 'declined', respondedAt: new Date() },
       create: {
         teacherId: input.teacherId,
-        email: input.accountEmail,
+        email,
         status: 'declined',
         origin: 'student_block',
         respondedAt: new Date(),
@@ -1192,12 +1205,20 @@ export async function resolveInvitationOnLink(
   tx: Prisma.TransactionClient,
   input: { teacherId: string; studentEmail: string },
 ): Promise<void> {
+  // Lowercased for the third time in this file, and for the same reason each
+  // time: invitation emails are always stored lowercase, `Student.email` and
+  // `Account.email` never are. Miss it here and a booking silently fails to
+  // clear the declined tombstone — so the student's only route back to a
+  // teacher they declined stops working, which is the one escape hatch the
+  // whole decline design rests on.
   await tx.invitation.updateMany({
-    where: { teacherId: input.teacherId, email: input.studentEmail },
+    where: { teacherId: input.teacherId, email: input.studentEmail.toLowerCase() },
     data: { status: 'accepted', respondedAt: new Date() },
   });
 }
 ```
+
+**Three call sites, one rule.** `acceptInvitation`, `unlinkTeacher` and this function all compare a person-supplied address against the lowercased column. If a fourth appears, it needs the same treatment — the asymmetry (invitation emails normalized, account and student emails not) is a property of the app, not of these functions, and it is filed separately as its own issue.
 
 Call it in `registrations/route.ts` inside the existing `if (!isTeacher)` block, right after the `teacherStudent.upsert` — the guard is already there and already correct, which is why the second test above passes without new branching. Call it in both `waitlist.ts` sites beside the upserts Task 1 added.
 
