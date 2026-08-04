@@ -68,10 +68,23 @@ type CreateClassWire = z.infer<typeof createClassSchema>;
  * enforces the rule the exclusion was suspending: every key this schema
  * declares must be a field this form actually renders.
  */
+type ClassFormExclusion = 'description';
+
+/**
+ * The exclusion's own pin. Without it the exclusion is unfalsifiable in the
+ * direction that matters: measured — removing `description` from
+ * `createClassSchema` produces no error here, the exclusion silently becomes a
+ * no-op, and it then survives forever looking like protection while protecting
+ * nothing. When #147 is fixed by adding a description input, this is what fails
+ * and tells whoever adds it to delete the exclusion. Same rot the pins in
+ * `class-lifecycle.ts` guard against one file over.
+ */
+const _exclusionsAreRealKeys: NoneOf<Exclude<ClassFormExclusion, keyof CreateClassWire>> = true;
 const _formCoversCreate: NoneOf<
-  Exclude<Exclude<keyof CreateClassWire, 'description'>, keyof FormData>
+  Exclude<Exclude<keyof CreateClassWire, ClassFormExclusion>, keyof FormData>
 > = true;
 const _formHasNoExtras: NoneOf<Exclude<keyof FormData, keyof CreateClassWire>> = true;
+void _exclusionsAreRealKeys;
 void _formCoversCreate;
 void _formHasNoExtras;
 

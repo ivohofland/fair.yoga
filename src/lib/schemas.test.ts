@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
 import * as schemas from './schemas';
 import {
@@ -301,17 +302,23 @@ describe('updateTeacherSchema.pageSlug', () => {
  */
 const SERVER_OWNED_FIELDS = [
   'accountId', 'archivedAt', 'cancelledAt', 'claimedAt', 'createdById',
-  'isArchived', 'isPublic', 'paidAt', 'photoUrl', 'settingsLocked', 'status',
-  'studentId', 'teacherId', 'templateId', 'tierAtBooking', 'tierSelectedAt',
-  'totalRevenue', 'withdrawnCount',
+  'effectiveTeacherRate', 'id', 'isArchived', 'isPublic', 'paidAt', 'photoUrl',
+  'settingsLocked', 'status', 'studentId', 'teacherId', 'templateId',
+  'tierAtBooking', 'tierSelectedAt', 'totalRevenue', 'totalStudents',
+  'withdrawnCount',
 ] as const;
 
-// Every name above must be a real column on one of these eight models. Without
-// this a typo would sit in the list protecting nothing while looking like
-// protection. Fails naming the offender. A legitimate server-owned name that
-// lives only on a model outside this union (e.g. TeacherStudent,
-// StudioClassTemplate) would fail this pin too — the fix there is to grow the
-// union, not to delete the name.
+// Every name above must be a real column on one of the fourteen models in this
+// union. Without this a typo would sit in the list protecting nothing while
+// looking like protection. Fails naming the offender. A legitimate server-owned
+// name that lives only on a model outside this union (e.g. TeacherStudent,
+// Session) would fail this pin too — the fix there is to grow the union, not to
+// delete the name.
+//
+// The union is deliberately wider than the names currently registered: a model
+// missing here is an obstacle to *adding* a legitimate name later
+// (WaitlistEntry.position, Notification.readAt), because the addition would
+// fail this pin and read as a typo.
 type AnyModelKey =
   | keyof Prisma.ClassUncheckedUpdateManyInput
   | keyof Prisma.StudioClassUncheckedUpdateManyInput
@@ -320,7 +327,13 @@ type AnyModelKey =
   | keyof Prisma.RoomUncheckedUpdateManyInput
   | keyof Prisma.RegistrationUncheckedUpdateManyInput
   | keyof Prisma.PaymentUncheckedUpdateManyInput
-  | keyof Prisma.ClassTemplateUncheckedUpdateManyInput;
+  | keyof Prisma.ClassTemplateUncheckedUpdateManyInput
+  | keyof Prisma.WaitlistEntryUncheckedUpdateManyInput
+  | keyof Prisma.NotificationUncheckedUpdateManyInput
+  | keyof Prisma.AnnouncementUncheckedUpdateManyInput
+  | keyof Prisma.StudentPrivacyUncheckedUpdateManyInput
+  | keyof Prisma.StudioClassTemplateUncheckedUpdateManyInput
+  | keyof Prisma.TeacherRoomUncheckedUpdateManyInput;
 
 const _serverOwnedNamesExist: NoneOf<
   Exclude<(typeof SERVER_OWNED_FIELDS)[number], AnyModelKey>
@@ -362,11 +375,57 @@ const EXPECTED: Record<string, readonly string[]> = {
 };
 
 describe('server-owned fields', () => {
+  // The register is only as good as the list it walks, and the exact-equality
+  // assertion below cannot see a name that is gone: ten of these appear in no
+  // EXPECTED entry, so deleting one changes neither side of the comparison.
+  // templateId — the field #146 and #148 are about — is one of them. This pin
+  // is the only thing that makes shortening the list fail.
+  it('is the curated list, changed deliberately', () => {
+    expect([...SERVER_OWNED_FIELDS].sort()).toEqual([
+      'accountId',
+      'archivedAt',
+      'cancelledAt',
+      'claimedAt',
+      'createdById',
+      'effectiveTeacherRate',
+      'id',
+      'isArchived',
+      'isPublic',
+      'paidAt',
+      'photoUrl',
+      'settingsLocked',
+      'status',
+      'studentId',
+      'teacherId',
+      'templateId',
+      'tierAtBooking',
+      'tierSelectedAt',
+      'totalRevenue',
+      'totalStudents',
+      'withdrawnCount',
+    ]);
+  });
+
   it('are declared only where EXPECTED says so, and everywhere it says so', () => {
     const actual: Record<string, string[]> = {};
 
     for (const [name, schema] of Object.entries(schemas)) {
-      const shape = (schema as { shape?: Record<string, unknown> })?.shape;
+      // Two different facts hide behind a missing `.shape`, and only one is
+      // safe to skip: "this export is not a schema" (MAX_CLASS_SIZE,
+      // isSafeRelativePath) versus "this export IS a schema whose top-level
+      // keys I cannot read" (anything wrapped in .transform(), z.union or
+      // z.array). Conflating them made this guard blind in exactly the way the
+      // three guards this repo has shipped were blind — measured: three
+      // exported schemas declaring teacherId, studentId and templateId behind
+      // those wrappers left the suite fully green.
+      if (!(schema instanceof z.ZodType)) continue;
+      const shape = (schema as { shape?: Record<string, unknown> }).shape;
+      expect(
+        shape,
+        `${name} is a schema whose top-level keys this register cannot read — unwrap it or extend the register`,
+      ).toBeDefined();
+      // Unreachable — the assertion above throws first. Present so the compiler
+      // can narrow `shape` away from `undefined`.
       if (!shape) continue;
       const hits = Object.keys(shape)
         .filter((k) => (SERVER_OWNED_FIELDS as readonly string[]).includes(k))

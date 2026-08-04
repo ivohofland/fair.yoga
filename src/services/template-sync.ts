@@ -41,8 +41,16 @@ export async function syncTemplateInstances(
   const result = await db.$transaction(async (tx) => {
     // Future generated instances; `gt: now` deliberately excludes today —
     // a class hours from starting should not shift under its students.
+    //
+    // `teacherId` is defence in depth, not a behaviour change: post-#146 a
+    // templateId uniquely determines its owner, so every match already belongs
+    // to `template.teacherId`. It is here because this is the query that turned
+    // #146's squat into a disclosure — the `updateMany` below writes the
+    // template's `teacherRoomId`, `roomCost`, `minRate` and `targetRate` onto
+    // every row it returns, and rental rates are never shared between teachers.
+    // Scoping it means a regression in the create route stays a squat.
     const future = await tx.class.findMany({
-      where: { templateId, date: { gt: new Date() } },
+      where: { templateId, teacherId: template.teacherId, date: { gt: new Date() } },
       select: { id: true, date: true, settingsLocked: true, status: true },
     });
 
