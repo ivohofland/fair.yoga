@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { routerPush } from '../../../tests/setup/components';
 import { CreateStudentForm } from './create-student-form';
 
 /**
  * #136. This form's body was a one-line literal with `.trim()` on each
- * value, with nothing checking it against `createStudentSchema`. The pins
- * in the source file hold the key set at compile time; this test holds what
- * a pin cannot see, which is what actually reaches the API — including that
- * the trims survive the move into a typed value.
+ * value, with nothing checking it against the route's schema
+ * (`createInvitationSchema` since #166). The pins in the source file hold the
+ * key set at compile time; this test holds what a pin cannot see, which is
+ * what actually reaches the API — including that the trims survive the move
+ * into a typed value.
  *
  * Nothing fetches on mount, so the submit is the first (and only) call.
  */
@@ -54,6 +56,21 @@ describe('CreateStudentForm', () => {
       lastName: 'Lovelace',
       email: 'ada@example.com',
     });
+  });
+
+  // #166. `id` in the response is an Invitation's, so the old
+  // `/students/${id}` push landed on a student detail page that will never
+  // resolve. Pinned on the literal, not merely on "push was called": the
+  // stub still answers `{ data: { id: 'student-1' } }`, so a regression that
+  // interpolates it again would produce `/students/student-1` — a plausible
+  // enough URL to pass any looser assertion.
+  it('redirects to the directory, not to a student page', async () => {
+    stubFetch();
+    render(<CreateStudentForm />);
+    fillForm('Ada', 'Lovelace', 'ada@example.com');
+    await submit();
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/students'));
+    expect(routerPush).toHaveBeenCalledTimes(1);
   });
 
   it('trims all three fields before sending', async () => {

@@ -125,6 +125,25 @@ export const updateTeacherSchema = z.object({
 // STUDENTS
 // ============================================================================
 
+/**
+ * The teacher's CRM contact form. `.strict()`, unlike the create schema it
+ * replaces: an unknown key here should be a 400, not silently stripped —
+ * this body is the only thing standing between a teacher and a row keyed
+ * on someone else's email address.
+ */
+export const createInvitationSchema = z.object({
+  firstName: z.string().min(1),
+  lastName: z.string().optional().default(''),
+  email: z.string().email(),
+}).strict();
+
+/**
+ * #166 left this alive for one caller only: the teacher branch of
+ * `PUT /api/students/[id]`, which still edits an unclaimed contact by
+ * firstName/lastName/email. `POST /api/students` no longer uses it — that
+ * route parses `createInvitationSchema` above. Deleted when the PUT is
+ * reworked to edit an Invitation instead of a Student.
+ */
 export const createStudentSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().optional().default(''),

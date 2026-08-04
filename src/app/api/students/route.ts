@@ -1,8 +1,9 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { respondOk, respondError, requireTeacher, isErrorResponse, parseBody, withErrorHandler } from '@/lib/api-utils';
-import { createStudentSchema, studentListQuerySchema } from '@/lib/schemas';
+import { createInvitationSchema, studentListQuerySchema } from '@/lib/schemas';
 import { checkStudentWriteLimit } from '@/lib/rate-limit';
+import { inviteContact, REFUSAL_MESSAGES } from '@/services/invitations';
 import { log } from '@/lib/log';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
@@ -106,81 +107,35 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  // Keyed on the teacher, not the IP: the caller is authenticated, so an IP key
-  // would be evadable by rotation, unfair to teachers behind one NAT, and would
-  // need an `ip === 'unknown'` escape hatch that buys nothing.
+  // Keyed on the teacher, not the IP: the caller is authenticated, so an IP
+  // key would be evadable by rotation and unfair to teachers behind one NAT.
   //
-  // The ceiling — and the bucket this route shares with the teacher branch of
-  // PUT /api/students/[id] — lives in `checkStudentWriteLimit`.
-  //
-  // Issue #51 (bulk/CSV student import) will exceed it by design — raise the
-  // ceiling or exempt the import path when that lands; do not assume this
-  // number still fits.
-  //
-  // What it buys: this route still tells a caller whether a Student row exists
-  // for an address — 200 if one does, 201 if it did not. "Student row", not
-  // "account": an unclaimed contact sitting in another teacher's CRM answers
-  // 200 with no Account behind it, so the bit leaks CRM membership as well as
-  // self-registration. A follow-up GET recovers the same bit through the
-  // returned name, since this branch ignores the names the caller submitted.
-  //
-  // The limit meters bulk probing rather than stopping it: 50/hour is ~8.3 days
-  // per 10,000 addresses. Treat that as an order of magnitude, not a guarantee
-  // — the limiter is in-process, so a deploy or restart hands back a fresh
-  // budget, and its shared 10,000-key map can evict a live bucket under
-  // pressure. The wall is requiring the student's acceptance before a link
-  // exists at all (#166); this holds until that lands.
+  // What it buys has changed. It is no longer standing in for a missing fix
+  // to an enumeration oracle — #166 closed that by construction, since this
+  // route no longer branches on whether the address exists. What remains is
+  // that a teacher can cause an email to be sent to an arbitrary address, so
+  // this is a spam brake. Issue #51 (bulk/CSV import) will exceed it by
+  // design; raise the ceiling or exempt that path when it lands.
   const limit = checkStudentWriteLimit(session.teacherId);
   if (!limit.allowed) {
-    log.warn({ teacherId: session.teacherId }, 'student write refused: rate limit exceeded');
+    log.warn({ teacherId: session.teacherId }, 'invitation refused: rate limit exceeded');
     const minutes = Math.ceil(limit.retryAfterSeconds / 60);
     return respondError(
-      `Too many student requests. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+      `Too many invitations. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
       429,
     );
   }
 
-  const parsed = await parseBody(request, createStudentSchema);
+  const parsed = await parseBody(request, createInvitationSchema);
   if ('error' in parsed) return parsed.error;
-  const { firstName, lastName, email } = parsed.data;
 
-  // #162: select the id and nothing else. Narrowing here rather than at the
-  // response is deliberate — `existing` is typed `{ id: string }`, so reading
-  // any field beyond `.id` off it is a compile error, not something review
-  // has to catch. (Returning more still compiles if a later edit also widens
-  // the `select` — `respondOk` is generically typed, so nothing pins response
-  // shape to query shape. The exhaustive key-set assertions in the
-  // integration tests are the backstop for that case.) This route answered
-  // any teacher who knew an email with the student's phone, birthday, home
-  // address and income tier.
-  const existing = await prisma.student.findUnique({
-    where: { email },
-    select: { id: true },
+  const result = await inviteContact(prisma, {
+    teacherId: session.teacherId,
+    ...parsed.data,
   });
-
-  if (existing) {
-    const link = await prisma.teacherStudent.findUnique({
-      where: { teacherId_studentId: { teacherId: session.teacherId, studentId: existing.id } },
-    });
-    if (link) {
-      return respondError('Student already in your contacts', 409, 'ALREADY_LINKED');
-    }
-    await prisma.teacherStudent.create({
-      data: { teacherId: session.teacherId, studentId: existing.id },
-    });
-    return respondOk({ id: existing.id }, 200);
+  if (!result.ok) {
+    return respondError(REFUSAL_MESSAGES[result.reason], 409, result.reason);
   }
 
-  const student = await prisma.$transaction(async (tx) => {
-    const created = await tx.student.create({
-      data: { firstName, lastName, email },
-      select: { id: true },
-    });
-    await tx.teacherStudent.create({
-      data: { teacherId: session.teacherId, studentId: created.id },
-    });
-    return created;
-  });
-
-  return respondOk({ id: student.id }, 201);
+  return respondOk({ id: result.value.id }, 201);
 });
