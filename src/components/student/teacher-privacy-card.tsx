@@ -1,10 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import type { updatePrivacySchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
+import { readErrorMessage } from '@/lib/client-errors';
 
 export interface TeacherPrivacyValues {
   shareFullName: boolean;
@@ -49,10 +51,14 @@ export function TeacherPrivacyCard({
   teacherName,
   initial,
 }: TeacherPrivacyCardProps) {
+  const router = useRouter();
   const [values, setValues] = useState(initial);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  const [confirmingUnlink, setConfirmingUnlink] = useState(false);
+  const [unlinking, setUnlinking] = useState(false);
+  const [unlinkError, setUnlinkError] = useState('');
 
   function toggle(key: keyof TeacherPrivacyValues, checked: boolean) {
     setValues((v) => ({ ...v, [key]: checked }));
@@ -92,6 +98,31 @@ export function TeacherPrivacyCard({
     }
   }
 
+  /**
+   * Severs the `TeacherStudent` link (`unlinkTeacher`,
+   * services/invitations.ts). Registrations and payments are untouched —
+   * only the copy below promises that, this call has no say in it — and a
+   * `TeacherBlock` goes down that stops the teacher re-adding this student,
+   * which booking one of their classes is the only thing that lifts.
+   * `router.refresh()` on success is what drops this card from the list.
+   */
+  async function handleUnlink() {
+    setUnlinking(true);
+    setUnlinkError('');
+    try {
+      const res = await fetch(`/api/teacher-links/${teacherId}`, { method: 'DELETE' });
+      if (res.ok) {
+        router.refresh();
+        return;
+      }
+      setUnlinkError(await readErrorMessage(res, 'Could not remove this teacher. Try again.'));
+    } catch {
+      setUnlinkError('Network error. Try again.');
+    } finally {
+      setUnlinking(false);
+    }
+  }
+
   return (
     <section className="bg-sand-soft border border-border rounded-card p-5">
       <h2 className="type-label text-ink font-semibold mb-3">{teacherName}</h2>
@@ -124,6 +155,39 @@ export function TeacherPrivacyCard({
         {saved && <span className="type-caption text-teal">Saved</span>}
       </div>
       {error && <p className="text-sm text-danger mt-2">{error}</p>}
+
+      <div className="mt-5 pt-4 border-t border-border">
+        {confirmingUnlink ? (
+          <div className="flex flex-col gap-3">
+            <p className="type-body">
+              Your past bookings and any payments with {teacherName} stay. They won&apos;t be
+              able to add you again — but you can always reconnect by booking one of their
+              classes.
+            </p>
+            <div className="flex items-center gap-3">
+              <Button variant="destructive" onClick={handleUnlink} disabled={unlinking}>
+                {unlinking ? 'Removing...' : 'Remove teacher'}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => setConfirmingUnlink(false)}
+                disabled={unlinking}
+              >
+                Cancel
+              </Button>
+            </div>
+            {unlinkError && <p className="type-caption text-danger">{unlinkError}</p>}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirmingUnlink(true)}
+            className="type-label text-danger"
+          >
+            Remove this teacher
+          </button>
+        )}
+      </div>
     </section>
   );
 }

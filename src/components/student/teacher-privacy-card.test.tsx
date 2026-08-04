@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { routerRefresh } from '../../../tests/setup/components';
 import { TeacherPrivacyCard } from './teacher-privacy-card';
 
 /**
@@ -120,5 +121,58 @@ describe('TeacherPrivacyCard', () => {
     renderCard();
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     await waitFor(() => expect(screen.getByText('Could not save. Try again.')).toBeTruthy());
+  });
+
+  /**
+   * #166 Task 11. `DELETE /api/teacher-links/[teacherId]` — the student's
+   * unlink. Two-step confirm, same idiom as `RemoveStudentButton` and
+   * `PendingInvitationCard`: the trigger alone must never fetch, and the
+   * copy in the confirm step is the one place this promises what survives
+   * (past bookings, payments) and what doesn't (the teacher's ability to
+   * re-add this student unprompted).
+   */
+  describe('unlinking a teacher', () => {
+    it('renders no confirmation, and fetches nothing, until the trigger is clicked', () => {
+      stubFetch();
+      renderCard();
+      expect(screen.queryByText(/won't be able to add you again/i)).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(screen.getByText(/won't be able to add you again/i)).toBeInTheDocument();
+    });
+
+    it('DELETEs /api/teacher-links/:teacherId and refreshes on success', async () => {
+      stubFetch();
+      renderCard();
+      fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^remove teacher$/i }));
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith('/api/teacher-links/teacher-1', { method: 'DELETE' }),
+      );
+      await waitFor(() => expect(routerRefresh).toHaveBeenCalledTimes(1));
+    });
+
+    it('cancel returns to the unconfirmed state without fetching', () => {
+      stubFetch();
+      renderCard();
+      fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
+      fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+      expect(screen.queryByText(/won't be able to add you again/i)).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('surfaces the server error message on a failed unlink, and does not refresh', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 404,
+        json: async () => ({ error: { message: 'Teacher link not found' } }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      renderCard();
+      fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^remove teacher$/i }));
+      expect(await screen.findByText('Teacher link not found')).toBeInTheDocument();
+      expect(routerRefresh).not.toHaveBeenCalled();
+    });
   });
 });

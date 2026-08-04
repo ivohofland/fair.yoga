@@ -227,6 +227,39 @@ export async function notifyInvitee(
 }
 
 /**
+ * A student's own invitations still awaiting a response — the read
+ * `(student)/account/privacy/page.tsx` (#166 task 11) renders above the
+ * teacher list.
+ *
+ * The block exclusion below is the PRIMARY gate, not defence in depth:
+ * `acceptInvitation`'s own `TeacherBlock` re-check exists only because an
+ * id travels in a URL and isn't a secret, on the assumption that a caller
+ * never reaches it for a blocked pair by way of this list. Drop this
+ * filter and that assumption breaks — a student who walked away from a
+ * teacher would see that teacher's invitation reappear here as if nothing
+ * had happened.
+ *
+ * `accountEmail` is lowercased for the same reason every other email match
+ * in this file is: `Invitation.email` and `TeacherBlock.email` are always
+ * written lowercase, `Account.email` never is.
+ */
+export async function listPendingInvitations(
+  db: PrismaClient,
+  input: { accountEmail: string },
+): Promise<Array<{ id: string; teacher: { firstName: string; lastName: string } }>> {
+  const email = input.accountEmail.toLowerCase();
+  return db.invitation.findMany({
+    where: {
+      email,
+      status: 'pending',
+      teacher: { teacherBlocks: { none: { email } } },
+    },
+    select: { id: true, teacher: { select: { firstName: true, lastName: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
+/**
  * Accept an invitation.
  *
  * Authorization is by ADDRESS, not by id. The invitation id travels in a

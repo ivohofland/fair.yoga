@@ -2,12 +2,14 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
+import { listPendingInvitations } from '@/services/invitations';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
   TeacherPrivacyCard,
   type TeacherPrivacyValues,
 } from '@/components/student/teacher-privacy-card';
+import { PendingInvitationCard } from '@/components/student/pending-invitation-card';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,7 +26,17 @@ export default async function PrivacySettingsPage() {
   const session = await getSession();
   if (!session?.studentId) redirect(session?.teacherId ? '/' : '/login');
 
-  const [links, privacyRows] = await Promise.all([
+  // Invitations match the authenticated account's own email, not
+  // Student.email — they agree by construction for a live linked profile,
+  // but the account address is what this person actually proved they own
+  // at sign-in. See `listPendingInvitations` (services/invitations.ts) for
+  // why it does its own lowercasing on top of this.
+  const account = await prisma.account.findUniqueOrThrow({
+    where: { id: session.accountId },
+    select: { email: true },
+  });
+
+  const [links, privacyRows, pendingInvitations] = await Promise.all([
     prisma.teacherStudent.findMany({
       where: { studentId: session.studentId, isArchived: false },
       select: { teacher: { select: { id: true, firstName: true, lastName: true } } },
@@ -33,6 +45,7 @@ export default async function PrivacySettingsPage() {
     prisma.studentPrivacy.findMany({
       where: { studentId: session.studentId },
     }),
+    listPendingInvitations(prisma, { accountEmail: account.email }),
   ]);
 
   const privacyByTeacher = new Map(privacyRows.map((row) => [row.teacherId, row]));
@@ -55,8 +68,30 @@ export default async function PrivacySettingsPage() {
         Notifications is global.
       </p>
 
+      {pendingInvitations.length > 0 && (
+        <div className="mb-6">
+          <h2 className="type-subtitle mb-3">Pending invitations</h2>
+          <div className="flex flex-col gap-4">
+            {pendingInvitations.map((invitation) => (
+              <PendingInvitationCard
+                key={invitation.id}
+                invitationId={invitation.id}
+                teacherName={`${invitation.teacher.firstName} ${invitation.teacher.lastName}`}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {links.length === 0 ? (
-        <EmptyState title="No teachers yet." body="Book a class first — teachers appear here once you're connected." />
+        <EmptyState
+          title="No teachers yet."
+          body={
+            pendingInvitations.length > 0
+              ? "Accept one of the invitations above to connect, or book a class to connect with someone new."
+              : "Book a class first — teachers appear here once you're connected."
+          }
+        />
       ) : (
         <div className="flex flex-col gap-4">
           {links.map(({ teacher }) => {
