@@ -793,9 +793,17 @@ describe('POST /api/students — response disclosure (#162)', () => {
       });
       expect(res.status).toBe(429);
     } finally {
-      // This test creates no Student rows at all — every request was refused.
+      // This row only exists if the regression this test guards has returned:
+      // under correct behaviour every request is refused and no Student is
+      // ever created. Clean it up anyway so a reappearing regression can't
+      // strand it in the shared dev database.
+      const created = await prisma.student.findUnique({
+        where: { email: `crm-gate-target-${suffix}@test.local` },
+      });
+      await prisma.teacherStudent.deleteMany({ where: { teacherId: gate.id } });
       await prisma.session.deleteMany({ where: { accountId: gate.accountId } });
       await prisma.teacher.delete({ where: { id: gate.id } });
+      if (created) await prisma.student.delete({ where: { id: created.id } });
       await prisma.account.deleteMany({ where: { id: gate.accountId } });
     }
   });
