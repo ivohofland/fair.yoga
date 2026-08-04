@@ -187,8 +187,10 @@ describe('GET /api/invitations', () => {
       expect(blockedRow).toBeDefined();
       expect(controlRow).toBeDefined();
 
-      // Same shape (no extra field leaking the block), same values on
-      // everything but the two fields that were always going to differ.
+      // Same shape (no extra field leaking the block). Values compared below
+      // skip only fields that were never going to match regardless of any
+      // block: `id`/`email` are per-row lookup keys, `createdAt` is
+      // wall-clock and these two rows were created moments apart.
       expect(Object.keys(blockedRow!).sort()).toEqual(Object.keys(controlRow!).sort());
       expect(blockedRow!.firstName).toBe(controlRow!.firstName);
       expect(blockedRow!.lastName).toBe(controlRow!.lastName);
