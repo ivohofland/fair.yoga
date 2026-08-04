@@ -12,6 +12,7 @@ import {
 import { createRegistrationSchema } from '@/lib/schemas';
 import { createBulkNotifications } from '@/services/notifications';
 import { activateRegistration, reorderWaitingEntries } from '@/services/waitlist';
+import { resolveInvitationOnLink } from '@/services/invitations';
 import { classStartInstant } from '@/lib/timezone';
 
 /** Thrown inside the registration transaction when the class is at capacity. */
@@ -203,6 +204,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
           update: {},
           create: { teacherId: cls.teacherId, studentId },
         });
+
+        // #166: only the student's own booking is consent — this call sits
+        // inside `!isTeacher` on purpose, so a roster add or a walk-in never
+        // launders itself into acceptance. See resolveInvitationOnLink for
+        // what it clears.
+        await resolveInvitationOnLink(tx, { teacherId: cls.teacherId, studentEmail: student.email });
 
         // Layer 1+2 of the comms model: confirmation for the student,
         // heads-up for the teacher. Email fallback picks these up if unread.

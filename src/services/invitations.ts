@@ -8,7 +8,7 @@
  * teacher already owns.
  */
 
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient, Prisma } from '@prisma/client';
 
 export type InviteRefusal = 'ALREADY_INVITED' | 'ALREADY_LINKED' | 'DECLINED';
 
@@ -280,4 +280,40 @@ export async function unlinkTeacher(
     });
   });
   return { ok: true };
+}
+
+/**
+ * A student's own booking is acceptance, so it resolves whatever
+ * invitation state stood between them and this teacher — including a
+ * `declined` tombstone. That asymmetry is the design: the tombstone is
+ * permanent from the teacher's side and always reversible from the
+ * student's, which is what keeps declining from being a trap while still
+ * denying the teacher a re-invite.
+ *
+ * `updateMany`, not `update`: most bookings have no invitation row at all
+ * and a zero-row update must not throw.
+ */
+export async function resolveInvitationOnLink(
+  tx: Prisma.TransactionClient,
+  input: { teacherId: string; studentEmail: string },
+): Promise<void> {
+  // Lowercased for the third time in this file, and for the same reason each
+  // time: invitation emails are always stored lowercase, `Student.email` and
+  // `Account.email` never are. Miss it here and a booking silently fails to
+  // clear the declined tombstone — so the student's only route back to a
+  // teacher they declined stops working, which is the one escape hatch the
+  // whole decline design rests on.
+  const email = input.studentEmail.toLowerCase();
+
+  // Task 6c moved the block into its own table, and the block is the thing
+  // that actually stands between them — so clearing it is what makes booking
+  // the student's route back. Updating the invitation alone would leave the
+  // pair connected on paper and severed in practice: linked, but every future
+  // invitation from this teacher still undeliverable.
+  await tx.teacherBlock.deleteMany({ where: { teacherId: input.teacherId, email } });
+
+  await tx.invitation.updateMany({
+    where: { teacherId: input.teacherId, email },
+    data: { status: 'accepted', respondedAt: new Date() },
+  });
 }

@@ -10,6 +10,7 @@
 import type { PrismaClient, Prisma, CancelDeadline, WaitlistEntry } from '@prisma/client';
 import { classStartInstant } from '@/lib/timezone';
 import { createBulkNotifications } from './notifications';
+import { resolveInvitationOnLink } from './invitations';
 
 /** Raised when a promotion/claim is not allowed in the current class state. */
 export class WaitlistPromotionError extends Error {
@@ -335,10 +336,10 @@ export async function promoteNext(
 
     if (!nextEntry) return null;
 
-    // Look up the student to get their incomeTier
+    // Look up the student to get their incomeTier and email
     const student = await tx.student.findUniqueOrThrow({
       where: { id: nextEntry.studentId },
-      select: { incomeTier: true },
+      select: { incomeTier: true, email: true },
     });
 
     const registration = await activateRegistration(tx, {
@@ -358,6 +359,11 @@ export async function promoteNext(
       update: {},
       create: { teacherId: cls.teacherId, studentId: nextEntry.studentId },
     });
+
+    // #166: promotion off the waitlist is the student's own act, aimed at
+    // this teacher — the same consent as a direct booking, so it resolves
+    // an invitation the same way. See resolveInvitationOnLink.
+    await resolveInvitationOnLink(tx, { teacherId: cls.teacherId, studentEmail: student.email });
 
     // Update the waitlist entry: promoted status, promotedAt, link to registration
     const updatedEntry = await tx.waitlistEntry.update({
@@ -449,7 +455,7 @@ export async function claimSpot(
 
     const student = await tx.student.findUniqueOrThrow({
       where: { id: studentId },
-      select: { incomeTier: true },
+      select: { incomeTier: true, email: true },
     });
 
     const registration = await activateRegistration(tx, {
@@ -466,6 +472,10 @@ export async function claimSpot(
       update: {},
       create: { teacherId: cls.teacherId, studentId },
     });
+
+    // #166: same resolution as promoteNext above — claiming is the
+    // student's own act too.
+    await resolveInvitationOnLink(tx, { teacherId: cls.teacherId, studentEmail: student.email });
 
     const updatedEntry = await tx.waitlistEntry.update({
       where: { id: entry.id },
