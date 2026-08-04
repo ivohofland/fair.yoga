@@ -13,7 +13,8 @@ import { unlinkTeacher } from '@/services/invitations';
  * The student's side of #166 that Task 5's accept/decline couldn't cover:
  * severing a link that already exists, without touching the account behind
  * it. See `unlinkTeacher` (src/services/invitations.ts) for what does and
- * does not happen to the Student row, and for the tombstone it leaves.
+ * does not happen to the Student row, and for the `TeacherBlock` it writes
+ * to stop a re-invite (#166 task 6c).
  *
  * `teacherId` travels in the path; `studentId` comes only from the session
  * — never from the request — so there is nothing here for a caller to

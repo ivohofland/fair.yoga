@@ -149,12 +149,16 @@ describe('GET /api/invitations', () => {
 
   it('lists an invitation for a blocked address exactly like any other', async () => {
     // The block lives in `TeacherBlock` now, not on this row (#166 task
-    // 6c) — there is no filter left in GET to prove absent. What is left
-    // to prove is the point of moving it: a blocked address's invitation
-    // is not merely un-filtered, it is completely ordinary.
+    // 6c) — there is no filter left in GET to prove absent. What is left to
+    // prove is the point of moving it, so this needs a control: a second,
+    // unblocked invitation with the same names, to show the blocked row's
+    // list entry isn't merely present but field-for-field indistinguishable
+    // from one with no block behind it.
     const blockedEmail = `inv-blocked-${suffix}@test.local`;
+    const controlEmail = `inv-blocked-control-${suffix}@test.local`;
     let block: { id: string } | undefined;
     let invitation: { id: string } | undefined;
+    let control: { id: string } | undefined;
     try {
       block = await prisma.teacherBlock.create({
         data: { teacherId, email: blockedEmail },
@@ -164,12 +168,35 @@ describe('GET /api/invitations', () => {
         data: { teacherId, email: blockedEmail, firstName: 'Blocked', lastName: 'Contact' },
         select: { id: true },
       });
+      control = await prisma.invitation.create({
+        data: { teacherId, email: controlEmail, firstName: 'Blocked', lastName: 'Contact' },
+        select: { id: true },
+      });
 
       const res = await fetch(`${BASE_URL}/api/invitations`, { headers: cookie(teacherToken) });
-      const json = (await res.json()) as { data: { invitations: Array<{ email: string }> } };
-      expect(json.data.invitations.map((i) => i.email)).toContain(blockedEmail);
+      const json = (await res.json()) as {
+        data: {
+          invitations: Array<{
+            id: string; email: string; firstName: string; lastName: string;
+            status: string; isArchived: boolean;
+          }>;
+        };
+      };
+      const blockedRow = json.data.invitations.find((i) => i.email === blockedEmail);
+      const controlRow = json.data.invitations.find((i) => i.email === controlEmail);
+      expect(blockedRow).toBeDefined();
+      expect(controlRow).toBeDefined();
+
+      // Same shape (no extra field leaking the block), same values on
+      // everything but the two fields that were always going to differ.
+      expect(Object.keys(blockedRow!).sort()).toEqual(Object.keys(controlRow!).sort());
+      expect(blockedRow!.firstName).toBe(controlRow!.firstName);
+      expect(blockedRow!.lastName).toBe(controlRow!.lastName);
+      expect(blockedRow!.status).toBe(controlRow!.status);
+      expect(blockedRow!.isArchived).toBe(controlRow!.isArchived);
     } finally {
       if (invitation) await prisma.invitation.delete({ where: { id: invitation.id } });
+      if (control) await prisma.invitation.delete({ where: { id: control.id } });
       if (block) await prisma.teacherBlock.delete({ where: { id: block.id } });
     }
   });
