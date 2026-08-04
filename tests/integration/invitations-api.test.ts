@@ -613,12 +613,20 @@ describe('POST /api/invitations/[id]/respond', () => {
 });
 
 describe('DELETE /api/teacher-links/[teacherId]', () => {
-  // Lowercase throughout, deliberately: `Invitation.email` is only ever
-  // stored lowercase (inviteContact, services/invitations.ts), so this is
-  // the one form an address can leak back out in. Mixed-case account email
-  // is already covered by the respond describe above — this describe's job
-  // is the tombstone, not re-proving normalisation.
+  // The canonical, lowercase form of this student's address — the shape
+  // `Invitation.email` is always stored in (inviteContact,
+  // services/invitations.ts). Every DB lookup below, and the re-invite
+  // POST body, use this literal string.
   const studentEmail = `unlink-student-${suffix}@test.local`;
+
+  // The signed-in account's OWN email, typed as at sign-up per this app's
+  // Account.email convention (never normalised) — deliberately a
+  // DIFFERENT, mixed-case string from `studentEmail` above. `unlinkTeacher`
+  // has its own `.toLowerCase()` call on this value, independent of
+  // `acceptInvitation`/`declineInvitation`'s (respond describe, above).
+  // A same-case fixture here would make that normalisation a no-op no test
+  // could tell apart from its absence — this is what F1 in review caught.
+  const studentAccountEmail = `Unlink-Student-${suffix}@Test.Local`;
 
   let studentId: string;
   let studentAccountId: string;
@@ -647,7 +655,7 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
       data: {
         firstName: 'Unlink', lastName: 'Student',
         email: studentEmail, claimedAt: new Date(),
-        account: { create: { email: studentEmail } },
+        account: { create: { email: studentAccountEmail } },
       },
       select: { id: true, accountId: true },
     });
