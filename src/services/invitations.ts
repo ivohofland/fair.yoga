@@ -100,3 +100,78 @@ export async function inviteContact(
   });
   return { ok: true, value: { id: created.id } };
 }
+
+/**
+ * Accept an invitation.
+ *
+ * Authorization is by ADDRESS, not by id. The invitation id travels in a
+ * URL and is not a secret; the account email is what the person proved
+ * they own at sign-in. Matching on `accountEmail` is therefore the
+ * ownership gate, and `findFirst` puts it in the query rather than in a
+ * check after the read. Without this, any signed-in student who guesses or
+ * obtains an id accepts on a stranger's behalf — creating a link between
+ * two people neither of whom agreed. This is the gate-4 ownership family
+ * #146, #148, and #162 all belonged to.
+ *
+ * `accountEmail` is lowercased before the comparison: `Invitation.email` is
+ * written lowercase by `inviteContact` above and by `PUT /api/invitations/[id]`,
+ * but `Account.email` is stored exactly as typed at sign-up. Comparing the
+ * two without normalising this side would hide a pending invitation from
+ * anyone whose account email carries any uppercase.
+ */
+export async function acceptInvitation(
+  db: PrismaClient,
+  input: { invitationId: string; studentId: string; accountEmail: string },
+): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_PENDING' }> {
+  const invitation = await db.invitation.findFirst({
+    where: { id: input.invitationId, email: input.accountEmail.toLowerCase() },
+    select: { id: true, teacherId: true, status: true },
+  });
+  if (!invitation) return { ok: false, reason: 'NOT_FOUND' };
+  if (invitation.status !== 'pending') return { ok: false, reason: 'NOT_PENDING' };
+
+  await db.$transaction(async (tx) => {
+    // `upsert`, not `create`: this student may already share this teacher's
+    // roster from booking a class while the invitation sat pending, and
+    // accepting must not throw on that overlap.
+    await tx.teacherStudent.upsert({
+      where: {
+        teacherId_studentId: { teacherId: invitation.teacherId, studentId: input.studentId },
+      },
+      update: {},
+      create: { teacherId: invitation.teacherId, studentId: input.studentId },
+    });
+    await tx.invitation.update({
+      where: { id: invitation.id },
+      data: { status: 'accepted', respondedAt: new Date() },
+    });
+  });
+  return { ok: true };
+}
+
+/**
+ * Decline an invitation. Same ownership gate as `acceptInvitation` above,
+ * and for the same reason — see its docblock.
+ *
+ * No link is created, and the row is not deleted. A declined `Invitation`
+ * is the tombstone that stops the teacher re-inviting the same address;
+ * `PUT`/`DELETE /api/invitations/[id]` already refuse to edit or remove a
+ * declined row for that same reason.
+ */
+export async function declineInvitation(
+  db: PrismaClient,
+  input: { invitationId: string; accountEmail: string },
+): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_PENDING' }> {
+  const invitation = await db.invitation.findFirst({
+    where: { id: input.invitationId, email: input.accountEmail.toLowerCase() },
+    select: { id: true, status: true },
+  });
+  if (!invitation) return { ok: false, reason: 'NOT_FOUND' };
+  if (invitation.status !== 'pending') return { ok: false, reason: 'NOT_PENDING' };
+
+  await db.invitation.update({
+    where: { id: invitation.id },
+    data: { status: 'declined', respondedAt: new Date() },
+  });
+  return { ok: true };
+}

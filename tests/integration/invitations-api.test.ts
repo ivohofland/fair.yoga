@@ -427,3 +427,158 @@ describe('PATCH /api/invitations/[id]', () => {
     }
   });
 });
+
+describe('POST /api/invitations/[id]/respond', () => {
+  // The account's own email is stored exactly as typed at sign-up, unlike
+  // `Invitation.email`, which `inviteContact` and `PUT` both lowercase on
+  // write (services/invitations.ts). Mixed case here is deliberate: it is
+  // what proves `acceptInvitation`/`declineInvitation` lowercase before
+  // matching, rather than merely happening to compare equal because both
+  // fixtures used the same case.
+  const acceptEmail = `Accept-Responder-${suffix}@Test.Local`;
+  const declineEmail = `Decline-Responder-${suffix}@Test.Local`;
+
+  let respondingStudentId: string;
+  let respondingAccountId: string;
+  let respondingToken: string;
+
+  let decliningStudentId: string;
+  let decliningAccountId: string;
+  let decliningToken: string;
+
+  let inviteId: string;
+  let declineId: string;
+  let otherPersonsInviteId: string;
+
+  beforeAll(async () => {
+    const responder = await prisma.student.create({
+      data: {
+        firstName: 'Accept', lastName: 'Responder',
+        email: acceptEmail, claimedAt: new Date(),
+        account: { create: { email: acceptEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    respondingStudentId = responder.id;
+    respondingAccountId = responder.accountId as string;
+    respondingToken = await seedSession(prisma, respondingAccountId);
+
+    const decliner = await prisma.student.create({
+      data: {
+        firstName: 'Decline', lastName: 'Responder',
+        email: declineEmail, claimedAt: new Date(),
+        account: { create: { email: declineEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    decliningStudentId = decliner.id;
+    decliningAccountId = decliner.accountId as string;
+    decliningToken = await seedSession(prisma, decliningAccountId);
+
+    const invite = await prisma.invitation.create({
+      data: {
+        teacherId, email: acceptEmail.toLowerCase(), firstName: 'Accept', lastName: 'Responder',
+      },
+    });
+    inviteId = invite.id;
+
+    const decline = await prisma.invitation.create({
+      data: {
+        teacherId, email: declineEmail.toLowerCase(), firstName: 'Decline', lastName: 'Responder',
+      },
+    });
+    declineId = decline.id;
+
+    // Addressed to neither responder — proves the guard rejects on the
+    // ADDRESS mismatch, not merely because this teacher differs from theirs.
+    const otherPersons = await prisma.invitation.create({
+      data: {
+        teacherId: otherTeacherId,
+        email: `inv-stranger-${suffix}@test.local`,
+        firstName: 'Stranger',
+        lastName: 'Contact',
+      },
+    });
+    otherPersonsInviteId = otherPersons.id;
+  });
+
+  afterAll(async () => {
+    // The file's own afterAll (top of file) sweeps Invitation by teacherId
+    // and Teacher/Account by the two teacher fixtures — it has never had a
+    // Student fixture to clean up before this describe, so that sweep does
+    // not reach these rows. Deleting a Student profile does not take its
+    // Account with it, so both are swept here explicitly.
+    const studentIds = [respondingStudentId, decliningStudentId].filter(Boolean);
+    const studentAccountIds = [respondingAccountId, decliningAccountId].filter(Boolean);
+    if (studentIds.length) {
+      await prisma.teacherStudent.deleteMany({ where: { studentId: { in: studentIds } } });
+    }
+    if (studentAccountIds.length) {
+      await prisma.session.deleteMany({ where: { accountId: { in: studentAccountIds } } });
+    }
+    if (studentIds.length) {
+      await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    }
+    if (studentAccountIds.length) {
+      await prisma.account.deleteMany({ where: { id: { in: studentAccountIds } } });
+    }
+  });
+
+  const respond = (id: string, token: string, response: 'accept' | 'decline') =>
+    fetch(`${BASE_URL}/api/invitations/${id}/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(token) },
+      body: JSON.stringify({ response }),
+    });
+
+  it('accepting creates the link and stamps the row', async () => {
+    const res = await respond(inviteId, respondingToken, 'accept');
+    expect(res.status).toBe(200);
+
+    const link = await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId, studentId: respondingStudentId } },
+    });
+    expect(link).not.toBeNull();
+    const inv = await prisma.invitation.findUniqueOrThrow({ where: { id: inviteId } });
+    expect(inv.status).toBe('accepted');
+    expect(inv.respondedAt).not.toBeNull();
+  });
+
+  it('declining leaves no link and blocks a re-invite', async () => {
+    const res = await respond(declineId, decliningToken, 'decline');
+    expect(res.status).toBe(200);
+    expect(await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId, studentId: decliningStudentId } },
+    })).toBeNull();
+
+    const reinvite = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({ firstName: 'A', lastName: 'B', email: declineEmail }),
+    });
+    expect(reinvite.status).toBe(409);
+    expect((await reinvite.json()).error.code).toBe('DECLINED');
+  });
+
+  it('refuses an invitation addressed to someone else', async () => {
+    // The id is the only thing the caller supplies; the address is what
+    // authorizes them. This is gate 4 — without it, any signed-in student
+    // who guesses or obtains an id accepts on a stranger's behalf.
+    const res = await respond(otherPersonsInviteId, respondingToken, 'accept');
+    expect(res.status).toBe(404);
+    expect(await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId: otherTeacherId, studentId: respondingStudentId } },
+    })).toBeNull();
+  });
+
+  it('refuses a second response to the same invitation', async () => {
+    const again = await respond(inviteId, respondingToken, 'decline');
+    expect(again.status).toBe(409);
+    expect((await again.json()).error.code).toBe('ALREADY_ANSWERED');
+  });
+
+  it('refuses a teacher-only session', async () => {
+    const res = await respond(inviteId, teacherToken, 'accept');
+    expect(res.status).toBe(403);
+  });
+});

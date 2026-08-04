@@ -149,6 +149,15 @@ export const updateInvitationSchema = z.object({
 }).strict();
 
 /**
+ * `POST /api/invitations/[id]/respond` (#166). The student's only two
+ * moves. `.strict()` for the same reason as the invitation schemas above:
+ * an unknown key is a 400, not a silent drop.
+ */
+export const respondToInvitationSchema = z.object({
+  response: z.enum(['accept', 'decline']),
+}).strict();
+
+/**
  * #166 left this alive for one caller only: the teacher branch of
  * `PUT /api/students/[id]`, which still edits an unclaimed contact by
  * firstName/lastName/email. `POST /api/students` no longer uses it — that
