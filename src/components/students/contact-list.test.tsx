@@ -83,6 +83,25 @@ describe('ContactList', () => {
     expect(await screen.findByText('No contacts yet.')).toBeInTheDocument();
   });
 
+  // F2 review fix: archiving a contact was a one-way door — nothing fetched
+  // `?archived=true`, so an archived row (a declined contact's only escape
+  // hatch) had no list to reappear in. Mirrors `student-directory.tsx`'s own
+  // `archived` prop.
+  it('fetches /api/invitations?archived=true when archived', async () => {
+    stubInvitations([]);
+    render(<ContactList archived />);
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/invitations?archived=true'),
+    );
+  });
+
+  it('shows the archived empty state, not the ordinary one, when archived and empty', async () => {
+    stubInvitations([]);
+    render(<ContactList archived />);
+    expect(await screen.findByText('No archived contacts.')).toBeInTheDocument();
+    expect(screen.queryByText('No contacts yet.')).toBeNull();
+  });
+
   // Same reasoning as `student-directory.tsx`'s equivalent branch: an
   // expired session answers 401 to every teacher-scoped GET, and this list
   // has to leave the page rather than render as though it were merely empty.

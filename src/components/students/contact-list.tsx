@@ -28,6 +28,16 @@ interface InvitationListResponse {
  * render in `StudentDirectory` instead. The row survives in `Invitation` as
  * history, but showing it here too would list the same person under two
  * different labels on the same page.
+ *
+ * `GET /api/invitations` does not filter this out itself — it only takes
+ * `?archived`, deliberately (see the route's own comment on why it has no
+ * pagination either: a teacher's contacts are a working set, not a paged
+ * directory). `isContact` below is the only place `accepted` gets excluded,
+ * which is fine with the one caller this component has today. If a second
+ * consumer needs the same distinction, give the route a `?status=` filter
+ * mirroring `?archived=`, rather than copying this predicate into another
+ * component — two places deciding "is this still a contact" is how the
+ * definition drifts.
  */
 interface ContactRow extends Omit<InvitationApiRow, 'status'> {
   status: 'pending' | 'declined';
@@ -42,7 +52,11 @@ const STATUS_LABEL: Record<ContactRow['status'], string> = {
   declined: 'Declined',
 };
 
-export function ContactList() {
+interface ContactListProps {
+  archived?: boolean;
+}
+
+export function ContactList({ archived = false }: ContactListProps) {
   const [contacts, setContacts] = useState<ContactRow[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -52,7 +66,7 @@ export function ContactList() {
     async function fetchContacts() {
       setLoading(true);
       try {
-        const res = await fetch('/api/invitations');
+        const res = await fetch(archived ? '/api/invitations?archived=true' : '/api/invitations');
         if (res.status === 401) {
           window.location.href = '/login';
           return;
@@ -69,12 +83,12 @@ export function ContactList() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [archived]);
 
   return (
     <div className={loading ? 'opacity-50' : ''}>
       {contacts.length === 0 && !loading ? (
-        <EmptyState title="No contacts yet." />
+        <EmptyState title={archived ? 'No archived contacts.' : 'No contacts yet.'} />
       ) : (
         <div>
           {contacts.map((contact) => (

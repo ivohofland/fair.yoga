@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { formatStudentName } from '@/lib/format';
+import { canRemoveContact } from '@/lib/contacts';
 import { PageHeader } from '@/components/layout/page-header';
 import { ContactForm, ArchiveContactButton } from '@/components/students/contact-form';
 import { RemoveStudentButton } from '@/components/students/remove-student-button';
@@ -58,9 +59,11 @@ export default async function ContactDetailPage({
           Absent, not present-and-failing: the PUT/DELETE routes both 409
           DECLINED_IS_PERMANENT on a declined row, but this page shouldn't
           make a teacher discover that by clicking. Archiving stays available
-          — that's the declined row's actual escape hatch.
+          — that's the declined row's actual escape hatch. `canRemoveContact`
+          (lib/contacts.ts) is the decision itself, pulled out and unit-tested
+          because this server component is otherwise untestable ground.
         */}
-        {invitation.status !== 'declined' && (
+        {canRemoveContact(invitation.status) && (
           <RemoveStudentButton invitationId={invitation.id} studentName={displayName} />
         )}
       </section>

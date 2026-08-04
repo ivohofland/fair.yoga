@@ -30,6 +30,11 @@ export default function StudentsPage() {
           your classes.
         </p>
         <ContactList />
+        <div className="mt-6">
+          <Link href="/students/contacts/archived" className="text-brown text-sm opacity-60">
+            View archived contacts
+          </Link>
+        </div>
       </section>
     </>
   );
