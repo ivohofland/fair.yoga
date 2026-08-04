@@ -138,6 +138,17 @@ export const createInvitationSchema = z.object({
 }).strict();
 
 /**
+ * `PUT /api/invitations/[id]` (#166). All fields optional — a teacher may
+ * fix just a typo'd last name — and `.strict()` for the same reason as the
+ * create schema above: an unknown key here is a 400, not a silent drop.
+ */
+export const updateInvitationSchema = z.object({
+  firstName: z.string().min(1).optional(),
+  lastName: z.string().optional(),
+  email: z.string().email().optional(),
+}).strict();
+
+/**
  * #166 left this alive for one caller only: the teacher branch of
  * `PUT /api/students/[id]`, which still edits an unclaimed contact by
  * firstName/lastName/email. `POST /api/students` no longer uses it — that
