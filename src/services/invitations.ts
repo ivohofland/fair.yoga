@@ -9,6 +9,7 @@
  */
 
 import type { PrismaClient, Prisma } from '@prisma/client';
+import { reorderWaitingEntries } from './waitlist';
 
 export type InviteRefusal = 'ALREADY_INVITED' | 'ALREADY_LINKED' | 'DECLINED';
 
@@ -256,6 +257,34 @@ export async function unlinkTeacher(
   await db.$transaction(async (tx) => {
     await tx.teacherStudent.delete({ where: { id: link.id } });
 
+    // A `waiting` entry for one of this teacher's classes is a standing
+    // request the student is walking away from along with the link — left
+    // in place, it hands the teacher a lever to reach back through it: cancel
+    // any other registration in that class, `handleSpotFreed` promotes this
+    // student off the queue, and `resolveInvitationOnLink` clears the block
+    // being set below, all without the student doing anything. Withdrawing
+    // here (rather than having `promoteNext` skip a blocked candidate) is
+    // deliberate — skipping leaves a zombie entry that keeps trying and
+    // occupying a queue position forever; withdrawing matches the same
+    // principle `resolveInvitationOnLink` runs on elsewhere: the student's
+    // most recent act governs. Registrations are untouched, on purpose and
+    // unlike this: a registration is a commitment that may carry money owed,
+    // a waitlist entry is neither.
+    const waitingEntries = await tx.waitlistEntry.findMany({
+      where: { studentId: input.studentId, status: 'waiting', class: { teacherId: input.teacherId } },
+      select: { id: true, classId: true },
+    });
+    if (waitingEntries.length > 0) {
+      await tx.waitlistEntry.updateMany({
+        where: { id: { in: waitingEntries.map((entry) => entry.id) } },
+        data: { status: 'removed' },
+      });
+      const classIds = [...new Set(waitingEntries.map((entry) => entry.classId))];
+      for (const classId of classIds) {
+        await reorderWaitingEntries(tx, classId);
+      }
+    }
+
     // Lowercased for the same reason `acceptInvitation` lowercases:
     // `Invitation.email` and `TeacherBlock.email` are always stored
     // lowercase, `Account.email` never is. A raw address here would miss an
@@ -297,12 +326,12 @@ export async function resolveInvitationOnLink(
   tx: Prisma.TransactionClient,
   input: { teacherId: string; studentEmail: string },
 ): Promise<void> {
-  // Lowercased for the third time in this file, and for the same reason each
-  // time: invitation emails are always stored lowercase, `Student.email` and
-  // `Account.email` never are. Miss it here and a booking silently fails to
-  // clear the declined tombstone — so the student's only route back to a
-  // teacher they declined stops working, which is the one escape hatch the
-  // whole decline design rests on.
+  // Lowercased again, and for the same reason each time: invitation emails
+  // are always stored lowercase, `Student.email` and `Account.email` never
+  // are. Miss it here and a booking silently fails to clear the declined
+  // tombstone — so the student's only route back to a teacher they declined
+  // stops working, which is the one escape hatch the whole decline design
+  // rests on.
   const email = input.studentEmail.toLowerCase();
 
   // Task 6c moved the block into its own table, and the block is the thing
@@ -312,8 +341,13 @@ export async function resolveInvitationOnLink(
   // invitation from this teacher still undeliverable.
   await tx.teacherBlock.deleteMany({ where: { teacherId: input.teacherId, email } });
 
+  // `status: { not: 'accepted' }` so an already-accepted row's `respondedAt`
+  // — the original acceptance moment — is left alone. Nothing reads it yet,
+  // which is exactly why this is worth getting right now: every later
+  // booking would otherwise silently overwrite it, and the drift wouldn't
+  // surface until something finally does read it.
   await tx.invitation.updateMany({
-    where: { teacherId: input.teacherId, email },
+    where: { teacherId: input.teacherId, email, status: { not: 'accepted' } },
     data: { status: 'accepted', respondedAt: new Date() },
   });
 }

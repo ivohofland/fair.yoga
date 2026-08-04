@@ -1102,8 +1102,19 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
   let claimClassId: string;
 
   // Booked directly by the student, after their invitation was declined —
-  // the exact shape resolveInvitationOnLink exists to reverse.
-  const declineEmail = `resolve-decline-${suffix}@test.local`;
+  // the exact shape resolveInvitationOnLink exists to reverse. Mixed case,
+  // exactly as this student's own address sits on `Student.email` and
+  // `Account.email` — this is what proves resolveInvitationOnLink's own
+  // `.toLowerCase()` does real work rather than comparing an already-lower
+  // string to itself. The file's unlink describe established the same
+  // pattern at :713-720 with `Unlink-Student-...@Test.Local` (this is F1
+  // from review: every fixture in this describe used to be all-lowercase by
+  // construction via `uniqueSuffix()`, which made the normalisation a no-op
+  // no test could tell apart from its absence). `Invitation.email` is always
+  // stored lowercase — `declineEmailLower` is that canonical form, used
+  // everywhere this file queries or writes an Invitation row directly.
+  const declineEmail = `Resolve-Decline-${suffix}@Test.Local`;
+  const declineEmailLower = declineEmail.toLowerCase();
   let declineStudentId: string;
   let declineAccountId: string;
   let declineToken: string;
@@ -1215,7 +1226,8 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
     declineToken = await seedSession(prisma, declineAccountId);
     await prisma.invitation.create({
       data: {
-        teacherId: resolveTeacherId, email: declineEmail, firstName: 'Resolve', lastName: 'Decline',
+        teacherId: resolveTeacherId, email: declineEmailLower,
+        firstName: 'Resolve', lastName: 'Decline',
         status: 'accepted', respondedAt: new Date(),
       },
     });
@@ -1331,30 +1343,49 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
   });
 
   it("booking a declined teacher's class re-establishes the link and clears the tombstone", async () => {
-    // Decline first.
-    await prisma.invitation.update({
-      where: { teacherId_email: { teacherId: resolveTeacherId, email: declineEmail } },
-      data: { status: 'declined', respondedAt: new Date() },
-    });
-    await prisma.teacherStudent.deleteMany({
-      where: { teacherId: resolveTeacherId, studentId: declineStudentId },
-    });
+    try {
+      // Decline first.
+      await prisma.invitation.update({
+        where: { teacherId_email: { teacherId: resolveTeacherId, email: declineEmailLower } },
+        data: { status: 'declined', respondedAt: new Date() },
+      });
+      await prisma.teacherStudent.deleteMany({
+        where: { teacherId: resolveTeacherId, studentId: declineStudentId },
+      });
 
-    const res = await fetch(`${BASE_URL}/api/registrations`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...cookie(declineToken) },
-      body: JSON.stringify({ classId: openClassId }),
-    });
-    expect(res.status).toBe(201);
+      const res = await fetch(`${BASE_URL}/api/registrations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(declineToken) },
+        body: JSON.stringify({ classId: openClassId }),
+      });
+      expect(res.status).toBe(201);
 
-    expect(await prisma.teacherStudent.findUnique({
-      where: { teacherId_studentId: { teacherId: resolveTeacherId, studentId: declineStudentId } },
-    })).not.toBeNull();
+      expect(await prisma.teacherStudent.findUnique({
+        where: { teacherId_studentId: { teacherId: resolveTeacherId, studentId: declineStudentId } },
+      })).not.toBeNull();
 
-    const inv = await prisma.invitation.findUniqueOrThrow({
-      where: { teacherId_email: { teacherId: resolveTeacherId, email: declineEmail } },
-    });
-    expect(inv.status).toBe('accepted');
+      // The write this test is really about: `Student.email` above is mixed
+      // case, `Invitation.email` is queried here by its canonical lowercase
+      // form — a dropped `.toLowerCase()` in resolveInvitationOnLink would
+      // leave this row stuck at `declined` even though the booking above
+      // succeeded (#166 F1).
+      const inv = await prisma.invitation.findUniqueOrThrow({
+        where: { teacherId_email: { teacherId: resolveTeacherId, email: declineEmailLower } },
+      });
+      expect(inv.status).toBe('accepted');
+    } finally {
+      // Restores the fixture to the state the describe's other tests expect
+      // to find `declineStudentId` in, and matches this file's own
+      // try/finally convention — the describe's `afterAll` would sweep both
+      // rows regardless (by `resolveTeacherId`/`declineStudentId`), so this
+      // is a safety net rather than the only thing standing between this
+      // test and debris.
+      await prisma.teacherStudent.upsert({
+        where: { teacherId_studentId: { teacherId: resolveTeacherId, studentId: declineStudentId } },
+        update: {},
+        create: { teacherId: resolveTeacherId, studentId: declineStudentId },
+      });
+    }
   });
 
   it('a teacher-initiated registration does not resolve anything', async () => {
@@ -1376,101 +1407,308 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
   });
 
   it('re-booking after unlinking clears the TeacherBlock, restoring deliverability', async () => {
-    const unlinkRes = await fetch(`${BASE_URL}/api/teacher-links/${resolveTeacherId}`, {
-      method: 'DELETE', headers: cookie(unlinkToken),
-    });
-    expect(unlinkRes.status).toBe(200);
-    expect(await prisma.teacherBlock.findUnique({
-      where: { teacherId_email: { teacherId: resolveTeacherId, email: unlinkEmail } },
-    })).not.toBeNull();
+    try {
+      const unlinkRes = await fetch(`${BASE_URL}/api/teacher-links/${resolveTeacherId}`, {
+        method: 'DELETE', headers: cookie(unlinkToken),
+      });
+      expect(unlinkRes.status).toBe(200);
+      expect(await prisma.teacherBlock.findUnique({
+        where: { teacherId_email: { teacherId: resolveTeacherId, email: unlinkEmail } },
+      })).not.toBeNull();
 
-    // Confirm the block genuinely withholds delivery before the re-book —
-    // without this, an assertion of `delivered: true` afterward would prove
-    // nothing about what changed.
-    const blocked = await inviteContact(prisma, {
-      teacherId: resolveTeacherId, email: unlinkEmail, firstName: 'A', lastName: 'B',
-    });
-    if (!blocked.ok) throw new Error('expected the pre-rebook invite to succeed');
-    expect(blocked.value.delivered).toBe(false);
-    // That call created a real, ordinary row (#166 task 6c) — remove it so
-    // the re-book below meets `inviteContact`'s "no existing row" path
-    // again, the same as a teacher who never re-invited in between.
-    await prisma.invitation.deleteMany({ where: { id: blocked.value.id } });
+      // Confirm the block genuinely withholds delivery before the re-book —
+      // without this, an assertion of `delivered: true` afterward would prove
+      // nothing about what changed.
+      const blocked = await inviteContact(prisma, {
+        teacherId: resolveTeacherId, email: unlinkEmail, firstName: 'A', lastName: 'B',
+      });
+      if (!blocked.ok) throw new Error('expected the pre-rebook invite to succeed');
+      expect(blocked.value.delivered).toBe(false);
+      // That call created a real, ordinary row (#166 task 6c) — remove it so
+      // the re-book below meets `inviteContact`'s "no existing row" path
+      // again, the same as a teacher who never re-invited in between. Not
+      // deferred to `finally`: the row must be gone before the re-book
+      // below, not merely by test end — this is a correctness step, not
+      // cleanup. `finally` below is a second, address-scoped sweep in case
+      // an assertion above threw before this line ran.
+      await prisma.invitation.deleteMany({ where: { id: blocked.value.id } });
 
-    const res = await fetch(`${BASE_URL}/api/registrations`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...cookie(unlinkToken) },
-      body: JSON.stringify({ classId: openClassId }),
-    });
-    expect(res.status).toBe(201);
+      const res = await fetch(`${BASE_URL}/api/registrations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(unlinkToken) },
+        body: JSON.stringify({ classId: openClassId }),
+      });
+      expect(res.status).toBe(201);
 
-    // The property this test exists for: the block itself is gone, not just
-    // an invitation row — `delivered` is the only signal a caller (Task 8's
-    // notify path) ever gets, so checking the invitation's status here
-    // would pass even if the block never cleared.
-    expect(await prisma.teacherBlock.findUnique({
-      where: { teacherId_email: { teacherId: resolveTeacherId, email: unlinkEmail } },
-    })).toBeNull();
+      // The property this test exists for: the block itself is gone, not just
+      // an invitation row — `delivered` is the only signal a caller (Task 8's
+      // notify path) ever gets, so checking the invitation's status here
+      // would pass even if the block never cleared.
+      expect(await prisma.teacherBlock.findUnique({
+        where: { teacherId_email: { teacherId: resolveTeacherId, email: unlinkEmail } },
+      })).toBeNull();
 
-    // The booking above also recreated the TeacherStudent link, and
-    // inviteContact refuses ALREADY_LINKED before it ever reaches the block
-    // check — so calling it on the still-linked pair would prove nothing
-    // about the block. Removing the link here isolates the one thing this
-    // test is about: whether `inviteContact` would still find the block if
-    // asked, independent of roster state.
-    await prisma.teacherStudent.deleteMany({
-      where: { teacherId: resolveTeacherId, studentId: unlinkStudentId },
-    });
-    const reinvite = await inviteContact(prisma, {
-      teacherId: resolveTeacherId, email: unlinkEmail, firstName: 'A', lastName: 'B',
-    });
-    if (!reinvite.ok) throw new Error('expected the re-invite to succeed');
-    expect(reinvite.value.delivered).toBe(true);
+      // The booking above also recreated the TeacherStudent link, and
+      // inviteContact refuses ALREADY_LINKED before it ever reaches the block
+      // check — so calling it on the still-linked pair would prove nothing
+      // about the block. Removing the link here isolates the one thing this
+      // test is about: whether `inviteContact` would still find the block if
+      // asked, independent of roster state.
+      await prisma.teacherStudent.deleteMany({
+        where: { teacherId: resolveTeacherId, studentId: unlinkStudentId },
+      });
+      const reinvite = await inviteContact(prisma, {
+        teacherId: resolveTeacherId, email: unlinkEmail, firstName: 'A', lastName: 'B',
+      });
+      if (!reinvite.ok) throw new Error('expected the re-invite to succeed');
+      expect(reinvite.value.delivered).toBe(true);
+    } finally {
+      // Both `inviteContact` calls above create a real Invitation row
+      // whenever none exists yet for the address — swept here by address
+      // rather than by id, so it also catches the first row if an assertion
+      // threw before its own inline delete ran. The describe's own
+      // `afterAll` sweeps every Invitation under `resolveTeacherId`
+      // regardless; this is the same per-test convention the rest of the
+      // file follows, not the only backstop.
+      await prisma.invitation.deleteMany({
+        where: { teacherId: resolveTeacherId, email: unlinkEmail },
+      });
+    }
   });
 
   it("promoting off the waitlist resolves the student's invitation the same way a direct booking does", async () => {
-    await prisma.invitation.update({
-      where: { teacherId_email: { teacherId: resolveTeacherId, email: promoteEmail } },
-      data: { status: 'declined', respondedAt: new Date() },
-    });
-    await prisma.waitlistEntry.create({
-      data: { classId: promoteClassId, studentId: promoteStudentId, position: 1, status: 'waiting' },
-    });
+    try {
+      await prisma.invitation.update({
+        where: { teacherId_email: { teacherId: resolveTeacherId, email: promoteEmail } },
+        data: { status: 'declined', respondedAt: new Date() },
+      });
+      await prisma.waitlistEntry.create({
+        data: { classId: promoteClassId, studentId: promoteStudentId, position: 1, status: 'waiting' },
+      });
 
-    const entry = await promoteNext(prisma, promoteClassId);
-    expect(entry).not.toBeNull();
+      const entry = await promoteNext(prisma, promoteClassId);
+      expect(entry).not.toBeNull();
 
-    expect(await prisma.teacherStudent.findUnique({
-      where: { teacherId_studentId: { teacherId: resolveTeacherId, studentId: promoteStudentId } },
-    })).not.toBeNull();
-    const inv = await prisma.invitation.findUniqueOrThrow({
-      where: { teacherId_email: { teacherId: resolveTeacherId, email: promoteEmail } },
-    });
-    expect(inv.status).toBe('accepted');
+      expect(await prisma.teacherStudent.findUnique({
+        where: { teacherId_studentId: { teacherId: resolveTeacherId, studentId: promoteStudentId } },
+      })).not.toBeNull();
+      const inv = await prisma.invitation.findUniqueOrThrow({
+        where: { teacherId_email: { teacherId: resolveTeacherId, email: promoteEmail } },
+      });
+      expect(inv.status).toBe('accepted');
+    } finally {
+      // The describe's own `afterAll` sweeps `waitlistEntry`/`registration`
+      // by `promoteClassId` regardless — this is the same per-test
+      // try/finally convention the rest of the file follows, not the only
+      // backstop against debris.
+      await prisma.waitlistEntry.deleteMany({
+        where: { classId: promoteClassId, studentId: promoteStudentId },
+      });
+      await prisma.registration.deleteMany({
+        where: { classId: promoteClassId, studentId: promoteStudentId },
+      });
+    }
   });
 
   it("claiming a spot resolves the student's invitation the same way a direct booking does", async () => {
-    await prisma.invitation.update({
-      where: { teacherId_email: { teacherId: resolveTeacherId, email: claimEmail } },
-      data: { status: 'declined', respondedAt: new Date() },
+    try {
+      await prisma.invitation.update({
+        where: { teacherId_email: { teacherId: resolveTeacherId, email: claimEmail } },
+        data: { status: 'declined', respondedAt: new Date() },
+      });
+      await prisma.waitlistEntry.create({
+        data: { classId: claimClassId, studentId: claimStudentId, position: 1, status: 'waiting' },
+      });
+
+      const res = await fetch(`${BASE_URL}/api/waitlist/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(claimToken) },
+        body: JSON.stringify({ classId: claimClassId }),
+      });
+      expect(res.status).toBe(201);
+
+      expect(await prisma.teacherStudent.findUnique({
+        where: { teacherId_studentId: { teacherId: resolveTeacherId, studentId: claimStudentId } },
+      })).not.toBeNull();
+      const inv = await prisma.invitation.findUniqueOrThrow({
+        where: { teacherId_email: { teacherId: resolveTeacherId, email: claimEmail } },
+      });
+      expect(inv.status).toBe('accepted');
+    } finally {
+      // Same convention as the promote test above.
+      await prisma.waitlistEntry.deleteMany({
+        where: { classId: claimClassId, studentId: claimStudentId },
+      });
+      await prisma.registration.deleteMany({
+        where: { classId: claimClassId, studentId: claimStudentId },
+      });
+    }
+  });
+});
+
+describe('unlinking withdraws waiting entries for the teacher (#166 F3)', () => {
+  // A dedicated teacher, dedicated from `resolveTeacherId` above: that
+  // describe's own `afterAll` has already torn its fixtures down by the time
+  // this one runs. `defaultTimezone: 'UTC'` for the same reason as above —
+  // the class needs a deterministic auto_promote window.
+  let teacherId: string;
+  let teacherAccountId: string;
+  let teacherToken: string;
+  let roomId: string;
+  let teacherRoomId: string;
+  let classId: string;
+
+  // The student under test: joins the waitlist, then unlinks. The exploit
+  // this closes: without withdrawal, this student's `waiting` entry survives
+  // the unlink, and the teacher — not the student — can later reach back
+  // through it (cancel the other registration below → handleSpotFreed →
+  // promoteNext promotes this student → resolveInvitationOnLink clears the
+  // block just written) with no further action from the student at all.
+  const studentEmail = `f3-student-${suffix}@test.local`;
+  let studentId: string;
+  let studentAccountId: string;
+  let studentToken: string;
+
+  // Occupies the class's one spot, so the student under test has to
+  // waitlist rather than book directly. Cancelling this registration is
+  // the "teacher cancels any other registration" step of the exploit.
+  let holderStudentId: string;
+  let holderRegistrationId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'F3', lastName: 'Teacher',
+        email: `f3-teacher-${suffix}@test.local`,
+        account: { create: { email: `f3-teacher-${suffix}@test.local` } },
+        bio: 'Task 7 review F3 tests', pageSlug: `f3-teacher-${suffix}`,
+        defaultTimezone: 'UTC',
+      },
     });
+    teacherId = teacher.id;
+    teacherAccountId = teacher.accountId;
+    teacherToken = await seedSession(prisma, teacherAccountId);
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'F3 Studio', address: `${suffix} F3 St`, city: 'Testville',
+        postcode: '1234F3', maxCapacity: 5, createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 5, rentalRate: 20 },
+    });
+    teacherRoomId = teacherRoom.id;
+
+    // auto_promote window: far enough out that promoteNext's own window
+    // check never trips — same trick used throughout this file.
+    const cls = await prisma.class.create({
+      data: {
+        teacherId, teacherRoomId, classType: 'F3 Class',
+        date: new Date('2099-06-01'), startTime: '09:00', durationMinutes: 60,
+        roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 1,
+        status: 'open',
+      },
+    });
+    classId = cls.id;
+
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'F3', lastName: 'Student', email: studentEmail, claimedAt: new Date(),
+        account: { create: { email: studentEmail } }, incomeTier: 3,
+      },
+      select: { id: true, accountId: true },
+    });
+    studentId = student.id;
+    studentAccountId = student.accountId as string;
+    studentToken = await seedSession(prisma, studentAccountId);
+    await prisma.teacherStudent.create({ data: { teacherId, studentId } });
+
+    const holder = await prisma.student.create({
+      data: {
+        firstName: 'F3', lastName: 'Holder', email: `f3-holder-${suffix}@test.local`, incomeTier: 3,
+      },
+      select: { id: true },
+    });
+    holderStudentId = holder.id;
+    await prisma.teacherStudent.create({ data: { teacherId, studentId: holderStudentId } });
+    const registration = await prisma.registration.create({
+      data: { classId, studentId: holderStudentId, status: 'registered', tierAtBooking: 3 },
+    });
+    holderRegistrationId = registration.id;
+
+    // The student under test waitlists behind the holder — the class's one
+    // spot is already taken.
     await prisma.waitlistEntry.create({
-      data: { classId: claimClassId, studentId: claimStudentId, position: 1, status: 'waiting' },
+      data: { classId, studentId, position: 1, status: 'waiting' },
     });
+  });
 
-    const res = await fetch(`${BASE_URL}/api/waitlist/claim`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...cookie(claimToken) },
-      body: JSON.stringify({ classId: claimClassId }),
+  afterAll(async () => {
+    await prisma.waitlistEntry.deleteMany({ where: { classId } });
+    await prisma.registration.deleteMany({ where: { classId } });
+    await prisma.notification.deleteMany({ where: { recipientId: { in: [studentId, teacherId] } } });
+    await prisma.class.deleteMany({ where: { id: classId } });
+    await prisma.teacherRoom.deleteMany({ where: { id: teacherRoomId } });
+    await prisma.room.deleteMany({ where: { id: roomId } });
+
+    await prisma.teacherStudent.deleteMany({ where: { teacherId } });
+    await prisma.invitation.deleteMany({ where: { teacherId } });
+    await prisma.teacherBlock.deleteMany({ where: { teacherId } });
+
+    await prisma.session.deleteMany({ where: { accountId: studentAccountId } });
+    await prisma.student.deleteMany({ where: { id: { in: [studentId, holderStudentId] } } });
+    await prisma.account.deleteMany({ where: { id: studentAccountId } });
+
+    await prisma.session.deleteMany({ where: { accountId: teacherAccountId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: teacherAccountId } });
+  });
+
+  it('unlinking withdraws the waiting entry, so a later cancel cannot promote the student back in and clear the block', async () => {
+    const unlinkRes = await fetch(`${BASE_URL}/api/teacher-links/${teacherId}`, {
+      method: 'DELETE', headers: cookie(studentToken),
     });
-    expect(res.status).toBe(201);
+    expect(unlinkRes.status).toBe(200);
 
-    expect(await prisma.teacherStudent.findUnique({
-      where: { teacherId_studentId: { teacherId: resolveTeacherId, studentId: claimStudentId } },
+    // The direct proof of the fix: the entry is withdrawn by the unlink
+    // itself, before any cancel ever happens.
+    const entryAfterUnlink = await prisma.waitlistEntry.findUniqueOrThrow({
+      where: { classId_studentId: { classId, studentId } },
+    });
+    expect(entryAfterUnlink.status).toBe('removed');
+
+    expect(await prisma.teacherBlock.findUnique({
+      where: { teacherId_email: { teacherId, email: studentEmail } },
     })).not.toBeNull();
-    const inv = await prisma.invitation.findUniqueOrThrow({
-      where: { teacherId_email: { teacherId: resolveTeacherId, email: claimEmail } },
+
+    // The exploit's second step: the teacher cancels the OTHER student's
+    // registration, freeing the class's only spot and triggering
+    // handleSpotFreed → promoteNext through the real cancel route.
+    const cancelRes = await fetch(`${BASE_URL}/api/registrations/${holderRegistrationId}`, {
+      method: 'DELETE', headers: cookie(teacherToken),
     });
-    expect(inv.status).toBe('accepted');
+    expect(cancelRes.status).toBe(200);
+
+    // Withdrawn, not promoted: promoteNext's queue search only ever looks at
+    // `status: 'waiting'`, so the removed entry is invisible to it — the
+    // freed spot goes unfilled rather than going to this student.
+    const entryAfterCancel = await prisma.waitlistEntry.findUniqueOrThrow({
+      where: { classId_studentId: { classId, studentId } },
+    });
+    expect(entryAfterCancel.status).toBe('removed');
+    expect(entryAfterCancel.registrationId).toBeNull();
+
+    // The property this whole test exists for: the block the student set by
+    // unlinking is still standing after the teacher's cancel — the teacher
+    // never got a lever back to it.
+    expect(await prisma.teacherBlock.findUnique({
+      where: { teacherId_email: { teacherId, email: studentEmail } },
+    })).not.toBeNull();
+
+    expect(
+      await prisma.registration.findUnique({ where: { classId_studentId: { classId, studentId } } }),
+    ).toBeNull();
   });
 });
