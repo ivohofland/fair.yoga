@@ -227,6 +227,53 @@ only that one remaining exclusion.
 This is the part that stops recurrence. Once the exclusions are gone, adding a key to
 either create schema without a matching form field fails the build, naming the key.
 
+### The structural guard: a forbidden list for every schema
+
+The wizard pins above are per-form and opt-in. They exist only because #136 pinned those
+two wizards; a new create route with a new form would carry no pin unless a contributor
+remembered to write one. Fixing three instances and hardening two forms does not make the
+*class* of defect fail the build, and that asymmetry is the same one premise correction 2
+identifies: the update path has a forbidden list
+(`PlainUpdateForbiddenClassField`, `src/services/class-lifecycle.ts:397`) and the create
+path has nothing.
+
+So this branch adds the missing half, in `src/lib/schemas.test.ts`:
+
+- `SERVER_OWNED_FIELDS` — names that are set by the server and must never be declared by a
+  schema without a stated reason: `templateId`, `status`, `settingsLocked`, `paidAt`,
+  `tierAtBooking`, `tierSelectedAt`, `claimedAt`, `cancelledAt`, `accountId`, `isArchived`,
+  `archivedAt`, `withdrawnCount`, `totalRevenue`, `isPublic`, `photoUrl`, `createdById`,
+  `teacherId`, `studentId`.
+- An expected-exceptions map, one entry per schema that legitimately declares one, each
+  with a one-line reason.
+- A test asserting that for **every** exported schema, the intersection of its keys with
+  `SERVER_OWNED_FIELDS` **equals** its expected set — exact equality, not a subset check,
+  so the list cannot rot in either direction. Adding a forbidden key to any schema fails
+  naming it; removing a legitimate one fails too, forcing the map to stay true.
+
+Measured today, all 34 exported schemas are enumerable via `.shape` (it survives
+`.refine()` in zod 4.4.3, verified), and exactly ten declare a candidate name. After this
+branch the two create schemas drop out, leaving eight documented exceptions:
+
+| schema | field | why it stays |
+|---|---|---|
+| `createRegistrationSchema` | `studentId` | a teacher registers a roster student; checked in `waitlist.ts:88-93` |
+| `createRoomSchema` | `isPublic` | a create-time choice, legitimately the client's |
+| `transitionClassSchema` | `status` | the state machine's own input; `'completed'` deliberately absent |
+| `updatePrivacySchema` | `teacherId` | the student chooses the teacher; the link is checked as of this branch |
+| `updateRegistrationSchema` | `status` | attendance on the teacher's own class |
+| `updateRoomSchema` | `isPublic` | **known gap** — no form sends it, one-way door; blocked on #73 |
+| `updateStudioClassSchema` | `cancelledAt` | **known gap** — a client can backdate; self-affecting |
+| `updateTeacherSchema` | `photoUrl` | **known gap** — no form sends it, rendered nowhere; blocked on #46 |
+
+The last three are the findings this branch decided not to fix. Putting them in the
+exceptions map is deliberate: it moves them from a spec nobody re-reads to a line beside
+the guard, where the next person to touch that schema sees them.
+
+Each name in `SERVER_OWNED_FIELDS` is additionally pinned against the Prisma model key
+union, mirroring `_forbiddenColumnsExist` (`class-lifecycle.ts:405`), so a typo cannot sit
+in the list protecting nothing.
+
 ### `as never`
 
 `classes/route.ts:76-77` writes `body.cancelDeadline as never ?? undefined`. Prisma
@@ -251,6 +298,8 @@ re-verified. A guard that cannot fail certifies nothing.
 | integration: foreign `templateId` does not attach (studio) | restore the spread |
 | integration: privacy PUT 403s an unlinked teacher | remove the link check |
 | integration: privacy GET 403s an unlinked teacher | remove the link check |
+| `SERVER_OWNED_FIELDS` exceptions map | add `templateId` to *any* schema; and separately, delete a legitimate exception to prove exact equality fails in both directions |
+| `SERVER_OWNED_FIELDS` name pin | misspell a name in the list and confirm the build names it |
 
 The two key-set pins mirror the existing ones for `updateClassSchema` and
 `updateClassTemplateSchema` (`schemas.test.ts:134`, `:159`). They are worth having
@@ -309,6 +358,11 @@ Named so nobody reads this as a clean sweep.
   decision, which `edit-room-form.tsx` is already blocked on.
 - **`photoUrl`** on `PUT /api/teachers/[id]` — declared, written, sent by no form,
   rendered nowhere. Latent until someone adds the `<img>`; blocked on #46.
+
+  These three are not merely left alone: each becomes a named entry in the
+  `SERVER_OWNED_FIELDS` exceptions map with its reason, so the next person to touch that
+  schema reads the gap instead of rediscovering it. That is the intended use of the map —
+  it is a register of decisions, not only a blocklist.
 - **`lastName` blanking** — the teacher branch of `PUT /api/students/[id]` validates with
   `createStudentSchema`, whose `lastName` is `.optional().default('')`. Zod materialises
   defaults, so a PUT omitting `lastName` writes `''` over the stored surname. Data loss,
