@@ -290,6 +290,14 @@ describe('updateTeacherSchema.pageSlug', () => {
  * a derivation from the Prisma schema. A newly added server-set column is not
  * covered until someone adds its name here — nothing pins this list against
  * the full set of server-set columns across the models it draws from.
+ *
+ * Out of scope entirely: client-supplied cross-tenant foreign keys such as
+ * `classId`, `roomId` and `teacherRoomId`. Those are legitimately client-set on
+ * several schemas (createClassSchema, createTeacherRoomSchema,
+ * createRegistrationSchema, createWaitlistSchema, claimWaitlistSchema,
+ * createAnnouncementSchema), so this register doesn't — and shouldn't — name
+ * them. A new route that accepts one of those with no ownership check would
+ * pass this guard.
  */
 const SERVER_OWNED_FIELDS = [
   'accountId', 'archivedAt', 'cancelledAt', 'claimedAt', 'createdById',
@@ -298,9 +306,12 @@ const SERVER_OWNED_FIELDS = [
   'totalRevenue', 'withdrawnCount',
 ] as const;
 
-// Every name above must be a real column on some Prisma model. Without this a
-// typo would sit in the list protecting nothing while looking like protection.
-// Fails naming the offender.
+// Every name above must be a real column on one of these eight models. Without
+// this a typo would sit in the list protecting nothing while looking like
+// protection. Fails naming the offender. A legitimate server-owned name that
+// lives only on a model outside this union (e.g. TeacherStudent,
+// StudioClassTemplate) would fail this pin too — the fix there is to grow the
+// union, not to delete the name.
 type AnyModelKey =
   | keyof Prisma.ClassUncheckedUpdateManyInput
   | keyof Prisma.StudioClassUncheckedUpdateManyInput

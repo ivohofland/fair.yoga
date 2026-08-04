@@ -35,9 +35,11 @@ This one is no exception. What was measured, against what the issues claimed:
 - `templateId` appears in no creation UI. Every UI reference to `templateId`
   (`settings/recurring/[id]`, `settings/studio-classes/[id]`, the four template buttons,
   the two template forms) targets a *template* route, never these two POSTs.
-- Nothing sends `templateId` or `studentCount` at create: not the two wizards, not the one
-  integration test that POSTs to `/api/studio-classes`
-  (`tests/integration/studio-api.test.ts:414-421`), not `prisma/seed.ts`.
+- No client sends `templateId` or `studentCount` at create: not the two wizards, not the
+  one integration test that POSTs to `/api/studio-classes`
+  (`tests/integration/studio-api.test.ts:414-421`). `prisma/seed.ts:706-717` does write both
+  when seeding a past `StudioClass`, but directly via Prisma, not through the route — the
+  schema narrowing doesn't govern that path, so it doesn't change this decision.
 - The exploitability gate is real. Both need another teacher's `ClassTemplate` /
   `StudioClassTemplate` UUID (v4, not enumerable), and no disclosure path for one was
   found. The two public pages pass only scalars to client components, and every
@@ -234,7 +236,7 @@ two wizards; a new create route with a new form would carry no pin unless a cont
 remembered to write one. Fixing three instances and hardening two forms does not make the
 *class* of defect fail the build, and that asymmetry is the same one premise correction 2
 identifies: the update path has a forbidden list
-(`PlainUpdateForbiddenClassField`, `src/services/class-lifecycle.ts:397`) and the create
+(`PlainUpdateForbiddenClassField`, `src/services/class-lifecycle.ts:390`) and the create
 path has nothing.
 
 So this branch adds the missing half, in `src/lib/schemas.test.ts`:

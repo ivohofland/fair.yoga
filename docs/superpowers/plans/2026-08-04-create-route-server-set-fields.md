@@ -3,7 +3,10 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Stop three API routes accepting an id from the request body that names another
-principal's row without checking it, and make the whole class of defect fail the build.
+principal's row without checking it, and make the server-set half of that class of defect
+fail the build. Client-supplied cross-tenant foreign keys (`roomId`, `classId`,
+`teacherRoomId`, etc.) are a separate half this branch does not close — see the
+`SERVER_OWNED_FIELDS` docblock in `schemas.test.ts`.
 
 **Architecture:** Two remedies for two situations. `templateId` is server-set and appears
 in no UI, so it is removed from both create schemas. `teacherId` on the privacy route is
@@ -563,8 +566,10 @@ git commit -m "fix: POST /api/studio-classes spread an unchecked templateId into
 
 **This task has a trap.** The existing fixture creates a teacher and **never links them to
 the student** — `grep teacherStudent tests/integration/privacy-api.test.ts` returns
-nothing. All five existing tests therefore exercise the unlinked path, which is the
-vulnerability. Adding the check without fixing the fixture breaks all four.
+nothing. Three of the five existing tests therefore exercise the unlinked path, which is the
+vulnerability (the other two short-circuit earlier, on the missing-parameter and
+student-side checks, before `hasTeacherLink` is ever reached). Adding the check without
+fixing the fixture breaks all three.
 
 - [ ] **Step 1: Link the fixture teacher, and add an unlinked one**
 
@@ -690,7 +695,7 @@ before the `upsert`:
 - [ ] **Step 5: Run the tests and typecheck**
 
 Run: `npx vitest run --project integration tests/integration/privacy-api.test.ts`
-Expected: PASS, all six tests.
+Expected: PASS, all seven tests.
 
 Run: `npx tsc --noEmit`
 Expected: clean.
@@ -727,7 +732,7 @@ git commit -m "fix: the privacy route never checked the teacher side of teacherI
 The wizard pins from Tasks 1 and 3 are per-form and opt-in: a new create route with a new
 form carries no protection unless a contributor remembers to write one. The update path
 has had a forbidden list since #79 (`PlainUpdateForbiddenClassField`,
-`src/services/class-lifecycle.ts:397`); the create path has had nothing. This is that half.
+`src/services/class-lifecycle.ts:390`); the create path has had nothing. This is that half.
 
 - [ ] **Step 1: Write the register and its test**
 
@@ -745,7 +750,7 @@ already present.
  * write one. #146 and #148 were both server-set `templateId` reaching a Prisma
  * create from a request body, on two routes, found months apart. This is the
  * create-side counterpart to PlainUpdateForbiddenClassField
- * (src/services/class-lifecycle.ts:397).
+ * (src/services/class-lifecycle.ts:390).
  */
 const SERVER_OWNED_FIELDS = [
   'accountId', 'archivedAt', 'cancelledAt', 'claimedAt', 'createdById',
