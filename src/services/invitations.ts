@@ -186,3 +186,55 @@ export async function declineInvitation(
   if (updated.count === 0) return { ok: false, reason: 'NOT_PENDING' };
   return { ok: true };
 }
+
+/**
+ * A student severs a teacher link.
+ *
+ * Two things this deliberately does not do. It does not delete the
+ * Student row when the last link goes — the teacher-side DELETE used to,
+ * and that behaviour must not survive into a student-facing route. And it
+ * does not touch registrations or payments: those are facts, and money may
+ * be owed. The teacher keeps seeing them through the registration-scoped
+ * surfaces, which is #167's decision applied here.
+ */
+export async function unlinkTeacher(
+  db: PrismaClient,
+  input: { teacherId: string; studentId: string; accountEmail: string },
+): Promise<{ ok: true } | { ok: false; reason: 'NOT_LINKED' }> {
+  const link = await db.teacherStudent.findUnique({
+    where: {
+      teacherId_studentId: { teacherId: input.teacherId, studentId: input.studentId },
+    },
+    select: { id: true },
+  });
+  if (!link) return { ok: false, reason: 'NOT_LINKED' };
+
+  await db.$transaction(async (tx) => {
+    await tx.teacherStudent.delete({ where: { id: link.id } });
+
+    // Update-or-create, and the origin differs by case. An existing row
+    // means the teacher typed this address themselves, so it stays theirs
+    // to see. A missing row means the link came from a booking and the
+    // teacher may never have had the address — shareEmail defaults false —
+    // so the tombstone is written as student_block and never listed back.
+    // Lowercased on both branches, for the same reason `acceptInvitation`
+    // lowercases: invitation emails are always stored lowercase, `Account.email`
+    // never is. A raw address here would miss the existing row and create a
+    // duplicate tombstone under a different casing — which then fails to block
+    // the re-invite it exists to block, because `inviteContact` looks up the
+    // lowercased form.
+    const email = input.accountEmail.toLowerCase();
+    await tx.invitation.upsert({
+      where: { teacherId_email: { teacherId: input.teacherId, email } },
+      update: { status: 'declined', respondedAt: new Date() },
+      create: {
+        teacherId: input.teacherId,
+        email,
+        status: 'declined',
+        origin: 'student_block',
+        respondedAt: new Date(),
+      },
+    });
+  });
+  return { ok: true };
+}

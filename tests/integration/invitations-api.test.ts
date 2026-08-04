@@ -611,3 +611,205 @@ describe('POST /api/invitations/[id]/respond', () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe('DELETE /api/teacher-links/[teacherId]', () => {
+  // Lowercase throughout, deliberately: `Invitation.email` is only ever
+  // stored lowercase (inviteContact, services/invitations.ts), so this is
+  // the one form an address can leak back out in. Mixed-case account email
+  // is already covered by the respond describe above — this describe's job
+  // is the tombstone, not re-proving normalisation.
+  const studentEmail = `unlink-student-${suffix}@test.local`;
+
+  let studentId: string;
+  let studentAccountId: string;
+  let studentToken: string;
+
+  // The link this student severs first, under the file's own `teacherId`
+  // fixture. No Invitation row is ever created for (teacherId, studentEmail)
+  // — this link exists purely because the student booked a class, which is
+  // exactly the shape that must produce a `student_block` tombstone.
+  //
+  // A second teacher who separately typed this same address into their own
+  // CRM before the student ever unlinked — this is what proves the
+  // tombstone does NOT downgrade a row the teacher is entitled to.
+  let invitingTeacherId: string;
+  let invitingTeacherAccountId: string;
+
+  // A registration (and its payment) the student holds under `teacherId` —
+  // proof that unlinking never reaches these. Money may be owed.
+  let roomId: string;
+  let teacherRoomId: string;
+  let classId: string;
+  let registrationId: string;
+
+  beforeAll(async () => {
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Unlink', lastName: 'Student',
+        email: studentEmail, claimedAt: new Date(),
+        account: { create: { email: studentEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    studentId = student.id;
+    studentAccountId = student.accountId as string;
+    studentToken = await seedSession(prisma, studentAccountId);
+
+    await prisma.teacherStudent.create({ data: { teacherId, studentId } });
+
+    const invitingTeacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Inviting', lastName: 'Teacher',
+        email: `unlink-inviting-${suffix}@test.local`,
+        account: { create: { email: `unlink-inviting-${suffix}@test.local` } },
+        bio: 'Second-teacher fixture for the origin-preserving unlink test',
+        pageSlug: `unlink-inviting-${suffix}`,
+      },
+    });
+    invitingTeacherId = invitingTeacher.id;
+    invitingTeacherAccountId = invitingTeacher.accountId;
+
+    // A real, already-accepted Invitation — what an existing
+    // (teacherId, email) row looks like when the teacher genuinely typed
+    // the address themselves, as opposed to the tombstone `unlinkTeacher`
+    // writes when no such row exists.
+    await prisma.invitation.create({
+      data: {
+        teacherId: invitingTeacherId, email: studentEmail,
+        firstName: 'Unlink', lastName: 'Student',
+        status: 'accepted', origin: 'teacher_invite', respondedAt: new Date(),
+      },
+    });
+    await prisma.teacherStudent.create({ data: { teacherId: invitingTeacherId, studentId } });
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Unlink Studio', address: `${suffix} Unlink St`, city: 'Amsterdam',
+        postcode: '1111UL', maxCapacity: 10, createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 10, rentalRate: 30 },
+    });
+    teacherRoomId = teacherRoom.id;
+    const cls = await prisma.class.create({
+      data: {
+        teacherId, teacherRoomId: teacherRoom.id, classType: 'Vinyasa', date: new Date(),
+        startTime: '09:00', durationMinutes: 60, roomCost: 30,
+        minRate: 15, targetRate: 25, minStudents: 2, maxStudents: 10,
+        status: 'completed', settingsLocked: true,
+      },
+    });
+    classId = cls.id;
+    const registration = await prisma.registration.create({
+      data: {
+        classId, studentId, status: 'attended', tierAtBooking: 3, price: 6.11, tierRatio: 1,
+      },
+    });
+    registrationId = registration.id;
+    await prisma.payment.create({ data: { registrationId, amount: 6.11, status: 'pending' } });
+  });
+
+  afterAll(async () => {
+    // Child-to-parent order throughout, and `deleteMany` rather than
+    // `delete` everywhere a mutation test above could plausibly have
+    // already removed the row for real (the student.delete mutation in
+    // particular) — cleanup must not throw over that.
+    if (registrationId) await prisma.payment.deleteMany({ where: { registrationId } });
+    if (classId) await prisma.registration.deleteMany({ where: { classId } });
+    if (classId) await prisma.class.deleteMany({ where: { id: classId } });
+    if (teacherRoomId) await prisma.teacherRoom.deleteMany({ where: { id: teacherRoomId } });
+    if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
+
+    // The file's top-level afterAll sweeps Invitation/Teacher/Account for
+    // `teacherId` (this describe reuses that fixture), including whatever
+    // tombstone this describe wrote under it. `invitingTeacherId` is local
+    // to this describe, so its own Invitation/Teacher/Account rows are not
+    // in that sweep and are cleaned up here instead.
+    await prisma.teacherStudent.deleteMany({ where: { studentId } });
+    await prisma.invitation.deleteMany({ where: { teacherId: invitingTeacherId } });
+    if (studentAccountId) {
+      await prisma.session.deleteMany({ where: { accountId: studentAccountId } });
+    }
+    if (studentId) await prisma.student.deleteMany({ where: { id: studentId } });
+    if (studentAccountId) await prisma.account.deleteMany({ where: { id: studentAccountId } });
+
+    if (invitingTeacherId) await prisma.teacher.deleteMany({ where: { id: invitingTeacherId } });
+    if (invitingTeacherAccountId) {
+      await prisma.account.deleteMany({ where: { id: invitingTeacherAccountId } });
+    }
+  });
+
+  it('removes the link and leaves the student account intact', async () => {
+    const res = await fetch(`${BASE_URL}/api/teacher-links/${teacherId}`, {
+      method: 'DELETE', headers: cookie(studentToken),
+    });
+    expect(res.status).toBe(200);
+    expect(await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId, studentId } },
+    })).toBeNull();
+
+    // The account must survive. The route this replaces
+    // (students/[id]/route.ts:201-206) deleted the Student row when its
+    // last link went; nothing student-facing may ever do that.
+    const student = await prisma.student.findUnique({ where: { id: studentId } });
+    expect(student).not.toBeNull();
+    expect(student!.deletedAt).toBeNull();
+  });
+
+  it('writes an invisible tombstone when the link came from a booking', async () => {
+    // Raw body, not the parsed row list or a DB-level field read: a leak
+    // through some other field (or a route that stops filtering by origin)
+    // fails here, printing the address in the failure diff, where a
+    // row-count or single-field assertion would not. This has to run
+    // before the field-level checks below — a wrong `origin` on write would
+    // otherwise be caught by the DB read first, which proves the write is
+    // wrong but not that it leaked.
+    const list = await fetch(`${BASE_URL}/api/invitations`, { headers: cookie(teacherToken) });
+    expect(await list.text()).not.toContain(studentEmail);
+
+    // Same ordering reason in the other direction: this has to run before
+    // the DB read too, so a missing tombstone (no row at all, not just the
+    // wrong origin) fails HERE with the re-invite wrongly succeeding,
+    // rather than as a not-found error out of `findUniqueOrThrow` below.
+    const reinvite = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({ firstName: 'A', lastName: 'B', email: studentEmail }),
+    });
+    expect(reinvite.status).toBe(409);
+
+    const tombstone = await prisma.invitation.findUniqueOrThrow({
+      where: { teacherId_email: { teacherId, email: studentEmail } },
+    });
+    expect(tombstone.status).toBe('declined');
+    expect(tombstone.origin).toBe('student_block');
+  });
+
+  it('keeps the teacher_invite origin when one already existed', async () => {
+    const res = await fetch(`${BASE_URL}/api/teacher-links/${invitingTeacherId}`, {
+      method: 'DELETE', headers: cookie(studentToken),
+    });
+    expect(res.status).toBe(200);
+
+    // The teacher typed that address; they already have it. Downgrading
+    // the row to student_block would hide a contact they are entitled to.
+    const row = await prisma.invitation.findUniqueOrThrow({
+      where: { teacherId_email: { teacherId: invitingTeacherId, email: studentEmail } },
+    });
+    expect(row.origin).toBe('teacher_invite');
+    expect(row.status).toBe('declined');
+  });
+
+  it('leaves registrations and payments alone', async () => {
+    expect(await prisma.registration.count({ where: { studentId } })).toBeGreaterThan(0);
+  });
+
+  it('404s when no link exists', async () => {
+    const res = await fetch(`${BASE_URL}/api/teacher-links/${otherTeacherId}`, {
+      method: 'DELETE', headers: cookie(studentToken),
+    });
+    expect(res.status).toBe(404);
+  });
+});
