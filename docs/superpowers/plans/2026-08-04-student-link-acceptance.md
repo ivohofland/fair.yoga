@@ -1244,6 +1244,116 @@ git commit -m "fix: a blocked address answered 409 where a fresh one answered 20
 
 ---
 
+### Task 6c: Move the block out of `Invitation` into its own table
+
+**Why this exists, and why it deletes more than it adds.** Task 6b's silent block closed the POST response but not the feature: `GET /api/invitations` filtered out `student_block` rows, so a fresh invite produced a listed row and a blocked one produced nothing. POST then GET, and the bit is back — one extra unmetered request.
+
+Making a blocked address indistinguishable *everywhere* while the block lives inside the `Invitation` row would need four deceptive special cases — `DELETE` appearing to delete while secretly reverting, `PUT` refusing to let an email change move the tombstone, plus two conditional filters — and each is a place a future edit silently loses the block.
+
+Moving the block to its own table removes the problem instead of managing it. `Invitation` rows then behave **normally everywhere, with no special cases at all**, because the block is no longer in the row being manipulated.
+
+**Files:**
+- Modify: `prisma/schema.prisma` (+ migration), `src/services/invitations.ts`, `src/app/api/invitations/route.ts`, `src/app/api/invitations/[id]/route.ts`
+- Test: `tests/integration/invitations-api.test.ts`
+
+**Interfaces:**
+- Produces: `model TeacherBlock`. `InviteResult.delivered` survives unchanged — it now means "no block exists" rather than "not a tombstone".
+- Consumed later: **Task 7 must delete the block** on a student-initiated link (it is the student's route back). **Task 8 must gate notification on `delivered === true`.** **Task 11's student-side pending query must exclude blocked pairs**, or the student sees an invitation from the person they walked away from.
+
+- [ ] **Step 1: Schema**
+
+```prisma
+// A student's standing refusal of one teacher, kept out of `Invitation` on
+// purpose. Held here, invitation rows behave identically for a blocked and
+// an unblocked address — listed, edited, archived, deleted, re-created — so
+// there is no observable difference for a teacher to read. Held *in* the
+// invitation row, every one of those operations needs a special case, and
+// each is a place the block can be silently lost.
+model TeacherBlock {
+  id        String   @id @default(uuid())
+  teacherId String
+  email     String
+  createdAt DateTime @default(now())
+
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([teacherId, email])
+}
+```
+
+Add `teacherBlocks TeacherBlock[]` to `Teacher`. **Drop `Invitation.origin` and the `InvitationOrigin` enum** — nothing needs them once blocks live elsewhere. Migration: `npx prisma migrate dev --name move_block_out_of_invitation`.
+
+- [ ] **Step 2: Simplify `inviteContact`**
+
+Delete the whole `origin === 'student_block'` branch and the `randomUUID()` return. A declined `teacher_invite` row keeps its honest 409 — that is now the *only* declined case. Then, after the invitation is created:
+
+```ts
+  // A block makes this invitation undeliverable, not un-creatable. The row
+  // is real, the teacher sees it, edits it, archives it — everything behaves
+  // exactly as it does for an address that was never blocked, which is the
+  // point. Only delivery is withheld. See `delivered` on InviteResult.
+  const blocked = await db.teacherBlock.findUnique({
+    where: { teacherId_email: { teacherId, email } },
+    select: { id: true },
+  });
+
+  return { ok: true, value: { id: created.id, delivered: blocked === null } };
+```
+
+- [ ] **Step 3: Rewrite `unlinkTeacher`'s tombstone half**
+
+Inside the same transaction, replace the `invitation.upsert` with:
+
+```ts
+    // An invitation the teacher created keeps its honest declined state —
+    // they typed that address, so telling them it is dead discloses nothing
+    // and saves them re-sending into silence. `updateMany`, because most
+    // links come from bookings and have no invitation at all.
+    await tx.invitation.updateMany({
+      where: { teacherId: input.teacherId, email },
+      data: { status: 'declined', respondedAt: new Date() },
+    });
+
+    // The block is what actually holds, invitation or not.
+    await tx.teacherBlock.upsert({
+      where: { teacherId_email: { teacherId: input.teacherId, email } },
+      update: {},
+      create: { teacherId: input.teacherId, email },
+    });
+```
+
+- [ ] **Step 4: Drop both `origin` filters**
+
+`src/app/api/invitations/route.ts` and `ownedInvitation` in `src/app/api/invitations/[id]/route.ts` both filter `origin: 'teacher_invite'`. Remove both — every `Invitation` row is now a contact the teacher typed, so there is nothing to hide. Delete the security comments explaining the filters; they describe a mechanism that no longer exists, and a comment describing a departed guard is worse than none.
+
+- [ ] **Step 5: Guard accept**
+
+`acceptInvitation` must refuse when a block exists. The student cannot see the invitation (Task 11 filters it), so this is defence in depth — but the id travels in a URL and the whole design rests on not trusting that. Return `NOT_FOUND`, not a distinct code: a distinct code would tell a probing caller a block exists.
+
+- [ ] **Step 6: Update the tests these changes invalidate**
+
+Task 6's `'writes an invisible tombstone'` and Task 6b's two silent-block tests all assert behaviour that is now different. **Rewrite, do not delete** — the properties they protect still hold, they are just enforced elsewhere. Each must still prove: the teacher's list and the teacher's POST answer identically for a blocked and a fresh address, and the block survives whatever the teacher does to the invitation row.
+
+Add the test the old design could not support: **delete the invitation for a blocked address, re-invite, and confirm the new invitation is still undelivered.** That is the case the four special cases existed to handle, and it should now pass with no special casing at all.
+
+- [ ] **Step 7: Prove the guards bite**
+
+1. Delete the `teacherBlock.upsert` in `unlinkTeacher` → re-invite becomes deliverable.
+2. Delete the block lookup in `inviteContact` → a blocked address reports `delivered: true`.
+3. Delete the accept guard → accepting a blocked invitation creates a link.
+
+Then re-run Task 3's oracle test and the whole invitations file.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add prisma/schema.prisma prisma/migrations src/services/invitations.ts \
+        src/app/api/invitations tests/integration/invitations-api.test.ts
+git commit -m "refactor: move the block out of Invitation so invitations behave normally (#166)"
+```
+
+---
+
 ### Task 7: Booking and waitlisting resolve invitations and clear tombstones
 
 The student's way back in. This is what stops "declined" being a trap.
@@ -1334,8 +1444,17 @@ export async function resolveInvitationOnLink(
   // clear the declined tombstone — so the student's only route back to a
   // teacher they declined stops working, which is the one escape hatch the
   // whole decline design rests on.
+  const email = input.studentEmail.toLowerCase();
+
+  // Task 6c moved the block into its own table, and the block is the thing
+  // that actually stands between them — so clearing it is what makes booking
+  // the student's route back. Updating the invitation alone would leave the
+  // pair connected on paper and severed in practice: linked, but every future
+  // invitation from this teacher still undeliverable.
+  await tx.teacherBlock.deleteMany({ where: { teacherId: input.teacherId, email } });
+
   await tx.invitation.updateMany({
-    where: { teacherId: input.teacherId, email: input.studentEmail.toLowerCase() },
+    where: { teacherId: input.teacherId, email },
     data: { status: 'accepted', respondedAt: new Date() },
   });
 }
