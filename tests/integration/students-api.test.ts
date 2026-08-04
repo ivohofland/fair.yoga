@@ -752,3 +752,34 @@ describe('POST /api/students — response disclosure (#162)', () => {
     await prisma.account.deleteMany({ where: { id: burst.accountId } });
   });
 });
+
+describe('PUT /api/students/[id] — teacher response shape (#162)', () => {
+  it('returns only the id when a teacher edits an unclaimed contact', async () => {
+    const target = await prisma.student.create({
+      data: {
+        firstName: 'Editable',
+        lastName: 'Contact',
+        email: `crm-put-${suffix}@test.local`,
+      },
+    });
+    studentIds.push(target.id); // cleaned up by the file's top-level afterAll
+    await prisma.teacherStudent.create({
+      data: { teacherId, studentId: target.id },
+    });
+
+    const res = await fetch(`${BASE_URL}/api/students/${target.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({
+        firstName: 'Renamed',
+        lastName: 'Contact',
+        email: `crm-put-renamed-${suffix}@test.local`,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(Object.keys(json.data)).toEqual(['id']);
+    expect(json.data.id).toBe(target.id);
+  });
+});

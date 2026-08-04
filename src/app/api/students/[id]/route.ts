@@ -104,7 +104,10 @@ export const PUT = withErrorHandler(async (
 
   // Teachers can edit unclaimed students in their contacts
   if (session.teacherId) {
-    const student = await prisma.student.findUnique({ where: { id } });
+    const student = await prisma.student.findUnique({
+      where: { id },
+      select: { id: true, claimedAt: true },
+    });
     if (!student) return respondError('Student not found', 404);
     if (student.claimedAt) {
       return respondError('Cannot edit a student who has claimed their account', 403);
@@ -123,12 +126,18 @@ export const PUT = withErrorHandler(async (
       return respondError('No valid fields to update', 400);
     }
 
+    // #162: same treatment as POST /api/students. Lower stakes here — this
+    // branch only fires for an unclaimed student already in the teacher's
+    // contacts, and Student_claim_link_check makes accountId provably null on
+    // that path — so what leaked was shape, not secrets. Narrowed anyway: the
+    // raw row standing here is what tells the next reader the pattern is fine.
     const updated = await prisma.student.update({
       where: { id },
       data: updateData,
+      select: { id: true },
     });
 
-    return respondOk(updated);
+    return respondOk({ id: updated.id });
   }
 
   return respondError('Access denied', 403);
