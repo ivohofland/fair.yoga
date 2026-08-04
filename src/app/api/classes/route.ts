@@ -73,8 +73,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       targetRate: body.targetRate,
       minStudents: body.minStudents,
       maxStudents: body.maxStudents,
-      cancelDeadline: body.cancelDeadline as never ?? undefined,
-      autoCancelCheck: body.autoCancelCheck as never ?? undefined,
+      cancelDeadline: body.cancelDeadline,
+      autoCancelCheck: body.autoCancelCheck,
       status: 'draft',
     },
   });
