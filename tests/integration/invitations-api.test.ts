@@ -560,6 +560,21 @@ describe('POST /api/invitations/[id]/respond', () => {
     expect((await reinvite.json()).error.code).toBe('DECLINED');
   });
 
+  it('refuses to accept an already-declined invitation, even by its rightful owner', async () => {
+    // Without acceptInvitation's own pending check, its rightful owner could
+    // re-POST accept on the same invitation after declining it, resurrecting
+    // the link they refused and overwriting the tombstone that (per Task 4's
+    // PUT/DELETE) is supposed to be permanent.
+    const res = await respond(declineId, decliningToken, 'accept');
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('ALREADY_ANSWERED');
+    expect(await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId, studentId: decliningStudentId } },
+    })).toBeNull();
+    const inv = await prisma.invitation.findUniqueOrThrow({ where: { id: declineId } });
+    expect(inv.status).toBe('declined');
+  });
+
   it('refuses an invitation addressed to someone else', async () => {
     // The id is the only thing the caller supplies; the address is what
     // authorizes them. This is gate 4 — without it, any signed-in student
@@ -569,6 +584,20 @@ describe('POST /api/invitations/[id]/respond', () => {
     expect(await prisma.teacherStudent.findUnique({
       where: { teacherId_studentId: { teacherId: otherTeacherId, studentId: respondingStudentId } },
     })).toBeNull();
+  });
+
+  it('refuses to decline an invitation addressed to someone else', async () => {
+    // declineInvitation has its own copy of the email match — this is the
+    // test that can actually fail it, since every other decline test in
+    // this file uses the invitation's rightful owner. An unguarded decline
+    // here would write a *permanent* tombstone (Task 4's PUT/DELETE both
+    // refuse to touch a declined row) against an address the caller does
+    // not own — a denial-of-service against whoever the invitation
+    // actually belongs to.
+    const res = await respond(otherPersonsInviteId, respondingToken, 'decline');
+    expect(res.status).toBe(404);
+    const inv = await prisma.invitation.findUniqueOrThrow({ where: { id: otherPersonsInviteId } });
+    expect(inv.status).toBe('pending');
   });
 
   it('refuses a second response to the same invitation', async () => {

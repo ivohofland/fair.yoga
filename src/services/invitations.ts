@@ -125,12 +125,22 @@ export async function acceptInvitation(
 ): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_PENDING' }> {
   const invitation = await db.invitation.findFirst({
     where: { id: input.invitationId, email: input.accountEmail.toLowerCase() },
-    select: { id: true, teacherId: true, status: true },
+    select: { id: true, teacherId: true },
   });
   if (!invitation) return { ok: false, reason: 'NOT_FOUND' };
-  if (invitation.status !== 'pending') return { ok: false, reason: 'NOT_PENDING' };
 
-  await db.$transaction(async (tx) => {
+  // The pending check lives in this `updateMany`'s `where`, not in a read
+  // beforehand — a concurrent accept and decline from the same account
+  // (the only account that can ever pass the email match above) would
+  // otherwise both pass a separate status read and race to leave a
+  // `TeacherStudent` link sitting beside a `declined` invitation.
+  const accepted = await db.$transaction(async (tx) => {
+    const updated = await tx.invitation.updateMany({
+      where: { id: invitation.id, status: 'pending' },
+      data: { status: 'accepted', respondedAt: new Date() },
+    });
+    if (updated.count === 0) return false;
+
     // `upsert`, not `create`: this student may already share this teacher's
     // roster from booking a class while the invitation sat pending, and
     // accepting must not throw on that overlap.
@@ -141,11 +151,9 @@ export async function acceptInvitation(
       update: {},
       create: { teacherId: invitation.teacherId, studentId: input.studentId },
     });
-    await tx.invitation.update({
-      where: { id: invitation.id },
-      data: { status: 'accepted', respondedAt: new Date() },
-    });
+    return true;
   });
+  if (!accepted) return { ok: false, reason: 'NOT_PENDING' };
   return { ok: true };
 }
 
@@ -164,14 +172,17 @@ export async function declineInvitation(
 ): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_PENDING' }> {
   const invitation = await db.invitation.findFirst({
     where: { id: input.invitationId, email: input.accountEmail.toLowerCase() },
-    select: { id: true, status: true },
+    select: { id: true },
   });
   if (!invitation) return { ok: false, reason: 'NOT_FOUND' };
-  if (invitation.status !== 'pending') return { ok: false, reason: 'NOT_PENDING' };
 
-  await db.invitation.update({
-    where: { id: invitation.id },
+  // Same reasoning as `acceptInvitation`: the pending check is the
+  // `where` on this write, not a separate read beforehand, so a
+  // concurrent accept from the same account can't slip past it.
+  const updated = await db.invitation.updateMany({
+    where: { id: invitation.id, status: 'pending' },
     data: { status: 'declined', respondedAt: new Date() },
   });
+  if (updated.count === 0) return { ok: false, reason: 'NOT_PENDING' };
   return { ok: true };
 }
