@@ -326,17 +326,36 @@ claimed students and are unaffected. Add one `declined` invitation so the
 tombstone path has a fixture. Then `npm run db:reset` (`prisma migrate reset` —
 drops, re-migrates, re-seeds).
 
-**The test blast radius here is wider than the route changes suggest, and must be
-measured before the seed moves.** `grep -rl 'unclaimed\|claimedAt'
-tests/integration/` returns **11 of the 21 files**: `students-api`, `privacy-api`,
-`auth`, `waitlist-api`, `full-flow`, `account-api`, `registrations-api`,
-`classes-api`, `signup-api`, `notifications-api`, `tier-selected-at`. That is a
-list of files to audit, **not** a count of affected tests — some build their own
-fixtures (`students-api.test.ts:291`, `:304`, `:679` all stamp `claimedAt`
-locally) and are indifferent to the seed. The plan's first task is to classify all
-11 into self-fixturing versus seed-dependent, because the second group breaks the
-moment the seed stops producing unclaimed students, and a test that breaks for
-that reason looks identical to one that breaks because the feature is wrong.
+**The seed change breaks no tests. Measured, after an earlier draft of this
+document worried that it would.** `grep -rl 'unclaimed\|claimedAt'
+tests/integration/` returns 11 of the 21 files, and an earlier draft called
+classifying them "the plan's first task". Classified: **all 11 are
+self-fixturing.** Every one mints its own teacher and students in `beforeAll`
+under a `uniqueSuffix()`. Nothing in `tests/` reads `lena@example.com` or
+`max@example.com` — `grep -rn` over `tests/ src/ prisma/` returns exactly two
+hits, `prisma/seed.ts:248` and `:255` — and no test asserts on a count the seed
+produces (`students-api.test.ts` asserts `total: 25` against 25 students it
+creates itself at `:30-41`). No e2e test visits a `/students` CRM page at all.
+
+What *does* break is smaller and entirely in two files:
+
+- **Removing the teacher `PUT` branch** breaks 3 tests and hollows out a 4th:
+  `students-api.test.ts:950` (`'returns only the id when a teacher edits an
+  unclaimed contact'`), `:984` (`'refuses a teacher editing an unclaimed student
+  outside their contacts'`), `:814` (`'spends one shared budget across POST and
+  the teacher PUT'`), and `tier-selected-at.test.ts:194`. `:355`
+  (`'a teacher cannot edit a claimed student'`) still passes but stops meaning
+  anything — it asserts only `403`, which it will now get from the catch-all at
+  `students/[id]/route.ts:166` rather than from the `claimedAt` guard. Delete it
+  rather than leave a green test whose name is a lie.
+- **Changing `POST /api/students`** breaks 5, all in `students-api.test.ts`:
+  `:146`, `:168`, `:183`, `:726`, `:763`. `:726` is the #162 disclosure regression
+  test and must be **rewritten** against the invitation flow, never deleted.
+
+**Removing `DELETE /api/students/[id]` breaks nothing**, because nothing tests it.
+Its only caller is `remove-student-button.tsx:23`, which is the one component in
+`src/components/students/` with no test file. That absence is why the removal
+looks free; it is not evidence that it is.
 
 ---
 
