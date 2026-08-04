@@ -56,24 +56,20 @@ type CreateClassWire = z.infer<typeof createClassSchema>;
  * #136. `FormData` is the list; the body is `form` itself, so the two cannot
  * drift. These pins tie that list to the schema.
  *
- * Two keys are excluded from the forward pin, each for its own reason:
+ * One key is excluded from the forward pin. `description` — `createClassSchema`
+ * accepts it and `POST /api/classes` writes it, but this wizard renders no
+ * input for it, so a teacher can only describe a class by editing it
+ * afterwards. That is a real gap, filed as #147, not something to paper over by
+ * adding a field inside an unrelated change.
  *
- * - `description` — `createClassSchema` accepts it and `POST /api/classes`
- *   writes it, but this wizard renders no input for it, so a teacher can only
- *   describe a class by editing it afterwards. That is a real gap, filed as
- *   #147, not something to paper over by adding a field inside a pinning
- *   change.
- * - `templateId` — server-set by `class-generator.ts` when a template
- *   materialises a class; it appears nowhere in this UI. The route passes a
- *   client-supplied value straight through with no ownership check, filed as
- *   #146. Excluded so this pin does not certify it as a field this form ought
- *   to be sending.
- *
- * Both exclusions are deliberate and both are tracked. Narrow them when the
- * issues close.
+ * `templateId` used to be excluded here too. It is gone from the schema as of
+ * #146 — it was server-set, reached `prisma.class.create` from the request body
+ * with no ownership check, and appeared in no UI. With it removed, this pin now
+ * enforces the rule the exclusion was suspending: every key this schema
+ * declares must be a field this form actually renders.
  */
 const _formCoversCreate: NoneOf<
-  Exclude<Exclude<keyof CreateClassWire, 'description' | 'templateId'>, keyof FormData>
+  Exclude<Exclude<keyof CreateClassWire, 'description'>, keyof FormData>
 > = true;
 const _formHasNoExtras: NoneOf<Exclude<keyof FormData, keyof CreateClassWire>> = true;
 void _formCoversCreate;

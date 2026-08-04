@@ -11,6 +11,7 @@ let otherTeacherToken: string;
 let ownerId: string;
 let otherTeacherId: string;
 let roomId: string;
+let teacherRoomId: string;
 let classId: string;
 let cancelClassId: string;
 
@@ -65,6 +66,7 @@ beforeAll(async () => {
   const teacherRoom = await prisma.teacherRoom.create({
     data: { teacherId: ownerId, roomId, capacityOverride: 8, rentalRate: 15 },
   });
+  teacherRoomId = teacherRoom.id;
 
   // Local fixture helper — the four class creates below share every field
   // except classType and status. teacherRoom.id is already in scope here, so
@@ -415,5 +417,90 @@ describe('PUT /api/classes/[id]', () => {
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
     expect(Number(after.roomCost)).toBe(Number(before.roomCost));
+  });
+});
+
+describe('POST /api/classes', () => {
+  // The tests below create real Class rows against `teacherRoomId` (the
+  // owner's fixture from the top-level beforeAll) and, in the second test, a
+  // dedicated TeacherRoom/ClassTemplate for otherTeacherId to play the victim.
+  // None of that is covered by `allClassIds` or the top-level afterAll above,
+  // so left behind it FK-blocks that afterAll's own
+  // `teacherRoom.deleteMany({ where: { teacherId: ownerId } })` (still
+  // referenced by the Class rows here) and, transitively, the room delete and
+  // otherTeacherId's teardown (still referenced by the victim TeacherRoom).
+  // Cleaned up here by the deterministic values the tests below set — not by
+  // capturing ids — so the `it` bodies stay exactly as specified.
+  afterAll(async () => {
+    await prisma.class.deleteMany({ where: { teacherRoomId, classType: 'Create Route' } });
+    await prisma.classTemplate.deleteMany({
+      where: { teacherId: otherTeacherId, classType: 'Victim Recurring' },
+    });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: otherTeacherId, roomId } });
+  });
+
+  const baseBody = () => ({
+    teacherRoomId,
+    classType: 'Create Route',
+    date: '2099-08-01',
+    startTime: '10:00',
+    durationMinutes: 60,
+    roomCost: 15,
+    minRate: 10,
+    targetRate: 20,
+    minStudents: 1,
+    maxStudents: 8,
+  });
+
+  const post = (token: string, body: unknown) =>
+    fetch(`${BASE_URL}/api/classes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(token) },
+      body: JSON.stringify(body),
+    });
+
+  it('creates a class against the calling teacher', async () => {
+    const res = await post(ownerToken, baseBody());
+    expect(res.status).toBe(201);
+    const { data } = (await res.json()) as { data: { id: string } };
+    const created = await prisma.class.findUniqueOrThrow({ where: { id: data.id } });
+    expect(created.teacherId).toBe(ownerId);
+    expect(created.templateId).toBeNull();
+  });
+
+  // #146. templateId is server-set — class-generator.ts writes it when a
+  // template materialises an instance, and no creation UI renders it. Sending
+  // another teacher's template id used to squat the (templateId, date) unique
+  // pair, which silently stops the victim's generator from ever filling that
+  // date.
+  it("ignores another teacher's templateId instead of attaching it", async () => {
+    const victimRoom = await prisma.teacherRoom.create({
+      data: { teacherId: otherTeacherId, roomId, capacityOverride: 8, rentalRate: 15 },
+    });
+    const victimTemplate = await prisma.classTemplate.create({
+      data: {
+        teacherId: otherTeacherId,
+        teacherRoomId: victimRoom.id,
+        classType: 'Victim Recurring',
+        dayOfWeek: 3,
+        startTime: '18:00',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 8,
+      },
+    });
+
+    const res = await post(ownerToken, { ...baseBody(), templateId: victimTemplate.id });
+    expect(res.status).toBe(201);
+
+    const { data } = (await res.json()) as { data: { id: string } };
+    const created = await prisma.class.findUniqueOrThrow({ where: { id: data.id } });
+    expect(created.templateId).toBeNull();
+
+    // The victim's own generation window is untouched.
+    expect(await prisma.class.count({ where: { templateId: victimTemplate.id } })).toBe(0);
   });
 });

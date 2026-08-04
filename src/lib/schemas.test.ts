@@ -103,6 +103,33 @@ describe('class size caps', () => {
   });
 });
 
+describe('createClassSchema', () => {
+  // #146. templateId was accepted here and written straight into
+  // prisma.class.create with no ownership check. It is server-set —
+  // class-generator.ts sets it when a template materialises an instance — so
+  // the fix was to stop declaring it, not to validate it.
+  //
+  // A failure here is a decision, not a chore: adding a key means a client may
+  // now set that column at creation time.
+  it('accepts exactly the client-settable create field set', () => {
+    expect(Object.keys(createClassSchema.shape).sort()).toEqual([
+      'autoCancelCheck',
+      'cancelDeadline',
+      'classType',
+      'date',
+      'description',
+      'durationMinutes',
+      'maxStudents',
+      'minRate',
+      'minStudents',
+      'roomCost',
+      'startTime',
+      'targetRate',
+      'teacherRoomId',
+    ]);
+  });
+});
+
 describe('updateClassSchema', () => {
   it('accepts partial payloads — the undefined guards on refinements are load-bearing', () => {
     // A locked-class save omits all economic fields; dropping the

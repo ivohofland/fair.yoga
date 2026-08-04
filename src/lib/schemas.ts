@@ -234,7 +234,6 @@ export const createClassSchema = z.object({
   maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
   autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
-  templateId: z.string().uuid().nullable().optional(),
 })
   .refine((d) => d.minStudents <= d.maxStudents, {
     message: 'minStudents cannot exceed maxStudents',

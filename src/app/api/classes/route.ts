@@ -75,7 +75,6 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       maxStudents: body.maxStudents,
       cancelDeadline: body.cancelDeadline as never ?? undefined,
       autoCancelCheck: body.autoCancelCheck as never ?? undefined,
-      templateId: body.templateId ?? null,
       status: 'draft',
     },
   });
