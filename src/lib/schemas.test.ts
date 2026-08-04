@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import type { Prisma } from '@prisma/client';
+import * as schemas from './schemas';
 import {
   transitionClassSchema,
   magicLinkSendSchema,
@@ -12,6 +14,7 @@ import {
   isSafeRelativePath,
   MAX_CLASS_SIZE,
 } from './schemas';
+import type { NoneOf } from './type-pins';
 
 describe('transitionClassSchema', () => {
   it('accepts legal manual transitions', () => {
@@ -263,5 +266,99 @@ describe('updateTeacherSchema.pageSlug', () => {
     expect(updateTeacherSchema.safeParse({ pageSlug: 'api' }).success).toBe(false);
     expect(updateTeacherSchema.safeParse({ pageSlug: 'updates' }).success).toBe(false);
     expect(updateTeacherSchema.safeParse({ pageSlug: 'my-yoga' }).success).toBe(true);
+  });
+});
+
+/**
+ * Field names the server owns. A schema declaring one of these is saying a
+ * client may set that column — which is occasionally right and usually a
+ * defect, so every instance has to be named in EXPECTED below with a reason.
+ *
+ * This exists because the per-form pins in the two create wizards are opt-in: a
+ * new route with a new form carries no protection until someone remembers to
+ * write one. #146 and #148 were both server-set `templateId` reaching a Prisma
+ * create from a request body, on two routes, found months apart. This is the
+ * create-side counterpart to PlainUpdateForbiddenClassField
+ * (src/services/class-lifecycle.ts:397).
+ */
+const SERVER_OWNED_FIELDS = [
+  'accountId', 'archivedAt', 'cancelledAt', 'claimedAt', 'createdById',
+  'isArchived', 'isPublic', 'paidAt', 'photoUrl', 'settingsLocked', 'status',
+  'studentId', 'teacherId', 'templateId', 'tierAtBooking', 'tierSelectedAt',
+  'totalRevenue', 'withdrawnCount',
+] as const;
+
+// Every name above must be a real column on some Prisma model. Without this a
+// typo would sit in the list protecting nothing while looking like protection.
+// Fails naming the offender.
+type AnyModelKey =
+  | keyof Prisma.ClassUncheckedUpdateManyInput
+  | keyof Prisma.StudioClassUncheckedUpdateManyInput
+  | keyof Prisma.StudentUncheckedUpdateManyInput
+  | keyof Prisma.TeacherUncheckedUpdateManyInput
+  | keyof Prisma.RoomUncheckedUpdateManyInput
+  | keyof Prisma.RegistrationUncheckedUpdateManyInput
+  | keyof Prisma.PaymentUncheckedUpdateManyInput
+  | keyof Prisma.ClassTemplateUncheckedUpdateManyInput;
+
+const _serverOwnedNamesExist: NoneOf<
+  Exclude<(typeof SERVER_OWNED_FIELDS)[number], AnyModelKey>
+> = true;
+void _serverOwnedNamesExist;
+
+/**
+ * Every schema that legitimately declares one, and why. Three of these are
+ * known gaps rather than endorsements — they are recorded here, beside the
+ * guard, so the next person to touch that schema reads the gap instead of
+ * rediscovering it.
+ */
+const EXPECTED: Record<string, readonly string[]> = {
+  // A teacher registers a student from their own roster; ownership is checked
+  // in src/services/waitlist.ts (the studentId is session-or-roster-checked).
+  createRegistrationSchema: ['studentId'],
+  // Whether a newly created room is shared is legitimately the creator's call.
+  createRoomSchema: ['isPublic'],
+  // This schema *is* the state machine's input. 'completed' is deliberately
+  // absent so completion must go through the route that runs pricing.
+  transitionClassSchema: ['status'],
+  // The student chooses which teacher's settings to change. The TeacherStudent
+  // link is checked in the route as of this branch.
+  updatePrivacySchema: ['teacherId'],
+  // Attendance status on the teacher's own class.
+  updateRegistrationSchema: ['status'],
+  // KNOWN GAP: no form sends it, and flipping it true is a one-way door — the
+  // room can then no longer be edited or deleted, and any teacher may attach.
+  // Blocked on #73's isPublic product decision.
+  updateRoomSchema: ['isPublic'],
+  // KNOWN GAP: a client can backdate, forward-date or null a cancellation
+  // timestamp. Ownership is checked, so the blast radius is the teacher's own
+  // bookkeeping.
+  updateStudioClassSchema: ['cancelledAt'],
+  // KNOWN GAP: no form sends it and nothing renders it. Latent until someone
+  // adds the <img>. Blocked on #46.
+  updateTeacherSchema: ['photoUrl'],
+};
+
+describe('server-owned fields', () => {
+  it('are declared only where EXPECTED says so, and everywhere it says so', () => {
+    const actual: Record<string, string[]> = {};
+
+    for (const [name, schema] of Object.entries(schemas)) {
+      const shape = (schema as { shape?: Record<string, unknown> })?.shape;
+      if (!shape) continue;
+      const hits = Object.keys(shape)
+        .filter((k) => (SERVER_OWNED_FIELDS as readonly string[]).includes(k))
+        .sort();
+      if (hits.length > 0) actual[name] = hits;
+    }
+
+    const expected = Object.fromEntries(
+      Object.entries(EXPECTED).map(([k, v]) => [k, [...v].sort()]),
+    );
+
+    // Exact equality in both directions. A new declaration fails naming the
+    // schema; deleting a legitimate one fails too, so the reasons above cannot
+    // rot into a list of names nobody re-reads.
+    expect(actual).toEqual(expected);
   });
 });
