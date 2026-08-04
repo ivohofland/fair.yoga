@@ -279,7 +279,17 @@ describe('updateTeacherSchema.pageSlug', () => {
  * write one. #146 and #148 were both server-set `templateId` reaching a Prisma
  * create from a request body, on two routes, found months apart. This is the
  * create-side counterpart to PlainUpdateForbiddenClassField
- * (src/services/class-lifecycle.ts:397).
+ * (src/services/class-lifecycle.ts:390).
+ *
+ * Scope: the guard below reads the top-level `.shape` keys of schemas exported
+ * from `src/lib/schemas.ts` — every schema in this repo is declared there. A
+ * server-owned name nested inside a sub-object (rather than a top-level key)
+ * would not be seen by `Object.keys(shape)`.
+ *
+ * Curation: `SERVER_OWNED_FIELDS` below is a hand-curated list of 18 names, not
+ * a derivation from the Prisma schema. A newly added server-set column is not
+ * covered until someone adds its name here — nothing pins this list against
+ * the full set of server-set columns across the models it draws from.
  */
 const SERVER_OWNED_FIELDS = [
   'accountId', 'archivedAt', 'cancelledAt', 'claimedAt', 'createdById',
@@ -314,7 +324,8 @@ void _serverOwnedNamesExist;
  */
 const EXPECTED: Record<string, readonly string[]> = {
   // A teacher registers a student from their own roster; ownership is checked
-  // in src/services/waitlist.ts (the studentId is session-or-roster-checked).
+  // in src/app/api/registrations/route.ts:87-92 (the TeacherStudent link is
+  // looked up and a missing link 403s before the registration is created).
   createRegistrationSchema: ['studentId'],
   // Whether a newly created room is shared is legitimately the creator's call.
   createRoomSchema: ['isPublic'],
