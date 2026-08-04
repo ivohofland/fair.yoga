@@ -5,7 +5,6 @@ import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { EditStudentForm } from '@/components/students/edit-student-form';
-import { RemoveStudentButton } from '@/components/students/remove-student-button';
 import { ArchiveStudentButton } from '@/components/students/archive-student-button';
 import { StudentPaymentList } from '@/components/students/student-payment-list';
 
@@ -61,7 +60,17 @@ export default async function StudentDetailPage({
         </p>
       )}
 
-      {/* Unlinked: editable form + remove */}
+      {/*
+        Unlinked: editable form only. This branch is unreachable for any
+        Student created after #166 — nothing creates an unclaimed one any
+        more (Task 10 comments the rest of this dead code in place; full
+        removal, `EditStudentForm` included, is its Step 6). The remove
+        affordance that used to sit here is gone rather than carried along
+        broken: `RemoveStudentButton` now points at `DELETE
+        /api/invitations/[id]`, which has no row for a `Student.id`, and
+        Task 9's own repoint is what would have made this call site 404 on
+        every legacy unclaimed row still in a live database.
+      */}
       {isUnlinked ? (
         <section className="mb-8">
           <EditStudentForm
@@ -70,9 +79,6 @@ export default async function StudentDetailPage({
             initialLastName={student.lastName}
             initialEmail={student.email}
           />
-          <div className="mt-6 pt-6 border-t border-border">
-            <RemoveStudentButton studentId={student.id} studentName={displayName} />
-          </div>
         </section>
       ) : (
         /* Claimed: read-only contact info (privacy-filtered) */

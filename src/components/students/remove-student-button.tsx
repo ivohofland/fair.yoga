@@ -6,11 +6,21 @@ import { Button } from '@/components/ui/button';
 import { readErrorMessage } from '@/lib/client-errors';
 
 interface RemoveStudentButtonProps {
-  studentId: string;
+  invitationId: string;
   studentName: string;
 }
 
-export function RemoveStudentButton({ studentId, studentName }: RemoveStudentButtonProps) {
+/**
+ * #166: repointed at `DELETE /api/invitations/[id]` — its former target,
+ * `DELETE /api/students/[id]`, is Task 10's to remove now that nothing
+ * creates the unclaimed `Student` row it served. The 409 a declined
+ * invitation answers with (`DECLINED_IS_PERMANENT`) arrives through
+ * `readErrorMessage` below unchanged; the caller is what decides whether
+ * this button renders at all for that case (see
+ * `/students/contacts/[id]/page.tsx`), since the fix for "present and
+ * failing" belongs before the click, not in the error text.
+ */
+export function RemoveStudentButton({ invitationId, studentName }: RemoveStudentButtonProps) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -20,11 +30,11 @@ export function RemoveStudentButton({ studentId, studentName }: RemoveStudentBut
     setRemoving(true);
     setError('');
     try {
-      const res = await fetch(`/api/students/${studentId}`, { method: 'DELETE' });
+      const res = await fetch(`/api/invitations/${invitationId}`, { method: 'DELETE' });
       if (res.ok) {
         router.push('/students');
       } else {
-        setError(await readErrorMessage(res, 'Could not remove the student. Try again.'));
+        setError(await readErrorMessage(res, 'Could not remove the contact. Try again.'));
       }
     } catch {
       setError('Network error. Try again.');
@@ -40,7 +50,7 @@ export function RemoveStudentButton({ studentId, studentName }: RemoveStudentBut
         onClick={() => setConfirming(true)}
         className="type-label text-danger"
       >
-        Remove student
+        Remove contact
       </button>
     );
   }

@@ -86,9 +86,9 @@ export function CreateStudentForm() {
       }
 
       // #166: the id in the response body is an Invitation's, not a
-      // Student's, and there is no detail page for one — so the body goes
-      // unread and the redirect goes to the directory. Task 9 gives the
-      // pending invitation a row there.
+      // Student's — the directory (not a detail page keyed on it) is where
+      // the new contact shows up, in the Contacts section `contact-list.tsx`
+      // renders there. So the body goes unread.
       router.push('/students');
     } catch {
       setSubmitError('Network error. Please try again.');
