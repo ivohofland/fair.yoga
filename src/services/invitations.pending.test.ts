@@ -10,14 +10,22 @@ const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
  * #166 Task 11. `listPendingInvitations` is the read
  * `(student)/account/privacy/page.tsx` renders above the teacher list — an
  * async server component, so no component test can reach its query, which
- * is why this DB-query guard gets a service-level test instead (same shape
- * as `canRemoveContact`, extracted for the same reason in Task 9).
+ * is why this DB-query guard gets a service-level test instead. Same
+ * precedent as `invitations.notify.test.ts` for `notifyInvitee`: a real
+ * Prisma call against the test database, not a pure predicate like
+ * `canRemoveContact` — a `where` clause has no pure-function form to
+ * extract into.
  *
- * The case that matters most is the third describe below: a `TeacherBlock`
- * is the student's standing refusal of a teacher, and `acceptInvitation`'s
- * own re-check of it is defence in depth ONLY because this function is
- * supposed to keep a blocked pair off the list in the first place — see
- * that function's docblock in invitations.ts.
+ * The block-exclusion tests matter most: a `TeacherBlock` is the student's
+ * standing refusal of a teacher, and `acceptInvitation`'s own re-check of
+ * it is defence in depth ONLY because this function is supposed to keep a
+ * blocked pair off the list in the first place — see that function's
+ * docblock in invitations.ts. Two mutations pass every test that existed
+ * before this review pass without this function actually working:
+ * `none: { email }` → `none: {}` (hides a teacher's entire pending list
+ * the moment they've blocked ANYONE, not just this address) and
+ * `status: 'pending'` → `status: { not: 'accepted' }` (resurrects a
+ * declined invitation). The tests below are written to fail under each.
  */
 describe('listPendingInvitations', () => {
   let teacherId: string;
@@ -83,19 +91,32 @@ describe('listPendingInvitations', () => {
   });
 
   it('excludes an invitation already accepted or declined', async () => {
-    const email = `pending-list-answered-${suffix}@test.local`;
+    // Both statuses, not just one: `status: 'pending'` and
+    // `status: { not: 'accepted' }` agree on the accepted row and disagree
+    // on the declined one — only the declined fixture can catch a
+    // regression to the looser form, which would resurrect a tombstone
+    // `declineInvitation` (services/invitations.ts) means to be permanent.
+    const acceptedEmail = `pending-list-accepted-${suffix}@test.local`;
+    const declinedEmail = `pending-list-declined-${suffix}@test.local`;
     const accepted = await prisma.invitation.create({
       data: {
-        teacherId, email, status: 'accepted', respondedAt: new Date(),
-        firstName: 'Answered', lastName: 'One',
+        teacherId, email: acceptedEmail, status: 'accepted', respondedAt: new Date(),
+        firstName: 'Answered', lastName: 'Accepted',
+      },
+      select: { id: true },
+    });
+    const declined = await prisma.invitation.create({
+      data: {
+        teacherId, email: declinedEmail, status: 'declined', respondedAt: new Date(),
+        firstName: 'Answered', lastName: 'Declined',
       },
       select: { id: true },
     });
     try {
-      const result = await listPendingInvitations(prisma, { accountEmail: email });
-      expect(result).toEqual([]);
+      expect(await listPendingInvitations(prisma, { accountEmail: acceptedEmail })).toEqual([]);
+      expect(await listPendingInvitations(prisma, { accountEmail: declinedEmail })).toEqual([]);
     } finally {
-      await prisma.invitation.deleteMany({ where: { id: accepted.id } });
+      await prisma.invitation.deleteMany({ where: { id: { in: [accepted.id, declined.id] } } });
     }
   });
 
@@ -150,6 +171,37 @@ describe('listPendingInvitations', () => {
       if (blockedInvitation) {
         await prisma.invitation.deleteMany({ where: { id: blockedInvitation.id } });
       }
+      if (openInvitation) await prisma.invitation.deleteMany({ where: { id: openInvitation.id } });
+      if (block) await prisma.teacherBlock.deleteMany({ where: { id: block.id } });
+    }
+  });
+
+  it("does not let a teacher's block on one address hide their OWN pending invitation to a different address", async () => {
+    // The case the two tests above cannot catch between them: both give
+    // `otherTeacherId` a block AND its exclusion, together, in the same
+    // fixture — a `none: {}` mutation (any block at all, on any address,
+    // hides every one of this teacher's pending invitations) passes both,
+    // because `teacherId` here never holds a `TeacherBlock` row at all.
+    // This fixture is the one place `teacherId` gets a block, on an
+    // address that is NOT the one under test — the query below must still
+    // return `teacherId`'s unrelated, unblocked invitation.
+    const blockedAddress = `pending-list-own-blocked-${suffix}@test.local`;
+    const openAddress = `pending-list-own-open-${suffix}@test.local`;
+    let block: { id: string } | undefined;
+    let openInvitation: { id: string } | undefined;
+    try {
+      block = await prisma.teacherBlock.create({
+        data: { teacherId, email: blockedAddress },
+        select: { id: true },
+      });
+      openInvitation = await prisma.invitation.create({
+        data: { teacherId, email: openAddress, firstName: 'Open', lastName: 'Address' },
+        select: { id: true },
+      });
+
+      const result = await listPendingInvitations(prisma, { accountEmail: openAddress });
+      expect(result.map((r) => r.id)).toEqual([openInvitation.id]);
+    } finally {
       if (openInvitation) await prisma.invitation.deleteMany({ where: { id: openInvitation.id } });
       if (block) await prisma.teacherBlock.deleteMany({ where: { id: block.id } });
     }

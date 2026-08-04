@@ -141,6 +141,34 @@ describe('TeacherPrivacyCard', () => {
       expect(screen.getByText(/won't be able to add you again/i)).toBeInTheDocument();
     });
 
+    // Review F2: `unlinkTeacher` (services/invitations.ts) withdraws every
+    // `waiting` waitlist entry for this teacher's classes — a consequence
+    // the confirm copy omitted entirely until this pass.
+    it('names the waitlist consequence, not just what survives', () => {
+      stubFetch();
+      renderCard();
+      fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
+      expect(screen.getByText(/waitlists? is given up/i)).toBeInTheDocument();
+    });
+
+    // Review F7: same fix, same reasoning as `PendingInvitationCard`'s test
+    // of the same name — `setUnlinking(false)` used to run in a `finally`,
+    // so it fired right after a successful DELETE too, before
+    // `router.refresh()` had repainted the page and dropped this card. A
+    // second click in that window reached the server for a link that was
+    // already gone.
+    it('stays disabled after a successful unlink, so a second click cannot reach the server', async () => {
+      stubFetch();
+      renderCard();
+      fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
+      const removeButton = screen.getByRole('button', { name: /^remove teacher$/i });
+      fireEvent.click(removeButton);
+      await waitFor(() => expect(routerRefresh).toHaveBeenCalledTimes(1));
+      expect(removeButton).toBeDisabled();
+      fireEvent.click(removeButton);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it('DELETEs /api/teacher-links/:teacherId and refreshes on success', async () => {
       stubFetch();
       renderCard();
@@ -173,6 +201,37 @@ describe('TeacherPrivacyCard', () => {
       fireEvent.click(screen.getByRole('button', { name: /^remove teacher$/i }));
       expect(await screen.findByText('Teacher link not found')).toBeInTheDocument();
       expect(routerRefresh).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * Review F3: archiving is the teacher's own CRM filing action, and must
+   * never remove the student's controls over the same link — the page no
+   * longer filters an archived `TeacherStudent` row out of the list it
+   * renders here, and this card's only acknowledgment of that state is a
+   * factual note, never a hidden card or disabled action.
+   */
+  describe('archivedByTeacher', () => {
+    it('shows no archived note by default', () => {
+      stubFetch();
+      renderCard();
+      expect(screen.queryByText(/archived by/i)).toBeNull();
+    });
+
+    it('shows a factual note, and still renders the toggles and unlink control, when archived', () => {
+      stubFetch();
+      render(
+        <TeacherPrivacyCard
+          studentId="student-1"
+          teacherId="teacher-1"
+          teacherName="Jane Teacher"
+          initial={initial}
+          archivedByTeacher
+        />,
+      );
+      expect(screen.getByText(/archived by jane teacher/i)).toBeInTheDocument();
+      expect(screen.getByLabelText('Phone number')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /remove this teacher/i })).toBeInTheDocument();
     });
   });
 });

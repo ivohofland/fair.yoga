@@ -35,6 +35,14 @@ interface TeacherPrivacyCardProps {
   teacherId: string;
   teacherName: string;
   initial: TeacherPrivacyValues;
+  /**
+   * True when this `TeacherStudent` link is archived on the teacher's side
+   * (their CRM filing action, `isArchived` on the row). Archiving must not
+   * remove the student's own controls over the same link — see the page's
+   * comment on why its query no longer filters this out (review F3) — so
+   * this only adds a factual note, never hides the card or its actions.
+   */
+  archivedByTeacher?: boolean;
 }
 
 const SHARE_FIELDS: Array<{ key: keyof TeacherPrivacyValues; label: string }> = [
@@ -50,6 +58,7 @@ export function TeacherPrivacyCard({
   teacherId,
   teacherName,
   initial,
+  archivedByTeacher = false,
 }: TeacherPrivacyCardProps) {
   const router = useRouter();
   const [values, setValues] = useState(initial);
@@ -105,6 +114,13 @@ export function TeacherPrivacyCard({
    * `TeacherBlock` goes down that stops the teacher re-adding this student,
    * which booking one of their classes is the only thing that lifts.
    * `router.refresh()` on success is what drops this card from the list.
+   *
+   * `unlinking` is deliberately left `true` on success rather than reset in
+   * a `finally` (review F7, same fix as `PendingInvitationCard`): the
+   * refresh that removes this card isn't synchronous with this call
+   * resolving, and a `finally` reset would leave a window where a second
+   * click DELETEs an already-gone link and shows "not found" over an
+   * action that had, in fact, succeeded.
    */
   async function handleUnlink() {
     setUnlinking(true);
@@ -116,16 +132,25 @@ export function TeacherPrivacyCard({
         return;
       }
       setUnlinkError(await readErrorMessage(res, 'Could not remove this teacher. Try again.'));
+      setUnlinking(false);
     } catch {
       setUnlinkError('Network error. Try again.');
-    } finally {
       setUnlinking(false);
     }
   }
 
   return (
     <section className="bg-sand-soft border border-border rounded-card p-5">
-      <h2 className="type-label text-ink font-semibold mb-3">{teacherName}</h2>
+      <div className="mb-3">
+        {/* h3: subordinate to the page's "Your teachers" h2 (review F8) */}
+        <h3 className="type-label text-ink font-semibold">{teacherName}</h3>
+        {archivedByTeacher && (
+          <p className="type-caption mt-1">
+            Archived by {teacherName} in their records — this doesn&apos;t change what you
+            control here.
+          </p>
+        )}
+      </div>
       <div className="flex flex-col">
         {SHARE_FIELDS.map((field) => (
           <label key={field.key} className="flex items-center gap-3 min-h-11">
@@ -160,9 +185,9 @@ export function TeacherPrivacyCard({
         {confirmingUnlink ? (
           <div className="flex flex-col gap-3">
             <p className="type-body">
-              Your past bookings and any payments with {teacherName} stay. They won&apos;t be
-              able to add you again — but you can always reconnect by booking one of their
-              classes.
+              Your past bookings and any payments with {teacherName} stay, but any spot you&apos;re
+              holding on their waitlists is given up. They won&apos;t be able to add you again —
+              but you can always reconnect by booking one of their classes.
             </p>
             <div className="flex items-center gap-3">
               <Button variant="destructive" onClick={handleUnlink} disabled={unlinking}>

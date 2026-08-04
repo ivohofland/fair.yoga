@@ -31,11 +31,11 @@ describe('PendingInvitationCard', () => {
     vi.stubGlobal('fetch', fetchMock);
   }
 
-  it('names the teacher and states nothing is shared until the student says so', () => {
+  it('names the teacher and states no contact details are shared until the student says so', () => {
     stubFetch();
     render(<PendingInvitationCard invitationId="inv-1" teacherName="Jane Teacher" />);
     expect(screen.getByText('Jane Teacher')).toBeInTheDocument();
-    expect(screen.getByText(/nothing is shared until you say so/i)).toBeInTheDocument();
+    expect(screen.getByText(/no contact details are shared until you say so/i)).toBeInTheDocument();
   });
 
   it('accept POSTs { response: "accept" } and refreshes on success', async () => {
@@ -50,6 +50,23 @@ describe('PendingInvitationCard', () => {
       }),
     );
     await waitFor(() => expect(routerRefresh).toHaveBeenCalledTimes(1));
+  });
+
+  // Review F7: `setSubmitting(false)` used to run in a `finally`, so it fired
+  // regardless of outcome — including right after the success branch called
+  // `router.refresh()`, before that refresh had actually repainted the page
+  // and dropped this card. A second click in that window reached the server
+  // for an invitation that was already answered, surfacing a red
+  // "already answered" error over an action that had, in fact, succeeded.
+  it('stays disabled after a successful accept, so a second click cannot reach the server', async () => {
+    stubFetch();
+    render(<PendingInvitationCard invitationId="inv-1" teacherName="Jane Teacher" />);
+    const acceptButton = screen.getByRole('button', { name: /^accept$/i });
+    fireEvent.click(acceptButton);
+    await waitFor(() => expect(routerRefresh).toHaveBeenCalledTimes(1));
+    expect(acceptButton).toBeDisabled();
+    fireEvent.click(acceptButton);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('renders no decline confirmation, and fetches nothing, until the trigger is clicked', () => {

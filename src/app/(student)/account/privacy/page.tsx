@@ -37,9 +37,18 @@ export default async function PrivacySettingsPage() {
   });
 
   const [links, privacyRows, pendingInvitations] = await Promise.all([
+    // Existence, not `isArchived: false` — the same choice
+    // `students/[id]/privacy/route.ts` makes for the API that reads and
+    // writes these settings, and for the same reason: archiving is the
+    // TEACHER's filing action on their own CRM view, and it must not strip
+    // a student of control over a link that is still live (the registration
+    // route does not check it either — a teacher can still book this
+    // student into a class after archiving them). That route's own comment
+    // called this exact gap out by name: "it becomes real the day anything
+    // renders an archived link" — this is that day (review F3).
     prisma.teacherStudent.findMany({
-      where: { studentId: session.studentId, isArchived: false },
-      select: { teacher: { select: { id: true, firstName: true, lastName: true } } },
+      where: { studentId: session.studentId },
+      select: { isArchived: true, teacher: { select: { id: true, firstName: true, lastName: true } } },
       orderBy: { teacher: { firstName: 'asc' } },
     }),
     prisma.studentPrivacy.findMany({
@@ -83,6 +92,11 @@ export default async function PrivacySettingsPage() {
         </div>
       )}
 
+      {/* h2, matching "Pending invitations" above — the two sections were
+          otherwise indistinguishable to a screen reader, since the only
+          headings on the page were the card titles underneath (review F8). */}
+      <h2 className="type-subtitle mb-3">Your teachers</h2>
+
       {links.length === 0 ? (
         <EmptyState
           title="No teachers yet."
@@ -94,7 +108,7 @@ export default async function PrivacySettingsPage() {
         />
       ) : (
         <div className="flex flex-col gap-4">
-          {links.map(({ teacher }) => {
+          {links.map(({ teacher, isArchived }) => {
             const row = privacyByTeacher.get(teacher.id);
             const initial: TeacherPrivacyValues = row
               ? {
@@ -113,6 +127,7 @@ export default async function PrivacySettingsPage() {
                 teacherId={teacher.id}
                 teacherName={`${teacher.firstName} ${teacher.lastName}`}
                 initial={initial}
+                archivedByTeacher={isArchived}
               />
             );
           })}

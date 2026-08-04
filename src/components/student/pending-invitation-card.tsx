@@ -36,20 +36,28 @@ export function PendingInvitationCard({ invitationId, teacherName }: PendingInvi
         body: JSON.stringify({ response }),
       });
       if (res.ok) {
+        // Left `submitting` true rather than resetting it in a `finally`:
+        // this card disappears once `router.refresh()` repaints (review
+        // F7), but that repaint isn't synchronous with this call resolving
+        // — a `finally` reset here would leave a moment where a second
+        // click reaches the server on an invitation that already has its
+        // answer, surfacing "already answered" in red over an action that
+        // in fact succeeded.
         router.refresh();
         return;
       }
       setError(await readErrorMessage(res, 'Could not respond. Try again.'));
+      setSubmitting(false);
     } catch {
       setError('Network error. Try again.');
-    } finally {
       setSubmitting(false);
     }
   }
 
   return (
     <section className="bg-sand-soft border border-border rounded-card p-5">
-      <h2 className="type-label text-ink font-semibold mb-2">{teacherName}</h2>
+      {/* h3: subordinate to the page's "Pending invitations" h2 (review F8) */}
+      <h3 className="type-label text-ink font-semibold mb-2">{teacherName}</h3>
 
       {confirmingDecline ? (
         <div className="flex flex-col gap-3">
@@ -74,7 +82,7 @@ export function PendingInvitationCard({ invitationId, teacherName }: PendingInvi
         <div className="flex flex-col gap-3">
           <p className="type-body">
             Accepting lets {teacherName} add you to their classes. You choose what they can see
-            next — nothing is shared until you say so.
+            next — no contact details are shared until you say so.
           </p>
           <div className="flex items-center gap-3">
             <Button variant="primary" onClick={() => respond('accept')} disabled={submitting}>
