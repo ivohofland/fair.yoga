@@ -3,9 +3,11 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import NewStudioClassPage from './page';
 
 /**
- * #136. This page restated its six fields across separate `useState` hooks
- * and the POST body, with nothing checking the two agreed with
- * `createStudioClassSchema`. The compile-time pins in the source file hold
+ * #136. This page keeps its six fields in separate `useState` hooks and used to
+ * restate them again in the POST body, with nothing checking the two agreed
+ * with `createStudioClassSchema`. The hooks are still there; only the
+ * duplication in the body went — the body is now spread from
+ * `StudioClassFormValues`. The compile-time pins in the source file hold
  * `StudioClassFormValues` against the schema with no exclusions — `studentCount`
  * and `templateId` are gone from the create schema entirely as of #148, for
  * the reasons at `page.tsx:28-40` — this test holds what a pin cannot see,

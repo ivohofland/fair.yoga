@@ -56,8 +56,11 @@ jobs:
 
       # Same command a contributor runs locally, so a green terminal and a
       # green CI mean the same thing. `npm test` does NOT type-check — Vitest
-      # strips types via esbuild — so this is the only gate on the compile-time
-      # pins in src/services/class-lifecycle.ts.
+      # strips types via esbuild — so this is the only gate on every
+      # compile-time pin in the repo, not just the ones in the services.
+      # Deliberately not a list: `grep -rn ': NoneOf<' src/` is current, and a
+      # list written here was accurate for one branch (see src/lib/type-pins.ts,
+      # which makes the same argument about counting them).
       - name: TypeScript type check
         run: npm run typecheck
 

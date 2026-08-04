@@ -2,6 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> Every line reference and present-tense claim below describes the tree at this branch's
+> base commit, `ea03d3a`, not at merge — this is a dated implementation record, not a live
+> reference. The code blocks quoted here are the plan's intent at the time; several were
+> revised during the build and the PR review that followed.
+
 **Goal:** Stop three API routes accepting an id from the request body that names another
 principal's row without checking it, and make the server-set half of that class of defect
 fail the build. Client-supplied cross-tenant foreign keys (`roomId`, `classId`,
@@ -315,8 +320,9 @@ with:
 Prisma generates `CancelDeadline` as `'HOURS_48' | 'HOURS_24' | 'HOURS_12' | 'HOURS_6'`
 and `AutoCancelCheck` as `'HOURS_4' | 'HOURS_2' | 'HOURS_1'`
 (`node_modules/.prisma/client/index.d.ts:151-168`) — identical to the Zod enum output.
-Both columns carry a `@default` in `prisma/schema.prisma:274-275`, so `undefined` is
-accepted and the `?? undefined` was a no-op.
+Both columns carry a `@default` on `Class` at `prisma/schema.prisma:334-335`, so
+`undefined` is accepted and the `?? undefined` was a no-op. (`:274-275` are
+`ClassTemplate`'s identically-defaulted pair — the wrong model for a `prisma.class.create`.)
 
 - [ ] **Step 2: Typecheck**
 
@@ -748,8 +754,9 @@ already present.
  * This exists because the per-form pins in the two create wizards are opt-in: a
  * new route with a new form carries no protection until someone remembers to
  * write one. #146 and #148 were both server-set `templateId` reaching a Prisma
- * create from a request body, on two routes, found months apart. This is the
- * create-side counterpart to PlainUpdateForbiddenClassField
+ * create from a request body — found 45 minutes apart by the same sweep, on two
+ * routes that had no reason to be compared. This is the create-side counterpart
+ * to PlainUpdateForbiddenClassField
  * (src/services/class-lifecycle.ts:390).
  */
 const SERVER_OWNED_FIELDS = [
@@ -847,9 +854,9 @@ The reason is worth understanding before you write the pin. The test compares `a
 against `EXPECTED`, so it *does* catch a typo in any name some schema currently declares —
 misspelling `'isPublic'` drops `createRoomSchema` and `updateRoomSchema` out of `actual`
 and fails. What it cannot catch is a typo in a name **nothing declares today**:
-`templateId` (post-Task-1), `paidAt`, `settingsLocked`, `tierAtBooking`. Those are exactly
-the forward-looking half of the register — the names guarding against a future addition —
-so the blind spot covers precisely the entries whose whole job is to fire later.
+`templateId` (post-Task-1), `paidAt`, `settingsLocked`, `tierAtBooking`, and others. Those
+are the forward-looking names in the register — the ones guarding against a future
+addition — so the blind spot covers precisely the entries whose whole job is to fire later.
 
 Therefore add this compile-time pin directly below `SERVER_OWNED_FIELDS`, mirroring
 `_forbiddenColumnsExist` (`src/services/class-lifecycle.ts:405`):

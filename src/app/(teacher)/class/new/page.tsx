@@ -64,9 +64,14 @@ type CreateClassWire = z.infer<typeof createClassSchema>;
  *
  * `templateId` used to be excluded here too. It is gone from the schema as of
  * #146 — it was server-set, reached `prisma.class.create` from the request body
- * with no ownership check, and appeared in no UI. With it removed, this pin now
- * enforces the rule the exclusion was suspending: every key this schema
- * declares must be a field this form actually renders.
+ * with no ownership check, and appeared in no UI.
+ *
+ * What this pin enforces, exactly: every key `createClassSchema` declares
+ * except `description` is a key of `FormData`, this form's own value type. Not
+ * that the field is *rendered* — `FormData` is a TypeScript interface, and
+ * adding a key to it with no matching input keeps both pins green. What catches
+ * that is `page.test.tsx`, which drives the rendered inputs and asserts the
+ * whole POST body.
  */
 type ClassFormExclusion = 'description';
 

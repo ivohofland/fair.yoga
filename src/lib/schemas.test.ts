@@ -114,8 +114,10 @@ describe('createClassSchema', () => {
   // class-generator.ts sets it when a template materialises an instance — so
   // the fix was to stop declaring it, not to validate it.
   //
-  // A failure here is a decision, not a chore: adding a key means a client may
-  // now set that column at creation time.
+  // A failure here is a decision, not a chore: the handler now names every
+  // field it writes, so a new key here is inert until the handler is edited
+  // too — but it means a client may send that name, and it is one handler edit
+  // away from being written.
   it('accepts exactly the client-settable create field set', () => {
     expect(Object.keys(createClassSchema.shape).sort()).toEqual([
       'autoCancelCheck',
@@ -278,8 +280,9 @@ describe('updateTeacherSchema.pageSlug', () => {
  * This exists because the per-form pins in the two create wizards are opt-in: a
  * new route with a new form carries no protection until someone remembers to
  * write one. #146 and #148 were both server-set `templateId` reaching a Prisma
- * create from a request body, on two routes, found months apart. This is the
- * create-side counterpart to PlainUpdateForbiddenClassField
+ * create from a request body — found 45 minutes apart by the same sweep, on two
+ * routes that had no reason to be compared. This is the create-side counterpart
+ * to PlainUpdateForbiddenClassField
  * (src/services/class-lifecycle.ts:390).
  *
  * Scope: the guard below reads the top-level `.shape` keys of schemas exported
@@ -287,18 +290,18 @@ describe('updateTeacherSchema.pageSlug', () => {
  * server-owned name nested inside a sub-object (rather than a top-level key)
  * would not be seen by `Object.keys(shape)`.
  *
- * Curation: `SERVER_OWNED_FIELDS` below is a hand-curated list of 18 names, not
- * a derivation from the Prisma schema. A newly added server-set column is not
- * covered until someone adds its name here — nothing pins this list against
- * the full set of server-set columns across the models it draws from.
+ * Curation: `SERVER_OWNED_FIELDS` below is hand-curated, not derived from the
+ * Prisma schema. A newly added server-set column is not covered until someone
+ * adds its name here — nothing pins this list against the full set of
+ * server-set columns across the models it draws from.
  *
  * Out of scope entirely: client-supplied cross-tenant foreign keys such as
  * `classId`, `roomId` and `teacherRoomId`. Those are legitimately client-set on
- * several schemas (createClassSchema, createTeacherRoomSchema,
- * createRegistrationSchema, createWaitlistSchema, claimWaitlistSchema,
- * createAnnouncementSchema), so this register doesn't — and shouldn't — name
- * them. A new route that accepts one of those with no ownership check would
- * pass this guard.
+ * eight schemas (createClassSchema, createClassTemplateSchema,
+ * updateClassTemplateSchema, createTeacherRoomSchema, createRegistrationSchema,
+ * createWaitlistSchema, claimWaitlistSchema, createAnnouncementSchema), so this
+ * register doesn't — and shouldn't — name them. A new route that accepts one of
+ * those with no ownership check would pass this guard.
  */
 const SERVER_OWNED_FIELDS = [
   'accountId', 'archivedAt', 'cancelledAt', 'claimedAt', 'createdById',
@@ -438,8 +441,11 @@ describe('server-owned fields', () => {
     );
 
     // Exact equality in both directions. A new declaration fails naming the
-    // schema; deleting a legitimate one fails too, so the reasons above cannot
-    // rot into a list of names nobody re-reads.
+    // schema; deleting a legitimate one fails too, so an entry cannot be
+    // silently dropped. That is all this pins: it compares key sets and field
+    // arrays and never reads the `//` prose, so a reason can go stale — or a
+    // pointer inside one can rot — with this test still green. Two of them did
+    // exactly that on this branch, caught only by human review.
     expect(
       actual,
       'A schema declares a server-owned field. Either stop declaring it, or add it to EXPECTED with a reason. See the docblock above.',

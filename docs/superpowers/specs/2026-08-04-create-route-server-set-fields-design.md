@@ -3,6 +3,10 @@
 **Issues:** #146, #148, plus a third instance found by census (no issue — fixed here).
 **Date:** 2026-08-04
 
+> Every line reference and present-tense claim below describes the tree at this branch's
+> base commit, `ea03d3a`, not at merge — this is a dated design record, not a live
+> reference. The branch itself invalidated several of them by construction.
+
 ## What this is
 
 Three API routes accept an id from the request body that identifies a row owned by
@@ -32,9 +36,11 @@ This one is no exception. What was measured, against what the issues claimed:
 - `src/app/api/studio-classes/route.ts:24-31` destructures `{ date, ...rest }` and spreads
   `rest` into `prisma.studioClass.create`. `createStudioClassSchema` declares eight keys;
   `date` is destructured out and the other seven ride the spread.
-- `templateId` appears in no creation UI. Every UI reference to `templateId`
-  (`settings/recurring/[id]`, `settings/studio-classes/[id]`, the four template buttons,
-  the two template forms) targets a *template* route, never these two POSTs.
+- `templateId` appears in no creation UI. Every UI reference to `templateId` that reaches
+  a request (`settings/recurring/[id]`, `settings/studio-classes/[id]`, the four template
+  buttons, the two template forms) targets a *template* route, never these two POSTs. The
+  two create wizards do contain the identifier at this branch's base — but only inside
+  their pin exclusions and the comments explaining them, never in a body.
 - No client sends `templateId` or `studentCount` at create: not the two wizards, not the
   one integration test that POSTs to `/api/studio-classes`
   (`tests/integration/studio-api.test.ts:414-421`). `prisma/seed.ts:706-717` does write both
@@ -42,7 +48,8 @@ This one is no exception. What was measured, against what the issues claimed:
   schema narrowing doesn't govern that path, so it doesn't change this decision.
 - The exploitability gate is real. Both need another teacher's `ClassTemplate` /
   `StudioClassTemplate` UUID (v4, not enumerable), and no disclosure path for one was
-  found. The two public pages pass only scalars to client components, and every
+  found. The two public pages pass no `templateId` to client components (they pass arrays
+  and objects, but no template id among them), and every
   `/api/class-templates*` handler is ownership-checked. **This was not proven exhaustively
   across all server components** — see "Not measured".
 
@@ -118,8 +125,9 @@ A non-strict `z.object` **strips** undeclared keys before Prisma sees them. `.st
 converts a silent strip into a 400 — a developer-experience property, not a security
 control. The dangerous thing is *declaring* a server-owned key at all.
 
-The proof is in this repo: `createClassSchema` is non-strict, is spread nowhere, and names
-all twelve fields explicitly at `classes/route.ts:63-80` — and is still #146. Conversely
+The proof is in this repo: `createClassSchema` is non-strict, is spread nowhere, and its
+handler names every field it writes explicitly at `classes/route.ts:63-80` — and is still
+#146. Conversely
 `createStudioClassTemplateSchema` is non-strict *and* spread wholesale
 (`studio-class-templates/route.ts:28`) and is clean, because its six keys are all
 teacher-owned scalars with no FK among them.
@@ -136,9 +144,11 @@ names cannot see `const { date, ...rest }`, which is how #148 stayed hidden.
 
 Arithmetic: `grep -rnE "\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(" src/app/api --include=route.ts`
 returns 42 lines; exactly one is not Prisma (`notifications/stream/route.ts:75`, a
-`Map.delete`). 42 − 1 = **41 writes across 25 route files**; the other 27 route files
-contain no write. Of 27 spreads under `src/app/api`, **7** reach a Prisma `data:` object;
-the rest are response-shaping or `where`-clause construction.
+`Map.delete`). 42 − 1 = **41 writes**. `grep -rl` with the same pattern returns 25 files,
+but `notifications/stream/route.ts` is one of them and its only match is that `Map.delete`
+— so the 41 writes live in **24** route files, and the other **28** of the 52 contain
+none. 24 + 28 = 52. (An earlier revision said 25 and 27: the non-Prisma hit had been
+subtracted from the write count but not from the file count.)
 
 It found one further instance of this exact defect (fixed here), and several adjacent
 findings that are not (see "Not fixed here").
@@ -155,7 +165,9 @@ findings that are not (see "Not fixed here").
 
 `updatePrivacySchema` (`src/lib/schemas.ts:151-159`) declares
 `teacherId: z.string().uuid()`. There is no `teacherStudent.findUnique`, no
-`teacher.findUnique`, and no session comparison anywhere in the file.
+`teacher.findUnique`, and no comparison of any kind on the *teacher* side. (The file does
+compare on the student side — `session.studentId !== id`, twice, quoted a few lines above.
+That is exactly the asymmetry.)
 
 An authenticated student can create or overwrite a `StudentPrivacy` row for any teacher —
 including one they have no relationship with — setting `shareFullName`, `shareEmail`,
@@ -168,7 +180,8 @@ session-checked. It needs a valid `Teacher` UUID; an unknown one is a foreign-ke
 not a write.
 
 The `GET` discloses nothing about the teacher — it returns the student's own row, or a
-virtual all-false default. It is fixed anyway, because fixing one handler and leaving its
+virtual maximum-privacy default (the five share flags false, `receiveComms` true). It is
+fixed anyway, because fixing one handler and leaving its
 twin is the failure this backlog keeps repeating.
 
 ## The design
@@ -245,7 +258,9 @@ So this branch adds the missing half, in `src/lib/schemas.test.ts`:
   schema without a stated reason: `templateId`, `status`, `settingsLocked`, `paidAt`,
   `tierAtBooking`, `tierSelectedAt`, `claimedAt`, `cancelledAt`, `accountId`, `isArchived`,
   `archivedAt`, `withdrawnCount`, `totalRevenue`, `isPublic`, `photoUrl`, `createdById`,
-  `teacherId`, `studentId`.
+  `teacherId`, `studentId` — plus `id`, `effectiveTeacherRate` and `totalStudents`, added
+  in review so the register is not a strict subset of the `PlainUpdateForbiddenClassField`
+  it claims parity with.
 - An expected-exceptions map, one entry per schema that legitimately declares one, each
   with a one-line reason.
 - A test asserting that for **every** exported schema, the intersection of its keys with
@@ -315,7 +330,8 @@ this survived. The new tests establish that coverage.
 
 ## Rejected alternatives
 
-**Validate `templateId` ownership instead of dropping it (#146 option 2, #148 option 2).**
+**Validate `templateId` ownership instead of dropping it (#146 option 2; #148 offers no
+validate option — its option 2 is "stop spreading into `create`").**
 Rejected: the field is server-set and appears in no UI, so there is nothing to validate
 *for*. Dropping it is strictly narrower, and it is what lets the wizard pins become
 self-enforcing — a validation check would leave the key declared and the exclusions in
@@ -342,6 +358,12 @@ Defence in depth, and genuinely tempting given the blast radius. Out of scope: w
 squatted row reachable, a `templateId` uniquely determines its owner, so the extra scope
 is unreachable code today. Filing it would add an issue that closes no path.
 
+**Reversed in review, for `template-sync.ts` only.** A branch whose thesis is that opt-in
+protections rot is an odd place to decline defence in depth, and the reasoning above
+assumes the create-route fix never regresses — the assumption this branch exists to
+distrust. `template-sync.ts:44` is now teacher-scoped; it is the query that turned the
+squat into a rental-rate disclosure. The other two sites stand as written.
+
 ## Not fixed here
 
 Named so nobody reads this as a clean sweep.
@@ -357,7 +379,8 @@ Named so nobody reads this as a clean sweep.
 - **`isPublic`** on `PUT /api/rooms/[id]` — declared, spread into the update, sent by no
   form, and a one-way door (a public room can no longer be edited or deleted, and every
   other teacher can attach to it). Self-inflicted and needs #73's `isPublic` product
-  decision, which `edit-room-form.tsx` is already blocked on.
+  decision. `edit-room-form.tsx` simply never mentions `isPublic` — nothing in that file
+  records a block, so read this as an inference, not as something the code states.
 - **`photoUrl`** on `PUT /api/teachers/[id]` — declared, written, sent by no form,
   rendered nowhere. Latent until someone adds the `<img>`; blocked on #46.
 

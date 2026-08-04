@@ -36,7 +36,13 @@ type CreateStudioClassWire = z.infer<typeof createStudioClassSchema>;
  * when a studio class is created, and `student-count-editor.tsx` sets it
  * afterwards through `PUT /api/studio-classes/[id]`.
  *
- * Keep this pin exclusion-free. An exclusion here is how the last two hid.
+ * This pin has no exclusions, and adding one should be a decision with its own
+ * reason written down. An exclusion is not itself how the last two hid — the
+ * previous revision carried `templateId`'s exclusion *and* named the mechanism
+ * and #148 beside it, which is what exposed them. What hides a key is a false
+ * reason attached to the exclusion, and an exclusion nothing pins (see the
+ * sibling wizard, where `description` is excluded deliberately, with its own
+ * non-vacuity pin).
  */
 const _formCoversCreate: NoneOf<
   Exclude<keyof CreateStudioClassWire, keyof StudioClassFormValues>

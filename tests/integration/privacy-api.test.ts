@@ -46,9 +46,13 @@ describe('students privacy API', () => {
     });
     teacherId = teacher.id;
 
-    // The four tests below all PUT/GET privacy for this teacher. Until #146's
-    // branch they passed with no TeacherStudent row at all — the route never
-    // checked the teacher side, so the suite was exercising the hole.
+    // Three tests below need this link: the GET that returns the virtual
+    // default, and the two PUTs. Until #146's branch they passed
+    // with no TeacherStudent row at all — the route never checked the teacher
+    // side, so the suite was exercising the hole. A fourth test names this
+    // `teacherId` but does not depend on the link: it targets `otherStudentId`
+    // and 403s at the student-side check before `hasTeacherLink` runs, so it
+    // passes identically with or without it.
     await prisma.teacherStudent.create({
       data: { teacherId: teacher.id, studentId: student.id },
     });
