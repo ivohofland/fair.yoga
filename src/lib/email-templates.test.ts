@@ -3,6 +3,7 @@ import {
   escapeHtml,
   renderNotificationEmail,
   renderMagicLinkEmail,
+  renderInvitationEmail,
 } from './email-templates';
 
 describe('email templates', () => {
@@ -69,5 +70,30 @@ describe('email templates', () => {
 
   it('escapeHtml handles all special characters', () => {
     expect(escapeHtml(`<>&"'`)).toBe('&lt;&gt;&amp;&quot;&#39;');
+  });
+
+  it('invitation email carries the teacher name and sign-in link', () => {
+    const { html, subject } = renderInvitationEmail(
+      'Anna Teacher',
+      'https://example.test/login',
+    );
+    expect(subject).toContain('Anna Teacher');
+    expect(html).toContain('Anna Teacher');
+    expect(html).toContain('https://example.test/login');
+  });
+
+  it('invitation email escapes an HTML-bearing teacher name', () => {
+    const { html } = renderInvitationEmail('<b>Anna</b>', 'https://example.test/login');
+    expect(html).not.toContain('<b>Anna</b>');
+    expect(html).toContain('&lt;b&gt;Anna&lt;/b&gt;');
+  });
+
+  it('invitation email carries no "welcome back" — same copy whether or not the address is already registered', () => {
+    // notifyInvitee (services/invitations.ts) only ever calls this for the
+    // "no Student row" branch, but the copy itself must not assume that —
+    // it is the one artifact of this feature a recipient actually reads,
+    // and it must not leak whether fair.yoga already knew their address.
+    const { html } = renderInvitationEmail('Anna Teacher', 'https://example.test/login');
+    expect(html.toLowerCase()).not.toContain('welcome back');
   });
 });

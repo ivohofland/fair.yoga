@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db';
 import { respondOk, respondError, requireTeacher, isErrorResponse, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { createInvitationSchema, studentListQuerySchema } from '@/lib/schemas';
 import { checkStudentWriteLimit } from '@/lib/rate-limit';
-import { inviteContact, REFUSAL_MESSAGES } from '@/services/invitations';
+import { inviteContact, notifyInvitee, REFUSAL_MESSAGES } from '@/services/invitations';
 import { log } from '@/lib/log';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
@@ -139,9 +139,22 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // `result.value.delivered` is false when a `TeacherBlock` exists for this
   // address (services/invitations.ts) — the invitation row is still real,
-  // only delivery is withheld. Nothing here reads it yet — but whichever
-  // change wires a notify/email send in after this success MUST gate it on
-  // `delivered === true`, or it emails the exact person who unlinked to get
-  // away from this teacher.
+  // only delivery is withheld. Gating on it here is what stops this from
+  // emailing the exact person who unlinked to get away from this teacher.
+  if (result.value.delivered) {
+    const teacher = await prisma.teacher.findUniqueOrThrow({
+      where: { id: session.teacherId },
+      select: { firstName: true, lastName: true },
+    });
+    await notifyInvitee(prisma, {
+      teacherId: session.teacherId,
+      // Same transform `inviteContact` applies before storing `Invitation.email`
+      // — recomputed here rather than read back off `result`, since the
+      // service returns only `{ id, delivered }` on the wire-shaped success path.
+      email: parsed.data.email.toLowerCase(),
+      teacherName: `${teacher.firstName} ${teacher.lastName}`,
+    });
+  }
+
   return respondOk({ id: result.value.id }, 201);
 });

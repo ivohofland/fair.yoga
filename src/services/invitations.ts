@@ -10,6 +10,8 @@
 
 import type { PrismaClient, Prisma } from '@prisma/client';
 import { reorderWaitingEntries } from './waitlist';
+import { createNotification } from './notifications';
+import { sendInvitationEmail } from '@/lib/email';
 
 export type InviteRefusal = 'ALREADY_INVITED' | 'ALREADY_LINKED' | 'DECLINED';
 
@@ -17,12 +19,12 @@ export interface InviteResult {
   id: string;
   /**
    * False when a `TeacherBlock` exists for this (teacher, email) pair, true
-   * otherwise. Not a detail — it is the field that stops a future caller
-   * from notifying on every `ok: true`. Task 8 wires a notify/email send in
-   * after `inviteContact` succeeds; gating that send on `delivered === true`
-   * is what keeps this from becoming a channel back to the exact person who
-   * unlinked to get away from this teacher. The invitation itself is created
-   * either way — only delivery is withheld (#166 task 6c).
+   * otherwise. Not a detail — it is the field that stops a caller from
+   * notifying on every `ok: true`. `POST /api/students` (route.ts) gates its
+   * `notifyInvitee` call (below) on `delivered === true`; that gate is what
+   * keeps this from becoming a channel back to the exact person who unlinked
+   * to get away from this teacher. The invitation itself is created either
+   * way — only delivery is withheld (#166 task 6c; wired in task 8).
    */
   delivered: boolean;
 }
@@ -129,6 +131,80 @@ export async function inviteContact(
   });
 
   return { ok: true, value: { id: created.id, delivered: blocked === null } };
+}
+
+/**
+ * Tell the invitee an invitation exists — layer 1+2 (in-app notification,
+ * which the inbox and the email-fallback cron both pick up) for a
+ * registered invitee, a plain email for everyone else (#166 task 8).
+ *
+ * The caller MUST only reach this when `InviteResult.delivered` is true.
+ * `inviteContact` above creates a real, ordinary-looking `Invitation` row
+ * for a blocked address on purpose, precisely so the teacher cannot tell
+ * blocked from fresh — `delivered` is the one place that distinction is
+ * allowed to surface, and only to callers that gate a send on it. A caller
+ * that skips the gate turns this into exactly the harassment channel the
+ * block exists to close.
+ *
+ * `delivered` is computed once, at `inviteContact`'s create time. Nothing
+ * about the invitation's route from there to here re-checks `TeacherBlock`
+ * — the only door that can move `delivered` after creation is
+ * `PUT /api/invitations/[id]`, which edits `email` on a pending row without
+ * recomputing it. That PUT does not call this function (it does not send
+ * anything at all), so no send in this codebase currently trusts a stale
+ * `delivered`. Any future send path that isn't `inviteContact`'s own
+ * create-time call — a resend, a retry, anything PUT-adjacent — must
+ * re-query `TeacherBlock` itself rather than reuse a value read earlier.
+ *
+ * The `Student` lookup below runs after the caller's response is already
+ * decided (`POST /api/students` answers 201 with `{ id }` before this ever
+ * runs) and feeds only which delivery channel to use — never the response.
+ * Restructuring this so the route's status or body depends on it would
+ * reopen the enumeration oracle #166 closed.
+ *
+ * `teacher_invitation` is deliberately NOT in `ESSENTIAL_NOTIFICATION_TYPES`
+ * (`services/notification-policy.ts`), so `shouldEmailStudent` falls
+ * through to the student's own `emailNotifications` preference — an
+ * invitation from someone they have never met is not a service message
+ * about their own booking, so it does not bypass their opt-out the way a
+ * booking confirmation does.
+ */
+export async function notifyInvitee(
+  db: PrismaClient,
+  input: { teacherId: string; email: string; teacherName: string },
+): Promise<void> {
+  // `Invitation.email` is always lowercase by the time a caller reaches
+  // this (inviteContact normalises on write), but `Student.email` never is
+  // — same systemic gap `inviteContact`'s own Student lookup notes above.
+  // This function does its own lowercasing rather than trusting a caller
+  // already did, the same way every other email-comparing function in this
+  // file does (acceptInvitation, unlinkTeacher, resolveInvitationOnLink).
+  const email = input.email.toLowerCase();
+
+  const student = await db.student.findUnique({
+    where: { email },
+    select: { id: true },
+  });
+
+  if (student) {
+    // The three-layer model handles email from here: the fallback cron
+    // picks this up unread after the threshold (or sooner, near a linked
+    // class — not applicable here, this notification has none), honouring
+    // the student's own preference. No direct send alongside this.
+    await createNotification(db, {
+      recipientType: 'student',
+      recipientId: student.id,
+      type: 'teacher_invitation',
+      title: 'A teacher would like to connect',
+      body: `${input.teacherName} added you as a contact. You choose whether to connect.`,
+    });
+    return;
+  }
+
+  // No Student row means no in-app surface exists to notify — a direct
+  // email is the only channel left.
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  await sendInvitationEmail(email, input.teacherName, `${baseUrl}/login`);
 }
 
 /**

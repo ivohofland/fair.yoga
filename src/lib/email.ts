@@ -1,5 +1,5 @@
 import { Resend } from 'resend';
-import { renderMagicLinkEmail } from '@/lib/email-templates';
+import { renderMagicLinkEmail, renderInvitationEmail } from '@/lib/email-templates';
 
 // Lazy: constructing Resend without a key throws, which would crash any
 // import of this module in keyless environments (Docker image build,
@@ -51,5 +51,35 @@ export async function sendMagicLinkEmail(
   // The Resend SDK reports API failures via { error }, it does not throw.
   if (error) {
     throw new Error(`Failed to send magic-link email: ${error.message}`);
+  }
+}
+
+/**
+ * Sends the invitation email — `notifyInvitee`'s (services/invitations.ts)
+ * fallback for an address with no `Student` row to notify instead. Unlike
+ * `sendMagicLinkEmail`, a missing key degrading to dry-run in production is
+ * not a login-breaking event here, so this has no equivalent production
+ * throw-guard: dry-run just logs, the same as `email-fallback.ts`'s send.
+ */
+export async function sendInvitationEmail(
+  to: string,
+  teacherName: string,
+  signInUrl: string,
+): Promise<void> {
+  if (emailDryRun()) {
+    console.log(`\n[DEV] Invitation email for ${to} from ${teacherName}: ${signInUrl}\n`);
+    return;
+  }
+
+  const { subject, html } = renderInvitationEmail(teacherName, signInUrl);
+  const { error } = await resend().emails.send({
+    from: process.env.EMAIL_FROM || 'noreply@fair.yoga',
+    to,
+    subject,
+    html,
+  });
+
+  if (error) {
+    throw new Error(`Failed to send invitation email: ${error.message}`);
   }
 }

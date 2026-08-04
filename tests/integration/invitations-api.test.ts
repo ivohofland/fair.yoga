@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { inviteContact } from '@/services/invitations';
+import { inviteContact, notifyInvitee } from '@/services/invitations';
 import { promoteNext } from '@/services/waitlist';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 
@@ -1014,10 +1014,10 @@ describe('POST /api/students — the block oracle (#166 task 6b, mechanism moved
 
   it('marks a blocked address undelivered and a fresh one delivered', async () => {
     // `delivered` is not on the HTTP wire (POST /api/students returns only
-    // `id`) — it exists for the caller Task 8 adds, which wires a
-    // notify/email send in after `inviteContact` succeeds. So this calls the
-    // service directly rather than through `post` above: that is where the
-    // field this guards actually lives.
+    // `id`) — it exists for `notifyInvitee`'s caller (route.ts), which
+    // gates its send on this after `inviteContact` succeeds (#166 task 8).
+    // So this calls the service directly rather than through `post` above:
+    // that is where the field this guards actually lives.
     const blockedEmail = `inv-delivered-blocked-${suffix}@test.local`;
     const freshEmail = `inv-delivered-fresh-${suffix}@test.local`;
     let block: { id: string } | undefined;
@@ -1082,6 +1082,139 @@ describe('POST /api/students — the block oracle (#166 task 6b, mechanism moved
     } finally {
       if (block) await prisma.teacherBlock.deleteMany({ where: { id: block.id } });
       await prisma.invitation.deleteMany({ where: { teacherId, email: blockedEmail } });
+    }
+  });
+});
+
+describe('POST /api/students notifies the invitee (#166 task 8)', () => {
+  it('creates an in-app notification for a registered invitee', async () => {
+    const registeredEmail = `notify-registered-${suffix}@test.local`;
+    let student: { id: string } | undefined;
+    try {
+      student = await prisma.student.create({
+        data: { firstName: 'Notify', lastName: 'Registered', email: registeredEmail },
+        select: { id: true },
+      });
+
+      const res = await fetch(`${BASE_URL}/api/students`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+        body: JSON.stringify({ firstName: 'A', lastName: 'B', email: registeredEmail }),
+      });
+      expect(res.status).toBe(201);
+
+      const notifications = await prisma.notification.findMany({
+        where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
+      });
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0]!.title).toBe('A teacher would like to connect');
+    } finally {
+      await prisma.invitation.deleteMany({ where: { teacherId, email: registeredEmail } });
+      if (student) {
+        await prisma.notification.deleteMany({ where: { recipientId: student.id } });
+        await prisma.student.delete({ where: { id: student.id } });
+      }
+    }
+  });
+
+  it('creates no notification for an address with no Student row, and still answers 201', async () => {
+    const strangerEmail = `notify-stranger-${suffix}@test.local`;
+    // Delta rather than an absolute count: `notifyInvitee`'s no-Student
+    // branch never calls `createNotification` — there is no `recipientId`
+    // to hang one off — so any pre-existing rows from earlier tests in this
+    // file are not this test's concern. `fileParallelism: false`
+    // (vitest.config.ts) is what makes a bracketing count safe here: no
+    // other test in this project can write a `teacher_invitation` row
+    // between the two reads below.
+    const before = await prisma.notification.count({ where: { type: 'teacher_invitation' } });
+    try {
+      const res = await fetch(`${BASE_URL}/api/students`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+        body: JSON.stringify({ firstName: 'A', lastName: 'B', email: strangerEmail }),
+      });
+      expect(res.status).toBe(201);
+
+      const after = await prisma.notification.count({ where: { type: 'teacher_invitation' } });
+      expect(after).toBe(before);
+    } finally {
+      await prisma.invitation.deleteMany({ where: { teacherId, email: strangerEmail } });
+    }
+  });
+
+  it('withholds delivery entirely from a blocked address, even when it belongs to a registered student', async () => {
+    // The strongest fixture for this guard: a blocked address that ALSO
+    // has a Student row. If route.ts's `if (result.value.delivered)` gate
+    // (src/app/api/students/route.ts) were ever dropped, this is the one
+    // case that leaves a Notification row behind to prove it — a stranger
+    // address can't, since notifyInvitee's own no-Student branch has no
+    // recipientId to attach a Notification to either way.
+    const blockedRegisteredEmail = `notify-blocked-registered-${suffix}@test.local`;
+    let student: { id: string } | undefined;
+    let block: { id: string } | undefined;
+    try {
+      student = await prisma.student.create({
+        data: { firstName: 'Notify', lastName: 'BlockedRegistered', email: blockedRegisteredEmail },
+        select: { id: true },
+      });
+      block = await prisma.teacherBlock.create({
+        data: { teacherId, email: blockedRegisteredEmail },
+        select: { id: true },
+      });
+
+      const res = await fetch(`${BASE_URL}/api/students`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+        body: JSON.stringify({ firstName: 'A', lastName: 'B', email: blockedRegisteredEmail }),
+      });
+      // Same 201 as any other address — the block withholds delivery, not
+      // the invitation's creation (inviteContact, services/invitations.ts).
+      expect(res.status).toBe(201);
+
+      const notifications = await prisma.notification.findMany({
+        where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
+      });
+      expect(notifications).toHaveLength(0);
+    } finally {
+      if (block) await prisma.teacherBlock.deleteMany({ where: { id: block.id } });
+      await prisma.invitation.deleteMany({ where: { teacherId, email: blockedRegisteredEmail } });
+      if (student) {
+        await prisma.notification.deleteMany({ where: { recipientId: student.id } });
+        await prisma.student.delete({ where: { id: student.id } });
+      }
+    }
+  });
+
+  it('lowercases the address before matching a Student row, so a mixed-case invitee is still found', async () => {
+    // `Student.email` is never normalised (unlike `Invitation.email` —
+    // notifyInvitee's own docblock, services/invitations.ts), so this calls
+    // notifyInvitee directly rather than through the route: the route
+    // always hands it an already-lowercased address (route.ts lowercases
+    // before calling), which would make notifyInvitee's own
+    // `.toLowerCase()` a no-op no HTTP-level test could tell apart from its
+    // absence — the exact mistake flagged twice already on this branch. The
+    // Student row is created lowercase; the address handed to
+    // `notifyInvitee` is deliberately mixed case for the same account.
+    const mixedCaseEmail = `Notify-Mixed-${suffix}@Test.Local`;
+    const canonicalEmail = mixedCaseEmail.toLowerCase();
+    let student: { id: string } | undefined;
+    try {
+      student = await prisma.student.create({
+        data: { firstName: 'Notify', lastName: 'Mixed', email: canonicalEmail },
+        select: { id: true },
+      });
+
+      await notifyInvitee(prisma, { teacherId, email: mixedCaseEmail, teacherName: 'Some Teacher' });
+
+      const notifications = await prisma.notification.findMany({
+        where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
+      });
+      expect(notifications).toHaveLength(1);
+    } finally {
+      if (student) {
+        await prisma.notification.deleteMany({ where: { recipientId: student.id } });
+        await prisma.student.delete({ where: { id: student.id } });
+      }
     }
   });
 });
@@ -1441,9 +1574,9 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
       expect(res.status).toBe(201);
 
       // The property this test exists for: the block itself is gone, not just
-      // an invitation row — `delivered` is the only signal a caller (Task 8's
-      // notify path) ever gets, so checking the invitation's status here
-      // would pass even if the block never cleared.
+      // an invitation row — `delivered` is the only signal `notifyInvitee`'s
+      // caller (route.ts, #166 task 8) ever gets, so checking the
+      // invitation's status here would pass even if the block never cleared.
       expect(await prisma.teacherBlock.findUnique({
         where: { teacherId_email: { teacherId: resolveTeacherId, email: unlinkEmail } },
       })).toBeNull();

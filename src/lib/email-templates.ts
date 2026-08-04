@@ -99,3 +99,29 @@ export function renderMagicLinkEmail(magicLink: string): { subject: string; html
   );
   return { subject: 'Sign in to fair.yoga', html };
 }
+
+/**
+ * The invitation email: sent when a teacher adds someone as a contact and
+ * the address has no `Student` row yet (`notifyInvitee`, services/invitations.ts).
+ *
+ * Same copy regardless of whether the address is already registered
+ * elsewhere on fair.yoga — this function only ever runs for the "no Student
+ * row" branch, but the wording itself must not carry a "welcome back" that
+ * would leak that distinction if this ever gets reused. `teacherName` is
+ * escaped: it is teacher-authored (their own first/last name), not sanitised
+ * on write, same reasoning as `renderNotificationEmail` escaping a teacher's
+ * announcement body.
+ */
+export function renderInvitationEmail(
+  teacherName: string,
+  signInUrl: string,
+): { subject: string; html: string } {
+  const subject = `${teacherName} would like to connect on fair.yoga`;
+  const html = wrapEmail(
+    'A teacher would like to connect',
+    `<p style="margin:0 0 16px;">${escapeHtml(teacherName)} added you as a contact on fair.yoga, a free tool independent yoga teachers use to run their classes. You choose whether to connect.</p>
+     <p style="margin:0 0 16px;"><a href="${signInUrl}" style="display:inline-block;background-color:#1A5653;color:#F7F4EF;text-decoration:none;font-weight:600;font-size:16px;padding:14px 24px;border-radius:999px;">Sign in</a></p>
+     <p style="margin:0;font-size:13px;color:#71645A;">If you weren't expecting this, you can ignore this email.</p>`,
+  );
+  return { subject, html };
+}
