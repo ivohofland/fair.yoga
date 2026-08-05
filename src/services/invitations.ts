@@ -270,13 +270,22 @@ async function revivePendingInvitation(
  * block exists to close.
  *
  * `delivered` (the caller's gate, above) is computed once, at
- * `inviteContact`'s create time, and can go stale — the only door that can
- * move it after creation is `PUT /api/invitations/[id]`, which edits `email`
- * on a pending row without recomputing it. This function does not lean on
- * the caller having read a fresh value: it re-queries `TeacherBlock` itself,
- * below, so the guard travels with the send rather than living only in
- * whichever caller remembers to check it. Keep the caller's own gate too —
- * belt and braces, and it skips a query on the common (unblocked) path.
+ * `inviteContact`'s create time, and can go stale before this function runs.
+ * The live door is a `TeacherBlock` committed in between: `unlinkTeacher`
+ * writes one inside its own transaction, and `POST /api/students` calls this
+ * fire-and-forget (below), so the two are genuinely concurrent — the student
+ * who unlinks a moment after the teacher clicks Send has a `delivered: true`
+ * computed before their block existed. That window is the whole reason this
+ * function re-queries `TeacherBlock` itself, below, rather than leaning on
+ * the caller's value: the guard travels with the send rather than living
+ * only in whichever caller remembers to check it. Keep the caller's own gate
+ * too — belt and braces, and it skips a query on the common (unblocked) path.
+ *
+ * `PUT /api/invitations/[id]` edits `email` on a pending row without
+ * recomputing `delivered`, which looks like a second door and is not: PUT
+ * does not notify, so a value gone stale there reaches nobody. Named only so
+ * the next reader does not go checking it, find it harmless, and conclude
+ * the re-check below is redundant.
  *
  * `POST /api/students` (route.ts) does not await this function — it is
  * called fire-and-forget, after the response's status and body are already
@@ -306,13 +315,14 @@ export async function notifyInvitee(
   // Load-bearing for the block re-check below, not for the Student lookup
   // under it. The Student lookup matches `mode: 'insensitive'` and finds its
   // row either way; `TeacherBlock` is a `findUnique` on a case-SENSITIVE
-  // `@@unique([teacherId, email])` whose column is lowercase by construction
-  // (`inviteContact` and `unlinkTeacher` are its only writers, and both
-  // normalise). Drop this line and an invitee address typed with uppercase
-  // misses the block entirely — and the send goes out to the exact person
-  // who blocked this teacher, which is the channel the block exists to
-  // close. `invitations.notify.test.ts`'s blocked-address test is the one
-  // that fails when it goes; nothing observable at the Student lookup can.
+  // `@@unique([teacherId, email])` whose column can only ever hold lowercase
+  // (`TeacherBlock_email_lowercase_check`, prisma/migrations/…
+  // _invitation_check_constraints). Drop this line and an invitee address
+  // carrying uppercase misses the block entirely — and the send goes out to
+  // the exact person who blocked this teacher, which is the channel the
+  // block exists to close. `invitations.notify.test.ts`'s blocked-address
+  // test is the one that fails when it goes; nothing observable at the
+  // Student lookup can.
   //
   // Done here rather than trusting a caller already did it, the same way
   // every other email-comparing function in this file does
