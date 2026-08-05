@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
@@ -72,15 +73,43 @@ export const PUT = withErrorHandler(async (
 
   const { email, ...rest } = parsed.data;
 
-  const updated = await prisma.invitation.update({
-    where: { id },
-    // Lowercased on write, matching `inviteContact` (services/invitations.ts)
-    // — this column is lowercase by construction, and the uniqueness check
-    // and later account-matching both depend on that holding for every row,
-    // not just the ones created through POST.
-    data: { ...rest, ...(email !== undefined ? { email: email.toLowerCase() } : {}) },
-    select: { id: true },
-  });
+  // Caught rather than pre-checked (F9, #166 review). `Invitation` has one
+  // unique key besides its primary — `@@unique([teacherId, email])` — and
+  // this is the only field on the form that can collide with it: the teacher
+  // retyped one contact's address as another's. That is an ordinary mistake
+  // on a contact form, not a race, and it used to fall all the way through
+  // to `classifyApiError`'s generic fallback (src/lib/api-errors.ts), which
+  // rendered Prisma's own "Resource already exists" in the form's error slot
+  // and logged a `warn` written for genuine lost races.
+  //
+  // A pre-check would leave the race the fallback is for, so this catches
+  // instead: the same shape `POST /api/registrations` uses for its own
+  // unique collision. `ALREADY_INVITED` is this domain's existing name for
+  // "a row already exists for this (teacher, address)" — the same code
+  // `POST /api/students` answers with, since it is the same constraint —
+  // but the message is the edit form's, because "another contact holds this
+  // address" is what the teacher standing on this page can act on.
+  let updated: { id: string };
+  try {
+    updated = await prisma.invitation.update({
+      where: { id },
+      // Lowercased on write, matching `inviteContact` (services/invitations.ts)
+      // — this column is lowercase by construction, and the uniqueness check
+      // and later account-matching both depend on that holding for every row,
+      // not just the ones created through POST.
+      data: { ...rest, ...(email !== undefined ? { email: email.toLowerCase() } : {}) },
+      select: { id: true },
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      return respondError(
+        'Another of your contacts already uses this email address.',
+        409,
+        'ALREADY_INVITED',
+      );
+    }
+    throw err;
+  }
 
   return respondOk({ id: updated.id });
 });

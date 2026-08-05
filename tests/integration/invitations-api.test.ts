@@ -361,6 +361,45 @@ describe('PUT /api/invitations/[id]', () => {
     }
   });
 
+  it('refuses an email that another of this teacher\'s contacts already holds, in words a teacher can act on', async () => {
+    // F9, #166 review. Retyping one contact's address as another's is an
+    // ordinary mistake, not a race — but it violates
+    // `@@unique([teacherId, email])`, and the P2002 used to escape to
+    // `classifyApiError`'s fallback: Prisma's own "Resource already exists"
+    // rendered in the form's error slot, plus a `warn` written for genuine
+    // lost races.
+    const occupiedEmail = `inv-put-occupied-${suffix}@test.local`;
+    let occupier: { id: string } | undefined;
+    try {
+      occupier = await prisma.invitation.create({
+        data: { teacherId, email: occupiedEmail, firstName: 'Already', lastName: 'Here' },
+        select: { id: true },
+      });
+
+      const before = await prisma.invitation.findUniqueOrThrow({ where: { id: putTargetId } });
+
+      const res = await fetch(`${BASE_URL}/api/invitations/${putTargetId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+        // Mixed case: the route lowercases before writing, so the collision
+        // has to be found on the normalised value, not the typed one.
+        body: JSON.stringify({ email: occupiedEmail.toUpperCase() }),
+      });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error: { message: string; code?: string } };
+      expect(body.error.code).toBe('ALREADY_INVITED');
+      expect(body.error.message).toBe('Another of your contacts already uses this email address.');
+      // The exact string this test exists to keep off a contact form.
+      expect(body.error.message).not.toBe('Resource already exists');
+
+      // A refused write is not a partial write.
+      const after = await prisma.invitation.findUniqueOrThrow({ where: { id: putTargetId } });
+      expect(after).toEqual(before);
+    } finally {
+      if (occupier) await prisma.invitation.deleteMany({ where: { id: occupier.id } });
+    }
+  });
+
   it('refuses another teacher\'s invitation', async () => {
     let other: { id: string } | undefined;
     try {
