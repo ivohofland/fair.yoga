@@ -27,10 +27,14 @@ import type { Prisma } from '@prisma/client';
  * escape hatch the whole decline design rests on: permanent from the
  * teacher's side, always reversible from the student's.
  *
- * Callers are the three places a student acts toward one named teacher:
- * `POST /api/registrations` (their own booking, never a teacher-initiated
- * one) and `addToWaitlist` (services/waitlist.ts). `promoteNext` and
- * `claimSpot` deliberately do NOT call this — see their comments.
+ * Call this only from a path where the student themselves is acting toward
+ * one named teacher, at this instant. Today that is `POST /api/registrations`
+ * (their own booking — the call sits inside the `!isTeacher` branch, so a
+ * teacher-initiated roster add never reaches it) and `addToWaitlist`
+ * (services/waitlist.ts, reached only through `POST /api/waitlist`, which is
+ * `requireStudent` and self-only). `promoteNext` and `claimSpot` deliberately
+ * do NOT call this — see their comments. That rule, not the number of sites,
+ * is what a new caller has to satisfy.
  *
  * There used to be a second mode here — a `LinkConsent` parameter whose
  * `standing` value resolved only a `pending` invitation — for the one caller
