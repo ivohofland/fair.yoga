@@ -666,7 +666,7 @@ async function hasActiveRegistration(
  * writes `status` — and `position`, through `reorderWaitingEntries` — with
  * no lock at all, so `DELETE /api/waitlist/[id]` mutates the queue unlocked.
  * Named rather than glossed so the next person to touch the queue finds it.
- * It is filed, and it is not this function's to fix: `removeFromWaitlist`
+ * It is filed as #174, and it is not this function's to fix: `removeFromWaitlist`
  * can only move an entry OUT of `waiting`, never into it, so nothing it
  * races can manufacture the standing request this withdraws.
  *

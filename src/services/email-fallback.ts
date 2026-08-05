@@ -67,12 +67,17 @@ export async function processEmailFallback(
       // 1. `deleteTeacherAccount` (services/gdpr.ts) deletes every
       //    `recipientType: 'teacher'` Notification for the erased teacher in
       //    the SAME transaction that sets `deletedAt`, and cancels every
-      //    draft/open/in_progress class of theirs in it too. All three
-      //    writers of a teacher-recipient notification gate on one of those
-      //    statuses under the class row lock that transaction holds
-      //    (`POST /api/registrations`, `class-transitions`' auto-cancel,
-      //    `completeClass`), so no fresh one can be written afterwards
-      //    either. An erased teacher therefore has no row that reaches here.
+      //    draft/open/in_progress class of theirs in it too. Of the three
+      //    writers of a teacher-recipient notification, two gate on one of
+      //    those statuses under the class row lock that transaction holds
+      //    (`POST /api/registrations`, `class-transitions`' auto-cancel), so
+      //    no fresh one can be written afterwards. **`completeClass` is the
+      //    exception: it reads its class without `FOR UPDATE`**, so a sweep
+      //    already inside it can commit after the `deleteMany`. That is the
+      //    same window (2) covers, and it is filed as #174 — which also
+      //    records the larger consequence, that such a sweep can flip a
+      //    `cancelled` class back to `completed` and create `Payment` rows
+      //    against it.
       // 2. The same transaction rewrites `Teacher.email` to
       //    `deleted-<id>@deleted.invalid`. So even a row that slipped through
       //    — a transition sweep committing its `completeClass` in the instant
