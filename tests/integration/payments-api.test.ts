@@ -132,14 +132,18 @@ describe('GET /api/payments, /api/payments/[id], /api/classes/[id]/payments', ()
         registration: {
           student: { displayName: string; email: string | null };
           tierAtBooking?: number;
+          tierRatio?: number;
+          price?: number;
         };
       }[];
     };
-    const row = body.data.find((p) => p.registration.student.displayName.startsWith('Reminder'));
+    const row = body.data.find((p) => p.registration.student.displayName?.startsWith('Reminder'));
     expect(row).toBeDefined();
     expect(row!.registration.student.displayName).toBe('Reminder s.');
     expect(row!.registration.student.email).toBeNull();
     expect(row!.registration.tierAtBooking).toBeUndefined();
+    expect(row!.registration.tierRatio).toBeUndefined();
+    expect(row!.registration.price).toBeUndefined();
   });
 
   it('GET /api/payments/[id] applies the same gate as the list', async () => {
@@ -152,12 +156,23 @@ describe('GET /api/payments, /api/payments/[id], /api/classes/[id]/payments', ()
         registration: {
           student: { displayName: string; email: string | null };
           tierAtBooking?: number;
+          tierRatio?: number;
+          price?: number;
         };
       };
     };
     expect(body.data.registration.student.displayName).toBe('Reminder s.');
     expect(body.data.registration.student.email).toBeNull();
     expect(body.data.registration.tierAtBooking).toBeUndefined();
+    expect(body.data.registration.tierRatio).toBeUndefined();
+    expect(body.data.registration.price).toBeUndefined();
+  });
+
+  it("GET /api/payments/[id] 403s another teacher's payment", async () => {
+    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}`, {
+      headers: cookie(otherTeacherToken),
+    });
+    expect(res.status).toBe(403);
   });
 
   it('GET /api/classes/[id]/payments withholds the surname too', async () => {
@@ -166,10 +181,34 @@ describe('GET /api/payments, /api/payments/[id], /api/classes/[id]/payments', ()
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      data: { registration: { student: { displayName: string }; tierAtBooking?: number } }[];
+      data: {
+        registration: {
+          student: { displayName: string };
+          tierAtBooking?: number;
+          tierRatio?: number;
+          price?: number;
+        };
+      }[];
     };
     expect(body.data[0]!.registration.student.displayName).toBe('Reminder s.');
     expect(body.data[0]!.registration.tierAtBooking).toBeUndefined();
+    expect(body.data[0]!.registration.tierRatio).toBeUndefined();
+    expect(body.data[0]!.registration.price).toBeUndefined();
+  });
+
+  it("GET /api/classes/[id]/payments 403s another teacher's class", async () => {
+    const res = await fetch(`${BASE_URL}/api/classes/${classId}/payments`, {
+      headers: cookie(otherTeacherToken),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('GET /api/classes/[id]/payments 404s an unknown class', async () => {
+    const res = await fetch(
+      `${BASE_URL}/api/classes/00000000-0000-4000-8000-000000000000/payments`,
+      { headers: cookie(teacherToken) },
+    );
+    expect(res.status).toBe(404);
   });
 });
 

@@ -8,6 +8,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
+import type { TeacherPaymentRow } from '@/services/payments';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -39,11 +40,21 @@ export const GET = withErrorHandler(async (
     return respondError('Access denied', 403);
   }
 
-  return respondOk({
+  // `class.teacherId` was only ever needed for the ownership check above —
+  // TeacherPaymentRow's `class` doesn't carry it, and it's built out
+  // explicitly here (not spread) so it can't ride along into the response.
+  const row: TeacherPaymentRow = {
     ...payment,
     registration: {
-      ...payment.registration,
+      id: payment.registration.id,
+      status: payment.registration.status,
       student: projectStudentForTeacher(payment.registration.student),
+      class: {
+        classType: payment.registration.class.classType,
+        date: payment.registration.class.date,
+      },
     },
-  });
+  };
+
+  return respondOk(row);
 });

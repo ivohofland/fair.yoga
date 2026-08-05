@@ -23,11 +23,16 @@ export type PaymentResult = { ok: true; payment: Payment } | { ok: false; error:
  * What a teacher-facing payment read returns.
  *
  * Both query functions below used to declare `Promise<Payment[]>` while
- * returning a structural superset carrying the student's name and email — it
- * type-checked, and the signature is exactly why nobody reading it could see
- * the disclosure. The `registration` shape is explicit for the same reason:
- * an un-`select`ed `include` shipped `tierAtBooking` and `tierRatio`, which are
- * stored copies of the student's income tier.
+ * returning a structural superset — it type-checked, and the signature is
+ * exactly why nobody reading it could see the disclosure. What each carried
+ * differed: `getOutstandingPayments` selected the student's `firstName`,
+ * `lastName` and `email`; `getPaymentsForClass` selected only `firstName`/
+ * `lastName`, never `email`. But both used an un-`select`ed `include` on
+ * `registration`, so both also shipped `tierAtBooking` and `tierRatio` —
+ * stored copies of the student's income tier — regardless of what the
+ * student `select` named. The `registration` shape below is explicit for the
+ * same reason this type exists at all: naming exactly what's returned is
+ * what makes a future superset visible again.
  */
 export type TeacherPaymentRow = Payment & {
   registration: {
@@ -240,7 +245,17 @@ export async function getOutstandingPayments(
 /**
  * Get all payments for a specific class.
  *
- * Includes registration with the teacher-visible student projection.
+ * `teacherId` does two jobs: it scopes the `where` to that teacher's own
+ * class — so a caller who skips the route's own ownership check still can't
+ * pull another teacher's payments — and it selects which teacher's
+ * `StudentPrivacy` row the projection reads. Without the `where` scope, a
+ * missing route guard wouldn't just leak the payments; it would render them
+ * under the *caller's* privacy flags, which is more misleading than a raw
+ * leak, not safer.
+ *
+ * Includes registration with the teacher-visible student projection and the
+ * class's type/date — the previous version selected no `class` fields at
+ * all.
  */
 export async function getPaymentsForClass(
   db: PrismaClient,
@@ -248,7 +263,7 @@ export async function getPaymentsForClass(
   teacherId: string,
 ): Promise<TeacherPaymentRow[]> {
   const rows = await db.payment.findMany({
-    where: { registration: { classId } },
+    where: { registration: { classId, class: { teacherId } } },
     include: {
       registration: {
         select: {
