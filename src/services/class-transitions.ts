@@ -83,14 +83,14 @@ export async function autoCancelClasses(
 ): Promise<number> {
   const currentTime = now ?? new Date();
 
+  // No `registrations` eager-load here: the count and the recipient list
+  // that decide and act on cancellation are both read inside the
+  // transaction below, from the database state at the moment of the CAS —
+  // not from this outer snapshot.
   const openClasses = await db.class.findMany({
     where: { status: 'open' },
     include: {
       teacher: { select: { defaultTimezone: true } },
-      registrations: {
-        where: { status: { in: ['registered', 'attended', 'no_show'] } },
-        select: { studentId: true },
-      },
     },
   });
 
@@ -104,40 +104,53 @@ export async function autoCancelClasses(
 
       // Only cancel if we're past the check time but before the class starts
       if (currentTime >= checkTime && currentTime < start) {
-        const activeCount = cls.registrations.length;
+        // Cancel + notify atomically: a cancelled class nobody was told
+        // about is worse than one that stays open one more sweep.
+        const didCancel = await db.$transaction(async (tx) => {
+          // Counted HERE, not from the sweep's outer `findMany` at the top of
+          // this function. That read is a snapshot taken before this
+          // transaction began, so a registration committing in between is
+          // invisible to it — and cancelling a class that has just reached
+          // its minimum tells every student it is off when it is not. The
+          // status CAS below cannot catch this: the status is still `open`,
+          // it is the count that moved.
+          const activeCount = await tx.registration.count({
+            where: { classId: cls.id, status: { in: ['registered', 'attended', 'no_show'] } },
+          });
+          if (activeCount >= cls.minStudents) return false;
 
-        if (activeCount < cls.minStudents) {
-          // Cancel + notify atomically: a cancelled class nobody was told
-          // about is worse than one that stays open one more sweep.
-          const didCancel = await db.$transaction(async (tx) => {
-            const updated = await tx.class.updateMany({
-              where: { id: cls.id, status: 'open' },
-              data: { status: 'cancelled' },
-            });
-            if (updated.count === 0) return false;
+          const updated = await tx.class.updateMany({
+            where: { id: cls.id, status: 'open' },
+            data: { status: 'cancelled' },
+          });
+          if (updated.count === 0) return false;
 
-            const notifications: CreateNotificationInput[] = cls.registrations.map((r) => ({
-              recipientType: 'student' as const,
-              recipientId: r.studentId,
-              type: 'class_cancelled' as const,
-              title: 'Class cancelled',
-              body: `${cls.classType} class has been cancelled due to insufficient registrations.`,
-              relatedClassId: cls.id,
-            }));
-            notifications.push({
-              recipientType: 'teacher',
-              recipientId: cls.teacherId,
-              type: 'class_cancelled',
-              title: 'Class auto-cancelled',
-              body: `${cls.classType} was cancelled — only ${activeCount} of ${cls.minStudents} minimum students registered.`,
-              relatedClassId: cls.id,
-            });
-            await createBulkNotifications(tx, notifications);
-            return true;
+          const registrations = await tx.registration.findMany({
+            where: { classId: cls.id, status: { in: ['registered', 'attended', 'no_show'] } },
+            select: { studentId: true },
           });
 
-          if (didCancel) cancelled++;
-        }
+          const notifications: CreateNotificationInput[] = registrations.map((r) => ({
+            recipientType: 'student' as const,
+            recipientId: r.studentId,
+            type: 'class_cancelled' as const,
+            title: 'Class cancelled',
+            body: `${cls.classType} class has been cancelled due to insufficient registrations.`,
+            relatedClassId: cls.id,
+          }));
+          notifications.push({
+            recipientType: 'teacher',
+            recipientId: cls.teacherId,
+            type: 'class_cancelled',
+            title: 'Class auto-cancelled',
+            body: `${cls.classType} was cancelled — only ${activeCount} of ${cls.minStudents} minimum students registered.`,
+            relatedClassId: cls.id,
+          });
+          await createBulkNotifications(tx, notifications);
+          return true;
+        });
+
+        if (didCancel) cancelled++;
       }
     } catch (err) {
       // Per-class isolation — see autoTransitionToInProgress.
