@@ -42,11 +42,19 @@ export type PaymentResult = { ok: true; payment: Payment } | { ok: false; error:
  * Verified, not assumed.
  *
  * What actually catches a widened `select` is
- * `tests/integration/payments-api.test.ts` — `:144` for
- * `getOutstandingPayments`, `:166` for `GET /api/payments/[id]`, `:194` for
+ * `tests/integration/payments-api.test.ts` — `:150` for
+ * `getOutstandingPayments`, `:175` for `GET /api/payments/[id]`, `:211` for
  * `getPaymentsForClass` — each asserting `tierAtBooking`/`tierRatio`/`price`
  * are `undefined` on the wire. Widen a `select` here and the corresponding
  * assertion goes red; skip that suite and nothing else will tell you.
+ *
+ * Those assertions name the fields they deny, so they catch a widened `select`
+ * and nothing else. The `Object.keys(…).sort()` assertion beside each of them
+ * is the complement: it denies every key not on the allowlist, which is what
+ * catches a `{ ...row.registration.student, ...projectStudentForTeacher(…) }`
+ * spread re-attaching the raw surname. That one was missing from this family
+ * until #167's round-two review — the spread left payments-api 22/22 and this
+ * service's own unit file 14/14 green.
  */
 export type TeacherPaymentRow = Payment & {
   registration: {
@@ -127,9 +135,11 @@ export async function markPaymentOverdue(
 
 /**
  * Undo a mistaken "mark paid": paid → pending, clearing method/paidAt.
- * Returns to 'pending' (not 'overdue') deliberately — the daily dunning
- * sweep re-derives overdue from the payment's age, so an old payment
- * self-heals back to overdue within a day.
+ * Returns to 'pending' (not 'overdue') deliberately — the dunning sweep
+ * (`markOverduePayments`) re-derives overdue from the payment's age, so an old
+ * payment self-heals back to overdue on the sweep's next tick. `lib/scheduler.ts`
+ * registers that job (`payment-reminders`) at `60 * MINUTE`, so the window is an
+ * hour, not the day this comment claimed.
  */
 export async function unmarkPaymentPaid(
   db: PrismaClient,
