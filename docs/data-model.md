@@ -70,6 +70,7 @@ One Account per human. Teacher and Student are profiles optionally linked to it 
 | **id** (PK) | uuid | |
 | *student_id* (FK) | → Student | |
 | *teacher_id* (FK) | → Teacher | |
+| share_full_name | boolean, default false | Surname; when false a teacher sees a last initial |
 | share_email | boolean, default false | |
 | share_phone | boolean, default false | |
 | share_birthday | boolean, default false | |
@@ -79,7 +80,12 @@ One Account per human. Teacher and Student are profiles optionally linked to it 
 | created_at | datetime | |
 | updated_at | datetime | |
 
-Created on first booking with a teacher. Default = maximum privacy. Student explicitly opts in to share each field per teacher.
+Not created on booking. Only the student's own `PUT /api/students/[id]/privacy`
+and invitation acceptance write the row — until one of those happens there is
+no row, and every read treats absence as maximum privacy
+(`privacy?.shareX ?? false`). Default = maximum privacy; the student opts in to
+each field, per teacher. One projection reads these flags for every
+teacher-facing surface: `src/lib/student-visibility.ts`.
 
 ### Invitation (teacher → student contact, #166)
 
