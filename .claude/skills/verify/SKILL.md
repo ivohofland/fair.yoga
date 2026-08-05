@@ -13,16 +13,17 @@ description: Build/launch/drive recipe for verifying fair.yoga changes in the ru
 
 ## Authenticate without email
 
-Sessions are DB rows: `id` = sha256-hex of a random token, cookie `fair_yoga_session=<raw token>`. Mint one directly (seeded teacher: `ivo@fairyoga.dev`):
+Sessions are DB rows: `id` = sha256-hex of a random token, cookie `fair_yoga_session=<raw token>`. `Session` keys on `accountId` (not on `Teacher`/`Student` — look up the account first). Mint one directly (seeded teacher: `ivo@fairyoga.dev`):
 
 ```ts
+const teacher = await prisma.teacher.findUniqueOrThrow({ where: { email: 'ivo@fairyoga.dev' } });
 const token = randomBytes(32).toString('hex');
 const hash = createHash('sha256').update(token).digest('hex');
-await prisma.session.create({ data: { id: hash, userId: teacher.id, userType: 'teacher', expiresAt: new Date(Date.now() + 86400_000) } });
+await prisma.session.create({ data: { id: hash, accountId: teacher.accountId, expiresAt: new Date(Date.now() + 86400_000) } });
 // Playwright: addCookies([{ name: 'fair_yoga_session', value: token, url: 'http://localhost:3000' }])
 ```
 
-Delete the session row when done.
+Delete the session row when done. (`tests/helpers.ts`'s `seedSession(db, accountId)` does the same thing for the test suites; `src/lib/auth/session.ts`'s `createSession` is the production path.)
 
 ## Drive (Playwright)
 
