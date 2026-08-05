@@ -1268,18 +1268,20 @@ describe('POST /api/students — re-inviting once the link is gone (#166 review 
   it('lets a teacher invite again when the accepted invitation has outlived its link', async () => {
     const { email, invitationId } = await seedAcceptedWithoutLink('erased');
 
-    // The Student row still exists and is NOT on this teacher's roster —
-    // the harder half of the fix. A check that stopped at "is there a
-    // Student with this address" would refuse here just as the status read
-    // did; only one that goes on to `TeacherStudent` lets this through.
-    // Mixed case, so the case-insensitive match is doing real work.
+    // A Student row for THIS address still exists and is NOT on this
+    // teacher's roster — the harder half of the fix, and the reason the
+    // address has to match the invitation's rather than merely being some
+    // other student's. A check that stopped at "is there a Student with this
+    // address" would refuse here just as the status read did; only one that
+    // goes on to `TeacherStudent` lets this through. Uppercased, so the
+    // case-insensitive match is doing real work: `Invitation.email` is
+    // lowercase by construction and `Student.email` is stored as typed, so a
+    // case-SENSITIVE lookup would miss this row and the test would pass for
+    // the wrong reason — the "no Student at all" path.
     let strangerId: string | undefined;
     try {
       const stranger = await prisma.student.create({
-        data: {
-          firstName: 'Not', lastName: 'Linked',
-          email: `Inv-Relink-Erased-Stranger-${suffix}@Test.Local`,
-        },
+        data: { firstName: 'Not', lastName: 'Linked', email: email.toUpperCase() },
         select: { id: true },
       });
       strangerId = stranger.id;
