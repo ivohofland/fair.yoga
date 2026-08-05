@@ -488,3 +488,164 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     expect(await prisma.invitation.count({ where: { teacherId: inviterId } })).toBe(1);
   });
 });
+
+// #174 task 3. `deleteTeacherAccount`'s transaction reads classes filtered to
+// `draft`/`open`/`in_progress` and then wrote `cancelled` unconditionally —
+// so a class that reached `completed` in the window between that read and
+// its own write got force-cancelled after its `Payment` rows already existed
+// and its students had already been told to pay.
+//
+// A test that merely completes the class BEFORE calling `deleteTeacherAccount`
+// proves nothing: the erasure `findMany` at `gdpr.ts:423` filters to
+// `draft`/`open`/`in_progress`, so an already-`completed` class is never
+// selected into `upcoming` and the loop never touches it — the assertion
+// passes on the unfixed code for a reason that has nothing to do with the
+// CAS. To pin the actual bug, the interleaving has to be reproduced: the
+// class must still read as `in_progress` when the transaction's `findMany`
+// runs, and only become `completed` afterward, before the loop's write for
+// that specific row.
+//
+// `$extends` makes that deterministic instead of racing for it, following
+// the precedent in `class-lifecycle.test.ts`'s
+// "refuses to write over a status that changed after the caller decided"
+// test, `class-template-lifecycle.test.ts:223`/`:282`, `waitlist.test.ts:1090`,
+// and `invitations.revive.test.ts:99`. `deleteTeacherAccount` calls
+// `class.findMany` twice — once before the transaction (to find classes to
+// `completeClass` directly) and once inside it (to find classes to cancel) —
+// so the hook has to tell those two calls apart. It does that by call order,
+// not by inspecting `args`: the first call is filtered to exclude this
+// fixture's class (standing in for a completion sweep that has not reached
+// this row yet, so the class is still genuinely `in_progress` for the second
+// call to read); the second call's real, unmodified read is what the
+// erasure transaction acts on. The side effect — a real, separately
+// committed `updateMany` moving the row to `completed` — runs inside that
+// same hook, after the real read resolves and before control returns to
+// `deleteTeacherAccount`, so it is guaranteed to land before the loop's
+// per-row write for this class, exactly the ordering the docblock at
+// `gdpr.ts:433` describes.
+describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-cas-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let teacherId: string;
+  let accountId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Cas',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'CAS erasure fixture',
+        pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'CAS Studio',
+        address: `${suffix} St`,
+        city: 'Amsterdam',
+        postcode: '1234CD',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+      select: { id: true },
+    });
+    roomId = room.id;
+
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+    teacherRoomId = teacherRoom.id;
+  });
+
+  afterAll(async () => {
+    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.delete({ where: { id: roomId } });
+    await prisma.teacher.delete({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: accountId } });
+    await prisma.$disconnect();
+  });
+
+  it('leaves a class that completed after the erasure read alone, and still erases', async () => {
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'CAS class',
+        date: new Date('2026-06-01'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 1,
+        maxStudents: 10,
+        status: 'in_progress',
+      },
+      select: { id: true },
+    });
+    const classId = cls.id;
+
+    let calls = 0;
+    let completedConcurrently = false;
+    const racing = prisma.$extends({
+      query: {
+        class: {
+          async findMany({ args, query }) {
+            calls += 1;
+            const rows = await query(args);
+            if (calls === 1) {
+              // `deleteTeacherAccount`'s pre-transaction sweep
+              // (`select: { id: true }` on `status: 'in_progress'`).
+              // Filtered out so the row is still genuinely `in_progress`
+              // for the transaction's own read below — standing in for a
+              // completion sweep that has not reached this class yet.
+              return rows.filter((r) => r.id !== classId);
+            }
+            // The erasure transaction's read of "upcoming" classes. The
+            // real, unmodified rows are what it acts on — this class is
+            // genuinely `in_progress` at this instant. The concurrent
+            // completion is a real, separately committed write, made now
+            // so it lands before the loop's write for this row runs.
+            if (!completedConcurrently && rows.some((r) => r.id === classId)) {
+              completedConcurrently = true;
+              await prisma.class.updateMany({
+                where: { id: classId },
+                data: { status: 'completed' },
+              });
+            }
+            return rows;
+          },
+        },
+      },
+      // `$extends` returns a client missing `$on`, so it is not assignable
+      // to `deleteTeacherAccount`'s `PrismaClient`-typed `db` parameter even
+      // though every method it calls here is the real one, running against
+      // the real database — same cast as the precedent cited above.
+    }) as unknown as PrismaClient;
+
+    await deleteTeacherAccount(racing, teacherId);
+
+    // Order matters for what a regression reports: checking the row first
+    // means the unconditional-update bug shows as the actual overwrite
+    // ("expected 'completed' to be 'cancelled'"), not just a wrong boolean.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    expect(after.status).toBe('completed');
+
+    // And the erasure itself still completed — the point is to skip the
+    // class, not to abandon the request.
+    const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
+    expect(teacher.email).toMatch(/@deleted\.invalid$/);
+  });
+});

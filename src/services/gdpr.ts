@@ -408,6 +408,13 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
     select: { id: true },
   });
   for (const cls of inProgress) {
+    // `completeClass` now opens with `lockClassRow`'s 2s `lock_timeout`
+    // (#174), narrower than the ~5s default Prisma gives the transaction
+    // that lock sits in, so this call can now fail faster than it used to.
+    // The kind of failure is unchanged — it could always throw, and that is
+    // deliberately left uncaught here, not wrapped in a try — but bounded
+    // beats unbounded, and the next reader should not have to re-derive why
+    // the window moved.
     const result = await completeClass(db, cls.id);
     if (!result.ok) {
       // Fall through: the cancel sweep below still picks the class up.
@@ -431,7 +438,23 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       });
 
       for (const cls of upcoming) {
-        await tx.class.update({ where: { id: cls.id }, data: { status: 'cancelled' } });
+        // Compare-and-swap against the same statuses the read above filtered
+        // on. The read is not under the row lock, so a class can reach
+        // `completed` between it and here — a sweep's `completeClass` doing
+        // exactly that is the window `email-fallback.ts` describes. Cancelling
+        // it anyway would strip a class that already has Payment rows and
+        // students who have been asked to pay.
+        //
+        // Skipping is the whole handling: a completed class is one erasure
+        // deliberately leaves standing (see this function's docblock), so
+        // landing on one late is not an error, it is the same outcome by a
+        // different route.
+        const cancelled = await tx.class.updateMany({
+          where: { id: cls.id, status: { in: ['draft', 'open', 'in_progress'] } },
+          data: { status: 'cancelled' },
+        });
+        if (cancelled.count === 0) continue;
+
         await tx.waitlistEntry.updateMany({
           where: { classId: cls.id, status: 'waiting' },
           data: { status: 'removed' },
