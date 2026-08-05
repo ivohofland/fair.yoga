@@ -55,9 +55,16 @@ test.describe('Teacher journey', () => {
     teacherId = teacher.id;
     teacherToken = await seedSession(prisma, await accountIdOfTeacher(prisma, teacherId));
 
-    // This student signs in to book, so they are claimed — and they share
-    // their full name with this teacher so the roster reads "Journey
-    // Student" rather than the privacy-default initial.
+    // This student signs in to book, so they are claimed, and their privacy
+    // row shares NOTHING — so every teacher-facing surface in this spec must
+    // read "Journey s.", never "Journey Student".
+    //
+    // It was `shareFullName: true` until the PR review of #167, which made
+    // this whole spec blind to the gate it looks like it exercises: a full
+    // name is what `teacherVisibleName` returns whether the gate runs or not,
+    // so substituting a raw `${firstName} ${lastName}` at any of these call
+    // sites left the spec green. A truncated name is not a fixed point of that
+    // composition, so it can only appear if the projection ran.
     const bookingStudent = await prisma.student.create({
       data: {
         firstName: 'Journey',
@@ -70,7 +77,7 @@ test.describe('Teacher journey', () => {
     });
     bookingStudentId = bookingStudent.id;
     await prisma.studentPrivacy.create({
-      data: { studentId: bookingStudentId, teacherId, shareFullName: true },
+      data: { studentId: bookingStudentId, teacherId, shareFullName: false },
     });
     bookingStudentToken = await seedSession(prisma, await accountIdOfStudent(prisma, bookingStudentId));
 
@@ -227,7 +234,7 @@ test.describe('Teacher journey', () => {
     await signInTeacher(context);
     await page.goto(`/class/${classId}`);
     await expect(page.getByRole('heading', { name: 'Registered students' })).toBeVisible();
-    await expect(page.getByText('Journey Student')).toBeVisible();
+    await expect(page.getByText('Journey s.')).toBeVisible();
   });
 
   test('the booking lands in the inbox and can be marked read', async ({ page, context }) => {
@@ -281,9 +288,9 @@ test.describe('Teacher journey', () => {
     await expect(page.getByText('Walkin Guest')).toBeVisible({ timeout: 10_000 });
 
     // Tick off the booked student as present.
-    await page.getByRole('button', { name: 'Mark Journey Student as present' }).click();
+    await page.getByRole('button', { name: 'Mark Journey s. as present' }).click();
     await expect(
-      page.getByRole('button', { name: 'Mark Journey Student as no-show' }),
+      page.getByRole('button', { name: 'Mark Journey s. as no-show' }),
     ).toBeVisible();
   });
 
@@ -299,16 +306,16 @@ test.describe('Teacher journey', () => {
     // Both charged registrations start unpaid; payment state is text, not a badge.
     await expect(page.getByText('○ Unpaid')).toHaveCount(2);
     await page
-      .getByRole('button', { name: 'Mark Journey Student payment as paid' })
+      .getByRole('button', { name: 'Mark Journey s. payment as paid' })
       .click();
     await expect(page.getByText('✓ Paid')).toBeVisible();
     await expect(page.getByText('○ Unpaid')).toHaveCount(1);
 
     // A mis-tap is recoverable: transient Undo restores the record.
-    await page.getByRole('button', { name: 'Undo marking Journey Student as paid' }).click();
+    await page.getByRole('button', { name: 'Undo marking Journey s. as paid' }).click();
     await expect(page.getByText('○ Unpaid')).toHaveCount(2, { timeout: 10_000 });
     await page
-      .getByRole('button', { name: 'Mark Journey Student payment as paid' })
+      .getByRole('button', { name: 'Mark Journey s. payment as paid' })
       .click();
     await expect(page.getByText('✓ Paid')).toBeVisible();
   });
@@ -320,10 +327,10 @@ test.describe('Teacher journey', () => {
     await signInTeacher(context);
     await page.goto(`/class/${classId}`);
 
-    // The walk-in's payment is the unpaid row; the paid row (Journey Student)
+    // The walk-in's payment is the unpaid row; the paid row (Journey s.)
     // offers no reminder — you can't dun someone you've marked as paid.
     await expect(
-      page.getByRole('button', { name: /Send reminder to Journey Student/ }),
+      page.getByRole('button', { name: /Send reminder to Journey s\./ }),
     ).toHaveCount(0);
     await page.getByRole('button', { name: 'Send reminder to Walkin Guest' }).click();
     await expect(page.getByText(/Reminded just now/)).toBeVisible();
