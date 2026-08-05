@@ -240,7 +240,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       return reg;
     });
 
-    return respondOk(registration, 201);
+    return respondOk({ id: registration.id, status: registration.status }, 201);
   } catch (err) {
     if (err instanceof ClassNotFoundError) {
       return respondError('Class not found', 404);

@@ -42,6 +42,54 @@ async function makeClass(maxStudents: number): Promise<string> {
   return cls.id;
 }
 
+/**
+ * A class starting a few hours from now — inside the default 24h cancel
+ * deadline (`Class.cancelDeadline` defaults to `HOURS_24`) — so `DELETE`
+ * takes the late-cancel branch instead of the before-deadline branch every
+ * `makeClass` fixture takes (those sit in 2099). `date`/`startTime` are
+ * derived from the *wall-clock* date and time in the owner teacher's
+ * timezone (Europe/Amsterdam — `Teacher.defaultTimezone`'s default, unset
+ * here), because `classStartInstant` interprets them as local wall time in
+ * that zone: building them from UTC getters directly would skew the
+ * resulting instant by the zone's UTC offset.
+ */
+async function makeLateCancelClass(maxStudents: number): Promise<string> {
+  const target = new Date(Date.now() + 3 * 60 * 60 * 1000);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Amsterdam',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  })
+    .formatToParts(target)
+    .reduce<Record<string, string>>((acc, { type, value }) => {
+      if (type !== 'literal') acc[type] = value;
+      return acc;
+    }, {});
+
+  const cls = await prisma.class.create({
+    data: {
+      teacherId: ownerId,
+      teacherRoomId,
+      classType: 'Reg API Late Cancel',
+      date: new Date(`${parts.year}-${parts.month}-${parts.day}`),
+      startTime: `${parts.hour}:${parts.minute}`,
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents,
+      status: 'open',
+    },
+  });
+  classIds.push(cls.id);
+  return cls.id;
+}
+
 // For the cross-teacher ownership test: a class the *other* teacher owns, so
 // an owner-roster student and an owner-teacher session can still collide with
 // it via studentId.
@@ -293,8 +341,16 @@ describe('POST /api/registrations', () => {
 
     const walkIn = await post(ownerToken, { classId, studentId: studentIds[1] });
     expect(walkIn.status).toBe(201);
-    const json = (await walkIn.json()) as { data: { isWalkIn: boolean } };
-    expect(json.data.isWalkIn).toBe(true);
+    const { data } = (await walkIn.json()) as { data: { id: string } };
+
+    // POST's response is narrowed to { id, status } (#167) — isWalkIn is
+    // still on the row, just no longer echoed back here. Confirm it via the
+    // teacher-facing read instead, which still carries it.
+    const read = await fetch(`${BASE_URL}/api/registrations/${data.id}`, {
+      headers: cookie(ownerToken),
+    });
+    const readJson = (await read.json()) as { data: { isWalkIn: boolean } };
+    expect(readJson.data.isWalkIn).toBe(true);
 
     // Students still cannot register into a running class.
     const student = await post(studentTokens[0]!, { classId });
@@ -659,5 +715,60 @@ describe('teacher-facing registration reads honour StudentPrivacy', () => {
       const body = (await res.json()) as { data: { tierAtBooking: number } };
       expect(body.data.tierAtBooking).toBeDefined();
     });
+  });
+});
+
+describe('registration writes return no stored income tier', () => {
+  it('POST returns the id and status, and nothing else', async () => {
+    const classId = await makeClass(5);
+    const res = await post(studentTokens[0]!, { classId });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { data: Record<string, unknown> };
+    expect(Object.keys(body.data).sort()).toEqual(['id', 'status']);
+  });
+
+  it('PUT returns the id and status, and nothing else', async () => {
+    const classId = await makeClass(5);
+    const created = await post(studentTokens[0]!, { classId });
+    const { data } = (await created.json()) as { data: { id: string } };
+
+    const res = await fetch(`${BASE_URL}/api/registrations/${data.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
+      body: JSON.stringify({ status: 'attended' }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: Record<string, unknown> };
+    expect(Object.keys(body.data).sort()).toEqual(['id', 'status']);
+  });
+
+  it('DELETE before the deadline returns the id and status, and nothing else', async () => {
+    const classId = await makeClass(5);
+    const created = await post(studentTokens[0]!, { classId });
+    const { data } = (await created.json()) as { data: { id: string } };
+
+    const res = await fetch(`${BASE_URL}/api/registrations/${data.id}`, {
+      method: 'DELETE',
+      headers: cookie(studentTokens[0]!),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: Record<string, unknown> };
+    expect(Object.keys(body.data).sort()).toEqual(['id', 'status']);
+    expect(body.data.status).toBe('cancelled');
+  });
+
+  it('DELETE past the deadline (late cancel) returns the id and status, and nothing else', async () => {
+    const classId = await makeLateCancelClass(5);
+    const created = await post(studentTokens[0]!, { classId });
+    const { data } = (await created.json()) as { data: { id: string } };
+
+    const res = await fetch(`${BASE_URL}/api/registrations/${data.id}`, {
+      method: 'DELETE',
+      headers: cookie(studentTokens[0]!),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: Record<string, unknown> };
+    expect(Object.keys(body.data).sort()).toEqual(['id', 'status']);
+    expect(body.data.status).toBe('late_cancel');
   });
 });

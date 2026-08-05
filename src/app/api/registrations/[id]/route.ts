@@ -99,7 +99,7 @@ export const PUT = withErrorHandler(async (
     data: { status: parsed.data.status },
   });
 
-  return respondOk(updated);
+  return respondOk({ id: updated.id, status: updated.status });
 });
 
 export const DELETE = withErrorHandler(async (
@@ -163,7 +163,7 @@ export const DELETE = withErrorHandler(async (
       });
       // The seat is free even though the canceller is still charged.
       await promoteAfterCancel(registration.classId);
-      return respondOk(updated);
+      return respondOk({ id: updated.id, status: updated.status });
     }
   }
 
@@ -177,7 +177,7 @@ export const DELETE = withErrorHandler(async (
   // depending on how close to the deadline we are.
   await promoteAfterCancel(registration.classId);
 
-  return respondOk(updated);
+  return respondOk({ id: updated.id, status: updated.status });
 });
 
 /**
