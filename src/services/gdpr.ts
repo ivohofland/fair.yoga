@@ -310,8 +310,8 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // `withdrawWaitingEntriesForTeacher` docblock: that argument turns on
     // only ever moving an entry OUT of `waiting`, and this renumbers rows
     // belonging to OTHER students, racing the six other writers of
-    // `WaitlistEntry.position` on the same class (`addToWaitlist`,
-    // `removeFromWaitlist`, `promoteNext`, `claimSpot`,
+    // `WaitlistEntry.position` on the same class, all of which also lock it
+    // (`addToWaitlist`, `removeFromWaitlist`, `promoteNext`, `claimSpot`,
     // `withdrawWaitingEntriesForTeacher`, `POST /api/registrations`).
     //
     // Sorted, not "in the order the read above returned them" — that read
@@ -450,34 +450,67 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // flat constant): 5_000ms matches Prisma's own default transaction
     // timeout, which is the budget every read and write above already ran
     // inside before this task — reads and writes on `Registration`,
-    // `StudentPrivacy`, `TeacherStudent`, `WaitlistEntry`, `Invitation`,
-    // `Notification`, `Session`, `PasskeyCredential`, `Account` and
-    // `MagicLinkToken`, all over indexed columns — so it's proven headroom
-    // for that part, not a guess. It is NOT a claim that none of those
-    // writes are lock-contended: several of them can and do wait on other
-    // transactions (that contention is exactly what the class-lock ordering
-    // above resolves) — the claim is narrower, that this specific set of
-    // statements already fit inside 5s before this task added anything.
-    // `waitingCount * 2_000` covers the lock loop's own worst case:
-    // `lockClassRow`'s `SET LOCAL lock_timeout` bounds each class's `FOR
-    // UPDATE` wait to 2s, and N contended classes can burn that in sequence.
+    // `Student`, `StudentPrivacy`, `Teacher`, `TeacherStudent`,
+    // `WaitlistEntry`, `Invitation`, `Notification`, `Session`,
+    // `PasskeyCredential`, `Account` and `MagicLinkToken`. Not all of that is
+    // indexed on the column it filters by, and this comment used to claim
+    // otherwise: `waitlistEntry.findMany`/`deleteMany` and
+    // `teacherStudent.deleteMany` key on `studentId` alone (`WaitlistEntry`
+    // only has `(classId, studentId)` and `(classId, position)`;
+    // `TeacherStudent` only has `(teacherId, studentId)`),
+    // `magicLinkToken.deleteMany` keys on `email` (only `tokenHash` and the
+    // PK are indexed), and the teacher-notification `updateMany` further
+    // down filters on `body: { startsWith }`. Those four run as sequential
+    // scans, not index scans — verified against
+    // `prisma/migrations/*/migration.sql` directly, not assumed. The 5_000ms
+    // figure is proven headroom empirically (this whole set, unindexed
+    // statements included, already ran inside it before this task), not a
+    // claim that it is indexed, and it is NOT a claim that none of these
+    // writes are lock-contended either: several of them can and do wait on
+    // other transactions (that contention is exactly what the class-lock
+    // ordering above resolves) — the claim is narrower, that this specific
+    // set of statements already fit inside 5s before this task added
+    // anything. `waitingCount * 2_000` covers the lock loop's own worst
+    // case: `lockClassRow`'s `SET LOCAL lock_timeout` bounds each class's
+    // `FOR UPDATE` wait to 2s, and N contended classes can burn that in
+    // sequence.
     //
-    // That term does not cover everything the 2s bound applies to, though.
-    // `SET LOCAL lock_timeout` governs every statement left in this
-    // transaction, not just each class's `FOR UPDATE` — including
+    // That term does not cover everything the 2s bound applies to, though —
+    // in two different directions. First, once the lock loop above has run
+    // at all (any `waitingCount` > 0), `SET LOCAL lock_timeout` is already
+    // set for the rest of THIS transaction, and it governs every statement
+    // left in it, not just `FOR UPDATE`s — so `registration.updateMany` and
+    // every other write between here and the reorder loop also now waits at
+    // most 2s on any row they contend for, whether or not that row has
+    // anything to do with a class this transaction locked. Round 2 review
+    // probed exactly this with a lock on the erased student's own
+    // `Registration` row, unrelated to any waitlist: with the student
+    // waiting in at least one class, `registration.updateMany` failed at
+    // ~2086ms with Postgres `55P03 canceling statement due to lock
+    // timeout`; with the student waiting in none (the lock loop never ran,
+    // so `SET LOCAL` was never set), the same contention just waited out the
+    // full ~3s hold and succeeded. That asymmetry is intended, not an
+    // accident of the hoist: bounded beats unbounded for a time-bound
+    // erasure regardless of which row is contended, the abort is atomic and
+    // retryable (`api/account/route.ts` tells the caller so — round 1
+    // review, M6), and this per-statement bound is what makes the
+    // `Math.min` ceiling below enforceable rather than nominal — Prisma's
+    // own interactive-transaction timeout cannot
+    // roll back a statement already blocked inside Postgres, only refuse to
+    // start a new one, so without `SET LOCAL` already active, "20s" would be
+    // a wish, not a guarantee. Second, in the other direction,
     // `reorderWaitingEntries`'s (`waitlist.ts`) own `findMany` plus up to M
-    // individual `UPDATE`s per class, run after the lock loop above. Every
-    // one of those M statements inherits the same 2s bound, adding real,
-    // uncounted time on top of `waitingCount * 2_000` regardless of how
-    // often any single one of them actually waits (round 1 review, I2 —
-    // also names two writers elsewhere that flip `WaitlistEntry.status` from
-    // `waiting` to `removed` without going through `lockClassRow`,
-    // `transition/route.ts`'s cancel branch and `deleteTeacherAccount`'s CAS
-    // loop below; both still take a conflicting lock on the Class row first,
-    // via their own `class.updateMany`, which is what the ordering fix above
-    // protects against — but that leaves the per-row cost of this loop, not
-    // the wait before it starts, as the part this formula still doesn't
-    // price in).
+    // individual `UPDATE`s per class, run after the lock loop above, also
+    // inherit the same 2s bound — adding real, uncounted time on top of
+    // `waitingCount * 2_000` regardless of how often any single one of them
+    // actually waits (round 1 review, I2 — also names two writers elsewhere
+    // that flip `WaitlistEntry.status` from `waiting` to `removed` without
+    // going through `lockClassRow`, `transition/route.ts`'s cancel branch
+    // and `deleteTeacherAccount`'s CAS loop below; both still take a
+    // conflicting lock on the Class row first, via their own
+    // `class.updateMany`, which is what the ordering fix above protects
+    // against — but that leaves the per-row cost of this loop, not the wait
+    // before it starts, as the part this formula still doesn't price in).
     //
     // The `Math.min` below is the backstop for both gaps at once — the
     // uncounted per-row time just described, and `waitingCount` itself
