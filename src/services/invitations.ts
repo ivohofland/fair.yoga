@@ -13,7 +13,11 @@ import { withdrawWaitingEntriesForTeacher } from './waitlist';
 import { createNotification } from './notifications';
 import { sendInvitationEmail } from '@/lib/email';
 
-export type InviteRefusal = 'ALREADY_INVITED' | 'ALREADY_LINKED' | 'DECLINED';
+export type InviteRefusal =
+  | 'ALREADY_INVITED'
+  | 'ALREADY_LINKED'
+  | 'DECLINED'
+  | 'CONTACT_CHANGED';
 
 export interface InviteResult {
   id: string;
@@ -52,12 +56,20 @@ export interface InviteResult {
  * one: the first is a person already on the roster (nothing to recover), the
  * second is a tombstone the invitee wrote, and re-inviting past it is exactly
  * what it exists to prevent.
+ *
+ * `CONTACT_CHANGED` exists so that the two races below are not reported as
+ * `DECLINED` (M3, #166 re-review). Both are transient and neither is the
+ * invitee's doing — saying "this person declined your invitation" about
+ * someone who did not is a false accusation the teacher has no way to check.
+ * It names the recovery for the same reason `ALREADY_INVITED` does: a retry
+ * genuinely works, and a refusal that does not say so reads as a wall.
  */
 export const REFUSAL_MESSAGES: Record<InviteRefusal, string> = {
   ALREADY_INVITED:
     'You have already invited this person — remove the contact to invite them again.',
   ALREADY_LINKED: 'This person is already one of your students.',
   DECLINED: 'This person declined your invitation.',
+  CONTACT_CHANGED: 'This contact changed while you were sending — reload and try again.',
 };
 
 /**
@@ -194,10 +206,16 @@ export async function inviteContact(
   let invitationId: string;
   if (existing) {
     const revived = await revivePendingInvitation(db, existing.id, { firstName, lastName });
-    // The revive lost a race with `unlinkTeacher` — see that helper. A
-    // tombstone written a moment ago is the honest answer, and it is the
-    // same answer a retry would give.
-    if (revived === null) return { ok: false, reason: 'DECLINED' };
+    // The revive matched no row, so the state this function read at the top
+    // is gone. Two things can have done that, and neither is the invitee
+    // refusing: `unlinkTeacher` wrote a `declined` tombstone under us, or
+    // `DELETE /api/invitations/[id]` removed the row from the teacher's own
+    // second tab (it refuses only `declined` rows, so an `accepted` one goes
+    // freely). Both are transient — a retry takes the create path or meets a
+    // real tombstone and says so — so the honest answer is "re-read", not an
+    // accusation. Reporting `DECLINED` here told the teacher that a person
+    // who had not declined had (M3, #166 re-review).
+    if (revived === null) return { ok: false, reason: 'CONTACT_CHANGED' };
     invitationId = revived;
   } else {
     const created = await db.invitation.create({
@@ -242,13 +260,22 @@ export async function inviteContact(
  * `updateMany` scoped to `status: 'accepted'`, rather than `update` by id,
  * for one race: `unlinkTeacher` writes `declined` + a `TeacherBlock` in a
  * single transaction, and it can commit between this function's caller
- * reading the row and this write. An unscoped update would flip that fresh
+ * reading the row and this write — a window two awaited queries wide, since
+ * `hasRosterLink` runs inside it. An unscoped update would flip that fresh
  * tombstone back to `pending` — and `PUT`/`DELETE /api/invitations/[id]`
  * both refuse to touch a declined row precisely because it is meant to be
  * permanent, so the flip would hand the teacher back the delete the
- * tombstone exists to deny. `accepted` is the only status this can be
- * reached with, and `unlinkTeacher` is the only writer that can move it, so
- * a zero count means exactly one thing.
+ * tombstone exists to deny. `invitations.revive.test.ts` drives that
+ * interleaving deterministically and dies when the scope is removed.
+ *
+ * A zero count does NOT mean exactly one thing, and an earlier version of
+ * this comment claiming it did is what let the caller answer `DECLINED` for
+ * it (M3, #166 re-review). `unlinkTeacher` is not the only writer that can
+ * move this row: `DELETE /api/invitations/[id]` refuses only `declined`
+ * rows, so the teacher's own second tab can delete an `accepted` one
+ * outright, and then this update matches nothing with no tombstone anywhere
+ * and nobody having declined. Hence `CONTACT_CHANGED` at the call site — the
+ * one honest thing that covers both.
  */
 async function revivePendingInvitation(
   db: PrismaClient,
