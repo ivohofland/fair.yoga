@@ -1285,6 +1285,41 @@ describe('POST /api/students notifies the invitee (#166 task 8)', () => {
     }
   });
 
+  it('finds a Student row whose OWN address carries uppercase (whole-branch I2)', async () => {
+    // The inverse of the case test below, and the direction that was
+    // broken. That one stores the Student lowercase and passes mixed case
+    // in, which `.toLowerCase()` alone already handled. Here the STORED
+    // address is mixed case — the shape `auth/student-signup` and
+    // `account/student-profile` actually write, since neither normalises —
+    // and the address handed in is the canonical lowercase one every caller
+    // supplies. A case-sensitive lookup finds nothing, skips the
+    // notification, and falls through to the stranger email: an existing
+    // account holder told to go and sign up, with their own
+    // `emailNotifications` preference never consulted.
+    const storedMixedCase = `Notify-Stored-Mixed-${suffix}@Test.Local`;
+    let student: { id: string } | undefined;
+    try {
+      student = await prisma.student.create({
+        data: { firstName: 'Notify', lastName: 'StoredMixed', email: storedMixedCase },
+        select: { id: true },
+      });
+
+      await notifyInvitee(prisma, {
+        teacherId, email: storedMixedCase.toLowerCase(), teacherName: 'Some Teacher',
+      });
+
+      const notifications = await prisma.notification.findMany({
+        where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
+      });
+      expect(notifications).toHaveLength(1);
+    } finally {
+      if (student) {
+        await prisma.notification.deleteMany({ where: { recipientId: student.id } });
+        await prisma.student.delete({ where: { id: student.id } });
+      }
+    }
+  });
+
   it('lowercases the address before matching a Student row, so a mixed-case invitee is still found', async () => {
     // `Student.email` is never normalised (unlike `Invitation.email` —
     // notifyInvitee's own docblock, services/invitations.ts), so this calls

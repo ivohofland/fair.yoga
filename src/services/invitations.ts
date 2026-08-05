@@ -106,11 +106,23 @@ export async function inviteContact(
   // being invited. Their being on this teacher's roster is the teacher's
   // own data, so refusing here discloses nothing new.
   //
-  // The lookup uses the normalised address, so it misses a Student row stored
-  // with different case. That fails toward creating an invitation, never
-  // toward a disclosure, and it is the same systemic case-sensitivity noted
-  // above rather than anything this branch introduces.
-  const student = await db.student.findUnique({ where: { email }, select: { id: true } });
+  // Matched case-insensitively, because the two sides are normalised
+  // differently: `email` above is always lowercase, `Student.email` is
+  // stored exactly as typed (`auth/student-signup`, `account/student-profile`).
+  // A case-sensitive `findUnique` here misses any student whose stored
+  // address carries uppercase, and the miss is silent — the refusal below
+  // never fires and the teacher gets a pending invitation for someone
+  // already on their roster.
+  //
+  // `findFirst`, not `findUnique`: an insensitive match cannot use the
+  // unique index, so this is a scan of `Student` on a path that runs at most
+  // 50 times an hour per teacher (`checkStudentWriteLimit`). Normalising the
+  // column on write is the real fix and is filed separately; it is not
+  // something to half-do from in here.
+  const student = await db.student.findFirst({
+    where: { email: { equals: email, mode: 'insensitive' } },
+    select: { id: true },
+  });
   if (student) {
     const link = await db.teacherStudent.findUnique({
       where: { teacherId_studentId: { teacherId, studentId: student.id } },
@@ -200,8 +212,13 @@ export async function notifyInvitee(
   });
   if (blocked) return;
 
-  const student = await db.student.findUnique({
-    where: { email },
+  // Case-insensitive for the same reason as `inviteContact`'s own Student
+  // lookup, but with a worse consequence: a miss here does not merely skip
+  // the in-app notification, it falls through to the plain-email branch
+  // below — which bypasses `Student.emailNotifications` entirely and tells
+  // an existing account holder to go and sign up.
+  const student = await db.student.findFirst({
+    where: { email: { equals: email, mode: 'insensitive' } },
     select: { id: true },
   });
 

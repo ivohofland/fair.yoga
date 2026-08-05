@@ -282,6 +282,54 @@ describe('POST /api/students', () => {
     ).toBeNull();
   });
 
+  // Whole-branch review I2. The sibling above uses a seeded student whose
+  // address `uniqueSuffix()` made lowercase on both sides, so the comparison
+  // there could not tell a case-sensitive lookup from an insensitive one.
+  // This one stores the address WITH uppercase — the shape
+  // `auth/student-signup` and `account/student-profile` actually write,
+  // neither of which normalises — and invites the lowercase form the route
+  // always passes down. Under a case-sensitive lookup the refusal above
+  // never fires: the teacher gets a pending invitation for someone already
+  // on their roster, and the invitee gets told to go and sign up.
+  it('returns 409 ALREADY_LINKED even when the stored address carries uppercase', async () => {
+    const storedMixedCase = `CRM-Linked-Mixed-${suffix}@Test.Local`;
+    let student: { id: string } | undefined;
+    try {
+      student = await prisma.student.create({
+        data: { firstName: 'Linked', lastName: 'MixedCase', email: storedMixedCase },
+        select: { id: true },
+      });
+      await prisma.teacherStudent.create({ data: { teacherId, studentId: student.id } });
+
+      const res = await fetch(`${BASE_URL}/api/students`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+        body: JSON.stringify({
+          firstName: 'Already', lastName: 'Mine', email: storedMixedCase.toLowerCase(),
+        }),
+      });
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).error.code).toBe('ALREADY_LINKED');
+      expect(
+        await prisma.invitation.findUnique({
+          where: { teacherId_email: { teacherId, email: storedMixedCase.toLowerCase() } },
+        }),
+      ).toBeNull();
+    } finally {
+      // `deleteMany` throughout: a regression turns the 409 into a 201, and
+      // the invitation it wrote has to go too or the next run's fixture for
+      // this address collides on (teacherId, email).
+      await prisma.invitation.deleteMany({
+        where: { teacherId, email: storedMixedCase.toLowerCase() },
+      });
+      if (student) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId: student.id } });
+        await prisma.student.deleteMany({ where: { id: student.id } });
+      }
+    }
+  });
+
   // #166 made `createInvitationSchema` `.strict()`, and that is the one
   // user-visible behaviour change on this route besides the status codes.
   // Drop the `.strict()` and this is the only test that fails: `incomeTier`
