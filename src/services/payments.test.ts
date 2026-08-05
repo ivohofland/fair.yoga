@@ -243,6 +243,17 @@ describe('Payment Service (DB)', () => {
     expect(notification).not.toBeNull();
   });
 
+  /**
+   * `teacherId` does two jobs in both queries below — it scopes the `where` and
+   * it selects which `StudentPrivacy` row the projection reads (see
+   * `getPaymentsForClass`'s docblock). Only the second was tested: every
+   * assertion passed the owning teacher, so deleting either `where` scope left
+   * this file green. The foreign-teacher reads are what make the scopes
+   * falsifiable — and `getPaymentsForClass` matters most, because it takes a
+   * `classId` a caller could have got from anywhere.
+   */
+  const FOREIGN_TEACHER = '00000000-0000-4000-8000-000000000000';
+
   it('getOutstandingPayments returns pending/overdue payments for teacher', async () => {
     // Reset to pending so it shows up as outstanding
     await prisma.payment.update({
@@ -258,6 +269,10 @@ describe('Payment Service (DB)', () => {
     expect(ourPayment).toBeDefined();
   });
 
+  it('getOutstandingPayments returns nothing for a teacher who owns none', async () => {
+    expect(await getOutstandingPayments(prisma, FOREIGN_TEACHER)).toEqual([]);
+  });
+
   it('getPaymentsForClass returns all payments for a class', async () => {
     const payments = await getPaymentsForClass(prisma, classId, teacherId);
 
@@ -265,5 +280,9 @@ describe('Payment Service (DB)', () => {
 
     const ourPayment = payments.find((p) => p.id === paymentId);
     expect(ourPayment).toBeDefined();
+  });
+
+  it('getPaymentsForClass returns nothing for a teacher who does not own the class', async () => {
+    expect(await getPaymentsForClass(prisma, classId, FOREIGN_TEACHER)).toEqual([]);
   });
 });
