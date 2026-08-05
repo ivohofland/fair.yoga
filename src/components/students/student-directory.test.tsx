@@ -57,7 +57,24 @@ describe('StudentDirectory', () => {
     await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
   });
 
-  it('renders an email row only for the student who shared it', async () => {
+  /**
+   * Two students who shared an email, one who did not.
+   *
+   * The assertion is structural, and deliberately so. Counting `@`-bearing
+   * text — what this test did before the PR review of #167, under a comment
+   * claiming it caught per-row gate removal — cannot catch that removal at
+   * any fixture size: deleting the `student.email &&` gate renders
+   * `<span>{null}</span>`, an element with no text node, so every text query
+   * returns exactly what it did before. Verified by deleting the gate and
+   * watching `getAllByText(/@/)).toHaveLength(2)` stay green against this same
+   * three-row fixture.
+   *
+   * What the gate actually decides is whether the name column has one child or
+   * two, so that is what this reads. It fails on gate removal (an empty span
+   * joins the withholder's column), on the email span disappearing entirely,
+   * and on the row recomposing the name it was handed.
+   */
+  it('renders an email row only for the students who shared one', async () => {
     stubStudents([
       {
         id: 'student-1',
@@ -74,7 +91,7 @@ describe('StudentDirectory', () => {
       {
         id: 'student-2',
         displayName: 'Bob c.',
-        email: null,
+        email: 'bob@example.com',
         phone: null,
         birthday: null,
         address: null,
@@ -83,19 +100,31 @@ describe('StudentDirectory', () => {
         classCount: 1,
         overduePayments: 0,
       },
+      {
+        id: 'student-3',
+        displayName: 'Carla d.',
+        email: null,
+        phone: null,
+        birthday: null,
+        address: null,
+        claimedAt: '2026-01-01T00:00:00.000Z',
+        lastClassDate: null,
+        classCount: 2,
+        overduePayments: 0,
+      },
     ]);
     render(<StudentDirectory />);
     await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
 
-    // Anna shared her email — it renders.
-    expect(screen.getByText('anna@example.com')).toBeInTheDocument();
-    // Bob withheld his — his row renders, but no address does. Checking the
-    // total count of `@`-bearing text (rather than just `queryByText` with a
-    // single-row fixture) is what makes this fail if the component stopped
-    // gating per-row instead of merely deleting the email span outright: a
-    // one-row fixture can't tell "never renders an email" apart from
-    // "correctly withheld this one".
-    expect(screen.getByText('Bob c.')).toBeInTheDocument();
-    expect(screen.getAllByText(/@/)).toHaveLength(1);
+    // The name column is the row link's first child: a name span, plus an
+    // email span only for the students who shared one.
+    const nameColumn = (row: HTMLElement) =>
+      Array.from(row.firstElementChild!.children).map((el) => el.textContent);
+
+    expect(screen.getAllByRole('link').map(nameColumn)).toEqual([
+      ['Anna Bakker', 'anna@example.com'],
+      ['Bob c.', 'bob@example.com'],
+      ['Carla d.'],
+    ]);
   });
 });
