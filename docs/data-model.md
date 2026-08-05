@@ -92,13 +92,17 @@ Created on first booking with a teacher. Default = maximum privacy. Student expl
 | last_name | string, default '' | |
 | status | enum: pending, accepted, declined | |
 | is_archived | boolean, default false | Teacher's own filing action; never hides the row from the invitee |
-| responded_at | datetime, nullable | Set when status leaves pending |
+| responded_at | datetime, nullable | Set when status leaves pending, cleared when an accepted row is returned to pending (see re-inviting, below) |
 | **Timestamps** | | |
 | created_at | datetime | |
 | **Constraints** | | |
 | unique | (teacher_id, email) | One contact per address per teacher |
+| check | `email = lower(email)` | The lowercasing is relied on by every reader that matches an account or student address against this column |
+| check | `(responded_at IS NULL) = (status = 'pending')` | A pending invitation has no response time; an answered one has one |
 
 A teacher may not link themselves to a student unilaterally. `POST /api/students` creates an `Invitation`, never a `Student` row — the `TeacherStudent` link (above) forms only once the invitee accepts it, or books one of the teacher's classes. A declined row is not deleted: it is the tombstone that stops the same address being re-invited, so `PUT`/`DELETE` on a declined invitation both refuse. This is a separate table from `TeacherStudent` on purpose — `POST /api/students` must behave identically whether or not the address is already on the platform, which it cannot if it writes to a table with a unique `email` column.
+
+`accepted` is not a second tombstone. Whether the teacher may invite that address again turns on whether a `TeacherStudent` link actually exists, never on the status alone — erasing a student deletes their links and leaves this row `accepted`, and reading the status there would tell the teacher "already one of your students" forever about someone off their roster, with `unique (teacher_id, email)` blocking any second row. `inviteContact` therefore returns such a row to `pending` (clearing `responded_at`) rather than creating one, and a `TeacherBlock` on the address still withholds delivery exactly as it does for a first invitation.
 
 ### TeacherBlock (a student's standing refusal of one teacher, #166)
 
@@ -111,6 +115,7 @@ A teacher may not link themselves to a student unilaterally. `POST /api/students
 | created_at | datetime | |
 | **Constraints** | | |
 | unique | (teacher_id, email) | |
+| check | `email = lower(email)` | Same reasoning as `Invitation.email` — the block is looked up by an address someone else typed |
 
 Written only when a student unlinks a teacher they were already connected to (`unlinkTeacher`) — a plain decline does not write one; the declined `Invitation` row already blocks a re-invite on its own. Held in its own table rather than as a flag on `Invitation` so a blocked address behaves identically to a fresh one everywhere an `Invitation` is read, edited, archived or re-created — the only place the distinction is allowed to surface is whether an invite email is actually sent.
 
