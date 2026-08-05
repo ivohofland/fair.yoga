@@ -1301,9 +1301,10 @@ describe('POST /api/students notifies the invitee (#166 task 8)', () => {
   });
 
   it('finds a Student row whose OWN address carries uppercase (whole-branch I2)', async () => {
-    // The inverse of the case test below, and the direction that was
-    // broken. That one stores the Student lowercase and passes mixed case
-    // in, which `.toLowerCase()` alone already handled. Here the STORED
+    // The inverse of `notifyInvitee`'s other case test in this describe,
+    // and the direction that was broken. That one stores the Student
+    // lowercase and passes mixed case in, which `.toLowerCase()` alone
+    // already handled. Here the STORED
     // address is mixed case — the shape `auth/student-signup` and
     // `account/student-profile` actually write, since neither normalises —
     // and the address handed in is the canonical lowercase one every caller
@@ -1796,10 +1797,11 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
   });
 
   it("promoting off the waitlist resolves the student's PENDING invitation", async () => {
-    // `pending`, not `declined` — see the declined case below, which is the
-    // one a promotion must leave alone (whole-branch review C2). A pending
-    // invitation is not a refusal, so a promotion resolving it costs the
-    // student nothing they did not already ask for by queueing.
+    // `pending`, not `declined` — a declined invitation is the one a
+    // promotion must leave alone (whole-branch review C2, tested in its own
+    // case in this describe). A pending invitation is not a refusal, so a
+    // promotion resolving it costs the student nothing they did not
+    // already ask for by queueing.
     try {
       await prisma.invitation.update({
         where: { teacherId_email: { teacherId: resolveTeacherId, email: promoteEmail } },
@@ -2265,9 +2267,10 @@ describe('unlinking withdraws waiting entries for the teacher (#166 F3)', () => 
 });
 
 describe('the unlink withdrawal takes the class lock (#166 whole-branch I4)', () => {
-  // Fixtures of its own rather than a second student inside the F3 describe
-  // above: this one holds a lock for over a second, and sharing a class with
-  // a test that promotes off it would couple the two through the queue.
+  // Fixtures of its own rather than a second student inside the F3
+  // withdrawal describe: this one holds a lock for over a second, and
+  // sharing a class with a test that promotes off it would couple them
+  // through the queue.
   let lockTeacherId: string;
   let lockTeacherAccountId: string;
   let lockRoomId: string;
@@ -2278,8 +2281,8 @@ describe('the unlink withdrawal takes the class lock (#166 whole-branch I4)', ()
   let lockStudentId: string;
   let lockStudentAccountId: string;
 
-  // Long enough that the probe below lands comfortably inside it; short
-  // enough not to approach Prisma's own five-second interactive-transaction
+  // Long enough that `PROBE_MS` lands comfortably inside it; short enough
+  // not to approach Prisma's own five-second interactive-transaction
   // timeout.
   const LOCK_HOLD_MS = 1500;
   // How long the unlink is given to prove it is NOT proceeding. Well clear
@@ -2370,8 +2373,8 @@ describe('the unlink withdrawal takes the class lock (#166 whole-branch I4)', ()
   // by luck.
   //
   // Called through the service rather than DELETE /api/teacher-links, since
-  // the point is the timing of one call, not the route's own behaviour
-  // (covered above).
+  // the point is the timing of one call, not the route's own behaviour —
+  // which this file's own unlink describe covers.
   it('waits for a class row another transaction holds, instead of writing through it', async () => {
     let holderReleased = false;
     const holder = prisma.$transaction(

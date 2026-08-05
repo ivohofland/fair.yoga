@@ -282,15 +282,15 @@ describe('POST /api/students', () => {
     ).toBeNull();
   });
 
-  // Whole-branch review I2. The sibling above uses a seeded student whose
-  // address `uniqueSuffix()` made lowercase on both sides, so the comparison
-  // there could not tell a case-sensitive lookup from an insensitive one.
-  // This one stores the address WITH uppercase — the shape
-  // `auth/student-signup` and `account/student-profile` actually write,
-  // neither of which normalises — and invites the lowercase form the route
-  // always passes down. Under a case-sensitive lookup the refusal above
-  // never fires: the teacher gets a pending invitation for someone already
-  // on their roster, and the invitee gets told to go and sign up.
+  // Whole-branch review I2. This describe's other ALREADY_LINKED test uses
+  // a seeded student whose address `uniqueSuffix()` made lowercase on both
+  // sides, so the comparison there could not tell a case-sensitive lookup
+  // from an insensitive one. This one stores the address WITH uppercase —
+  // the shape `auth/student-signup` and `account/student-profile` actually
+  // write, neither of which normalises — and invites the lowercase form the
+  // route always passes down. Under a case-sensitive lookup the roster-link
+  // refusal never fires: the teacher gets a pending invitation for someone
+  // already on their roster, and the invitee gets told to go and sign up.
   it('returns 409 ALREADY_LINKED even when the stored address carries uppercase', async () => {
     const storedMixedCase = `CRM-Linked-Mixed-${suffix}@Test.Local`;
     let student: { id: string } | undefined;
