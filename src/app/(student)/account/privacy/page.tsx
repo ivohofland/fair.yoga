@@ -101,11 +101,13 @@ export default async function PrivacySettingsPage() {
         <EmptyState
           title="No teachers yet."
           // Three ways in, not two. Joining a waitlist creates the link as
-          // surely as booking does (`joinWaitlist`, services/waitlist.ts,
-          // upserts `TeacherStudent` and resolves the invitation) — naming
-          // only booking made this an incomplete list stated as a complete
-          // one, on the page whose whole job is telling a student how their
-          // teacher relationships come to exist.
+          // surely as booking does (`addToWaitlist`, services/waitlist.ts,
+          // upserts `TeacherStudent` and calls `resolveInvitationOnLink`) —
+          // naming only booking made this an incomplete list stated as a
+          // complete one, on the page whose whole job is telling a student
+          // how their teacher relationships come to exist. Both branches are
+          // asserted in `tests/e2e/invitations.spec.ts`; nothing in the
+          // Vitest suite can reach them (async server component, prisma).
           body={
             pendingInvitations.length > 0
               ? 'Accept one of the invitations above, or connect with someone new by booking a class or joining a waitlist.'

@@ -199,9 +199,26 @@ test.describe('Invitations — add, accept, decline', () => {
     await signInAs(context, decliningToken);
     await page.goto('/account/privacy');
     await expect(page.getByRole('heading', { name: 'Invite Teacher' })).toBeVisible();
+
+    // This student holds no link, so "Your teachers" is empty and its empty
+    // state is on screen — in its with-pending-invitations wording here, and
+    // in the other one after the decline below. Both must name BOTH routes
+    // that connect a student to a teacher: booking a class AND joining a
+    // waitlist, which has created the link since `addToWaitlist` started
+    // upserting `TeacherStudent`. The page is an async server component
+    // reading prisma, so the components Vitest project cannot render it and
+    // e2e is the only place this claim can be pinned — which is how the
+    // sentence came to name only booking for as long as it did (#166 review
+    // F16).
+    await expect(
+      page.getByText('by booking a class or joining a waitlist'),
+    ).toBeVisible();
+
     await page.getByRole('button', { name: 'Decline' }).click();
     await page.getByRole('button', { name: 'Decline invitation' }).click();
     await expect(page.getByRole('heading', { name: 'Pending invitations' })).not.toBeVisible();
+    // The other branch of the same empty state, now that nothing is pending.
+    await expect(page.getByText('Book a class or join a waitlist')).toBeVisible();
     // "Your teachers" itself always renders (it's the section header, shown
     // even when empty) — declining is not accepting: no teacher CARD forms
     // under it, so the name that headed the pending card above is gone from
