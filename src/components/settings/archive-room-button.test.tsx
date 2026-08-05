@@ -49,4 +49,52 @@ describe('ArchiveRoomButton', () => {
       }),
     );
   });
+
+  /**
+   * #166 review F14. The third instance of a defect already fixed twice on
+   * this branch (`ArchiveStudentButton`, `ArchiveContactButton`): `if
+   * (res.ok)` with no `else` and no `catch`. The success path navigates
+   * away, so a failure that says nothing looks exactly like a click that
+   * never registered. These three are the tests that fail if the
+   * `else`/`catch` is removed again — the two above pass either way.
+   */
+  it('shows the server message when the PATCH fails', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: { message: 'This room is used by an upcoming class.' } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ArchiveRoomButton teacherRoomId="tr-1" isArchived={false} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(
+      await screen.findByText('This room is used by an upcoming class.'),
+    ).toBeInTheDocument();
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the generic copy its sibling toggles use when the server sends none', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ArchiveRoomButton teacherRoomId="tr-1" isArchived={true} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(await screen.findByText('Failed to update. Please try again.')).toBeInTheDocument();
+  });
+
+  it('reports a thrown fetch instead of swallowing it', async () => {
+    fetchMock.mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ArchiveRoomButton teacherRoomId="tr-1" isArchived={false} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
+    // Re-enabled, not stuck mid-flight: `finally` still has to run on the
+    // throw path.
+    await waitFor(() => expect(screen.getByRole('button')).not.toBeDisabled());
+  });
 });
