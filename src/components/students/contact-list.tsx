@@ -60,6 +60,18 @@ interface ContactListProps {
 export function ContactList({ archived = false }: ContactListProps) {
   const [contacts, setContacts] = useState<ContactRow[]>([]);
   const [loading, setLoading] = useState(true);
+  /**
+   * The only thing that separates "loaded, and you really have no contacts"
+   * from "we could not ask" (review F6). Without it, a 500 bailed with
+   * `contacts` still `[]` and `loading` false, and the component stated "No
+   * contacts yet." — a confident falsehood about the teacher's own data, on
+   * the page they land on straight after inviting someone.
+   */
+  const [failed, setFailed] = useState(false);
+  // Bumped by "Try again" to re-run the effect. A counter rather than calling
+  // the fetch directly: the effect owns the `cancelled` flag, so a retry that
+  // bypassed it would be the one request nothing can cancel.
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,9 +84,20 @@ export function ContactList({ archived = false }: ContactListProps) {
           window.location.href = '/login';
           return;
         }
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (!cancelled) setFailed(true);
+          return;
+        }
         const json: InvitationListResponse = await res.json();
-        if (!cancelled) setContacts(json.data.invitations.filter(isContact));
+        if (!cancelled) {
+          setContacts(json.data.invitations.filter(isContact));
+          setFailed(false);
+        }
+      } catch {
+        // A rejected `fetch` (offline, DNS, a torn-down connection) used to
+        // propagate straight out of the `try` with only the `finally` running,
+        // which left the same "No contacts yet." on screen.
+        if (!cancelled) setFailed(true);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -84,11 +107,29 @@ export function ContactList({ archived = false }: ContactListProps) {
     return () => {
       cancelled = true;
     };
-  }, [archived]);
+  }, [archived, reloadKey]);
 
   return (
     <div className={loading ? 'opacity-50' : ''}>
-      {contacts.length === 0 && !loading ? (
+      {failed ? (
+        <EmptyState
+          title="Could not load your contacts."
+          action={
+            // The v2 error state's ghost "Try again", same shape as the route
+            // error boundary in `src/app/error.tsx`. Not `<Button>`: that one
+            // is full-width below `sm`, which is too loud for a list that may
+            // simply need asking again.
+            <button
+              type="button"
+              onClick={() => setReloadKey((n) => n + 1)}
+              disabled={loading}
+              className="inline-flex items-center justify-center rounded-pill px-6 min-h-12 text-base font-semibold text-teal hover:bg-teal-tint"
+            >
+              Try again
+            </button>
+          }
+        />
+      ) : contacts.length === 0 && !loading ? (
         <EmptyState title={archived ? 'No archived contacts.' : 'No contacts yet.'} />
       ) : (
         <div>

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ContactList } from './contact-list';
 
 /**
@@ -120,5 +120,76 @@ describe('ContactList', () => {
     await waitFor(() => expect(window.location.href).toBe('/login'));
 
     Object.defineProperty(window, 'location', { configurable: true, value: original });
+  });
+
+  /**
+   * #166 review F6. `if (!res.ok) return;` left `contacts` at `[]` and
+   * `loading` at false, so a 500 rendered "No contacts yet." — a confident
+   * false statement about the teacher's own data, on the page they land on
+   * straight after inviting someone.
+   *
+   * The "not shown" halves below are not vacuous: `shows the empty state when
+   * there are no contacts` above proves the same string does appear for a
+   * genuinely empty *successful* response, so its absence here is the
+   * distinction being tested and not an assertion that could never fire.
+   */
+  function stubFailure(status: number): void {
+    fetchMock.mockResolvedValue({ ok: false, status, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+  }
+
+  it('does not claim the teacher has no contacts when the request failed', async () => {
+    stubFailure(500);
+    render(<ContactList />);
+
+    expect(await screen.findByText('Could not load your contacts.')).toBeInTheDocument();
+    expect(screen.queryByText('No contacts yet.')).toBeNull();
+  });
+
+  it('shows the error state, not the archived empty state, when the archived request fails', async () => {
+    stubFailure(500);
+    render(<ContactList archived />);
+
+    expect(await screen.findByText('Could not load your contacts.')).toBeInTheDocument();
+    expect(screen.queryByText('No archived contacts.')).toBeNull();
+  });
+
+  it('shows the error state when fetch itself throws', async () => {
+    fetchMock.mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ContactList />);
+
+    expect(await screen.findByText('Could not load your contacts.')).toBeInTheDocument();
+    expect(screen.queryByText('No contacts yet.')).toBeNull();
+  });
+
+  it('refetches when Try again is clicked, and clears the error on success', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            invitations: [
+              {
+                id: 'inv-1',
+                firstName: 'Lena',
+                lastName: 'Visser',
+                email: 'lena@example.com',
+                status: 'pending',
+              },
+            ],
+          },
+        }),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ContactList />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+
+    expect(await screen.findByText('Lena Visser')).toBeInTheDocument();
+    expect(screen.queryByText('Could not load your contacts.')).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
