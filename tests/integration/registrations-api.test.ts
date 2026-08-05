@@ -541,4 +541,123 @@ describe('teacher-facing registration reads honour StudentPrivacy', () => {
     // blanket filter. This test is what stops the fix over-reaching.
     expect(body.data.tierAtBooking).toBeDefined();
   });
+
+  /**
+   * The three tests above authorize `isStudent` first, so a defect that
+   * checks the teacher branch first instead — routing a dual-role account
+   * into the projected view of its OWN booking, in a class it happens to
+   * teach — would slip past them silently: `isStudent` is still true, so
+   * every assertion above still holds. This fixture is the one case where
+   * `isTeacher` and `isStudent` are BOTH true for the same request, which is
+   * the only way to tell the two orderings apart. Mirrors the dual-role
+   * fixture at `students-api.test.ts:556-596`.
+   */
+  describe('a dual-role account reading its own booking in a class it teaches', () => {
+    let dualTeacherId: string;
+    let dualStudentId: string;
+    let dualAccountId: string;
+    let dualToken: string;
+    let dualRoomId: string;
+    let dualTeacherRoomId: string;
+    let dualClassId: string;
+    let dualRegistrationId: string;
+
+    beforeAll(async () => {
+      const dualEmail = `regapi-dual-${suffix}@test.local`;
+      const teacher = await prisma.teacher.create({
+        data: {
+          firstName: 'Dual',
+          lastName: 'Booker',
+          email: dualEmail,
+          bio: 'Registration API dual-role fixture',
+          pageSlug: `regapi-dual-${suffix}`,
+          account: { create: { email: dualEmail } },
+        },
+      });
+      dualTeacherId = teacher.id;
+      dualAccountId = teacher.accountId;
+
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'Dual',
+          lastName: 'Booker',
+          email: dualEmail,
+          claimedAt: new Date(),
+          account: { connect: { id: dualAccountId } },
+        },
+      });
+      dualStudentId = student.id;
+      dualToken = await seedSession(prisma, dualAccountId);
+
+      const room = await prisma.room.create({
+        data: {
+          venueName: 'Reg API Dual Studio',
+          address: `${suffix} Dual St`,
+          city: 'Amsterdam',
+          postcode: '1234RB',
+          floor: '1',
+          roomName: 'Dual Room',
+          maxCapacity: 20,
+          createdById: dualTeacherId,
+        },
+      });
+      dualRoomId = room.id;
+
+      const teacherRoom = await prisma.teacherRoom.create({
+        data: {
+          teacherId: dualTeacherId,
+          roomId: dualRoomId,
+          capacityOverride: 15,
+          rentalRate: 30,
+        },
+      });
+      dualTeacherRoomId = teacherRoom.id;
+
+      const cls = await prisma.class.create({
+        data: {
+          teacherId: dualTeacherId,
+          teacherRoomId: dualTeacherRoomId,
+          classType: 'Reg API (dual)',
+          date: new Date('2099-06-01'),
+          startTime: '09:00',
+          durationMinutes: 60,
+          roomCost: 20,
+          minRate: 15,
+          targetRate: 25,
+          minStudents: 1,
+          maxStudents: 5,
+          status: 'open',
+        },
+      });
+      dualClassId = cls.id;
+
+      // No studentId in the body: the dual account books itself, through the
+      // student path, into the class it also teaches.
+      const created = await post(dualToken, { classId: dualClassId });
+      const { data } = (await created.json()) as { data: { id: string } };
+      dualRegistrationId = data.id;
+    });
+
+    afterAll(async () => {
+      await prisma.registration.deleteMany({ where: { classId: dualClassId } });
+      await prisma.class.deleteMany({ where: { id: dualClassId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: dualTeacherId } });
+      await prisma.room.deleteMany({ where: { id: dualRoomId } });
+      await prisma.session.deleteMany({ where: { accountId: dualAccountId } });
+      await prisma.student.deleteMany({ where: { id: dualStudentId } });
+      await prisma.teacher.deleteMany({ where: { id: dualTeacherId } });
+      // Not cascaded from the student/teacher deletes above — the account
+      // itself must be reclaimed explicitly or it leaks across runs.
+      await prisma.account.deleteMany({ where: { id: dualAccountId } });
+    });
+
+    it('is a self-read, not the teacher-gated view, even though the account teaches this class', async () => {
+      const res = await fetch(`${BASE_URL}/api/registrations/${dualRegistrationId}`, {
+        headers: cookie(dualToken),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { data: { tierAtBooking: number } };
+      expect(body.data.tierAtBooking).toBeDefined();
+    });
+  });
 });

@@ -36,6 +36,13 @@ export const GET = withErrorHandler(async (
 
   // The student's own read is not a disclosure boundary — their tier and
   // price are theirs. Only the teacher's view is projected (#167).
+  //
+  // Checked before the teacher-ownership check below: a dual-role account
+  // reading its own booking in a class it also teaches is still a self-read.
+  // `isStudent` and `registration.class.teacherId === session.teacherId` can
+  // both be true for the same request — ordering the teacher check first
+  // would route that request into the projected view and silently strip the
+  // very tier and price this branch exists to protect.
   if (isStudent) return respondOk(registration);
 
   const { teacherId } = session;
