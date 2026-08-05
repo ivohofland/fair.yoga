@@ -56,13 +56,22 @@ test.describe('Teacher journey', () => {
     teacherToken = await seedSession(prisma, await accountIdOfTeacher(prisma, teacherId));
 
     // This student signs in to book, so they are claimed, and their privacy
-    // row shares NOTHING — so every teacher-facing surface in this spec must
-    // read "Journey s.", never "Journey Student".
+    // row shares NOTHING — so wherever this spec renders their name through
+    // the projection it must read "Journey s.", never "Journey Student".
+    //
+    // Be exact about where that is, because an earlier version of this comment
+    // said "every teacher-facing surface in this spec", and it is not. All six
+    // `Journey s.` assertions are on `/class/[id]` — the roster, the two
+    // attendance buttons and the three payment-row buttons. `/inbox` asserts
+    // "Journey booked Journey Flow.", a raw first name baked into a
+    // notification body at write time, which never passes through
+    // `teacherVisibleName`. `/settings/payments` asserts nothing about this
+    // student at all; the walk-in below is what covers that page.
     //
     // It was `shareFullName: true` until the PR review of #167, which made
-    // this whole spec blind to the gate it looks like it exercises: a full
-    // name is what `teacherVisibleName` returns whether the gate runs or not,
-    // so substituting a raw `${firstName} ${lastName}` at any of these call
+    // those six assertions blind to the gate they look like they exercise: a
+    // full name is what `teacherVisibleName` returns whether the gate runs or
+    // not, so substituting a raw `${firstName} ${lastName}` at those call
     // sites left the spec green. A truncated name is not a fixed point of that
     // composition, so it can only appear if the projection ran.
     const bookingStudent = await prisma.student.create({
@@ -81,17 +90,38 @@ test.describe('Teacher journey', () => {
     });
     bookingStudentToken = await seedSession(prisma, await accountIdOfStudent(prisma, bookingStudentId));
 
-    // The walk-in picker is roster-only; this student never signs in and
-    // stays a genuinely unclaimed CRM row (full name by default).
+    // The walk-in picker is roster-only. This student never drives a browser,
+    // but it is claimed and shares nothing — for the same reason the booking
+    // student is, and then some.
+    //
+    // Until #167's round-two review it was a genuinely unclaimed CRM row, and
+    // that made two guards inert. `bypassesPrivacy` returned true for it, so
+    // the full name rendered whether the projection ran or not: a raw
+    // `${firstName} ${lastName}` substituted into `settings/payments/page.tsx`
+    // left this spec green — the same defect 4f93343 fixed for the booking
+    // student, three lines away, and the reason /settings/payments was the one
+    // teacher surface this spec still could not falsify. It also fired the
+    // module's `log.warn` on every render that touched the walk-in, so the
+    // baseline was dozens of lines a run and the tripwire could not function
+    // as an alarm.
+    //
+    // `Student_claim_link_check` requires claimedAt and accountId to move
+    // together, hence the account.
+    const walkInEmail = `e2e-journey-walkin-${suffix}@test.local`;
     const walkIn = await prisma.student.create({
       data: {
         firstName: 'Walkin',
         lastName: 'Guest',
-        email: `e2e-journey-walkin-${suffix}@test.local`,
+        email: walkInEmail,
+        account: { create: { email: walkInEmail } },
+        claimedAt: new Date(),
         incomeTier: 2,
       },
     });
     walkInStudentId = walkIn.id;
+    await prisma.studentPrivacy.create({
+      data: { studentId: walkInStudentId, teacherId, shareFullName: false },
+    });
     await prisma.teacherStudent.create({
       data: { teacherId, studentId: walkInStudentId },
     });
@@ -118,6 +148,7 @@ test.describe('Teacher journey', () => {
     await prisma.session.deleteMany({
       where: { accountId: await accountIdOfTeacher(prisma, teacherId) },
     });
+    const studentAccountIds: string[] = [];
     for (const sid of [bookingStudentId, walkInStudentId]) {
       const student = await prisma.student.findUnique({
         where: { id: sid },
@@ -125,11 +156,15 @@ test.describe('Teacher journey', () => {
       });
       if (student?.accountId) {
         await prisma.session.deleteMany({ where: { accountId: student.accountId } });
+        studentAccountIds.push(student.accountId);
       }
     }
     await prisma.student.deleteMany({
       where: { id: { in: [bookingStudentId, walkInStudentId] } },
     });
+    // Both students are claimed now, so both own an Account — delete them
+    // after the Student rows that point at them.
+    await prisma.account.deleteMany({ where: { id: { in: studentAccountIds } } });
     await prisma.teacher.delete({ where: { id: teacherId } });
     await prisma.$disconnect();
   });
@@ -285,7 +320,7 @@ test.describe('Teacher journey', () => {
     // slow CI runners.
     await expect(page.getByLabel('Walk-in student')).toBeHidden({ timeout: 10_000 });
     await page.reload();
-    await expect(page.getByText('Walkin Guest')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Walkin g.')).toBeVisible({ timeout: 10_000 });
 
     // Tick off the booked student as present.
     await page.getByRole('button', { name: 'Mark Journey s. as present' }).click();
@@ -332,7 +367,7 @@ test.describe('Teacher journey', () => {
     await expect(
       page.getByRole('button', { name: /Send reminder to Journey s\./ }),
     ).toHaveCount(0);
-    await page.getByRole('button', { name: 'Send reminder to Walkin Guest' }).click();
+    await page.getByRole('button', { name: 'Send reminder to Walkin g.' }).click();
     await expect(page.getByText(/Reminded just now/)).toBeVisible();
 
     const reminded = await prisma.payment.findFirst({
@@ -386,7 +421,7 @@ test.describe('Teacher journey', () => {
     // separator or the order — the format stays free to change.
     await expect(
       page.getByRole('button', {
-        name: new RegExp(`Send reminder to Walkin Guest for .*${slot.startTime}`),
+        name: new RegExp(`Send reminder to Walkin g\\. for .*${slot.startTime}`),
       }),
     ).toBeVisible();
     // The caption from the class-page send above survives the server read.
