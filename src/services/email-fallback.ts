@@ -55,6 +55,33 @@ export async function processEmailFallback(
     let emailEnabled = true;
 
     if (notification.recipientType === 'teacher') {
+      // No `deletedAt: null` here, unlike every reader that surfaces a
+      // teacher to another person as a live counterparty (`(public)/[slug]`,
+      // `(public)/[slug]/book/[classId]`, `validateSession`,
+      // `payment-reminders`, `acceptInvitation`). This one is not that read —
+      // it emails the teacher their OWN notification — and it is safe by an
+      // upstream guarantee rather than by anything visible here. Written down
+      // because the next person to touch either end needs to know what they
+      // are holding up:
+      //
+      // 1. `deleteTeacherAccount` (services/gdpr.ts) deletes every
+      //    `recipientType: 'teacher'` Notification for the erased teacher in
+      //    the SAME transaction that sets `deletedAt`, and cancels every
+      //    draft/open/in_progress class of theirs in it too. All three
+      //    writers of a teacher-recipient notification gate on one of those
+      //    statuses under the class row lock that transaction holds
+      //    (`POST /api/registrations`, `class-transitions`' auto-cancel,
+      //    `completeClass`), so no fresh one can be written afterwards
+      //    either. An erased teacher therefore has no row that reaches here.
+      // 2. The same transaction rewrites `Teacher.email` to
+      //    `deleted-<id>@deleted.invalid`. So even a row that slipped through
+      //    — a transition sweep committing its `completeClass` in the instant
+      //    after that `deleteMany` is the one window — carries no real
+      //    address to send to.
+      //
+      // A `deletedAt` filter is deliberately NOT added: with (1) holding,
+      // nothing could drive it, and an untestable guard is what this branch
+      // has already shipped too many of.
       const teacher = await db.teacher.findUnique({
         where: { id: notification.recipientId },
         select: { email: true },
