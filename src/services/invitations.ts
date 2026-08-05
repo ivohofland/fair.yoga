@@ -239,6 +239,15 @@ export async function notifyInvitee(
 
   // No Student row means no in-app surface exists to notify — a direct
   // email is the only channel left.
+  //
+  // `/login`, not the invitation page the registered invitee's own fallback
+  // email points at (`renderNotificationEmail`, lib/email-templates.ts): a
+  // stranger has no account, and the verify flow decides where to land them
+  // itself rather than honouring a destination in the link. Not a
+  // disclosure — a recipient learns only about their own account, and the
+  // teacher sees neither mail. The COPY is what must not branch, and does
+  // not: no "welcome back", nothing that says whether fair.yoga already
+  // knew this address (see `renderInvitationEmail`'s own test).
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
   await sendInvitationEmail(email, input.teacherName, `${baseUrl}/login`);
 }

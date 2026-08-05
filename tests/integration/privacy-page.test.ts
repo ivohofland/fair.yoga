@@ -118,4 +118,68 @@ describe('GET /account/privacy (page)', () => {
     const html = await res.text();
     expect(html).toContain('PageInvite Teacher');
   });
+
+  /**
+   * #166 whole-branch review I5. `studentNotificationHref` has its own unit
+   * tests; those say nothing about whether `/updates` calls it. A helper
+   * that is written, unit-tested and not wired in reads as covered while
+   * protecting nothing — the same failure mode Task 9's review caught one
+   * component over.
+   *
+   * `NotificationList` is a client component that navigates through the
+   * router rather than an anchor, so there is no href in the HTML to assert
+   * on. What it does render for a linkable row, and only for a linkable
+   * row, is a trailing arrow. Asserted differentially against a
+   * deliberately unlinkable notification for the same student, so a page
+   * that happened to contain an arrow of its own would fail the control
+   * rather than pass both.
+   */
+  it('renders the invitation notification as linkable on /updates, and a class-less one as not', async () => {
+    let invitation: { id: string } | undefined;
+    let plain: { id: string } | undefined;
+    try {
+      // No `relatedClassId` on either — that is the whole point. One is a
+      // type with somewhere to go; the other is not.
+      invitation = await prisma.notification.create({
+        data: {
+          recipientType: 'student', recipientId: studentId, type: 'teacher_invitation',
+          title: 'PageInvite invitation row', body: 'A teacher would like to connect.',
+        },
+        select: { id: true },
+      });
+
+      const withInvitation = await fetch(`${BASE_URL}/updates`, { headers: cookie(studentToken) });
+      expect(withInvitation.status).toBe(200);
+      // Reduced to a boolean before asserting, and carrying its own
+      // message: a `toContain` against a whole rendered page prints the
+      // page on failure, which buries the one fact the assertion is about.
+      expect(
+        (await withInvitation.text()).includes('→'),
+        'the teacher_invitation row on /updates renders no link target',
+      ).toBe(true);
+
+      await prisma.notification.delete({ where: { id: invitation.id } });
+      invitation = undefined;
+
+      plain = await prisma.notification.create({
+        data: {
+          recipientType: 'student', recipientId: studentId, type: 'announcement',
+          title: 'PageInvite plain row', body: 'Bring a mat.',
+        },
+        select: { id: true },
+      });
+
+      const withPlain = await fetch(`${BASE_URL}/updates`, { headers: cookie(studentToken) });
+      expect(withPlain.status).toBe(200);
+      // The control: if the page carried an arrow of its own, the assertion
+      // above would be vacuous and this is what catches that.
+      expect(
+        (await withPlain.text()).includes('→'),
+        'the page renders an arrow for a row that has nowhere to go, so the assertion above proves nothing',
+      ).toBe(false);
+    } finally {
+      if (invitation) await prisma.notification.deleteMany({ where: { id: invitation.id } });
+      if (plain) await prisma.notification.deleteMany({ where: { id: plain.id } });
+    }
+  });
 });

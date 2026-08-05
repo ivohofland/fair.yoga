@@ -61,6 +61,34 @@ describe('email templates', () => {
     expect(html).toContain('turn them off in your settings');
   });
 
+  // #166 whole-branch review I5. The fallback email is what an invitee gets
+  // when the in-app notification goes unread — which for someone who has
+  // never heard of fair.yoga is the likely case. It carried no link at all,
+  // so it told them a teacher wanted to connect and gave them nothing to do
+  // about it.
+  it('a student invitation fallback carries a link to the page that answers it', () => {
+    const { html } = renderNotificationEmail(
+      {
+        type: 'teacher_invitation',
+        title: 'A teacher would like to connect',
+        body: 'Anna Teacher added you as a contact.',
+        recipientType: 'student',
+      },
+      'https://example.test',
+    );
+    expect(html).toContain('href="https://example.test/account/privacy"');
+  });
+
+  // The link is per-type, not a blanket addition: every other type is about
+  // a class, and the routes for those are teacher-only.
+  it('adds no link to a notification type that has nowhere to send a student', () => {
+    const { html } = renderNotificationEmail(
+      { type: 'reminder', title: 'Reminder', body: 'Class tomorrow.', recipientType: 'student' },
+      'https://example.test',
+    );
+    expect(html).not.toContain('href=');
+  });
+
   it('magic-link email carries the link and the expiry note', () => {
     const { html, subject } = renderMagicLinkEmail('https://example.test/verify?token=abc');
     expect(subject).toBe('Sign in to fair.yoga');

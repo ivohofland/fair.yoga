@@ -10,6 +10,7 @@ import { WaitlistEntryActions } from '@/components/student/waitlist-entry-action
 import { PaymentQr } from '@/components/student/payment-qr';
 import { formatRoomLocation, paymentStateText, formatDayHeader } from '@/lib/format';
 import { getWaitlistWindow } from '@/services/waitlist';
+import { studentNotificationHref } from '@/lib/notification-links';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,16 +73,13 @@ export default async function StudentBookingsPage() {
     }),
   ]);
 
-  // Link an update to its booking page only while booking still makes sense.
+  // Same targets /updates uses — see `studentNotificationHref`.
   const updates = unreadNotifications.map((n) => ({
     id: n.id,
     title: n.title,
     body: n.body,
     createdAt: n.createdAt.toISOString(),
-    href:
-      n.relatedClass && n.relatedClass.status === 'open'
-        ? `/${n.relatedClass.teacher.pageSlug}/book/${n.relatedClass.id}`
-        : null,
+    href: studentNotificationHref(n),
   }));
 
   const now = new Date();

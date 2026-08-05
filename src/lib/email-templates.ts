@@ -7,6 +7,7 @@
  */
 
 import type { NotificationType } from '@prisma/client';
+import { STUDENT_INVITATION_LABEL, STUDENT_INVITATION_PATH } from './notification-links';
 
 export function escapeHtml(text: string): string {
   return text
@@ -64,6 +65,23 @@ const TEACHER_INTROS: Partial<Record<NotificationType, string>> = {
   reminder: 'A gentle reminder.',
 };
 
+/**
+ * Types whose fallback email needs somewhere to go, keyed by the reader.
+ *
+ * Most notifications are about a class, and this template has never carried
+ * a link because the class routes it would point at are teacher-only. An
+ * invitation is different: the message exists to ask someone for a decision,
+ * and the mail that arrives when they miss the in-app one has to reach the
+ * place that decision is made — otherwise the recipient is told a teacher
+ * wants to connect and given nothing to do about it.
+ *
+ * Path only. The base URL is the caller's, so this stays renderable without
+ * an environment.
+ */
+const STUDENT_ACTION_LINKS: Partial<Record<NotificationType, { label: string; path: string }>> = {
+  teacher_invitation: { label: STUDENT_INVITATION_LABEL, path: STUDENT_INVITATION_PATH },
+};
+
 export interface NotificationEmailInput {
   type: NotificationType;
   title: string;
@@ -72,8 +90,17 @@ export interface NotificationEmailInput {
   recipientType?: 'teacher' | 'student';
 }
 
-/** Renders the email for an unread notification (layer 3 fallback). */
-export function renderNotificationEmail(notification: NotificationEmailInput): {
+/**
+ * Renders the email for an unread notification (layer 3 fallback).
+ *
+ * `baseUrl` defaults from the environment the same way `notifyInvitee`
+ * (services/invitations.ts) builds its own sign-in link, so existing
+ * callers need not thread it through; tests pass an explicit value.
+ */
+export function renderNotificationEmail(
+  notification: NotificationEmailInput,
+  baseUrl: string = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+): {
   subject: string;
   html: string;
 } {
@@ -81,10 +108,17 @@ export function renderNotificationEmail(notification: NotificationEmailInput): {
     notification.recipientType === 'teacher'
       ? (TEACHER_INTROS[notification.type] ?? STUDENT_INTROS[notification.type])
       : STUDENT_INTROS[notification.type];
+  const action =
+    notification.recipientType === 'teacher'
+      ? undefined
+      : STUDENT_ACTION_LINKS[notification.type];
+  const actionHtml = action
+    ? `<p style="margin:16px 0 0;"><a href="${baseUrl}${action.path}" style="display:inline-block;background-color:#1A5653;color:#F7F4EF;text-decoration:none;font-weight:600;font-size:16px;padding:14px 24px;border-radius:999px;">${escapeHtml(action.label)}</a></p>`
+    : '';
   const html = wrapEmail(
     escapeHtml(notification.title),
     `<p style="margin:0 0 8px;color:#71645A;font-size:13px;">${escapeHtml(intro)}</p>
-     <p style="margin:0;">${escapeHtml(notification.body)}</p>`,
+     <p style="margin:0;">${escapeHtml(notification.body)}</p>${actionHtml}`,
   );
   return { subject: notification.title, html };
 }

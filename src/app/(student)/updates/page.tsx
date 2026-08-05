@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { Icon } from '@/components/ui/icon';
 import { NotificationList } from '@/components/layout/notification-list';
+import { studentNotificationHref } from '@/lib/notification-links';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,16 +25,11 @@ export default async function StudentUpdatesPage() {
     },
   });
 
-  // Student-side link targets: the public booking page while booking
-  // still makes sense, nothing otherwise (the default would point at
-  // teacher-only class routes).
+  // Student-side link targets — shared with the strip on /bookings, so the
+  // two cannot disagree about where an invitation goes. The default
+  // (`NotificationList`'s own) would point at teacher-only class routes.
   const hrefById = Object.fromEntries(
-    notifications.map((n) => [
-      n.id,
-      n.relatedClass && n.relatedClass.status === 'open'
-        ? `/${n.relatedClass.teacher.pageSlug}/book/${n.relatedClass.id}`
-        : null,
-    ]),
+    notifications.map((n) => [n.id, studentNotificationHref(n)]),
   );
 
   return (
