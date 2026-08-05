@@ -54,7 +54,7 @@ describe('teacherVisibleName', () => {
 describe('projectStudentForTeacher', () => {
   it('withholds every unshared field as null, with the key present', () => {
     const result = projectStudentForTeacher(claimedStudent());
-    expect(result).toEqual({
+    expect(result).toStrictEqual({
       id: 'student-1',
       displayName: 'Anna b.',
       email: null,
@@ -63,6 +63,22 @@ describe('projectStudentForTeacher', () => {
       address: null,
       claimedAt: new Date('2026-01-01T00:00:00.000Z'),
     });
+  });
+
+  it('treats a missing privacy row as maximum privacy', () => {
+    const result = projectStudentForTeacher(claimedStudent({ studentPrivacy: [] }));
+    expect(result.email).toBeNull();
+    expect(result.phone).toBeNull();
+    expect(result.birthday).toBeNull();
+    expect(result.address).toBeNull();
+  });
+
+  it('ungates every field for a legacy unclaimed student', () => {
+    const result = projectStudentForTeacher(claimedStudent({ claimedAt: null }));
+    expect(result.email).toBe('anna@example.com');
+    expect(result.phone).toBe('+31612345678');
+    expect(result.birthday).toEqual(BIRTHDAY);
+    expect(result.address).toBe('Keizersgracht 1');
   });
 
   it('releases exactly the fields whose flag is set, and no others', () => {
@@ -100,7 +116,7 @@ describe('projectStudentForTeacher', () => {
     expect(Object.keys(shared)).not.toContain('firstName');
   });
 
-  it('never emits an income tier, even though the query loads the row', () => {
+  it('never emits an income tier', () => {
     const result = projectStudentForTeacher(claimedStudent());
     expect(Object.keys(result)).not.toContain('incomeTier');
   });

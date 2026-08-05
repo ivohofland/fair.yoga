@@ -30,10 +30,13 @@ export type VisibilityFlags = Pick<
 >;
 
 /**
- * Every `share*` column on `StudentPrivacy` must be classified — either as a
- * visibility flag above, or in the explicit exclusion list here. A new column
- * (say `shareIncomeTier`) fails this pin by name rather than being silently
- * ignored by every projection in the app.
+ * Every column on `StudentPrivacy` must be classified — either as a
+ * visibility flag above, or in the explicit exclusion list here. That
+ * includes non-`share*` columns like `receiveComms`, `id`, and the
+ * timestamps: this pin does not only watch for new `share*` columns, it
+ * watches the whole model. A new column (say `shareIncomeTier`) fails this
+ * pin by name rather than being silently ignored by every projection in the
+ * app.
  *
  * #167 decided against `shareIncomeTier` specifically: on `/class/[id]`,
  * `PricingBreakdown` renders "Tier 4 · €15.20" and `PaymentChecklist` renders
