@@ -189,9 +189,18 @@ void _projectionCarriesNoRawIdentity;
  *
  * The proof above is a comment, and comments do not run. The `log.warn` is
  * what makes the day it stops holding show up in a log line rather than in a
- * student's complaint — this branch ungates *every* field at all 13 call
- * sites, so a silent failure here is the largest one in the module. Projecting
- * an unclaimed student logs twice (once through `teacherVisibleName`);
+ * student's complaint — this branch ungates *every* field at every call site
+ * that reaches it, so a silent failure here is the largest one in the module.
+ * Outside this module that is 12 call sites: 5 API routes (`api/payments/[id]`,
+ * `api/classes/[id]/registrations`, `api/students`, `api/students/[id]`,
+ * `api/registrations/[id]`), 5 across the three teacher pages
+ * (`settings/payments` once, `students/[id]` once, `class/[id]` three times),
+ * and 2 in `services/payments.ts`. Add the module-internal `teacherVisibleName`
+ * call inside `projectStudentForTeacher` below and the total is 13. This
+ * comment has already stated a wrong count once — before trusting either
+ * number, recount with a grep for `teacherVisibleName` and
+ * `projectStudentForTeacher` across `src/`.
+ * Projecting an unclaimed student logs twice (once through `teacherVisibleName`);
  * deduplicating that would mean either threading a flag through the public
  * signature or composing the display name a second time here, and a doubled
  * line on a should-never-happen event is cheaper than either.

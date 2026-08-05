@@ -246,11 +246,13 @@ describe('Payment Service (DB)', () => {
   /**
    * `teacherId` does two jobs in both queries below — it scopes the `where` and
    * it selects which `StudentPrivacy` row the projection reads (see
-   * `getPaymentsForClass`'s docblock). Only the second was tested: every
-   * assertion passed the owning teacher, so deleting either `where` scope left
-   * this file green. The foreign-teacher reads are what make the scopes
-   * falsifiable — and `getPaymentsForClass` matters most, because it takes a
-   * `classId` a caller could have got from anywhere.
+   * `getPaymentsForClass`'s docblock). Neither job was asserted on directly;
+   * the second was merely exercised, since every fixture in this file happens
+   * to read as the owning teacher. So every existing assertion passed with the
+   * owning teacher regardless of which job ran, and deleting either `where`
+   * scope left this file green. The foreign-teacher reads below are what make
+   * the scopes falsifiable — and `getPaymentsForClass` matters most, because
+   * it takes a `classId` a caller could have got from anywhere.
    */
   const FOREIGN_TEACHER = '00000000-0000-4000-8000-000000000000';
 
