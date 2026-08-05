@@ -609,13 +609,22 @@ async function hasActiveRegistration(
  * student has just walked away from is a lever the teacher can pull to
  * reach back through (#166 Task 7 F3; the reasoning lives at that call site).
  *
- * It lives HERE rather than there because every other writer of
- * `WaitlistEntry.status`/`position` in this module opens with the class
- * row's `FOR UPDATE` lock, and this one must too. Without it, a
- * `promoteNext` racing an unlink promotes the student off the queue, and
- * its `teacherStudent.upsert` plus `resolveInvitationOnLink` re-create the
- * very link — and delete the very `TeacherBlock` — the unlink is in the
- * middle of committing.
+ * It lives HERE rather than there because it must take the class row's
+ * `FOR UPDATE` lock, and that convention belongs with the table it
+ * protects. Without the lock, a `promoteNext` racing an unlink promotes the
+ * student off the queue, and its `teacherStudent.upsert` plus
+ * `resolveInvitationOnLink` re-create the very link — and delete the very
+ * `TeacherBlock` — the unlink is in the middle of committing.
+ *
+ * The convention is NOT universal in this module, and inferring one from
+ * the writers that do follow it would hide a real gap: `addToWaitlist`,
+ * `promoteNext` and `claimSpot` each open with the lock; `removeFromWaitlist`
+ * writes `status` — and `position`, through `reorderWaitingEntries` — with
+ * no lock at all, so `DELETE /api/waitlist/[id]` mutates the queue unlocked.
+ * Named rather than glossed so the next person to touch the queue finds it.
+ * It is filed, and it is not this function's to fix: `removeFromWaitlist`
+ * can only move an entry OUT of `waiting`, never into it, so nothing it
+ * races can manufacture the standing request this withdraws.
  *
  * The lock is taken BY the statement that chooses the classes, so there is
  * no window between choosing them and holding them.
@@ -635,8 +644,9 @@ export async function withdrawWaitingEntriesForTeacher(
   tx: PrismaTransactionClient,
   input: { teacherId: string; studentId: string },
 ): Promise<void> {
-  // `FOR UPDATE OF c` — only the Class rows, matching what every other
-  // writer in this module locks. No `DISTINCT`: Postgres refuses it
+  // `FOR UPDATE OF c` — only the Class rows, the same thing `addToWaitlist`,
+  // `promoteNext` and `claimSpot` lock (`removeFromWaitlist` locks nothing;
+  // see this function's docblock). No `DISTINCT`: Postgres refuses it
   // alongside `FOR UPDATE`, so duplicates are collapsed below. Ordered, so
   // two concurrent unlinks take multiple classes in the same sequence.
   const locked = await tx.$queryRaw<Array<{ id: string }>>`
