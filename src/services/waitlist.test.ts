@@ -1281,7 +1281,12 @@ describe('removeFromWaitlist takes the class lock (DB)', () => {
     await holder;
     expect(await removing).toBe('returned');
 
-    // And the queue it renumbered under the lock is intact.
+    // Not a lock-discriminating assertion on its own — nothing else is
+    // renumbering this queue concurrently, so it would pass with the lock
+    // removed too (confirmed: it still passes with `lockClassRow` commented
+    // out and the two wait assertions above deleted). What the wait
+    // assertions above prove is the serialization; this only confirms
+    // `removeFromWaitlist` left the queue correctly renumbered once it ran.
     const remaining = await prisma.waitlistEntry.findMany({
       where: { classId, status: 'waiting' },
       orderBy: { position: 'asc' },

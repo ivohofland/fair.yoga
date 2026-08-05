@@ -300,12 +300,25 @@ export async function removeFromWaitlist(
   studentId: string,
 ): Promise<void> {
   await db.$transaction(async (tx) => {
-    // The same lock `addToWaitlist`, `promoteNext`, `claimSpot` and
-    // `withdrawWaitingEntriesForTeacher` take. Without it two renumberings of
-    // one queue interleave, each having read a snapshot the other
-    // invalidated, and nothing errors: there is no unique on
-    // `(classId, position)`, only a plain index. `promoteNext` then picks its
-    // head by lowest position and promotes the wrong student.
+    // The same row and `FOR UPDATE` mode `addToWaitlist`, `promoteNext`,
+    // `claimSpot` and `withdrawWaitingEntriesForTeacher` take — though this
+    // wait is bounded to 2s by `lockClassRow`'s `SET LOCAL lock_timeout`,
+    // unlike those four inline sites' unbounded wait (#104; not this
+    // branch's to fix). Without the lock at all, two renumberings of one
+    // queue interleave, each having read a snapshot the other invalidated,
+    // and nothing errors: there is no unique on `(classId, position)`, only
+    // a plain index. `promoteNext` then picks its head by lowest position
+    // and promotes the wrong student.
+    //
+    // `SET LOCAL` bounds every statement left in this transaction, not just
+    // the `FOR UPDATE` above it — including the reorder loop's own
+    // `UPDATE`s below (`lockClassRow`'s docblock). `deleteStudentAccount`
+    // (`gdpr.ts`) renumbers the same queue with no class lock of its own —
+    // a gap `src/lib/db-locks.ts` already tracks. Racing that gap, this
+    // removal fails fast with a Postgres `lock_timeout` after 2s — surfaced
+    // as a 500 by `withErrorHandler`, not swallowed — rather than blocking
+    // out to Prisma's ~5s transaction timeout. Bounded beats unbounded
+    // either way, and the failure class is unchanged.
     await lockClassRow(tx, classId);
 
     // Mark as removed
@@ -669,15 +682,20 @@ async function hasActiveRegistration(
  * `TeacherBlock` too: since the link moved to the join, promotion resolves
  * no invitations at all. The link alone is enough to want this lock.)
  *
- * The convention now covers every writer of the queue: `addToWaitlist`,
- * `promoteNext`, `claimSpot` and `removeFromWaitlist` each open with the
- * lock, and this function takes it too, for the same reason — two
- * renumberings of one queue interleaving with no unique on
- * `(classId, position)` to catch it. (`removeFromWaitlist` picked it up in
- * #174, having gone without it for a while — it can only move an entry OUT
- * of `waiting`, never into it, so nothing it raced could have manufactured
- * the standing request this withdraws; the gap was skew in the position
- * numbering, not a wrong promotion.)
+ * The convention now covers every renumbering writer *in this module*:
+ * `addToWaitlist`, `promoteNext`, `claimSpot` and `removeFromWaitlist` each
+ * open with the lock, and this function takes it too — for an additional
+ * reason on top of the link race above, not the same one: two renumberings
+ * of one queue interleaving with no unique on `(classId, position)` to catch
+ * it. (`removeFromWaitlist` picked it up in #174, having gone without it for
+ * a while — it can only move an entry OUT of `waiting`, never into it, so
+ * nothing it raced could have manufactured the standing request this
+ * withdraws; the gap was skew in the position numbering, not a wrong
+ * promotion.) `POST /api/registrations` locks and renumbers the same way,
+ * outside this module (`src/app/api/registrations/route.ts:100,183-187`).
+ * This paragraph claims nothing about renumbering writers beyond the ones
+ * named here — see `src/lib/db-locks.ts` for what elsewhere still runs
+ * unlocked.
  *
  * The lock is taken BY the statement that chooses the classes, so there is
  * no window between choosing them and holding them.
