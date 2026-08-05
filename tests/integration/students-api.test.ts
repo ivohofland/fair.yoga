@@ -186,6 +186,13 @@ describe('POST /api/students', () => {
     // ALREADY_INVITED, not ALREADY_LINKED: this refusal is about the
     // teacher's own pending invitation, which is theirs to know about.
     expect(json.error.code).toBe('ALREADY_INVITED');
+    // F4, #166 review: the message must name the way out, not just the wall.
+    // The invitation email is sent fire-and-forget, so a teacher whose send
+    // failed meets this refusal when they retry — and removing the contact is
+    // the recovery `DELETE /api/invitations/[id]` actually allows for a
+    // pending row. Substring, not the whole sentence: what is pinned is that
+    // the refusal points somewhere, not this month's wording.
+    expect(json.error.message).toContain('remove the contact');
   });
 
   // The defect #166 exists to fix, inverted into a test. This used to be

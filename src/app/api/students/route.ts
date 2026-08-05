@@ -185,7 +185,25 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // — recomputed here rather than read back off `result`, since the
     // service returns only `{ id, delivered }` on the wire-shaped success path.
     void deliverInvitation(session.teacherId, parsed.data.email.toLowerCase()).catch((err) => {
-      log.error({ err, teacherId: session.teacherId }, 'failed to notify invitee');
+      // `invitationId`, not just `teacherId` (F4, #166 review). A send that
+      // fails leaves a row indistinguishable from one that went out — still
+      // `pending`, still listed under Contacts — so without the id an operator
+      // reading this line knows a delivery failed but not WHICH one, and a
+      // busy teacher's invitations are the haystack.
+      //
+      // No email address on purpose: this pair finds the row, and the address
+      // is the one field on it worth keeping out of the logs.
+      //
+      // There is no resend. The teacher's recovery is to remove the contact
+      // and invite again — `DELETE /api/invitations/[id]` refuses only
+      // `declined` rows, so a pending one can go — which is what
+      // `REFUSAL_MESSAGES.ALREADY_INVITED` now names, since the refusal is the
+      // only place they meet the dead end. A real resend affordance is filed
+      // separately; do not grow one out of this catch.
+      log.error(
+        { err, teacherId: session.teacherId, invitationId: result.value.id },
+        'failed to notify invitee',
+      );
     });
   }
 

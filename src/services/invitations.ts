@@ -32,8 +32,24 @@ export interface InviteResult {
   delivered: boolean;
 }
 
+/**
+ * `ALREADY_INVITED` names the way out, the other two do not, and that
+ * asymmetry is the point (F4, #166 review). A teacher whose invitation email
+ * silently failed to send meets this refusal when they try again, and on its
+ * own it reads as a closed door — while the door is in fact open: `DELETE
+ * /api/invitations/[id]` refuses only `declined` rows, so a pending
+ * invitation can be removed and re-sent. The recovery existed and was simply
+ * undiscoverable. There is no resend button yet; when one lands, this
+ * sentence is the thing to repoint at it.
+ *
+ * `ALREADY_LINKED` and `DECLINED` get no such sentence because neither has
+ * one: the first is a person already on the roster (nothing to recover), the
+ * second is a tombstone the invitee wrote, and re-inviting past it is exactly
+ * what it exists to prevent.
+ */
 export const REFUSAL_MESSAGES: Record<InviteRefusal, string> = {
-  ALREADY_INVITED: 'You have already invited this person.',
+  ALREADY_INVITED:
+    'You have already invited this person. If the invitation never arrived, remove the contact and invite them again.',
   ALREADY_LINKED: 'This person is already one of your students.',
   DECLINED: 'This person declined your invitation.',
 };
