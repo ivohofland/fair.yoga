@@ -462,6 +462,16 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // read side too — `listPendingInvitations` and `acceptInvitation` both
       // filter `deletedAt: null`, so these rows were already invisible to
       // every invitee the moment `deletedAt` below is set.
+      //
+      // `TeacherBlock` is NOT swept with them, and the asymmetry is
+      // deliberate: this is a soft delete (`deletedAt` below, row retained),
+      // so the rows have to survive a hypothetical restore. A restored
+      // teacher whose contacts are gone simply re-types them; a restored
+      // teacher whose blocks are gone has been silently un-refused by every
+      // student who walked away. Erring toward the refusal is the only
+      // direction that cannot hurt the person the block protects. The
+      // student-erasure side of the same question is genuinely open — see
+      // `deleteStudentAccount` above.
       await tx.invitation.deleteMany({ where: { teacherId } });
       await tx.notification.deleteMany({ where: { recipientType: 'teacher', recipientId: teacherId } });
       // Sessions and passkeys belong to the account. They die with the
