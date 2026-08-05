@@ -32,6 +32,8 @@ describe('listPendingInvitations', () => {
   let teacherAccountId: string;
   let otherTeacherId: string;
   let otherTeacherAccountId: string;
+  let erasedTeacherId: string;
+  let erasedTeacherAccountId: string;
 
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
@@ -57,11 +59,30 @@ describe('listPendingInvitations', () => {
     });
     otherTeacherId = other.id;
     otherTeacherAccountId = other.accountId;
+
+    // `deletedAt` set at creation, with the renamed fields erasure actually
+    // writes (`deleteTeacherAccount`, services/gdpr.ts) — the "Deleted
+    // Teacher" name below is what the student's card would render if this
+    // row were ever offered to them.
+    const erased = await prisma.teacher.create({
+      data: {
+        firstName: 'Deleted', lastName: 'Teacher',
+        email: `pending-list-erased-${suffix}@test.local`,
+        account: { create: { email: `pending-list-erased-${suffix}@test.local` } },
+        bio: '',
+        pageSlug: `pending-list-erased-${suffix}`,
+        deletedAt: new Date(),
+      },
+    });
+    erasedTeacherId = erased.id;
+    erasedTeacherAccountId = erased.accountId;
   });
 
   afterAll(async () => {
-    const teacherIds = [teacherId, otherTeacherId].filter(Boolean);
-    const accountIds = [teacherAccountId, otherTeacherAccountId].filter(Boolean);
+    const teacherIds = [teacherId, otherTeacherId, erasedTeacherId].filter(Boolean);
+    const accountIds = [
+      teacherAccountId, otherTeacherAccountId, erasedTeacherAccountId,
+    ].filter(Boolean);
     if (teacherIds.length) {
       await prisma.invitation.deleteMany({ where: { teacherId: { in: teacherIds } } });
       await prisma.teacherBlock.deleteMany({ where: { teacherId: { in: teacherIds } } });
@@ -205,6 +226,41 @@ describe('listPendingInvitations', () => {
     } finally {
       if (openInvitation) await prisma.invitation.deleteMany({ where: { id: openInvitation.id } });
       if (block) await prisma.teacherBlock.deleteMany({ where: { id: block.id } });
+    }
+  });
+
+  it('excludes a pending invitation from a soft-deleted teacher while still returning a live one to the same address', async () => {
+    // F7, #166 review. Erasure deletes every `TeacherStudent` row but leaves
+    // `Invitation` standing, so a pre-erasure invitation stays `pending`
+    // forever. Offered here, the student gets a card asking them to connect
+    // with "Deleted Teacher" — and accepting it recreates a link erasure
+    // deleted (`acceptInvitation` carries the matching guard).
+    //
+    // Both rows are addressed to ONE address on purpose. Asserting only that
+    // the erased teacher's row is absent would pass just as well if
+    // `deletedAt: null` were mistyped into something that matches nothing at
+    // all; the live row in the same result proves the filter discriminates
+    // rather than empties.
+    const email = `pending-list-erased-target-${suffix}@test.local`;
+    let erasedInvitation: { id: string } | undefined;
+    let liveInvitation: { id: string } | undefined;
+    try {
+      erasedInvitation = await prisma.invitation.create({
+        data: { teacherId: erasedTeacherId, email, firstName: 'Erased', lastName: 'Invite' },
+        select: { id: true },
+      });
+      liveInvitation = await prisma.invitation.create({
+        data: { teacherId, email, firstName: 'Live', lastName: 'Invite' },
+        select: { id: true },
+      });
+
+      const result = await listPendingInvitations(prisma, { accountEmail: email });
+      expect(result.map((r) => r.id)).toEqual([liveInvitation.id]);
+    } finally {
+      const ids = [erasedInvitation?.id, liveInvitation?.id].filter(
+        (id): id is string => id !== undefined,
+      );
+      if (ids.length) await prisma.invitation.deleteMany({ where: { id: { in: ids } } });
     }
   });
 });

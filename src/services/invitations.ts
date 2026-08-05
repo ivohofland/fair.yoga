@@ -269,6 +269,15 @@ export async function notifyInvitee(
  * `accountEmail` is lowercased for the same reason every other email match
  * in this file is: `Invitation.email` and `TeacherBlock.email` are always
  * written lowercase, `Account.email` never is.
+ *
+ * `deletedAt: null` is the other half of `acceptInvitation`'s own liveness
+ * check (F7, #166 review). Erasure (`deleteTeacherAccount`, services/gdpr.ts)
+ * deletes every `TeacherStudent` row and renames the teacher to "Deleted
+ * Teacher", but it leaves `Invitation` rows standing — so without this
+ * filter a student is offered a card inviting them to connect with an
+ * account that no longer exists, naming a person called "Deleted Teacher".
+ * This is the primary gate for that, the same way the block exclusion above
+ * is the primary gate for a block.
  */
 export async function listPendingInvitations(
   db: PrismaClient,
@@ -279,7 +288,7 @@ export async function listPendingInvitations(
     where: {
       email,
       status: 'pending',
-      teacher: { teacherBlocks: { none: { email } } },
+      teacher: { deletedAt: null, teacherBlocks: { none: { email } } },
     },
     select: { id: true, teacher: { select: { firstName: true, lastName: true } } },
     orderBy: { createdAt: 'desc' },
@@ -311,6 +320,26 @@ export async function listPendingInvitations(
  * It returns the same `NOT_FOUND` as an unknown id, not a distinct code: a
  * distinct code would tell a probing caller that a block exists, which is
  * the exact bit `inviteContact` above withholds.
+ *
+ * `teacher: { deletedAt: null }` is in the `where` for the same structural
+ * reason the email match is (F7, #166 review): a condition the write depends
+ * on belongs in the query, not in a check after the read. Erasure
+ * (`deleteTeacherAccount`, services/gdpr.ts) deletes every `TeacherStudent`
+ * row this teacher had, but it does not touch `Invitation` — so an
+ * invitation sent before the erasure is still `pending`, and without this
+ * the `upsert` below RECREATES a link erasure deleted, against an account
+ * that no longer exists. Every reader that surfaces a teacher to another
+ * person filters this (`(public)/[slug]`, `(public)/[slug]/book/[classId]`,
+ * `validateSession`, `payment-reminders`); this one did not.
+ *
+ * Also `NOT_FOUND`, not a code of its own. The student loses nothing by it:
+ * `listPendingInvitations` above already drops the card, so a refresh is
+ * the whole explanation, and the only way to reach this branch at all is a
+ * page held open across the erasure. Against that, a distinct code is a new
+ * bit on a student-facing route that anyone holding a guessed id could read
+ * — and this route's whole design is that an id, on its own, tells a caller
+ * nothing. Keeping every "there is nothing here for you" answer identical is
+ * worth more than naming this one.
  */
 export async function acceptInvitation(
   db: PrismaClient,
@@ -318,7 +347,7 @@ export async function acceptInvitation(
 ): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_PENDING' }> {
   const email = input.accountEmail.toLowerCase();
   const invitation = await db.invitation.findFirst({
-    where: { id: input.invitationId, email },
+    where: { id: input.invitationId, email, teacher: { deletedAt: null } },
     select: { id: true, teacherId: true },
   });
   if (!invitation) return { ok: false, reason: 'NOT_FOUND' };

@@ -692,6 +692,93 @@ describe('POST /api/invitations/[id]/respond', () => {
     }
   });
 
+  it('refuses to accept an invitation from a soft-deleted teacher, and creates no link', async () => {
+    // F7, #166 review. Erasure (`deleteTeacherAccount`, services/gdpr.ts)
+    // deletes every one of that teacher's `TeacherStudent` rows and leaves
+    // their `Invitation` rows standing — so a pending invitation sent before
+    // the erasure outlives it, and accepting it RECREATES a link erasure
+    // deleted, pointing at an account that no longer exists.
+    //
+    // The fixture's starting state is the test: no `TeacherStudent` row for
+    // this pair, which is exactly what erasure leaves behind and exactly
+    // what the broken code moves away from. Seeded with a link, the
+    // `expect(...).toBeNull()` below could not fail.
+    const erasedEmail = `Inv-Erased-Responder-${suffix}@Test.Local`;
+    let erasedTeacher: { id: string; accountId: string } | undefined;
+    let erasedInvite: { id: string } | undefined;
+    let erasedStudentId: string | undefined;
+    let erasedStudentAccountId: string | undefined;
+    try {
+      erasedTeacher = await prisma.teacher.create({
+        data: {
+          // The names erasure itself writes — this is the card the student
+          // would be shown if the guard were absent.
+          firstName: 'Deleted', lastName: 'Teacher',
+          email: `inv-erased-teacher-${suffix}@test.local`,
+          account: { create: { email: `inv-erased-teacher-${suffix}@test.local` } },
+          bio: '',
+          pageSlug: `inv-erased-teacher-${suffix}`,
+          deletedAt: new Date(),
+        },
+        select: { id: true, accountId: true },
+      });
+
+      const erasedStudent = await prisma.student.create({
+        data: {
+          firstName: 'Erased', lastName: 'Responder',
+          email: erasedEmail, claimedAt: new Date(),
+          account: { create: { email: erasedEmail } },
+        },
+        select: { id: true, accountId: true },
+      });
+      erasedStudentId = erasedStudent.id;
+      erasedStudentAccountId = erasedStudent.accountId as string;
+      const erasedToken = await seedSession(prisma, erasedStudentAccountId);
+
+      // Lowercase on the invitation, mixed case on the account — the same
+      // split every other test in this describe uses, so the guard being
+      // added here cannot pass by accidentally short-circuiting the
+      // lowercasing that already has to happen.
+      erasedInvite = await prisma.invitation.create({
+        data: {
+          teacherId: erasedTeacher.id, email: erasedEmail.toLowerCase(),
+          firstName: 'Erased', lastName: 'Responder',
+        },
+        select: { id: true },
+      });
+
+      // Same 404 as an unknown id: a distinct code would be a new bit on a
+      // route whose whole design is that an id alone tells a caller nothing.
+      const res = await respond(erasedInvite.id, erasedToken, 'accept');
+      expect(res.status).toBe(404);
+
+      expect(await prisma.teacherStudent.findUnique({
+        where: { teacherId_studentId: { teacherId: erasedTeacher.id, studentId: erasedStudentId } },
+      })).toBeNull();
+      const inv = await prisma.invitation.findUniqueOrThrow({ where: { id: erasedInvite.id } });
+      expect(inv.status).toBe('pending');
+      expect(inv.respondedAt).toBeNull();
+    } finally {
+      if (erasedInvite) await prisma.invitation.deleteMany({ where: { id: erasedInvite.id } });
+      if (erasedStudentId) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId: erasedStudentId } });
+      }
+      if (erasedStudentAccountId) {
+        await prisma.session.deleteMany({ where: { accountId: erasedStudentAccountId } });
+      }
+      if (erasedStudentId) await prisma.student.deleteMany({ where: { id: erasedStudentId } });
+      if (erasedStudentAccountId) {
+        await prisma.account.deleteMany({ where: { id: erasedStudentAccountId } });
+      }
+      if (erasedTeacher) {
+        await prisma.invitation.deleteMany({ where: { teacherId: erasedTeacher.id } });
+        await prisma.teacherBlock.deleteMany({ where: { teacherId: erasedTeacher.id } });
+        await prisma.teacher.deleteMany({ where: { id: erasedTeacher.id } });
+        await prisma.account.deleteMany({ where: { id: erasedTeacher.accountId } });
+      }
+    }
+  });
+
   it('refuses to decline an invitation addressed to someone else', async () => {
     // declineInvitation has its own copy of the email match — this is the
     // test that can actually fail it, since every other decline test in
