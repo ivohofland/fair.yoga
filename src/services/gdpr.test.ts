@@ -530,6 +530,8 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
   let accountId: string;
   let roomId: string;
   let teacherRoomId: string;
+  let registeredStudentId: string;
+  let waitingStudentId: string;
 
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
@@ -566,10 +568,36 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
       select: { id: true },
     });
     teacherRoomId = teacherRoom.id;
+
+    // Two students on the class this test skips: one registered, one
+    // waiting. A skip that is real (the class row untouched) has to be told
+    // apart from a skip that is only half-applied (the row untouched but
+    // the waitlist/notification side effects below the CAS still ran) —
+    // round 1 review, Important 2.
+    const registered = await prisma.student.create({
+      data: { firstName: 'Cas', lastName: 'Registered', email: `${suffix}-registered@test.local`, incomeTier: 2 },
+      select: { id: true },
+    });
+    registeredStudentId = registered.id;
+    const waiting = await prisma.student.create({
+      data: { firstName: 'Cas', lastName: 'Waiting', email: `${suffix}-waiting@test.local`, incomeTier: 2 },
+      select: { id: true },
+    });
+    waitingStudentId = waiting.id;
   });
 
   afterAll(async () => {
+    await prisma.notification.deleteMany({
+      where: { recipientId: { in: [registeredStudentId, waitingStudentId] } },
+    });
+    await prisma.waitlistEntry.deleteMany({
+      where: { studentId: { in: [registeredStudentId, waitingStudentId] } },
+    });
+    await prisma.registration.deleteMany({
+      where: { studentId: { in: [registeredStudentId, waitingStudentId] } },
+    });
     await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.student.deleteMany({ where: { id: { in: [registeredStudentId, waitingStudentId] } } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
     await prisma.teacher.delete({ where: { id: teacherId } });
@@ -597,6 +625,13 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     });
     const classId = cls.id;
 
+    await prisma.registration.create({
+      data: { classId, studentId: registeredStudentId, status: 'registered', tierAtBooking: 2 },
+    });
+    await prisma.waitlistEntry.create({
+      data: { classId, studentId: waitingStudentId, position: 1, status: 'waiting' },
+    });
+
     let calls = 0;
     let completedConcurrently = false;
     const racing = prisma.$extends({
@@ -605,12 +640,25 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
           async findMany({ args, query }) {
             calls += 1;
             const rows = await query(args);
-            if (calls === 1) {
-              // `deleteTeacherAccount`'s pre-transaction sweep
-              // (`select: { id: true }` on `status: 'in_progress'`).
-              // Filtered out so the row is still genuinely `in_progress`
-              // for the transaction's own read below — standing in for a
-              // completion sweep that has not reached this class yet.
+            // Discriminated on the args shape, not on which call happens to
+            // come first (round 1 review, Important 1: keying on call order
+            // went silently vacuous when an unrelated extra `class.findMany`
+            // landed before the transaction's own read — the concurrent
+            // completion fired on the wrong call, the real read then saw an
+            // already-`completed` row and excluded it via its own `WHERE`,
+            // and the buggy unconditional update never got a row to
+            // clobber). The pre-transaction sweep (`gdpr.ts`, before the
+            // transaction opens) selects only `id` on `status: 'in_progress'`
+            // and never includes `registrations`; the transaction's read of
+            // "upcoming" classes is the only one of the two that does. An
+            // extra `class.findMany` inserted anywhere else now reliably
+            // falls into the "not the transaction's read" branch below
+            // instead of stealing this hook's one shot at the side effect.
+            const isTransactionRead = Boolean(args.include && 'registrations' in args.include);
+            if (!isTransactionRead) {
+              // Standing in for a completion sweep that has not reached
+              // this row yet — filtered so the class stays genuinely
+              // `in_progress` for the transaction's own read.
               return rows.filter((r) => r.id !== classId);
             }
             // The erasure transaction's read of "upcoming" classes. The
@@ -637,11 +685,39 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
 
     await deleteTeacherAccount(racing, teacherId);
 
+    // Exactly the two `class.findMany` calls `deleteTeacherAccount` is known
+    // to make today — no more, no fewer. A future structural change that
+    // adds, removes, or reorders one now fails loudly here instead of the
+    // shape-based routing above silently absorbing it and the test passing
+    // for the wrong reason (round 1 review, Important 1).
+    expect(calls).toBe(2);
+
     // Order matters for what a regression reports: checking the row first
     // means the unconditional-update bug shows as the actual overwrite
     // ("expected 'completed' to be 'cancelled'"), not just a wrong boolean.
     const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
     expect(after.status).toBe('completed');
+
+    // The skip has to be real, not just "the class row happens to look
+    // right": a half-applied skip — the CAS predicate refuses the class
+    // write but the waitlist/notification statements below it still run
+    // unconditionally — would flip this waiting entry to `removed` and tell
+    // the registered student their class was cancelled, while
+    // `completeClass` had already told them to pay for it (round 1 review,
+    // Important 2).
+    const waitlistEntry = await prisma.waitlistEntry.findUniqueOrThrow({
+      where: { classId_studentId: { classId, studentId: waitingStudentId } },
+    });
+    expect(waitlistEntry.status).toBe('waiting');
+    const cancelledNotice = await prisma.notification.findFirst({
+      where: {
+        recipientType: 'student',
+        recipientId: registeredStudentId,
+        type: 'class_cancelled',
+        relatedClassId: classId,
+      },
+    });
+    expect(cancelledNotice).toBeNull();
 
     // And the erasure itself still completed — the point is to skip the
     // class, not to abandon the request.
