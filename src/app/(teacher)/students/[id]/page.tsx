@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
-import { formatStudentName, formatDateWithYear, formatDateShort } from '@/lib/format';
+import { formatDateWithYear, formatDateShort } from '@/lib/format';
+import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -17,13 +18,11 @@ export default async function StudentDetailPage({
 
   const student = await prisma.student.findUnique({
     where: { id },
-    include: {
+    select: {
+      ...studentVisibilitySelect(session.teacherId),
       teacherStudents: {
         where: { teacherId: session.teacherId },
         select: { id: true, isArchived: true },
-      },
-      studentPrivacy: {
-        where: { teacherId: session.teacherId },
       },
       registrations: {
         where: { class: { teacherId: session.teacherId } },
@@ -38,21 +37,10 @@ export default async function StudentDetailPage({
 
   if (!student || student.teacherStudents.length === 0) redirect('/students');
 
-  // #166: unreachable for rows created after acceptance-gated linking —
-  // nothing creates an unclaimed Student any more. Kept because removing
-  // it means removing the claim path (lib/auth/account.ts:34-50), the
-  // Student_claim_link_check constraint and Student.claimedAt together.
-  // Filed as a leaf. Do NOT treat this branch as a live privacy rule.
-  const isUnlinked = !student.claimedAt;
   const isArchived = student.teacherStudents[0]?.isArchived ?? false;
-  // For claimed students, respect privacy settings
-  const privacy = student.studentPrivacy[0];
-  const shareFullName = isUnlinked || (privacy?.shareFullName ?? false);
-  const displayName = formatStudentName(student.firstName, student.lastName, shareFullName);
-  const showEmail = isUnlinked || (privacy?.shareEmail ?? false);
-  const showPhone = isUnlinked || (privacy?.sharePhone ?? false);
-  const showBirthday = isUnlinked || (privacy?.shareBirthday ?? false);
-  const showAddress = isUnlinked || (privacy?.shareAddress ?? false);
+  const visible = projectStudentForTeacher(student);
+  const isUnlinked = !visible.claimedAt;
+  const displayName = visible.displayName;
 
   return (
     <>
@@ -78,19 +66,19 @@ export default async function StudentDetailPage({
       <section className="mb-8">
         <h2 className="type-subtitle mb-3">Contact</h2>
         <div className="flex flex-col gap-2">
-          {showEmail && student.email && (
+          {visible.email && (
             <div>
               <span className="type-label">Email</span>
-              <p className="text-base text-ink">{student.email}</p>
+              <p className="text-base text-ink">{visible.email}</p>
             </div>
           )}
-          {showPhone && student.phone && (
+          {visible.phone && (
             <div>
               <span className="type-label">Phone</span>
-              <p className="text-base text-ink">{student.phone}</p>
+              <p className="text-base text-ink">{visible.phone}</p>
             </div>
           )}
-          {showBirthday && student.birthday && (
+          {visible.birthday && (
             <div>
               <span className="type-label">Birthday</span>
               {/*
@@ -101,16 +89,16 @@ export default async function StudentDetailPage({
                 reads with UTC accessors, which avoids the same
                 host-local-shifts-the-day bug as the two class dates below.
               */}
-              <p className="text-base text-ink">{formatDateShort(student.birthday)}</p>
+              <p className="text-base text-ink">{formatDateShort(visible.birthday)}</p>
             </div>
           )}
-          {showAddress && student.address && (
+          {visible.address && (
             <div>
               <span className="type-label">Address</span>
-              <p className="text-base text-ink">{student.address}</p>
+              <p className="text-base text-ink">{visible.address}</p>
             </div>
           )}
-          {!showEmail && !showPhone && !showBirthday && !showAddress && (
+          {!visible.email && !visible.phone && !visible.birthday && !visible.address && (
             <EmptyState title="No contact information shared by this student." />
           )}
         </div>

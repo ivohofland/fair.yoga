@@ -1,12 +1,22 @@
-import type { Class, Registration, Student } from '@prisma/client';
+import type { Class, Registration } from '@prisma/client';
 import { calculateClassPricing } from '@/services/pricing';
 import { INCOME_TIERS, type IncomeTier } from '@/lib/tiers';
 import { toIncomeTier } from '@/lib/tiers.server';
 
-type RegistrationWithStudent = Registration & { student: Student };
+/**
+ * Only the four registration columns this component reads. It used to ask for
+ * `Registration & { student: Student }`, which forced its one caller
+ * (`(teacher)/class/[id]/page.tsx`) to load every `Student` column for a
+ * component that touches no student field at all — #167 narrowed that query to
+ * the name projection, so this type now states what is actually consumed.
+ */
+type PricedRegistration = Pick<
+  Registration,
+  'id' | 'status' | 'tierAtBooking' | 'price'
+>;
 
 type ClassWithRegistrations = Class & {
-  registrations: RegistrationWithStudent[];
+  registrations: PricedRegistration[];
 };
 
 interface PricingPreviewProps {

@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
-import { formatStudentName } from '@/lib/format';
+import { teacherVisibleName, studentNameSelect } from '@/lib/student-visibility';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
 import { ClassInfo } from '@/components/class/class-info';
@@ -37,14 +37,7 @@ export default async function ClassDetailPage({
       teacherRoom: { include: { room: true } },
       registrations: {
         include: {
-          student: {
-            include: {
-              studentPrivacy: {
-                where: { teacherId: session.teacherId },
-                select: { shareFullName: true },
-              },
-            },
-          },
+          student: { select: studentNameSelect(session.teacherId) },
           payment: true,
         },
         orderBy: { registeredAt: 'asc' },
@@ -57,17 +50,6 @@ export default async function ClassDetailPage({
     redirect('/');
   }
 
-  // Serialize registrations for client components (Prisma Dates/Decimals are not serializable)
-  function getStudentDisplayName(student: { firstName: string; lastName: string; claimedAt: Date | null; studentPrivacy: { shareFullName: boolean }[] }): string {
-    // #166: unreachable for rows created after acceptance-gated linking —
-    // nothing creates an unclaimed Student any more. Kept because removing
-    // it means removing the claim path (lib/auth/account.ts:34-50), the
-    // Student_claim_link_check constraint and Student.claimedAt together.
-    // Filed as a leaf. Do NOT treat this branch as a live privacy rule.
-    const shareFullName = !student.claimedAt || (student.studentPrivacy[0]?.shareFullName ?? false);
-    return formatStudentName(student.firstName, student.lastName, shareFullName);
-  }
-
   const activeRegistrations = cls.registrations.filter((r) => r.status !== 'cancelled');
 
   // Seat occupancy excludes late_cancel: those students are still charged
@@ -77,10 +59,11 @@ export default async function ClassDetailPage({
     ['registered', 'attended', 'no_show'].includes(r.status),
   ).length;
 
+  // Serialize registrations for client components (Prisma Dates/Decimals are not serializable)
   const attendanceItems: AttendanceItem[] = activeRegistrations
     .map((r) => ({
       registrationId: r.id,
-      studentName: getStudentDisplayName(r.student),
+      studentName: teacherVisibleName(r.student),
       status: r.status,
     }));
 
@@ -89,7 +72,7 @@ export default async function ClassDetailPage({
     .map((r) => ({
       paymentId: r.payment!.id,
       studentId: r.studentId,
-      studentName: getStudentDisplayName(r.student),
+      studentName: teacherVisibleName(r.student),
       amount: Number(r.payment!.amount),
       status: r.payment!.status,
       reminderSentAt: r.payment!.reminderSentAt,
@@ -153,7 +136,7 @@ export default async function ClassDetailPage({
                 href={`/students/${r.studentId}`}
                 className="flex items-center min-h-14 py-2 border-b border-border last:border-b-0 no-underline"
               >
-                <span className="text-base text-ink">{getStudentDisplayName(r.student)}</span>
+                <span className="text-base text-ink">{teacherVisibleName(r.student)}</span>
               </Link>
             ))}
           </div>

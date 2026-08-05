@@ -4,7 +4,8 @@ import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { OutstandingPaymentRow } from '@/components/class/outstanding-payment-row';
 import { ReceivedPaymentRow } from '@/components/class/received-payment-row';
-import { formatStudentName, formatDateShort } from '@/lib/format';
+import { formatDateShort } from '@/lib/format';
+import { teacherVisibleName, studentNameSelect } from '@/lib/student-visibility';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,17 +21,7 @@ export default async function PaymentsOverviewPage() {
       registration: {
         select: {
           studentId: true,
-          student: {
-            select: {
-              firstName: true,
-              lastName: true,
-              claimedAt: true,
-              studentPrivacy: {
-                where: { teacherId: session.teacherId },
-                select: { shareFullName: true },
-              },
-            },
-          },
+          student: { select: studentNameSelect(session.teacherId) },
           class: { select: { id: true, classType: true, date: true, startTime: true } },
         },
       },
@@ -44,19 +35,8 @@ export default async function PaymentsOverviewPage() {
     .filter((p) => p.status === 'paid')
     .reduce((sum, p) => sum + Number(p.amount), 0);
 
-  const studentName = (p: (typeof payments)[number]) => {
-    const s = p.registration.student;
-    // #166: unreachable for rows created after acceptance-gated linking —
-    // nothing creates an unclaimed Student any more. Kept because removing
-    // it means removing the claim path (lib/auth/account.ts:34-50), the
-    // Student_claim_link_check constraint and Student.claimedAt together.
-    // Filed as a leaf. Do NOT treat this branch as a live privacy rule.
-    return formatStudentName(
-      s.firstName,
-      s.lastName,
-      !s.claimedAt || (s.studentPrivacy[0]?.shareFullName ?? false),
-    );
-  };
+  const studentName = (p: (typeof payments)[number]) =>
+    teacherVisibleName(p.registration.student);
 
   return (
     <div>
