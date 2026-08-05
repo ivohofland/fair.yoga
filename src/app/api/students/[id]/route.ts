@@ -9,6 +9,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { updateStudentSchema, archiveStateQuerySchema } from '@/lib/schemas';
+import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -36,39 +37,13 @@ export const GET = withErrorHandler(async (
     });
     if (!link) return respondError('Student not in your contacts', 403);
 
-    const privacy = await prisma.studentPrivacy.findUnique({
-      where: {
-        studentId_teacherId: {
-          studentId: id,
-          teacherId: session.teacherId,
-        },
-      },
+    const visible = await prisma.student.findUnique({
+      where: { id },
+      select: studentVisibilitySelect(session.teacherId),
     });
+    if (!visible) return respondError('Student not found', 404);
 
-    // #166: unreachable for rows created after acceptance-gated linking —
-    // nothing creates an unclaimed Student any more. Kept because removing
-    // it means removing the claim path (lib/auth/account.ts:34-50), the
-    // Student_claim_link_check constraint and Student.claimedAt together.
-    // Filed as a leaf. Do NOT treat this branch as a live privacy rule.
-    // Unclaimed students (teacher-created) — no privacy restrictions
-    const isUnclaimed = !student.claimedAt;
-
-    const filtered: Record<string, unknown> = {
-      id: student.id,
-      firstName: student.firstName,
-      lastName: (isUnclaimed || privacy?.shareFullName) ? student.lastName : (student.lastName.charAt(0) || ''),
-      incomeTier: student.incomeTier,
-      claimedAt: student.claimedAt,
-      createdAt: student.createdAt,
-      updatedAt: student.updatedAt,
-    };
-
-    if (isUnclaimed || privacy?.shareEmail) filtered.email = student.email;
-    if (isUnclaimed || privacy?.sharePhone) filtered.phone = student.phone;
-    if (isUnclaimed || privacy?.shareBirthday) filtered.birthday = student.birthday;
-    if (isUnclaimed || privacy?.shareAddress) filtered.address = student.address;
-
-    return respondOk(filtered);
+    return respondOk(projectStudentForTeacher(visible));
   }
 
   return respondError('Access denied', 403);

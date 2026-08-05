@@ -625,10 +625,16 @@ describe('GET /api/students/[id] — profile-presence authorization', () => {
     const res = await as(dualToken, `/api/students/${rosterStudentId}`);
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { data: { lastName: string; email?: string } };
-    // Default privacy: last initial only, no email.
-    expect(body.data.lastName).toBe('P');
-    expect(body.data.email).toBeUndefined();
+    const body = (await res.json()) as {
+      data: { displayName: string; email: string | null; incomeTier?: number };
+    };
+    // Default privacy: a composed name with a last initial, and no email.
+    // `email` is present and null rather than absent — an absent key cannot be
+    // told apart from a route that forgot to select the field (#167).
+    expect(body.data.displayName).toBe('Rostered p.');
+    expect(body.data.email).toBeNull();
+    // No tier: there is no shareIncomeTier flag and #167 decided against one.
+    expect(body.data.incomeTier).toBeUndefined();
   });
 
   it('a student-only session reading another student is denied', async () => {
