@@ -4,16 +4,19 @@ import { INCOME_TIERS, type IncomeTier } from '@/lib/tiers';
 import { toIncomeTier } from '@/lib/tiers.server';
 
 /**
- * Only the four registration columns this component reads. It used to ask for
+ * Only the three registration columns this component reads. It used to ask for
  * `Registration & { student: Student }`, which forced its one caller
  * (`(teacher)/class/[id]/page.tsx`) to load every `Student` column for a
  * component that touches no student field at all — #167 narrowed that query to
  * the name projection, so this type now states what is actually consumed.
+ *
+ * `price` is deliberately absent even though the render shows prices: those
+ * come from `pricing.students`, computed here, not from the registration rows.
+ * Naming a column this component does not read would over-state the contract
+ * and push the next caller into widening its query to satisfy the type — the
+ * failure this comment exists to prevent.
  */
-type PricedRegistration = Pick<
-  Registration,
-  'id' | 'status' | 'tierAtBooking' | 'price'
->;
+type PricedRegistration = Pick<Registration, 'id' | 'status' | 'tierAtBooking'>;
 
 type ClassWithRegistrations = Class & {
   registrations: PricedRegistration[];

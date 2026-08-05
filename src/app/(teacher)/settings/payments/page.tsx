@@ -20,7 +20,6 @@ export default async function PaymentsOverviewPage() {
     include: {
       registration: {
         select: {
-          studentId: true,
           student: { select: studentNameSelect(session.teacherId) },
           class: { select: { id: true, classType: true, date: true, startTime: true } },
         },

@@ -98,8 +98,16 @@ export default async function StudentDetailPage({
               <p className="text-base text-ink">{visible.address}</p>
             </div>
           )}
+          {/*
+            "to show", not "shared by this student": this renders both when
+            the student withheld everything and when they shared a field they
+            have never filled in (`sharePhone` over a null `phone`). The old
+            copy blamed the student's choice for what can be an empty column.
+            `email` is non-null on `Student`, so `shareEmail: true` always
+            renders a row and can never reach this branch.
+          */}
           {!visible.email && !visible.phone && !visible.birthday && !visible.address && (
-            <EmptyState title="No contact information shared by this student." />
+            <EmptyState title="No contact information to show." />
           )}
         </div>
       </section>
