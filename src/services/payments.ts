@@ -30,9 +30,23 @@ export type PaymentResult = { ok: true; payment: Payment } | { ok: false; error:
  * `lastName`, never `email`. But both used an un-`select`ed `include` on
  * `registration`, so both also shipped `tierAtBooking` and `tierRatio` —
  * stored copies of the student's income tier — regardless of what the
- * student `select` named. The `registration` shape below is explicit for the
- * same reason this type exists at all: naming exactly what's returned is
- * what makes a future superset visible again.
+ * student `select` named.
+ *
+ * The `registration` shape below is explicit so a reader can see what is
+ * returned — but do not mistake it for the guard. It is not one. Both query
+ * functions build their rows with `...row.registration`, and TypeScript does
+ * not excess-property-check spread properties against a declared return type:
+ * adding `tierAtBooking: true` to either `select` (or spreading
+ * `payment.registration` in `api/payments/[id]/route.ts` instead of building
+ * it out field by field) re-ships the income tier with `tsc --noEmit` clean.
+ * Verified, not assumed.
+ *
+ * What actually catches a widened `select` is
+ * `tests/integration/payments-api.test.ts` — `:144` for
+ * `getOutstandingPayments`, `:166` for `GET /api/payments/[id]`, `:194` for
+ * `getPaymentsForClass` — each asserting `tierAtBooking`/`tierRatio`/`price`
+ * are `undefined` on the wire. Widen a `select` here and the corresponding
+ * assertion goes red; skip that suite and nothing else will tell you.
  */
 export type TeacherPaymentRow = Payment & {
   registration: {
