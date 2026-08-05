@@ -76,9 +76,10 @@ describe('teacherVisibleName', () => {
     );
   });
 
-  // Multi-row inputs. In production `studentNameSelect`'s nested
-  // `where: { teacherId }` keeps this list to at most one row, so these arrays
-  // are what an *unscoped* query would hand the function.
+  // Multi-row inputs. In production the nested `where: { teacherId }` on
+  // `studentNameSelect` and `studentVisibilitySelect` alike keeps this list to
+  // at most one row — `StudentPrivacy` is `@@unique([studentId, teacherId])` —
+  // so these arrays are what an *unscoped* query would hand the function.
   //
   // Be exact about what that falsifies, because an earlier version of this
   // comment was not. Nothing in this file imports `studentNameSelect` or

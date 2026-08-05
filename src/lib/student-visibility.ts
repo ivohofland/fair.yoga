@@ -92,10 +92,13 @@ void _visibilityFlagsAreExhaustive;
  *   `students-api.test.ts`'s two-privacy-row fixture goes red on it.
  *
  * The mutation that universally produces no-match-every-field-null is
- * dropping `teacherId: true` from a nested `select`. It cannot reach runtime:
- * `tsc` fails with 12 errors, one at each of the 12 external call sites,
- * because the row no longer satisfies `ScopedVisibilityFlags`. That is this
- * type's real enforcement — the shape, not the `find`.
+ * dropping `teacherId: true` from the nested `select`. It cannot reach
+ * runtime: `tsc` fails at every external call site fed by whichever fragment
+ * lost it, because the row no longer satisfies `ScopedVisibilityFlags`.
+ * Measured: 8 errors from `studentVisibilitySelect` alone, 4 from
+ * `studentNameSelect` alone, 12 from both — which is the module's own
+ * call-site census, enumerated below. That is this type's real enforcement —
+ * the shape, not the `find`.
  */
 export type ScopedVisibilityFlags = VisibilityFlags & Pick<StudentPrivacy, 'teacherId'>;
 
