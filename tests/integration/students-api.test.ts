@@ -590,6 +590,11 @@ describe('GET /api/students/[id] — profile-presence authorization', () => {
         firstName: 'Rostered',
         lastName: 'Privately',
         email: rosterEmail,
+        // A real phone number, so the `phone` assertions downstream are about
+        // the flag rather than about an empty column. Neither teacher has
+        // `sharePhone`, so both must read `null` — which, with no phone on the
+        // fixture, they did whether the gate ran or not.
+        phone: '+31600000167',
         claimedAt: new Date(),
         account: { create: { email: rosterEmail } },
       },
@@ -673,15 +678,25 @@ describe('GET /api/students/[id] — profile-presence authorization', () => {
 
   /**
    * The student holds two `StudentPrivacy` rows: all-false for this teacher,
-   * and `shareFullName`/`shareEmail` for `sharedTeacherId`. That is what makes
-   * this a test of the *scope* rather than of the default.
+   * and `shareFullName`/`shareEmail` for `sharedTeacherId`, created first. That
+   * is what makes this a test of the *scope* rather than of the default —
+   * until the PR review of #167 the fixture had no privacy row at all, and a
+   * missing row and a wrong-teacher row both project to `null`.
    *
-   * Until the PR review of #167 the fixture had no privacy row at all, so this
-   * assertion held for the wrong reason — a missing row and a wrong-teacher
-   * row both project to `null`, and deleting `where: { teacherId }` from
-   * `studentVisibilitySelect` left `tsc`, unit and integration all green while
-   * every teacher read whichever row sorted first. With a permissive row now
-   * present and created first, that mutation makes this test fail.
+   * Which mutation it catches was stated wrongly here, and the wrong statement
+   * is the interesting one. It claimed a deleted `where: { teacherId }` in
+   * `studentVisibilitySelect` reddens this test. It does not: the fixture's
+   * all-false row belongs to the *requesting* teacher, so the projection's
+   * `find` picks it out of the unscoped set and the response is unchanged.
+   * Measured — with that `where` deleted this file is 34/34 green.
+   *
+   * What it catches is the pre-#167 pair: `studentPrivacy[0]` read against an
+   * unscoped nested select. Then `[0]` is `sharedTeacherId`'s permissive row
+   * and this test reddens with `Rostered Privately` and a real email, as does
+   * the list test below (2 failed, measured). Neither half alone reddens
+   * anything — see `ScopedVisibilityFlags` in `lib/student-visibility.ts` for
+   * why, and for the mutation that does fail universally (dropping
+   * `teacherId: true`, which fails at compile time).
    */
   it('a dual account reading a roster student sees only its OWN privacy row', async () => {
     const res = await as(dualToken, `/api/students/${rosterStudentId}`);
@@ -716,7 +731,9 @@ describe('GET /api/students/[id] — profile-presence authorization', () => {
     };
     expect(body.data.displayName).toBe('Rostered Privately');
     expect(body.data.email).toBe(`stuapi-roster-${dualSuffix}@test.local`);
-    // Still per-field: this row shares name and email, nothing else.
+    // Still per-field: this row shares name and email, nothing else — and the
+    // student does have a phone number, so this is the flag being read and not
+    // an empty column.
     expect(body.data.phone).toBeNull();
   });
 
