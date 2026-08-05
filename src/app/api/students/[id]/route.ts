@@ -29,8 +29,18 @@ export const GET = withErrorHandler(async (
 
   // Teacher accessing student profile — must be linked to the student,
   // then filtered by that student's per-teacher privacy settings.
-  // Without the link check any teacher with a UUID could read names and
-  // income tiers of students they have no relationship with.
+  //
+  // The two checks answer different questions and neither replaces the other.
+  // Without the link check, any teacher holding a UUID reads a stranger — and
+  // a stranger has no `StudentPrivacy` row for this teacher, so the projection
+  // returns the maximum-privacy view rather than nothing: a truncated name,
+  // and the confirmation that this id is a student at all. That is the
+  // disclosure the link check exists to prevent. Once linked, the projection
+  // decides which of email, phone, birthday and address come back.
+  //
+  // Not income tiers, whatever this comment used to say: #167 dropped
+  // `incomeTier` from the teacher-facing shape entirely, and
+  // `students-api.test.ts` pins that it stays gone.
   if (session.teacherId) {
     const link = await prisma.teacherStudent.findUnique({
       where: { teacherId_studentId: { teacherId: session.teacherId, studentId: id } },
