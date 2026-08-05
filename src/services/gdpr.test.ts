@@ -29,7 +29,7 @@ async function makeStudentWaitingInClass() {
       bio: 'Class-lock fixture',
       pageSlug: suffix,
     },
-    select: { id: true },
+    select: { id: true, accountId: true },
   });
   const room = await prisma.room.create({
     data: {
@@ -82,7 +82,29 @@ async function makeStudentWaitingInClass() {
     classId: cls.id,
     teacherId: teacher.id,
     roomId: room.id,
+    accountId: teacher.accountId,
   };
+}
+
+/**
+ * Tears down everything `makeStudentWaitingInClass` created. Called from a
+ * `finally` in each test that uses the fixture (round 1 review, M5) — an
+ * assertion failure between creating the fixture and this call must still
+ * reap it, not leak the teacher/room/class/student/account rows into the
+ * next run.
+ */
+async function cleanupStudentWaitingInClass(
+  fixture: Awaited<ReturnType<typeof makeStudentWaitingInClass>>,
+): Promise<void> {
+  // `WaitlistEntry.class` is `onDelete: Cascade`, so any surviving entry
+  // (e.g. the erasure never ran because an earlier assertion threw) goes
+  // with the class below — no separate delete needed for it here.
+  await prisma.class.deleteMany({ where: { id: fixture.classId } });
+  await prisma.teacherRoom.deleteMany({ where: { teacherId: fixture.teacherId } });
+  await prisma.room.deleteMany({ where: { id: fixture.roomId } });
+  await prisma.student.deleteMany({ where: { id: fixture.studentId } });
+  await prisma.teacher.deleteMany({ where: { id: fixture.teacherId } });
+  await prisma.account.deleteMany({ where: { id: fixture.accountId } });
 }
 
 describe('GDPR (DB)', () => {
@@ -273,41 +295,90 @@ let studentAccountId: string;
   });
 
   it('waits for a class row another transaction holds before renumbering other students', async () => {
-    const {
-      studentId: fixtureStudentId,
-      classId: fixtureClassId,
-      teacherId: fixtureTeacherId,
-      roomId: fixtureRoomId,
-    } = await makeStudentWaitingInClass();
-    let holderReleased = false;
+    const fixture = await makeStudentWaitingInClass();
+    const { studentId: fixtureStudentId, classId: fixtureClassId } = fixture;
+    try {
+      let holderReleased = false;
 
-    const holder = prisma.$transaction(
-      async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${fixtureClassId} FOR UPDATE`;
-        await new Promise((r) => setTimeout(r, 900));
-        holderReleased = true;
-      },
-      { timeout: 10_000 },
-    );
-    await new Promise((r) => setTimeout(r, 150));
+      const holder = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${fixtureClassId} FOR UPDATE`;
+          await new Promise((r) => setTimeout(r, 900));
+          holderReleased = true;
+        },
+        { timeout: 10_000 },
+      );
+      await new Promise((r) => setTimeout(r, 150));
 
-    const erasing = deleteStudentAccount(prisma, fixtureStudentId).then(() => 'returned' as const);
-    const outcome = await Promise.race([
-      erasing,
-      new Promise<'waiting'>((r) => setTimeout(() => r('waiting'), 400)),
-    ]);
+      const erasing = deleteStudentAccount(prisma, fixtureStudentId).then(() => 'returned' as const);
+      const outcome = await Promise.race([
+        erasing,
+        new Promise<'waiting'>((r) => setTimeout(() => r('waiting'), 400)),
+      ]);
 
-    expect(outcome).toBe('waiting');
-    expect(holderReleased).toBe(false);
+      expect(outcome).toBe('waiting');
+      expect(holderReleased).toBe(false);
 
-    await holder;
-    expect(await erasing).toBe('returned');
+      await holder;
+      expect(await erasing).toBe('returned');
+    } finally {
+      await cleanupStudentWaitingInClass(fixture);
+    }
+  }, 15_000);
 
-    await prisma.class.deleteMany({ where: { id: fixtureClassId } });
-    await prisma.teacherRoom.deleteMany({ where: { teacherId: fixtureTeacherId } });
-    await prisma.room.deleteMany({ where: { id: fixtureRoomId } });
-    await prisma.student.deleteMany({ where: { id: fixtureStudentId } });
-    await prisma.teacher.deleteMany({ where: { id: fixtureTeacherId } });
+  it('does not deadlock against a transaction that locks the class first and then writes the erased student\'s waiting entry', async () => {
+    // Round 1 review, C1: the previous version of this fix took the row
+    // locks below BEFORE requesting the Class lock — the inverse of every
+    // other writer (`promoteNext` dropping a stale head,
+    // `withdrawWaitingEntriesForTeacher` clearing every entry both lock the
+    // Class row FIRST, then write `WaitlistEntry`). That inversion is a
+    // classic AB-BA deadlock: this transaction holding a `WaitlistEntry` row
+    // lock while requesting the Class lock, opposite another transaction
+    // holding the Class lock while requesting that same `WaitlistEntry`
+    // row. `OTHER` below plays that other transaction's exact shape — Class
+    // `FOR UPDATE` first, `WaitlistEntry` write second — reproduced against
+    // the previous version of this fix as Postgres error `40P01 deadlock
+    // detected`, and fails this test (via one of the two outcomes below not
+    // matching) if the class lock ever moves back below this transaction's
+    // own writes.
+    const fixture = await makeStudentWaitingInClass();
+    const { studentId: fixtureStudentId, classId: fixtureClassId } = fixture;
+    try {
+      const other = prisma
+        .$transaction(
+          async (tx) => {
+            await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${fixtureClassId} FOR UPDATE`;
+            // Give the erasure time to reach — and, pre-fix, complete — its
+            // own write to this same `WaitlistEntry` row before this
+            // transaction tries to touch it too. Comfortably under the 1s
+            // Postgres `deadlock_timeout` this test relies on to resolve the
+            // cycle it is trying to provoke.
+            await new Promise((r) => setTimeout(r, 300));
+            await tx.waitlistEntry.updateMany({
+              where: { classId: fixtureClassId, studentId: fixtureStudentId },
+              data: { status: 'removed' },
+            });
+          },
+          { timeout: 10_000 },
+        )
+        .then(() => 'other-ok' as const)
+        .catch((err: unknown) => ({ error: String(err) }) as const);
+
+      // Small settle so `other`'s `FOR UPDATE` is in place before the
+      // erasure starts — mirrors the settle in the wait test above.
+      await new Promise((r) => setTimeout(r, 50));
+
+      const erasing = deleteStudentAccount(prisma, fixtureStudentId)
+        .then(() => 'returned' as const)
+        .catch((err: unknown) => ({ error: String(err) }) as const);
+
+      const [otherOutcome, erasureOutcome] = await Promise.all([other, erasing]);
+
+      expect(erasureOutcome).toBe('returned');
+      expect(otherOutcome).toBe('other-ok');
+    } finally {
+      await cleanupStudentWaitingInClass(fixture);
+    }
   }, 15_000);
 
   it('teacher deletion cancels upcoming classes, notifies, and anonymizes', async () => {

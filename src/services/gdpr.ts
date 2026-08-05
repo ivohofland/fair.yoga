@@ -256,12 +256,14 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
   // was never applied half-way — and is safe to retry: `deleteStudentAccount`
   // is idempotent (`api/account/route.ts`'s docblock: "Both erasures are
   // safely re-runnable, so a retry finishes the job"). A retryable failure,
-  // not a silent or partial one.
+  // not a silent or partial one. See the transaction's `timeout` option
+  // below for the ceiling this count still has to respect.
   const waitingCount = await db.waitlistEntry.count({ where: { studentId, status: 'waiting' } });
 
   const freedClassIds = await db.$transaction(async (tx) => {
     // Record which open classes free a spot — the waitlist hook runs on
-    // them after the erasure commits.
+    // them after the erasure commits. A read, so it carries no lock-ordering
+    // obligation — see the lock loop below for what does.
     const upcoming = await tx.registration.findMany({
       where: {
         studentId,
@@ -270,6 +272,58 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
       },
       select: { classId: true, class: { select: { status: true } } },
     });
+
+    // Queues the student was waiting in need their positions closed up once
+    // the entries are gone. Read here, before this transaction's first
+    // write — not where this used to sit, immediately before the reorder
+    // loop — so the lock loop below can run before any write. See that loop
+    // for why the order matters, not just the fact of locking.
+    const waitingClassIds = (
+      await tx.waitlistEntry.findMany({
+        where: { studentId, status: 'waiting' },
+        select: { classId: true },
+      })
+    ).map((w) => w.classId);
+    const sortedWaitingClassIds = [...waitingClassIds].sort();
+
+    // Locked here, before this transaction's first write below — not merely
+    // before the reorder loop the lock used to sit beside. Round 1 review
+    // reproduced why placement matters: `promoteNext` drops a stale head and
+    // `withdrawWaitingEntriesForTeacher` clears every entry, and both take
+    // the Class row's lock BEFORE writing `WaitlistEntry`. Locking after
+    // this transaction's own writes (the previous version of this fix) let
+    // this transaction hold a `WaitlistEntry` row lock — from, e.g., the
+    // `waitlistEntry.deleteMany` below — while *requesting* the Class lock,
+    // at the same moment one of those functions held the Class lock while
+    // *requesting* that same `WaitlistEntry` row: transaction A holds row
+    // lock 1 and waits on lock 2; transaction B holds lock 2 and waits on
+    // lock 1. Postgres detects that cycle and kills one side with error
+    // `40P01 deadlock detected` — reproduced against the previous version of
+    // this fix, and the victim can be this erasure or a student's booking,
+    // Postgres's choice, not this code's. Locking every affected class here,
+    // before any write, makes this transaction's acquisition order match
+    // theirs (Class row, then its children) — the same convention
+    // `waitlist.ts:703–707` documents as "a correctness requirement rather
+    // than a style note," now for the same reason there as here.
+    //
+    // Not covered by the escape argument in `waitlist.ts`'s
+    // `withdrawWaitingEntriesForTeacher` docblock: that argument turns on
+    // only ever moving an entry OUT of `waiting`, and this renumbers rows
+    // belonging to OTHER students, racing the six other writers of
+    // `WaitlistEntry.position` on the same class (`addToWaitlist`,
+    // `removeFromWaitlist`, `promoteNext`, `claimSpot`,
+    // `withdrawWaitingEntriesForTeacher`, `POST /api/registrations`).
+    //
+    // Sorted, not "in the order the read above returned them" — that read
+    // has no `orderBy`, so trusting return order would let two concurrent
+    // erasures lock the same pair of classes in opposite sequences,
+    // recreating the exact inversion this sort exists to prevent. Matches
+    // `withdrawWaitingEntriesForTeacher`'s own ordered `FOR UPDATE OF c`,
+    // for the same reason: two concurrent erasures then take multiple
+    // classes in the same sequence and cannot cycle against each other.
+    for (const classId of sortedWaitingClassIds) {
+      await lockClassRow(tx, classId);
+    }
 
     // Cancel upcoming registrations so open classes free the spots.
     await tx.registration.updateMany({
@@ -280,15 +334,6 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
       },
       data: { status: 'cancelled', cancelledAt: new Date() },
     });
-
-    // Queues the student was waiting in need their positions closed up
-    // once the entries are gone.
-    const waitingClassIds = (
-      await tx.waitlistEntry.findMany({
-        where: { studentId, status: 'waiting' },
-        select: { classId: true },
-      })
-    ).map((w) => w.classId);
 
     await tx.studentPrivacy.deleteMany({ where: { studentId } });
     await tx.teacherStudent.deleteMany({ where: { studentId } });
@@ -375,21 +420,12 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
       });
     }
 
-    // Locked per class, in the order `waitingClassIds` came back in, so two
-    // concurrent erasures take multiple classes in the same sequence and
-    // cannot cycle. Not covered by the escape argument in
-    // `waitlist.ts`'s `withdrawWaitingEntriesForTeacher` docblock: that turns
-    // on only ever moving an entry OUT of `waiting`, and this renumbers rows
-    // belonging to OTHER students, racing the three locked writers that also
-    // write `position` on the same class.
-    //
-    // The 2s bound in `lockClassRow` matters most here: this runs inside the
-    // erasure transaction, which by now holds locks on StudentPrivacy,
-    // TeacherStudent, WaitlistEntry, Invitation and Notification. An
-    // unbounded wait on a row the transitions sweep holds would hang a
-    // legally time-bound request.
-    for (const classId of [...waitingClassIds].sort()) {
-      await lockClassRow(tx, classId);
+    // The lock for each of these classes was already taken above, before
+    // this transaction's first write — see that loop for why placement, not
+    // just the fact of locking, matters here. Renumbering here rather than
+    // there only changes when the write happens; the lock has been held
+    // since before this transaction wrote anything at all.
+    for (const classId of sortedWaitingClassIds) {
       await reorderWaitingEntries(tx, classId);
     }
 
@@ -410,19 +446,58 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
 
     return upcoming.filter((r) => r.class.status === 'open').map((r) => r.classId);
   }, {
-    // Arithmetic (see `waitingCount` above for why this can't be a flat
-    // constant): 5_000ms matches Prisma's own default transaction timeout,
-    // which is the budget every write above already ran inside before this
-    // task — a `student.findMany`/`deleteMany`/`updateMany` chain over
-    // indexed columns, none of it lock-contended — so it's proven headroom,
-    // not a guess. On top of that, `waitingCount * 2_000` covers the added
-    // loop's worst case: `lockClassRow`'s `SET LOCAL lock_timeout` bounds
-    // each class's wait to 2s, and N contended classes can burn that in
-    // sequence. At `waitingCount` = 3, the case #174's `db-locks.ts` docblock
-    // calls out as enough to exhaust Prisma's unmodified 5s default, this
-    // gives 11s — 6s of margin past the worst case that default couldn't
-    // survive.
-    timeout: 5_000 + waitingCount * 2_000,
+    // Arithmetic (see `waitingCount` above for why the base term can't be a
+    // flat constant): 5_000ms matches Prisma's own default transaction
+    // timeout, which is the budget every read and write above already ran
+    // inside before this task — reads and writes on `Registration`,
+    // `StudentPrivacy`, `TeacherStudent`, `WaitlistEntry`, `Invitation`,
+    // `Notification`, `Session`, `PasskeyCredential`, `Account` and
+    // `MagicLinkToken`, all over indexed columns — so it's proven headroom
+    // for that part, not a guess. It is NOT a claim that none of those
+    // writes are lock-contended: several of them can and do wait on other
+    // transactions (that contention is exactly what the class-lock ordering
+    // above resolves) — the claim is narrower, that this specific set of
+    // statements already fit inside 5s before this task added anything.
+    // `waitingCount * 2_000` covers the lock loop's own worst case:
+    // `lockClassRow`'s `SET LOCAL lock_timeout` bounds each class's `FOR
+    // UPDATE` wait to 2s, and N contended classes can burn that in sequence.
+    //
+    // That term does not cover everything the 2s bound applies to, though.
+    // `SET LOCAL lock_timeout` governs every statement left in this
+    // transaction, not just each class's `FOR UPDATE` — including
+    // `reorderWaitingEntries`'s (`waitlist.ts`) own `findMany` plus up to M
+    // individual `UPDATE`s per class, run after the lock loop above. Every
+    // one of those M statements inherits the same 2s bound, adding real,
+    // uncounted time on top of `waitingCount * 2_000` regardless of how
+    // often any single one of them actually waits (round 1 review, I2 —
+    // also names two writers elsewhere that flip `WaitlistEntry.status` from
+    // `waiting` to `removed` without going through `lockClassRow`,
+    // `transition/route.ts`'s cancel branch and `deleteTeacherAccount`'s CAS
+    // loop below; both still take a conflicting lock on the Class row first,
+    // via their own `class.updateMany`, which is what the ordering fix above
+    // protects against — but that leaves the per-row cost of this loop, not
+    // the wait before it starts, as the part this formula still doesn't
+    // price in).
+    //
+    // The `Math.min` below is the backstop for both gaps at once — the
+    // uncounted per-row time just described, and `waitingCount` itself
+    // having no upper bound (I3: nothing caps how many distinct classes a
+    // student can be `waiting` in, and that count is attacker-influenceable
+    // by joining more waitlists before requesting erasure). 20_000ms:
+    // generous enough that the realistic case — this is a single-teacher
+    // CRM tool with no plausible legitimate student waiting in more than a
+    // handful of classes at once — always gets its full honestly-sized
+    // budget (covers up to 7 fully-contended classes via the formula above
+    // before the cap binds). Bounded enough that a pathological N can no
+    // longer hold this app's single Postgres connection pool — the whole
+    // deployment runs on one 2GB VPS (`CLAUDE.md`: "VPS budget") — for more
+    // than 20s, versus the 105s an uncapped 50-class case would have taken.
+    // When the cap binds, the erasure aborts with P2028 instead of stalling
+    // further: a safe, retryable failure (every write lives inside this same
+    // transaction, so a rollback leaves nothing partially applied and a
+    // retry is byte-identical to a first attempt — verified end to end in
+    // round 1 review), not a correctness problem.
+    timeout: Math.min(5_000 + waitingCount * 2_000, 20_000),
   });
 
   // The seats are freed and the erasure is committed — a promotion failure

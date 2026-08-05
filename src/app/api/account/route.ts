@@ -24,9 +24,23 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
   // erasures are separate transactions: if the second fails after the
   // first committed, say exactly that — a bare 500 would hide that half
   // the erasure is already irreversible. Both erasures are safely
-  // re-runnable, so a retry finishes the job.
+  // re-runnable, so a retry finishes the job — but that only helps if the
+  // caller is TOLD to retry. A failure here (e.g. the erasure transaction's
+  // own `timeout` — see `gdpr.ts` — throwing P2028 under contention) used to
+  // fall straight through to `withErrorHandler`'s generic classification,
+  // which says nothing about retrying. Caught explicitly so the message
+  // matches the teacher-half path below.
   if (session.studentId) {
-    await deleteStudentAccount(prisma, session.studentId);
+    try {
+      await deleteStudentAccount(prisma, session.studentId);
+    } catch (err) {
+      log.error({ err, accountId: session.accountId }, 'account erasure: student half failed');
+      return respondError(
+        'Removing your account failed. Press Delete again to finish.',
+        500,
+        'ERASURE_FAILED',
+      );
+    }
   }
   if (session.teacherId) {
     try {

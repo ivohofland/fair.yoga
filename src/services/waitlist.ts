@@ -316,6 +316,8 @@ export async function removeFromWaitlist(
     // (`gdpr.ts`) takes the same bounded lock on the same queue too, since
     // #174 Task 5 — so a race between the two now waits, up to 2s, on
     // whichever of them got there first, rather than interleaving unlocked.
+    // At 2s the loser gets a Postgres `lock_timeout`, surfaced as a 500 by
+    // `withErrorHandler` — not swallowed — rather than blocking further.
     await lockClassRow(tx, classId);
 
     // Mark as removed
@@ -696,6 +698,20 @@ async function hasActiveRegistration(
  * task nothing renumbers this queue unlocked any more; see
  * `src/lib/db-locks.ts` for the bounded-vs-unbounded split (#104) that
  * remains among the ones that do lock.
+ *
+ * A narrower, still-open gap: two writers flip `WaitlistEntry.status` from
+ * `waiting` to `removed` — never touching `position`, so "renumbering
+ * writer" above does not cover them — without going through `lockClassRow`:
+ * the cancel branch of `POST /api/classes/[id]/transition`
+ * (`route.ts:52`) and `deleteTeacherAccount`'s own cancel loop (`gdpr.ts`,
+ * near its `class.updateMany` CAS). Both take a conflicting lock on the
+ * Class row first, via that CAS `UPDATE`, so they cannot race a
+ * `lockClassRow` holder into corrupting anything — but neither bounds its
+ * own wait the way `lockClassRow` does, and `deleteStudentAccount`'s
+ * `reorderWaitingEntries` loop inherits `lockClassRow`'s 2s bound for every
+ * statement it runs, these two mutators' rows included. Named here so the
+ * next reader of that budget's arithmetic (`gdpr.ts`, the erasure
+ * transaction's `timeout`) does not have to rediscover them.
  *
  * The lock is taken BY the statement that chooses the classes, so there is
  * no window between choosing them and holding them.
