@@ -33,11 +33,15 @@ import type { Prisma } from '@prisma/client';
  * in psql that a second `SET LOCAL lock_timeout` later in the same
  * transaction simply overwrites the first rather than erroring or stacking,
  * so calling this helper more than once per transaction is safe on that
- * axis. It is not free on every axis: a caller that calls it in a loop — none
- * do yet — puts each iteration's own lock wait under the same 2s cap inside
- * a transaction Prisma itself caps at 5s by default, so a handful of
- * contended iterations can exhaust the transaction's whole budget well before
- * any single one of them hits its own timeout. Not addressed here.
+ * axis. It is not free on every axis: a caller that calls it in a loop puts
+ * each iteration's own lock wait under the same 2s cap inside a transaction
+ * Prisma itself caps at 5s by default, so a handful of contended iterations
+ * can exhaust the transaction's whole budget well before any single one of
+ * them hits its own timeout. `deleteStudentAccount` (`gdpr.ts`) is exactly
+ * this caller, added in #174 Task 5 — its call site sizes the erasure
+ * transaction's own `timeout` to the number of classes it is about to lock
+ * rather than trusting the 5s default; the arithmetic lives there, not
+ * here.
  *
  * 2s matches the two template-claim sites (`class-generator.ts:140`,
  * `studio-class-generator.ts:31`) — the only other bounded lock waits in the
@@ -53,10 +57,12 @@ import type { Prisma } from '@prisma/client';
  * `deleteStudentAccount`'s erasure transaction is time-bound by GDPR's own
  * clock, and an unbounded block there on a row the 60-second transitions
  * sweep can hold would hang a legally time-bound operation. That caller
- * lands in a later task of #174; `completeClass` below is the first of what
- * this issue's plan makes three call sites sharing this helper, not the only
- * one it exists to serve — so at this commit only one call site exists, and
- * that is expected, not a discrepancy with this paragraph.
+ * landed in #174 Task 5. All three call sites this issue's plan intended for
+ * this helper now exist: `completeClass` below was the first,
+ * `removeFromWaitlist` (`waitlist.ts`) picked it up next, and
+ * `deleteStudentAccount` (`gdpr.ts`) — called once per class it is about to
+ * renumber — is the last. Not the only callers this helper exists to serve,
+ * either: nothing about it restricts it to these three.
  *
  * Must be given a transaction client for the lock to have anywhere to live —
  * see the brand paragraph above for what enforces that at compile time.

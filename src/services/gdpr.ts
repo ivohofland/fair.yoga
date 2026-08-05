@@ -14,6 +14,7 @@ import type { PrismaClient } from '@prisma/client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { completeClass } from './class-lifecycle';
 import { handleSpotFreed, reorderWaitingEntries } from './waitlist';
+import { lockClassRow } from '@/lib/db-locks';
 import { log } from '@/lib/log';
 
 // ---------------------------------------------------------------------------
@@ -240,6 +241,24 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     select: { email: true, firstName: true, accountId: true },
   });
 
+  // Sizes the transaction's own `timeout` below — see that option for the
+  // arithmetic. `WaitlistEntry` only enforces one entry per class per
+  // student (`@@unique([classId, studentId])`); nothing caps how many
+  // distinct classes one student can simultaneously be `waiting` in, so a
+  // fixed transaction budget can't be "sized to the worst case" honestly.
+  // This count is read outside any lock (cheap: no transaction, no FOR
+  // UPDATE) purely to size that budget, and it can drift low if a waitlist
+  // join for this same student lands in the gap before the transaction
+  // opens below — the account is still live until that transaction commits.
+  // Worst case the transaction's own query for `waitingClassIds` (below)
+  // then finds more rows than this counted, the timeout undershoots, and
+  // Prisma throws P2028. That rolls the whole erasure back atomically — it
+  // was never applied half-way — and is safe to retry: `deleteStudentAccount`
+  // is idempotent (`api/account/route.ts`'s docblock: "Both erasures are
+  // safely re-runnable, so a retry finishes the job"). A retryable failure,
+  // not a silent or partial one.
+  const waitingCount = await db.waitlistEntry.count({ where: { studentId, status: 'waiting' } });
+
   const freedClassIds = await db.$transaction(async (tx) => {
     // Record which open classes free a spot — the waitlist hook runs on
     // them after the erasure commits.
@@ -356,7 +375,21 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
       });
     }
 
-    for (const classId of waitingClassIds) {
+    // Locked per class, in the order `waitingClassIds` came back in, so two
+    // concurrent erasures take multiple classes in the same sequence and
+    // cannot cycle. Not covered by the escape argument in
+    // `waitlist.ts`'s `withdrawWaitingEntriesForTeacher` docblock: that turns
+    // on only ever moving an entry OUT of `waiting`, and this renumbers rows
+    // belonging to OTHER students, racing the three locked writers that also
+    // write `position` on the same class.
+    //
+    // The 2s bound in `lockClassRow` matters most here: this runs inside the
+    // erasure transaction, which by now holds locks on StudentPrivacy,
+    // TeacherStudent, WaitlistEntry, Invitation and Notification. An
+    // unbounded wait on a row the transitions sweep holds would hang a
+    // legally time-bound request.
+    for (const classId of [...waitingClassIds].sort()) {
+      await lockClassRow(tx, classId);
       await reorderWaitingEntries(tx, classId);
     }
 
@@ -376,6 +409,20 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     });
 
     return upcoming.filter((r) => r.class.status === 'open').map((r) => r.classId);
+  }, {
+    // Arithmetic (see `waitingCount` above for why this can't be a flat
+    // constant): 5_000ms matches Prisma's own default transaction timeout,
+    // which is the budget every write above already ran inside before this
+    // task — a `student.findMany`/`deleteMany`/`updateMany` chain over
+    // indexed columns, none of it lock-contended — so it's proven headroom,
+    // not a guess. On top of that, `waitingCount * 2_000` covers the added
+    // loop's worst case: `lockClassRow`'s `SET LOCAL lock_timeout` bounds
+    // each class's wait to 2s, and N contended classes can burn that in
+    // sequence. At `waitingCount` = 3, the case #174's `db-locks.ts` docblock
+    // calls out as enough to exhaust Prisma's unmodified 5s default, this
+    // gives 11s — 6s of margin past the worst case that default couldn't
+    // survive.
+    timeout: 5_000 + waitingCount * 2_000,
   });
 
   // The seats are freed and the erasure is committed — a promotion failure

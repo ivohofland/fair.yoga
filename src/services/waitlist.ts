@@ -313,12 +313,9 @@ export async function removeFromWaitlist(
     // `SET LOCAL` bounds every statement left in this transaction, not just
     // the `FOR UPDATE` above it — including the reorder loop's own
     // `UPDATE`s below (`lockClassRow`'s docblock). `deleteStudentAccount`
-    // (`gdpr.ts`) renumbers the same queue with no class lock of its own —
-    // a gap `src/lib/db-locks.ts` already tracks. Racing that gap, this
-    // removal fails fast with a Postgres `lock_timeout` after 2s — surfaced
-    // as a 500 by `withErrorHandler`, not swallowed — rather than blocking
-    // out to Prisma's ~5s transaction timeout. Bounded beats unbounded
-    // either way, and the failure class is unchanged.
+    // (`gdpr.ts`) takes the same bounded lock on the same queue too, since
+    // #174 Task 5 — so a race between the two now waits, up to 2s, on
+    // whichever of them got there first, rather than interleaving unlocked.
     await lockClassRow(tx, classId);
 
     // Mark as removed
@@ -694,8 +691,11 @@ async function hasActiveRegistration(
  * promotion.) `POST /api/registrations` locks and renumbers the same way,
  * outside this module (`src/app/api/registrations/route.ts:100,183-187`).
  * This paragraph claims nothing about renumbering writers beyond the ones
- * named here — see `src/lib/db-locks.ts` for what elsewhere still runs
- * unlocked.
+ * named here. `deleteStudentAccount` (`gdpr.ts`) was the last renumbering
+ * writer that ran fully unlocked — closed in #174 Task 5 — so as of that
+ * task nothing renumbers this queue unlocked any more; see
+ * `src/lib/db-locks.ts` for the bounded-vs-unbounded split (#104) that
+ * remains among the ones that do lock.
  *
  * The lock is taken BY the statement that chooses the classes, so there is
  * no window between choosing them and holding them.

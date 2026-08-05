@@ -10,6 +10,81 @@ import {
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
+/**
+ * Self-contained fixture: a fresh teacher, room, and open class with one
+ * student holding a `waiting` `WaitlistEntry` on it. No helper in this file
+ * produces a waiting entry, so this builds the whole chain from scratch
+ * rather than reusing the shared `describe('GDPR (DB)', ...)` fixtures —
+ * those students get erased by other tests in that block, and test order is
+ * not something to depend on.
+ */
+async function makeStudentWaitingInClass() {
+  const suffix = `gdpr-lock-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  const teacher = await prisma.teacher.create({
+    data: {
+      firstName: 'Lock',
+      lastName: 'Teacher',
+      email: `${suffix}@test.local`,
+      account: { create: { email: `${suffix}@test.local` } },
+      bio: 'Class-lock fixture',
+      pageSlug: suffix,
+    },
+    select: { id: true },
+  });
+  const room = await prisma.room.create({
+    data: {
+      venueName: 'Lock Studio',
+      address: `${suffix} St`,
+      city: 'Amsterdam',
+      postcode: '1234LK',
+      floor: '1',
+      roomName: 'Main',
+      maxCapacity: 20,
+      createdById: teacher.id,
+    },
+    select: { id: true },
+  });
+  const teacherRoom = await prisma.teacherRoom.create({
+    data: { teacherId: teacher.id, roomId: room.id, capacityOverride: 15, rentalRate: 30 },
+    select: { id: true },
+  });
+  const cls = await prisma.class.create({
+    data: {
+      teacherId: teacher.id,
+      teacherRoomId: teacherRoom.id,
+      classType: 'Lock class',
+      date: new Date('2099-06-01'),
+      startTime: '09:00',
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 10,
+      status: 'open',
+    },
+    select: { id: true },
+  });
+  const student = await prisma.student.create({
+    data: {
+      firstName: 'Lock',
+      lastName: 'Student',
+      email: `${suffix}-student@test.local`,
+      incomeTier: 2,
+    },
+    select: { id: true },
+  });
+  await prisma.waitlistEntry.create({
+    data: { classId: cls.id, studentId: student.id, position: 1, status: 'waiting' },
+  });
+  return {
+    studentId: student.id,
+    classId: cls.id,
+    teacherId: teacher.id,
+    roomId: room.id,
+  };
+}
+
 describe('GDPR (DB)', () => {
   let teacherId: string;
   let roomId: string;
@@ -196,6 +271,44 @@ let studentAccountId: string;
     expect(teacherCopy?.body).not.toContain('Gdpr');
     expect(teacherCopy?.body).toContain('deleted');
   });
+
+  it('waits for a class row another transaction holds before renumbering other students', async () => {
+    const {
+      studentId: fixtureStudentId,
+      classId: fixtureClassId,
+      teacherId: fixtureTeacherId,
+      roomId: fixtureRoomId,
+    } = await makeStudentWaitingInClass();
+    let holderReleased = false;
+
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${fixtureClassId} FOR UPDATE`;
+        await new Promise((r) => setTimeout(r, 900));
+        holderReleased = true;
+      },
+      { timeout: 10_000 },
+    );
+    await new Promise((r) => setTimeout(r, 150));
+
+    const erasing = deleteStudentAccount(prisma, fixtureStudentId).then(() => 'returned' as const);
+    const outcome = await Promise.race([
+      erasing,
+      new Promise<'waiting'>((r) => setTimeout(() => r('waiting'), 400)),
+    ]);
+
+    expect(outcome).toBe('waiting');
+    expect(holderReleased).toBe(false);
+
+    await holder;
+    expect(await erasing).toBe('returned');
+
+    await prisma.class.deleteMany({ where: { id: fixtureClassId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: fixtureTeacherId } });
+    await prisma.room.deleteMany({ where: { id: fixtureRoomId } });
+    await prisma.student.deleteMany({ where: { id: fixtureStudentId } });
+    await prisma.teacher.deleteMany({ where: { id: fixtureTeacherId } });
+  }, 15_000);
 
   it('teacher deletion cancels upcoming classes, notifies, and anonymizes', async () => {
     // Fresh student registered on the teacher's open class (recreate an
