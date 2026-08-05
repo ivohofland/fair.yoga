@@ -801,3 +801,296 @@ describe('claimSpot (DB)', () => {
     expect(notifications[0]!.type).toBe('booking_confirmed');
   });
 });
+
+// ===========================================================================
+// The join is the consenting act — link creation and invitation resolution
+// ===========================================================================
+
+/**
+ * #166. The `TeacherStudent` link is created at the JOIN, not at the
+ * promotion: joining is student-initiated and aimed at one named teacher,
+ * exactly like booking, whereas a promotion fires at a moment the teacher
+ * picks (cancel any registration → `handleSpotFreed` → `promoteNext`). This
+ * describe covers what a join writes beyond the `WaitlistEntry` on each of
+ * `addToWaitlist`'s three exits, and what a promotion no longer writes.
+ *
+ * Every student address here carries uppercase, deliberately.
+ * `Invitation.email` and `TeacherBlock.email` are stored lowercase by
+ * construction; `Student.email` is stored exactly as typed. An all-lowercase
+ * fixture would make `resolveInvitationOnLink`'s `.toLowerCase()`
+ * indistinguishable from its absence, which is the shape of a test that
+ * cannot fail (#166 F1).
+ */
+describe('addToWaitlist links the student and resolves their invitation (DB)', () => {
+  let teacherId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+  /** Full and open: the only state `addToWaitlist` accepts a join in. */
+  let fullClassId: string;
+  /** Has spare capacity, so every join is refused — the guard case. */
+  let notFullClassId: string;
+  /** Full, `auto_promote` window, one filler to cancel: the promotion case. */
+  let promoteClassId: string;
+
+  const classIds: string[] = [];
+  const studentIds: string[] = [];
+  /** Student id → the lowercase form of that student's mixed-case address. */
+  const emailOf = new Map<string, string>();
+
+  let pendingId: string;
+  let declinedId: string;
+  let noopId: string;
+  let guardId: string;
+  let promoteId: string;
+  let fillerId: string;
+  let promoteFillerId: string;
+
+  /** The row whose presence or absence every test here turns on. */
+  const link = (studentId: string) =>
+    prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId, studentId } },
+    });
+
+  const invitationOf = (studentId: string) =>
+    prisma.invitation.findUniqueOrThrow({
+      where: { teacherId_email: { teacherId, email: emailOf.get(studentId)! } },
+    });
+
+  /**
+   * A student whose stored address carries uppercase, plus (optionally) the
+   * invitation this teacher sent them — written lowercase, the way
+   * `inviteContact` writes it.
+   */
+  const makeStudent = async (
+    label: string,
+    invitation?: { status: 'pending' | 'declined'; blocked?: boolean },
+  ): Promise<string> => {
+    const email = `Join-${label}-${uniqueSuffix}@Test.Local`;
+    const lower = email.toLowerCase();
+    const student = await prisma.student.create({
+      data: { firstName: 'Join', lastName: label, email, incomeTier: 3 },
+      select: { id: true },
+    });
+    studentIds.push(student.id);
+    emailOf.set(student.id, lower);
+    if (invitation) {
+      await prisma.invitation.create({
+        data: {
+          teacherId,
+          email: lower,
+          firstName: 'Join',
+          lastName: label,
+          status: invitation.status,
+          respondedAt: invitation.status === 'declined' ? new Date() : null,
+        },
+      });
+      if (invitation.blocked) {
+        await prisma.teacherBlock.create({ data: { teacherId, email: lower } });
+      }
+    }
+    return student.id;
+  };
+
+  beforeAll(async () => {
+    const mail = `join-teacher-${uniqueSuffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Join',
+        lastName: 'Teacher',
+        email: mail,
+        account: { create: { email: mail } },
+        bio: 'Test teacher for join-link tests',
+        pageSlug: `join-teacher-${uniqueSuffix}`,
+        defaultTimezone: 'UTC',
+      },
+    });
+    teacherId = teacher.id;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Join Studio',
+        address: `${uniqueSuffix} Join St`,
+        city: 'Amsterdam',
+        postcode: '3456JN',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 20, rentalRate: 25 },
+    });
+    teacherRoomId = teacherRoom.id;
+
+    // 2099 keeps every class in the `auto_promote` window, so `promoteNext`'s
+    // own window guard never trips — the same trick the describes above use.
+    const makeClass = async (label: string, maxStudents: number): Promise<string> => {
+      const cls = await prisma.class.create({
+        data: {
+          teacherId,
+          teacherRoomId,
+          classType: label,
+          date: new Date('2099-08-01'),
+          startTime: '10:00',
+          durationMinutes: 60,
+          roomCost: 25,
+          minRate: 15,
+          targetRate: 25,
+          minStudents: 1,
+          maxStudents,
+          status: 'open',
+          settingsLocked: true,
+        },
+      });
+      classIds.push(cls.id);
+      return cls.id;
+    };
+
+    fullClassId = await makeClass('Join Full', 1);
+    notFullClassId = await makeClass('Join Not Full', 12);
+    promoteClassId = await makeClass('Join Promote', 1);
+
+    pendingId = await makeStudent('Pending', { status: 'pending' });
+    declinedId = await makeStudent('Declined', { status: 'declined', blocked: true });
+    noopId = await makeStudent('Noop', { status: 'pending' });
+    guardId = await makeStudent('Guard', { status: 'pending' });
+    promoteId = await makeStudent('Promote', { status: 'pending' });
+    fillerId = await makeStudent('Filler');
+    promoteFillerId = await makeStudent('PromoteFiller');
+
+    // One registration each takes the single spot, which is what makes the
+    // class full — `addToWaitlist` refuses a join otherwise.
+    await prisma.registration.create({
+      data: { classId: fullClassId, studentId: fillerId, status: 'registered', tierAtBooking: 3 },
+    });
+    await prisma.registration.create({
+      data: {
+        classId: promoteClassId,
+        studentId: promoteFillerId,
+        status: 'registered',
+        tierAtBooking: 3,
+      },
+    });
+  });
+
+  afterAll(async () => {
+    // Promotions write a notification whose `recipientId` carries no FK, so
+    // it does not cascade with the student — same reasoning as the describes
+    // above.
+    await prisma.notification.deleteMany({ where: { relatedClassId: { in: classIds } } });
+    await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
+    await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
+    await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+    await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
+    await prisma.room.delete({ where: { id: roomId } });
+    // Invitations, blocks and any surviving links go with the teacher.
+    await prisma.teacher.delete({ where: { id: teacherId } });
+    await prisma.$disconnect();
+  });
+
+  it('joining a full class creates the link and accepts a pending invitation', async () => {
+    // The starting state is the test: no link, invitation unanswered.
+    expect(await link(pendingId)).toBeNull();
+    expect((await invitationOf(pendingId)).status).toBe('pending');
+
+    const entry = await addToWaitlist(prisma, fullClassId, pendingId);
+    expect(entry.status).toBe('waiting');
+
+    expect(await link(pendingId)).not.toBeNull();
+    const invitation = await invitationOf(pendingId);
+    expect(invitation.status).toBe('accepted');
+    expect(invitation.respondedAt).not.toBeNull();
+  });
+
+  it('joining reverses a decline and clears the block — the way back, through the queue', async () => {
+    // Seeded at `declined` with a live block: the state a join has to move
+    // AWAY from. A fixture seeded at `accepted` asserting `accepted` cannot
+    // tell a working resolve from one that never ran.
+    expect((await invitationOf(declinedId)).status).toBe('declined');
+    expect(
+      await prisma.teacherBlock.findUnique({
+        where: { teacherId_email: { teacherId, email: emailOf.get(declinedId)! } },
+      }),
+    ).not.toBeNull();
+
+    await addToWaitlist(prisma, fullClassId, declinedId);
+
+    expect(await link(declinedId)).not.toBeNull();
+    // The block, not just the invitation: the block is the thing that
+    // actually stands between them, and `delivered` is the only signal a
+    // future invitation would carry.
+    expect(
+      await prisma.teacherBlock.findUnique({
+        where: { teacherId_email: { teacherId, email: emailOf.get(declinedId)! } },
+      }),
+    ).toBeNull();
+    expect((await invitationOf(declinedId)).status).toBe('accepted');
+  });
+
+  it('the already-waiting no-op path writes the link too, so the three exits agree', async () => {
+    // A `waiting` row with no link is reachable two ways: it predates this
+    // change, or an unlink committed just after a join (see
+    // `withdrawWaitingEntriesForTeacher`). Either way the student's next
+    // join must repair it — and that join returns early, so a link written
+    // after the early return would never run for them.
+    await prisma.waitlistEntry.create({
+      data: { classId: fullClassId, studentId: noopId, position: 9, status: 'waiting' },
+    });
+    expect(await link(noopId)).toBeNull();
+
+    const entry = await addToWaitlist(prisma, fullClassId, noopId);
+    // Position 9 survives: this is the no-op exit, not the reactivation one,
+    // which would move the row to the back of the queue.
+    expect(entry.position).toBe(9);
+    expect(entry.status).toBe('waiting');
+
+    expect(await link(noopId)).not.toBeNull();
+    expect((await invitationOf(noopId)).status).toBe('accepted');
+  });
+
+  it('a join the guards refuse writes no link and touches no invitation', async () => {
+    // The link write sits after all three guards, inside the transaction —
+    // a refused join must leave the pair exactly as it found them.
+    await expect(addToWaitlist(prisma, notFullClassId, guardId)).rejects.toMatchObject({
+      reason: 'class_not_full',
+    });
+
+    expect(await link(guardId)).toBeNull();
+    const invitation = await invitationOf(guardId);
+    expect(invitation.status).toBe('pending');
+    expect(invitation.respondedAt).toBeNull();
+  });
+
+  it('a promotion repairs a missing link but leaves the invitation as it stands', async () => {
+    // Written by hand, because that is the only way to reach a promotion
+    // with no link now that joining makes one — and it is exactly what a row
+    // written before this change looks like. The upsert in `promoteNext` is
+    // the backstop for those rows.
+    await prisma.waitlistEntry.create({
+      data: { classId: promoteClassId, studentId: promoteId, position: 1, status: 'waiting' },
+    });
+    await prisma.registration.update({
+      where: { classId_studentId: { classId: promoteClassId, studentId: promoteFillerId } },
+      data: { status: 'cancelled', cancelledAt: new Date() },
+    });
+
+    const promoted = await promoteNext(prisma, promoteClassId);
+    expect(promoted).not.toBeNull();
+    expect(promoted!.studentId).toBe(promoteId);
+
+    // The backstop ran.
+    expect(await link(promoteId)).not.toBeNull();
+
+    // And resolved nothing. A promotion fires when the TEACHER cancels some
+    // other registration, so letting it answer an invitation on the
+    // student's behalf hands them the timing of an acceptance the student
+    // never gave.
+    const invitation = await invitationOf(promoteId);
+    expect(invitation.status).toBe('pending');
+    expect(invitation.respondedAt).toBeNull();
+  });
+});

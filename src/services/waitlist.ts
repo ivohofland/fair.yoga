@@ -156,6 +156,9 @@ export function getWaitlistWindow(
  * entry reactivated at the back of the queue — the unique
  * (classId, studentId) constraint means the row must be reused.
  *
+ * Joining also creates the roster link — see the comment at that write for
+ * why this function, and not the promotion, is where consent lives.
+ *
  * Throws WaitlistJoinError when a guard rejects.
  */
 export async function addToWaitlist(
@@ -168,7 +171,7 @@ export async function addToWaitlist(
 
     const cls = await tx.class.findUniqueOrThrow({
       where: { id: classId },
-      select: { status: true, maxStudents: true },
+      select: { status: true, maxStudents: true, teacherId: true },
     });
     if (cls.status !== 'open') {
       throw new WaitlistJoinError(
@@ -193,6 +196,56 @@ export async function addToWaitlist(
         'already_registered',
       );
     }
+
+    // #166: joining the waitlist IS the consenting act, and this is the line
+    // that says so. It is student-initiated and aimed at one named teacher —
+    // the same thing a direct booking is (`api/registrations/route.ts`) — so
+    // it earns the roster link on the same terms. Without a link the student
+    // is queued but unmanageable: absent from the CRM, and unable to create
+    // the `StudentPrivacy` row that would mute this teacher.
+    //
+    // The link used to be written at the promotion instead. That handed the
+    // TEACHER the moment it came into existence: cancel any unrelated
+    // registration, `handleSpotFreed` promotes the head of this queue, and a
+    // link appears — off a request the student made at some earlier time,
+    // with nothing rechecking their intent in between. Here the instant is
+    // the student's own.
+    //
+    // Placed BEFORE the three exits below, not after them, and that is the
+    // point: `existingEntry.status === 'waiting'` returns early, so a write
+    // sitting after it would be skipped on the one path where the student is
+    // re-asserting a request that already stands. Both states that path can
+    // be in need it — a `waiting` row written before this change never got a
+    // link, and an unlink racing a join can leave a `waiting` row whose link
+    // the unlink then deleted (see `withdrawWaitingEntriesForTeacher`'s
+    // docblock for that race). The cost is one upsert on a no-op rejoin, and
+    // it buys all three exits agreeing about whether a link exists.
+    //
+    // Order matters and is not a preference: the class lock is already held
+    // (top of this transaction) and the `TeacherStudent` row is taken after
+    // it, which is the same order `promoteNext`, `claimSpot` and
+    // `unlinkTeacher` take them in. Reversing it here would deadlock against
+    // any of the three.
+    const student = await tx.student.findUniqueOrThrow({
+      where: { id: studentId },
+      select: { email: true },
+    });
+
+    await tx.teacherStudent.upsert({
+      where: { teacherId_studentId: { teacherId: cls.teacherId, studentId } },
+      update: {},
+      create: { teacherId: cls.teacherId, studentId },
+    });
+
+    // The student's own act at this instant, so it resolves whatever
+    // invitation state stood between them and this teacher — a `declined`
+    // one included, which is the escape hatch the whole decline design rests
+    // on: permanent from the teacher's side, always reversible from the
+    // student's. Booking is the other route back; this is the second.
+    await resolveInvitationOnLink(tx, {
+      teacherId: cls.teacherId,
+      studentEmail: student.email,
+    });
 
     // Find the current max position among 'waiting' entries
     const maxEntry = await tx.waitlistEntry.findFirst({
@@ -336,10 +389,10 @@ export async function promoteNext(
 
     if (!nextEntry) return null;
 
-    // Look up the student to get their incomeTier and email
+    // Look up the student to get their incomeTier
     const student = await tx.student.findUniqueOrThrow({
       where: { id: nextEntry.studentId },
-      select: { incomeTier: true, email: true },
+      select: { incomeTier: true },
     });
 
     const registration = await activateRegistration(tx, {
@@ -348,30 +401,27 @@ export async function promoteNext(
       tierAtBooking: student.incomeTier,
     });
 
-    // #166: joining a waitlist is a student-initiated act aimed at one
-    // teacher, exactly like booking — so it earns the roster link on the
-    // same terms. Without it the student is registered but unmanageable:
-    // absent from the CRM, and unable to create the StudentPrivacy row
-    // that would mute this teacher's announcements, which reach them
-    // through the registration regardless.
+    // #166: a backstop, not the mechanism. The link is created where the
+    // consent is given — `addToWaitlist` above — and nobody reaches this
+    // function without having joined. This upsert repairs the cases that
+    // join cannot reach: a `waiting` row written before that change, and one
+    // written by hand (fixtures, a psql fix-up). One idempotent query, and
+    // without it such a promotion registers a student the teacher's CRM
+    // cannot see.
     await tx.teacherStudent.upsert({
       where: { teacherId_studentId: { teacherId: cls.teacherId, studentId: nextEntry.studentId } },
       update: {},
       create: { teacherId: cls.teacherId, studentId: nextEntry.studentId },
     });
 
-    // #166: joining the waitlist was the student's own act aimed at this
-    // teacher, so promotion earns the link — but the promotion itself fires
-    // at a moment the TEACHER chooses (cancel a registration →
-    // handleSpotFreed → here), off a request the student made earlier, and
-    // nothing rechecks their intent in between. `standing` is what stops
-    // that erasing a refusal they made after joining the queue. See
-    // `LinkConsent` (services/invitations.ts).
-    await resolveInvitationOnLink(tx, {
-      teacherId: cls.teacherId,
-      studentEmail: student.email,
-      consent: 'standing',
-    });
+    // No `resolveInvitationOnLink` here, deliberately. A promotion fires at
+    // a moment the TEACHER chooses — cancel any registration →
+    // `handleSpotFreed` → here — off a request the student made earlier,
+    // with nothing rechecking their intent in between. Whatever invitation
+    // stood between these two was resolved by the join; anything that
+    // appeared after it is a decision this function has no standing to make,
+    // and making it here is what let a teacher time the acceptance of a row
+    // the student had not answered.
 
     // Update the waitlist entry: promoted status, promotedAt, link to registration
     const updatedEntry = await tx.waitlistEntry.update({
@@ -463,7 +513,7 @@ export async function claimSpot(
 
     const student = await tx.student.findUniqueOrThrow({
       where: { id: studentId },
-      select: { incomeTier: true, email: true },
+      select: { incomeTier: true },
     });
 
     const registration = await activateRegistration(tx, {
@@ -472,22 +522,15 @@ export async function claimSpot(
       tierAtBooking: student.incomeTier,
     });
 
-    // #166: see promoteNext above — claiming a spot is the same
-    // student-initiated act aimed at one teacher, so it earns the same
-    // roster link.
+    // #166: the same backstop as `promoteNext` above, for the same reason —
+    // and silent about invitations for a simpler one: a claim can only come
+    // from someone already holding a `waiting` entry, and the join that
+    // created it is what created the link and resolved the invitation.
+    // There is nothing left here to resolve.
     await tx.teacherStudent.upsert({
       where: { teacherId_studentId: { teacherId: cls.teacherId, studentId } },
       update: {},
       create: { teacherId: cls.teacherId, studentId },
-    });
-
-    // #166: `given_now`, unlike promoteNext above — a claim is the student
-    // pressing the button themselves, at this instant, so it carries the
-    // same consent a direct booking does and clears a decline the same way.
-    await resolveInvitationOnLink(tx, {
-      teacherId: cls.teacherId,
-      studentEmail: student.email,
-      consent: 'given_now',
     });
 
     const updatedEntry = await tx.waitlistEntry.update({
@@ -612,9 +655,10 @@ async function hasActiveRegistration(
  * It lives HERE rather than there because it must take the class row's
  * `FOR UPDATE` lock, and that convention belongs with the table it
  * protects. Without the lock, a `promoteNext` racing an unlink promotes the
- * student off the queue, and its `teacherStudent.upsert` plus
- * `resolveInvitationOnLink` re-create the very link — and delete the very
- * `TeacherBlock` — the unlink is in the middle of committing.
+ * student off the queue, and its `teacherStudent.upsert` re-creates the very
+ * link the unlink is in the middle of deleting. (It no longer clears the
+ * `TeacherBlock` too: since the link moved to the join, promotion resolves
+ * no invitations at all. The link alone is enough to want this lock.)
  *
  * The convention is NOT universal in this module, and inferring one from
  * the writers that do follow it would hide a real gap: `addToWaitlist`,
@@ -638,7 +682,10 @@ async function hasActiveRegistration(
  * A student with no `waiting` entry for this teacher locks nothing, so an
  * unlink racing a waitlist JOIN of that same student's can leave the new
  * entry standing. Both of those are the student's own acts; the lever this
- * closes is the teacher's.
+ * closes is the teacher's. That race is the one way a `waiting` entry can
+ * outlive its link (the join creates one; an unlink that commits after the
+ * join's withdrawal window deletes it), which is why `addToWaitlist` writes
+ * the link on its no-op path too and `promoteNext` keeps its upsert.
  */
 export async function withdrawWaitingEntriesForTeacher(
   tx: PrismaTransactionClient,

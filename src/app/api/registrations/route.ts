@@ -207,13 +207,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
         // #166: only the student's own booking is consent — this call sits
         // inside `!isTeacher` on purpose, so a roster add or a walk-in never
-        // launders itself into acceptance. `given_now`, because the student
-        // is doing this at this instant: it clears a decline, which is the
-        // one route back from one. See `LinkConsent` (services/invitations.ts).
+        // launders itself into acceptance. It clears a decline, which is one
+        // of the two routes back from one (joining a waitlist,
+        // `addToWaitlist` in services/waitlist.ts, is the other).
         await resolveInvitationOnLink(tx, {
           teacherId: cls.teacherId,
           studentEmail: student.email,
-          consent: 'given_now',
         });
 
         // Layer 1+2 of the comms model: confirmation for the student,

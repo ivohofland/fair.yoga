@@ -14,8 +14,9 @@ interface PendingInvitationCardProps {
  * The student's side of #166: the only place a pending `Invitation` can be
  * answered. Accept creates the `TeacherStudent` link server-side; decline
  * is final from this screen (`declineInvitation`,
- * services/invitations.ts) — the only way back is booking one of the
- * teacher's classes, which `resolveInvitationOnLink` turns into acceptance.
+ * services/invitations.ts) — the way back is booking one of the teacher's
+ * classes, or joining a waitlist for one, either of which
+ * `resolveInvitationOnLink` turns into acceptance.
  * `router.refresh()` on either outcome is what moves the answered
  * invitation out of this list and, for an accept, the teacher into the
  * privacy list below.

@@ -262,7 +262,18 @@ describe('POST /api/waitlist/claim', () => {
   });
 });
 
-describe('waitlist promotion joins the teacher roster (#166)', () => {
+describe('promotion and claim repair a missing teacher-roster link (#166)', () => {
+  // The link is created at the JOIN now (`addToWaitlist`, services/waitlist.ts)
+  // — joining is the student's own act aimed at one named teacher, where a
+  // promotion fires at a moment the teacher picks. Both fixtures below write
+  // their `waiting` entry directly, so what these cases exercise is the
+  // `teacherStudent.upsert` `promoteNext`/`claimSpot` keep as a backstop for
+  // rows the join never touched: entries written before that change, or by
+  // hand. The consequence is the same either way, and it is the third case
+  // here: without the link, PUT /privacy answers TEACHER_NOT_LINKED and the
+  // student cannot mute a teacher whose announcements still reach them
+  // through the registration.
+  //
   // Dedicated students and classes rather than reusing studentId /
   // freedSpotClassId above: those are already consumed (registered,
   // promoted, or asserted-full) by the describe block above, and this one
@@ -383,7 +394,7 @@ describe('waitlist promotion joins the teacher roster (#166)', () => {
     }
   });
 
-  it('creates the TeacherStudent link when a waiting student is promoted', async () => {
+  it('creates the TeacherStudent link when a linkless waiting student is promoted', async () => {
     await promoteNext(prisma, promoteClassId);
 
     const link = await prisma.teacherStudent.findUnique({
@@ -392,7 +403,7 @@ describe('waitlist promotion joins the teacher roster (#166)', () => {
     expect(link).not.toBeNull();
   });
 
-  it('creates the link when a student claims an open spot', async () => {
+  it('creates the link when a linkless waiting student claims an open spot', async () => {
     const res = await fetch(`${BASE_URL}/api/waitlist/claim`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(claimStudentToken) },

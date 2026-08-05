@@ -1432,12 +1432,19 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
   let promoteDeclineToken: string;
   let promoteDeclineInvitationId: string;
 
-  // Claims a spot after declining — same shape again, resolved through
-  // claimSpot.
+  // Joins the queue after declining, then claims the spot that frees — the
+  // join is what reverses the decline; the claim is only allowed to inherit
+  // it. Needs a session, because the join goes through the student's own
+  // route, which is the whole point of the case.
   const claimEmail = `resolve-claim-${suffix}@test.local`;
   let claimStudentId: string;
   let claimAccountId: string;
   let claimToken: string;
+
+  // Holds the claim class's single spot, so the student above has to queue
+  // rather than book — `addToWaitlist` refuses a join into a class with room.
+  // Cancelling this registration is what frees the spot to claim.
+  let claimHolderStudentId: string;
 
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
@@ -1618,13 +1625,22 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
         status: 'accepted', respondedAt: new Date(),
       },
     });
+
+    const claimHolder = await prisma.student.create({
+      data: {
+        firstName: 'Resolve', lastName: 'ClaimHolder',
+        email: `resolve-claim-holder-${suffix}@test.local`, incomeTier: 3,
+      },
+      select: { id: true },
+    });
+    claimHolderStudentId = claimHolder.id;
   });
 
   afterAll(async () => {
     const classIds = [openClassId, promoteClassId, claimClassId];
     const studentIds = [
       declineStudentId, rosterStudentId, unlinkStudentId, promoteStudentId,
-      promoteDeclineStudentId, claimStudentId,
+      promoteDeclineStudentId, claimStudentId, claimHolderStudentId,
     ].filter(Boolean);
     const accountIds = [
       declineAccountId, unlinkAccountId, promoteDeclineAccountId, claimAccountId,
@@ -1796,12 +1812,15 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
     }
   });
 
-  it("promoting off the waitlist resolves the student's PENDING invitation", async () => {
-    // `pending`, not `declined` — a declined invitation is the one a
-    // promotion must leave alone (whole-branch review C2, tested in its own
-    // case in this describe). A pending invitation is not a refusal, so a
-    // promotion resolving it costs the student nothing they did not
-    // already ask for by queueing.
+  it('promoting off the waitlist repairs a missing link and resolves nothing', async () => {
+    // The link belongs to the JOIN now (`addToWaitlist`, services/waitlist.ts),
+    // so the entry below is written by hand — which is both the only way left
+    // to reach a promotion with no link, and exactly what a `waiting` row
+    // written before that change looks like. `promoteNext` keeps its
+    // `teacherStudent.upsert` as the backstop for those rows.
+    //
+    // `pending`, seeded as the state a resolving promotion would move AWAY
+    // from: a fixture already `accepted` cannot tell the two apart.
     try {
       await prisma.invitation.update({
         where: { teacherId_email: { teacherId: resolveTeacherId, email: promoteEmail } },
@@ -1814,13 +1833,19 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
       const entry = await promoteNext(prisma, promoteClassId);
       expect(entry).not.toBeNull();
 
+      // The backstop ran.
       expect(await prisma.teacherStudent.findUnique({
         where: { teacherId_studentId: { teacherId: resolveTeacherId, studentId: promoteStudentId } },
       })).not.toBeNull();
+
+      // And nothing else did. A promotion fires when the TEACHER cancels some
+      // other registration, so an invitation answered from in here is an
+      // acceptance they timed and the student never gave.
       const inv = await prisma.invitation.findUniqueOrThrow({
         where: { teacherId_email: { teacherId: resolveTeacherId, email: promoteEmail } },
       });
-      expect(inv.status).toBe('accepted');
+      expect(inv.status).toBe('pending');
+      expect(inv.respondedAt).toBeNull();
     } finally {
       // The describe's own `afterAll` sweeps `waitlistEntry`/`registration`
       // by `promoteClassId` regardless — this is the same per-test
@@ -1837,8 +1862,11 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
 
   it('a promotion cannot erase a decline the student made after joining the queue (whole-branch C2)', async () => {
     try {
-      // The student's older act: a place in the queue. Joining a waitlist
-      // creates no link and resolves nothing, so the entry just sits there.
+      // The student's older act: a place in the queue. Written by hand, so
+      // this models a row from before joining created the link — a real join
+      // today would have accepted the invitation on the spot, and this
+      // sequence could not arise. What the case still pins is the promotion
+      // itself: it must not answer an invitation on anyone's behalf.
       await prisma.waitlistEntry.create({
         data: {
           classId: promoteClassId, studentId: promoteDeclineStudentId,
@@ -1871,8 +1899,9 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
       expect(entry!.studentId).toBe(promoteDeclineStudentId);
 
       // The promotion really ran and really did its other work — the roster
-      // link is there (#166 task 1). Without this the assertion below could
-      // pass because nothing happened at all.
+      // link is there, repaired by the upsert `promoteNext` keeps as a
+      // backstop (#166 task 1). Without this the assertion below could pass
+      // because nothing happened at all.
       expect(await prisma.teacherStudent.findUnique({
         where: {
           teacherId_studentId: { teacherId: resolveTeacherId, studentId: promoteDeclineStudentId },
@@ -1896,14 +1925,60 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
     }
   });
 
-  it("claiming a spot resolves the student's invitation the same way a direct booking does", async () => {
+  it('joining the queue reverses a decline, and the later claim adds nothing to it', async () => {
     try {
+      // The state the join has to move away from: refused, and unlinked.
       await prisma.invitation.update({
         where: { teacherId_email: { teacherId: resolveTeacherId, email: claimEmail } },
         data: { status: 'declined', respondedAt: new Date() },
       });
-      await prisma.waitlistEntry.create({
-        data: { classId: claimClassId, studentId: claimStudentId, position: 1, status: 'waiting' },
+      expect(await prisma.teacherStudent.findUnique({
+        where: { teacherId_studentId: { teacherId: resolveTeacherId, studentId: claimStudentId } },
+      })).toBeNull();
+
+      // The holder takes the class's one spot, which is what makes the queue
+      // the student's only way in.
+      await prisma.registration.create({
+        data: {
+          classId: claimClassId, studentId: claimHolderStudentId,
+          status: 'registered', tierAtBooking: 3,
+        },
+      });
+
+      // Through the student's own session and the real route: this is the
+      // consenting act, and the whole point of the correction is that it is
+      // this request, not a later promotion, that the link hangs off.
+      const joinRes = await fetch(`${BASE_URL}/api/waitlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(claimToken) },
+        body: JSON.stringify({ classId: claimClassId }),
+      });
+      expect(joinRes.status).toBe(201);
+
+      expect(await prisma.teacherStudent.findUnique({
+        where: { teacherId_studentId: { teacherId: resolveTeacherId, studentId: claimStudentId } },
+      })).not.toBeNull();
+      expect((await prisma.invitation.findUniqueOrThrow({
+        where: { teacherId_email: { teacherId: resolveTeacherId, email: claimEmail } },
+      })).status).toBe('accepted');
+
+      // Put the refusal back by hand. No real sequence produces this state
+      // any more — declining needs a pending row, and the join above just
+      // accepted it — but without it the assertion after the claim would be
+      // `accepted` before and `accepted` after, which proves nothing about
+      // whether `claimSpot` resolves. Seeded at what a resolving claim would
+      // move away from, so re-adding `resolveInvitationOnLink` there fails
+      // this case.
+      await prisma.invitation.update({
+        where: { teacherId_email: { teacherId: resolveTeacherId, email: claimEmail } },
+        data: { status: 'declined', respondedAt: new Date() },
+      });
+
+      await prisma.registration.update({
+        where: {
+          classId_studentId: { classId: claimClassId, studentId: claimHolderStudentId },
+        },
+        data: { status: 'cancelled', cancelledAt: new Date() },
       });
 
       const res = await fetch(`${BASE_URL}/api/waitlist/claim`, {
@@ -1913,21 +1988,13 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
       });
       expect(res.status).toBe(201);
 
-      expect(await prisma.teacherStudent.findUnique({
-        where: { teacherId_studentId: { teacherId: resolveTeacherId, studentId: claimStudentId } },
-      })).not.toBeNull();
-      const inv = await prisma.invitation.findUniqueOrThrow({
+      expect((await prisma.invitation.findUniqueOrThrow({
         where: { teacherId_email: { teacherId: resolveTeacherId, email: claimEmail } },
-      });
-      expect(inv.status).toBe('accepted');
+      })).status).toBe('declined');
     } finally {
       // Same convention as the promote test above.
-      await prisma.waitlistEntry.deleteMany({
-        where: { classId: claimClassId, studentId: claimStudentId },
-      });
-      await prisma.registration.deleteMany({
-        where: { classId: claimClassId, studentId: claimStudentId },
-      });
+      await prisma.waitlistEntry.deleteMany({ where: { classId: claimClassId } });
+      await prisma.registration.deleteMany({ where: { classId: claimClassId } });
     }
   });
 });
@@ -2115,8 +2182,9 @@ describe('unlinking withdraws waiting entries for the teacher (#166 F3)', () => 
   // this closes: without withdrawal, this student's `waiting` entry survives
   // the unlink, and the teacher — not the student — can later reach back
   // through it (cancel the other registration below → handleSpotFreed →
-  // promoteNext promotes this student → resolveInvitationOnLink clears the
-  // block just written) with no further action from the student at all.
+  // promoteNext promotes this student → the promotion's own
+  // `teacherStudent.upsert` restores the very link the unlink just deleted)
+  // with no further action from the student at all.
   const studentEmail = `f3-student-${suffix}@test.local`;
   let studentId: string;
   let studentAccountId: string;
@@ -2219,7 +2287,7 @@ describe('unlinking withdraws waiting entries for the teacher (#166 F3)', () => 
     await prisma.account.deleteMany({ where: { id: teacherAccountId } });
   });
 
-  it('unlinking withdraws the waiting entry, so a later cancel cannot promote the student back in and clear the block', async () => {
+  it('unlinking withdraws the waiting entry, so a later cancel cannot promote the student back in and restore the link', async () => {
     const unlinkRes = await fetch(`${BASE_URL}/api/teacher-links/${teacherId}`, {
       method: 'DELETE', headers: cookie(studentToken),
     });
@@ -2253,9 +2321,20 @@ describe('unlinking withdraws waiting entries for the teacher (#166 F3)', () => 
     expect(entryAfterCancel.status).toBe('removed');
     expect(entryAfterCancel.registrationId).toBeNull();
 
-    // The property this whole test exists for: the block the student set by
-    // unlinking is still standing after the teacher's cancel — the teacher
-    // never got a lever back to it.
+    // The property this whole test exists for: the link the student severed
+    // is still severed after the teacher's cancel. `promoteNext` keeps a
+    // `teacherStudent.upsert` as a backstop for linkless waiting rows, and
+    // a surviving `waiting` entry is exactly what would aim that upsert at
+    // this pair — so the withdrawal is what stands between the teacher and
+    // a roster row the student deleted.
+    expect(await prisma.teacherStudent.findUnique({
+      where: { teacherId_studentId: { teacherId, studentId } },
+    })).toBeNull();
+
+    // The block still stands too. Weaker than the assertion above since
+    // promotion stopped resolving invitations (nothing in `promoteNext`
+    // clears a block any more), but it is the row the student's refusal
+    // actually lives in, so it is worth pinning against a future writer.
     expect(await prisma.teacherBlock.findUnique({
       where: { teacherId_email: { teacherId, email: studentEmail } },
     })).not.toBeNull();
