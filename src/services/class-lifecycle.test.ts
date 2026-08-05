@@ -653,10 +653,35 @@ describe('completeClass (DB)', () => {
    * clobbers the holder's cancellation with 'completed'. Held well under
    * the 2s `lock_timeout` the new site sets, so this observes the wait and
    * not the timeout.
+   *
+   * One charged registration is attached rather than none: the lock's
+   * stated purpose covers the registration set the pricing engine consumes
+   * and the `payment.create` it feeds, not just the status field, and a
+   * class with zero registrations only ever exercises `completeClass`'s
+   * zero-charged short-circuit — proving nothing about that half of the
+   * rationale beyond inference.
    */
   it('decides from the class row the holder left behind, not from a read taken before the wait', async () => {
     const cls = await makeClass({ status: 'in_progress' });
-    let holderReleased = false;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Lock',
+        lastName: 'Test',
+        email: `lock-test-${uniqueSuffix}@test.local`,
+        incomeTier: 3,
+      },
+    });
+    studentIds.push(student.id);
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId: student.id, status: 'registered', tierAtBooking: 3 },
+    });
+
+    // Set when the holder's own work — the sleep and its status update — is
+    // done, which happens before its transaction callback returns and
+    // therefore before Prisma issues `COMMIT` and before Postgres actually
+    // releases the row lock. Named for what it observes: not "released",
+    // which happens later, on both counts.
+    let holderFinishedWork = false;
 
     const holder = prisma.$transaction(
       async (tx) => {
@@ -666,7 +691,7 @@ describe('completeClass (DB)', () => {
           where: { id: cls.id, status: 'in_progress' },
           data: { status: 'cancelled' },
         });
-        holderReleased = true;
+        holderFinishedWork = true;
       },
       { timeout: 10_000 },
     );
@@ -680,7 +705,7 @@ describe('completeClass (DB)', () => {
     ]);
 
     expect(outcome).toBe('waiting');
-    expect(holderReleased).toBe(false);
+    expect(holderFinishedWork).toBe(false);
 
     await holder;
     const result = await completingResult;
@@ -693,14 +718,29 @@ describe('completeClass (DB)', () => {
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
     expect(after.status).toBe('cancelled');
+
+    // The registration was never priced and no Payment exists — the
+    // pricing engine never ran, because the refusal happened before
+    // `completeClass` got past its own status gate.
+    const reg = await prisma.registration.findFirstOrThrow({ where: { classId: cls.id } });
+    expect(reg.price).toBeNull();
+    expect(await prisma.payment.count({ where: { registration: { classId: cls.id } } })).toBe(0);
   });
 
   /**
    * The refusal's SHAPE is the assertion, not the absence of Payment rows.
    * After the terminality trigger lands (Task 8), "no Payment rows" is
    * satisfied by the trigger alone and would no longer prove this lock.
+   *
+   * Renamed from 'refuses cleanly when the class was cancelled while it
+   * waited' — nothing here waits or races; the cancel is a plain,
+   * already-committed update issued before `completeClass` is even called.
+   * What this actually pins is `completeClass`'s own status gate (the
+   * `validateTransition` call, not the lock this file is otherwise about):
+   * confirmed by mutating that gate to a no-op and finding this is the only
+   * test in the suite that then fails.
    */
-  it('refuses cleanly when the class was cancelled while it waited', async () => {
+  it('refuses to complete a class that is already cancelled', async () => {
     const cls = await makeClass({ status: 'in_progress' });
     await prisma.class.updateMany({
       where: { id: cls.id, status: 'in_progress' },
