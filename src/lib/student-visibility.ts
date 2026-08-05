@@ -1,6 +1,7 @@
 import type { Prisma, StudentPrivacy } from '@prisma/client';
 import type { NoneOf } from './type-pins';
 import { formatStudentName } from './format';
+import { log } from './log';
 
 /**
  * One answer to "what may this teacher see about this student".
@@ -11,9 +12,15 @@ import { formatStudentName } from './format';
  * the issue could not see the three pages, which is how a helper meant to
  * replace two copies would have become a sixth.
  *
- * Type-only `@prisma/client` import, same as `contacts.ts` and
- * `payment-status.ts`: this stays safe to import from a `'use client'` module
- * without pulling the Prisma runtime into the browser bundle.
+ * Server-only. The `@prisma/client` import is type-only (same as `contacts.ts`
+ * and `payment-status.ts`), but `./log` is pino and is a *value* import, so
+ * this module must not be value-imported from a `'use client'` component —
+ * `tiers.ts` documents the same hazard and answers it with a `tiers.server.ts`
+ * split. No such split is needed here: everything this module exports is a
+ * server-side gate. `studentNameSelect`/`studentVisibilitySelect` return Prisma
+ * selects, and a client running `projectStudentForTeacher` would mean the raw
+ * row had already reached the browser, which is the exact leak this module
+ * exists to prevent. `import type` from a client module stays free, as always.
  */
 
 /**
@@ -73,8 +80,14 @@ export type ScopedVisibilityFlags = VisibilityFlags & Pick<StudentPrivacy, 'teac
 export type ScopedNameFlags = Pick<VisibilityFlags, 'shareFullName'> &
   Pick<StudentPrivacy, 'teacherId'>;
 
-/** Just enough to compose a display name. */
+/**
+ * Just enough to compose a display name.
+ *
+ * `id` is here only so `bypassesPrivacy` can name the student in the warning
+ * it logs — see its docblock. It is not read by the name composition itself.
+ */
 export interface StudentNameInput {
+  id: string;
   firstName: string;
   lastName: string;
   claimedAt: Date | null;
@@ -83,7 +96,6 @@ export interface StudentNameInput {
 
 /** Everything the full projection reads. */
 export interface StudentProjectionInput extends StudentNameInput {
-  id: string;
   email: string;
   phone: string | null;
   birthday: Date | null;
@@ -174,9 +186,23 @@ void _projectionCarriesNoRawIdentity;
  * phrase across two lines; that is how the count in this comment was wrong for
  * the whole of #167. It is not filed, and this is deliberate: it is dead code
  * with a complete explanation, not a defect anyone can reach.
+ *
+ * The proof above is a comment, and comments do not run. The `log.warn` is
+ * what makes the day it stops holding show up in a log line rather than in a
+ * student's complaint — this branch ungates *every* field at all 13 call
+ * sites, so a silent failure here is the largest one in the module. Projecting
+ * an unclaimed student logs twice (once through `teacherVisibleName`);
+ * deduplicating that would mean either threading a flag through the public
+ * signature or composing the display name a second time here, and a doubled
+ * line on a should-never-happen event is cheaper than either.
  */
-function bypassesPrivacy(student: { claimedAt: Date | null }): boolean {
-  return !student.claimedAt;
+function bypassesPrivacy(student: { id: string; claimedAt: Date | null }): boolean {
+  if (student.claimedAt) return false;
+  log.warn(
+    { studentId: student.id },
+    'unclaimed Student reached the teacher projection — every privacy flag is being bypassed',
+  );
+  return true;
 }
 
 export function teacherVisibleName(student: StudentNameInput, teacherId: string): string {
@@ -216,6 +242,7 @@ export function projectStudentForTeacher(
  */
 export function studentNameSelect(teacherId: string) {
   return {
+    id: true,
     firstName: true,
     lastName: true,
     claimedAt: true,
