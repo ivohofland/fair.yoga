@@ -112,23 +112,38 @@ describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', ()
     expect(args.to).toBe(email);
   });
 
-  it('sends nothing at all for a blocked address, even one with a registered Student row', async () => {
+  it('sends nothing at all for a blocked address, even one typed with uppercase', async () => {
+    // Two guards at once, because they are one guard: the block re-check and
+    // the `.toLowerCase()` that makes it hit.
+    //
     // F3: `notifyInvitee` re-queries `TeacherBlock` itself rather than
     // trusting a `delivered` value computed earlier by its caller. This
     // calls `notifyInvitee` directly — bypassing `POST /api/students`'
     // own `delivered` gate entirely — so it is the guard INSIDE
     // `notifyInvitee` under test here, not the caller's.
-    const email = `notify-blocked-${suffix}@test.local`;
+    //
+    // The address handed in carries uppercase; the `TeacherBlock` row is
+    // lowercase, which is the only form that table is ever written in. That
+    // pairing is what makes the leading `.toLowerCase()` observable: the
+    // block lookup is a `findUnique` on `@@unique([teacherId, email])` and
+    // is therefore case-SENSITIVE, so without the normalisation it misses
+    // and the send goes out to someone who blocked this teacher. The Student
+    // lookup below it cannot show that — it is `mode: 'insensitive'`
+    // (whole-branch I2) and finds the row either way — and an all-lowercase
+    // fixture address would make the normalisation indistinguishable from
+    // its absence.
+    const email = `Notify-Blocked-${suffix}@Test.Local`;
+    const blockedEmail = email.toLowerCase();
     let studentId: string | undefined;
     let blockId: string | undefined;
     try {
       const student = await prisma.student.create({
-        data: { firstName: 'Notify', lastName: 'Blocked', email },
+        data: { firstName: 'Notify', lastName: 'Blocked', email: blockedEmail },
         select: { id: true },
       });
       studentId = student.id;
       const block = await prisma.teacherBlock.create({
-        data: { teacherId, email },
+        data: { teacherId, email: blockedEmail },
         select: { id: true },
       });
       blockId = block.id;

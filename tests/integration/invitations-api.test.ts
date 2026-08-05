@@ -1626,10 +1626,15 @@ describe('POST /api/students notifies the invitee (#166 task 8)', () => {
   });
 
   it('finds a Student row whose OWN address carries uppercase (whole-branch I2)', async () => {
-    // The inverse of `notifyInvitee`'s other case test in this describe,
-    // and the direction that was broken. That one stores the Student
-    // lowercase and passes mixed case in, which `.toLowerCase()` alone
-    // already handled. Here the STORED
+    // The one test in this file that certifies `mode: 'insensitive'` on
+    // `notifyInvitee`'s Student lookup, and the direction that was broken.
+    // Its former partner — Student stored lowercase, mixed case passed in —
+    // is gone: an insensitive lookup finds that row with or without the
+    // leading `.toLowerCase()`, and an exact lookup finds it too once the
+    // `.toLowerCase()` has run, so no single mutation could make it fail.
+    // What that partner claimed to test now lives where it is observable,
+    // against the case-SENSITIVE `TeacherBlock` re-check
+    // (`invitations.notify.test.ts`). Here the STORED
     // address is mixed case — the shape `auth/student-signup` and
     // `account/student-profile` actually write, since neither normalises —
     // and the address handed in is the canonical lowercase one every caller
@@ -1661,38 +1666,6 @@ describe('POST /api/students notifies the invitee (#166 task 8)', () => {
     }
   });
 
-  it('lowercases the address before matching a Student row, so a mixed-case invitee is still found', async () => {
-    // `Student.email` is never normalised (unlike `Invitation.email` —
-    // notifyInvitee's own docblock, services/invitations.ts), so this calls
-    // notifyInvitee directly rather than through the route: the route
-    // always hands it an already-lowercased address (route.ts lowercases
-    // before calling), which would make notifyInvitee's own
-    // `.toLowerCase()` a no-op no HTTP-level test could tell apart from its
-    // absence — the exact mistake flagged twice already on this branch. The
-    // Student row is created lowercase; the address handed to
-    // `notifyInvitee` is deliberately mixed case for the same account.
-    const mixedCaseEmail = `Notify-Mixed-${suffix}@Test.Local`;
-    const canonicalEmail = mixedCaseEmail.toLowerCase();
-    let student: { id: string } | undefined;
-    try {
-      student = await prisma.student.create({
-        data: { firstName: 'Notify', lastName: 'Mixed', email: canonicalEmail },
-        select: { id: true },
-      });
-
-      await notifyInvitee(prisma, { teacherId, email: mixedCaseEmail, teacherName: 'Some Teacher' });
-
-      const notifications = await prisma.notification.findMany({
-        where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
-      });
-      expect(notifications).toHaveLength(1);
-    } finally {
-      if (student) {
-        await prisma.notification.deleteMany({ where: { recipientId: student.id } });
-        await prisma.student.delete({ where: { id: student.id } });
-      }
-    }
-  });
 });
 
 describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {

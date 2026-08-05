@@ -303,13 +303,21 @@ export async function notifyInvitee(
   db: PrismaClient,
   input: { teacherId: string; email: string; teacherName: string },
 ): Promise<void> {
-  // `Invitation.email` is always lowercase by the time a caller reaches
-  // this (inviteContact normalises on write), but `Student.email` never is
-  // — same systemic gap `inviteContact`'s own Student lookup notes above.
-  // This function does its own lowercasing rather than trusting a caller
-  // already did, the same way every other email-comparing function in this
-  // file does (acceptInvitation, unlinkTeacher) and the one next door
-  // (resolveInvitationOnLink, services/link-consent.ts).
+  // Load-bearing for the block re-check below, not for the Student lookup
+  // under it. The Student lookup matches `mode: 'insensitive'` and finds its
+  // row either way; `TeacherBlock` is a `findUnique` on a case-SENSITIVE
+  // `@@unique([teacherId, email])` whose column is lowercase by construction
+  // (`inviteContact` and `unlinkTeacher` are its only writers, and both
+  // normalise). Drop this line and an invitee address typed with uppercase
+  // misses the block entirely — and the send goes out to the exact person
+  // who blocked this teacher, which is the channel the block exists to
+  // close. `invitations.notify.test.ts`'s blocked-address test is the one
+  // that fails when it goes; nothing observable at the Student lookup can.
+  //
+  // Done here rather than trusting a caller already did it, the same way
+  // every other email-comparing function in this file does
+  // (acceptInvitation, declineInvitation, unlinkTeacher) and the one next
+  // door (resolveInvitationOnLink, services/link-consent.ts).
   const email = input.email.toLowerCase();
 
   // Structural, not comment-enforced (F3, #166 review): re-check the block
