@@ -12,6 +12,7 @@ let teacherId: string;
 let otherTeacherId: string;
 let roomId: string;
 let studentId: string;
+let studentAccountId: string;
 let classId: string;
 let paymentId: string;
 
@@ -75,15 +76,22 @@ beforeAll(async () => {
   });
   classId = cls.id;
 
+  const studentEmail = `pay-student-${suffix}@test.local`;
   const student = await prisma.student.create({
     data: {
       firstName: 'Reminder',
       lastName: 'Student',
-      email: `pay-student-${suffix}@test.local`,
+      email: studentEmail,
       incomeTier: 3,
+      // Claimed, deliberately. Every privacy gate has an `isUnclaimed ||`
+      // bypass, so an unclaimed fixture would make any assertion added here
+      // pass whether or not the gate works. See #167.
+      claimedAt: new Date(),
+      account: { create: { email: studentEmail } },
     },
   });
   studentId = student.id;
+  studentAccountId = student.accountId!;
 
   const registration = await prisma.registration.create({
     data: { classId, studentId, tierAtBooking: 3, status: 'attended' },
@@ -111,6 +119,7 @@ afterAll(async () => {
     await prisma.teacher.delete({ where: { id } });
     await prisma.account.deleteMany({ where: { email: t.email } });
   }
+  await prisma.account.deleteMany({ where: { id: studentAccountId } });
   await prisma.$disconnect();
 });
 
