@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession, PROJECTED_STUDENT_KEYS } from '../helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -130,7 +130,7 @@ describe('GET /api/payments, /api/payments/[id], /api/classes/[id]/payments', ()
     const body = (await res.json()) as {
       data: {
         registration: {
-          student: { displayName: string; email: string | null };
+          student: Record<string, unknown> & { displayName: string; email: string | null };
           tierAtBooking?: number;
           tierRatio?: number;
           price?: number;
@@ -141,6 +141,12 @@ describe('GET /api/payments, /api/payments/[id], /api/classes/[id]/payments', ()
     expect(row).toBeDefined();
     expect(row!.registration.student.displayName).toBe('Reminder s.');
     expect(row!.registration.student.email).toBeNull();
+    // The key set, not just the values — see PROJECTED_STUDENT_KEYS. This
+    // route reads `services/payments.ts`'s `getOutstandingPayments`, where the
+    // `{ ...student, ...projectStudentForTeacher(student, t) }` spread left
+    // this file 22/22 green while shipping the raw surname beside the
+    // truncated one.
+    expect(Object.keys(row!.registration.student).sort()).toEqual(PROJECTED_STUDENT_KEYS);
     expect(row!.registration.tierAtBooking).toBeUndefined();
     expect(row!.registration.tierRatio).toBeUndefined();
     expect(row!.registration.price).toBeUndefined();
@@ -154,7 +160,7 @@ describe('GET /api/payments, /api/payments/[id], /api/classes/[id]/payments', ()
     const body = (await res.json()) as {
       data: {
         registration: {
-          student: { displayName: string; email: string | null };
+          student: Record<string, unknown> & { displayName: string; email: string | null };
           tierAtBooking?: number;
           tierRatio?: number;
           price?: number;
@@ -163,6 +169,9 @@ describe('GET /api/payments, /api/payments/[id], /api/classes/[id]/payments', ()
     };
     expect(body.data.registration.student.displayName).toBe('Reminder s.');
     expect(body.data.registration.student.email).toBeNull();
+    // This route projects inline (`api/payments/[id]/route.ts`) rather than
+    // through the service, so it needs its own key-set assertion.
+    expect(Object.keys(body.data.registration.student).sort()).toEqual(PROJECTED_STUDENT_KEYS);
     expect(body.data.registration.tierAtBooking).toBeUndefined();
     expect(body.data.registration.tierRatio).toBeUndefined();
     expect(body.data.registration.price).toBeUndefined();
@@ -183,7 +192,7 @@ describe('GET /api/payments, /api/payments/[id], /api/classes/[id]/payments', ()
     const body = (await res.json()) as {
       data: {
         registration: {
-          student: { displayName: string };
+          student: Record<string, unknown> & { displayName: string; email: string | null };
           tierAtBooking?: number;
           tierRatio?: number;
           price?: number;
@@ -191,6 +200,14 @@ describe('GET /api/payments, /api/payments/[id], /api/classes/[id]/payments', ()
       }[];
     };
     expect(body.data[0]!.registration.student.displayName).toBe('Reminder s.');
+    // Was missing, unlike both siblings above: this test asserted the name and
+    // nothing about the email, so half the gate went unpinned on this route.
+    expect(body.data[0]!.registration.student.email).toBeNull();
+    // Reads `getPaymentsForClass` — the second of the two service call sites
+    // the spread regression hits.
+    expect(Object.keys(body.data[0]!.registration.student).sort()).toEqual(
+      PROJECTED_STUDENT_KEYS,
+    );
     expect(body.data[0]!.registration.tierAtBooking).toBeUndefined();
     expect(body.data[0]!.registration.tierRatio).toBeUndefined();
     expect(body.data[0]!.registration.price).toBeUndefined();

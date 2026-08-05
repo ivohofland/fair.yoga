@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { BASE_URL, cookie, uniqueSuffix, seedSession, PROJECTED_STUDENT_KEYS } from '../helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -576,27 +576,65 @@ describe('GET /api/classes/[id]/registrations — ownership', () => {
   });
 });
 
+/**
+ * All three access guards on `api/registrations/[id]` — one per method.
+ *
+ * #167 edited that file (it added the projection to the GET) and added
+ * ownership tests for the roster route above and for both payment routes, and
+ * skipped this one. A reviewer then deleted each of the three in turn and every
+ * suite stayed green: registrations-api 26/26, full-flow 17/17, classes-api
+ * 20/20, waitlist-api 10/10, payments-api 22/22. Two of the three are writes.
+ *
+ * One test per guard, deliberately, and each was mutation-checked on its own —
+ * a single passing test does not vouch for the other two, because each method
+ * reaches its check by a different route (PUT rejects a non-teacher before it
+ * ever loads the row; DELETE's check is an OR over student-or-teacher).
+ */
+describe('api/registrations/[id] — a non-owning teacher is refused on every method', () => {
+  /** A registration on the owner's class, which `otherTeacher` has no claim to. */
+  async function othersRegistration(): Promise<string> {
+    const classId = await makeClass(5);
+    const created = await post(studentTokens[0]!, { classId });
+    const { data } = (await created.json()) as { data: { id: string } };
+    return data.id;
+  }
+
+  it('GET 403s: reading it would disclose the projected student', async () => {
+    const res = await fetch(`${BASE_URL}/api/registrations/${await othersRegistration()}`, {
+      headers: cookie(otherTeacherToken),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  // Attendance drives pricing and payment creation, so without this guard any
+  // teacher can bill another teacher's students.
+  it('PUT 403s: marking attendance on a class you do not teach', async () => {
+    const res = await fetch(`${BASE_URL}/api/registrations/${await othersRegistration()}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(otherTeacherToken) },
+      body: JSON.stringify({ status: 'attended' }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  // The class sits in 2099, so it is before the cancel deadline: without this
+  // guard the request would not merely be refused for some other reason, it
+  // would succeed and cancel a stranger's booking.
+  it('DELETE 403s: cancelling a booking that is neither yours nor your class', async () => {
+    const res = await fetch(`${BASE_URL}/api/registrations/${await othersRegistration()}`, {
+      method: 'DELETE',
+      headers: cookie(otherTeacherToken),
+    });
+    expect(res.status).toBe(403);
+  });
+});
+
 describe('teacher-facing registration reads honour StudentPrivacy', () => {
-  /**
-   * The projected keys, sorted — the whole point of #167's `TeacherVisibleStudent`.
-   *
-   * Pinning `displayName` alone is not enough. The realistic regression is
-   * `student: { ...r.student, ...projectStudentForTeacher(r.student) }`, where
-   * `displayName` stays correct while raw `firstName`, `lastName`, `email`,
-   * `phone`, `birthday`, `address` and the whole `studentPrivacy` array ship
-   * alongside it — every assertion below still passes, and the surname the
-   * projection exists to truncate is in the response twice. Same
-   * `Object.keys(…).sort()` idiom as the write tests at the bottom of this file.
-   */
-  const PROJECTED_STUDENT_KEYS = [
-    'address',
-    'birthday',
-    'claimedAt',
-    'displayName',
-    'email',
-    'id',
-    'phone',
-  ];
+  // `PROJECTED_STUDENT_KEYS` (tests/helpers.ts) carries the rationale. It moved
+  // there in #167's round-two review: this file had it as a local const, and
+  // the payments family — which returns the same projection from three routes —
+  // asserted only values, so the exact spread this constant exists to catch
+  // went undetected there.
 
   it('the class roster withholds a surname the student did not share', async () => {
     const classId = await makeClass(5);

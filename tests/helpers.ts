@@ -23,6 +23,34 @@ import type { PrismaClient } from '@prisma/client';
 /** The app under test — the dev server locally, the built app in CI. */
 export const BASE_URL = 'http://localhost:3000';
 
+/**
+ * The keys `TeacherVisibleStudent` carries, sorted — #167's whole point, as a
+ * wire assertion: `expect(Object.keys(student).sort()).toEqual(…)`.
+ *
+ * Pinning `displayName` and `email` is not enough. The realistic regression is
+ * `student: { ...row.student, ...projectStudentForTeacher(row.student, teacherId) }`,
+ * where both stay correct while raw `firstName`, `lastName`, `phone`,
+ * `birthday`, `address` and the whole `studentPrivacy` array ship alongside
+ * them — the surname the projection exists to truncate is then in the response
+ * twice, and every value assertion still passes.
+ *
+ * Shared rather than per-file because the idiom stopped at the registrations
+ * family the first time: the same spread applied to `services/payments.ts`
+ * left payments-api 22/22 and unit 14/14 green. Every route that returns a
+ * projected student should assert against this one list, so a new key on
+ * `TeacherVisibleStudent` is one edit and a leaked raw field is caught
+ * everywhere at once.
+ */
+export const PROJECTED_STUDENT_KEYS = [
+  'address',
+  'birthday',
+  'claimedAt',
+  'displayName',
+  'email',
+  'id',
+  'phone',
+];
+
 /** Matches the production cookie name (src/lib/auth/session.ts) — the one
  *  fact `cookie()` and `sessionCookie()` must never drift apart on. */
 const SESSION_COOKIE_NAME = 'fair_yoga_session';
