@@ -1,9 +1,17 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { log } from './log';
 import {
   teacherVisibleName,
   projectStudentForTeacher,
   type StudentProjectionInput,
 } from './student-visibility';
+
+// `student-visibility.ts` imports `./log`, so the specifier here must match
+// that one — same constraint `api-utils.test.ts` documents for its own
+// `@/lib/log` mock.
+vi.mock('./log', () => ({
+  log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
 
 const TEACHER = 'teacher-1';
 /** A second teacher, to whom this student shares everything. */
@@ -68,15 +76,30 @@ describe('teacherVisibleName', () => {
     );
   });
 
-  // The query fragments scope `studentPrivacy` with `where: { teacherId }`, so
-  // in production this list holds at most one row. These two assertions are
-  // what make that scope falsifiable: they hand the projection the row set a
-  // dropped `where` would produce, and require it to fail closed.
+  // Multi-row inputs. In production `studentNameSelect`'s nested
+  // `where: { teacherId }` keeps this list to at most one row, so these arrays
+  // are what an *unscoped* query would hand the function.
+  //
+  // Be exact about what that falsifies, because an earlier version of this
+  // comment was not. Nothing in this file imports `studentNameSelect` or
+  // `studentVisibilitySelect` — those names appeared only in the comment — and
+  // nothing here runs a query. These are pure functions taking arrays, so what
+  // they can falsify is the `find`, not the Prisma `where`. Reverting
+  // `.find((p) => p.teacherId === teacherId)` to `studentPrivacy[0]` reddens
+  // both tests below and both of their `projectStudentForTeacher` twins: 4 red
+  // (verified). Dropping the `where` reddens nothing anywhere, because the
+  // `find` picks the same row out of the larger set — see
+  // `ScopedVisibilityFlags`.
   it('ignores a privacy row belonging to another teacher', () => {
     const s = claimedStudent({ studentPrivacy: [ALL_TRUE_FOR_OTHER] });
     expect(teacherVisibleName(s, TEACHER)).toBe('Anna b.');
   });
 
+  // Both directions on purpose. The first assertion is the fail-closed one;
+  // the second is the *positive* one — OTHER_TEACHER's row is permissive, so
+  // this pins that the `find` still releases the full name to the teacher who
+  // was granted it. A projection hard-wired to withhold would pass the rest of
+  // this file and fail here.
   it('picks this teacher\'s row out of several, not the first one', () => {
     const s = claimedStudent({ studentPrivacy: [ALL_TRUE_FOR_OTHER, ALL_FALSE] });
     expect(teacherVisibleName(s, TEACHER)).toBe('Anna b.');
@@ -166,9 +189,9 @@ describe('projectStudentForTeacher', () => {
     expect(projectStudentForTeacher(s, TEACHER).phone).toBeNull();
   });
 
-  // The projection's half of the scoping check — `teacherVisibleName`'s two
-  // sit above. A dropped `where: { teacherId }` in `studentVisibilitySelect`
-  // hands the projection exactly this row set.
+  // The projection's half of the `find` check — `teacherVisibleName`'s two sit
+  // above, with the note on what these can and cannot falsify. Same shape: an
+  // unscoped row set, handed straight to a pure function.
   it('withholds every field when the only privacy row is another teacher\'s', () => {
     const s = claimedStudent({ studentPrivacy: [ALL_TRUE_FOR_OTHER] });
     expect(projectStudentForTeacher(s, TEACHER)).toStrictEqual({
@@ -186,5 +209,41 @@ describe('projectStudentForTeacher', () => {
     const s = claimedStudent({ studentPrivacy: [ALL_TRUE_FOR_OTHER, ALL_FALSE] });
     expect(projectStudentForTeacher(s, TEACHER).email).toBeNull();
     expect(projectStudentForTeacher(s, OTHER_TEACHER).email).toBe('anna@example.com');
+  });
+});
+
+/**
+ * `bypassesPrivacy`'s `log.warn` is the only runtime tripwire on this branch:
+ * the argument that an unclaimed `Student` can no longer exist is a comment,
+ * and comments do not run. It shipped with nothing asserting it, so deleting
+ * the line left every suite green — the guard against a silent guard was
+ * itself silent.
+ *
+ * Two directions, because one is not enough: a `log.warn` moved above the
+ * `if (student.claimedAt) return false` would satisfy the firing test and fire
+ * on every render in the app.
+ */
+describe('the unclaimed-student tripwire', () => {
+  beforeEach(() => {
+    vi.mocked(log.warn).mockClear();
+  });
+
+  it('warns with both ids when an unclaimed student reaches the projection', () => {
+    projectStudentForTeacher(claimedStudent({ claimedAt: null }), TEACHER);
+
+    // Both ids: `studentId` says whose data was bypassed, `teacherId` says who
+    // received it. The payload carried only the student until #167's
+    // round-two review, which left the incident unanswerable.
+    expect(log.warn).toHaveBeenCalledWith(
+      { studentId: 'student-1', teacherId: TEACHER },
+      expect.stringContaining('unclaimed Student'),
+    );
+  });
+
+  it('stays silent for a claimed student', () => {
+    projectStudentForTeacher(claimedStudent(), TEACHER);
+    teacherVisibleName(claimedStudent(), TEACHER);
+
+    expect(log.warn).not.toHaveBeenCalled();
   });
 });

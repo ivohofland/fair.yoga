@@ -65,14 +65,37 @@ void _visibilityFlagsAreExhaustive;
  * A `StudentPrivacy` row as a projection reads it: the flags, plus the
  * `teacherId` that says whose flags they are.
  *
- * `teacherId` is not optional and is not a convenience. Both query fragments
- * below scope their nested `studentPrivacy` with `where: { teacherId }`, and
- * before this shape existed the projections trusted that scope blindly by
- * reading `studentPrivacy[0]`. Deleting either `where` therefore left `tsc`,
- * the unit suite and the integration suite all green while handing a teacher
- * whatever privacy row happened to sort first — i.e. *opening* another
- * teacher's flags. Carrying the owner in the row and matching on it here makes
- * that mutation fail closed instead: no match, every field `null`.
+ * `teacherId` is not optional and is not a convenience. Before this shape
+ * existed the projections read `studentPrivacy[0]`, trusting the nested
+ * `where: { teacherId }` in the query fragments below without being able to
+ * check it: delete a `where` and `tsc`, unit and integration all stayed green
+ * while every teacher read whichever row sorted first — another teacher's
+ * flags, opened.
+ *
+ * What the flags-plus-owner shape buys is that the projection can re-check.
+ * Be precise about what that is worth, because an earlier version of this
+ * comment was not — it claimed the `find` makes a dropped `where` "fail
+ * closed", and that is not what happens. Measured on this branch:
+ *
+ * - Drop `where: { teacherId }` alone → the query returns every teacher's
+ *   rows, the `find` still selects the requesting teacher's own row, and the
+ *   output is byte-identical. Harmless, and no suite notices (verified:
+ *   students-api stays 34/34). It only withholds — "fails closed" — in the
+ *   sub-case where the requesting teacher has no row and some other teacher
+ *   does. The guarantee is not that the mutation is caught; it is that it can
+ *   never leak another teacher's flags.
+ * - Revert the `find` to `[0]` alone → the `where` still scopes the row set to
+ *   one row, so that is also output-identical in production. The unit suite
+ *   catches it anyway (4 red) because it hands the functions unscoped arrays
+ *   directly.
+ * - Both together — the pre-#167 code — is the one that leaks, and
+ *   `students-api.test.ts`'s two-privacy-row fixture goes red on it.
+ *
+ * The mutation that universally produces no-match-every-field-null is
+ * dropping `teacherId: true` from a nested `select`. It cannot reach runtime:
+ * `tsc` fails with 12 errors, one at each of the 12 external call sites,
+ * because the row no longer satisfies `ScopedVisibilityFlags`. That is this
+ * type's real enforcement — the shape, not the `find`.
  */
 export type ScopedVisibilityFlags = VisibilityFlags & Pick<StudentPrivacy, 'teacherId'>;
 
@@ -163,7 +186,8 @@ void _projectionCarriesNoRawIdentity;
  *
  * An earlier draft of this comment argued it from the link side instead —
  * "every `TeacherStudent` writer requires a `session.studentId`" — and that is
- * false. Four of the five do (`api/registrations/route.ts:202`,
+ * false. Four of the five link-creating upsert sites do
+ * (`api/registrations/route.ts:202`,
  * `services/invitations.ts:535`, `services/waitlist.ts:234` and `:530`), but
  * `promoteNext` (`services/waitlist.ts:411`) links `nextEntry.studentId` off a
  * persisted `WaitlistEntry`, during a cancellation someone else initiated
@@ -173,8 +197,13 @@ void _projectionCarriesNoRawIdentity;
  * survives on the two supports above; the support that did not survive is what
  * a census of writers looks like when the writers are counted, not read.
  *
+ * "Five" counts the upserts that can *create* a link, which is the only set
+ * this argument is about. `TeacherStudent` has a sixth writer —
+ * `api/students/[id]/route.ts`'s `teacherStudent.update`, the archive toggle —
+ * which only flips a flag on a link that already exists.
+ *
  * It is kept rather than deleted because removing it means removing the claim
- * path (`lib/auth/account.ts:34-50`), the `Student_claim_link_check`
+ * path (`lib/auth/account.ts:37-52`), the `Student_claim_link_check`
  * constraint and `Student.claimedAt` together — one decision, not five edits.
  * Before #167 this comment stood in six places and each copy claimed the
  * question was "filed as a leaf"; no such issue existed. Five were the
@@ -182,15 +211,20 @@ void _projectionCarriesNoRawIdentity;
  * `components/students/student-directory.tsx`, where the same branch gates an
  * "unlinked" caption rather than a field — it still stands, corrected in place
  * rather than deleted, and points here for the canonical argument. Counting by
- * `git grep "Filed as a leaf"` finds only five, because that copy wraps the
- * phrase across two lines; that is how the count in this comment was wrong for
- * the whole of #167. It is not filed, and this is deliberate: it is dead code
- * with a complete explanation, not a defect anyone can reach.
+ * `git grep "Filed as a leaf"` found only five of those six copies, because
+ * one wrapped the phrase across two lines; that is how the count in this
+ * comment was wrong for the whole of #167. The same grep over `src/` now
+ * returns a single hit — this sentence — because every copy but the directory
+ * one is gone and that one no longer uses the phrase. It is not filed, and
+ * this is deliberate: it is dead code with a complete explanation, not a
+ * defect anyone can reach.
  *
  * The proof above is a comment, and comments do not run. The `log.warn` is
  * what makes the day it stops holding show up in a log line rather than in a
- * student's complaint — this branch ungates *every* field at every call site
- * that reaches it, so a silent failure here is the largest one in the module.
+ * student's complaint. At the eight `projectStudentForTeacher` call sites this
+ * branch ungates *every* field; at the four `teacherVisibleName` ones only
+ * `shareFullName` is in play, since the name is all those sites read. Either
+ * way a silent failure here is the largest one in the module.
  * Outside this module that is 12 call sites: 5 API routes (`api/payments/[id]`,
  * `api/classes/[id]/registrations`, `api/students`, `api/students/[id]`,
  * `api/registrations/[id]`), 5 across the three teacher pages
@@ -200,15 +234,29 @@ void _projectionCarriesNoRawIdentity;
  * comment has already stated a wrong count once — before trusting either
  * number, recount with a grep for `teacherVisibleName` and
  * `projectStudentForTeacher` across `src/`.
+ *
+ * The payload carries both ids because either alone leaves the incident
+ * unanswerable: `studentId` says whose data was bypassed, `teacherId` says who
+ * received it. Both are UUIDs and neither is PII — no name, no email — so this
+ * line is safe to keep at `warn` in a log anyone operating the box can read.
+ *
  * Projecting an unclaimed student logs twice (once through `teacherVisibleName`);
  * deduplicating that would mean either threading a flag through the public
  * signature or composing the display name a second time here, and a doubled
  * line on a should-never-happen event is cheaper than either.
+ *
+ * `student-visibility.test.ts` asserts both directions — that it fires with
+ * both ids for an unclaimed student, and that it stays silent for a claimed
+ * one. Until #167's round-two review nothing asserted it at all, so the one
+ * runtime tripwire on this branch could have been deleted silently.
  */
-function bypassesPrivacy(student: { id: string; claimedAt: Date | null }): boolean {
+function bypassesPrivacy(
+  student: { id: string; claimedAt: Date | null },
+  teacherId: string,
+): boolean {
   if (student.claimedAt) return false;
   log.warn(
-    { studentId: student.id },
+    { studentId: student.id, teacherId },
     'unclaimed Student reached the teacher projection — every privacy flag is being bypassed',
   );
   return true;
@@ -216,7 +264,7 @@ function bypassesPrivacy(student: { id: string; claimedAt: Date | null }): boole
 
 export function teacherVisibleName(student: StudentNameInput, teacherId: string): string {
   const flags = student.studentPrivacy.find((p) => p.teacherId === teacherId);
-  const shareFullName = bypassesPrivacy(student) || (flags?.shareFullName ?? false);
+  const shareFullName = bypassesPrivacy(student, teacherId) || (flags?.shareFullName ?? false);
   return formatStudentName(student.firstName, student.lastName, shareFullName);
 }
 
@@ -225,7 +273,7 @@ export function projectStudentForTeacher(
   teacherId: string,
 ): TeacherVisibleStudent {
   const flags = student.studentPrivacy.find((p) => p.teacherId === teacherId);
-  const ungated = bypassesPrivacy(student);
+  const ungated = bypassesPrivacy(student, teacherId);
   const shared = <T>(flag: boolean | undefined, value: T): T | null =>
     ungated || (flag ?? false) ? value : null;
 
@@ -245,9 +293,11 @@ export function projectStudentForTeacher(
  *
  * `teacherId: true` inside the nested select is what lets the projection
  * re-check the scope it was handed rather than trusting it — see
- * `ScopedNameFlags`. The `where` and the `find` are deliberately redundant:
- * the `where` keeps the row set small, the `find` is what fails closed if the
- * `where` is ever dropped.
+ * `ScopedNameFlags`, which also records what each half of that redundancy is
+ * and is not worth. In short: the `where` keeps the row set to one row; the
+ * `find` makes the projection independent of whether it did. Dropping the
+ * `where` on its own changes no output and reddens nothing — it is dropping
+ * `teacherId: true` here that fails, and it fails at compile time.
  */
 export function studentNameSelect(teacherId: string) {
   return {
