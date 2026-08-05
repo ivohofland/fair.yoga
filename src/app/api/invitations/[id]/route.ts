@@ -61,6 +61,15 @@ export const PUT = withErrorHandler(async (
 
   const parsed = await parseBody(request, updateInvitationSchema);
   if ('error' in parsed) return parsed.error;
+
+  // Every field on `updateInvitationSchema` is optional, so `{}` parses and
+  // would reach `update({ data: {} })` — a write that touches nothing and
+  // answers 200, telling the caller their edit landed. Same refusal, same
+  // wording as `PUT /api/students/[id]` (route.ts) for the same body.
+  if (Object.keys(parsed.data).length === 0) {
+    return respondError('No valid fields to update', 400);
+  }
+
   const { email, ...rest } = parsed.data;
 
   const updated = await prisma.invitation.update({

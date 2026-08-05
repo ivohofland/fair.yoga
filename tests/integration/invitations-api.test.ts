@@ -310,6 +310,21 @@ describe('PUT /api/invitations/[id]', () => {
     expect(row.email).toBe(typed.toLowerCase());
   });
 
+  it('refuses an empty update rather than reporting a write it never made', async () => {
+    const before = await prisma.invitation.findUniqueOrThrow({ where: { id: putTargetId } });
+    const res = await fetch(`${BASE_URL}/api/invitations/${putTargetId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+    // Whole row, since `Invitation` carries no `updatedAt` to compare — an
+    // empty `data` is a no-op write anyway, so this is really guarding
+    // against a future edit that starts stamping something on the way past.
+    const after = await prisma.invitation.findUniqueOrThrow({ where: { id: putTargetId } });
+    expect(after).toEqual(before);
+  });
+
   it('refuses an unknown field with a 400, not a silent drop', async () => {
     const res = await fetch(`${BASE_URL}/api/invitations/${putTargetId}`, {
       method: 'PUT',

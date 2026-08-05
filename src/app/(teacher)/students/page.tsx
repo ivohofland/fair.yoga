@@ -11,7 +11,11 @@ export default function StudentsPage() {
         title="Students"
         backHref={null}
         variant="display"
-        action={<Link href="/students/new" className="type-label text-teal no-underline">+ Add student</Link>}
+        // "Contact", not "student": since #166 this creates an Invitation,
+        // and the person lands in the Contacts section below rather than in
+        // the directory above. Labelled "student", a teacher who used it
+        // then scanned the student list would conclude it had failed.
+        action={<Link href="/students/new" className="type-label text-teal no-underline">+ Add contact</Link>}
       />
       <div className="mb-5">
         <SendAnnouncement recipientHint="your booked students" />

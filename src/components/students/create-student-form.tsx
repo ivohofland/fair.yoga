@@ -42,6 +42,15 @@ export function CreateStudentForm() {
   const [errors, setErrors] = useState<FormErrors>({});
   const [submitError, setSubmitError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  /**
+   * The address the last successful submit invited, or empty. Holding the
+   * confirmation here rather than redirecting straight to /students is the
+   * fix for the flow reading as a failure: the teacher pressed a button
+   * labelled "student", landed on a page whose student directory was
+   * unchanged, and had to notice a separate Contacts section further down
+   * to see anything had happened at all.
+   */
+  const [invitedEmail, setInvitedEmail] = useState('');
 
   function validate(): boolean {
     const errs: FormErrors = {};
@@ -89,12 +98,39 @@ export function CreateStudentForm() {
       // Student's — the directory (not a detail page keyed on it) is where
       // the new contact shows up, in the Contacts section `contact-list.tsx`
       // renders there. So the body goes unread.
-      router.push('/students');
+      setInvitedEmail(payload.email);
     } catch {
       setSubmitError('Network error. Please try again.');
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function addAnother() {
+    setInvitedEmail('');
+    setFirstName('');
+    setLastName('');
+    setEmail('');
+    setErrors({});
+    setSubmitError('');
+  }
+
+  if (invitedEmail) {
+    return (
+      <section className="bg-sand-soft border border-border rounded-card p-5">
+        <h2 className="type-subtitle mb-2">Invitation sent</h2>
+        <p className="type-body mb-4">
+          {invitedEmail} has been invited. They appear under Contacts until they accept — a
+          contact joins your students once they accept, or book one of your classes.
+        </p>
+        <div className="flex items-center gap-3">
+          <Button onClick={() => router.push('/students')}>Done</Button>
+          <Button variant="secondary" onClick={addAnother}>
+            Add another
+          </Button>
+        </div>
+      </section>
+    );
   }
 
   return (
@@ -132,7 +168,7 @@ export function CreateStudentForm() {
 
       <div className="mt-4">
         <Button type="submit" disabled={submitting}>
-          {submitting ? 'Adding...' : 'Add student'}
+          {submitting ? 'Sending...' : 'Send invitation'}
         </Button>
       </div>
     </form>

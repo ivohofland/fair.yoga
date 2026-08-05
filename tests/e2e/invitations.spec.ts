@@ -125,12 +125,20 @@ test.describe('Invitations — add, accept, decline', () => {
     await page.goto('/students');
     await expect(page.getByRole('heading', { name: 'Students' })).toBeVisible();
 
-    await page.getByRole('link', { name: '+ Add student' }).click();
-    await expect(page.getByRole('heading', { name: 'New student' })).toBeVisible();
+    await page.getByRole('link', { name: '+ Add contact' }).click();
+    await expect(page.getByRole('heading', { name: 'New contact' })).toBeVisible();
     await page.getByLabel('First name').fill('Accept');
     await page.getByLabel('Last name').fill('Student');
     await page.getByLabel('Email').fill(acceptingEmail);
-    await page.getByRole('button', { name: 'Add student' }).click();
+    await page.getByRole('button', { name: 'Send invitation' }).click();
+
+    // The form confirms in place and names the address — it does not leave
+    // for /students by itself, because the new row lands in a Contacts
+    // section below an unchanged student directory and the flow read as a
+    // failure without this.
+    await expect(page.getByRole('heading', { name: 'Invitation sent' })).toBeVisible();
+    await expect(page.getByText(acceptingEmail)).toBeVisible();
+    await page.getByRole('button', { name: 'Done' }).click();
 
     // Back on /students — the new contact is pending, under Contacts.
     await expect(page.getByRole('heading', { name: 'Students' })).toBeVisible();
@@ -184,7 +192,8 @@ test.describe('Invitations — add, accept, decline', () => {
     await page.getByLabel('First name').fill('Decline');
     await page.getByLabel('Last name').fill('Student');
     await page.getByLabel('Email').fill(decliningEmail);
-    await page.getByRole('button', { name: 'Add student' }).click();
+    await page.getByRole('button', { name: 'Send invitation' }).click();
+    await page.getByRole('button', { name: 'Done' }).click();
     await expect(page.getByRole('heading', { name: 'Students' })).toBeVisible();
 
     await signInAs(context, decliningToken);
