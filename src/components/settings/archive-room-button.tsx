@@ -25,11 +25,14 @@ export function ArchiveRoomButton({ teacherRoomId, isArchived }: ArchiveRoomButt
       if (res.ok) {
         router.push('/settings/rooms');
       } else {
-        // The third of three identical instances: `ArchiveStudentButton` and
-        // `ArchiveContactButton` both ran `if (res.ok)` with no `else` and no
-        // `catch` until #166 fixed them. Success here navigates away, so
-        // silence on failure is indistinguishable from a click that never
-        // registered — the button re-enables and the page is unchanged.
+        // One of a family this branch swept out: `if (res.ok)` with no
+        // `else` and no `catch`. `ArchiveStudentButton`,
+        // `ArchiveContactButton`, the two class-transition buttons and the
+        // two studio-class ones carried the same shape; a count here was
+        // wrong within a wave and is not worth keeping right (#166
+        // re-review M5). Success here navigates away, so silence on failure
+        // is indistinguishable from a click that never registered — the
+        // button re-enables and the page is unchanged.
         // Wording matches this directory's other PATCH toggles
         // (`archive-template-button.tsx`, `archive-studio-template-button.tsx`),
         // which differ from the student/contact pair's direction-naming copy.

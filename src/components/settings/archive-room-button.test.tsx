@@ -51,12 +51,16 @@ describe('ArchiveRoomButton', () => {
   });
 
   /**
-   * #166 review F14. The third instance of a defect already fixed twice on
-   * this branch (`ArchiveStudentButton`, `ArchiveContactButton`): `if
-   * (res.ok)` with no `else` and no `catch`. The success path navigates
-   * away, so a failure that says nothing looks exactly like a click that
-   * never registered. These three are the tests that fail if the
-   * `else`/`catch` is removed again — the two above pass either way.
+   * #166 review F14, and one of a family: `if (res.ok)` with no `else` and
+   * no `catch`. `ArchiveStudentButton` and `ArchiveContactButton` were the
+   * first two fixed; the re-review's M5 found four more (the two
+   * class-transition buttons and the two studio-class ones) and they were
+   * swept with the same shape and their own tests. Not counted here — the
+   * count in this comment was already wrong by the end of the wave that
+   * wrote it. The success path navigates away, so a failure that says
+   * nothing looks exactly like a click that never registered. These three
+   * are the tests that fail if the `else`/`catch` is removed again — the two
+   * above pass either way.
    */
   it('shows the server message when the PATCH fails', async () => {
     fetchMock.mockResolvedValue({
