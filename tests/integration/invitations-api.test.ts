@@ -1188,6 +1188,205 @@ describe('POST /api/students — the block oracle (#166 task 6b, mechanism moved
   });
 });
 
+describe('POST /api/students — re-inviting once the link is gone (#166 review F8)', () => {
+  // `ALREADY_LINKED` used to be read off `Invitation.status === 'accepted'`.
+  // Erasing a student deletes their `TeacherStudent` rows and leaves the
+  // `Invitation` row `accepted`, so the teacher was told "already one of
+  // your students" forever about someone not on their roster — and
+  // `@@unique([teacherId, email])` meant no second row could be created,
+  // while `DELETE`/`PUT` offer no way out of an accepted row either.
+  // Unrecoverable through the UI.
+  const post = (email: string) =>
+    fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+      body: JSON.stringify({ firstName: 'Second', lastName: 'Attempt', email }),
+    });
+
+  // A distinctive, obviously-not-now timestamp: the ALREADY_LINKED contrast
+  // test asserts this exact value survives, which it cannot do against
+  // `new Date()`.
+  const ACCEPTED_AT = new Date('2026-01-02T03:04:05.000Z');
+
+  /**
+   * The state erasure leaves behind: an `accepted` invitation with no
+   * `TeacherStudent` row anywhere. Seeded at that state deliberately — it
+   * is the state the broken code refuses to move away from, so a fixture
+   * seeded any other way could not fail.
+   */
+  async function seedAcceptedWithoutLink(label: string) {
+    const email = `inv-relink-${label}-${suffix}@test.local`;
+    const invitation = await prisma.invitation.create({
+      data: {
+        teacherId, email, status: 'accepted', respondedAt: ACCEPTED_AT,
+        firstName: 'Was', lastName: 'Linked',
+      },
+      select: { id: true },
+    });
+    return { email, invitationId: invitation.id };
+  }
+
+  it('lets a teacher invite again when the accepted invitation has outlived its link', async () => {
+    const { email, invitationId } = await seedAcceptedWithoutLink('erased');
+
+    // The Student row still exists and is NOT on this teacher's roster —
+    // the harder half of the fix. A check that stopped at "is there a
+    // Student with this address" would refuse here just as the status read
+    // did; only one that goes on to `TeacherStudent` lets this through.
+    // Mixed case, so the case-insensitive match is doing real work.
+    let strangerId: string | undefined;
+    try {
+      const stranger = await prisma.student.create({
+        data: {
+          firstName: 'Not', lastName: 'Linked',
+          email: `Inv-Relink-Erased-Stranger-${suffix}@Test.Local`,
+        },
+        select: { id: true },
+      });
+      strangerId = stranger.id;
+
+      const res = await post(email);
+      expect(res.status).toBe(201);
+      // The same row, returned to pending — not a second row, which
+      // `@@unique([teacherId, email])` would refuse anyway.
+      const json = (await res.json()) as { data: { id: string } };
+      expect(json.data.id).toBe(invitationId);
+
+      const row = await prisma.invitation.findUniqueOrThrow({ where: { id: invitationId } });
+      expect(row.status).toBe('pending');
+      // Not merely tidiness: `Invitation_responded_at_status_check` rejects
+      // a pending row that still carries a response time.
+      expect(row.respondedAt).toBeNull();
+      // The teacher typed a new name into the form; the contact shows it.
+      expect(row.firstName).toBe('Second');
+    } finally {
+      await prisma.invitation.deleteMany({ where: { id: invitationId } });
+      if (strangerId) await prisma.student.deleteMany({ where: { id: strangerId } });
+    }
+  });
+
+  it('still refuses with ALREADY_LINKED when the link really is there, and leaves the accepted row alone', async () => {
+    // The contrast case, and the reason this is not a blanket removal. The
+    // fixture starts accepted-AND-linked, which is the state the
+    // over-corrected code would move away from.
+    const { email, invitationId } = await seedAcceptedWithoutLink('linked');
+    let studentId: string | undefined;
+    try {
+      // Mixed case on `Student.email` — stored as typed everywhere in this
+      // app, unlike `Invitation.email`. With the roster lookup's
+      // `mode: 'insensitive'` dropped, this student is invisible, the guard
+      // finds no link and the row is revived: this test is what notices.
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'Still', lastName: 'Linked',
+          email: email.toUpperCase(),
+          teacherStudents: { create: { teacherId } },
+        },
+        select: { id: true },
+      });
+      studentId = student.id;
+
+      const res = await post(email);
+      expect(res.status).toBe(409);
+      expect((await res.json()).error.code).toBe('ALREADY_LINKED');
+
+      const row = await prisma.invitation.findUniqueOrThrow({ where: { id: invitationId } });
+      expect(row.status).toBe('accepted');
+      // The original acceptance moment, untouched — a revive would have
+      // nulled it.
+      expect(row.respondedAt).toEqual(ACCEPTED_AT);
+    } finally {
+      await prisma.invitation.deleteMany({ where: { id: invitationId } });
+      if (studentId) {
+        await prisma.teacherStudent.deleteMany({ where: { studentId } });
+        await prisma.student.deleteMany({ where: { id: studentId } });
+      }
+    }
+  });
+
+  it('answers a blocked re-invite exactly as an unblocked one', async () => {
+    // Requirement 3 of the fix: the new path must not become the fifth
+    // place on this branch to leak whether a block exists. Both fixtures
+    // are in the identical accepted-no-link state; only the `TeacherBlock`
+    // differs.
+    const blocked = await seedAcceptedWithoutLink('blocked');
+    const open = await seedAcceptedWithoutLink('open');
+    let block: { id: string } | undefined;
+    try {
+      block = await prisma.teacherBlock.create({
+        data: { teacherId, email: blocked.email },
+        select: { id: true },
+      });
+
+      const [blockedRes, openRes] = await Promise.all([post(blocked.email), post(open.email)]);
+      expect(blockedRes.status).toBe(openRes.status);
+      expect(blockedRes.status).toBe(201);
+
+      // Body equality down to the key set and the value, which is each
+      // row's own id — the only field either response carries.
+      const blockedJson = (await blockedRes.json()) as { data: { id: string } };
+      const openJson = (await openRes.json()) as { data: { id: string } };
+      expect(blockedJson).toEqual({ data: { id: blocked.invitationId } });
+      expect(openJson).toEqual({ data: { id: open.invitationId } });
+
+      // And the rows are identical too, apart from the address and the name
+      // the teacher typed: an ordinary pending invitation either way. The
+      // block underneath the first one is untouched.
+      const blockedRow = await prisma.invitation.findUniqueOrThrow({
+        where: { id: blocked.invitationId },
+      });
+      const openRow = await prisma.invitation.findUniqueOrThrow({
+        where: { id: open.invitationId },
+      });
+      expect(blockedRow.status).toBe(openRow.status);
+      expect(blockedRow.status).toBe('pending');
+      expect(blockedRow.isArchived).toBe(openRow.isArchived);
+      expect(await prisma.teacherBlock.findUnique({
+        where: { teacherId_email: { teacherId, email: blocked.email } },
+      })).not.toBeNull();
+    } finally {
+      if (block) await prisma.teacherBlock.deleteMany({ where: { id: block.id } });
+      await prisma.invitation.deleteMany({
+        where: { id: { in: [blocked.invitationId, open.invitationId] } },
+      });
+    }
+  });
+
+  it('marks a blocked re-invite undelivered and an unblocked one delivered', async () => {
+    // The bit the wire never carries. `POST /api/students` gates
+    // `notifyInvitee` on it, so this is what actually keeps a re-invite from
+    // emailing the person who walked away — the HTTP test above can only
+    // prove the two responses are indistinguishable, not that one of them
+    // sends nothing.
+    const blocked = await seedAcceptedWithoutLink('delivered-blocked');
+    const open = await seedAcceptedWithoutLink('delivered-open');
+    let block: { id: string } | undefined;
+    try {
+      block = await prisma.teacherBlock.create({
+        data: { teacherId, email: blocked.email },
+        select: { id: true },
+      });
+
+      const blockedResult = await inviteContact(prisma, {
+        teacherId, email: blocked.email, firstName: 'Second', lastName: 'Attempt',
+      });
+      const openResult = await inviteContact(prisma, {
+        teacherId, email: open.email, firstName: 'Second', lastName: 'Attempt',
+      });
+
+      if (!blockedResult.ok) throw new Error('expected the blocked re-invite to succeed');
+      if (!openResult.ok) throw new Error('expected the unblocked re-invite to succeed');
+      expect(blockedResult.value.delivered).toBe(false);
+      expect(openResult.value.delivered).toBe(true);
+    } finally {
+      if (block) await prisma.teacherBlock.deleteMany({ where: { id: block.id } });
+      await prisma.invitation.deleteMany({
+        where: { id: { in: [blocked.invitationId, open.invitationId] } },
+      });
+    }
+  });
+});
+
 describe('POST /api/students notifies the invitee (#166 task 8)', () => {
   it('creates an in-app notification for a registered invitee', async () => {
     const registeredEmail = `notify-registered-${suffix}@test.local`;

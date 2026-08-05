@@ -39,7 +39,56 @@ export const REFUSAL_MESSAGES: Record<InviteRefusal, string> = {
 };
 
 /**
- * Create a CRM contact and invite its owner.
+ * Is this address on this teacher's roster right now?
+ *
+ * The one question `ALREADY_LINKED` is allowed to be an answer to (F8, #166
+ * review). It used to be asked two different ways: `Invitation.status ===
+ * 'accepted'` on the row-exists path, and this pair of queries on the
+ * no-row path. Those two disagree the moment a link is deleted without the
+ * invitation being touched — which is exactly what erasing a student does —
+ * and the `status` reading is the one that lies.
+ *
+ * `false` for "no Student row" and for "Student row, no link" alike, and
+ * that is the property, not an implementation detail: the caller must not be
+ * able to tell those two apart, or it becomes the account-enumeration oracle
+ * the old `POST /api/students` was.
+ *
+ * Matched case-insensitively, because the two sides are normalised
+ * differently: `email` is always lowercase (`inviteContact` below normalises
+ * on write), `Student.email` is stored exactly as typed
+ * (`auth/student-signup`, `account/student-profile`). A case-sensitive
+ * `findUnique` here misses any student whose stored address carries
+ * uppercase, and the miss is silent — the refusal never fires and the
+ * teacher gets a pending invitation for someone already on their roster.
+ *
+ * `findFirst`, not `findUnique`: an insensitive match cannot use the unique
+ * index, so this is a scan of `Student` on a path that runs at most 50 times
+ * an hour per teacher (`checkStudentWriteLimit`). Normalising the column on
+ * write is the real fix and is filed separately; it is not something to
+ * half-do from in here.
+ */
+async function hasRosterLink(
+  db: PrismaClient,
+  teacherId: string,
+  email: string,
+): Promise<boolean> {
+  const student = await db.student.findFirst({
+    where: { email: { equals: email, mode: 'insensitive' } },
+    select: { id: true },
+  });
+  if (!student) return false;
+
+  const link = await db.teacherStudent.findUnique({
+    where: { teacherId_studentId: { teacherId, studentId: student.id } },
+    select: { id: true },
+  });
+  return link !== null;
+}
+
+/**
+ * Create a CRM contact and invite its owner — or, when an answered
+ * invitation has outlived the link it created, return that row to `pending`
+ * and invite them again.
  *
  * The security property lives in what this function does NOT branch on.
  * Every refusal below is about a row THIS teacher owns — their own
@@ -47,10 +96,9 @@ export const REFUSAL_MESSAGES: Record<InviteRefusal, string> = {
  * Nothing else is consulted. In particular there is no "does a Student
  * row exist for this address" branch, which is what made the old route an
  * account-enumeration oracle: 200 meant taken, 201 meant free.
- *
- * The Student lookup below is deliberately AFTER the outcome is fixed and
- * feeds only the roster-link check. Do not hoist it, and do not add a
- * branch on `student === null`.
+ * `hasRosterLink` above is answerable only about this teacher's own roster,
+ * which is what keeps calling it safe. Do not add a branch on whether a
+ * Student row was found.
  *
  * One residual channel is knowingly left open: the "Student exists but is not
  * on this teacher's roster" path issues one extra query, so it is marginally
@@ -59,10 +107,13 @@ export const REFUSAL_MESSAGES: Record<InviteRefusal, string> = {
  * side effects — and closing it would mean issuing dummy queries to flatten
  * the timing, which is not worth the contortion at this threat level.
  *
- * The block check below runs unconditionally, after the invitation is
- * already created — a blocked and a fresh address run the exact same query
+ * The block check below runs unconditionally, after the invitation row is
+ * already written — a blocked and a fresh address run the exact same query
  * sequence, differing only in the `delivered` value neither response ever
- * carries on the wire.
+ * carries on the wire. The revive path and the create path share that tail
+ * on purpose: a second block check written for the revive would be a second
+ * place to get it subtly wrong, and re-inviting a blocked address has to
+ * stay as silent as inviting one for the first time.
  */
 export async function inviteContact(
   db: PrismaClient,
@@ -90,62 +141,103 @@ export async function inviteContact(
 
   const existing = await db.invitation.findUnique({
     where: { teacherId_email: { teacherId, email } },
-    select: { status: true },
+    select: { id: true, status: true },
   });
-  if (existing) {
-    // Every Invitation row left standing is now one the teacher typed
-    // themselves — the block that used to live in here has moved to
-    // `TeacherBlock` — so a 409 here tells them nothing they did not
-    // already have, and silence would be cruelty rather than protection.
-    if (existing.status === 'declined') return { ok: false, reason: 'DECLINED' };
-    if (existing.status === 'accepted') return { ok: false, reason: 'ALREADY_LINKED' };
-    return { ok: false, reason: 'ALREADY_INVITED' };
+
+  // Every Invitation row left standing is one the teacher typed themselves
+  // — the block that used to live in here has moved to `TeacherBlock` — so
+  // a 409 here tells them nothing they did not already have, and silence
+  // would be cruelty rather than protection.
+  if (existing?.status === 'declined') return { ok: false, reason: 'DECLINED' };
+  if (existing?.status === 'pending') return { ok: false, reason: 'ALREADY_INVITED' };
+
+  // What is left is an `accepted` row, or no row at all — and both turn on
+  // the same question, asked the same way (F8, #166 review).
+  //
+  // `accepted` used to answer `ALREADY_LINKED` on the strength of the status
+  // alone. Erasing a student deletes their `TeacherStudent` rows and leaves
+  // `Invitation` untouched, so that answer became a permanent lie: the
+  // teacher was told "already one of your students" about someone not on
+  // their roster, on the one row shape they can neither delete (it is not
+  // declined, but it is not re-invitable either) nor edit their way out of.
+  // The `@@unique([teacherId, email])` key means the way back is this row,
+  // returned to `pending`.
+  //
+  // No row at all is the same question with a different history: a link with
+  // no invitation is a student who booked a class instead of being invited.
+  if (await hasRosterLink(db, teacherId, email)) {
+    return { ok: false, reason: 'ALREADY_LINKED' };
   }
 
-  // A link with no invitation row: this student booked a class instead of
-  // being invited. Their being on this teacher's roster is the teacher's
-  // own data, so refusing here discloses nothing new.
-  //
-  // Matched case-insensitively, because the two sides are normalised
-  // differently: `email` above is always lowercase, `Student.email` is
-  // stored exactly as typed (`auth/student-signup`, `account/student-profile`).
-  // A case-sensitive `findUnique` here misses any student whose stored
-  // address carries uppercase, and the miss is silent — the refusal below
-  // never fires and the teacher gets a pending invitation for someone
-  // already on their roster.
-  //
-  // `findFirst`, not `findUnique`: an insensitive match cannot use the
-  // unique index, so this is a scan of `Student` on a path that runs at most
-  // 50 times an hour per teacher (`checkStudentWriteLimit`). Normalising the
-  // column on write is the real fix and is filed separately; it is not
-  // something to half-do from in here.
-  const student = await db.student.findFirst({
-    where: { email: { equals: email, mode: 'insensitive' } },
-    select: { id: true },
-  });
-  if (student) {
-    const link = await db.teacherStudent.findUnique({
-      where: { teacherId_studentId: { teacherId, studentId: student.id } },
+  let invitationId: string;
+  if (existing) {
+    const revived = await revivePendingInvitation(db, existing.id, { firstName, lastName });
+    // The revive lost a race with `unlinkTeacher` — see that helper. A
+    // tombstone written a moment ago is the honest answer, and it is the
+    // same answer a retry would give.
+    if (revived === null) return { ok: false, reason: 'DECLINED' };
+    invitationId = revived;
+  } else {
+    const created = await db.invitation.create({
+      data: { teacherId, email, firstName, lastName },
       select: { id: true },
     });
-    if (link) return { ok: false, reason: 'ALREADY_LINKED' };
+    invitationId = created.id;
   }
-
-  const created = await db.invitation.create({
-    data: { teacherId, email, firstName, lastName },
-    select: { id: true },
-  });
 
   // A block makes this invitation undeliverable, not un-creatable. The row
   // is real, the teacher sees it, edits it, archives it — everything behaves
   // exactly as it does for an address that was never blocked, which is the
   // point. Only delivery is withheld. See `delivered` on InviteResult.
+  //
+  // Shared by both paths above, so a re-invite of a blocked address is as
+  // silent as a first invite of one: same status, same body, same `id` key,
+  // and the difference lives only in `delivered`, which never reaches the
+  // wire.
   const blocked = await db.teacherBlock.findUnique({
     where: { teacherId_email: { teacherId, email } },
     select: { id: true },
   });
 
-  return { ok: true, value: { id: created.id, delivered: blocked === null } };
+  return { ok: true, value: { id: invitationId, delivered: blocked === null } };
+}
+
+/**
+ * Return an `accepted` invitation to `pending` so its teacher can invite
+ * that address again (F8, #166 review). Returns the row's id, or `null` if
+ * the row stopped being `accepted` under us.
+ *
+ * `respondedAt: null` is not tidiness — `Invitation_responded_at_status_check`
+ * (prisma/migrations/…_invitation_check_constraints) binds it to `status`,
+ * so a revive that left the old acceptance timestamp standing would be
+ * rejected by Postgres.
+ *
+ * The names are rewritten and `isArchived` cleared because this is an
+ * invitation the teacher is sending now: they typed a name into the form,
+ * and a contact that reappeared only in the archive would look like the
+ * request did nothing.
+ *
+ * `updateMany` scoped to `status: 'accepted'`, rather than `update` by id,
+ * for one race: `unlinkTeacher` writes `declined` + a `TeacherBlock` in a
+ * single transaction, and it can commit between this function's caller
+ * reading the row and this write. An unscoped update would flip that fresh
+ * tombstone back to `pending` — and `PUT`/`DELETE /api/invitations/[id]`
+ * both refuse to touch a declined row precisely because it is meant to be
+ * permanent, so the flip would hand the teacher back the delete the
+ * tombstone exists to deny. `accepted` is the only status this can be
+ * reached with, and `unlinkTeacher` is the only writer that can move it, so
+ * a zero count means exactly one thing.
+ */
+async function revivePendingInvitation(
+  db: PrismaClient,
+  id: string,
+  names: { firstName: string; lastName: string },
+): Promise<string | null> {
+  const revived = await db.invitation.updateMany({
+    where: { id, status: 'accepted' },
+    data: { status: 'pending', respondedAt: null, isArchived: false, ...names },
+  });
+  return revived.count === 0 ? null : id;
 }
 
 /**
