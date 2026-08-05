@@ -81,14 +81,14 @@ Teacher sends message to all students of a specific class (or all their students
 
 ## Data Model
 
-12 entities across 6 domains: People (Account, Teacher, Student, StudentPrivacy), Spaces (Room, TeacherRoom), Classes (ClassTemplate, Class, StudioClass), Bookings (Registration, WaitlistEntry), Payments (Payment), Communication (Notification, Announcement).
+16 entities across 6 domains: People (Account, Teacher, Student, StudentPrivacy, Invitation, TeacherBlock), Spaces (Room, TeacherRoom), Classes (ClassTemplate, Class, StudioClass), Bookings (Registration, WaitlistEntry), Payments (Payment), Communication (Notification, Announcement).
 
 Key design decisions:
 - `tier_at_booking` on Registration captures income tier at booking time — serves as income history, no separate tracking needed
 - `StudentPrivacy` is per-teacher — students control what each teacher can see, default is maximum privacy
 - `TeacherRoom` holds private rental rate per teacher — never shared between teachers
 - `StudioClass` is disconnected from Room/Student — pure calendar + income tracking
-- `Account` owns auth (email identity, sessions, passkeys); `Teacher`/`Student` are optionally-linked profiles — one login serves both hats, teacher pages require a teacher profile and student pages a student one, and CRM-created students claim their account on first sign-in
+- `Account` owns auth (email identity, sessions, passkeys); `Teacher`/`Student` are optionally-linked profiles — one login serves both hats, teacher pages require a teacher profile and student pages a student one. A teacher may not link a student unilaterally: adding a CRM contact creates only an `Invitation`, and the `TeacherStudent` link forms only once the invitee accepts it (or books a class) — nothing creates an unclaimed `Student` row any more, though pre-existing unclaimed rows (created before this rule) still claim their account on first sign-in. A student who unlinks after being linked leaves a `TeacherBlock`, which keeps that teacher from re-adding them; a plain decline does not — the declined `Invitation` row is itself the tombstone that blocks a re-invite
 - Session/passkey tables managed by auth layer, keyed by account
 
 → Full schema with all fields and types: `docs/data-model.md`

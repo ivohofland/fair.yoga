@@ -190,7 +190,7 @@ Lightweight teacher-facing tools for managing their student community.
 - No general notes field, no experience level, no health data (GDPR special category risk)
 - Address is useful for personal touches (e.g., teacher sending a Christmas card) and future features (private bookings)
 
-**CRM student import:** Teachers can add students to the CRM manually (e.g., migrating existing students). As an optional step in the process, they can send a platform invitation to the student.
+**CRM contact invitations:** Adding someone to the CRM (e.g., migrating existing students) sends them a platform invitation — the only way a contact becomes a student. A teacher cannot link themselves to a student unilaterally: the contact stays a pending invitation, visible only to the teacher, until the invitee accepts it on their own account (or books one of the teacher's classes, which accepts implicitly). Declining is final short of booking a class.
 
 ### 6. Communication
 

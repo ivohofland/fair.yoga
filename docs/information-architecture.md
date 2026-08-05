@@ -142,7 +142,8 @@ Students
 │   │   ├── Payment history
 │   │   └── Shared info (based on student privacy settings)
 │   │
-│   ├── + Add student (CRM import, optional invite)
+│   ├── + Add student (sends an invitation — the only way a contact becomes a student)
+│   ├── Contacts (pending / declined invitations, separate from the student list)
 │   └── Send announcement (to selection or all)
 │
 └── Reporting
@@ -155,7 +156,7 @@ Students
 
 A simple searchable list. Not a "CRM dashboard" — it should feel like a personal address book. Each row shows the student's name, how many classes they've attended, and when they last came.
 
-Teachers can add students manually (with optional platform invitation) for migrating existing students.
+Teachers can add a contact for migrating existing students, but a teacher may not link themselves to a student unilaterally: adding one always sends a platform invitation, and the person stays a contact — visible only in the separate Contacts list, not here — until they accept it on their own account or book one of the teacher's classes.
 
 ### Student detail
 

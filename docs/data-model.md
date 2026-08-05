@@ -1,6 +1,6 @@
 # Data Model — Ethical Yoga App
 
-11 entities across 6 domains. This is the source of truth for the application's data layer.
+15 entities across 6 domains. This is the source of truth for the application's data layer.
 
 ---
 
@@ -69,6 +69,39 @@
 | updated_at | datetime | |
 
 Created on first booking with a teacher. Default = maximum privacy. Student explicitly opts in to share each field per teacher.
+
+### Invitation (teacher → student contact, #166)
+
+| Field | Type | Notes |
+|---|---|---|
+| **id** (PK) | uuid | |
+| *teacher_id* (FK) | → Teacher | |
+| email | string | Lowercased on write — the one place a teacher types another person's address, so a case slip must not hide the invitation from them |
+| first_name | string, default '' | As the teacher typed it; independent of the invitee's own Student row, if one exists |
+| last_name | string, default '' | |
+| status | enum: pending, accepted, declined | |
+| is_archived | boolean, default false | Teacher's own filing action; never hides the row from the invitee |
+| responded_at | datetime, nullable | Set when status leaves pending |
+| **Timestamps** | | |
+| created_at | datetime | |
+| **Constraints** | | |
+| unique | (teacher_id, email) | One contact per address per teacher |
+
+A teacher may not link themselves to a student unilaterally. `POST /api/students` creates an `Invitation`, never a `Student` row — the `TeacherStudent` link (above) forms only once the invitee accepts it, or books one of the teacher's classes. A declined row is not deleted: it is the tombstone that stops the same address being re-invited, so `PUT`/`DELETE` on a declined invitation both refuse. This is a separate table from `TeacherStudent` on purpose — `POST /api/students` must behave identically whether or not the address is already on the platform, which it cannot if it writes to a table with a unique `email` column.
+
+### TeacherBlock (a student's standing refusal of one teacher, #166)
+
+| Field | Type | Notes |
+|---|---|---|
+| **id** (PK) | uuid | |
+| *teacher_id* (FK) | → Teacher | |
+| email | string | Lowercased on write, same reasoning as `Invitation.email` |
+| **Timestamps** | | |
+| created_at | datetime | |
+| **Constraints** | | |
+| unique | (teacher_id, email) | |
+
+Written only when a student unlinks a teacher they were already connected to (`unlinkTeacher`) — a plain decline does not write one; the declined `Invitation` row already blocks a re-invite on its own. Held in its own table rather than as a flag on `Invitation` so a blocked address behaves identically to a fresh one everywhere an `Invitation` is read, edited, archived or re-created — the only place the distinction is allowed to surface is whether an invite email is actually sent.
 
 ---
 
@@ -309,6 +342,8 @@ When sent, creates one Notification per recipient student. Class-scoped (specifi
 - Class → has many WaitlistEntries
 - Student → has many Registrations
 - Student → has many StudentPrivacy records (one per teacher)
+- Teacher → has many Invitations
+- Teacher → has many TeacherBlocks
 - Registration → has one Payment
 - WaitlistEntry → has one Registration (when promoted)
 - Announcement → creates many Notifications
@@ -323,7 +358,8 @@ When sent, creates one Notification per recipient student. Class-scoped (specifi
 - **StudioClass** is intentionally disconnected from Room and Student entities. It's a simple log entry for the teacher's calendar and income reporting.
 - **Notification** uses a polymorphic recipient (teacher or student) so both user types share the same inbox infrastructure.
 - **rental_rate** on TeacherRoom is private to each teacher — never exposed to other teachers using the same room.
-- **Authentication** hangs off the Account entity: one Account per human owns the authenticated email, sessions, and passkeys. Teacher and Student are profiles optionally linked to it via their unique `account_id` — a dual-role person (a teacher who attends classes) has one account with both profiles. Student.account_id is nullable: CRM-created students stay unclaimed until the human first authenticates (the claim moment links the account and stamps claimed_at). Profile email fields are denormalized copies set at link time.
+- **Authentication** hangs off the Account entity: one Account per human owns the authenticated email, sessions, and passkeys. Teacher and Student are profiles optionally linked to it via their unique `account_id` — a dual-role person (a teacher who attends classes) has one account with both profiles. Student.account_id is nullable, but nothing creates a new unclaimed Student any more (#166): a CRM contact is an Invitation until accepted, and accepting requires an already-signed-in account. The nullable column and the claim-on-first-authenticate path only still serve pre-existing unclaimed rows created before that change. Profile email fields are denormalized copies set at link time.
+- **Invitation and TeacherBlock** (#166) exist because a teacher may not link a student unilaterally. `POST /api/students` creates only an Invitation; the TeacherStudent link forms when the invitee accepts it or books a class. Declining leaves the Invitation row itself as a tombstone against re-inviting; unlinking after being linked additionally writes a TeacherBlock, so the two "no" states aren't uniform — a bare decline blocks re-invites without a TeacherBlock row, only an unlink writes one.
 
 ## Open Questions
 
