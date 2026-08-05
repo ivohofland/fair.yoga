@@ -1,10 +1,21 @@
 # Data Model — Ethical Yoga App
 
-15 entities across 6 domains. This is the source of truth for the application's data layer.
+16 entities across 6 domains. This is the source of truth for the application's data layer.
 
 ---
 
 ## People
+
+### Account (auth identity)
+
+| Field | Type | Notes |
+|---|---|---|
+| **id** (PK) | uuid | |
+| email | string, unique | The authenticated identity — sessions and passkeys key off this, not off Teacher/Student |
+| **Timestamps** | | |
+| created_at | datetime | |
+
+One Account per human. Teacher and Student are profiles optionally linked to it via their own unique `account_id` — a dual-role person (a teacher who also attends classes) has one Account with both profiles attached. See Design Notes below for the claim path that links an Account to a pre-existing unclaimed Student.
 
 ### Teacher (core)
 
@@ -330,6 +341,8 @@ When sent, creates one Notification per recipient student. Class-scoped (specifi
 
 ## Relationships
 
+- Account → has one Teacher (optional)
+- Account → has one Student (optional)
 - Teacher → has many TeacherRooms
 - Teacher → has many Classes
 - Teacher → has many ClassTemplates

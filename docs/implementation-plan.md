@@ -149,7 +149,7 @@ Built by Ivo + Claude Code. Technical foundation first, then layer on UI and fea
 4.6 — Students tab
   - Student list (searchable)
   - Student detail (attendance history, payment history, shared info)
-  - Add student / CRM import
+  - Add student / CRM import (pre-#166 plan — shipped as an invitation a contact must accept, not a direct add; see docs/data-model.md's Invitation entity)
 
 4.7 — Inbox tab
   - Notification list (chronological, read/unread)
