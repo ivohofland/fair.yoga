@@ -12,6 +12,7 @@ import { updateRegistrationSchema } from '@/lib/schemas';
 import { DEADLINE_HOURS, handleSpotFreed } from '@/services/waitlist';
 import { classStartInstant } from '@/lib/timezone';
 import { log } from '@/lib/log';
+import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -25,20 +26,39 @@ export const GET = withErrorHandler(async (
   const registration = await prisma.registration.findUnique({
     where: { id },
     include: {
-      student: { select: { firstName: true, lastName: true } },
       class: { select: { teacherId: true, classType: true, date: true } },
     },
   });
 
   if (!registration) return respondError('Registration not found', 404);
 
-  // Allow access if the user is the student or the class teacher
   const isStudent = registration.studentId === session.studentId;
-  const isTeacher = registration.class.teacherId === session.teacherId;
 
-  if (!isStudent && !isTeacher) return respondError('Access denied', 403);
+  // The student's own read is not a disclosure boundary — their tier and
+  // price are theirs. Only the teacher's view is projected (#167).
+  if (isStudent) return respondOk(registration);
 
-  return respondOk(registration);
+  const { teacherId } = session;
+  if (teacherId === null || registration.class.teacherId !== teacherId) {
+    return respondError('Access denied', 403);
+  }
+
+  const student = await prisma.student.findUniqueOrThrow({
+    where: { id: registration.studentId },
+    select: studentVisibilitySelect(teacherId),
+  });
+
+  return respondOk({
+    id: registration.id,
+    classId: registration.classId,
+    studentId: registration.studentId,
+    status: registration.status,
+    registeredAt: registration.registeredAt,
+    cancelledAt: registration.cancelledAt,
+    isWalkIn: registration.isWalkIn,
+    class: registration.class,
+    student: projectStudentForTeacher(student),
+  });
 });
 
 export const PUT = withErrorHandler(async (

@@ -493,3 +493,52 @@ describe('DELETE /api/waitlist/[id] — profile-presence authorization', () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe('teacher-facing registration reads honour StudentPrivacy', () => {
+  it('the class roster withholds a surname the student did not share', async () => {
+    const classId = await makeClass(5);
+    await post(studentTokens[0]!, { classId });
+
+    const res = await fetch(`${BASE_URL}/api/classes/${classId}/registrations`, {
+      headers: cookie(ownerToken),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { student: { displayName: string }; tierAtBooking?: number; tierRatio?: string }[];
+    };
+    expect(body.data[0]!.student.displayName).toBe('RegStudent0 t.');
+    expect(body.data[0]!.tierAtBooking).toBeUndefined();
+    expect(body.data[0]!.tierRatio).toBeUndefined();
+  });
+
+  it('a teacher reading one registration gets the gated student', async () => {
+    const classId = await makeClass(5);
+    const created = await post(studentTokens[0]!, { classId });
+    const { data } = (await created.json()) as { data: { id: string } };
+
+    const res = await fetch(`${BASE_URL}/api/registrations/${data.id}`, {
+      headers: cookie(ownerToken),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { student: { displayName: string }; tierAtBooking?: number };
+    };
+    expect(body.data.student.displayName).toBe('RegStudent0 t.');
+    expect(body.data.tierAtBooking).toBeUndefined();
+  });
+
+  it('a student reading their OWN registration is not gated', async () => {
+    const classId = await makeClass(5);
+    const created = await post(studentTokens[0]!, { classId });
+    const { data } = (await created.json()) as { data: { id: string } };
+
+    const res = await fetch(`${BASE_URL}/api/registrations/${data.id}`, {
+      headers: cookie(studentTokens[0]!),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { tierAtBooking: number } };
+    // Their own tier is theirs to see — the gate is a teacher boundary, not a
+    // blanket filter. This test is what stops the fix over-reaching.
+    expect(body.data.tierAtBooking).toBeDefined();
+  });
+});

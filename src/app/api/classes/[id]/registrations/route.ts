@@ -7,6 +7,7 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
+import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -23,13 +24,21 @@ export const GET = withErrorHandler(async (
 
   const registrations = await prisma.registration.findMany({
     where: { classId: id },
-    include: {
-      student: {
-        select: { firstName: true, lastName: true },
-      },
+    select: {
+      id: true,
+      classId: true,
+      studentId: true,
+      status: true,
+      isWalkIn: true,
+      registeredAt: true,
+      cancelledAt: true,
+      updatedAt: true,
+      student: { select: studentVisibilitySelect(session.teacherId) },
     },
     orderBy: { registeredAt: 'asc' },
   });
 
-  return respondOk(registrations);
+  return respondOk(
+    registrations.map((r) => ({ ...r, student: projectStudentForTeacher(r.student) })),
+  );
 });
