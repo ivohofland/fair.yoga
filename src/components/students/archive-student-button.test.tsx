@@ -49,4 +49,51 @@ describe('ArchiveStudentButton', () => {
       }),
     );
   });
+
+  /**
+   * #166 review F5. The success path navigates away, so silence on failure is
+   * indistinguishable from a click that never registered: the PATCH 4xx'd, the
+   * button re-enabled, the page did not change, and nothing said why. These
+   * three are the tests that fail if the `else`/`catch` is removed again — the
+   * two above pass either way.
+   */
+  it('shows the server message when the PATCH fails', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: { message: 'This student has an unpaid class.' } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ArchiveStudentButton studentId="st-1" isArchived={false} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(await screen.findByText('This student has an unpaid class.')).toBeInTheDocument();
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  it('falls back to copy naming the direction when the server sends no message', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ArchiveStudentButton studentId="st-1" isArchived={true} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(
+      await screen.findByText('Could not unarchive this student. Try again.'),
+    ).toBeInTheDocument();
+  });
+
+  it('reports a thrown fetch instead of swallowing it', async () => {
+    fetchMock.mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ArchiveStudentButton studentId="st-1" isArchived={false} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(await screen.findByText('Network error. Try again.')).toBeInTheDocument();
+    // Re-enabled, not stuck mid-flight: `finally` still has to run on the
+    // throw path.
+    await waitFor(() => expect(screen.getByRole('button')).not.toBeDisabled());
+  });
 });

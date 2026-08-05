@@ -123,15 +123,24 @@ interface ArchiveContactButtonProps {
  * button's only home, `/students/contacts/[id]/page.tsx`, is a server
  * component (it reads the invitation via prisma directly, matching
  * `(teacher)/students/[id]/page.tsx`) and so cannot hold the click handler
- * itself. Copies `archive-student-button.tsx:18-24`'s query-param idiom
- * exactly, pointed at `/api/invitations` instead of `/api/students`.
+ * itself. Copies `archive-student-button.tsx`'s query-param idiom exactly,
+ * pointed at `/api/invitations` instead of `/api/students` — including its
+ * failure handling, which the two must keep in step (they were copied once
+ * with the same missing `else` in both).
+ *
+ * That handling matters more here than for its sibling: archiving is the only
+ * escape hatch a declined contact has. Its row is a tombstone the PUT and the
+ * DELETE both 409 on, so a teacher who cannot archive it and is told nothing
+ * is stuck with it on their list with no signal why.
  */
 export function ArchiveContactButton({ invitationId, isArchived }: ArchiveContactButtonProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   async function handleToggle() {
     setLoading(true);
+    setError('');
     try {
       const res = await fetch(
         `/api/invitations/${invitationId}?state=${isArchived ? 'unarchived' : 'archived'}`,
@@ -139,22 +148,34 @@ export function ArchiveContactButton({ invitationId, isArchived }: ArchiveContac
       );
       if (res.ok) {
         router.push('/students');
+      } else {
+        setError(
+          await readErrorMessage(
+            res,
+            `Could not ${isArchived ? 'unarchive' : 'archive'} this contact. Try again.`,
+          ),
+        );
       }
+    } catch {
+      setError('Network error. Try again.');
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <button
-      type="button"
-      onClick={handleToggle}
-      disabled={loading}
-      className="type-caption"
-    >
-      {loading
-        ? (isArchived ? 'Unarchiving...' : 'Archiving...')
-        : (isArchived ? 'Unarchive contact' : 'Archive contact')}
-    </button>
+    <div>
+      <button
+        type="button"
+        onClick={handleToggle}
+        disabled={loading}
+        className="type-caption"
+      >
+        {loading
+          ? (isArchived ? 'Unarchiving...' : 'Archiving...')
+          : (isArchived ? 'Unarchive contact' : 'Archive contact')}
+      </button>
+      {error && <p className="text-sm text-danger mt-2">{error}</p>}
+    </div>
   );
 }

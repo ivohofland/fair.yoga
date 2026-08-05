@@ -173,4 +173,50 @@ describe('ArchiveContactButton', () => {
       }),
     );
   });
+
+  /**
+   * #166 review F5. Archiving is the only escape hatch a declined contact has
+   * — its row is a tombstone the PUT and the DELETE both 409 on — so a failed
+   * archive that says nothing leaves the teacher stuck with the row and no
+   * explanation. Mirrors `archive-student-button.test.tsx`'s three failure
+   * tests deliberately: the two components were copied once with the same
+   * missing `else`, and fixing one without the other is how they drift.
+   */
+  it('shows the server message when the PATCH fails', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: { message: 'Contact not found' } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ArchiveContactButton invitationId="inv-1" isArchived={false} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(await screen.findByText('Contact not found')).toBeInTheDocument();
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  it('falls back to copy naming the direction when the server sends no message', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ArchiveContactButton invitationId="inv-1" isArchived={false} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(
+      await screen.findByText('Could not archive this contact. Try again.'),
+    ).toBeInTheDocument();
+  });
+
+  it('reports a thrown fetch instead of swallowing it', async () => {
+    fetchMock.mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ArchiveContactButton invitationId="inv-1" isArchived={false} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(await screen.findByText('Network error. Try again.')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button')).not.toBeDisabled());
+  });
 });
