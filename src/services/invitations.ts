@@ -594,10 +594,14 @@ export async function unlinkTeacher(
     // purpose and unlike this: a registration is a commitment that may carry
     // money owed, a waitlist entry is neither.
     //
-    // It lives in `waitlist.ts` because it must take the class lock every
-    // other writer of `WaitlistEntry` takes, and it must run before this
-    // transaction's other writes — see that function for both, including
-    // why the ordering is a deadlock question and not a preference.
+    // It lives in `waitlist.ts` because it must take the class row's `FOR
+    // UPDATE` lock, and that convention belongs with the table it protects.
+    // The convention is not universal there and reading one off this line
+    // would hide a real gap: `addToWaitlist`, `promoteNext` and `claimSpot`
+    // each open with that lock, `removeFromWaitlist` takes none at all. Why
+    // that gap cannot reach this call site is recorded in that function's
+    // own docblock, along with why it must run before this transaction's
+    // other writes — a deadlock question, not a preference.
     await withdrawWaitingEntriesForTeacher(tx, {
       teacherId: input.teacherId,
       studentId: input.studentId,
