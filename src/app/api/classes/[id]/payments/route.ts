@@ -22,6 +22,6 @@ export const GET = withErrorHandler(async (
   if (!cls) return respondError('Class not found', 404);
   if (cls.teacherId !== session.teacherId) return respondError('Not your class', 403);
 
-  const payments = await getPaymentsForClass(prisma, id);
+  const payments = await getPaymentsForClass(prisma, id, session.teacherId);
   return respondOk(payments);
 });

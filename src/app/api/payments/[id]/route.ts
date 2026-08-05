@@ -7,6 +7,7 @@ import {
   isErrorResponse,
   withErrorHandler,
 } from '@/lib/api-utils';
+import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -21,8 +22,10 @@ export const GET = withErrorHandler(async (
     where: { id },
     include: {
       registration: {
-        include: {
-          student: { select: { firstName: true, lastName: true, email: true } },
+        select: {
+          id: true,
+          status: true,
+          student: { select: studentVisibilitySelect(session.teacherId) },
           class: { select: { teacherId: true, classType: true, date: true } },
         },
       },
@@ -36,5 +39,11 @@ export const GET = withErrorHandler(async (
     return respondError('Access denied', 403);
   }
 
-  return respondOk(payment);
+  return respondOk({
+    ...payment,
+    registration: {
+      ...payment.registration,
+      student: projectStudentForTeacher(payment.registration.student),
+    },
+  });
 });

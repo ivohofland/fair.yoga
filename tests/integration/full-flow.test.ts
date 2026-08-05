@@ -307,7 +307,7 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
   // Step 15: Get payments for class — 1 payment, pending, amount > 0
   // -----------------------------------------------------------------------
   it('Step 15: one pending payment exists for the class with correct amount', async () => {
-    const payments = await getPaymentsForClass(prisma, classId);
+    const payments = await getPaymentsForClass(prisma, classId, teacherId);
 
     expect(payments).toHaveLength(1);
     const payment = payments[0]!;

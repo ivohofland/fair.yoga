@@ -5,14 +5,38 @@
  * This service handles status transitions, reminders, and queries.
  */
 
-import type { PrismaClient, Payment } from '@prisma/client';
+import type { PrismaClient, Payment, RegistrationStatus } from '@prisma/client';
 import { createBulkNotifications } from './notifications';
+import {
+  projectStudentForTeacher,
+  studentVisibilitySelect,
+  type TeacherVisibleStudent,
+} from '@/lib/student-visibility';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export type PaymentResult = { ok: true; payment: Payment } | { ok: false; error: string };
+
+/**
+ * What a teacher-facing payment read returns.
+ *
+ * Both query functions below used to declare `Promise<Payment[]>` while
+ * returning a structural superset carrying the student's name and email — it
+ * type-checked, and the signature is exactly why nobody reading it could see
+ * the disclosure. The `registration` shape is explicit for the same reason:
+ * an un-`select`ed `include` shipped `tierAtBooking` and `tierRatio`, which are
+ * stored copies of the student's income tier.
+ */
+export type TeacherPaymentRow = Payment & {
+  registration: {
+    id: string;
+    status: RegistrationStatus;
+    student: TeacherVisibleStudent;
+    class: { classType: string; date: Date };
+  };
+};
 
 // ---------------------------------------------------------------------------
 // Status transitions
@@ -180,69 +204,68 @@ export async function sendPaymentReminder(
  * Get all outstanding (pending or overdue) payments for a teacher.
  *
  * Follows the relation chain: Payment → Registration → Class → Teacher.
- * Includes registration with student name/email and class type/date.
+ * Includes registration with the teacher-visible student projection and
+ * class type/date.
  */
 export async function getOutstandingPayments(
   db: PrismaClient,
   teacherId: string,
-): Promise<Payment[]> {
-  return db.payment.findMany({
+): Promise<TeacherPaymentRow[]> {
+  const rows = await db.payment.findMany({
     where: {
       status: { in: ['pending', 'overdue'] },
-      registration: {
-        class: {
-          teacherId,
-        },
-      },
+      registration: { class: { teacherId } },
     },
     include: {
       registration: {
-        include: {
-          student: {
-            select: {
-              firstName: true,
-              lastName: true,
-              email: true,
-            },
-          },
-          class: {
-            select: {
-              classType: true,
-              date: true,
-            },
-          },
+        select: {
+          id: true,
+          status: true,
+          student: { select: studentVisibilitySelect(teacherId) },
+          class: { select: { classType: true, date: true } },
         },
       },
     },
   });
+
+  return rows.map((row) => ({
+    ...row,
+    registration: {
+      ...row.registration,
+      student: projectStudentForTeacher(row.registration.student),
+    },
+  }));
 }
 
 /**
  * Get all payments for a specific class.
  *
- * Includes registration with student name.
+ * Includes registration with the teacher-visible student projection.
  */
 export async function getPaymentsForClass(
   db: PrismaClient,
   classId: string,
-): Promise<Payment[]> {
-  return db.payment.findMany({
-    where: {
-      registration: {
-        classId,
-      },
-    },
+  teacherId: string,
+): Promise<TeacherPaymentRow[]> {
+  const rows = await db.payment.findMany({
+    where: { registration: { classId } },
     include: {
       registration: {
-        include: {
-          student: {
-            select: {
-              firstName: true,
-              lastName: true,
-            },
-          },
+        select: {
+          id: true,
+          status: true,
+          student: { select: studentVisibilitySelect(teacherId) },
+          class: { select: { classType: true, date: true } },
         },
       },
     },
   });
+
+  return rows.map((row) => ({
+    ...row,
+    registration: {
+      ...row.registration,
+      student: projectStudentForTeacher(row.registration.student),
+    },
+  }));
 }

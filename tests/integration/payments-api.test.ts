@@ -123,6 +123,56 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+describe('GET /api/payments, /api/payments/[id], /api/classes/[id]/payments', () => {
+  it('GET /api/payments withholds the email and surname of a student who shared neither', async () => {
+    const res = await fetch(`${BASE_URL}/api/payments`, { headers: cookie(teacherToken) });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: {
+        registration: {
+          student: { displayName: string; email: string | null };
+          tierAtBooking?: number;
+        };
+      }[];
+    };
+    const row = body.data.find((p) => p.registration.student.displayName.startsWith('Reminder'));
+    expect(row).toBeDefined();
+    expect(row!.registration.student.displayName).toBe('Reminder s.');
+    expect(row!.registration.student.email).toBeNull();
+    expect(row!.registration.tierAtBooking).toBeUndefined();
+  });
+
+  it('GET /api/payments/[id] applies the same gate as the list', async () => {
+    const res = await fetch(`${BASE_URL}/api/payments/${paymentId}`, {
+      headers: cookie(teacherToken),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: {
+        registration: {
+          student: { displayName: string; email: string | null };
+          tierAtBooking?: number;
+        };
+      };
+    };
+    expect(body.data.registration.student.displayName).toBe('Reminder s.');
+    expect(body.data.registration.student.email).toBeNull();
+    expect(body.data.registration.tierAtBooking).toBeUndefined();
+  });
+
+  it('GET /api/classes/[id]/payments withholds the surname too', async () => {
+    const res = await fetch(`${BASE_URL}/api/classes/${classId}/payments`, {
+      headers: cookie(teacherToken),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { registration: { student: { displayName: string }; tierAtBooking?: number } }[];
+    };
+    expect(body.data[0]!.registration.student.displayName).toBe('Reminder s.');
+    expect(body.data[0]!.registration.tierAtBooking).toBeUndefined();
+  });
+});
+
 describe('POST /api/payments/[id]/remind', () => {
   it('rejects a signed-out caller', async () => {
     const res = await fetch(`${BASE_URL}/api/payments/${paymentId}/remind`, {

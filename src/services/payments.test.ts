@@ -259,7 +259,7 @@ describe('Payment Service (DB)', () => {
   });
 
   it('getPaymentsForClass returns all payments for a class', async () => {
-    const payments = await getPaymentsForClass(prisma, classId);
+    const payments = await getPaymentsForClass(prisma, classId, teacherId);
 
     expect(payments.length).toBeGreaterThanOrEqual(1);
 
