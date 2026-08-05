@@ -100,10 +100,16 @@ export default async function PrivacySettingsPage() {
       {links.length === 0 ? (
         <EmptyState
           title="No teachers yet."
+          // Three ways in, not two. Joining a waitlist creates the link as
+          // surely as booking does (`joinWaitlist`, services/waitlist.ts,
+          // upserts `TeacherStudent` and resolves the invitation) — naming
+          // only booking made this an incomplete list stated as a complete
+          // one, on the page whose whole job is telling a student how their
+          // teacher relationships come to exist.
           body={
             pendingInvitations.length > 0
-              ? "Accept one of the invitations above to connect, or book a class to connect with someone new."
-              : "Book a class first — teachers appear here once you're connected."
+              ? 'Accept one of the invitations above, or connect with someone new by booking a class or joining a waitlist.'
+              : "Book a class or join a waitlist — teachers appear here once you're connected."
           }
         />
       ) : (
