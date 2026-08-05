@@ -5,6 +5,7 @@ import { createInvitationSchema, studentListQuerySchema } from '@/lib/schemas';
 import { checkStudentWriteLimit } from '@/lib/rate-limit';
 import { inviteContact, notifyInvitee, REFUSAL_MESSAGES } from '@/services/invitations';
 import { log } from '@/lib/log';
+import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
 
 /**
  * Loads the inviting teacher's display name and notifies the invitee — the
@@ -66,15 +67,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       skip: (page - 1) * pageSize,
       take: pageSize,
       select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        email: true,
-        claimedAt: true,
-        studentPrivacy: {
-          where: { teacherId: session.teacherId },
-          select: { shareFullName: true, shareEmail: true },
-        },
+        ...studentVisibilitySelect(session.teacherId),
         registrations: {
           where: { class: { teacherId: session.teacherId } },
           orderBy: { registeredAt: 'desc' },
@@ -109,28 +102,12 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     overdueGroups.map((g) => [g.studentId, g._count._all]),
   );
 
-  const result = students.map((s) => {
-    const privacy = s.studentPrivacy[0];
-    // #166: unreachable for rows created after acceptance-gated linking —
-    // nothing creates an unclaimed Student any more. Kept because removing
-    // it means removing the claim path (lib/auth/account.ts:34-50), the
-    // Student_claim_link_check constraint and Student.claimedAt together.
-    // Filed as a leaf. Do NOT treat this branch as a live privacy rule.
-    const isUnclaimed = !s.claimedAt;
-    const shareFullName = isUnclaimed || (privacy?.shareFullName ?? false);
-    const shareEmail = isUnclaimed || (privacy?.shareEmail ?? false);
-    return {
-      id: s.id,
-      firstName: s.firstName,
-      lastName: shareFullName ? s.lastName : (s.lastName.charAt(0) || ''),
-      email: shareEmail ? s.email : null,
-      claimedAt: s.claimedAt,
-      shareFullName,
-      lastClassDate: s.registrations[0]?.class.date ?? null,
-      classCount: s._count.registrations,
-      overduePayments: overdueByStudent.get(s.id) ?? 0,
-    };
-  });
+  const result = students.map((s) => ({
+    ...projectStudentForTeacher(s),
+    lastClassDate: s.registrations[0]?.class.date ?? null,
+    classCount: s._count.registrations,
+    overduePayments: overdueByStudent.get(s.id) ?? 0,
+  }));
 
   return respondOk({ students: result, total, page, pageSize });
 });

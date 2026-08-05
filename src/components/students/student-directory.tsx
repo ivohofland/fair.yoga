@@ -5,16 +5,13 @@ import Link from 'next/link';
 import { Input } from '@/components/ui/input';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
-import { formatStudentName } from '@/lib/format';
 import { Pagination } from '@/components/students/pagination';
 
 interface StudentRow {
   id: string;
-  firstName: string;
-  lastName: string;
+  displayName: string;
   email: string | null;
   claimedAt: string | null;
-  shareFullName: boolean;
   lastClassDate: string | null;
   classCount: number;
   overduePayments: number;
@@ -111,7 +108,7 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
               >
                 <div className="flex-1 min-w-0 flex flex-col gap-1">
                   <span className="text-base text-ink font-medium">
-                    {formatStudentName(student.firstName, student.lastName, student.shareFullName)}
+                    {student.displayName}
                   </span>
                   {student.email && <span className="type-caption">{student.email}</span>}
                 </div>

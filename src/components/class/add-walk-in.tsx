@@ -9,8 +9,7 @@ import { readErrorMessage } from '@/lib/client-errors';
 
 interface RosterStudent {
   id: string;
-  firstName: string;
-  lastName: string;
+  displayName: string;
 }
 
 interface AddWalkInProps {
@@ -98,7 +97,7 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
         <option value="">Choose a student…</option>
         {students.map((s) => (
           <option key={s.id} value={s.id}>
-            {s.firstName} {s.lastName}
+            {s.displayName}
           </option>
         ))}
       </Select>

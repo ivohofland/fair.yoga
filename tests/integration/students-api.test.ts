@@ -103,7 +103,7 @@ describe('GET /api/students', () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.data.students).toHaveLength(1);
-    expect(json.data.students[0].firstName).toBe('Student00');
+    expect(json.data.students[0].displayName).toBe('Student00 Test');
   });
 
   it('filters by search term (email)', async () => {
@@ -641,6 +641,25 @@ describe('GET /api/students/[id] — profile-presence authorization', () => {
     const res = await as(rosterToken, `/api/students/${dualOwnStudentId}`);
     expect(res.status).toBe(403);
   });
+
+  // #167 mutation check: the two pre-existing list assertions (`filters by
+  // search term (name)`, `maps counts to the right rows across a full page`)
+  // fail if the route stops projecting at all — but only because `displayName`
+  // goes missing, not because a privacy-restricted student's data leaked, since
+  // those fixtures (`Student00`..`Student24`) are unclaimed and legitimately
+  // show a full name either way. This is the assertion that actually exercises
+  // gating on the LIST route, mirroring the detail-route test just above.
+  it('the list withholds a surname and an email the student did not share', async () => {
+    const res = await as(dualToken, '/api/students?page=1&pageSize=20');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { students: { displayName: string; email: string | null }[] };
+    };
+    const row = body.data.students.find((s) => s.displayName.startsWith('Rostered'));
+    expect(row).toBeDefined();
+    expect(row!.displayName).toBe('Rostered p.');
+    expect(row!.email).toBeNull();
+  });
 });
 
 describe('GET /api/students — overduePayments', () => {
@@ -794,14 +813,14 @@ describe('GET /api/students — overduePayments', () => {
     const json = await res.json();
     const byName = new Map<string, number>(
       json.data.students.map(
-        (s: { firstName: string; overduePayments: number }) => [s.firstName, s.overduePayments],
+        (s: { displayName: string; overduePayments: number }) => [s.displayName, s.overduePayments],
       ),
     );
-    expect(byName.get('Student00')).toBe(2);
-    expect(byName.get('Student01')).toBe(0);
-    expect(byName.get('Student02')).toBe(0);
+    expect(byName.get('Student00 Test')).toBe(2);
+    expect(byName.get('Student01 Test')).toBe(0);
+    expect(byName.get('Student02 Test')).toBe(0);
     // Student03 has no registrations at all.
-    expect(byName.get('Student03')).toBe(0);
+    expect(byName.get('Student03 Test')).toBe(0);
   });
 });
 
