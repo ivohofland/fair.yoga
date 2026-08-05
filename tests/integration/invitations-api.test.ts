@@ -1364,10 +1364,22 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
   let unlinkAccountId: string;
   let unlinkToken: string;
 
-  // Promoted off the waitlist after declining — same tombstone shape as
-  // `declineEmail`, resolved through promoteNext instead of a direct booking.
+  // Promoted off the waitlist with a PENDING invitation — resolved through
+  // promoteNext instead of a direct booking.
   const promoteEmail = `resolve-promote-${suffix}@test.local`;
   let promoteStudentId: string;
+
+  // The whole-branch C2 chain, in the order that makes it an exploit:
+  // queues first, is invited second, declines third — then the teacher
+  // frees a spot. Needs a session of its own, because the decline goes
+  // through the real route rather than a direct row edit; that is what
+  // proves declining withdraws no queue position and writes no block, which
+  // is the precondition that leaves the lever in the teacher's hand.
+  const promoteDeclineEmail = `resolve-promote-decline-${suffix}@test.local`;
+  let promoteDeclineStudentId: string;
+  let promoteDeclineAccountId: string;
+  let promoteDeclineToken: string;
+  let promoteDeclineInvitationId: string;
 
   // Claims a spot after declining — same shape again, resolved through
   // claimSpot.
@@ -1518,6 +1530,27 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
       },
     });
 
+    // No TeacherStudent link: joining a waitlist creates none, which is the
+    // state this student is in when the invitation arrives.
+    const promoteDeclineStudent = await prisma.student.create({
+      data: {
+        firstName: 'Resolve', lastName: 'PromoteDecline', email: promoteDeclineEmail,
+        claimedAt: new Date(), account: { create: { email: promoteDeclineEmail } }, incomeTier: 3,
+      },
+      select: { id: true, accountId: true },
+    });
+    promoteDeclineStudentId = promoteDeclineStudent.id;
+    promoteDeclineAccountId = promoteDeclineStudent.accountId as string;
+    promoteDeclineToken = await seedSession(prisma, promoteDeclineAccountId);
+    const promoteDeclineInvitation = await prisma.invitation.create({
+      data: {
+        teacherId: resolveTeacherId, email: promoteDeclineEmail,
+        firstName: 'Resolve', lastName: 'PromoteDecline',
+      },
+      select: { id: true },
+    });
+    promoteDeclineInvitationId = promoteDeclineInvitation.id;
+
     const claimStudent = await prisma.student.create({
       data: {
         firstName: 'Resolve', lastName: 'Claim', email: claimEmail, claimedAt: new Date(),
@@ -1539,9 +1572,12 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
   afterAll(async () => {
     const classIds = [openClassId, promoteClassId, claimClassId];
     const studentIds = [
-      declineStudentId, rosterStudentId, unlinkStudentId, promoteStudentId, claimStudentId,
+      declineStudentId, rosterStudentId, unlinkStudentId, promoteStudentId,
+      promoteDeclineStudentId, claimStudentId,
     ].filter(Boolean);
-    const accountIds = [declineAccountId, unlinkAccountId, claimAccountId].filter(Boolean);
+    const accountIds = [
+      declineAccountId, unlinkAccountId, promoteDeclineAccountId, claimAccountId,
+    ].filter(Boolean);
 
     await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
     await prisma.payment.deleteMany({ where: { registration: { classId: { in: classIds } } } });
@@ -1709,11 +1745,15 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
     }
   });
 
-  it("promoting off the waitlist resolves the student's invitation the same way a direct booking does", async () => {
+  it("promoting off the waitlist resolves the student's PENDING invitation", async () => {
+    // `pending`, not `declined` — see the declined case below, which is the
+    // one a promotion must leave alone (whole-branch review C2). A pending
+    // invitation is not a refusal, so a promotion resolving it costs the
+    // student nothing they did not already ask for by queueing.
     try {
       await prisma.invitation.update({
         where: { teacherId_email: { teacherId: resolveTeacherId, email: promoteEmail } },
-        data: { status: 'declined', respondedAt: new Date() },
+        data: { status: 'pending', respondedAt: null },
       });
       await prisma.waitlistEntry.create({
         data: { classId: promoteClassId, studentId: promoteStudentId, position: 1, status: 'waiting' },
@@ -1739,6 +1779,67 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
       });
       await prisma.registration.deleteMany({
         where: { classId: promoteClassId, studentId: promoteStudentId },
+      });
+    }
+  });
+
+  it('a promotion cannot erase a decline the student made after joining the queue (whole-branch C2)', async () => {
+    try {
+      // The student's older act: a place in the queue. Joining a waitlist
+      // creates no link and resolves nothing, so the entry just sits there.
+      await prisma.waitlistEntry.create({
+        data: {
+          classId: promoteClassId, studentId: promoteDeclineStudentId,
+          position: 1, status: 'waiting',
+        },
+      });
+
+      // Their newer act, through the real route: no.
+      const declineRes = await fetch(
+        `${BASE_URL}/api/invitations/${promoteDeclineInvitationId}/respond`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...cookie(promoteDeclineToken) },
+          body: JSON.stringify({ response: 'decline' }),
+        },
+      );
+      expect(declineRes.status).toBe(200);
+
+      // Declining withdraws nothing, on purpose — refusing an invitation
+      // must not cost a student their place in an unrelated queue. That is
+      // exactly what leaves the entry available as a lever, and why the
+      // guard has to live at the promotion rather than at the decline.
+      expect((await prisma.waitlistEntry.findUniqueOrThrow({
+        where: { classId_studentId: { classId: promoteClassId, studentId: promoteDeclineStudentId } },
+      })).status).toBe('waiting');
+
+      // The teacher's move, at a moment of their choosing.
+      const entry = await promoteNext(prisma, promoteClassId);
+      expect(entry).not.toBeNull();
+      expect(entry!.studentId).toBe(promoteDeclineStudentId);
+
+      // The promotion really ran and really did its other work — the roster
+      // link is there (#166 task 1). Without this the assertion below could
+      // pass because nothing happened at all.
+      expect(await prisma.teacherStudent.findUnique({
+        where: {
+          teacherId_studentId: { teacherId: resolveTeacherId, studentId: promoteDeclineStudentId },
+        },
+      })).not.toBeNull();
+
+      // The property: the "no" stands. Flipped, this contact reappears in
+      // the teacher's CRM as accepted, on the strength of a request the
+      // student made before they refused.
+      const inv = await prisma.invitation.findUniqueOrThrow({
+        where: { id: promoteDeclineInvitationId },
+      });
+      expect(inv.status).toBe('declined');
+    } finally {
+      await prisma.waitlistEntry.deleteMany({
+        where: { classId: promoteClassId, studentId: promoteDeclineStudentId },
+      });
+      await prisma.registration.deleteMany({
+        where: { classId: promoteClassId, studentId: promoteDeclineStudentId },
       });
     }
   });

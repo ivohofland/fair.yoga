@@ -246,10 +246,46 @@ advisory locks. None names the table.
 
 1. **The student accepts an invitation.** Creates `TeacherStudent`, sets
    `status = accepted` and `respondedAt`.
-2. **The student books or waitlists one of that teacher's classes.** The existing
-   upsert at `registrations/route.ts:201` already does this; it additionally
-   resolves any `pending` invitation for that pair to `accepted`, and clears a
-   `declined` tombstone.
+2. **The student takes a spot in one of that teacher's classes** — books it
+   directly, is promoted off the waitlist, or claims an open spot. The existing
+   upsert at `registrations/route.ts:201` already does this for a direct
+   booking, and `promoteNext`/`claimSpot` gain the same upsert (see the route
+   table). **Joining a waitlist creates no link**: `addToWaitlist` writes only
+   the `WaitlistEntry`, and the link appears when the entry turns into a
+   registration. An earlier draft of this section said "books or waitlists",
+   which the route table has never agreed with.
+
+   Each of these also resolves a `pending` invitation for that pair to
+   `accepted`. Only the two that are the student's own act *at that instant* —
+   a direct booking and a claim — additionally clear a `declined` tombstone and
+   a `TeacherBlock`. A **promotion does not clear a decline**, and the
+   distinction is the point: see below.
+
+### A promotion is not consent given now
+
+`promoteNext` is the one link-creating path that fires at a moment the
+**teacher** chooses — they cancel a registration, `handleSpotFreed` promotes
+the queue head — off a request the student made earlier, with nothing
+rechecking the student's intent in between.
+
+That is enough to erase a refusal. Sam joins the waitlist for Ivo's class
+(creating no link). Ivo types Sam's address into the CRM. Sam declines. Ivo
+cancels any registration in that class, and the promotion resolves the
+invitation to `accepted` — Sam's "no" gone, at a moment Ivo picked.
+
+So `resolveInvitationOnLink` takes a `LinkConsent`. `given_now` (direct
+booking, `claimSpot`) clears any non-accepted invitation, which is the
+student's escape hatch from their own decline. `standing` (`promoteNext`)
+resolves only a `pending` invitation and leaves a `declined` one exactly as it
+stands.
+
+The `TeacherBlock` delete is deliberately *not* gated the same way, and the
+asymmetry follows from Q4: `unlinkTeacher` withdraws that student's `waiting`
+entries, so an entry that survives to be promoted was joined **after** the
+unlink — the student walking back of their own accord. Declining withdraws
+nothing (a refusal of an invitation must not cost a queue position in an
+unrelated class), so a `waiting` entry can outlive a decline and the ordering
+there is genuinely ambiguous. Where it is ambiguous, the refusal wins.
 
 ### Which email identifies the invitee, and who can accept
 
@@ -280,7 +316,7 @@ Three arrival states, all of which the surface must handle:
 | `PATCH /api/invitations/[id]` | Teacher archives/unarchives, mirroring `PATCH /api/students/[id]?state=` exactly. |
 | `POST /api/invitations/[id]/accept`, `/decline` | Student-authed. Accept creates the link; decline writes the tombstone. |
 | `DELETE /api/teacher-links/[teacherId]` | Student-authed unlink. Deletes the `TeacherStudent` row for the session's `studentId`, then upserts the tombstone: **update** an existing row to `declined` (keeping `origin: teacher_invite`, since the teacher typed that address), or **create** one with `origin: student_block` when the link came from a booking and no invitation ever existed. The student's own `Student` row survives unconditionally — unlinking a last teacher must not orphan-delete an account. (The one code path that did that, `students/[id]/route.ts:201-206`, is removed by the row above; this route must not reintroduce it.) |
-| `services/waitlist.ts:344`, `:443` | Gain the same link upsert `registrations/route.ts:201` has, and the same invitation resolution. |
+| `services/waitlist.ts:344` (`promoteNext`), `:443` (`claimSpot`) | Both gain the link upsert `registrations/route.ts:201` has. `claimSpot` resolves invitations on the same terms as a direct booking (`given_now`); `promoteNext` resolves only a `pending` one (`standing`) — see "A promotion is not consent given now". `addToWaitlist` gains nothing: joining a queue is not taking a spot. |
 
 ### The tombstone hole, and the fix
 

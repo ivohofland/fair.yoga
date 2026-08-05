@@ -495,19 +495,48 @@ export async function unlinkTeacher(
 }
 
 /**
- * A student's own booking is acceptance, so it resolves whatever
- * invitation state stood between them and this teacher — including a
- * `declined` tombstone. That asymmetry is the design: the tombstone is
- * permanent from the teacher's side and always reversible from the
- * student's, which is what keeps declining from being a trap while still
- * denying the teacher a re-invite.
+ * Whose act, and when, is creating the link being resolved.
+ *
+ * `given_now` — the student is doing something at this instant aimed at
+ * this teacher: booking a class, claiming an open spot. Consent is
+ * contemporaneous, so it overrides whatever refusal stood before it,
+ * including a `declined` invitation. That reversal is the escape hatch the
+ * whole decline design rests on: permanent from the teacher's side, always
+ * reversible from the student's.
+ *
+ * `standing` — the link comes off a request the student made EARLIER, acted
+ * on by something that fires at a moment the teacher chooses: a waitlist
+ * promotion (`promoteNext`, services/waitlist.ts, reached from
+ * `handleSpotFreed` when the teacher cancels a registration). Nothing
+ * rechecks the student's intent in between, so this must not overwrite a
+ * refusal they made after that request. It resolves a `pending` invitation
+ * — never a refusal — and leaves a `declined` one exactly as it stands.
+ *
+ * The `TeacherBlock` delete below is NOT gated on this, and the asymmetry
+ * is deliberate rather than an oversight. `unlinkTeacher` is the only
+ * writer of blocks, and it withdraws that student's `waiting` entries for
+ * that teacher's classes in the same transaction, under the class lock — so
+ * an entry that survives to be promoted was joined AFTER the unlink, which
+ * is the student walking back to that teacher of their own accord. A
+ * `declined` invitation has no such guarantee: declining withdraws nothing
+ * (it should not cost a student their queue position over an unrelated
+ * refusal), so a `waiting` entry can outlive it and the ordering is
+ * genuinely ambiguous. Where it is ambiguous, the refusal wins.
+ */
+export type LinkConsent = 'given_now' | 'standing';
+
+/**
+ * A student's own act is acceptance, so it resolves whatever invitation
+ * state stood between them and this teacher. How much it resolves depends
+ * on `consent` — see `LinkConsent` above, which is where the reasoning
+ * lives.
  *
  * `updateMany`, not `update`: most bookings have no invitation row at all
  * and a zero-row update must not throw.
  */
 export async function resolveInvitationOnLink(
   tx: Prisma.TransactionClient,
-  input: { teacherId: string; studentEmail: string },
+  input: { teacherId: string; studentEmail: string; consent: LinkConsent },
 ): Promise<void> {
   // Lowercased again, and for the same reason each time: invitation emails
   // are always stored lowercase, `Student.email` and `Account.email` never
@@ -524,13 +553,21 @@ export async function resolveInvitationOnLink(
   // invitation from this teacher still undeliverable.
   await tx.teacherBlock.deleteMany({ where: { teacherId: input.teacherId, email } });
 
-  // `status: { not: 'accepted' }` so an already-accepted row's `respondedAt`
-  // — the original acceptance moment — is left alone. Nothing reads it yet,
-  // which is exactly why this is worth getting right now: every later
-  // booking would otherwise silently overwrite it, and the drift wouldn't
-  // surface until something finally does read it.
+  // An already-accepted row is excluded either way, so its `respondedAt` —
+  // the original acceptance moment — survives. Nothing reads it yet, which
+  // is exactly why this is worth getting right now: every later booking
+  // would otherwise silently overwrite it, and the drift wouldn't surface
+  // until something finally does read it.
+  //
+  // The `standing` filter is narrower on purpose, and `'pending'` is not a
+  // tidier spelling of `{ not: 'accepted' }` — it is the guard. See
+  // `LinkConsent` above.
   await tx.invitation.updateMany({
-    where: { teacherId: input.teacherId, email, status: { not: 'accepted' } },
+    where: {
+      teacherId: input.teacherId,
+      email,
+      status: input.consent === 'given_now' ? { not: 'accepted' } : 'pending',
+    },
     data: { status: 'accepted', respondedAt: new Date() },
   });
 }

@@ -360,10 +360,18 @@ export async function promoteNext(
       create: { teacherId: cls.teacherId, studentId: nextEntry.studentId },
     });
 
-    // #166: promotion off the waitlist is the student's own act, aimed at
-    // this teacher — the same consent as a direct booking, so it resolves
-    // an invitation the same way. See resolveInvitationOnLink.
-    await resolveInvitationOnLink(tx, { teacherId: cls.teacherId, studentEmail: student.email });
+    // #166: joining the waitlist was the student's own act aimed at this
+    // teacher, so promotion earns the link — but the promotion itself fires
+    // at a moment the TEACHER chooses (cancel a registration →
+    // handleSpotFreed → here), off a request the student made earlier, and
+    // nothing rechecks their intent in between. `standing` is what stops
+    // that erasing a refusal they made after joining the queue. See
+    // `LinkConsent` (services/invitations.ts).
+    await resolveInvitationOnLink(tx, {
+      teacherId: cls.teacherId,
+      studentEmail: student.email,
+      consent: 'standing',
+    });
 
     // Update the waitlist entry: promoted status, promotedAt, link to registration
     const updatedEntry = await tx.waitlistEntry.update({
@@ -473,9 +481,14 @@ export async function claimSpot(
       create: { teacherId: cls.teacherId, studentId },
     });
 
-    // #166: same resolution as promoteNext above — claiming is the
-    // student's own act too.
-    await resolveInvitationOnLink(tx, { teacherId: cls.teacherId, studentEmail: student.email });
+    // #166: `given_now`, unlike promoteNext above — a claim is the student
+    // pressing the button themselves, at this instant, so it carries the
+    // same consent a direct booking does and clears a decline the same way.
+    await resolveInvitationOnLink(tx, {
+      teacherId: cls.teacherId,
+      studentEmail: student.email,
+      consent: 'given_now',
+    });
 
     const updatedEntry = await tx.waitlistEntry.update({
       where: { id: entry.id },
