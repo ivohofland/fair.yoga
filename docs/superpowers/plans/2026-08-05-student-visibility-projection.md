@@ -1413,14 +1413,18 @@ The `StudentPrivacy` table at `:66-80` lists five flags and **omits `share_full_
 | share_full_name | boolean, default false | Surname; when false a teacher sees a last initial |
 ```
 
-Then replace the note at `:82`. It currently says "Created on first booking with a teacher" — that is not what happens. Only two sites write the row: `api/students/[id]/privacy/route.ts:112` (the student's own `PUT`) and `services/invitations.ts:673`. Absence of a row means maximum privacy, which every read site relies on:
+Then replace the note at `:82`. It currently says "Created on first booking with a teacher" — that is not what happens. Only two sites write the row: `api/students/[id]/privacy/route.ts:112` (the student's own `PUT`) and `services/invitations.ts:673`, inside `unlinkTeacher` — a student *severing* a teacher link, not accepting one; that write force-sets every flag (including `receive_comms`) to `false` rather than being an opt-in. Absence of a row means maximum privacy, which every read site relies on:
 
 ```
-Not created on booking. Only the student's own `PUT /api/students/[id]/privacy`
-and invitation acceptance write the row — until one of those happens there is
+Not created on booking. Two sites write it: the student's own
+`PUT /api/students/[id]/privacy` — where the student opts in to each field —
+and `DELETE /api/teacher-links/[teacherId]` (`unlinkTeacher`), which force-sets
+every flag, including `receive_comms`, to `false` when a student severs a
+teacher link. The second write is not an opt-in; it is the system silencing
+every share on the student's behalf because deleting the link alone does not
+stop the teacher reaching them. Until one of those two sites has run there is
 no row, and every read treats absence as maximum privacy
-(`privacy?.shareX ?? false`). Default = maximum privacy; the student opts in to
-each field, per teacher. One projection reads these flags for every
+(`privacy?.shareX ?? false`). One projection reads these flags for every
 teacher-facing surface: `src/lib/student-visibility.ts`.
 ```
 
