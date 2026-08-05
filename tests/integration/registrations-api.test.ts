@@ -550,7 +550,54 @@ describe('DELETE /api/waitlist/[id] — profile-presence authorization', () => {
   });
 });
 
+/**
+ * `GET /api/classes/[id]/registrations` had no ownership test at all until the
+ * PR review of #167, and this branch is what made that expensive: the route
+ * used to select `{ firstName, lastName }` and now selects email, phone,
+ * birthday and address as well. The guard it relies on is the same
+ * `cls.teacherId !== session.teacherId` shape the payment routes use, so these
+ * two copy the idiom from `payments-api.test.ts:199,206` verbatim.
+ */
+describe('GET /api/classes/[id]/registrations — ownership', () => {
+  it("403s another teacher's class", async () => {
+    const classId = await makeClass(5);
+    const res = await fetch(`${BASE_URL}/api/classes/${classId}/registrations`, {
+      headers: cookie(otherTeacherToken),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('404s an unknown class', async () => {
+    const res = await fetch(
+      `${BASE_URL}/api/classes/00000000-0000-4000-8000-000000000000/registrations`,
+      { headers: cookie(ownerToken) },
+    );
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('teacher-facing registration reads honour StudentPrivacy', () => {
+  /**
+   * The projected keys, sorted — the whole point of #167's `TeacherVisibleStudent`.
+   *
+   * Pinning `displayName` alone is not enough. The realistic regression is
+   * `student: { ...r.student, ...projectStudentForTeacher(r.student) }`, where
+   * `displayName` stays correct while raw `firstName`, `lastName`, `email`,
+   * `phone`, `birthday`, `address` and the whole `studentPrivacy` array ship
+   * alongside it — every assertion below still passes, and the surname the
+   * projection exists to truncate is in the response twice. Same
+   * `Object.keys(…).sort()` idiom as the write tests at the bottom of this file.
+   */
+  const PROJECTED_STUDENT_KEYS = [
+    'address',
+    'birthday',
+    'claimedAt',
+    'displayName',
+    'email',
+    'id',
+    'phone',
+  ];
+
   it('the class roster withholds a surname the student did not share', async () => {
     const classId = await makeClass(5);
     await post(studentTokens[0]!, { classId });
@@ -560,9 +607,15 @@ describe('teacher-facing registration reads honour StudentPrivacy', () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      data: { student: { displayName: string }; tierAtBooking?: number; tierRatio?: string }[];
+      data: {
+        student: Record<string, unknown> & { displayName: string; email: string | null };
+        tierAtBooking?: number;
+        tierRatio?: string;
+      }[];
     };
     expect(body.data[0]!.student.displayName).toBe('RegStudent0 t.');
+    expect(body.data[0]!.student.email).toBeNull();
+    expect(Object.keys(body.data[0]!.student).sort()).toEqual(PROJECTED_STUDENT_KEYS);
     expect(body.data[0]!.tierAtBooking).toBeUndefined();
     expect(body.data[0]!.tierRatio).toBeUndefined();
   });
@@ -577,9 +630,14 @@ describe('teacher-facing registration reads honour StudentPrivacy', () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      data: { student: { displayName: string }; tierAtBooking?: number };
+      data: {
+        student: Record<string, unknown> & { displayName: string; email: string | null };
+        tierAtBooking?: number;
+      };
     };
     expect(body.data.student.displayName).toBe('RegStudent0 t.');
+    expect(body.data.student.email).toBeNull();
+    expect(Object.keys(body.data.student).sort()).toEqual(PROJECTED_STUDENT_KEYS);
     expect(body.data.tierAtBooking).toBeUndefined();
   });
 
