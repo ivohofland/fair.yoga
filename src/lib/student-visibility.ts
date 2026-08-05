@@ -104,11 +104,27 @@ const _projectionCarriesNoRawIdentity: NoneOf<
 void _projectionCarriesNoRawIdentity;
 
 /**
- * #166 retired the unclaimed student: nothing creates a `Student` row without
- * `claimedAt` any more, every `TeacherStudent` writer requires a
- * `session.studentId`, and `Student_claim_link_check` ties `accountId` to
- * `claimedAt`. There is no production deployment, so no legacy unclaimed rows
- * exist anywhere for this branch to expose.
+ * #166 retired the unclaimed student, and the bypass is unreachable because of
+ * what creates a `Student`, not because of what links one. Exactly two sites
+ * create the row — `api/auth/student-signup/route.ts:41` and
+ * `api/account/student-profile/route.ts:54` — and both set `claimedAt` in the
+ * creating statement, while `Student_claim_link_check` ties `claimedAt` to
+ * `accountId` for every future write. There is therefore no unclaimed
+ * `Student` for any `TeacherStudent` writer to link, however that writer gets
+ * its `studentId`. There is no production deployment either, so no legacy
+ * unclaimed rows exist anywhere for this branch to expose.
+ *
+ * An earlier draft of this comment argued it from the link side instead —
+ * "every `TeacherStudent` writer requires a `session.studentId`" — and that is
+ * false. Four of the five do (`api/registrations/route.ts:202`,
+ * `services/invitations.ts:535`, `services/waitlist.ts:234` and `:530`), but
+ * `promoteNext` (`services/waitlist.ts:411`) links `nextEntry.studentId` off a
+ * persisted `WaitlistEntry`, during a cancellation someone else initiated
+ * (`api/registrations/[id]/route.ts:190`, `services/gdpr.ts:385`) — and its
+ * own docblock says it is there to repair rows "written by hand (fixtures, a
+ * psql fix-up)", i.e. precisely the rows no session produced. The conclusion
+ * survives on the two supports above; the support that did not survive is what
+ * a census of writers looks like when the writers are counted, not read.
  *
  * It is kept rather than deleted because removing it means removing the claim
  * path (`lib/auth/account.ts:34-50`), the `Student_claim_link_check`
