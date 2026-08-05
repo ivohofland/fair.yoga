@@ -177,14 +177,15 @@ describe('listPendingInvitations', () => {
   });
 
   it("does not let a teacher's block on one address hide their OWN pending invitation to a different address", async () => {
-    // The case the two tests above cannot catch between them: both give
-    // `otherTeacherId` a block AND its exclusion, together, in the same
-    // fixture — a `none: {}` mutation (any block at all, on any address,
-    // hides every one of this teacher's pending invitations) passes both,
-    // because `teacherId` here never holds a `TeacherBlock` row at all.
-    // This fixture is the one place `teacherId` gets a block, on an
-    // address that is NOT the one under test — the query below must still
-    // return `teacherId`'s unrelated, unblocked invitation.
+    // The block-exclusion test proves a block hides its own address; the
+    // cross-teacher contrast case proves a block from one teacher doesn't
+    // hide a DIFFERENT teacher's invitation to the same address. Neither
+    // ever leaves `teacherId` holding a `TeacherBlock` row of its own, so a
+    // `none: {}` mutation (any block at all, on any address, hides every
+    // one of this teacher's pending invitations) passes both undetected.
+    // This fixture closes that gap: `teacherId` holds a block on one
+    // address and a separate, unrelated pending invitation on another — the
+    // query below must still return that invitation.
     const blockedAddress = `pending-list-own-blocked-${suffix}@test.local`;
     const openAddress = `pending-list-own-open-${suffix}@test.local`;
     let block: { id: string } | undefined;

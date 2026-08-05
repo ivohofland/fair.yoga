@@ -21,11 +21,11 @@ import { log } from '@/lib/log';
  *
  * Existence, not `isArchived: false`. Archiving is the teacher's filing action,
  * and the looser check is the one that would not strip a student of control
- * over their own settings because a teacher tidied them away. That is the
- * reason for the choice, not a benefit the product currently delivers:
- * `account/privacy/page.tsx` renders cards only for non-archived links, so no
- * UI path reaches the looser case either way. It becomes real the day anything
- * renders an archived link.
+ * over their own settings because a teacher tidied them away. This is now
+ * load-bearing, not merely future-proofing: `account/privacy/page.tsx`
+ * renders a card, toggles included, for an archived link too (#166 Task 11
+ * review F3) — a student must still be able to revoke shares from a teacher
+ * who filed them away, and this route is what that card's Save button hits.
  *
  * The two 403s below have different causes and different remedies, so they
  * carry distinct codes. Splitting them leaks nothing: the link check runs only

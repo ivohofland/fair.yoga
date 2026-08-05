@@ -44,8 +44,8 @@ export default async function PrivacySettingsPage() {
     // a student of control over a link that is still live (the registration
     // route does not check it either — a teacher can still book this
     // student into a class after archiving them). That route's own comment
-    // called this exact gap out by name: "it becomes real the day anything
-    // renders an archived link" — this is that day (review F3).
+    // previously predicted this exact gap as future-proofing; #166 Task 11
+    // review F3 is what made it load-bearing (see that comment for why).
     prisma.teacherStudent.findMany({
       where: { studentId: session.studentId },
       select: { isArchived: true, teacher: { select: { id: true, firstName: true, lastName: true } } },

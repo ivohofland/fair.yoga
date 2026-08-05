@@ -21,8 +21,10 @@ describe('GET /account/privacy (page)', () => {
   let archivedTeacherId: string;
   let inviteTeacherId: string;
 
-  // Mixed case, and NOT the same string `Student.email` gets below — see
-  // the second test for why the two must differ.
+  // Mixed case, and deliberately different from `Student.email` below: this
+  // is what proves the page matches a pending invitation through the
+  // session's own account email rather than `Student.email` — the same
+  // address on both would let that swap pass by coincidence.
   const accountEmail = `T11-Page-Verify-${suffix}@Test.Local`;
 
   beforeAll(async () => {
