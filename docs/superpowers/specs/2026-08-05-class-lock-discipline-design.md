@@ -208,27 +208,41 @@ machine. A `count === 0` result then needs one read to distinguish "no such
 class" (404) from "illegal transition" (409) — that read is on the failure path
 only and decides nothing that is written.
 
-### The two new lock sites carry a `lock_timeout`; the existing four are left alone
+### The three new lock sites carry a `lock_timeout`; the existing five are left alone
 
-`SET LOCAL lock_timeout = '2s'` already exists in this codebase, at the two
-template-claim sites (`src/services/class-generator.ts:140` and `:210`, and the
-studio twin at `src/services/studio-class-generator.ts:31` and `:97`). #104 is
-open about the four sites that take a bare `FOR UPDATE` without it — the three
-in `waitlist.ts` and `POST /api/registrations`.
+Counted rather than recalled, because the first count in this spec was wrong.
+`grep -rn "FOR UPDATE" src/` returns 20 lines outside tests; **7** are
+statements and the other 13 are prose inside docblocks and comments. Of the 7:
 
-The two sites this branch adds take the timeout. Not to pre-empt #104, but
-because one of them is `deleteStudentAccount`'s reorder loop
-(`src/services/gdpr.ts:359-361`), which runs **inside the erasure transaction**
-— a transaction that by then holds locks on `StudentPrivacy`, `TeacherStudent`,
+| Statement | `lock_timeout`? |
+|---|---|
+| `src/services/class-generator.ts:216` | yes — `:210`, via `LOCK_TIMEOUT_SQL` at `:140` |
+| `src/services/studio-class-generator.ts:103` | yes — `:97`, via `:31` |
+| `src/app/api/registrations/route.ts:100` | no |
+| `src/services/waitlist.ts:170` `addToWaitlist` | no |
+| `src/services/waitlist.ts:334` `promoteNext` | no |
+| `src/services/waitlist.ts:466` `claimSpot` | no |
+| `src/services/waitlist.ts:707` `withdrawWaitingEntriesForTeacher` | no |
+
+So the standing split is **2 with, 5 without** — and #104's own enumeration of
+"four sites" is stale: it predates `withdrawWaitingEntriesForTeacher`, which
+#166 / PR #169 added as an untimed fifth.
+
+This branch adds **three** `FOR UPDATE` statements, not two: `completeClass`,
+`removeFromWaitlist`, and `deleteStudentAccount`'s reorder loop. All three take
+the timeout. Not to pre-empt #104, but because one of them
+(`src/services/gdpr.ts:359-361`) runs **inside the erasure transaction** — a
+transaction that by then holds locks on `StudentPrivacy`, `TeacherStudent`,
 `WaitlistEntry`, `Invitation`, `Notification` and possibly `Account`. Adding an
 untimed block there, on a row the 60-second transitions sweep can be holding,
 makes a legally time-bound operation hang indefinitely. That is a worse failure
 than the skewed queue being fixed, and it would be this branch's doing rather
-than an inherited gap.
+than an inherited gap. The other two take it for consistency with their own new
+sibling rather than with the untimed legacy.
 
-The existing four are **not** changed here — that is #104's work, and widening
-into it would blur what this branch is accountable for. The result is 4 sites
-with a timeout and 4 without, which #104 gets told about rather than discovering.
+The existing five are **not** changed here — that is #104's work, and widening
+into it would blur what this branch is accountable for. The result is 5 sites
+with a timeout and 5 without.
 
 ### The ordering constraint that is not negotiable
 
@@ -353,11 +367,13 @@ for the controlled block points the interleaving tests need.
   today — `promoteNext` requires `status === 'open'` (`waitlist.ts:341`) — so the
   impact is a stale queue display, not a wrong promotion. A comment beside the
   code rather than a tracker entry.
-- **#104's `lock_timeout` on the existing four sites.** This branch adds two
-  `FOR UPDATE` sites and gives *those two* a timeout (see the decision above),
-  but leaves the four `waitlist.ts`/`registrations` sites #104 enumerates
-  untouched. An Update comment on #104 recording the new count — 4 with, 4
-  without — not a new issue.
+- **#104's `lock_timeout` on the existing five sites.** This branch adds three
+  `FOR UPDATE` sites and gives *those three* a timeout (see the decision above),
+  but leaves the five `waitlist.ts`/`registrations` sites untouched. An Update
+  comment on #104 rather than a new issue, recording two things it does not
+  currently know: that its enumeration of four is stale — `waitlist.ts:707`
+  `withdrawWaitingEntriesForTeacher` is an untimed fifth added by #166 after
+  #104 was filed — and that the standing split is now 5 with, 5 without.
 
 ## Ratio
 
