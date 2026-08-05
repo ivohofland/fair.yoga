@@ -11,6 +11,7 @@ import type { PrismaClient, Prisma, CancelDeadline, WaitlistEntry } from '@prism
 import { classStartInstant } from '@/lib/timezone';
 import { createBulkNotifications } from './notifications';
 import { resolveInvitationOnLink } from './link-consent';
+import { lockClassRow } from '@/lib/db-locks';
 
 /** Raised when a promotion/claim is not allowed in the current class state. */
 export class WaitlistPromotionError extends Error {
@@ -299,6 +300,14 @@ export async function removeFromWaitlist(
   studentId: string,
 ): Promise<void> {
   await db.$transaction(async (tx) => {
+    // The same lock `addToWaitlist`, `promoteNext`, `claimSpot` and
+    // `withdrawWaitingEntriesForTeacher` take. Without it two renumberings of
+    // one queue interleave, each having read a snapshot the other
+    // invalidated, and nothing errors: there is no unique on
+    // `(classId, position)`, only a plain index. `promoteNext` then picks its
+    // head by lowest position and promotes the wrong student.
+    await lockClassRow(tx, classId);
+
     // Mark as removed
     await tx.waitlistEntry.update({
       where: { classId_studentId: { classId, studentId } },
@@ -660,15 +669,15 @@ async function hasActiveRegistration(
  * `TeacherBlock` too: since the link moved to the join, promotion resolves
  * no invitations at all. The link alone is enough to want this lock.)
  *
- * The convention is NOT universal in this module, and inferring one from
- * the writers that do follow it would hide a real gap: `addToWaitlist`,
- * `promoteNext` and `claimSpot` each open with the lock; `removeFromWaitlist`
- * writes `status` — and `position`, through `reorderWaitingEntries` — with
- * no lock at all, so `DELETE /api/waitlist/[id]` mutates the queue unlocked.
- * Named rather than glossed so the next person to touch the queue finds it.
- * It is filed as #174, and it is not this function's to fix: `removeFromWaitlist`
- * can only move an entry OUT of `waiting`, never into it, so nothing it
- * races can manufacture the standing request this withdraws.
+ * The convention now covers every writer of the queue: `addToWaitlist`,
+ * `promoteNext`, `claimSpot` and `removeFromWaitlist` each open with the
+ * lock, and this function takes it too, for the same reason — two
+ * renumberings of one queue interleaving with no unique on
+ * `(classId, position)` to catch it. (`removeFromWaitlist` picked it up in
+ * #174, having gone without it for a while — it can only move an entry OUT
+ * of `waiting`, never into it, so nothing it raced could have manufactured
+ * the standing request this withdraws; the gap was skew in the position
+ * numbering, not a wrong promotion.)
  *
  * The lock is taken BY the statement that chooses the classes, so there is
  * no window between choosing them and holding them.
@@ -692,10 +701,10 @@ export async function withdrawWaitingEntriesForTeacher(
   input: { teacherId: string; studentId: string },
 ): Promise<void> {
   // `FOR UPDATE OF c` — only the Class rows, the same thing `addToWaitlist`,
-  // `promoteNext` and `claimSpot` lock (`removeFromWaitlist` locks nothing;
-  // see this function's docblock). No `DISTINCT`: Postgres refuses it
-  // alongside `FOR UPDATE`, so duplicates are collapsed below. Ordered, so
-  // two concurrent unlinks take multiple classes in the same sequence.
+  // `promoteNext`, `claimSpot` and `removeFromWaitlist` lock. No `DISTINCT`:
+  // Postgres refuses it alongside `FOR UPDATE`, so duplicates are collapsed
+  // below. Ordered, so two concurrent unlinks take multiple classes in the
+  // same sequence.
   const locked = await tx.$queryRaw<Array<{ id: string }>>`
     SELECT c.id
     FROM "Class" c

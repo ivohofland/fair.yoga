@@ -1144,3 +1144,148 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
     expect(invitation.respondedAt).toBeNull();
   });
 });
+
+// ===========================================================================
+// removeFromWaitlist takes the class lock — #174
+// ===========================================================================
+
+describe('removeFromWaitlist takes the class lock (DB)', () => {
+  let teacherId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+  let classId: string;
+  let fillerId: string;
+  const studentIds: string[] = [];
+
+  beforeAll(async () => {
+    const mail = `lock-teacher-${uniqueSuffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Lock',
+        lastName: 'Teacher',
+        email: mail,
+        account: { create: { email: mail } },
+        bio: 'Test teacher for removeFromWaitlist lock test',
+        pageSlug: `lock-teacher-${uniqueSuffix}`,
+        defaultTimezone: 'UTC',
+      },
+    });
+    teacherId = teacher.id;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Lock Studio',
+        address: `${uniqueSuffix} Lock St`,
+        city: 'Amsterdam',
+        postcode: '7890LK',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+    });
+    teacherRoomId = teacherRoom.id;
+
+    // One spot, taken by a filler — full, so the waitlist will accept joins.
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Lock Flow',
+        date: new Date('2099-09-01'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 30,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 1,
+        maxStudents: 1,
+        status: 'open',
+        settingsLocked: true,
+      },
+    });
+    classId = cls.id;
+
+    const filler = await prisma.student.create({
+      data: {
+        firstName: 'LockFiller',
+        lastName: 'Test',
+        email: `lock-filler-${uniqueSuffix}@test.local`,
+        incomeTier: 3,
+      },
+    });
+    fillerId = filler.id;
+    await prisma.registration.create({
+      data: { classId, studentId: fillerId, status: 'registered', tierAtBooking: 3 },
+    });
+
+    // Three waiting students — position 2 gets removed mid-lock below, so
+    // the reorder that follows has real work to do (2 → 1).
+    for (let i = 1; i <= 3; i++) {
+      const student = await prisma.student.create({
+        data: {
+          firstName: `LockStudent${i}`,
+          lastName: 'Test',
+          email: `lock-student-${i}-${uniqueSuffix}@test.local`,
+          incomeTier: i + 1,
+        },
+      });
+      studentIds.push(student.id);
+      await addToWaitlist(prisma, classId, student.id);
+    }
+  });
+
+  afterAll(async () => {
+    await prisma.waitlistEntry.deleteMany({ where: { classId } });
+    await prisma.registration.deleteMany({ where: { classId } });
+    await prisma.class.deleteMany({ where: { id: classId } });
+    await prisma.student.deleteMany({ where: { id: { in: [...studentIds, fillerId] } } });
+    await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
+    await prisma.room.delete({ where: { id: roomId } });
+    await prisma.teacher.delete({ where: { id: teacherId } });
+  });
+
+  /**
+   * Held for under the 2s `lock_timeout` this site now sets, so what this
+   * observes is the wait and not the timeout.
+   */
+  it('waits for a class row another transaction holds before renumbering', async () => {
+    let holderReleased = false;
+
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
+        await new Promise((r) => setTimeout(r, 900));
+        holderReleased = true;
+      },
+      { timeout: 10_000 },
+    );
+    await new Promise((r) => setTimeout(r, 150));
+
+    const removing = removeFromWaitlist(prisma, classId, studentIds[1]!).then(
+      () => 'returned' as const,
+    );
+    const outcome = await Promise.race([
+      removing,
+      new Promise<'waiting'>((r) => setTimeout(() => r('waiting'), 400)),
+    ]);
+
+    expect(outcome).toBe('waiting');
+    expect(holderReleased).toBe(false);
+
+    await holder;
+    expect(await removing).toBe('returned');
+
+    // And the queue it renumbered under the lock is intact.
+    const remaining = await prisma.waitlistEntry.findMany({
+      where: { classId, status: 'waiting' },
+      orderBy: { position: 'asc' },
+    });
+    expect(remaining.map((e) => e.position)).toEqual([1, 2]);
+  });
+});
