@@ -444,11 +444,11 @@ Expected: clean.
 
 - [ ] **Step 5: Mutation-test guard 1 — `_visibilityFlagsAreExhaustive`**
 
-Temporarily add a sixth flag to the model. In `prisma/schema.prisma`, inside `model StudentPrivacy`, add `shareIncomeTier Boolean @default(false)` after `shareAddress`. Then run `npx prisma generate` followed by `npm run typecheck`.
+The pin fires when a `StudentPrivacy` column is neither a visibility flag nor explicitly excluded. Reach that state by removing an exclusion rather than by adding a column: delete `| 'receiveComms'` from the `Exclude<...>` list, then run `npm run typecheck`.
 
-Expected: FAIL in `src/lib/student-visibility.ts` naming `shareIncomeTier` — the pin resolves to `"shareIncomeTier"`, which is not assignable to `true`. **Record the exact error text in the commit body.**
+Expected: FAIL in `src/lib/student-visibility.ts` naming `receiveComms` — the pin resolves to `"receiveComms"`, which is not assignable to `true`. This exercises the identical code path a new `shareIncomeTier` column would take. **Record the exact error text in the commit body.** Then restore the line and confirm typecheck is clean.
 
-Then revert: remove the line from `prisma/schema.prisma`, run `npx prisma generate`, and confirm `npm run typecheck` is clean again. **Do not create a migration for this** — the schema edit is temporary and must not reach a commit.
+**Do not mutate `prisma/schema.prisma` to test this.** Adding a column there requires `npx prisma generate`, which rewrites the client in `node_modules` underneath the dev server the user is running on :3000 — and restarting that server to clear the stale client is forbidden by the Global Constraints. The exclusion-list mutation proves the same thing with no regeneration.
 
 - [ ] **Step 6: Mutation-test guard 2 — `_projectionCarriesNoRawIdentity`**
 
