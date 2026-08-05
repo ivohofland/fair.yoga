@@ -9,6 +9,13 @@ import { StudentDirectory } from './student-directory';
  * tested it, and a future call site had no way to know. The API now sends one
  * composed `displayName`; this pins that the component stopped composing.
  *
+ * The fixture below is a full name (`'Anna Bakker'`), not an already-truncated
+ * one (`'Anna b.'`): a truncated name is a fixed point of `formatStudentName` —
+ * composing it again returns it unchanged — so a mutation that reintroduced
+ * composition would pass against that fixture for the same reason the
+ * original code did. A full name is not a fixed point, so recomposing it
+ * (splitting on the first space and re-truncating) changes what renders.
+ *
  * Same mocking idiom as `contact-list.test.tsx`: a shared `fetchMock`, stubbed
  * per test via a helper, reset in `afterEach`.
  */
@@ -35,7 +42,7 @@ describe('StudentDirectory', () => {
     stubStudents([
       {
         id: 'student-1',
-        displayName: 'Anna b.',
+        displayName: 'Anna Bakker',
         email: null,
         phone: null,
         birthday: null,
@@ -47,15 +54,15 @@ describe('StudentDirectory', () => {
       },
     ]);
     render(<StudentDirectory />);
-    await waitFor(() => expect(screen.getByText('Anna b.')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
   });
 
-  it('renders no email row when the student withheld it', async () => {
+  it('renders an email row only for the student who shared it', async () => {
     stubStudents([
       {
         id: 'student-1',
-        displayName: 'Anna b.',
-        email: null,
+        displayName: 'Anna Bakker',
+        email: 'anna@example.com',
         phone: null,
         birthday: null,
         address: null,
@@ -64,9 +71,31 @@ describe('StudentDirectory', () => {
         classCount: 3,
         overduePayments: 0,
       },
+      {
+        id: 'student-2',
+        displayName: 'Bob c.',
+        email: null,
+        phone: null,
+        birthday: null,
+        address: null,
+        claimedAt: '2026-01-01T00:00:00.000Z',
+        lastClassDate: null,
+        classCount: 1,
+        overduePayments: 0,
+      },
     ]);
     render(<StudentDirectory />);
-    await waitFor(() => expect(screen.getByText('Anna b.')).toBeInTheDocument());
-    expect(screen.queryByText(/@/)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Anna Bakker')).toBeInTheDocument());
+
+    // Anna shared her email — it renders.
+    expect(screen.getByText('anna@example.com')).toBeInTheDocument();
+    // Bob withheld his — his row renders, but no address does. Checking the
+    // total count of `@`-bearing text (rather than just `queryByText` with a
+    // single-row fixture) is what makes this fail if the component stopped
+    // gating per-row instead of merely deleting the email span outright: a
+    // one-row fixture can't tell "never renders an email" apart from
+    // "correctly withheld this one".
+    expect(screen.getByText('Bob c.')).toBeInTheDocument();
+    expect(screen.getAllByText(/@/)).toHaveLength(1);
   });
 });

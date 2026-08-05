@@ -655,7 +655,7 @@ describe('GET /api/students/[id] — profile-presence authorization', () => {
     const body = (await res.json()) as {
       data: { students: { displayName: string; email: string | null }[] };
     };
-    const row = body.data.students.find((s) => s.displayName.startsWith('Rostered'));
+    const row = body.data.students.find((s) => s.displayName?.startsWith('Rostered'));
     expect(row).toBeDefined();
     expect(row!.displayName).toBe('Rostered p.');
     expect(row!.email).toBeNull();

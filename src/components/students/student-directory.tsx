@@ -128,8 +128,12 @@ export function StudentDirectory({ archived = false }: StudentDirectoryProps) {
                     linking — nothing creates an unclaimed Student any more.
                     Kept because removing it means removing the claim path
                     (lib/auth/account.ts:34-50), the Student_claim_link_check
-                    constraint and Student.claimedAt together. Filed as a
-                    leaf. Do NOT treat this as a live UI affordance.
+                    constraint and Student.claimedAt together — one decision,
+                    not several call sites deciding separately. Not filed as
+                    an issue: it is dead code with a complete explanation
+                    (see `lib/student-visibility.ts`'s `bypassesPrivacy` for
+                    the canonical version), not a defect anyone can reach.
+                    Do NOT treat this as a live UI affordance.
                   */}
                   {!student.claimedAt && (
                     <span className="type-caption">unlinked</span>
