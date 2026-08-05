@@ -69,6 +69,18 @@ export function validateTransition(
   };
 }
 
+/**
+ * The states from which `to` is a legal move — the inverse of
+ * `VALID_TRANSITIONS`, derived rather than hand-declared so the
+ * compare-and-swap in `transitionClass` cannot drift from the state machine
+ * when a transition is added or removed.
+ */
+export function sourceStatesFor(to: ClassStatus): ClassStatus[] {
+  return (Object.keys(VALID_TRANSITIONS) as ClassStatus[]).filter((from) =>
+    VALID_TRANSITIONS[from].includes(to),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Economic field locking
 // ---------------------------------------------------------------------------
@@ -91,21 +103,40 @@ export type TransitionDbResult =
 
 /**
  * Transition a class to a new status in the database.
- * Validates the transition against the state machine before applying.
+ *
+ * Compare-and-swap, not read-then-write. The predicate IS the guard: under
+ * READ COMMITTED the `UPDATE` re-evaluates `status` after it acquires the row
+ * lock, so a cancel that commits between a caller's read and this write is
+ * seen rather than written over. No `FOR UPDATE` and no transaction, because
+ * the status is the only thing this decision depends on — the same reason
+ * `POST /api/classes/[id]/transition`'s cancel branch and `autoCancelClasses`
+ * are safe without one. Sites that read more state under the decision
+ * (`completeClass`) take the lock instead; see `docs/lock-order.md`.
  */
 export async function transitionClass(
   db: PrismaClient,
   classId: string,
   targetStatus: ClassStatus,
 ): Promise<TransitionDbResult> {
-  const cls = await db.class.findUnique({ where: { id: classId } });
+  const updated = await db.class.updateMany({
+    where: { id: classId, status: { in: sourceStatesFor(targetStatus) } },
+    data: { status: targetStatus },
+  });
+  if (updated.count === 1) return { ok: true, newStatus: targetStatus };
+
+  // Nothing was written, so this read decides nothing that gets persisted —
+  // it only tells the caller which refusal happened, and the route maps both
+  // to a 409.
+  const cls = await db.class.findUnique({ where: { id: classId }, select: { status: true } });
   if (!cls) return { ok: false, error: `Class not found: ${classId}` };
 
   const validation = validateTransition(cls.status, targetStatus);
   if (!validation.ok) return validation;
 
-  await db.class.update({ where: { id: classId }, data: { status: targetStatus } });
-  return { ok: true, newStatus: targetStatus };
+  // The CAS matched nothing, yet the status now permits the move: the row
+  // changed twice while we were deciding. Refuse rather than retry — the
+  // caller's decision was made against a world that no longer exists.
+  return { ok: false, error: `Concurrent modification of class ${classId}` };
 }
 
 // ---------------------------------------------------------------------------

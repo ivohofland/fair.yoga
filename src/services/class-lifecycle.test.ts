@@ -281,6 +281,68 @@ describe('transitionClass (DB)', () => {
       expect(result.error).toContain('not found');
     }
   });
+
+  it('refuses to write over a status that changed after the caller decided', async () => {
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Hatha',
+        date: new Date('2026-06-03'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 35,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 4,
+        maxStudents: 12,
+        status: 'open',
+      },
+    });
+
+    // The interleaving, made deterministic: cancel the class, then ask for the
+    // transition the sweep would have asked for holding a pre-cancel read.
+    // A read-then-write implementation re-reads and refuses here, so that is
+    // not what this pins. What it pins is the write itself being predicated:
+    // the CAS matches zero rows and the class stays cancelled.
+    await prisma.class.updateMany({
+      where: { id: cls.id, status: 'open' },
+      data: { status: 'cancelled' },
+    });
+
+    const result = await transitionClass(prisma, cls.id, 'in_progress');
+
+    expect(result.ok).toBe(false);
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.status).toBe('cancelled');
+  });
+
+  it('reports a missing class differently from an illegal transition', async () => {
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Hatha',
+        date: new Date('2026-06-04'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 35,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 4,
+        maxStudents: 12,
+        status: 'completed',
+      },
+    });
+
+    const illegal = await transitionClass(prisma, cls.id, 'open');
+    expect(illegal.ok).toBe(false);
+    if (!illegal.ok) expect(illegal.error).toMatch(/Invalid transition/);
+
+    const missing = await transitionClass(prisma, 'no-such-class-id', 'open');
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.error).toMatch(/Class not found/);
+  });
 });
 
 describe('completeClass (DB)', () => {
