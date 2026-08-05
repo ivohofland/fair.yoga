@@ -9,7 +9,7 @@
  */
 
 import type { PrismaClient, Prisma } from '@prisma/client';
-import { reorderWaitingEntries } from './waitlist';
+import { withdrawWaitingEntriesForTeacher } from './waitlist';
 import { createNotification } from './notifications';
 import { sendInvitationEmail } from '@/lib/email';
 
@@ -425,6 +425,29 @@ export async function unlinkTeacher(
   if (!link) return { ok: false, reason: 'NOT_LINKED' };
 
   await db.$transaction(async (tx) => {
+    // FIRST, before any write below. A `waiting` entry for one of this
+    // teacher's classes is a standing request the student is walking away
+    // from along with the link — left in place, it hands the teacher a lever
+    // to reach back through: cancel any other registration in that class,
+    // `handleSpotFreed` promotes this student off the queue, and the
+    // promotion's own `teacherStudent.upsert` restores the link this
+    // transaction is deleting. Withdrawing (rather than having `promoteNext`
+    // skip a blocked candidate) is deliberate — skipping leaves a zombie
+    // entry that keeps trying and occupying a queue position forever;
+    // withdrawing matches the principle the rest of this file runs on: the
+    // student's most recent act governs. Registrations are untouched, on
+    // purpose and unlike this: a registration is a commitment that may carry
+    // money owed, a waitlist entry is neither.
+    //
+    // It lives in `waitlist.ts` because it must take the class lock every
+    // other writer of `WaitlistEntry` takes, and it must run before this
+    // transaction's other writes — see that function for both, including
+    // why the ordering is a deadlock question and not a preference.
+    await withdrawWaitingEntriesForTeacher(tx, {
+      teacherId: input.teacherId,
+      studentId: input.studentId,
+    });
+
     await tx.teacherStudent.delete({ where: { id: link.id } });
 
     // Deleting the link does not, by itself, stop this teacher reaching the
@@ -456,34 +479,6 @@ export async function unlinkTeacher(
         ...SILENCED_PRIVACY,
       },
     });
-
-    // A `waiting` entry for one of this teacher's classes is a standing
-    // request the student is walking away from along with the link — left
-    // in place, it hands the teacher a lever to reach back through it: cancel
-    // any other registration in that class, `handleSpotFreed` promotes this
-    // student off the queue, and `resolveInvitationOnLink` clears the block
-    // being set below, all without the student doing anything. Withdrawing
-    // here (rather than having `promoteNext` skip a blocked candidate) is
-    // deliberate — skipping leaves a zombie entry that keeps trying and
-    // occupying a queue position forever; withdrawing matches the same
-    // principle `resolveInvitationOnLink` runs on elsewhere: the student's
-    // most recent act governs. Registrations are untouched, on purpose and
-    // unlike this: a registration is a commitment that may carry money owed,
-    // a waitlist entry is neither.
-    const waitingEntries = await tx.waitlistEntry.findMany({
-      where: { studentId: input.studentId, status: 'waiting', class: { teacherId: input.teacherId } },
-      select: { id: true, classId: true },
-    });
-    if (waitingEntries.length > 0) {
-      await tx.waitlistEntry.updateMany({
-        where: { id: { in: waitingEntries.map((entry) => entry.id) } },
-        data: { status: 'removed' },
-      });
-      const classIds = [...new Set(waitingEntries.map((entry) => entry.classId))];
-      for (const classId of classIds) {
-        await reorderWaitingEntries(tx, classId);
-      }
-    }
 
     // Lowercased for the same reason `acceptInvitation` lowercases:
     // `Invitation.email` and `TeacherBlock.email` are always stored

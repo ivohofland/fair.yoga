@@ -603,6 +603,71 @@ async function hasActiveRegistration(
 }
 
 /**
+ * Withdraws every `waiting` entry a student holds across one teacher's
+ * classes, closing the gaps behind them. Called by `unlinkTeacher`
+ * (services/invitations.ts) — a standing request aimed at a teacher the
+ * student has just walked away from is a lever the teacher can pull to
+ * reach back through (#166 Task 7 F3; the reasoning lives at that call site).
+ *
+ * It lives HERE rather than there because every other writer of
+ * `WaitlistEntry.status`/`position` in this module opens with the class
+ * row's `FOR UPDATE` lock, and this one must too. Without it, a
+ * `promoteNext` racing an unlink promotes the student off the queue, and
+ * its `teacherStudent.upsert` plus `resolveInvitationOnLink` re-create the
+ * very link — and delete the very `TeacherBlock` — the unlink is in the
+ * middle of committing.
+ *
+ * The lock is taken BY the statement that chooses the classes, so there is
+ * no window between choosing them and holding them.
+ *
+ * The caller must call this before its own writes, and that is a
+ * correctness requirement rather than a style note: a caller that deleted
+ * the `TeacherStudent` row first would hold that row's lock while waiting
+ * on a class lock `promoteNext` already had, while `promoteNext`'s own
+ * `teacherStudent.upsert` waited on the row — a deadlock instead of a race.
+ *
+ * A student with no `waiting` entry for this teacher locks nothing, so an
+ * unlink racing a waitlist JOIN of that same student's can leave the new
+ * entry standing. Both of those are the student's own acts; the lever this
+ * closes is the teacher's.
+ */
+export async function withdrawWaitingEntriesForTeacher(
+  tx: PrismaTransactionClient,
+  input: { teacherId: string; studentId: string },
+): Promise<void> {
+  // `FOR UPDATE OF c` — only the Class rows, matching what every other
+  // writer in this module locks. No `DISTINCT`: Postgres refuses it
+  // alongside `FOR UPDATE`, so duplicates are collapsed below. Ordered, so
+  // two concurrent unlinks take multiple classes in the same sequence.
+  const locked = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT c.id
+    FROM "Class" c
+    JOIN "WaitlistEntry" w ON w."classId" = c.id
+    WHERE c."teacherId" = ${input.teacherId}
+      AND w."studentId" = ${input.studentId}
+      AND w.status = 'waiting'
+    ORDER BY c.id
+    FOR UPDATE OF c
+  `;
+  if (locked.length === 0) return;
+
+  const classIds = [...new Set(locked.map((row) => row.id))];
+
+  // 'removed', matching `removeFromWaitlist` above rather than inventing a
+  // state. Re-selected through Prisma under the lock now held, so a
+  // concurrent promotion that committed while this waited is seen: its
+  // entry is no longer `waiting` and is left alone.
+  await tx.waitlistEntry.updateMany({
+    where: { studentId: input.studentId, classId: { in: classIds }, status: 'waiting' },
+    data: { status: 'removed' },
+  });
+
+  for (const classId of classIds) {
+    await reorderWaitingEntries(tx, classId);
+  }
+}
+
+/**
  * Reorders all 'waiting' entries for a class so positions are
  * sequential starting at 1 with no gaps.
  */

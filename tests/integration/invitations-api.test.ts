@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { inviteContact, notifyInvitee } from '@/services/invitations';
+import { inviteContact, notifyInvitee, unlinkTeacher } from '@/services/invitations';
 import { promoteNext } from '@/services/waitlist';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor } from '../helpers';
 
@@ -2246,5 +2246,148 @@ describe('unlinking withdraws waiting entries for the teacher (#166 F3)', () => 
     expect(
       await prisma.registration.findUnique({ where: { classId_studentId: { classId, studentId } } }),
     ).toBeNull();
+  });
+});
+
+describe('the unlink withdrawal takes the class lock (#166 whole-branch I4)', () => {
+  // Fixtures of its own rather than a second student inside the F3 describe
+  // above: this one holds a lock for over a second, and sharing a class with
+  // a test that promotes off it would couple the two through the queue.
+  let lockTeacherId: string;
+  let lockTeacherAccountId: string;
+  let lockRoomId: string;
+  let lockTeacherRoomId: string;
+  let lockClassId: string;
+
+  const lockStudentEmail = `lock-student-${suffix}@test.local`;
+  let lockStudentId: string;
+  let lockStudentAccountId: string;
+
+  // Long enough that the probe below lands comfortably inside it; short
+  // enough not to approach Prisma's own five-second interactive-transaction
+  // timeout.
+  const LOCK_HOLD_MS = 1500;
+  // How long the unlink is given to prove it is NOT proceeding. Well clear
+  // of both ends: an unlocked unlink returns in tens of milliseconds, and a
+  // locked one cannot return for another ~750ms after this elapses.
+  const PROBE_MS = 600;
+  const SETTLE_MS = 150;
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Lock', lastName: 'Teacher',
+        email: `lock-teacher-${suffix}@test.local`,
+        account: { create: { email: `lock-teacher-${suffix}@test.local` } },
+        bio: 'Whole-branch I4 lock fixture', pageSlug: `lock-teacher-${suffix}`,
+        defaultTimezone: 'UTC',
+      },
+    });
+    lockTeacherId = teacher.id;
+    lockTeacherAccountId = teacher.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Lock Studio', address: `${suffix} Lock St`, city: 'Testville',
+        postcode: '1234LK', maxCapacity: 5, createdById: lockTeacherId,
+      },
+    });
+    lockRoomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: lockTeacherId, roomId: lockRoomId, capacityOverride: 5, rentalRate: 20 },
+    });
+    lockTeacherRoomId = teacherRoom.id;
+    const cls = await prisma.class.create({
+      data: {
+        teacherId: lockTeacherId, teacherRoomId: lockTeacherRoomId, classType: 'Lock Class',
+        date: new Date('2099-06-01'), startTime: '09:00', durationMinutes: 60,
+        roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 1,
+        status: 'open',
+      },
+    });
+    lockClassId = cls.id;
+
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Lock', lastName: 'Student', email: lockStudentEmail, claimedAt: new Date(),
+        account: { create: { email: lockStudentEmail } }, incomeTier: 3,
+      },
+      select: { id: true, accountId: true },
+    });
+    lockStudentId = student.id;
+    lockStudentAccountId = student.accountId as string;
+
+    await prisma.teacherStudent.create({
+      data: { teacherId: lockTeacherId, studentId: lockStudentId },
+    });
+    // The waiting entry is what makes the withdrawal reach for the lock at
+    // all — with no entry to withdraw, nothing is locked and there is
+    // nothing to observe.
+    await prisma.waitlistEntry.create({
+      data: { classId: lockClassId, studentId: lockStudentId, position: 1, status: 'waiting' },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.waitlistEntry.deleteMany({ where: { classId: lockClassId } });
+    await prisma.registration.deleteMany({ where: { classId: lockClassId } });
+    await prisma.class.deleteMany({ where: { id: lockClassId } });
+    await prisma.teacherRoom.deleteMany({ where: { id: lockTeacherRoomId } });
+    await prisma.room.deleteMany({ where: { id: lockRoomId } });
+    await prisma.studentPrivacy.deleteMany({ where: { teacherId: lockTeacherId } });
+    await prisma.teacherStudent.deleteMany({ where: { teacherId: lockTeacherId } });
+    await prisma.invitation.deleteMany({ where: { teacherId: lockTeacherId } });
+    await prisma.teacherBlock.deleteMany({ where: { teacherId: lockTeacherId } });
+    await prisma.student.deleteMany({ where: { id: lockStudentId } });
+    await prisma.account.deleteMany({ where: { id: lockStudentAccountId } });
+    await prisma.teacher.deleteMany({ where: { id: lockTeacherId } });
+    await prisma.account.deleteMany({ where: { id: lockTeacherAccountId } });
+  });
+
+  // A lock cannot be observed by looking at the rows afterwards — the
+  // withdrawal produces the same final state either way. What CAN be
+  // observed is that it waits: hold the class row in another transaction,
+  // and an unlink that reaches for the same lock cannot get past it. Racing
+  // a real `promoteNext` instead would test the same property with a
+  // nondeterministic interleaving, which is how a lock test ends up passing
+  // by luck.
+  //
+  // Called through the service rather than DELETE /api/teacher-links, since
+  // the point is the timing of one call, not the route's own behaviour
+  // (covered above).
+  it('waits for a class row another transaction holds, instead of writing through it', async () => {
+    let holderReleased = false;
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${lockClassId} FOR UPDATE`;
+        await sleep(LOCK_HOLD_MS);
+        holderReleased = true;
+      },
+      { timeout: 10_000 },
+    );
+    await sleep(SETTLE_MS);
+
+    const unlink = unlinkTeacher(prisma, {
+      teacherId: lockTeacherId,
+      studentId: lockStudentId,
+      accountEmail: lockStudentEmail,
+    }).then(() => 'returned' as const);
+
+    const outcome = await Promise.race([unlink, sleep(PROBE_MS).then(() => 'waiting' as const)]);
+    expect(outcome).toBe('waiting');
+    expect(holderReleased).toBe(false);
+
+    // And it is waiting rather than wedged: once the holder commits, the
+    // unlink finishes and does what it always does.
+    await holder;
+    expect(await unlink).toBe('returned');
+    expect((await prisma.waitlistEntry.findUniqueOrThrow({
+      where: { classId_studentId: { classId: lockClassId, studentId: lockStudentId } },
+    })).status).toBe('removed');
+    expect(await prisma.teacherBlock.findUnique({
+      where: { teacherId_email: { teacherId: lockTeacherId, email: lockStudentEmail } },
+    })).not.toBeNull();
   });
 });
