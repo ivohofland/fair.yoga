@@ -1888,8 +1888,10 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
       },
     });
 
-    // No TeacherStudent link: joining a waitlist creates none, which is the
-    // state this student is in when the invitation arrives.
+    // No TeacherStudent link. Joining a waitlist now creates one, so this is
+    // not a state a fresh join can produce — it models a `waiting` row from
+    // before that change, which is why the test body writes the row by hand
+    // rather than calling `addToWaitlist`.
     const promoteDeclineStudent = await prisma.student.create({
       data: {
         firstName: 'Resolve', lastName: 'PromoteDecline', email: promoteDeclineEmail,
