@@ -329,3 +329,162 @@ describe('GDPR on dual-role accounts', () => {
     expect(teacher.firstName).toBe('Deleted');
   });
 });
+
+// #166 added two tables holding a person's email address plus the first and
+// last name a TEACHER typed for them. Neither erasure nor the subject-access
+// export knew they existed (re-review I2). The tests below are ordered:
+// export first, then student erasure, then teacher erasure — each reads the
+// state the previous one left.
+describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-inv-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  // Mixed case on purpose. `Student.email` is stored exactly as typed;
+  // `Invitation.email` and `TeacherBlock.email` are lowercase by DB
+  // constraint. Every one of these lookups has to bridge that, and a fixture
+  // whose student address is already lowercase cannot tell a bridged lookup
+  // from an unbridged one.
+  const typedEmail = `Gdpr-Inv-${suffix}@Test.Local`;
+  const storedEmail = typedEmail.toLowerCase();
+  let inviterId: string;
+  let inviterAccountId: string;
+  let blockerId: string;
+  let blockerAccountId: string;
+  let studentId: string;
+  let studentAccountId: string;
+  let strangerInvitationId: string;
+
+  const mkTeacher = async (label: string) => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Inv',
+        lastName: label,
+        email: `${suffix}-${label}@test.local`,
+        bio: 'I2 fixtures',
+        pageSlug: `${suffix}-${label}`,
+        account: { create: { email: `${suffix}-${label}@test.local` } },
+      },
+      select: { id: true, accountId: true },
+    });
+    return teacher;
+  };
+
+  beforeAll(async () => {
+    const inviter = await mkTeacher('inviter');
+    inviterId = inviter.id;
+    inviterAccountId = inviter.accountId;
+    const blocker = await mkTeacher('blocker');
+    blockerId = blocker.id;
+    blockerAccountId = blocker.accountId;
+
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Inv',
+        lastName: 'Subject',
+        email: typedEmail,
+        claimedAt: new Date(),
+        account: { create: { email: typedEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    studentId = student.id;
+    studentAccountId = student.accountId!;
+
+    // Two teachers, so the anonymised address has to stay unique per teacher
+    // (`@@unique([teacherId, email])`) rather than collapsing two rows onto
+    // one value. Different statuses, so the `respondedAt`/`status` CHECK is
+    // exercised from both sides of it.
+    await prisma.invitation.create({
+      data: {
+        teacherId: inviterId, email: storedEmail, firstName: 'Sam', lastName: 'Typo',
+        status: 'accepted', respondedAt: new Date('2026-02-03T04:05:06.000Z'),
+      },
+    });
+    await prisma.invitation.create({
+      data: {
+        teacherId: blockerId, email: storedEmail, firstName: 'Sammy', lastName: 'Typo',
+        status: 'declined', respondedAt: new Date('2026-03-04T05:06:07.000Z'),
+      },
+    });
+    await prisma.teacherBlock.create({ data: { teacherId: blockerId, email: storedEmail } });
+
+    // Somebody else entirely, on the teacher who gets erased last: the point
+    // of clearing a teacher's contacts is that they hold OTHER people's
+    // addresses, and an anonymised row alone could not show that.
+    const stranger = await prisma.invitation.create({
+      data: {
+        teacherId: blockerId, email: `${suffix}-stranger@test.local`,
+        firstName: 'A', lastName: 'Stranger',
+      },
+      select: { id: true },
+    });
+    strangerInvitationId = stranger.id;
+  });
+
+  afterAll(async () => {
+    // Invitation and TeacherBlock cascade off Teacher.
+    await prisma.teacher.deleteMany({ where: { id: { in: [inviterId, blockerId] } } });
+    await prisma.student.deleteMany({ where: { id: studentId } });
+    await prisma.account.deleteMany({
+      where: { id: { in: [inviterAccountId, blockerAccountId, studentAccountId] } },
+    });
+    await prisma.$disconnect();
+  });
+
+  it('the subject-access export lists the invitations and blocks held about them', async () => {
+    const data = await exportStudentData(prisma, studentId);
+
+    // The name is the teacher's guess at who this person is, held about them
+    // without their involvement — precisely the kind of record Art. 15 is
+    // for, and it appears nowhere else in the export.
+    expect(data.invitations).toHaveLength(2);
+    const accepted = data.invitations.find((i) => i.status === 'accepted');
+    expect(accepted?.teacher).toBe('Inv inviter');
+    expect(accepted?.nameTheyUsed).toBe('Sam Typo');
+    expect(data.invitations.find((i) => i.status === 'declined')?.teacher).toBe('Inv blocker');
+
+    expect(data.blockedTeachers).toHaveLength(1);
+    expect(data.blockedTeachers[0]?.teacher).toBe('Inv blocker');
+  });
+
+  it('erasing a student anonymises the invitations that name them', async () => {
+    await deleteStudentAccount(prisma, studentId);
+
+    const rows = await prisma.invitation.findMany({
+      where: { teacherId: { in: [inviterId, blockerId] }, firstName: { not: 'A' } },
+      orderBy: { teacherId: 'asc' },
+    });
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.email).toBe(`deleted-${studentId}@deleted.invalid`);
+      expect(row.firstName).toBe('Deleted');
+      expect(row.lastName).toBe('Student');
+    }
+    // The teacher's own filing state is theirs, not the subject's: the
+    // decline still stands as a tombstone and the acceptance still records
+    // when it happened. Scrubbing those would rewrite the teacher's history,
+    // and the CHECK constraint binding `respondedAt` to `status` would
+    // reject a half-done job anyway.
+    expect(rows.map((r) => r.status).sort()).toEqual(['accepted', 'declined']);
+    expect(rows.every((r) => r.respondedAt !== null)).toBe(true);
+
+    // Deliberately untouched — see the comment at the erasure site and
+    // `docs/data-model.md`. Retention vs. scrubbing is a legal call nobody
+    // on this branch is placed to make, and this asserts the current
+    // behaviour so a change to it is a decision rather than a drift.
+    const block = await prisma.teacherBlock.findFirst({ where: { teacherId: blockerId } });
+    expect(block?.email).toBe(storedEmail);
+  });
+
+  it('erasing a teacher deletes the contacts they typed about other people', async () => {
+    expect(await prisma.invitation.count({ where: { teacherId: blockerId } })).toBe(2);
+
+    await deleteTeacherAccount(prisma, blockerId);
+
+    expect(await prisma.invitation.count({ where: { teacherId: blockerId } })).toBe(0);
+    expect(
+      await prisma.invitation.findUnique({ where: { id: strangerInvitationId } }),
+    ).toBeNull();
+    // The other teacher's contacts are none of this erasure's business.
+    expect(await prisma.invitation.count({ where: { teacherId: inviterId } })).toBe(1);
+  });
+});

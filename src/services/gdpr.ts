@@ -57,6 +57,36 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
     orderBy: { createdAt: 'asc' },
   });
 
+  // Keyed by address, not by `studentId` — a teacher can type an address into
+  // their CRM before (or without) the owner ever holding a Student row, which
+  // is the whole point of `Invitation` being a separate table. `.toLowerCase()`
+  // bridges the two normalisations: `Invitation.email`/`TeacherBlock.email` are
+  // lowercase by CHECK constraint, `Student.email` is stored exactly as typed.
+  // Miss it and the export silently omits the rows for anyone whose address
+  // carries uppercase — the failure mode of an omission is a quiet, complete
+  // absence, which is why it is worth stating.
+  const subjectEmail = student.email.toLowerCase();
+  const invitations = await db.invitation.findMany({
+    where: { email: subjectEmail },
+    select: {
+      status: true,
+      firstName: true,
+      lastName: true,
+      createdAt: true,
+      respondedAt: true,
+      teacher: { select: { firstName: true, lastName: true, pageSlug: true } },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+  const blocks = await db.teacherBlock.findMany({
+    where: { email: subjectEmail },
+    select: {
+      createdAt: true,
+      teacher: { select: { firstName: true, lastName: true, pageSlug: true } },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+
   return {
     exportedAt: new Date().toISOString(),
     format: 'fair.yoga student data export v1',
@@ -102,6 +132,24 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
       date: w.class.date,
       status: w.status,
       position: w.position,
+    })),
+    // Records held ABOUT the subject rather than created by them: a teacher
+    // typed their address into a CRM and guessed at their name. `nameTheyUsed`
+    // is that guess — it is not the subject's own profile name and can differ
+    // from it, so the export has to show it rather than fold it into
+    // `profile`.
+    invitations: invitations.map((i) => ({
+      teacher: `${i.teacher.firstName} ${i.teacher.lastName}`,
+      page: i.teacher.pageSlug,
+      nameTheyUsed: `${i.firstName} ${i.lastName}`.trim(),
+      status: i.status,
+      invitedAt: i.createdAt,
+      respondedAt: i.respondedAt,
+    })),
+    blockedTeachers: blocks.map((b) => ({
+      teacher: `${b.teacher.firstName} ${b.teacher.lastName}`,
+      page: b.teacher.pageSlug,
+      since: b.createdAt,
     })),
     notifications,
   };
@@ -178,6 +226,10 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
  * - profile fields anonymized, email replaced with an unroutable unique one
  * - privacy rows, roster links, waitlist entries, notifications, sessions,
  *   magic-link tokens: deleted
+ * - `Invitation` rows naming this address anonymized in place, so a teacher's
+ *   refusal tombstones survive without the identity behind them
+ * - `TeacherBlock` rows left standing on purpose; the tension is written down
+ *   at the site and in `docs/data-model.md`
  * - upcoming registrations cancelled (teachers see the spot free up);
  *   charged/past registrations and payments remain, attributed to
  *   "Deleted Student"
@@ -222,6 +274,46 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     await tx.studentPrivacy.deleteMany({ where: { studentId } });
     await tx.teacherStudent.deleteMany({ where: { studentId } });
     await tx.waitlistEntry.deleteMany({ where: { studentId } });
+
+    // Invitations are keyed by address, not by `studentId` — a teacher can
+    // hold a CRM contact for someone with no Student row at all — so this
+    // matches on the address and lowercases it first (`Invitation.email` is
+    // lowercase by CHECK constraint, `Student.email` is stored as typed).
+    //
+    // Anonymised rather than deleted, and the reason is the teacher's side:
+    // a `declined` row is the tombstone that stops that teacher re-inviting
+    // this address, so deleting it would hand back the re-invite the refusal
+    // exists to deny — an erasure request would double as a way to clear
+    // every refusal anyone ever made. `status` and `respondedAt` therefore
+    // stay exactly as they are; only the three columns holding the person's
+    // identity change.
+    //
+    // The replacement satisfies both constraints the branch added:
+    // `Invitation_email_lowercase_check` (uuid + `@deleted.invalid` is
+    // already lowercase) and `Invitation_responded_at_status_check` (this
+    // write touches neither side of it). It also stays unique per teacher,
+    // so a student invited by several teachers anonymises to one value
+    // without colliding on `@@unique([teacherId, email])`.
+    await tx.invitation.updateMany({
+      where: { email: student.email.toLowerCase() },
+      data: {
+        email: `deleted-${studentId}@deleted.invalid`,
+        firstName: 'Deleted',
+        lastName: 'Student',
+      },
+    });
+
+    // `TeacherBlock` is DELIBERATELY not touched here, and the omission is
+    // undecided rather than settled — see `docs/data-model.md`
+    // (TeacherBlock). Scrubbing the address breaks the block, because every
+    // lookup is `teacherId` + exact `email` and the erased person's real
+    // mailbox still exists in the world: the teacher could re-type that
+    // address and the invitation would actually be delivered. Retaining it
+    // keeps a plaintext address for someone who asked to be forgotten, on a
+    // row they can no longer reach to clear (their account email is rewritten
+    // and their sessions are gone, so the unlink UI is unreachable for
+    // them). `CLAUDE.md` parks GDPR/legal review for proper consultation and
+    // this is exactly that call. Do not resolve it from in here.
     await tx.notification.deleteMany({ where: { recipientType: 'student', recipientId: studentId } });
     // Sessions and passkeys belong to the account. They die with the
     // erased profile unless a live teacher profile still uses the account.
@@ -361,6 +453,16 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       await tx.studioClassTemplate.updateMany({ where: { teacherId }, data: { isActive: false, isArchived: true } });
       await tx.studentPrivacy.deleteMany({ where: { teacherId } });
       await tx.teacherStudent.deleteMany({ where: { teacherId } });
+      // The teacher's CRM contacts — every one an address and a name they
+      // typed about somebody ELSE. Deleted rather than anonymized, unlike the
+      // student-side scrub above: the only thing an `Invitation` row means is
+      // "this teacher may/may not invite this address", and with the teacher
+      // erased there is nobody left to invite anyone. A tombstone guarding a
+      // door that no longer exists is just a retained address. Safe on the
+      // read side too — `listPendingInvitations` and `acceptInvitation` both
+      // filter `deletedAt: null`, so these rows were already invisible to
+      // every invitee the moment `deletedAt` below is set.
+      await tx.invitation.deleteMany({ where: { teacherId } });
       await tx.notification.deleteMany({ where: { recipientType: 'teacher', recipientId: teacherId } });
       // Sessions and passkeys belong to the account. They die with the
       // erased profile unless a live student profile still uses the account.

@@ -119,6 +119,13 @@ A teacher may not link themselves to a student unilaterally. `POST /api/students
 
 Written only when a student unlinks a teacher they were already connected to (`unlinkTeacher`) — a plain decline does not write one; the declined `Invitation` row already blocks a re-invite on its own. Held in its own table rather than as a flag on `Invitation` so a blocked address behaves identically to a fresh one everywhere an `Invitation` is read, edited, archived or re-created — the only place the distinction is allowed to surface is whether an invite email is actually sent.
 
+**Open, and deliberately unresolved: what erasing a student should do to this row.** `deleteStudentAccount` (`src/services/gdpr.ts`) today leaves it exactly as it stands, holding the erased person's plaintext address. That is a placeholder for a decision, not a decision — both answers are defensible and the choice is a legal one, which `CLAUDE.md` parks for proper consultation:
+
+- **Retain (current behaviour).** The block keeps working, and it is not inert after erasure: the person's real mailbox still exists in the world, so if the teacher re-types that address `inviteContact` computes `delivered: false` and no invitation email is sent. Retention is the only thing standing between an erased person and mail from the one teacher they explicitly refused. The cost is a retained plaintext address for someone who asked to be forgotten — on a row they can no longer reach to clear, since erasure rewrites their account email and deletes their sessions.
+- **Scrub or hash the address.** Honours the erasure literally. The cost is that lookups are `teacher_id` + exact `email` (`unique (teacher_id, email)`), so a scrubbed row stops matching and the block silently stops blocking; keeping it functional would need a hashed-address column and every reader taught to hash before querying — a schema change and a change at roughly four call sites.
+
+Invitations are handled differently, and that asymmetry is intentional: `deleteStudentAccount` anonymises `Invitation.email` / `first_name` / `last_name` in place (to `deleted-<student_id>@deleted.invalid`, which satisfies the lowercase CHECK) while leaving `status` and `responded_at` alone, so a teacher's `declined` tombstone survives an erasure it would otherwise clear. `deleteTeacherAccount` deletes that teacher's `Invitation` rows outright — they hold other people's addresses and, with the teacher erased, guard a door nobody can open.
+
 ---
 
 ## Spaces
