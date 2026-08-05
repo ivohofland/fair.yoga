@@ -1779,6 +1779,173 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
   });
 });
 
+describe('unlinking silences the teacher and freezes the shares (#166 whole-branch C1)', () => {
+  // Dedicated fixtures: this drives a full announce → unlink → announce
+  // chain, and the file's shared `teacherId` has invitations, blocks and a
+  // roster of its own by the time this runs.
+  let c1TeacherId: string;
+  let c1TeacherAccountId: string;
+  let c1TeacherToken: string;
+  let c1RoomId: string;
+  let c1TeacherRoomId: string;
+  let c1ClassId: string;
+
+  const c1StudentEmail = `c1-student-${suffix}@test.local`;
+  let c1StudentId: string;
+  let c1StudentAccountId: string;
+  let c1StudentToken: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'C1', lastName: 'Teacher',
+        email: `c1-teacher-${suffix}@test.local`,
+        account: { create: { email: `c1-teacher-${suffix}@test.local` } },
+        bio: 'Whole-branch C1 fixtures', pageSlug: `c1-teacher-${suffix}`,
+      },
+    });
+    c1TeacherId = teacher.id;
+    c1TeacherAccountId = teacher.accountId;
+    c1TeacherToken = await seedSession(prisma, c1TeacherAccountId);
+
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'C1', lastName: 'Student', email: c1StudentEmail, claimedAt: new Date(),
+        account: { create: { email: c1StudentEmail } }, incomeTier: 3,
+      },
+      select: { id: true, accountId: true },
+    });
+    c1StudentId = student.id;
+    c1StudentAccountId = student.accountId as string;
+    c1StudentToken = await seedSession(prisma, c1StudentAccountId);
+
+    await prisma.teacherStudent.create({
+      data: { teacherId: c1TeacherId, studentId: c1StudentId },
+    });
+
+    // Sharing switched ON, and announcements ON — the state a student who
+    // trusted this teacher leaves behind. Both must be false after the
+    // unlink, and both are invisible to the student once the card is gone.
+    await prisma.studentPrivacy.create({
+      data: {
+        studentId: c1StudentId, teacherId: c1TeacherId,
+        shareFullName: true, shareEmail: true, receiveComms: true,
+      },
+    });
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'C1 Studio', address: `${suffix} C1 St`, city: 'Testville',
+        postcode: '1234C1', maxCapacity: 10, createdById: c1TeacherId,
+      },
+    });
+    c1RoomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: c1TeacherId, roomId: c1RoomId, capacityOverride: 10, rentalRate: 20 },
+    });
+    c1TeacherRoomId = teacherRoom.id;
+    const cls = await prisma.class.create({
+      data: {
+        teacherId: c1TeacherId, teacherRoomId: c1TeacherRoomId, classType: 'C1 Class',
+        date: new Date('2099-06-01'), startTime: '09:00', durationMinutes: 60,
+        roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 10,
+        status: 'open',
+      },
+    });
+    c1ClassId = cls.id;
+
+    // The registration is the whole point: announcements pick recipients
+    // from Registration, not from TeacherStudent, so this is what keeps the
+    // student reachable after the link is gone.
+    await prisma.registration.create({
+      data: { classId: c1ClassId, studentId: c1StudentId, status: 'registered', tierAtBooking: 3 },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.notification.deleteMany({ where: { recipientId: c1StudentId } });
+    await prisma.announcement.deleteMany({ where: { teacherId: c1TeacherId } });
+    await prisma.registration.deleteMany({ where: { classId: c1ClassId } });
+    await prisma.class.deleteMany({ where: { id: c1ClassId } });
+    await prisma.teacherRoom.deleteMany({ where: { id: c1TeacherRoomId } });
+    await prisma.room.deleteMany({ where: { id: c1RoomId } });
+    await prisma.studentPrivacy.deleteMany({ where: { teacherId: c1TeacherId } });
+    await prisma.teacherStudent.deleteMany({ where: { teacherId: c1TeacherId } });
+    await prisma.invitation.deleteMany({ where: { teacherId: c1TeacherId } });
+    await prisma.teacherBlock.deleteMany({ where: { teacherId: c1TeacherId } });
+
+    await prisma.session.deleteMany({ where: { accountId: c1StudentAccountId } });
+    await prisma.student.deleteMany({ where: { id: c1StudentId } });
+    await prisma.account.deleteMany({ where: { id: c1StudentAccountId } });
+
+    await prisma.session.deleteMany({ where: { accountId: c1TeacherAccountId } });
+    await prisma.teacher.deleteMany({ where: { id: c1TeacherId } });
+    await prisma.account.deleteMany({ where: { id: c1TeacherAccountId } });
+  });
+
+  const announce = () =>
+    fetch(`${BASE_URL}/api/announcements`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(c1TeacherToken) },
+      body: JSON.stringify({ classId: c1ClassId, message: 'Bring a mat.' }),
+    });
+
+  // One test, not three: the announcement BEFORE the unlink is the control
+  // that makes the silence afterwards mean something. Split across tests,
+  // the second half would pass against a teacher who could never have
+  // reached this student in the first place.
+  it('an announcement that reaches the student before the unlink cannot reach them after it', async () => {
+    const reachable = await announce();
+    expect(reachable.status).toBe(201);
+    expect(await prisma.notification.count({
+      where: { recipientType: 'student', recipientId: c1StudentId, type: 'announcement' },
+    })).toBe(1);
+
+    const unlinkRes = await fetch(`${BASE_URL}/api/teacher-links/${c1TeacherId}`, {
+      method: 'DELETE', headers: cookie(c1StudentToken),
+    });
+    expect(unlinkRes.status).toBe(200);
+
+    // The registration — and so the teacher's route to this student — is
+    // untouched, which is what makes the privacy row load-bearing rather
+    // than incidental.
+    expect(await prisma.registration.count({
+      where: { classId: c1ClassId, studentId: c1StudentId, status: { not: 'cancelled' } },
+    })).toBe(1);
+
+    // Asserted before the row itself, deliberately: this is the property,
+    // and it is the one whose failure message names the defect. A regression
+    // reads "expected 201 to be 400" — the teacher still reached them —
+    // rather than a bare boolean mismatch on a column.
+    //
+    // `receiveComms: false` filters this student out of the recipient list,
+    // and they were the only registrant, so the route has nobody left to
+    // notify.
+    const silenced = await announce();
+    expect(silenced.status).toBe(400);
+    expect(await prisma.notification.count({
+      where: { recipientType: 'student', recipientId: c1StudentId, type: 'announcement' },
+    })).toBe(1);
+
+    // The student can no longer reach this row: the privacy route 403s
+    // without a link, and `/account/privacy` renders no card for a teacher
+    // they are not linked to. Whatever it says now is permanent from their
+    // side, so it has to say the most private thing. The share flags carry
+    // no announcement consequence — they are what the teacher's own roster
+    // keeps reading (`(teacher)/class/[id]/page.tsx`), with no link check,
+    // so each needs asserting on its own.
+    const privacy = await prisma.studentPrivacy.findUniqueOrThrow({
+      where: { studentId_teacherId: { studentId: c1StudentId, teacherId: c1TeacherId } },
+    });
+    expect(privacy.receiveComms).toBe(false);
+    expect(privacy.shareFullName).toBe(false);
+    expect(privacy.shareEmail).toBe(false);
+    expect(privacy.sharePhone).toBe(false);
+    expect(privacy.shareBirthday).toBe(false);
+    expect(privacy.shareAddress).toBe(false);
+  });
+});
+
 describe('unlinking withdraws waiting entries for the teacher (#166 F3)', () => {
   // A dedicated teacher, dedicated from `resolveTeacherId` above: that
   // describe's own `afterAll` has already torn its fixtures down by the time

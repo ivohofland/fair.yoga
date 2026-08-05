@@ -112,7 +112,11 @@ export function TeacherPrivacyCard({
    * services/invitations.ts). Registrations and payments are untouched —
    * only the copy below promises that, this call has no say in it — and a
    * `TeacherBlock` goes down that stops the teacher re-adding this student,
-   * which booking one of their classes is the only thing that lifts.
+   * which booking one of their classes is the only thing that lifts. The
+   * same call writes this student's `StudentPrivacy` row for this teacher
+   * to every share off and announcements off, which is what the first
+   * sentence of the confirmation copy below promises; deleting the link
+   * alone would have left both switched on with no way back to this card.
    * `router.refresh()` on success is what drops this card from the list.
    *
    * `unlinking` is deliberately left `true` on success rather than reset in
@@ -185,9 +189,10 @@ export function TeacherPrivacyCard({
         {confirmingUnlink ? (
           <div className="flex flex-col gap-3">
             <p className="type-body">
-              Your past bookings and any payments with {teacherName} stay, but any spot you&apos;re
-              holding on their waitlists is given up. They won&apos;t be able to add you again —
-              but you can always reconnect by booking one of their classes.
+              {teacherName} stops sending you announcements, and everything on this card is
+              switched off for them. Your past bookings and any payments stay, but any spot
+              you&apos;re holding on their waitlists is given up. They won&apos;t be able to add
+              you again — but you can always reconnect by booking one of their classes.
             </p>
             <div className="flex items-center gap-3">
               <Button variant="destructive" onClick={handleUnlink} disabled={unlinking}>

@@ -128,8 +128,9 @@ describe('TeacherPrivacyCard', () => {
    * unlink. Two-step confirm, same idiom as `RemoveStudentButton` and
    * `PendingInvitationCard`: the trigger alone must never fetch, and the
    * copy in the confirm step is the one place this promises what survives
-   * (past bookings, payments) and what doesn't (the teacher's ability to
-   * re-add this student unprompted).
+   * (past bookings, payments) and what doesn't — the teacher's ability to
+   * re-add this student unprompted, their announcements, the waitlist
+   * spots, and every share on the card above.
    */
   describe('unlinking a teacher', () => {
     it('renders no confirmation, and fetches nothing, until the trigger is clicked', () => {
@@ -149,6 +150,20 @@ describe('TeacherPrivacyCard', () => {
       renderCard();
       fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
       expect(screen.getByText(/waitlists? is given up/i)).toBeInTheDocument();
+    });
+
+    // Whole-branch review C1: the same call silences this teacher's
+    // announcements and switches every share on this card off, by writing
+    // the `StudentPrivacy` row the unlink would otherwise leave standing.
+    // The copy promised neither — it offered only "they can't add you
+    // again", which reads as though a student who unlinks after booking
+    // keeps receiving announcements they can no longer mute.
+    it('names the announcement and sharing consequences', () => {
+      stubFetch();
+      renderCard();
+      fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
+      expect(screen.getByText(/stops sending you announcements/i)).toBeInTheDocument();
+      expect(screen.getByText(/switched off/i)).toBeInTheDocument();
     });
 
     // Review F7: same fix, same reasoning as `PendingInvitationCard`'s test

@@ -361,6 +361,27 @@ export async function declineInvitation(
 }
 
 /**
+ * Every share off, announcements off — the `StudentPrivacy` shape an unlink
+ * leaves behind.
+ *
+ * One object rather than two literals so `upsert`'s `update` and `create`
+ * halves cannot drift: a field present in one and missing from the other
+ * would leave that share switched on for whichever of the two paths forgot
+ * it, with no surface left to switch it off from. Typed as an update input
+ * so a misspelled field is a compile error rather than a silently ignored
+ * key. `satisfies` rather than an annotation, so the plain boolean literals
+ * survive for the `create` half too.
+ */
+const SILENCED_PRIVACY = {
+  shareFullName: false,
+  shareEmail: false,
+  sharePhone: false,
+  shareBirthday: false,
+  shareAddress: false,
+  receiveComms: false,
+} satisfies Prisma.StudentPrivacyUpdateInput;
+
+/**
  * A student severs a teacher link.
  *
  * Two things this deliberately does not do. It does not delete the
@@ -369,6 +390,10 @@ export async function declineInvitation(
  * does not touch registrations or payments: those are facts, and money may
  * be owed. The teacher keeps seeing them through the registration-scoped
  * surfaces, which is #167's decision applied here.
+ *
+ * Deleting the link is NOT on its own enough to stop the teacher reaching
+ * this student, which is why `StudentPrivacy` is written below — see the
+ * comment at that write.
  */
 export async function unlinkTeacher(
   db: PrismaClient,
@@ -384,6 +409,36 @@ export async function unlinkTeacher(
 
   await db.$transaction(async (tx) => {
     await tx.teacherStudent.delete({ where: { id: link.id } });
+
+    // Deleting the link does not, by itself, stop this teacher reaching the
+    // student, and it takes away the control that would.
+    //
+    // Announcements pick their recipients from `Registration`
+    // (`api/announcements/route.ts`), never from `TeacherStudent`, so anyone
+    // who booked one class stays a recipient after unlinking. The only
+    // opt-out is `StudentPrivacy.receiveComms` — and both the privacy route
+    // and the card on `/account/privacy` require a live link, so the mute
+    // switch vanishes at the exact moment it is wanted. Meanwhile the
+    // teacher's own roster reads this row's `shareFullName` scoped by
+    // teacher and registration with no link check at all
+    // (`(teacher)/class/[id]/page.tsx`), so a share left switched on keeps
+    // disclosing after the student has gone.
+    //
+    // So the student's last instruction is recorded here, and it outlives
+    // the link: silence, and nothing shared. The announcement filter already
+    // honours `receiveComms`, and every reader of the share flags already
+    // reads this row — no route needs to learn anything new.
+    await tx.studentPrivacy.upsert({
+      where: {
+        studentId_teacherId: { studentId: input.studentId, teacherId: input.teacherId },
+      },
+      update: SILENCED_PRIVACY,
+      create: {
+        studentId: input.studentId,
+        teacherId: input.teacherId,
+        ...SILENCED_PRIVACY,
+      },
+    });
 
     // A `waiting` entry for one of this teacher's classes is a standing
     // request the student is walking away from along with the link — left
