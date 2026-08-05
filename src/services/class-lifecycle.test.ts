@@ -5,6 +5,7 @@ import {
   ECONOMIC_FIELDS,
   canTransition,
   validateTransition,
+  sourceStatesFor,
   isEconomicFieldLocked,
   transitionClass,
   completeClass,
@@ -129,6 +130,42 @@ describe('validateTransition', () => {
       expect(typeof result.error).toBe('string');
       expect(result.error.length).toBeGreaterThan(0);
     }
+  });
+});
+
+// `sourceStatesFor` is the inverse of `VALID_TRANSITIONS` above, and it is
+// what `transitionClass`'s compare-and-swap predicate is built from — a
+// silent drift here (say, a target status left out when a new transition is
+// added) would show up as `transitionClass` refusing a transition that
+// `VALID_TRANSITIONS` calls legal, or vice versa. Hand-derived per status,
+// the same way `describe('VALID_TRANSITIONS', ...)` above pins each row by
+// hand, rather than re-deriving the expectation from `VALID_TRANSITIONS`
+// itself, which would only prove the function agrees with itself.
+describe('sourceStatesFor', () => {
+  it('draft has no source states — nothing transitions into the initial state', () => {
+    // Load-bearing, not incidental: transitionClass's CAS predicate becomes
+    // `status: { in: [] }` for a `draft` target, which Prisma turns into a
+    // Postgres `IN ()` that matches no row. `updateMany` therefore always
+    // reports `count: 0` for a `draft` target, so a request to transition
+    // *into* `draft` — which `transitionClassSchema` (`schemas.ts:305`) does
+    // accept as a target — is always refused, and the row is left untouched.
+    expect(sourceStatesFor('draft')).toEqual([]);
+  });
+
+  it('open is reachable only from draft', () => {
+    expect(sourceStatesFor('open')).toEqual(['draft']);
+  });
+
+  it('in_progress is reachable only from open', () => {
+    expect(sourceStatesFor('in_progress')).toEqual(['open']);
+  });
+
+  it('completed is reachable only from in_progress', () => {
+    expect(sourceStatesFor('completed')).toEqual(['in_progress']);
+  });
+
+  it('cancelled is reachable from draft and open', () => {
+    expect(sourceStatesFor('cancelled')).toEqual(['draft', 'open']);
   });
 });
 
@@ -282,6 +319,25 @@ describe('transitionClass (DB)', () => {
     }
   });
 
+  /**
+   * Two sequential statements in one test body cannot pin a race by
+   * themselves: cancelling the row *before* calling `transitionClass` just
+   * gives a read-then-write implementation a fresh row to read, and it
+   * correctly refuses too — proven by running this test against the
+   * pre-fix body, which also passes it. What a real interleaving requires is
+   * a caller whose *read* is already stale by the time it decides, which a
+   * sequential test cannot produce without interposing on the read itself.
+   *
+   * So the row is genuinely cancelled up front, and then the read
+   * `transitionClass` performs is hooked to keep reporting `open` regardless
+   * — standing in for a read taken before the cancel committed. A
+   * read-then-write implementation trusts that lie and writes `in_progress`
+   * straight over the real `cancelled` row via a plain `update`, which this
+   * hook does not intercept. The CAS's `updateMany` predicate, by contrast,
+   * is evaluated by Postgres against the real row at write time, independent
+   * of anything any `SELECT` reported — so it is the write itself that has
+   * to refuse here, not a second read noticing the row moved.
+   */
   it('refuses to write over a status that changed after the caller decided', async () => {
     const cls = await prisma.class.create({
       data: {
@@ -300,21 +356,45 @@ describe('transitionClass (DB)', () => {
       },
     });
 
-    // The interleaving, made deterministic: cancel the class, then ask for the
-    // transition the sweep would have asked for holding a pre-cancel read.
-    // A read-then-write implementation re-reads and refuses here, so that is
-    // not what this pins. What it pins is the write itself being predicated:
-    // the CAS matches zero rows and the class stays cancelled.
     await prisma.class.updateMany({
       where: { id: cls.id, status: 'open' },
       data: { status: 'cancelled' },
     });
 
-    const result = await transitionClass(prisma, cls.id, 'in_progress');
+    // Cast for the same reason as the interposition tests in
+    // `class-template-lifecycle.test.ts` (`:223`, `:1036`, `:1267`) and
+    // `invitations.revive.test.ts` (`:99`): `$extends` returns a client
+    // missing `$on`, so it is not assignable to `transitionClass`'s
+    // `PrismaClient`-typed `db` parameter even though every method it calls
+    // here is the real one, running against the real database.
+    const stale = prisma.$extends({
+      query: {
+        class: {
+          async findUnique({ args, query }) {
+            const row = await query(args);
+            return row === null ? row : { ...row, status: 'open' as const };
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
 
-    expect(result.ok).toBe(false);
+    const result = await transitionClass(stale, cls.id, 'in_progress');
+
+    // Order matters for what a regression reports: checking the row first
+    // means a read-then-write implementation's failure shows as the actual
+    // overwrite ("expected 'in_progress' to be 'cancelled'"), not just a
+    // wrong boolean.
     const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
     expect(after.status).toBe('cancelled');
+
+    // The error text is asserted, not just `ok === false`: after Task 8
+    // lands a Postgres trigger, a bare `ok === false` would also be
+    // satisfiable by the trigger throwing instead of by this CAS refusing —
+    // `Concurrent modification` is this function's own vocabulary for
+    // exactly this case (`updateMany` matched nothing, yet the read now
+    // calls the move legal), not the trigger's.
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/Concurrent modification/);
   });
 
   it('reports a missing class differently from an illegal transition', async () => {

@@ -107,11 +107,14 @@ export type TransitionDbResult =
  * Compare-and-swap, not read-then-write. The predicate IS the guard: under
  * READ COMMITTED the `UPDATE` re-evaluates `status` after it acquires the row
  * lock, so a cancel that commits between a caller's read and this write is
- * seen rather than written over. No `FOR UPDATE` and no transaction, because
- * the status is the only thing this decision depends on — the same reason
- * `POST /api/classes/[id]/transition`'s cancel branch and `autoCancelClasses`
- * are safe without one. Sites that read more state under the decision
- * (`completeClass`) take the lock instead; see `docs/lock-order.md`.
+ * seen rather than written over. No `FOR UPDATE`, because the status is the
+ * only thing this decision depends on — the same reason `POST
+ * /api/classes/[id]/transition`'s cancel branch and `autoCancelClasses` don't
+ * need one for their own conditional cancel-update either, even though both
+ * additionally wrap it in a transaction — for an unrelated reason, to keep
+ * their notification writes atomic with the status change, not because the
+ * conditional update itself needs one. Sites that read more state under the
+ * decision (`completeClass`) take the lock instead; see `docs/lock-order.md`.
  */
 export async function transitionClass(
   db: PrismaClient,
