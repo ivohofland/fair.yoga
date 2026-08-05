@@ -841,6 +841,8 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
   let declinedId: string;
   let noopId: string;
   let guardId: string;
+  /** Reaches the create exit, then fails there — the rollback case. */
+  let rollbackId: string;
   let promoteId: string;
   let fillerId: string;
   let promoteFillerId: string;
@@ -957,6 +959,7 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
     declinedId = await makeStudent('Declined', { status: 'declined', blocked: true });
     noopId = await makeStudent('Noop', { status: 'pending' });
     guardId = await makeStudent('Guard', { status: 'pending' });
+    rollbackId = await makeStudent('Rollback', { status: 'pending' });
     promoteId = await makeStudent('Promote', { status: 'pending' });
     fillerId = await makeStudent('Filler');
     promoteFillerId = await makeStudent('PromoteFiller');
@@ -1053,8 +1056,13 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
   });
 
   it('a join the guards refuse writes no link and touches no invitation', async () => {
-    // The link write sits after all three guards, inside the transaction —
-    // a refused join must leave the pair exactly as it found them.
+    // The guarantee here is the `db.$transaction` wrapper, NOT the fact that
+    // the three guards happen to sit above the link write. Moving the write
+    // above all three leaves this test — and the other 32 in the file — green,
+    // because a guard throw rolls the writes back either way (M4, #166
+    // re-review). What this test rules out is a refused join leaving the pair
+    // connected; the test below is the one that can tell where that comes
+    // from.
     await expect(addToWaitlist(prisma, notFullClassId, guardId)).rejects.toMatchObject({
       reason: 'class_not_full',
     });
@@ -1063,6 +1071,48 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
     const invitation = await invitationOf(guardId);
     expect(invitation.status).toBe('pending');
     expect(invitation.respondedAt).toBeNull();
+  });
+
+  it('a failure AFTER the link write rolls the link back too', async () => {
+    // The test above cannot distinguish the transaction from the ordering,
+    // because every guard it can trip fires before the first write. This one
+    // fails at the last write instead, which only the transaction can undo:
+    // by then the link and the invitation resolution are already issued.
+    //
+    // Injected rather than provoked, because nothing reachable throws there —
+    // no unique key covers `(classId, position)` and the class row is locked
+    // for the duration. A mid-transaction database error is the realistic
+    // shape (a deadlock, a dropped connection, a constraint a later migration
+    // adds), and what it must not do is leave a student linked to a teacher
+    // whose queue they never entered.
+    expect(await link(rollbackId)).toBeNull();
+    const boom = new Error('injected: the waitlist row write failed');
+    const failing = prisma.$extends({
+      query: {
+        waitlistEntry: {
+          create() {
+            throw boom;
+          },
+        },
+      },
+    });
+
+    // Cast for the same reason as `invitations.revive.test.ts`: an extended
+    // client is missing `$on`, so it is not assignable to `PrismaClient`
+    // despite every method being the real one.
+    await expect(
+      addToWaitlist(failing as unknown as PrismaClient, fullClassId, rollbackId),
+    ).rejects.toBe(boom);
+
+    expect(await link(rollbackId)).toBeNull();
+    const invitation = await invitationOf(rollbackId);
+    expect(invitation.status).toBe('pending');
+    expect(invitation.respondedAt).toBeNull();
+    expect(
+      await prisma.waitlistEntry.findUnique({
+        where: { classId_studentId: { classId: fullClassId, studentId: rollbackId } },
+      }),
+    ).toBeNull();
   });
 
   it('a promotion repairs a missing link but leaves the invitation as it stands', async () => {
