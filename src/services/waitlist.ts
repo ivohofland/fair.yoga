@@ -10,7 +10,7 @@
 import type { PrismaClient, Prisma, CancelDeadline, WaitlistEntry } from '@prisma/client';
 import { classStartInstant } from '@/lib/timezone';
 import { createBulkNotifications } from './notifications';
-import { resolveInvitationOnLink } from './invitations';
+import { resolveInvitationOnLink } from './link-consent';
 
 /** Raised when a promotion/claim is not allowed in the current class state. */
 export class WaitlistPromotionError extends Error {

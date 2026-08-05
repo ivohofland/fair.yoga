@@ -200,7 +200,8 @@ export async function notifyInvitee(
   // — same systemic gap `inviteContact`'s own Student lookup notes above.
   // This function does its own lowercasing rather than trusting a caller
   // already did, the same way every other email-comparing function in this
-  // file does (acceptInvitation, unlinkTeacher, resolveInvitationOnLink).
+  // file does (acceptInvitation, unlinkTeacher) and the one next door
+  // (resolveInvitationOnLink, services/link-consent.ts).
   const email = input.email.toLowerCase();
 
   // Structural, not comment-enforced (F3, #166 review): re-check the block
@@ -513,61 +514,4 @@ export async function unlinkTeacher(
     });
   });
   return { ok: true };
-}
-
-/**
- * A student's own act is acceptance, so it resolves whatever invitation
- * state stood between them and this teacher — `pending` and `declined`
- * alike, and the `TeacherBlock` along with them. Reversing a decline is the
- * escape hatch the whole decline design rests on: permanent from the
- * teacher's side, always reversible from the student's.
- *
- * There used to be a second mode here — a `LinkConsent` parameter whose
- * `standing` value resolved only a `pending` invitation — for the one caller
- * whose link was NOT created by an act of the student's: a waitlist
- * promotion, which fires when the teacher cancels some other registration.
- * That distinction has no referent any more. The link is created where the
- * consent is actually given (`addToWaitlist`, services/waitlist.ts), and
- * `promoteNext`/`claimSpot` resolve nothing at all — so every caller of this
- * function is a student acting at this instant. Do not reintroduce the mode:
- * the way to keep a refusal safe is to not call this from something a
- * teacher can trigger, not to weaken what it does when they can't.
- *
- * `updateMany`, not `update`: most bookings have no invitation row at all
- * and a zero-row update must not throw.
- */
-export async function resolveInvitationOnLink(
-  tx: Prisma.TransactionClient,
-  input: { teacherId: string; studentEmail: string },
-): Promise<void> {
-  // Lowercased again, and for the same reason each time: invitation emails
-  // are always stored lowercase, `Student.email` and `Account.email` never
-  // are. Miss it here and a booking silently fails to clear the declined
-  // tombstone — so the student's only route back to a teacher they declined
-  // stops working, which is the one escape hatch the whole decline design
-  // rests on.
-  const email = input.studentEmail.toLowerCase();
-
-  // Task 6c moved the block into its own table, and the block is the thing
-  // that actually stands between them — so clearing it is what makes booking
-  // the student's route back. Updating the invitation alone would leave the
-  // pair connected on paper and severed in practice: linked, but every future
-  // invitation from this teacher still undeliverable.
-  await tx.teacherBlock.deleteMany({ where: { teacherId: input.teacherId, email } });
-
-  // `{ not: 'accepted' }` rather than a list, so a `declined` row flips too
-  // — that is the reversal this function exists for. An already-accepted row
-  // is excluded, so its `respondedAt` — the original acceptance moment —
-  // survives. Nothing reads it yet, which is exactly why this is worth
-  // getting right now: every later booking would otherwise silently
-  // overwrite it, and the drift wouldn't surface until something finally
-  // does read it.
-  await tx.invitation.updateMany({
-    where: {
-      teacherId: input.teacherId,
-      email,
-      status: { not: 'accepted' },
-    },
-    data: { status: 'accepted', respondedAt: new Date() },
-  });
 }

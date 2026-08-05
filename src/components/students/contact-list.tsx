@@ -23,8 +23,9 @@ interface InvitationListResponse {
 /**
  * The row shape this list actually renders — `status` narrowed to the two
  * values a contact still is one. `accepted` means the invitee is now a real
- * student: `acceptInvitation` or `resolveInvitationOnLink` (both in
- * services/invitations.ts) already put them in `TeacherStudent`, so they
+ * student: `acceptInvitation` (services/invitations.ts) or
+ * `resolveInvitationOnLink` (services/link-consent.ts) already put them in
+ * `TeacherStudent`, so they
  * render in `StudentDirectory` instead. The row survives in `Invitation` as
  * history, but showing it here too would list the same person under two
  * different labels on the same page.

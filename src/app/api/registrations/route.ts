@@ -12,7 +12,7 @@ import {
 import { createRegistrationSchema } from '@/lib/schemas';
 import { createBulkNotifications } from '@/services/notifications';
 import { activateRegistration, reorderWaitingEntries } from '@/services/waitlist';
-import { resolveInvitationOnLink } from '@/services/invitations';
+import { resolveInvitationOnLink } from '@/services/link-consent';
 import { classStartInstant } from '@/lib/timezone';
 
 /** Thrown inside the registration transaction when the class is at capacity. */
