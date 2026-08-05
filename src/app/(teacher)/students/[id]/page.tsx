@@ -38,7 +38,7 @@ export default async function StudentDetailPage({
   if (!student || student.teacherStudents.length === 0) redirect('/students');
 
   const isArchived = student.teacherStudents[0]?.isArchived ?? false;
-  const visible = projectStudentForTeacher(student);
+  const visible = projectStudentForTeacher(student, session.teacherId);
   const isUnlinked = !visible.claimedAt;
   const displayName = visible.displayName;
 

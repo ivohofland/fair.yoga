@@ -251,7 +251,7 @@ export async function getOutstandingPayments(
     ...row,
     registration: {
       ...row.registration,
-      student: projectStudentForTeacher(row.registration.student),
+      student: projectStudentForTeacher(row.registration.student, teacherId),
     },
   }));
 }
@@ -294,7 +294,7 @@ export async function getPaymentsForClass(
     ...row,
     registration: {
       ...row.registration,
-      student: projectStudentForTeacher(row.registration.student),
+      student: projectStudentForTeacher(row.registration.student, teacherId),
     },
   }));
 }

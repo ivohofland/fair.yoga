@@ -48,7 +48,7 @@ export const GET = withErrorHandler(async (
     registration: {
       id: payment.registration.id,
       status: payment.registration.status,
-      student: projectStudentForTeacher(payment.registration.student),
+      student: projectStudentForTeacher(payment.registration.student, session.teacherId),
       class: {
         classType: payment.registration.class.classType,
         date: payment.registration.class.date,

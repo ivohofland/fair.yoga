@@ -35,7 +35,7 @@ export default async function PaymentsOverviewPage() {
     .reduce((sum, p) => sum + Number(p.amount), 0);
 
   const studentName = (p: (typeof payments)[number]) =>
-    teacherVisibleName(p.registration.student);
+    teacherVisibleName(p.registration.student, session.teacherId);
 
   return (
     <div>

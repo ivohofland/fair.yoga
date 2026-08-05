@@ -103,7 +103,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   );
 
   const result = students.map((s) => ({
-    ...projectStudentForTeacher(s),
+    ...projectStudentForTeacher(s, session.teacherId),
     lastClassDate: s.registrations[0]?.class.date ?? null,
     classCount: s._count.registrations,
     overduePayments: overdueByStudent.get(s.id) ?? 0,

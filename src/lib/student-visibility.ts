@@ -54,12 +54,31 @@ const _visibilityFlagsAreExhaustive: NoneOf<
 > = true;
 void _visibilityFlagsAreExhaustive;
 
+/**
+ * A `StudentPrivacy` row as a projection reads it: the flags, plus the
+ * `teacherId` that says whose flags they are.
+ *
+ * `teacherId` is not optional and is not a convenience. Both query fragments
+ * below scope their nested `studentPrivacy` with `where: { teacherId }`, and
+ * before this shape existed the projections trusted that scope blindly by
+ * reading `studentPrivacy[0]`. Deleting either `where` therefore left `tsc`,
+ * the unit suite and the integration suite all green while handing a teacher
+ * whatever privacy row happened to sort first — i.e. *opening* another
+ * teacher's flags. Carrying the owner in the row and matching on it here makes
+ * that mutation fail closed instead: no match, every field `null`.
+ */
+export type ScopedVisibilityFlags = VisibilityFlags & Pick<StudentPrivacy, 'teacherId'>;
+
+/** The same scoping, for the name-only fragment. */
+export type ScopedNameFlags = Pick<VisibilityFlags, 'shareFullName'> &
+  Pick<StudentPrivacy, 'teacherId'>;
+
 /** Just enough to compose a display name. */
 export interface StudentNameInput {
   firstName: string;
   lastName: string;
   claimedAt: Date | null;
-  studentPrivacy: Pick<VisibilityFlags, 'shareFullName'>[];
+  studentPrivacy: ScopedNameFlags[];
 }
 
 /** Everything the full projection reads. */
@@ -69,7 +88,7 @@ export interface StudentProjectionInput extends StudentNameInput {
   phone: string | null;
   birthday: Date | null;
   address: string | null;
-  studentPrivacy: VisibilityFlags[];
+  studentPrivacy: ScopedVisibilityFlags[];
 }
 
 /**
@@ -160,23 +179,24 @@ function bypassesPrivacy(student: { claimedAt: Date | null }): boolean {
   return !student.claimedAt;
 }
 
-export function teacherVisibleName(student: StudentNameInput): string {
-  const shareFullName =
-    bypassesPrivacy(student) || (student.studentPrivacy[0]?.shareFullName ?? false);
+export function teacherVisibleName(student: StudentNameInput, teacherId: string): string {
+  const flags = student.studentPrivacy.find((p) => p.teacherId === teacherId);
+  const shareFullName = bypassesPrivacy(student) || (flags?.shareFullName ?? false);
   return formatStudentName(student.firstName, student.lastName, shareFullName);
 }
 
 export function projectStudentForTeacher(
   student: StudentProjectionInput,
+  teacherId: string,
 ): TeacherVisibleStudent {
-  const flags = student.studentPrivacy[0];
+  const flags = student.studentPrivacy.find((p) => p.teacherId === teacherId);
   const ungated = bypassesPrivacy(student);
   const shared = <T>(flag: boolean | undefined, value: T): T | null =>
     ungated || (flag ?? false) ? value : null;
 
   return {
     id: student.id,
-    displayName: teacherVisibleName(student),
+    displayName: teacherVisibleName(student, teacherId),
     email: shared(flags?.shareEmail, student.email),
     phone: shared(flags?.sharePhone, student.phone),
     birthday: shared(flags?.shareBirthday, student.birthday),
@@ -185,7 +205,15 @@ export function projectStudentForTeacher(
   };
 }
 
-/** Query fragment for `teacherVisibleName`'s input. */
+/**
+ * Query fragment for `teacherVisibleName`'s input.
+ *
+ * `teacherId: true` inside the nested select is what lets the projection
+ * re-check the scope it was handed rather than trusting it — see
+ * `ScopedNameFlags`. The `where` and the `find` are deliberately redundant:
+ * the `where` keeps the row set small, the `find` is what fails closed if the
+ * `where` is ever dropped.
+ */
 export function studentNameSelect(teacherId: string) {
   return {
     firstName: true,
@@ -193,7 +221,7 @@ export function studentNameSelect(teacherId: string) {
     claimedAt: true,
     studentPrivacy: {
       where: { teacherId },
-      select: { shareFullName: true },
+      select: { teacherId: true, shareFullName: true },
     },
   } satisfies Prisma.StudentSelect;
 }
@@ -212,6 +240,7 @@ export function studentVisibilitySelect(teacherId: string) {
     studentPrivacy: {
       where: { teacherId },
       select: {
+        teacherId: true,
         shareFullName: true,
         shareEmail: true,
         sharePhone: true,

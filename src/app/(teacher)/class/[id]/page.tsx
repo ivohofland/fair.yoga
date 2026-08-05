@@ -63,7 +63,7 @@ export default async function ClassDetailPage({
   const attendanceItems: AttendanceItem[] = activeRegistrations
     .map((r) => ({
       registrationId: r.id,
-      studentName: teacherVisibleName(r.student),
+      studentName: teacherVisibleName(r.student, session.teacherId),
       status: r.status,
     }));
 
@@ -72,7 +72,7 @@ export default async function ClassDetailPage({
     .map((r) => ({
       paymentId: r.payment!.id,
       studentId: r.studentId,
-      studentName: teacherVisibleName(r.student),
+      studentName: teacherVisibleName(r.student, session.teacherId),
       amount: Number(r.payment!.amount),
       status: r.payment!.status,
       reminderSentAt: r.payment!.reminderSentAt,
@@ -136,7 +136,7 @@ export default async function ClassDetailPage({
                 href={`/students/${r.studentId}`}
                 className="flex items-center min-h-14 py-2 border-b border-border last:border-b-0 no-underline"
               >
-                <span className="text-base text-ink">{teacherVisibleName(r.student)}</span>
+                <span className="text-base text-ink">{teacherVisibleName(r.student, session.teacherId)}</span>
               </Link>
             ))}
           </div>

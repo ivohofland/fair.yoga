@@ -39,6 +39,9 @@ export const GET = withErrorHandler(async (
   });
 
   return respondOk(
-    registrations.map((r) => ({ ...r, student: projectStudentForTeacher(r.student) })),
+    registrations.map((r) => ({
+      ...r,
+      student: projectStudentForTeacher(r.student, session.teacherId),
+    })),
   );
 });

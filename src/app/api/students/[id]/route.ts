@@ -43,7 +43,7 @@ export const GET = withErrorHandler(async (
     });
     if (!visible) return respondError('Student not found', 404);
 
-    return respondOk(projectStudentForTeacher(visible));
+    return respondOk(projectStudentForTeacher(visible, session.teacherId));
   }
 
   return respondError('Access denied', 403);

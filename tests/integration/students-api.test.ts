@@ -542,6 +542,11 @@ describe('GET /api/students/[id] — profile-presence authorization', () => {
   let rosterStudentId: string;
   let rosterAccountId: string;
   let rosterToken: string;
+  // A second teacher the roster student ALSO shares with — the other half of
+  // the privacy-scoping fixture below.
+  let sharedTeacherId: string;
+  let sharedTeacherAccountId: string;
+  let sharedTeacherToken: string;
 
   const as = (token: string, path: string, init?: RequestInit) =>
     fetch(`${BASE_URL}${path}`, {
@@ -595,19 +600,64 @@ describe('GET /api/students/[id] — profile-presence authorization', () => {
       data: { teacherId: dualTeacherId, studentId: rosterStudentId },
     });
     rosterToken = await seedSession(prisma, rosterAccountId);
+
+    // Second teacher, same student, opposite settings. Both are on the
+    // student's roster, so both reach the projection legitimately — what
+    // separates them is only which StudentPrivacy row is theirs.
+    const sharedEmail = `stuapi-shared-${dualSuffix}@test.local`;
+    const sharedTeacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Shared',
+        lastName: 'Teacher',
+        email: sharedEmail,
+        bio: 'Privacy-scoping fixtures',
+        pageSlug: `stuapi-shared-${dualSuffix}`,
+        account: { create: { email: sharedEmail } },
+      },
+    });
+    sharedTeacherId = sharedTeacher.id;
+    sharedTeacherAccountId = sharedTeacher.accountId;
+    sharedTeacherToken = await seedSession(prisma, sharedTeacherAccountId);
+    await prisma.teacherStudent.create({
+      data: { teacherId: sharedTeacherId, studentId: rosterStudentId },
+    });
+
+    // Two rows, deliberately in this order: the permissive one is created
+    // first, so an unscoped read that takes `studentPrivacy[0]` gets the
+    // *open* flags. Without this the fixture would fail closed by luck.
+    await prisma.studentPrivacy.create({
+      data: {
+        studentId: rosterStudentId,
+        teacherId: sharedTeacherId,
+        shareFullName: true,
+        shareEmail: true,
+      },
+    });
+    await prisma.studentPrivacy.create({
+      data: { studentId: rosterStudentId, teacherId: dualTeacherId },
+    });
   });
 
   afterAll(async () => {
     await prisma.session.deleteMany({
-      where: { accountId: { in: [dualAccountId, rosterAccountId] } },
+      where: {
+        accountId: { in: [dualAccountId, rosterAccountId, sharedTeacherAccountId] },
+      },
     });
-    await prisma.teacherStudent.deleteMany({ where: { teacherId: dualTeacherId } });
+    await prisma.studentPrivacy.deleteMany({
+      where: { teacherId: { in: [dualTeacherId, sharedTeacherId] } },
+    });
+    await prisma.teacherStudent.deleteMany({
+      where: { teacherId: { in: [dualTeacherId, sharedTeacherId] } },
+    });
     await prisma.student.deleteMany({
       where: { id: { in: [dualOwnStudentId, rosterStudentId] } },
     });
-    await prisma.teacher.deleteMany({ where: { id: dualTeacherId } });
+    await prisma.teacher.deleteMany({
+      where: { id: { in: [dualTeacherId, sharedTeacherId] } },
+    });
     await prisma.account.deleteMany({
-      where: { id: { in: [dualAccountId, rosterAccountId] } },
+      where: { id: { in: [dualAccountId, rosterAccountId, sharedTeacherAccountId] } },
     });
   });
 
@@ -621,20 +671,53 @@ describe('GET /api/students/[id] — profile-presence authorization', () => {
     expect(body.data.lastName).toBe('Matrix');
   });
 
-  it('a dual account reading a roster student gets the privacy-filtered view', async () => {
+  /**
+   * The student holds two `StudentPrivacy` rows: all-false for this teacher,
+   * and `shareFullName`/`shareEmail` for `sharedTeacherId`. That is what makes
+   * this a test of the *scope* rather than of the default.
+   *
+   * Until the PR review of #167 the fixture had no privacy row at all, so this
+   * assertion held for the wrong reason — a missing row and a wrong-teacher
+   * row both project to `null`, and deleting `where: { teacherId }` from
+   * `studentVisibilitySelect` left `tsc`, unit and integration all green while
+   * every teacher read whichever row sorted first. With a permissive row now
+   * present and created first, that mutation makes this test fail.
+   */
+  it('a dual account reading a roster student sees only its OWN privacy row', async () => {
     const res = await as(dualToken, `/api/students/${rosterStudentId}`);
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       data: { displayName: string; email: string | null; incomeTier?: number };
     };
-    // Default privacy: a composed name with a last initial, and no email.
-    // `email` is present and null rather than absent — an absent key cannot be
-    // told apart from a route that forgot to select the field (#167).
+    // A composed name with a last initial, and no email — the other teacher's
+    // open flags must not reach this response. `email` is present and null
+    // rather than absent: an absent key cannot be told apart from a route that
+    // forgot to select the field (#167).
     expect(body.data.displayName).toBe('Rostered p.');
     expect(body.data.email).toBeNull();
     // No tier: there is no shareIncomeTier flag and #167 decided against one.
     expect(body.data.incomeTier).toBeUndefined();
+  });
+
+  /**
+   * The positive direction, and the only one in this suite. Every other
+   * privacy assertion here checks that something is withheld, which a
+   * projection that returned `null` unconditionally would also satisfy — the
+   * gate would look perfect and the app would be unusable. This is the
+   * assertion that says the flags still let data through when set.
+   */
+  it('the teacher the student DID share with gets the full name and the real email', async () => {
+    const res = await as(sharedTeacherToken, `/api/students/${rosterStudentId}`);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { displayName: string; email: string | null; phone: string | null };
+    };
+    expect(body.data.displayName).toBe('Rostered Privately');
+    expect(body.data.email).toBe(`stuapi-roster-${dualSuffix}@test.local`);
+    // Still per-field: this row shares name and email, nothing else.
+    expect(body.data.phone).toBeNull();
   });
 
   it('a student-only session reading another student is denied', async () => {

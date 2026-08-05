@@ -64,7 +64,7 @@ export const GET = withErrorHandler(async (
     cancelledAt: registration.cancelledAt,
     isWalkIn: registration.isWalkIn,
     class: registration.class,
-    student: projectStudentForTeacher(student),
+    student: projectStudentForTeacher(student, teacherId),
   });
 });
 
