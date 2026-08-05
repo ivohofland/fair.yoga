@@ -70,6 +70,13 @@ Task 1 depends on nothing and can land first on its own.
 
 ### Task 1: Waitlist promotion and claim create the roster link
 
+> **Amended after the PR review.** The project owner ruled that joining the
+> waitlist is itself the consenting act — "registering for the waiting list
+> already establishes the connection" — so the link is created in
+> `addToWaitlist`, not here. The upserts this task adds stayed, but as an
+> idempotent backstop for `waiting` rows the join never touched, not as the
+> mechanism. See the design doc's "The two ways a link comes into existence".
+
 The one part of this branch that fixes a bug live today, and it needs no schema. A student promoted off a waitlist has a `Registration` and no `TeacherStudent` row, so they are invisible in the CRM and — the sharp part — receive the teacher's announcements while being locked out of the `StudentPrivacy` row that would mute them.
 
 **Files:**
@@ -1355,6 +1362,13 @@ git commit -m "refactor: move the block out of Invitation so invitations behave 
 ---
 
 ### Task 7: Booking and waitlisting resolve invitations and clear tombstones
+
+> **Amended after the PR review.** `resolveInvitationOnLink` now lives in
+> `src/services/link-consent.ts` (a `waitlist.ts` ↔ `invitations.ts` import
+> cycle), and it is called from the student's own booking and from
+> `addToWaitlist` — not from `promoteNext`/`claimSpot`, which fire at a moment
+> the teacher chooses. The `LinkConsent` parameter a review wave added here was
+> deleted with that change; the signature below is the one that shipped.
 
 The student's way back in. This is what stops "declined" being a trap.
 

@@ -246,46 +246,55 @@ advisory locks. None names the table.
 
 1. **The student accepts an invitation.** Creates `TeacherStudent`, sets
    `status = accepted` and `respondedAt`.
-2. **The student takes a spot in one of that teacher's classes** — books it
-   directly, is promoted off the waitlist, or claims an open spot. The existing
-   upsert at `registrations/route.ts:201` already does this for a direct
-   booking, and `promoteNext`/`claimSpot` gain the same upsert (see the route
-   table). **Joining a waitlist creates no link**: `addToWaitlist` writes only
-   the `WaitlistEntry`, and the link appears when the entry turns into a
-   registration. An earlier draft of this section said "books or waitlists",
-   which the route table has never agreed with.
+2. **The student takes a spot in one of that teacher's classes, or asks for
+   one** — books it directly, or joins the waitlist. The existing upsert at
+   `registrations/route.ts:201` already does this for a direct booking;
+   `addToWaitlist` gains the same upsert (see the route table).
 
-   Each of these also resolves a `pending` invitation for that pair to
-   `accepted`. Only the two that are the student's own act *at that instant* —
-   a direct booking and a claim — additionally clear a `declined` tombstone and
-   a `TeacherBlock`. A **promotion does not clear a decline**, and the
-   distinction is the point: see below.
+   **Joining a waitlist creates the link.** It is student-initiated and aimed
+   at one named teacher, which is exactly what a direct booking is. An earlier
+   version of this section said the opposite — that the link appears only when
+   the entry turns into a registration — and the project owner reversed it
+   after the PR review: "registering for the waitlist already establishes the
+   connection." `promoteNext` and `claimSpot` keep the same upsert, but as an
+   idempotent backstop for `waiting` rows the join never touched (rows
+   predating the correction, or written by hand), not as the mechanism.
+
+   Each of the two student acts also resolves the invitation for that pair:
+   `pending` and `declined` alike, and the `TeacherBlock` with them. A
+   promotion resolves nothing at all — see below.
 
 ### A promotion is not consent given now
 
-`promoteNext` is the one link-creating path that fires at a moment the
-**teacher** chooses — they cancel a registration, `handleSpotFreed` promotes
-the queue head — off a request the student made earlier, with nothing
-rechecking the student's intent in between.
+`promoteNext` fires at a moment the **teacher** chooses — they cancel a
+registration, `handleSpotFreed` promotes the queue head — off a request the
+student made earlier, with nothing rechecking the student's intent in between.
 
-That is enough to erase a refusal. Sam joins the waitlist for Ivo's class
-(creating no link). Ivo types Sam's address into the CRM. Sam declines. Ivo
-cancels any registration in that class, and the promotion resolves the
-invitation to `accepted` — Sam's "no" gone, at a moment Ivo picked.
+While the link was created there, that was enough to erase a refusal. Sam
+joins the waitlist for Ivo's class. Ivo types Sam's address into the CRM. Sam
+declines. Ivo cancels any registration in that class, and the promotion
+resolves the invitation to `accepted` — Sam's "no" gone, at a moment Ivo
+picked.
 
-So `resolveInvitationOnLink` takes a `LinkConsent`. `given_now` (direct
-booking, `claimSpot`) clears any non-accepted invitation, which is the
-student's escape hatch from their own decline. `standing` (`promoteNext`)
-resolves only a `pending` invitation and leaves a `declined` one exactly as it
-stands.
+The first fix was a `LinkConsent` parameter on `resolveInvitationOnLink`:
+`given_now` (booking, claim) clearing any non-accepted invitation, `standing`
+(promotion) resolving only a `pending` one. That patched the symptom at the
+wrong layer, and it is gone. Creating the link at the join removes the cause:
+promotion is not where a link comes from, so it resolves no invitation at all,
+and there is no second kind of consent left to model. Every caller of
+`resolveInvitationOnLink` is a student acting at that instant, so it always
+clears a `declined` row and a `TeacherBlock`.
 
-The `TeacherBlock` delete is deliberately *not* gated the same way, and the
-asymmetry follows from Q4: `unlinkTeacher` withdraws that student's `waiting`
-entries, so an entry that survives to be promoted was joined **after** the
-unlink — the student walking back of their own accord. Declining withdraws
-nothing (a refusal of an invitation must not cost a queue position in an
-unrelated class), so a `waiting` entry can outlive a decline and the ordering
-there is genuinely ambiguous. Where it is ambiguous, the refusal wins.
+What remains load-bearing from Q4 is the withdrawal: `unlinkTeacher` withdraws
+that student's `waiting` entries under the class lock, so a `waiting` entry
+that survives an unlink was joined **after** it — the student walking back of
+their own accord — and the join is a safe place to clear the block.
+
+`resolveInvitationOnLink` lives in `src/services/link-consent.ts`, not
+`services/invitations.ts`: `invitations.ts` imports
+`withdrawWaitingEntriesForTeacher` from `waitlist.ts`, and a third
+`waitlist.ts → invitations.ts` edge would have deepened a real import cycle
+that until then survived only on function hoisting.
 
 ### Which email identifies the invitee, and who can accept
 
@@ -316,7 +325,8 @@ Three arrival states, all of which the surface must handle:
 | `PATCH /api/invitations/[id]` | Teacher archives/unarchives, mirroring `PATCH /api/students/[id]?state=` exactly. |
 | `POST /api/invitations/[id]/accept`, `/decline` | Student-authed. Accept creates the link; decline writes the tombstone. |
 | `DELETE /api/teacher-links/[teacherId]` | Student-authed unlink. Deletes the `TeacherStudent` row for the session's `studentId`, then upserts the tombstone: **update** an existing row to `declined` (keeping `origin: teacher_invite`, since the teacher typed that address), or **create** one with `origin: student_block` when the link came from a booking and no invitation ever existed. The student's own `Student` row survives unconditionally — unlinking a last teacher must not orphan-delete an account. (The one code path that did that, `students/[id]/route.ts:201-206`, is removed by the row above; this route must not reintroduce it.) |
-| `services/waitlist.ts:344` (`promoteNext`), `:443` (`claimSpot`) | Both gain the link upsert `registrations/route.ts:201` has. `claimSpot` resolves invitations on the same terms as a direct booking (`given_now`); `promoteNext` resolves only a `pending` one (`standing`) — see "A promotion is not consent given now". `addToWaitlist` gains nothing: joining a queue is not taking a spot. |
+| `services/waitlist.ts` `addToWaitlist` | Gains the link upsert `registrations/route.ts:201` has, plus `resolveInvitationOnLink` — under the class lock it already takes, and **before** its three exits, because the "already waiting" exit returns early. This is where the link comes from: joining is the consenting act. |
+| `services/waitlist.ts:344` (`promoteNext`), `:443` (`claimSpot`) | Both keep the same link upsert, as an idempotent backstop for `waiting` rows with no link (rows predating the correction, or written by hand). Neither resolves an invitation — see "A promotion is not consent given now". |
 
 ### The tombstone hole, and the fix
 
@@ -523,10 +533,11 @@ Integration (`tests/integration/`), run by explicit file path — never
   the response body, not merely that the row count is unchanged — and
   `POST /api/students` for that address must still be refused.
 - **The student's way back.** After declining, the student books that teacher's
-  class → link exists, tombstone cleared.
-- **Waitlist promotion and claim create the link**, and the promoted student can
-  then set per-teacher privacy (the 403 `TEACHER_NOT_LINKED` path must stop
-  firing for them).
+  class — or joins the waitlist for one → link exists, tombstone cleared.
+- **Joining a waitlist creates the link**, so the waiting student can set
+  per-teacher privacy (the 403 `TEACHER_NOT_LINKED` path must stop firing for
+  them) without waiting for a spot. Promotion and claim repair the link for a
+  `waiting` row that has none, and resolve no invitation.
 - **Unlink does not delete the `Student` row.** A student whose last teacher is
   unlinked still has an account, still signs in, and still sees their bookings.
 - **The removed `PUT` teacher branch.** The route survives for the self-edit
