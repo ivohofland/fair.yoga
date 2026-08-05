@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type ClassStatus } from '@prisma/client';
 import {
   VALID_TRANSITIONS,
   ECONOMIC_FIELDS,
@@ -432,6 +432,30 @@ describe('completeClass (DB)', () => {
   let classId: string;
   const studentIds: string[] = [];
 
+  // For the lock tests below, which each need their own class rather than
+  // sharing the fixture `classId` the other tests in this block mutate to
+  // 'completed'. Mirrors `updateClass (DB)`'s `makeClass` closure — reuses
+  // the shared teacher/room fixture from `beforeAll` instead of standing up
+  // a fresh one per test.
+  const makeClass = ({ status }: { status: ClassStatus }) =>
+    prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Vinyasa',
+        date: new Date('2026-06-01'),
+        startTime: '18:00',
+        durationMinutes: 75,
+        roomCost: 35,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 4,
+        maxStudents: 12,
+        status,
+        settingsLocked: true,
+      },
+    });
+
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
       data: {
@@ -525,12 +549,14 @@ describe('completeClass (DB)', () => {
   });
 
   afterAll(async () => {
-    // Clean up in dependency order: payments → registrations → class → students → teacherRoom → room → teacher
+    // Clean up in dependency order: payments → registrations → class → students → teacherRoom → room → teacher.
+    // Filtered by teacherId, not just the fixed `classId`, so this also
+    // catches the extra classes `makeClass` creates in the lock tests below.
     await prisma.payment.deleteMany({
-      where: { registration: { classId } },
+      where: { registration: { class: { teacherId } } },
     });
-    await prisma.registration.deleteMany({ where: { classId } });
-    await prisma.class.delete({ where: { id: classId } });
+    await prisma.registration.deleteMany({ where: { class: { teacherId } } });
+    await prisma.class.deleteMany({ where: { teacherId } });
     for (const sid of studentIds) {
       await prisma.student.delete({ where: { id: sid } });
     }
@@ -608,6 +634,84 @@ describe('completeClass (DB)', () => {
     if (!result.ok) {
       expect(result.error).toContain('not found');
     }
+  });
+
+  /**
+   * The lock cannot be seen in the rows afterwards — it is the timing that
+   * differs. But timing alone does not falsify this: `completeClass` always
+   * ends with a `class.update`, and that statement blocks behind another
+   * transaction's `FOR UPDATE` whether or not the read above it was taken
+   * under a lock — a holder that only sleeps produces the same
+   * wait-then-return shape either way (confirmed: this was tried first, and
+   * it passed against the unlocked implementation, which is why it was
+   * rewritten). So the holder here also commits a status change — while
+   * `completeClass` is blocked, not before it starts — and the assertion
+   * is on what the eventual decision was made from, not just on the wait:
+   * a read taken under the lock (after the holder's commit) sees the
+   * cancellation and refuses; a read taken before the wait is stale, and
+   * the unconditional `class.update` that follows — once the lock frees —
+   * clobbers the holder's cancellation with 'completed'. Held well under
+   * the 2s `lock_timeout` the new site sets, so this observes the wait and
+   * not the timeout.
+   */
+  it('decides from the class row the holder left behind, not from a read taken before the wait', async () => {
+    const cls = await makeClass({ status: 'in_progress' });
+    let holderReleased = false;
+
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
+        await new Promise((r) => setTimeout(r, 900));
+        await tx.class.updateMany({
+          where: { id: cls.id, status: 'in_progress' },
+          data: { status: 'cancelled' },
+        });
+        holderReleased = true;
+      },
+      { timeout: 10_000 },
+    );
+    await new Promise((r) => setTimeout(r, 150));
+
+    const completingResult = completeClass(prisma, cls.id);
+    const completing = completingResult.then(() => 'returned' as const);
+    const outcome = await Promise.race([
+      completing,
+      new Promise<'waiting'>((r) => setTimeout(() => r('waiting'), 400)),
+    ]);
+
+    expect(outcome).toBe('waiting');
+    expect(holderReleased).toBe(false);
+
+    await holder;
+    const result = await completingResult;
+
+    // Without the lock, this reads 'in_progress' — the value that was
+    // current before the wait began — and reports success, having already
+    // clobbered the holder's cancellation on the way out.
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/Invalid transition/);
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.status).toBe('cancelled');
+  });
+
+  /**
+   * The refusal's SHAPE is the assertion, not the absence of Payment rows.
+   * After the terminality trigger lands (Task 8), "no Payment rows" is
+   * satisfied by the trigger alone and would no longer prove this lock.
+   */
+  it('refuses cleanly when the class was cancelled while it waited', async () => {
+    const cls = await makeClass({ status: 'in_progress' });
+    await prisma.class.updateMany({
+      where: { id: cls.id, status: 'in_progress' },
+      data: { status: 'cancelled' },
+    });
+
+    const result = await completeClass(prisma, cls.id);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/Invalid transition/);
+    expect(await prisma.payment.count({ where: { registration: { classId: cls.id } } })).toBe(0);
   });
 });
 

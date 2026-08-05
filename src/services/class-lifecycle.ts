@@ -13,6 +13,7 @@ import type { updateClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { ECONOMIC_FIELDS, type EconomicField } from '@/lib/class-fields';
 import { toIncomeTierOrThrow } from '@/lib/tiers.server';
+import { lockClassRow } from '@/lib/db-locks';
 import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 
@@ -180,6 +181,13 @@ export async function completeClass(
   classId: string,
 ): Promise<TransitionDbResult> {
   return db.$transaction(async (tx) => {
+    // Before the read, not with the first write. Everything below decides
+    // from this row — the status gate, the registration set the pricing
+    // engine consumes, and the Payment rows created from it — so the read
+    // has to happen under the lock rather than the update acquiring it after
+    // the decision is already made.
+    await lockClassRow(tx, classId);
+
     const cls = await tx.class.findUnique({
       where: { id: classId },
       include: { registrations: true },
