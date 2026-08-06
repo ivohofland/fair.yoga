@@ -362,7 +362,8 @@ describe('transitionClass (DB)', () => {
     });
 
     // Cast for the same reason as the interposition tests in
-    // `class-template-lifecycle.test.ts` (`:223`, `:1036`, `:1267`) and
+    // `class-template-lifecycle.test.ts`'s `updateClassTemplate`,
+    // `archiveOrUnarchiveTemplate`, and `pauseOrResumeTemplate` blocks, and
     // `invitations.revive.test.ts` (`:99`): `$extends` returns a client
     // missing `$on`, so it is not assignable to `transitionClass`'s
     // `PrismaClient`-typed `db` parameter even though every method it calls
