@@ -567,6 +567,37 @@ describe('class transitions (DB, timezone-aware)', () => {
     await prisma.class.delete({ where: { id: cls.id } });
   });
 
+  /**
+   * The pre-filter's `_count` is FILTERED, and the filter is the difference
+   * between an optimisation and a bug. An unfiltered `_count` counts
+   * cancelled and late-cancelled registrations too, so a class everybody
+   * dropped out of would count above its minimum forever and never be swept
+   * again — it would sit `open` until it started, with nobody in it and
+   * nobody told.
+   *
+   * Two cancelled registrations against `minStudents: 1`: unfiltered that is
+   * 2 >= 1 and the class survives; filtered it is 0 < 1 and the class is
+   * cancelled, which is correct.
+   */
+  it('still cancels a class whose only registrations are cancelled', async () => {
+    const cls = await makeClass({ autoCancelCheck: 'HOURS_2', minStudents: 1 });
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId, status: 'cancelled', tierAtBooking: 3 },
+    });
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId: secondStudentId, status: 'late_cancel', tierAtBooking: 3 },
+    });
+
+    await autoCancelClasses(prisma, new Date('2026-07-20T15:00:00Z'));
+
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(updated.status).toBe('cancelled');
+
+    await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+    await prisma.registration.deleteMany({ where: { classId: cls.id } });
+    await prisma.class.delete({ where: { id: cls.id } });
+  });
+
   it('auto-completes an in-progress class after its local end time', async () => {
     const cls = await makeClass({ status: 'in_progress', minStudents: 1 });
     await prisma.registration.create({

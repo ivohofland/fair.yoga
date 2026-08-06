@@ -117,25 +117,23 @@ export async function autoCancelClasses(
 ): Promise<number> {
   const currentTime = now ?? new Date();
 
-  // The eager-loaded active registrations are a PRE-FILTER and nothing else —
-  // see the `continue` below. `select: { id: true }` deliberately: the
-  // recipient list this used to carry (`studentId`) is now read inside the
-  // transaction, under the lock, and leaving the ids out is what stops a
-  // future reader rebuilding it from here without noticing.
+  // A filtered `_count`, and it is a PRE-FILTER and nothing else — see the
+  // `continue` below. A count rather than the eager-loaded rows this used to
+  // carry: the recipient list is read inside the transaction under the lock
+  // now, and having no `studentId`s here at all is what stops a future reader
+  // rebuilding it from the snapshot without noticing.
   //
-  // A filtered `_count` would be the natural shape and is not available:
-  // relation-count filters are still behind Prisma's `filteredRelationCount`
-  // preview feature, which this schema does not enable, and an UNfiltered
-  // `_count` would be wrong rather than merely coarse — a class whose only
-  // registrations are all cancelled would count above its minimum and never
-  // be swept again.
+  // The filter is load-bearing, not tidiness. An UNfiltered `_count` would be
+  // wrong rather than merely coarse: a class whose registrations are all
+  // cancelled would count above its minimum and never be swept again. This is
+  // the same filtered shape, with the same status set, that
+  // `(student)/bookings/page.tsx` already uses.
   const openClasses = await db.class.findMany({
     where: { status: 'open' },
     include: {
       teacher: { select: { defaultTimezone: true } },
-      registrations: {
-        where: { status: { in: ACTIVE_REGISTRATION_STATUSES } },
-        select: { id: true },
+      _count: {
+        select: { registrations: { where: { status: { in: ACTIVE_REGISTRATION_STATUSES } } } },
       },
     },
   });
@@ -164,149 +162,158 @@ export async function autoCancelClasses(
       // instead of this one. A pre-filter can only ever DELAY a cancellation,
       // never cause a wrong one, because nothing here cancels: it only
       // decides whether to look properly.
-      if (cls.registrations.length >= cls.minStudents) continue;
+      if (cls._count.registrations >= cls.minStudents) continue;
       if (!inCancelWindow(cls, cls.teacher.defaultTimezone, currentTime)) continue;
 
-      {
-        // Cancel + notify atomically: a cancelled class nobody was told
-        // about is worse than one that stays open one more sweep.
-        const didCancel = await db.$transaction(async (tx) => {
-          // Locked before anything is read, not just before the write: this
-          // decision reads more state than a status (a registration count),
-          // so per the rule in `transitionClass`'s docblock — CAS where the
-          // status is the only thing the decision depends on, `FOR UPDATE`
-          // where the transaction reads more state under the decision —
-          // this is a locking site, not a CAS-only one. Every production
-          // writer that CREATES a registration takes the same Class row lock
-          // first — `POST /api/registrations` and `waitlist.ts`'s
-          // `activateRegistration` (reached through `promoteNext` and
-          // `claimSpot`), each via its own inline `SELECT … FOR UPDATE`
-          // rather than through this helper; `db-locks.ts` records those
-          // inline sites as deliberately not adopting it. So this serializes
-          // against all of them: one already inside its own lock when this
-          // transaction starts is finished (committed or rolled back) before
-          // this count runs; one arriving after this count has been read
-          // blocks here until this transaction ends — it cannot land between
-          // the count and the update below either way. Without this lock,
-          // nothing stops it doing exactly that: reading the count first is
-          // not enough by itself, only serializing every writer against it
-          // is.
-          //
-          // Two writers are outside that: `PUT /api/registrations/[id]`
-          // (attendance) and `DELETE /api/registrations/[id]` (cancel) both
-          // write `Registration.status` with no `Class` lock at all. The
-          // exception is real but harmless HERE, and the direction is why:
-          // both of them can only move a registration OUT of the set this
-          // count filters on (`late_cancel`, `cancelled`), never into it. A
-          // racing exit makes this count too HIGH, so the class survives a
-          // sweep it might have been cancelled in — a one-tick delay, the
-          // same cost as a stale pre-filter above. The harmful direction, a
-          // registration arriving between the count and the CAS, belongs to
-          // the writers that do lock.
-          //
-          // Scope note, the same one `gdpr.ts` and `waitlist.ts`'s
-          // `removeFromWaitlist` each carry at their own `lockClassRow` call:
-          // `SET LOCAL lock_timeout = '2s'` bounds every statement left in
-          // this transaction, not just the `FOR UPDATE` inside the helper. So
-          // the 2s also governs the `registration.count`, the CAS, the
-          // recipient `findMany` and `createBulkNotifications` below it.
-          // Benign here, unlike at the erasure sites: none of those four waits
-          // on a lock in the normal case, and if one did time out, the
-          // per-class `catch` at the bottom of this loop logs it and the sweep
-          // moves to the next class — no partial write survives, because the
-          // whole transaction rolls back. Written down because it is
-          // non-obvious from this line, not because it is a hazard.
-          await lockClassRow(tx, cls.id);
+      // Cancel + notify atomically: a cancelled class nobody was told
+      // about is worse than one that stays open one more sweep.
+      const didCancel = await db.$transaction(async (tx) => {
+        // Locked before anything is read, not just before the write: this
+        // decision reads more state than a status (a registration count),
+        // so per the rule in `transitionClass`'s docblock — CAS where the
+        // status is the only thing the decision depends on, `FOR UPDATE`
+        // where the transaction reads more state under the decision —
+        // this is a locking site, not a CAS-only one. Every production
+        // writer that CREATES a registration takes the same Class row lock
+        // first — `POST /api/registrations` and `waitlist.ts`'s
+        // `activateRegistration` (reached through `promoteNext` and
+        // `claimSpot`), each via its own inline `SELECT … FOR UPDATE`
+        // rather than through this helper; `db-locks.ts` records those
+        // inline sites as deliberately not adopting it. So this serializes
+        // against all of them: one already inside its own lock when this
+        // transaction starts is finished (committed or rolled back) before
+        // this count runs; one arriving after this count has been read
+        // blocks here until this transaction ends — it cannot land between
+        // the count and the update below either way. Without this lock,
+        // nothing stops it doing exactly that: reading the count first is
+        // not enough by itself, only serializing every writer against it
+        // is.
+        //
+        // Two writers are outside that: `PUT /api/registrations/[id]`
+        // (attendance) and `DELETE /api/registrations/[id]` (cancel) both
+        // write `Registration.status` with no `Class` lock at all.
+        //
+        // `DELETE` is harmless here, and the direction is why: it only ever
+        // writes `cancelled` or `late_cancel`, both OUTSIDE the set this
+        // count filters on, so a racing cancel makes the count too HIGH and
+        // the class merely survives a sweep it might have been cancelled in
+        // — a one-tick delay, the same cost as a stale pre-filter above.
+        //
+        // `PUT` is NOT, and the claim here used to say it was. It accepts
+        // `attended | no_show | late_cancel` with no guard on the
+        // registration's current status and none on the class's, so
+        // `late_cancel -> attended` moves a registration INTO the counted
+        // set. Landing between this count and the CAS below, that makes the
+        // count too LOW — the harmful direction, on a class that is being
+        // cancelled for being under its minimum. The window is small (one
+        // statement) and the action is a teacher marking attendance on a
+        // class that has not started, which is not a normal thing to do; it
+        // is recorded rather than closed because guarding `PUT` is a product
+        // decision about which attendance transitions are legal, not a
+        // lock-discipline fix.
+        //
+        // Scope note, the same one `gdpr.ts` and `waitlist.ts`'s
+        // `removeFromWaitlist` each carry at their own `lockClassRow` call:
+        // `SET LOCAL lock_timeout = '2s'` bounds every statement left in
+        // this transaction, not just the `FOR UPDATE` inside the helper. So
+        // the 2s also governs the `registration.count`, the CAS, the
+        // recipient `findMany` and `createBulkNotifications` below it.
+        // Benign here, unlike at the erasure sites: none of those four waits
+        // on a lock in the normal case, and if one did time out, the
+        // per-class `catch` at the bottom of this loop logs it and the sweep
+        // moves to the next class — no partial write survives, because the
+        // whole transaction rolls back. Written down because it is
+        // non-obvious from this line, not because it is a hazard.
+        await lockClassRow(tx, cls.id);
 
-          // Re-read HERE, under the lock, and decide from THIS row — not from
-          // the snapshot the loop is walking. Round 1 review moved the count
-          // in and stopped there, which left the WINDOW itself still decided
-          // from the pre-lock read: `date`, `startTime`, `autoCancelCheck`
-          // and `minStudents` all still came from the outer `findMany`. Only
-          // `minStudents` is economic; `date` and `startTime` are NOT, so a
-          // teacher can reschedule an `open` class with registrations at any
-          // time, including while this sweep is mid-flight. The result was a
-          // class rescheduled out of its window being cancelled against the
-          // old one — and every student emailed about it — with `cancelled`
-          // now terminal in Postgres, so the teacher cannot undo it in the
-          // app.
-          //
-          // The identical stale-window race is still live in
-          // `autoTransitionToInProgress` above and `autoCompleteClasses`
-          // below. Both predate this branch and neither is fixed here; they
-          // are filed separately, because widening a lock-discipline fix into
-          // "re-read everything everywhere" is how a wave stops being
-          // reviewable.
-          const fresh = await tx.class.findUnique({
-            where: { id: cls.id },
-            select: {
-              status: true,
-              date: true,
-              startTime: true,
-              autoCancelCheck: true,
-              minStudents: true,
-              classType: true,
-              teacherId: true,
-              teacher: { select: { defaultTimezone: true } },
-            },
-          });
-          // Deleted, or no longer open — a concurrent cancel, completion or
-          // teacher action got here first. Not an error; the same outcome by
-          // a different route.
-          if (!fresh || fresh.status !== 'open') return false;
-          if (!inCancelWindow(fresh, fresh.teacher.defaultTimezone, currentTime)) return false;
+        // Re-read HERE, under the lock, and decide from THIS row — not from
+        // the snapshot the loop is walking. Round 1 review moved the count
+        // in and stopped there, which left the WINDOW itself still decided
+        // from the pre-lock read: `date`, `startTime`, `autoCancelCheck`
+        // and `minStudents` all still came from the outer `findMany`. Only
+        // `minStudents` is economic; `date` and `startTime` are NOT, so a
+        // teacher can reschedule an `open` class with registrations at any
+        // time, including while this sweep is mid-flight. The result was a
+        // class rescheduled out of its window being cancelled against the
+        // old one — and every student emailed about it — with `cancelled`
+        // now terminal in Postgres, so the teacher cannot undo it in the
+        // app.
+        //
+        // The identical stale-window race is still live in
+        // `autoTransitionToInProgress` above and `autoCompleteClasses`
+        // below. Both predate this branch and neither is fixed here; they
+        // are filed separately, because widening a lock-discipline fix into
+        // "re-read everything everywhere" is how a wave stops being
+        // reviewable.
+        const fresh = await tx.class.findUnique({
+          where: { id: cls.id },
+          select: {
+            status: true,
+            date: true,
+            startTime: true,
+            autoCancelCheck: true,
+            minStudents: true,
+            classType: true,
+            teacherId: true,
+            teacher: { select: { defaultTimezone: true } },
+          },
+        });
+        // Deleted, or no longer open — a concurrent cancel, completion or
+        // teacher action got here first. Not an error; the same outcome by
+        // a different route.
+        if (!fresh || fresh.status !== 'open') return false;
+        if (!inCancelWindow(fresh, fresh.teacher.defaultTimezone, currentTime)) return false;
 
-          // Counted HERE, not from the sweep's outer `findMany` at the top of
-          // this function. That read is a snapshot taken before this
-          // transaction began, so a registration committing in between is
-          // invisible to it — and cancelling a class that has just reached
-          // its minimum tells every student it is off when it is not.
-          const activeCount = await tx.registration.count({
-            where: { classId: cls.id, status: { in: ACTIVE_REGISTRATION_STATUSES } },
-          });
-          if (activeCount >= fresh.minStudents) return false;
+        // Counted HERE, not from the sweep's outer `findMany` at the top of
+        // this function. That read is a snapshot taken before this
+        // transaction began, so a registration committing in between is
+        // invisible to it — and cancelling a class that has just reached
+        // its minimum tells every student it is off when it is not.
+        const activeCount = await tx.registration.count({
+          where: { classId: cls.id, status: { in: ACTIVE_REGISTRATION_STATUSES } },
+        });
+        if (activeCount >= fresh.minStudents) return false;
 
-          // Redundant with the `fresh.status` check above, kept anyway: it
-          // costs nothing inside a statement that has to run regardless, and
-          // it is the guard that survives if someone later moves or drops the
-          // re-read.
-          const updated = await tx.class.updateMany({
-            where: { id: cls.id, status: 'open' },
-            data: { status: 'cancelled' },
-          });
-          if (updated.count === 0) return false;
+        // Redundant with the `fresh.status` check above, kept anyway: it
+        // costs nothing inside a statement that has to run regardless, and
+        // it is the guard that survives if someone later moves or drops the
+        // re-read.
+        const updated = await tx.class.updateMany({
+          where: { id: cls.id, status: 'open' },
+          data: { status: 'cancelled' },
+        });
+        if (updated.count === 0) return false;
 
-          const registrations = await tx.registration.findMany({
-            where: { classId: cls.id, status: { in: ACTIVE_REGISTRATION_STATUSES } },
-            select: { studentId: true },
-          });
-
-          // Bodies built from `fresh`, not `cls`. A notice that names the
-          // pre-lock `classType` or `minStudents` tells the student about a
-          // class that no longer exists in that shape — the same defect as
-          // deciding from the snapshot, one step later and harder to see.
-          const notifications: CreateNotificationInput[] = registrations.map((r) => ({
-            recipientType: 'student' as const,
-            recipientId: r.studentId,
-            type: 'class_cancelled' as const,
-            title: 'Class cancelled',
-            body: `${fresh.classType} class has been cancelled due to insufficient registrations.`,
-            relatedClassId: cls.id,
-          }));
-          notifications.push({
-            recipientType: 'teacher',
-            recipientId: fresh.teacherId,
-            type: 'class_cancelled',
-            title: 'Class auto-cancelled',
-            body: `${fresh.classType} was cancelled — only ${activeCount} of ${fresh.minStudents} minimum students registered.`,
-            relatedClassId: cls.id,
-          });
-          await createBulkNotifications(tx, notifications);
-          return true;
+        const registrations = await tx.registration.findMany({
+          where: { classId: cls.id, status: { in: ACTIVE_REGISTRATION_STATUSES } },
+          select: { studentId: true },
         });
 
-        if (didCancel) cancelled++;
-      }
+        // Bodies built from `fresh`, not `cls`. A notice that names the
+        // pre-lock `classType` or `minStudents` tells the student about a
+        // class that no longer exists in that shape — the same defect as
+        // deciding from the snapshot, one step later and harder to see.
+        const notifications: CreateNotificationInput[] = registrations.map((r) => ({
+          recipientType: 'student' as const,
+          recipientId: r.studentId,
+          type: 'class_cancelled' as const,
+          title: 'Class cancelled',
+          body: `${fresh.classType} class has been cancelled due to insufficient registrations.`,
+          relatedClassId: cls.id,
+        }));
+        notifications.push({
+          recipientType: 'teacher',
+          recipientId: fresh.teacherId,
+          type: 'class_cancelled',
+          title: 'Class auto-cancelled',
+          body: `${fresh.classType} was cancelled — only ${activeCount} of ${fresh.minStudents} minimum students registered.`,
+          relatedClassId: cls.id,
+        });
+        await createBulkNotifications(tx, notifications);
+        return true;
+      });
+
+      if (didCancel) cancelled++;
     } catch (err) {
       // Per-class isolation — see autoTransitionToInProgress.
       log.error({ err, classId: cls.id }, 'auto-cancel check failed');
