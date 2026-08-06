@@ -110,12 +110,14 @@ export type TransitionDbResult =
  * lock, so a cancel that commits between a caller's read and this write is
  * seen rather than written over. No `FOR UPDATE`, because the status is the
  * only thing this decision depends on — the same reason `POST
- * /api/classes/[id]/transition`'s cancel branch and `autoCancelClasses` don't
- * need one for their own conditional cancel-update either, even though both
- * additionally wrap it in a transaction — for an unrelated reason, to keep
- * their notification writes atomic with the status change, not because the
- * conditional update itself needs one. Sites that read more state under the
- * decision (`completeClass`) take the lock instead; see `docs/lock-order.md`.
+ * /api/classes/[id]/transition`'s cancel branch doesn't need one for its own
+ * conditional cancel-update either, even though it additionally wraps it in
+ * a transaction — for an unrelated reason, to keep its notification write
+ * atomic with the status change, not because the conditional update itself
+ * needs one. Sites that read more state under the decision (`completeClass`,
+ * and `autoCancelClasses` since #174 Task 6 started deciding from a
+ * registration count read under its own cancel decision) take the lock
+ * instead; see `docs/lock-order.md`.
  */
 export async function transitionClass(
   db: PrismaClient,

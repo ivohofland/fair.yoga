@@ -12,6 +12,7 @@ import { transitionClass, completeClass } from './class-lifecycle';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { classStartInstant } from '@/lib/timezone';
 import { log } from '@/lib/log';
+import { lockClassRow } from '@/lib/db-locks';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -76,6 +77,15 @@ export async function autoTransitionToInProgress(
  * Finds open classes within their auto-cancel check window and cancels
  * them if registered students are below min_students.
  * Creates notifications for affected students.
+ *
+ * Each class gets its own `db.$transaction`, so each also gets its own
+ * `lockClassRow` wait and its own Prisma-default transaction budget — not a
+ * budget shared across the sweep. This differs from `deleteStudentAccount`
+ * (`gdpr.ts`), which calls `lockClassRow` in a loop *inside one*
+ * transaction and sizes that transaction's timeout to the number of classes
+ * it is about to lock: nothing here accumulates that way, so a slow lock
+ * wait on one class costs only that class's own transaction, not the ones
+ * before or after it in this loop.
  */
 export async function autoCancelClasses(
   db: PrismaClient,
@@ -107,13 +117,30 @@ export async function autoCancelClasses(
         // Cancel + notify atomically: a cancelled class nobody was told
         // about is worse than one that stays open one more sweep.
         const didCancel = await db.$transaction(async (tx) => {
+          // Locked before anything is read, not just before the write: this
+          // decision reads more state than a status (a registration count),
+          // so per the rule in `transitionClass`'s docblock — CAS where the
+          // status is the only thing the decision depends on, `FOR UPDATE`
+          // where the transaction reads more state under the decision —
+          // this is a locking site, not a CAS-only one. Every production
+          // registration writer already takes this same Class row lock
+          // first (`POST /api/registrations`; `waitlist.ts`'s
+          // `activateRegistration`), so this serializes against all of
+          // them: one that is already inside its own `lockClassRow` when
+          // this transaction starts is finished (committed or rolled back)
+          // before this count runs; one that arrives after this count has
+          // already been read blocks here, behind this lock, until this
+          // transaction commits or rolls back — it cannot land between the
+          // count and the update below either way. Without this lock, nothing
+          // stops it doing exactly that: reading the count first is not
+          // enough by itself, only serializing every writer against it is.
+          await lockClassRow(tx, cls.id);
+
           // Counted HERE, not from the sweep's outer `findMany` at the top of
           // this function. That read is a snapshot taken before this
           // transaction began, so a registration committing in between is
           // invisible to it — and cancelling a class that has just reached
-          // its minimum tells every student it is off when it is not. The
-          // status CAS below cannot catch this: the status is still `open`,
-          // it is the count that moved.
+          // its minimum tells every student it is off when it is not.
           const activeCount = await tx.registration.count({
             where: { classId: cls.id, status: { in: ['registered', 'attended', 'no_show'] } },
           });
