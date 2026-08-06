@@ -2,6 +2,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { acceptInvitation, unlinkTeacher } from './invitations';
+import { resolveInvitationOnLink } from './link-consent';
 
 /**
  * Lock-ORDER invariants for the two table pairs #174 task 7 fixed:
@@ -38,15 +39,24 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
   const lockOrderTeacherAccountIds: string[] = [];
   const lockOrderStudentIds: string[] = [];
   const lockOrderStudentAccountIds: string[] = [];
+  const lockOrderRoomIds: string[] = [];
 
   afterAll(async () => {
     if (lockOrderTeacherIds.length) {
+      await prisma.registration.deleteMany({
+        where: { class: { teacherId: { in: lockOrderTeacherIds } } },
+      });
+      await prisma.class.deleteMany({ where: { teacherId: { in: lockOrderTeacherIds } } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: lockOrderTeacherIds } } });
       await prisma.invitation.deleteMany({ where: { teacherId: { in: lockOrderTeacherIds } } });
       await prisma.teacherStudent.deleteMany({ where: { teacherId: { in: lockOrderTeacherIds } } });
       await prisma.teacherBlock.deleteMany({ where: { teacherId: { in: lockOrderTeacherIds } } });
     }
     if (lockOrderStudentIds.length) {
       await prisma.student.deleteMany({ where: { id: { in: lockOrderStudentIds } } });
+    }
+    if (lockOrderRoomIds.length) {
+      await prisma.room.deleteMany({ where: { id: { in: lockOrderRoomIds } } });
     }
     if (lockOrderTeacherIds.length) {
       await prisma.teacher.deleteMany({ where: { id: { in: lockOrderTeacherIds } } });
@@ -56,6 +66,52 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
       await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
     }
   });
+
+  /**
+   * An open class for one of this describe's teachers. Only the booking-race
+   * test needs one — the counterparty there is `POST /api/registrations`'
+   * real statement order, which opens by locking a `Class` row and inserting
+   * a `Registration` before it ever reaches `TeacherStudent`, and that
+   * prelude is exactly what makes the accept reach the link first.
+   */
+  async function makeOpenClass(teacherId: string) {
+    const local = uniqueSuffix();
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Lock Order Studio',
+        address: `${local} Lock St`,
+        city: 'Amsterdam',
+        postcode: '1234LO',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+      select: { id: true },
+    });
+    lockOrderRoomIds.push(room.id);
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId: room.id, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+    return prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId: teacherRoom.id,
+        classType: 'Lock Order Flow',
+        date: new Date('2099-06-01'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 1,
+        maxStudents: 10,
+        status: 'open',
+      },
+      select: { id: true },
+    });
+  }
 
   /**
    * A fresh teacher/student pair with a pending Invitation, and — when
@@ -309,35 +365,34 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
   });
 
   /**
-   * The falsifiable regression test for the reorder: it observes the ORDER
-   * the real, unmodified `acceptInvitation` issues its two writes in, and
-   * fails the moment that order changes.
+   * The primary regression test for the reorder: it observes the ORDER the
+   * real, unmodified `acceptInvitation` issues its two writes in, and fails
+   * the moment that order changes.
    *
-   * Why the order and not a deadlock. Every deadlock-shaped attempt at this
-   * runs into the same wall, and it is worth writing down so the next person
-   * does not spend the afternoon rediscovering it. With a link already
-   * present, `upsert({ where, update: {}, create })` compiles to three
-   * non-locking `SELECT`s, so the real function asks for no `TeacherStudent`
-   * lock in either order and no counterparty can cycle against it — that is
-   * precisely why the tests above have to hand-roll a synthetic non-empty
-   * `update`, and it is what made the previous version of this test pass
-   * with the reorder reverted. With no link present the upsert genuinely
-   * `INSERT`s, but then the only counterparty that can contend for that row
-   * is another `INSERT` of the same `(teacherId, studentId)` key — and
-   * Prisma's non-atomic upsert answers a lost insert race with `P2002`, in
-   * BOTH orders, so that cannot discriminate either. (`unlinkTeacher` is not
-   * available as a counterparty here at all: with no link it returns
-   * `NOT_LINKED` and writes nothing.)
+   * Why the order and not a deadlock, given that the test below DOES
+   * reproduce one. Because this assertion holds regardless of scheduling.
+   * The cycle below needs the booking to have inserted its `TeacherStudent`
+   * row before the accept reaches its own, which is one round trip wide and
+   * has to be forced with a handshake; unforced, whichever side is faster
+   * simply wins and both orders look fine. The write order is the property
+   * the fix actually changed, and it is observable without racing anything.
    *
-   * So the order itself is the assertion. That is not a weaker test than a
-   * deadlock one — it is a stricter one: it fails on the reorder being
-   * undone even in the world where no deadlock is currently reachable, which
-   * is the world `docs/lock-order.md` says we are in and the whole reason
-   * the reorder was made.
+   * (An earlier version of this docblock asserted that NO counterparty could
+   * make the real function deadlock under the old order — that Prisma's
+   * non-atomic upsert answers `P2002` in both orders, so nothing could
+   * discriminate. That was false, and false because it generalised from a
+   * single arm: only the fixed order was ever run, against a counterparty
+   * whose `teacherStudent.upsert` came FIRST, which is not where `POST
+   * /api/registrations` puts it. See the test below for the reproduction.)
    *
-   * The fixture is unlinked so the recorded `upsert` is the lock-taking
-   * `INSERT` path rather than the three-`SELECT` one — the write whose
-   * position actually matters.
+   * What remains true and is worth keeping: with a link already present,
+   * `upsert({ where, update: {}, create })` compiles to three non-locking
+   * `SELECT`s, so the real function asks for no `TeacherStudent` lock in
+   * either order — that is why the tests above hand-roll a synthetic
+   * non-empty `update`, and why the previous version of THIS test passed
+   * with the reorder reverted. The fixture here is unlinked so the recorded
+   * upsert is the lock-taking `INSERT` path, the write whose position
+   * actually matters.
    *
    * The result assertion is `{ ok: true }`, not "did not reject". The
    * previous version only checked that nothing threw, which a version of
@@ -399,6 +454,105 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
       (await prisma.invitation.findUniqueOrThrow({ where: { id: invitationId } })).status,
     ).toBe('accepted');
   });
+
+  /**
+   * The cycle the reorder actually closes, against a real production writer.
+   *
+   * The counterparty is `POST /api/registrations`' own statement order,
+   * copied rather than paraphrased, and the copying is the whole point: the
+   * route takes the `Class` row lock, reads, inserts the `Registration`, and
+   * only THEN upserts `TeacherStudent` before reaching `Invitation` through
+   * `resolveInvitationOnLink`. A counterparty that upserts `TeacherStudent`
+   * as its FIRST statement — which is what an earlier attempt at this test
+   * used — always wins that insert, so the accept can only ever lose it with
+   * `P2002` and the orders look indistinguishable. That mistake is why this
+   * file briefly claimed no such reproduction existed.
+   *
+   * With the real order, on an unlinked pair, both transactions `INSERT` the
+   * same `(teacherId, studentId)` key, and Postgres makes the second inserter
+   * wait on the first's uncommitted tuple — a wait that participates in
+   * deadlock detection exactly like a row lock. So:
+   *
+   *   old order  accept: Invitation (held) -> TeacherStudent (blocked)
+   *              booking: TeacherStudent (held) -> Invitation (blocked)   40P01
+   *   new order  accept: TeacherStudent first, so it never holds Invitation
+   *              while asking for the link — no cycle to detect
+   *
+   * Measured three runs per order:
+   *
+   *   old: {"accept":"REJECTED 40P01","booking":"ok"}   x3
+   *   new: {"accept":"REJECTED P2002","booking":"ok"}   x3
+   *
+   * The handshake is not optional and does not create the inversion. The
+   * window between the booking's insert and the accept's is one round trip
+   * wide; unforced, whichever side is faster simply wins and BOTH orders come
+   * back clean (measured: 3/3 `accept: ok` under each). The same
+   * widen-the-window device the erasure lock tests in `gdpr.test.ts` use.
+   *
+   * The assertion is the ABSENCE of `40P01`, not a specific success, and that
+   * is deliberate. Under the fixed order the accept still loses this race —
+   * with `P2002`, because Prisma's non-atomic upsert answers a lost `INSERT`
+   * race that way. That is a real, separately-filed, pre-existing bug in
+   * `acceptInvitation`'s upsert and it has nothing to do with lock order;
+   * pinning it here would make this test fail the day it is fixed. What this
+   * test owns is the difference between a 409 the caller can act on and a
+   * deadlock Postgres resolves by killing someone.
+   */
+  it('does not deadlock when a real accept races a real booking on an unlinked pair', async () => {
+    const { teacherId, studentId, email, invitationId } =
+      await makeLinkedStudentWithPendingInvite({ linked: false });
+    const cls = await makeOpenClass(teacherId);
+
+    let bookingHasLink!: () => void;
+    const linkInserted = new Promise<void>((r) => { bookingHasLink = r; });
+
+    // The accept's own upsert waits until the booking has inserted the same
+    // key. Widens the window; does not change which row either side reaches
+    // for first, which is the property under test.
+    const accepting = prisma.$extends({
+      query: {
+        teacherStudent: {
+          async upsert({ args, query }) {
+            await linkInserted;
+            return query(args);
+          },
+        },
+      },
+      // Same cast rationale as the tests above.
+    }) as unknown as PrismaClient;
+
+    const booking = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
+      await tx.class.findUnique({ where: { id: cls.id } });
+      await tx.registration.count({
+        where: { classId: cls.id, status: { in: ['registered', 'attended', 'no_show'] } },
+      });
+      await tx.registration.create({
+        data: { classId: cls.id, studentId, status: 'registered', tierAtBooking: 3 },
+      });
+      await tx.teacherStudent.upsert({
+        where: { teacherId_studentId: { teacherId, studentId } },
+        update: {},
+        create: { teacherId, studentId },
+      });
+      bookingHasLink();
+      await new Promise((r) => setTimeout(r, 300));
+      // The real call, not a hand-rolled stand-in: TeacherBlock then
+      // Invitation, which is where the cycle closes.
+      await resolveInvitationOnLink(tx, { teacherId, studentEmail: email });
+    }, { timeout: 15_000 });
+
+    const [acceptResult, bookingResult] = await Promise.allSettled([
+      acceptInvitation(accepting, { invitationId, studentId, accountEmail: email }),
+      booking,
+    ]);
+
+    for (const settled of [acceptResult, bookingResult]) {
+      if (settled.status === 'rejected') {
+        expect(String(settled.reason)).not.toMatch(/40P01|deadlock/i);
+      }
+    }
+  }, 30_000);
 
   /**
    * The reorder moved the `TeacherStudent` upsert BEFORE the pending check —

@@ -279,13 +279,22 @@ purpose or by circumstance:
   a sixth upsert, on a different table.
 
 None of those five `TeacherStudent` upserts, and neither the `TeacherStudent`
-upsert nor the `TeacherBlock` upsert, currently take the row lock in the one
-scenario that would matter (the row already exists — the only case a race
-against a delete/decline of that same row is possible). That is why
-`acceptInvitation`'s old order never actually deadlocked against `unlinkTeacher`
-in production, and why `resolveInvitationOnLink` racing `unlinkTeacher` on
-`{TeacherBlock, Invitation}` doesn't either (see "Known safe by accident"
-below) — **not** because either order was safe.
+upsert nor the `TeacherBlock` upsert, currently take the row lock **when the
+row already exists** — the only case in which a race against a delete or a
+decline of that same row is possible. That is why `acceptInvitation`'s old
+order never deadlocked against `unlinkTeacher` (which needs the link to
+exist, or it returns `NOT_LINKED` and writes nothing), and why
+`resolveInvitationOnLink` racing `unlinkTeacher` on `{TeacherBlock,
+Invitation}` doesn't either (see "Known safe by accident" below) — **not**
+because either order was safe.
+
+Read that as scoped to the row-already-exists case, because the other case is
+not safe: when the row does NOT exist yet, the same `update: {}` upsert
+`INSERT`s, two concurrent `INSERT`s of one unique key make the second wait on
+the first's uncommitted tuple, and that wait deadlocks like any other.
+`acceptInvitation`'s old order against `POST /api/registrations` is exactly
+that pairing and it was reproduced — see "Known conformance" below. An earlier
+version of this section was read as covering both cases; it never did.
 
 **If you are the future reader who turns one of these `update: {}` objects
 into something with a real field in it** (an `updatedAt` stamp, a bookkeeping
@@ -308,20 +317,33 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   `TeacherBlock`. `StudentPrivacy` used to come after `TeacherStudent`; fixed
   in #174 task 7 after a direct reproduction (see below).
 - **`acceptInvitation`** (`src/services/invitations.ts`) — `TeacherStudent`
-  then `Invitation`. Was the other way round until #174 task 7. Does not
-  currently deadlock against the old order either way, for the reason in the
-  quirk section above — reordered anyway, because that protection is an
-  accident, not a guarantee. `src/services/invitations-lock-order.test.ts`
-  pins the mechanism with a synthetic non-empty `update` that forces the
-  atomic path and shows the old order deadlocking under it while the new one
-  does not. (That file lived in `tests/integration/` until #174's
-  four-specialist review moved it — it is a DB-invariant suite with no HTTP
-  surface, and the `integration` project deliberately runs against dev.) The
-  order itself is pinned separately there, by "takes TeacherStudent before
-  Invitation, and accepts", because the deadlock tests cannot catch a revert
-  of the reorder: with the link already present the real upsert takes no lock
-  in either order, and with no link the only possible counterparty is another
-  `INSERT` of the same key, which Prisma answers with `P2002` in both orders.
+  then `Invitation`. Was the other way round until #174 task 7, and **the old
+  order deadlocks against a real production writer**:
+  `POST /api/registrations` upserts `TeacherStudent` and then reaches
+  `Invitation` through `resolveInvitationOnLink`, so on a pair with no link
+  yet both transactions `INSERT` the same `(teacherId, studentId)` key —
+  and Postgres makes the second inserter wait on the first's uncommitted
+  tuple, a wait that deadlocks exactly like a row lock. Reproduced against
+  the real function and the route's real statement order, three runs per
+  order: old `accept: REJECTED 40P01` 3/3, new no deadlock 3/3.
+
+  What the quirk section above still explains is the case where the link
+  ALREADY exists: there the upsert takes no lock in either order, which is
+  why the reorder was made on principle before anyone had a reproduction, and
+  why `src/services/invitations-lock-order.test.ts` also pins the mechanism
+  with a synthetic non-empty `update`. That file lived in
+  `tests/integration/` until #174's four-specialist review moved it — it is a
+  DB-invariant suite with no HTTP surface, and the `integration` project
+  deliberately runs against dev.
+
+  Two tests, not one, and the split is deliberate. The deadlock reproduction
+  needs a handshake to widen a window one round trip wide — unforced,
+  whichever side is faster simply wins and both orders come back clean. So
+  the write ORDER is pinned separately and unconditionally by "takes
+  TeacherStudent before Invitation, and accepts". An earlier version of this
+  entry claimed no reproduction was possible at all; that was wrong, and
+  wrong because it generalised from a counterparty that upserted
+  `TeacherStudent` first — which is not where the registration route puts it.
 - **`deleteStudentAccount`** (`src/services/gdpr.ts`) — `Class`, looped via
   `lockClassRow` over every class the student is `waiting` in (sorted
   ascending; see "Ordering WITHIN `Class`"), hoisted ahead of every row write

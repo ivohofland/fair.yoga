@@ -566,10 +566,21 @@ export async function acceptInvitation(
     // `docs/lock-order.md`, and the mechanism-pinning tests in
     // `invitations-lock-order.test.ts` (this directory) that force the
     // atomic path with a synthetic non-empty `update` and show the old order
-    // deadlocks under it while this one does not. The order below is pinned
-    // directly, too, by that file's "takes TeacherStudent before Invitation,
-    // and accepts" — the deadlock tests cannot catch a revert of this
-    // reorder, for the reason their own docblocks give.
+    // deadlocks under it while this one does not.
+    //
+    // The cycle is not only hypothetical, either: on a pair with no link yet,
+    // this upsert genuinely `INSERT`s, and so does `POST
+    // /api/registrations`'s — which upserts `TeacherStudent` and then reaches
+    // `Invitation` through `resolveInvitationOnLink`. Postgres makes the
+    // second inserter wait on the first's uncommitted tuple, and that wait
+    // deadlocks exactly like a row lock. Reproduced against the real function
+    // and the route's real statement order, three runs per order: old order
+    // `accept: REJECTED 40P01` 3/3, this order no deadlock 3/3
+    // (`does not deadlock when a real accept races a real booking on an
+    // unlinked pair`). That reproduction needs a handshake to widen a
+    // one-round-trip window, so the order itself is pinned separately and
+    // unconditionally by `takes TeacherStudent before Invitation, and
+    // accepts`.
     //
     // Upserting first is safe to do unconditionally: the link is not the
     // thing being decided. If the `updateMany` below then matches nothing —
