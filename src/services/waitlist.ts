@@ -11,7 +11,7 @@ import type { PrismaClient, Prisma, CancelDeadline, WaitlistEntry } from '@prism
 import { classStartInstant } from '@/lib/timezone';
 import { createBulkNotifications } from './notifications';
 import { resolveInvitationOnLink } from './link-consent';
-import { lockClassRow } from '@/lib/db-locks';
+import { lockClassRow, type TransactionClientOnly } from '@/lib/db-locks';
 import { isRecordNotFound } from '@/lib/api-errors';
 
 /** Raised when a promotion/claim is not allowed in the current class state. */
@@ -763,7 +763,7 @@ async function hasActiveRegistration(
  * the link on its no-op path too and `promoteNext` keeps its upsert.
  */
 export async function withdrawWaitingEntriesForTeacher(
-  tx: PrismaTransactionClient,
+  tx: TransactionClientOnly,
   input: { teacherId: string; studentId: string },
 ): Promise<void> {
   // `FOR UPDATE OF c` — only the Class rows, the same thing `addToWaitlist`,

@@ -1,6 +1,9 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { LOCK_TIMEOUT_SQL, lockClassRow, setLockTimeout } from './db-locks';
+import { claimTemplateForGeneration } from '@/services/class-generator';
+import { claimStudioTemplateForGeneration } from '@/services/studio-class-generator';
+import { withdrawWaitingEntriesForTeacher } from '@/services/waitlist';
 
 const prisma = new PrismaClient();
 
@@ -26,6 +29,13 @@ afterAll(async () => {
  * `tsconfig.json` includes every `.ts` file in the repo, so weakening the
  * brand makes `tsc --noEmit` fail on the unused `@ts-expect-error` below
  * rather than leaving a green suite.
+ *
+ * One directive per branded function, not one for the type. Loosening
+ * `TransactionClientOnly` itself fails all of them at once, but re-typing a
+ * single parameter back to `Prisma.TransactionClient` fails only that
+ * function's own line — which is the regression each of these is here to
+ * catch. They live together because the brand does, not because one of them
+ * covers the rest.
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function _theBrandRejectsABareClient(client: PrismaClient): Promise<void> {
@@ -34,6 +44,12 @@ async function _theBrandRejectsABareClient(client: PrismaClient): Promise<void> 
   await lockClassRow(client, 'never-called');
   // @ts-expect-error Same brand, same reason, on the split-out helper.
   await setLockTimeout(client);
+  // @ts-expect-error `LOCK_TIMEOUT_SQL` then `FOR UPDATE`, both transaction-scoped.
+  await claimTemplateForGeneration(client, 'never-called');
+  // @ts-expect-error The studio mirror of the site above.
+  await claimStudioTemplateForGeneration(client, 'never-called');
+  // @ts-expect-error `FOR UPDATE OF c`, with the writes it protects after it.
+  await withdrawWaitingEntriesForTeacher(client, { teacherId: 'x', studentId: 'y' });
 }
 
 describe('the shared lock timeout', () => {

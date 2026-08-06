@@ -7,7 +7,7 @@
 
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
-import { LOCK_TIMEOUT_SQL } from '@/lib/db-locks';
+import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
 import { classStartInstant } from '@/lib/timezone';
 import { log } from '@/lib/log';
 
@@ -197,7 +197,7 @@ export async function generateInstancesForTemplate(
  * `DECIMAL(10,2)` and a raw row does not hand back Prisma's `Decimal`.
  */
 export async function claimTemplateForGeneration(
-  tx: Prisma.TransactionClient,
+  tx: TransactionClientOnly,
   templateId: string,
 ): Promise<TemplateWithTimezone | null> {
   // `LOCK_TIMEOUT_SQL` (`@/lib/db-locks`) — shared with `lockClassRow`, which

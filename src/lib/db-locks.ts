@@ -4,12 +4,32 @@ import type { Prisma } from '@prisma/client';
  * A Prisma client that must be an interactive transaction client, never the
  * bare `PrismaClient`.
  *
- * Named and exported because three sibling functions carry the identical
- * hazard and each re-declares the brand inline today:
- * `claimTemplateForGeneration` (`class-generator.ts`),
- * `claimStudioTemplateForGeneration` (`studio-class-generator.ts`) and
- * `setLockTimeout` below. See `lockClassRow`'s docblock for what the brand
- * is doing and why `Prisma.TransactionClient` alone does not do it.
+ * See `lockClassRow`'s docblock for what the brand is doing and why
+ * `Prisma.TransactionClient` alone does not do it. The rule that follows from
+ * it: a function needs this brand exactly when it issues a statement whose
+ * effect is scoped to the surrounding transaction — `SET LOCAL` or a row lock
+ * — since that is the thing a bare client makes evaporate silently. Decided
+ * per site, not uniformly:
+ *
+ *   adopt  `lockClassRow` and `setLockTimeout` below.
+ *   adopt  `claimTemplateForGeneration` (`class-generator.ts`) and
+ *          `claimStudioTemplateForGeneration` (`studio-class-generator.ts`) —
+ *          each issues `LOCK_TIMEOUT_SQL` and then a `FOR UPDATE`.
+ *   adopt  `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) — `FOR UPDATE
+ *          OF c` inside the statement that selects the rows, with the
+ *          `updateMany` and reorder that lock exists to protect after it.
+ *   skip   `activateRegistration`, `hasActiveRegistration` and
+ *          `reorderWaitingEntries` (`waitlist.ts`), and
+ *          `resolveInvitationOnLink` (`link-consent.ts`) — none issues a
+ *          `SET LOCAL` or a row lock, so none has anything that can
+ *          evaporate. They still belong inside their callers' transactions,
+ *          but for atomicity, which a bare client breaks loudly (a
+ *          check-then-create racing itself hits a unique constraint) rather
+ *          than silently.
+ *
+ * `waitlist.ts` reaches its own helpers through a module-local alias. The
+ * parameter is changed at the one adopting site rather than re-pointing that
+ * alias, which would have branded the three skipped ones by side effect.
  */
 export type TransactionClientOnly = Prisma.TransactionClient & { $transaction?: never };
 
