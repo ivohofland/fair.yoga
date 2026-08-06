@@ -15,16 +15,23 @@ type can prevent the cycle forming — only the order can.
 ## `Class` is the real gate; the rest is not
 
 `Class` is not merely first in the list — every site below that touches more
-than one of these tables also holds `Class`'s row lock (via `lockClassRow` or
-an inline `SELECT ... FOR UPDATE`) before touching any of the others, *when it
-touches `Class` at all*. `POST /api/registrations` writes `Registration`
-before `WaitlistEntry`; `promoteNext` can write `WaitlistEntry` before
-`Registration`, but only conditionally (the stale-head-drop loop,
-`waitlist.ts:405` — it runs only when the current queue head already holds an
-active registration, not the common case); `claimSpot` never writes
-`WaitlistEntry` before `Registration` at all (its only `WaitlistEntry` write,
-`waitlist.ts:557`, comes after `activateRegistration`) — an earlier version of
-this document claimed otherwise for both, corrected in round 1 review. None of
+than one of these tables also holds `Class`'s row lock before touching any of
+the others, *when it touches `Class` at all*. Three different statements take
+that lock and all three count: `lockClassRow`, an inline
+`SELECT ... FOR UPDATE`, and a compare-and-swap `class.updateMany` (an
+`UPDATE` locks the rows it matches — `deleteTeacherAccount` takes its
+per-class lock this way and no other, so a version of this sentence that names
+only the first two writes it out of the rule it is subject to). `POST
+/api/registrations` writes `Registration` before `WaitlistEntry`;
+`promoteNext` can write `WaitlistEntry` before `Registration`, but only
+conditionally (the stale-head-drop loop — it runs only when the current queue
+head already holds an active registration, not the common case); `claimSpot`
+never writes `WaitlistEntry` before `Registration` at all — its `WaitlistEntry`
+writes are the promotion `update` and the `reorderWaitingEntries` call after
+it, both after `activateRegistration`. (Not "its only `WaitlistEntry` write":
+the reorder is a second one, and it issues an `UPDATE` per remaining queue
+member.) An earlier version of this document claimed otherwise for both, first
+corrected in round 1 review. None of
 that is a bug regardless: all three of those sites lock `Class` first, so only
 one of them can ever be past that lock for a given class at a time — they
 cannot hold conflicting `WaitlistEntry`/`Registration` locks concurrently
@@ -125,12 +132,34 @@ children of more than one class. Exactly one does — `deleteTeacherAccount`'s
 `createBulkNotifications` — and it runs inside the per-class loop, on the class
 whose CAS it has just taken, so the `FOR KEY SHARE` lands on a row it already
 holds a stronger lock on, in the same ascending sequence. Every other
-child-insert in `src/` is scoped to one class per transaction (checked across
-every `createBulkNotifications` call site: the per-payment reminder sweep, the
-announcement route, both waitlist paths, `completeClass`, the transition route
-and the registration route). Five stands — but a future sweep that notifies
-across classes in one transaction would be a sixth site, and none of the four
-checks above would surface it.
+child-insert in `src/` is scoped to one class per transaction.
+
+That was checked across every `createBulkNotifications` call site, and "every"
+is the word this passage exists to earn: an earlier version of it asserted
+completeness and then listed **seven**, where `grep -rn 'createBulkNotifications('
+src/` (minus the definition in `notifications.ts`) returns **eleven**. Three
+were missing — `autoCancelClasses` (`class-transitions.ts`),
+`sendPaymentReminder` (`payments.ts`), and `handleSpotFreed`'s broadcast, a THIRD site in
+`waitlist.ts` beyond the two "both waitlist paths" covered. Re-derived here in
+full, with the class each one's notifications carry:
+
+| Call site | Classes per transaction |
+|---|---|
+| `deleteTeacherAccount` (`gdpr.ts`) | one — the loop's current class (the named exception above) |
+| `autoCancelClasses` (`class-transitions.ts`) | one — `cls.id`, and one transaction per class |
+| `completeClass` (`class-lifecycle.ts`) | one — `cls.id` |
+| `promoteNext` (`waitlist.ts`) | one — `classId` |
+| `claimSpot` (`waitlist.ts`) | one — `classId` |
+| `handleSpotFreed` broadcast (`waitlist.ts`) | one — `classId`, and outside any transaction |
+| `sendPaymentReminder` (`payments.ts`) | one — the payment's registration's class |
+| `sendPaymentReminders` (`payment-reminders.ts`) | one — per-payment, one transaction each |
+| `POST /api/registrations` | one — the class being booked |
+| `POST /api/announcements` | one — the announcement's class, outside any transaction |
+| `POST /api/classes/[id]/transition` | one — the class being transitioned |
+
+Five stands — but a future sweep that notifies across classes in one
+transaction would be a sixth site, and none of the four checks above would
+surface it.
 
 Three things about that table are easy to get wrong and are the reason it exists:
 
@@ -282,10 +311,17 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   then `Invitation`. Was the other way round until #174 task 7. Does not
   currently deadlock against the old order either way, for the reason in the
   quirk section above — reordered anyway, because that protection is an
-  accident, not a guarantee. `tests/integration/invitations-api.test.ts`
+  accident, not a guarantee. `src/services/invitations-lock-order.test.ts`
   pins the mechanism with a synthetic non-empty `update` that forces the
   atomic path and shows the old order deadlocking under it while the new one
-  does not.
+  does not. (That file lived in `tests/integration/` until #174's
+  four-specialist review moved it — it is a DB-invariant suite with no HTTP
+  surface, and the `integration` project deliberately runs against dev.) The
+  order itself is pinned separately there, by "takes TeacherStudent before
+  Invitation, and accepts", because the deadlock tests cannot catch a revert
+  of the reorder: with the link already present the real upsert takes no lock
+  in either order, and with no link the only possible counterparty is another
+  `INSERT` of the same key, which Prisma answers with `P2002` in both orders.
 - **`deleteStudentAccount`** (`src/services/gdpr.ts`) — `Class`, looped via
   `lockClassRow` over every class the student is `waiting` in (sorted
   ascending; see "Ordering WITHIN `Class`"), hoisted ahead of every row write
@@ -349,7 +385,7 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   already `StudentPrivacy` before `TeacherStudent`; not the outlier.
 - **`completeClass`** (`src/services/class-lifecycle.ts`) — `Class` via
   `lockClassRow`, then `Registration`, `Payment`. `transitionClass`'s own
-  docblock (`class-lifecycle.ts:117-120`) names this and `autoCancelClasses`
+  docblock names this and `autoCancelClasses`
   as the two sites that read more state than a bare status under the
   decision, and take the lock instead of a plain CAS for that reason.
 - **`autoCancelClasses`** (`src/services/class-transitions.ts`) — `Class` via
@@ -364,16 +400,18 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   below for why the disagreement is not currently live, and why the
   canonical line still names `unlinkTeacher`'s direction over this one's.
 - **`promoteNext`** (`src/services/waitlist.ts`) — `Class`, then
-  conditionally `WaitlistEntry` (the stale-head-drop loop,
-  `waitlist.ts:405` — only when the current queue head already holds an
-  active registration, not the common case), then `Registration`
-  (`activateRegistration`), `TeacherStudent`, then `WaitlistEntry` again (the
-  promotion and the reorder). **`claimSpot`** (`src/services/waitlist.ts`) —
-  `Class`, then `Registration` (`activateRegistration`), `TeacherStudent`,
-  then `WaitlistEntry` (`waitlist.ts:557`) — never before `Registration`. An
-  earlier version of this document claimed both functions wrote
-  `WaitlistEntry` before `Registration` unconditionally; wrong for
+  conditionally `WaitlistEntry` (the stale-head-drop loop — only when the
+  current queue head already holds an active registration, not the common
+  case), then `Registration` (`activateRegistration`), `TeacherStudent`, then
+  `WaitlistEntry` again (the promotion and the reorder).
+  **`claimSpot`** (`src/services/waitlist.ts`) — `Class`, then `Registration`
+  (`activateRegistration`), `TeacherStudent`, then `WaitlistEntry` TWICE (the
+  promotion `update`, then `reorderWaitingEntries`) — never before
+  `Registration`. An earlier version of this document claimed both functions
+  wrote `WaitlistEntry` before `Registration` unconditionally; wrong for
   `claimSpot` and overstated for `promoteNext`, corrected in round 1 review.
+  A later version called the promotion `update` `claimSpot`'s "only"
+  `WaitlistEntry` write, which the reorder after it contradicts.
   Neither calls `resolveInvitationOnLink` (deliberately — see each
   function's own docblock), so neither touches `Invitation`/`TeacherBlock`.
 - **`removeFromWaitlist`**, **`withdrawWaitingEntriesForTeacher`**
@@ -411,9 +449,12 @@ touches every table in the canonical line — `StudentPrivacy`,
 `TeacherStudent`, `Invitation` AND `TeacherBlock` — and its order across the
 first three of those was directly audited and fixed for lock safety in #174
 task 7. `resolveInvitationOnLink`'s own order was not chosen with lock
-safety in mind at all, as far as this document can tell from its docblock:
-"the block is the thing that actually stands between them... clearing it is
-what makes booking the student's route back" is a narrative choice about
+safety in mind at all, as far as this document can tell from the comment at
+its `teacherBlock.deleteMany` (`link-consent.ts` — an inline comment, not the
+function's docblock, which an earlier version of this passage attributed it
+to): "the block is the thing that actually stands between them — so clearing
+it is what makes booking the student's route back" is a narrative choice
+about
 which state change makes sense first from the student's side, not a
 decision that ever weighed deadlock risk. Anchoring the canonical line on
 the function that WAS reasoned about for lock safety, rather than the one

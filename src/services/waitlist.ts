@@ -720,7 +720,9 @@ async function hasActiveRegistration(
  * nothing it raced could have manufactured the standing request this
  * withdraws; the gap was skew in the position numbering, not a wrong
  * promotion.) `POST /api/registrations` locks and renumbers the same way,
- * outside this module (`src/app/api/registrations/route.ts:100,183-187`).
+ * outside this module (`src/app/api/registrations/route.ts` — its own
+ * `FOR UPDATE` on the `Class` row, and the `reorderWaitingEntries` call in
+ * its waitlist-resolution step).
  * This paragraph claims nothing about renumbering writers beyond the ones
  * named here. `deleteStudentAccount` (`gdpr.ts`) was the last renumbering
  * writer that ran fully unlocked — closed in #174 Task 5 — so as of that
@@ -731,8 +733,9 @@ async function hasActiveRegistration(
  * A narrower, still-open gap: two writers flip `WaitlistEntry.status` from
  * `waiting` to `removed` — never touching `position`, so "renumbering
  * writer" above does not cover them — without going through `lockClassRow`:
- * the cancel branch of `POST /api/classes/[id]/transition`
- * (`route.ts:52`) and `deleteTeacherAccount`'s own cancel loop (`gdpr.ts`,
+ * the cancel branch of `POST /api/classes/[id]/transition` (its
+ * `waitlistEntry.updateMany` on `status: 'waiting'`) and
+ * `deleteTeacherAccount`'s own cancel loop (`gdpr.ts`,
  * near its `class.updateMany` CAS). Both take a conflicting lock on the
  * Class row first, via that CAS `UPDATE`, so they cannot race a
  * `lockClassRow` holder into corrupting anything — but neither bounds its

@@ -457,6 +457,27 @@ export async function listPendingInvitations(
 }
 
 /**
+ * Rolls back `acceptInvitation`'s transaction when the invitation is no
+ * longer pending. A plain `return false` would commit the `TeacherStudent`
+ * upsert taken above it — including, on the create path, a genuine
+ * `INSERT` — so the link would exist for an invitation nobody accepted.
+ * Only a throw, caught outside `$transaction`, rolls that write back with
+ * everything else. `invitations-lock-order.test.ts` proves the negative
+ * directly: a NOT_PENDING refusal leaves no `TeacherStudent` row even though
+ * the upsert already ran by the time this fires.
+ *
+ * Declared ABOVE `acceptInvitation`'s docblock, not between it and the
+ * function. It sat between them until #174's four-specialist review, which
+ * meant TypeScript attached that 46-line docblock to this error class
+ * instead: every hover, every go-to-definition and every doc tool showed
+ * `acceptInvitation`'s ownership-gate reasoning as the description of
+ * `NotPendingError`, while `acceptInvitation` itself showed nothing.
+ * `declineInvitation` below cross-references that docblock by name, so the
+ * text people were sent to was attached to the wrong symbol.
+ */
+class NotPendingError extends Error {}
+
+/**
  * Accept an invitation.
  *
  * Authorization is by ADDRESS, not by id. The invitation id travels in a
@@ -502,18 +523,6 @@ export async function listPendingInvitations(
  * nothing. Keeping every "there is nothing here for you" answer identical is
  * worth more than naming this one.
  */
-/**
- * Rolls back `acceptInvitation`'s transaction when the invitation is no
- * longer pending. A plain `return false` would commit the `TeacherStudent`
- * upsert taken above it — including, on the create path, a genuine
- * `INSERT` — so the link would exist for an invitation nobody accepted.
- * Only a throw, caught outside `$transaction`, rolls that write back with
- * everything else. `invitations-api.test.ts` proves the negative directly:
- * a NOT_PENDING refusal leaves no `TeacherStudent` row even though the
- * upsert already ran by the time this fires.
- */
-class NotPendingError extends Error {}
-
 export async function acceptInvitation(
   db: PrismaClient,
   input: { invitationId: string; studentId: string; accountEmail: string },
@@ -555,9 +564,12 @@ export async function acceptInvitation(
     // thing standing between this function and a deadlock the next
     // contributor who "tidies" `update: {}` would reintroduce silently. See
     // `docs/lock-order.md`, and the mechanism-pinning tests in
-    // `tests/integration/invitations-api.test.ts` that force the atomic
-    // path with a synthetic non-empty `update` and show the old order
-    // deadlocks under it while this one does not.
+    // `invitations-lock-order.test.ts` (this directory) that force the
+    // atomic path with a synthetic non-empty `update` and show the old order
+    // deadlocks under it while this one does not. The order below is pinned
+    // directly, too, by that file's "takes TeacherStudent before Invitation,
+    // and accepts" — the deadlock tests cannot catch a revert of this
+    // reorder, for the reason their own docblocks give.
     //
     // Upserting first is safe to do unconditionally: the link is not the
     // thing being decided. If the `updateMany` below then matches nothing —

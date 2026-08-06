@@ -737,9 +737,17 @@ describe('completeClass (DB)', () => {
    * waited' — nothing here waits or races; the cancel is a plain,
    * already-committed update issued before `completeClass` is even called.
    * What this actually pins is `completeClass`'s own status gate (the
-   * `validateTransition` call, not the lock this file is otherwise about):
-   * confirmed by mutating that gate to a no-op and finding this is the only
-   * test in the suite that then fails.
+   * `validateTransition` call, not the lock this file is otherwise about).
+   * Mutating that gate to a no-op fails this test — and, an earlier version
+   * of this comment claimed, ONLY this test in the whole suite. That was
+   * wrong: re-measured across all 592 unit tests, two fail, both in this
+   * file. The other is "decides from the class row the holder left behind,
+   * not from a read taken before the wait" immediately above, whose own
+   * refusal also comes from this gate — it asserts the refusal's shape
+   * precisely because "no Payment rows" would be satisfied by the terminality
+   * trigger alone. So the gate is not uniquely pinned here; what IS unique
+   * here is that this is the only one of the two that reaches it without any
+   * concurrency at all.
    */
   it('refuses to complete a class that is already cancelled', async () => {
     const cls = await makeClass({ status: 'in_progress' });

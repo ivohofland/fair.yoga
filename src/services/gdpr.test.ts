@@ -954,7 +954,12 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
             // transaction opens) filters `status: 'in_progress'` — a bare
             // value; the transaction's read of "upcoming" classes filters
             // `status: { in: [...] }`, and that `in` object is the only
-            // structural difference between them. (It used to be keyed on
+            // difference this hook keys on. It is not the ONLY structural
+            // difference — the transaction's read also carries an `orderBy`
+            // and selects `classType`, either of which could have served —
+            // but it is the one chosen, because the `orderBy` is a lock-order
+            // fix that a later change could legitimately move and the
+            // `select` is presentation. (It used to be keyed on
             // the transaction read's `include: { registrations }`; the
             // whole-branch review of #174 deleted that eager-load, because
             // building the cancellation notices from a pre-lock snapshot was
@@ -1270,6 +1275,42 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // two-lock sequence rather than a one-lock one.
     expect(casCalls).toBe(2);
   }, 30_000);
+
+  /**
+   * The two `Class` lock-order cycles this branch ships KNOWN and unfixed.
+   * Both are reproduced and both are live: `syncTemplateInstances`
+   * (`template-sync.ts`) and `archiveOrUnarchiveTemplate`
+   * (`class-template-lifecycle.ts`) take their `Class` row locks in heap
+   * order, which cycles against all three ordered sites — including
+   * `deleteStudentAccount`, whose pairing #174 CAUSED by giving the erasure
+   * a `Class` lock it never used to take. `docs/lock-order.md`, "The two that
+   * do not", has the reproduction transcript and the reasons for recording
+   * rather than resolving (the cheap fix is a no-op; the working fix has to
+   * land at both sites with timeout arithmetic; the template family is
+   * already filed as an open decision).
+   *
+   * Markers, not tests. The reason given for having no tests at all was that
+   * a deadlock assertion "can go green for the wrong cause", and #174's own
+   * four-specialist review refuted that: this branch already asserts `40P01`
+   * by SQLSTATE in two places (`invitations-lock-order.test.ts`), so a
+   * `lock_timeout` FAILS those tests rather than satisfying them. What
+   * survives is the second reason — a deadlock-asserting test is the only
+   * artifact that could refute a fix-shaped no-op, and writing it belongs
+   * with the fix.
+   *
+   * They are `it.todo` rather than a doc paragraph because a doc paragraph is
+   * read once. These print on every `--project unit` run, next to the tests
+   * that pin the cycles that WERE closed.
+   *
+   * ISSUE PLACEHOLDER: `#TEMPLATE-LOCK-ORDER` below is not a real issue
+   * number — substitute the one filed for the template-family lock order.
+   */
+  it.todo(
+    '#TEMPLATE-LOCK-ORDER: syncTemplateInstances vs deleteStudentAccount deadlocks (40P01, reproduced, unfixed)',
+  );
+  it.todo(
+    '#TEMPLATE-LOCK-ORDER: archiveOrUnarchiveTemplate vs deleteStudentAccount deadlocks (same cycle, same fix site)',
+  );
 });
 
 /**

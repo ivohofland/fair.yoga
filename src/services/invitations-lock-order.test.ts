@@ -33,7 +33,6 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-
 describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () => {
   const lockOrderTeacherIds: string[] = [];
   const lockOrderTeacherAccountIds: string[] = [];
@@ -548,10 +547,12 @@ describe('StudentPrivacy and TeacherStudent take one lock order (#174 task 7)', 
   };
 
   /**
-   * The first two tests below are hand-rolled on both sides rather than
-   * calling the real `unlinkTeacher`/`deleteStudentAccount` — deliberately,
-   * and NOT because the real function can't be raced at all (a real-function
-   * test follows further down; see its own docblock for why that one works).
+   * The next THREE tests are hand-rolled on both sides rather than calling
+   * the real `unlinkTeacher`/`deleteStudentAccount` — deliberately, and NOT
+   * because the real function can't be raced at all (a real-function test
+   * follows further down; see its own docblock for why that one works). (An
+   * earlier version of this paragraph said "the first two"; the
+   * `deleteTeacherAccount`-order test is hand-rolled on both sides too.)
    *
    * An early draft called the real `unlinkTeacher` racing a
    * `deleteStudentAccount`-shaped transaction that used `deleteMany` on
