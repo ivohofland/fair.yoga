@@ -72,33 +72,65 @@ for the ones it missed.
 ### How that enumeration was derived
 
 Mechanically, not by recall — the defect being fixed was an incomplete list
-asserted as complete. A `Class` row lock can only come from `UPDATE`, `DELETE`
-or `SELECT … FOR UPDATE` on that table, so the candidate set is what these
-three greps return over `src/`, minus `*.test.ts` (re-runnable; deliberately
-greps rather than a count, since a count rots on the first unrelated change and
-one of these hits a docblock rather than a call):
+asserted as complete. An earlier version of this passage opened by asserting
+that a `Class` row lock "can only come from `UPDATE`, `DELETE` or
+`SELECT … FOR UPDATE` on that table". That is false — there is a fourth path,
+described after the list — and a completeness argument resting on it was
+unsound even though its answer happened to be right.
+
+The candidate set is bounded by these four checks over `src/`, minus
+`*.test.ts` (re-runnable; deliberately greps rather than counts, since a count
+rots on the first unrelated change and one of these hits a docblock rather than
+a call):
 
 1. `\bclass\.\(update\|updateMany\|delete\|deleteMany\|upsert\)(` — the Prisma
-   writes;
-2. `'"Class"'` — the raw statements. All but one are single-id `FOR UPDATE`
-   (four of them through `lockClassRow`); the exception is
-   `withdrawWaitingEntriesForTeacher`'s join;
+   writes **that can lock an existing row**. `create`/`createMany` are
+   deliberately absent: a freshly inserted row's lock conflicts with nothing,
+   so it carries no ordering obligation;
+2. `'"Class"'` — the raw statements. All but one are single-id `FOR UPDATE`:
+   four written inline, plus `lockClassRow`'s body (itself called from exactly
+   four places, grep 3). The exception is `withdrawWaitingEntriesForTeacher`'s
+   join;
 3. `lockClassRow(` — the helper's callers;
 4. **parent deletes that cascade onto `Class` without naming it** — the
-   category a grep for `class.` misses. `Class` has three inbound FKs:
-   `teacher` (`onDelete: Cascade`), `template` (`onDelete: SetNull`), and
-   `teacherRoom` (no action given, so `Restrict` — a required relation, so it
-   errors rather than writing). A `teacher.delete` or `classTemplate.delete`
-   would therefore issue a mass `DELETE`/`UPDATE` across `Class` rows. Neither
-   exists anywhere in `src/`: erasure soft-deletes teachers and archiving
-   soft-deletes templates. If either ever becomes a hard delete, it joins this
-   table.
+   category a grep for `class.` misses. `Class` holds three FKs pointing *out*
+   at its parents: `teacher` (`onDelete: Cascade`), `template`
+   (`onDelete: SetNull`), and `teacherRoom` (no action given, so `Restrict` —
+   a required relation, so it errors rather than writing). Deleting one of
+   those parents would therefore issue a mass `DELETE`/`UPDATE` across `Class`
+   rows. No `teacher.delete` or `classTemplate.delete` exists anywhere in
+   `src/`: erasure soft-deletes teachers and archiving soft-deletes templates.
+   If either ever becomes a hard delete, it joins this table.
 
 Each candidate was then classified by multiplicity — can this transaction end
 up holding more than one `Class` row lock? Single-`id` writes and single-`id`
 `FOR UPDATE`s cannot; a loop or a multi-row predicate can. That leaves the five
 above. Note `autoCancelClasses` is *not* one of them: it opens a separate
 `db.$transaction` per class, so it holds one row lock at a time.
+
+**The fourth path, which none of those checks would find: an FK lock taken
+from a CHILD table, by an `INSERT` that never mentions `Class` at all.**
+Inserting a row that references a class — `Registration`, `WaitlistEntry`,
+`Notification.relatedClassId`, `Announcement.classId` — makes Postgres take
+`FOR KEY SHARE` on the parent `Class` row for the rest of that transaction.
+That is not a weak advisory lock: measured here, an uncommitted
+`notification.create` carrying `relatedClassId` made a third connection's
+`SELECT … FOR UPDATE NOWAIT` on that class fail with `55P03`, and blocked a
+`DELETE` of it. So it conflicts with `lockClassRow` and with every site in the
+table above.
+
+It changes the answer nowhere, and that was checked rather than assumed: a
+transaction only acquires a *second* `Class` lock this way if it inserts
+children of more than one class. Exactly one does — `deleteTeacherAccount`'s
+`createBulkNotifications` — and it runs inside the per-class loop, on the class
+whose CAS it has just taken, so the `FOR KEY SHARE` lands on a row it already
+holds a stronger lock on, in the same ascending sequence. Every other
+child-insert in `src/` is scoped to one class per transaction (checked across
+every `createBulkNotifications` call site: the per-payment reminder sweep, the
+announcement route, both waitlist paths, `completeClass`, the transition route
+and the registration route). Five stands — but a future sweep that notifies
+across classes in one transaction would be a sixth site, and none of the four
+checks above would surface it.
 
 Three things about that table are easy to get wrong and are the reason it exists:
 
