@@ -254,9 +254,10 @@ describe('DELETE /api/account', () => {
     // registration inside its transaction. `Payment.registrationId` is @unique,
     // so a Payment that already exists makes that create throw P2002.
     //
-    // It has to throw rather than return a failure: deleteTeacherAccount
-    // catches `{ok: false}` from completeClass and falls through (gdpr.ts:318-326),
-    // so a merely-failing completion would not produce PARTIAL_ERASURE at all.
+    // It has to throw rather than return a failure: `deleteTeacherAccount`
+    // (`gdpr.ts`) catches `{ok: false}` from `completeClass` and falls
+    // through, so a merely-failing completion would not produce
+    // PARTIAL_ERASURE at all.
     //
     // This injection replaced `tierAtBooking: 0` when #39 added a CHECK
     // constraint making that value unwritable. Same three properties: real

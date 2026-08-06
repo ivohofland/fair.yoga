@@ -189,16 +189,19 @@ void _projectionCarriesNoRawIdentity;
  *
  * An earlier draft of this comment argued it from the link side instead —
  * "every `TeacherStudent` writer requires a `session.studentId`" — and that is
- * false. Four of the five link-creating upsert sites do
- * (`api/registrations/route.ts:202`,
- * `services/invitations.ts:535`, `services/waitlist.ts:234` and `:530`), but
- * `promoteNext` (`services/waitlist.ts:411`) links `nextEntry.studentId` off a
- * persisted `WaitlistEntry`, during a cancellation someone else initiated
- * (`api/registrations/[id]/route.ts:190`, `services/gdpr.ts:385`) — and its
- * own docblock says it is there to repair rows "written by hand (fixtures, a
- * psql fix-up)", i.e. precisely the rows no session produced. The conclusion
- * survives on the two supports above; the support that did not survive is what
- * a census of writers looks like when the writers are counted, not read.
+ * false. Four of the five link-creating upsert sites do — `POST
+ * /api/registrations`, `acceptInvitation` (`services/invitations.ts`), and
+ * `addToWaitlist` and `claimSpot` (both `services/waitlist.ts`), each via
+ * its own `teacherStudent.upsert` — but `promoteNext`'s own
+ * `teacherStudent.upsert` (`services/waitlist.ts`) links `nextEntry.studentId`
+ * off a persisted `WaitlistEntry`, during a cancellation someone else
+ * initiated (`promoteAfterCancel` in `api/registrations/[id]/route.ts`;
+ * `deleteStudentAccount`'s `handleSpotFreed` call in `services/gdpr.ts`) —
+ * and its own docblock says it is there to repair rows "written by hand
+ * (fixtures, a psql fix-up)", i.e. precisely the rows no session produced.
+ * The conclusion survives on the two supports above; the support that did
+ * not survive is what a census of writers looks like when the writers are
+ * counted, not read.
  *
  * "Five" counts the upserts that can *create* a link, which is the only set
  * this argument is about. `TeacherStudent` has a sixth writer —

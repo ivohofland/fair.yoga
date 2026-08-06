@@ -72,7 +72,12 @@ export async function processEmailFallback(
       //    those statuses under the class row lock that transaction holds:
       //    `POST /api/registrations` takes `FOR UPDATE` directly;
       //    `completeClass` and `class-transitions`' auto-cancel each take it
-      //    via `lockClassRow`. So no fresh one can be written afterwards.
+      //    via `lockClassRow`. So no fresh one can be written afterwards —
+      //    for a class this transaction actually reaches. Its own `findMany`
+      //    for `upcoming` classes runs unlocked, before the per-class CAS
+      //    loop below it; a class created after that read is never touched
+      //    by this transaction at all, so nothing here blocks a fresh
+      //    notification for it — that gap is (2)'s to cover, not this one's.
       //    `completeClass` was the exception until #174 — it used to read
       //    its class without `FOR UPDATE`, so a sweep already inside it
       //    could commit after the `deleteMany`, flipping a `cancelled` class
@@ -81,11 +86,20 @@ export async function processEmailFallback(
       //    merely by tracking it.
       // 2. The same transaction rewrites `Teacher.email` to
       //    `deleted-<id>@deleted.invalid`. Kept as a second line rather than
-      //    deleted now that (1) is structural: (1)'s guarantee depends on
-      //    all three writers above continuing to take the lock before they
-      //    write; this one does not depend on any writer's behaviour at
-      //    all, so it still catches a stray notification if a future writer
-      //    is added, or an existing one's lock discipline regresses.
+      //    deleted: it depends on neither of (1)'s two edges — a class
+      //    created after `upcoming`'s unlocked read, or a regression in any
+      //    of the three writers' own lock discipline — which is exactly what
+      //    makes it cover both. So even a row that slipped through carries
+      //    no real address to send to: `email` above still comes back
+      //    truthy (the rewritten address, not null), so the send below is
+      //    still attempted — nothing here stops that — it only guarantees
+      //    the attempt lands on an address `.invalid` guarantees can never
+      //    be delivered. (A `completeClass`-shaped regression gets a second,
+      //    independent backstop too: `class_terminal_status_guard`, the DB
+      //    trigger #174 also added, rejects the underlying
+      //    `cancelled → completed` write outright, so no notification from
+      //    that path is ever created — but it has nothing to say about the
+      //    read-then-create gap above, which only this line covers.)
       //
       // A `deletedAt` filter is deliberately NOT added: with (1) holding,
       // nothing could drive it, and an untestable guard is what this branch

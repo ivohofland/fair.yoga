@@ -162,7 +162,8 @@ export async function inviteContact(
   //
   // Normalised here rather than in `createInvitationSchema`, because a
   // `.transform()` there would hide the schema's `.shape` from the
-  // server-owned-field walk in `src/lib/schemas.test.ts:412-453`.
+  // server-owned-field walk in `src/lib/schemas.test.ts` ("are declared only
+  // where EXPECTED says so, and everywhere it says so").
   //
   // Deliberately scoped to Invitation. Account and Student emails are stored
   // as typed and compared case-sensitively throughout this app (magic-link
@@ -691,9 +692,10 @@ export async function unlinkTeacher(
     // A comment at this exact call site has already gone stale twice for
     // naming which functions in that module do and do not take it — once
     // under #166, again under #174 once `removeFromWaitlist` picked the
-    // lock up — so this one names none: see that function's own docblock
-    // (`waitlist.ts:669-732`) for the current, authoritative account of who
-    // locks and why, and for why this call must run before this
+    // lock up — so this one names none: see
+    // `withdrawWaitingEntriesForTeacher`'s own docblock (`waitlist.ts`,
+    // called immediately below) for the current, authoritative account of
+    // who locks and why, and for why this call must run before this
     // transaction's other writes — a deadlock question, not a preference.
     await withdrawWaitingEntriesForTeacher(tx, {
       teacherId: input.teacherId,

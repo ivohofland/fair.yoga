@@ -238,10 +238,11 @@ export async function updateClassTemplate(
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
-  // Defined-value scan, matching `updateClass` (`class-lifecycle.ts:465`): a
-  // key present with value `undefined` is not an edit. A key-count check would
-  // let `{ description: undefined }` clear this guard, issue a no-op `update`,
-  // run a full sync for nothing, and still report `ok: true`.
+  // Defined-value scan, matching `updateClass`'s own `hasEdit` check
+  // (`class-lifecycle.ts`): a key present with value `undefined` is not an
+  // edit. A key-count check would let `{ description: undefined }` clear
+  // this guard, issue a no-op `update`, run a full sync for nothing, and
+  // still report `ok: true`.
   const hasEdit = Object.values(data).some((v) => v !== undefined);
   if (!hasEdit) return { ok: false, reason: 'no_fields' };
 

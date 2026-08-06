@@ -138,10 +138,11 @@ describe('updateClassTemplate (DB)', () => {
     expect(after.classType).toBe('Empty Payload');
   });
 
-  // Defined-value scan (class-template-lifecycle.ts:227): a key present with
-  // value `undefined` is not an edit, unlike the key-count check this
-  // replaced, which would have let this through as `ok: true` and run a
-  // no-op update plus a full sync for nothing.
+  // Defined-value scan (`updateClassTemplate`'s own `hasEdit` check,
+  // `class-template-lifecycle.ts`): a key present with value `undefined` is
+  // not an edit, unlike the key-count check this replaced, which would have
+  // let this through as `ok: true` and run a no-op update plus a full sync
+  // for nothing.
   it('returns no_fields for a payload of only undefined values, and writes nothing', async () => {
     const template = await makeTemplate('Undefined Only');
     const result = await updateClassTemplate(prisma, template.id, teacherId, {

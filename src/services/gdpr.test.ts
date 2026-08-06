@@ -692,8 +692,12 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
 // `$extends` makes that deterministic instead of racing for it, following
 // the precedent in `class-lifecycle.test.ts`'s
 // "refuses to write over a status that changed after the caller decided"
-// test, `class-template-lifecycle.test.ts:223`/`:282`, `waitlist.test.ts:1090`,
-// and `invitations.revive.test.ts:99`. `deleteTeacherAccount` calls
+// test; `class-template-lifecycle.test.ts`'s "maps a delete landing between
+// the read and the write to not_found" and "...between the write and the
+// sync to not_found"; `waitlist.test.ts`'s "a failure AFTER the link write
+// rolls the link back too"; and `invitations.revive.test.ts`'s "answers
+// CONTACT_CHANGED and leaves the fresh tombstone standing".
+// `deleteTeacherAccount` calls
 // `class.findMany` twice — once before the transaction (to find classes to
 // `completeClass` directly) and once inside it (to find classes to cancel) —
 // so the hook has to tell those two calls apart. It does that by args

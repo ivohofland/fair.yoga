@@ -87,9 +87,9 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
 ## Known conformance
 
 - **`unlinkTeacher`** (`src/services/invitations.ts`) — `Class`/`WaitlistEntry`
-  via `withdrawWaitingEntriesForTeacher` (must run first; its docblock,
-  `waitlist.ts:669-732`, explains why — a deadlock question, not a
-  preference), then `StudentPrivacy`, `TeacherStudent`, `Invitation`,
+  via `withdrawWaitingEntriesForTeacher` (must run first; its own docblock
+  in `waitlist.ts` explains why — a deadlock question, not a preference),
+  then `StudentPrivacy`, `TeacherStudent`, `Invitation`,
   `TeacherBlock`. `StudentPrivacy` used to come after `TeacherStudent`; fixed
   in #174 task 7 after a direct reproduction (see below).
 - **`acceptInvitation`** (`src/services/invitations.ts`) — `TeacherStudent`

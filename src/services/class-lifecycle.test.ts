@@ -848,8 +848,8 @@ describe('completeClass — billing path throws rather than mis-charging a bypas
     // constraint both say is impossible: `tierAtBooking` outside 1-5. It can
     // only be reached here by dropping the constraint out from under Prisma
     // with raw SQL. That is deliberate — this test is the only thing standing
-    // between a one-word edit (reverting `toIncomeTierOrThrow` to
-    // `toIncomeTier` at class-lifecycle.ts:183) and a silent mis-charge:
+    // between a one-word edit (reverting `completeClass`'s
+    // `toIncomeTierOrThrow` call to `toIncomeTier`) and a silent mis-charge:
     // without it, completeClass would degrade the bad tier to
     // DEFAULT_INCOME_TIER and bill the student at the wrong price with
     // nothing anywhere to fail.

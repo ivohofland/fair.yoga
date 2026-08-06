@@ -282,8 +282,7 @@ describe('updateTeacherSchema.pageSlug', () => {
  * write one. #146 and #148 were both server-set `templateId` reaching a Prisma
  * create from a request body — found 45 minutes apart by the same sweep, on two
  * routes that had no reason to be compared. This is the create-side counterpart
- * to PlainUpdateForbiddenClassField
- * (src/services/class-lifecycle.ts:390).
+ * to `PlainUpdateForbiddenClassField` (`src/services/class-lifecycle.ts`).
  *
  * Scope: the guard below reads the top-level `.shape` keys of schemas exported
  * from `src/lib/schemas.ts` — every schema in this repo is declared there. A
