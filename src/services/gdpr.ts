@@ -253,11 +253,14 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
   // Worst case the transaction's own query for `waitingClassIds` (below)
   // then finds more rows than this counted, the timeout undershoots, and
   // Prisma throws P2028. That rolls the whole erasure back atomically — it
-  // was never applied half-way — and is safe to retry: `deleteStudentAccount`
-  // is idempotent (`api/account/route.ts`'s docblock: "Both erasures are
-  // safely re-runnable, so a retry finishes the job"). A retryable failure,
-  // not a silent or partial one. See the transaction's `timeout` option
-  // below for the ceiling this count still has to respect.
+  // was never applied half-way — and is safe to retry: THIS function is one
+  // transaction end to end (its only work outside it is the post-commit
+  // `handleSpotFreed` loop, which swallows its own errors), so a throw means
+  // nothing landed. `api/account/route.ts`'s `erasureFailure` relies on
+  // exactly that to tell this caller "Nothing was changed", and says why the
+  // teacher erasure cannot claim the same. A retryable failure, not a silent
+  // or partial one. See the transaction's `timeout` option below for the
+  // ceiling this count still has to respect.
   const waitingCount = await db.waitlistEntry.count({ where: { studentId, status: 'waiting' } });
 
   const freedClassIds = await db.$transaction(async (tx) => {

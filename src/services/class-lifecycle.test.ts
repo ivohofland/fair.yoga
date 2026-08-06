@@ -147,7 +147,8 @@ describe('sourceStatesFor', () => {
     // `status: { in: [] }` for a `draft` target, which Prisma turns into a
     // Postgres `IN ()` that matches no row. `updateMany` therefore always
     // reports `count: 0` for a `draft` target, so a request to transition
-    // *into* `draft` — which `transitionClassSchema` (`schemas.ts:305`) does
+    // *into* `draft` — which `transitionClassSchema` (`schemas.ts`, whose
+    // `z.enum` still lists `'draft'`) does
     // accept as a target — is always refused, and the row is left untouched.
     expect(sourceStatesFor('draft')).toEqual([]);
   });

@@ -193,6 +193,79 @@ describe('DELETE /api/account', () => {
     };
   };
 
+  /** A teacher-only account: one Account carrying a Teacher and no Student. */
+  const seedTeacherOnly = async (label: string) => {
+    const mail = `accdel-${label}-${suffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Del',
+        lastName: label,
+        email: mail,
+        bio: 'DELETE /api/account fixtures',
+        pageSlug: `accdel-${label}-${suffix}`,
+        account: { create: { email: mail } },
+      },
+    });
+    seededAccountIds.push(teacher.accountId);
+    seededTeacherIds.push(teacher.id);
+    return {
+      accountId: teacher.accountId,
+      teacherId: teacher.id,
+      token: await seedSession(prisma, teacher.accountId),
+    };
+  };
+
+  /**
+   * An in-progress class with one charged registration, for the teacher-only
+   * erasure test below. `deleteTeacherAccount` completes every in-progress
+   * class it finds BEFORE opening its own transaction, so each of these is a
+   * separately committed unit of work — which is the whole point of the test.
+   */
+  const seedInProgressClass = async (teacherId: string, label: string) => {
+    const room = await prisma.room.create({
+      data: {
+        venueName: `Venue ${label}`,
+        address: `${suffix} ${label} St`,
+        city: 'Testville',
+        postcode: '1234TO',
+        floor: '1',
+        roomName: 'Hall',
+        maxCapacity: 10,
+        createdById: teacherId,
+      },
+    });
+    seededRoomIds.push(room.id);
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId: room.id, capacityOverride: 8, rentalRate: 15 },
+    });
+    seededTeacherRoomIds.push(teacherRoom.id);
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId: teacherRoom.id,
+        classType: `Flow ${label}`,
+        date: new Date('2026-06-01'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 8,
+        status: 'in_progress',
+      },
+    });
+    seededClassIds.push(cls.id);
+    const attendee = await prisma.student.create({
+      data: { firstName: 'Att', lastName: label, email: `att-${label}-${suffix}@test.local` },
+    });
+    seededStudentIds.push(attendee.id);
+    const registration = await prisma.registration.create({
+      data: { classId: cls.id, studentId: attendee.id, tierAtBooking: 3 },
+    });
+    return { classId: cls.id, registrationId: registration.id };
+  };
+
   /**
    * A student-only account: one Account carrying a Student and no Teacher.
    * The dual seed above cannot stand in for it — the two failure paths below
@@ -412,9 +485,12 @@ describe('DELETE /api/account', () => {
     expect(body.error.message).toMatch(/will not fix it/i);
     expect(body.error.message).toMatch(/contact support/i);
 
-    // "Nothing was changed" is a claim the message makes; this is the check
-    // that it is true. The whole erasure is one transaction, so a throw out
-    // of it rolls every write back — including the profile anonymisation.
+    // "Nothing was changed" is a claim this message makes, and it may only
+    // make it on the STUDENT half — `deleteStudentAccount` is one transaction
+    // end to end, so a throw out of it rolls every write back including the
+    // profile anonymisation. The teacher half is not, and must not say this;
+    // the test below is the one that holds it to that.
+    expect(body.error.message).toMatch(/Nothing was changed/i);
     const student = await prisma.student.findUniqueOrThrow({ where: { id: acc.studentId } });
     expect(student.deletedAt).toBeNull();
     expect(student.firstName).toBe('Del');
@@ -441,6 +517,69 @@ describe('DELETE /api/account', () => {
    * `FOR UPDATE` with `55P03`, the whole transaction rolls back, and the
    * route has to recognise it as contention rather than a defect.
    */
+  /**
+   * The teacher-only path, and the one thing its message may NOT say.
+   *
+   * `deleteTeacherAccount` is not a single transaction: before `db
+   * .$transaction` opens it runs `completeClass(db, cls.id)` for every
+   * in-progress class, and each of those commits on its own — pricing the
+   * class, writing a `Payment` per charged registration, sending
+   * notifications. So a failure after that loop leaves real, irreversible
+   * billing behind, and the first version of this fix wave answered it with
+   * "Nothing was changed", which is a lie about money.
+   *
+   * Two in-progress classes make that visible rather than merely arguable:
+   * the first completes and commits, the second collides on the same
+   * `Payment.registrationId` @unique injection the PARTIAL_ERASURE test uses,
+   * so the erasure aborts with the first class already completed and billed.
+   * Asserted directly below — the Payment exists, and the message does not
+   * claim otherwise.
+   *
+   * Ordered by class id, because `deleteTeacherAccount`'s completion sweep
+   * walks an unordered `findMany` and either class could be reached first;
+   * blocking BOTH would leave nothing committed and make this test vacuous,
+   * so exactly one is blocked and the assertion is on "some class completed".
+   */
+  it('does not claim nothing changed when the teacher erasure already billed a class', async () => {
+    const acc = await seedTeacherOnly('teacheronly');
+
+    const first = await seedInProgressClass(acc.teacherId, 'first');
+    const second = await seedInProgressClass(acc.teacherId, 'second');
+
+    // Block exactly one of the two. Whichever the sweep reaches first, the
+    // other one completes and commits before the failure.
+    const blockingPayment = await prisma.payment.create({
+      data: { registrationId: second.registrationId, amount: 1, status: 'pending' },
+    });
+
+    const res = await fetch(`${BASE_URL}/api/account`, {
+      method: 'DELETE',
+      headers: cookie(acc.token),
+    });
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: { message: string; code?: string } };
+    expect(body.error.code).toBe('ERASURE_FAILED');
+
+    // The load-bearing assertion: this message must not tell a teacher that
+    // nothing changed, because something did.
+    expect(body.error.message).not.toMatch(/Nothing was changed/i);
+    expect(body.error.message).toMatch(/closed and billed/i);
+
+    // And something really did — the unblocked class completed, in its own
+    // committed transaction, before the failure.
+    const completed = await prisma.class.findUniqueOrThrow({ where: { id: first.classId } });
+    expect(completed.status).toBe('completed');
+    expect(
+      await prisma.payment.count({ where: { registrationId: first.registrationId } }),
+    ).toBe(1);
+
+    // The teacher is still there — the erasure itself did not land.
+    const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: acc.teacherId } });
+    expect(teacher.deletedAt).toBeNull();
+
+    await prisma.payment.delete({ where: { id: blockingPayment.id } });
+  }, 30_000);
+
   it('reports ERASURE_BUSY with retry advice when the erasure loses a lock race', async () => {
     const acc = await seedStudentOnly('busy');
 

@@ -125,6 +125,7 @@ describe('classifyApiError', () => {
   it.each<[string, string]>([
     ['P2028 (interactive transaction budget expired)', 'P2028'],
     ['P2024 (connection pool timeout)', 'P2024'],
+    ['P2034 (write conflict or deadlock)', 'P2034'],
   ])('maps %s to a 503 at warn', (_label, code) => {
     const failure = classifyApiError(prismaError(code));
 
