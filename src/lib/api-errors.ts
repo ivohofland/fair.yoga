@@ -54,6 +54,45 @@ export type ApiFailure = {
 };
 
 /**
+ * Matches the terminality trigger from migration
+ * `20260805120000_class_terminal_status_trigger` (`class_terminal_status_
+ * guard`, `RAISE EXCEPTION ... USING ERRCODE = '23514'`).
+ *
+ * Measured directly rather than assumed (`tests/integration/class-terminal-
+ * status.test.ts`) — the brief this shipped from deliberately did not
+ * predict which Prisma error class would wrap a trigger's SQLSTATE. What was
+ * observed:
+ *
+ *   PrismaClientUnknownRequestError: Invalid `prisma.class.update()` invocation
+ *   Error occurred during query execution:
+ *   ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(
+ *     PostgresError { code: "23514", message: "Class <id> is cancelled, which
+ *     is terminal; cannot change status to <status>", severity: "ERROR",
+ *     detail: None, column: None, hint: None }), transient: false })
+ *
+ * Not `PrismaClientKnownRequestError` — there is no P-code for "a trigger
+ * fired", so the engine falls back to Unknown, and Unknown carries no
+ * `.code`/`.meta` the way P2002 does below; the SQLSTATE only exists inside
+ * the message string.
+ *
+ * `23514` (check_violation) alone is not a safe match: it is Postgres's
+ * default SQLSTATE for a plain `CHECK` constraint too, and this schema
+ * already has several (`Student_income_tier_check`,
+ * `Student_claim_link_check`, the `Invitation` checks in
+ * `20260805074500_invitation_check_constraints`) that raise it with no
+ * `USING ERRCODE` override. Matching on the code by itself would relabel any
+ * of those as "that class can no longer change status." The trigger's own
+ * message text — unique to it — is what actually discriminates.
+ */
+function isTerminalStatusViolation(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientUnknownRequestError &&
+    error.message.includes('23514') &&
+    error.message.includes('which is terminal')
+  );
+}
+
+/**
  * Classify anything thrown out of a route handler. Total: every input,
  * including non-Error throwables, yields an ApiFailure.
  *
@@ -65,6 +104,21 @@ export type ApiFailure = {
  * that, so the two are alternatives, not a plan.
  */
 export function classifyApiError(error: unknown): ApiFailure {
+  // The terminality trigger (migration 20260805120000) raises with SQLSTATE
+  // 23514. Reaching here means a status write lost a race that its own CAS or
+  // row lock should have caught — every writer has one since #174 — so this
+  // is a 409 and a `warn`, the same reading as the P2002 branch below: not an
+  // outage, but worth knowing a guard was bypassed.
+  if (isTerminalStatusViolation(error)) {
+    return {
+      status: 409,
+      message: 'That class can no longer change status',
+      logMessage: 'terminal class status change reached the DB trigger',
+      level: 'warn',
+      detail: {},
+    };
+  }
+
   // Reaching this branch means a route's own check-then-create lost its race
   // — at least four routes have that window today — or a route never
   // pre-checked at all. Both are worth knowing about; neither is an outage,
