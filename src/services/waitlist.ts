@@ -79,7 +79,7 @@ export async function activateRegistration(
   });
 }
 
-/** A Prisma client or transaction client — used for helpers that run inside or outside transactions. */
+/** The transaction client the helpers below take. Every call site passes one. */
 type PrismaTransactionClient = Prisma.TransactionClient;
 
 // ---------------------------------------------------------------------------

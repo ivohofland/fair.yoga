@@ -6,10 +6,12 @@ import type { Prisma } from '@prisma/client';
  *
  * See `lockClassRow`'s docblock for what the brand is doing and why
  * `Prisma.TransactionClient` alone does not do it. The rule that follows from
- * it: a function needs this brand exactly when it issues a statement whose
- * effect is scoped to the surrounding transaction — `SET LOCAL` or a row lock
- * — since that is the thing a bare client makes evaporate silently. Decided
- * per site, not uniformly:
+ * it: a function needs this brand when it issues a statement whose effect is
+ * scoped to the surrounding transaction — `SET LOCAL` or a row lock — since
+ * that is the thing a bare client makes evaporate silently. Sufficient, not
+ * necessary: a helper that only reads can still be wrong on a bare client, by
+ * reading around its caller's uncommitted writes. Decided per site, not
+ * uniformly:
  *
  *   adopt  `lockClassRow` and `setLockTimeout` below.
  *   adopt  `claimTemplateForGeneration` (`class-generator.ts`) and
@@ -22,10 +24,7 @@ import type { Prisma } from '@prisma/client';
  *          `reorderWaitingEntries` (`waitlist.ts`), and
  *          `resolveInvitationOnLink` (`link-consent.ts`) — none issues a
  *          `SET LOCAL` or a row lock, so none has anything that can
- *          evaporate. They still belong inside their callers' transactions,
- *          but for atomicity, which a bare client breaks loudly (a
- *          check-then-create racing itself hits a unique constraint) rather
- *          than silently.
+ *          evaporate. They still belong inside their callers' transactions.
  *
  * `waitlist.ts` reaches its own helpers through a module-local alias. The
  * parameter is changed at the one adopting site rather than re-pointing that
