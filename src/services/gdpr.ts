@@ -335,6 +335,14 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
       data: { status: 'cancelled', cancelledAt: new Date() },
     });
 
+    // `StudentPrivacy` BEFORE `TeacherStudent` — this project's one order
+    // for these two tables (#174 task 7; see `docs/lock-order.md`).
+    // `unlinkTeacher` (services/invitations.ts) used to take them the other
+    // way round, and racing it against this transaction deadlocked for
+    // real — not a theoretical inversion, a reproduced `40P01 deadlock
+    // detected` — because `unlinkTeacher`'s own `StudentPrivacy` write is
+    // never an empty upsert (six real columns), so it always takes the row
+    // lock. `unlinkTeacher` now takes them in this same order.
     await tx.studentPrivacy.deleteMany({ where: { studentId } });
     await tx.teacherStudent.deleteMany({ where: { studentId } });
     await tx.waitlistEntry.deleteMany({ where: { studentId } });
@@ -629,6 +637,12 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
 
       await tx.classTemplate.updateMany({ where: { teacherId }, data: { isActive: false, isArchived: true } });
       await tx.studioClassTemplate.updateMany({ where: { teacherId }, data: { isActive: false, isArchived: true } });
+      // `StudentPrivacy` BEFORE `TeacherStudent` — the same order
+      // `deleteStudentAccount` above and `unlinkTeacher`
+      // (services/invitations.ts) both take these two rows in (#174 task 7;
+      // see `docs/lock-order.md`). `unlinkTeacher` used to disagree and
+      // deadlocked for real against this table pair; not repeating that
+      // inversion here is the whole point of writing the order down.
       await tx.studentPrivacy.deleteMany({ where: { teacherId } });
       await tx.teacherStudent.deleteMany({ where: { teacherId } });
       // The teacher's CRM contacts — every one an address and a name they

@@ -500,6 +500,18 @@ export async function listPendingInvitations(
  * nothing. Keeping every "there is nothing here for you" answer identical is
  * worth more than naming this one.
  */
+/**
+ * Rolls back `acceptInvitation`'s transaction when the invitation is no
+ * longer pending. A plain `return false` would commit the `TeacherStudent`
+ * upsert taken above it — including, on the create path, a genuine
+ * `INSERT` — so the link would exist for an invitation nobody accepted.
+ * Only a throw, caught outside `$transaction`, rolls that write back with
+ * everything else. `invitations-api.test.ts` proves the negative directly:
+ * a NOT_PENDING refusal leaves no `TeacherStudent` row even though the
+ * upsert already ran by the time this fires.
+ */
+class NotPendingError extends Error {}
+
 export async function acceptInvitation(
   db: PrismaClient,
   input: { invitationId: string; studentId: string; accountEmail: string },
@@ -517,18 +529,40 @@ export async function acceptInvitation(
   });
   if (blocked) return { ok: false, reason: 'NOT_FOUND' };
 
-  // The pending check lives in this `updateMany`'s `where`, not in a read
-  // beforehand — a concurrent accept and decline from the same account
-  // (the only account that can ever pass the email match above) would
-  // otherwise both pass a separate status read and race to leave a
-  // `TeacherStudent` link sitting beside a `declined` invitation.
   const accepted = await db.$transaction(async (tx) => {
-    const updated = await tx.invitation.updateMany({
-      where: { id: invitation.id, status: 'pending' },
-      data: { status: 'accepted', respondedAt: new Date() },
-    });
-    if (updated.count === 0) return false;
-
+    // `TeacherStudent` BEFORE `Invitation`. `unlinkTeacher`,
+    // `deleteStudentAccount` and `deleteTeacherAccount` all take these two
+    // rows in that order; this function alone took them the other way
+    // round, which is a genuine cycle on paper — two transactions, each
+    // holding what the other wants next.
+    //
+    // It does not currently deadlock, and the reason is not that the old
+    // order was safe: `upsert({ where, update: {}, create: {...} })`
+    // compiles to three plain, non-locking `SELECT`s when the row already
+    // exists (confirmed by query log, #174 task 7), not the atomic
+    // `INSERT ... ON CONFLICT DO UPDATE` a non-empty `update` produces — so
+    // the upsert below has never actually asked Postgres for the row lock
+    // the cycle needs. That is an accident of how Prisma compiles an empty
+    // `update` object, not a design decision, and it is one real column
+    // away from vanishing: give this `update` a single field (an
+    // `updatedAt`, a bookkeeping flag) and the atomic path returns, the
+    // lock is taken, the cycle re-forms, and Postgres starts answering
+    // `40P01 deadlock detected` — surfaced as a 500 by `withErrorHandler` —
+    // with no warning anywhere that the edit did that. Reordering removes
+    // the dependency on that accident rather than leaving it as the only
+    // thing standing between this function and a deadlock the next
+    // contributor who "tidies" `update: {}` would reintroduce silently. See
+    // `docs/lock-order.md`, and the mechanism-pinning tests in
+    // `tests/integration/invitations-api.test.ts` that force the atomic
+    // path with a synthetic non-empty `update` and show the old order
+    // deadlocks under it while this one does not.
+    //
+    // Upserting first is safe to do unconditionally: the link is not the
+    // thing being decided. If the `updateMany` below then matches nothing —
+    // a concurrent decline or unlink got there first — the transaction
+    // rolls back and the upsert goes with it (see `NotPendingError` above
+    // for why that has to be a throw rather than a `return false`).
+    //
     // `upsert`, not `create`: this student may already share this teacher's
     // roster from booking a class while the invitation sat pending, and
     // accepting must not throw on that overlap.
@@ -539,7 +573,22 @@ export async function acceptInvitation(
       update: {},
       create: { teacherId: invitation.teacherId, studentId: input.studentId },
     });
+
+    // The pending check lives in this `updateMany`'s `where`, not in a read
+    // beforehand — a concurrent accept and decline from the same account
+    // (the only account that can ever pass the email match above) would
+    // otherwise both pass a separate status read and race to leave a
+    // `TeacherStudent` link sitting beside a `declined` invitation.
+    const updated = await tx.invitation.updateMany({
+      where: { id: invitation.id, status: 'pending' },
+      data: { status: 'accepted', respondedAt: new Date() },
+    });
+    if (updated.count === 0) throw new NotPendingError();
+
     return true;
+  }).catch((err: unknown) => {
+    if (err instanceof NotPendingError) return false;
+    throw err;
   });
   if (!accepted) return { ok: false, reason: 'NOT_PENDING' };
   return { ok: true };
@@ -650,8 +699,21 @@ export async function unlinkTeacher(
       studentId: input.studentId,
     });
 
-    await tx.teacherStudent.delete({ where: { id: link.id } });
-
+    // `StudentPrivacy` BEFORE `TeacherStudent` — a correctness requirement,
+    // not the order these two used to appear in this function. Both
+    // `deleteStudentAccount` and `deleteTeacherAccount` (services/gdpr.ts)
+    // take these two rows in that order; this function alone took them the
+    // other way round, and unlike the `Invitation`/`TeacherStudent`
+    // inversion #174 also fixed, this one is not protected by any accident
+    // of how Prisma compiles an upsert: `SILENCED_PRIVACY` below is six real
+    // columns, never empty, so this `upsert` always compiles to the atomic
+    // `INSERT ... ON CONFLICT DO UPDATE`, which always takes the row lock.
+    // Reproduced directly (#174 task 7): a transaction shaped like this
+    // function's old order, racing one shaped like `deleteStudentAccount`'s,
+    // deadlocked with Postgres `40P01 deadlock detected` on the first run —
+    // no synthetic non-empty payload needed, the real code was already
+    // exploitable. See `docs/lock-order.md`.
+    //
     // Deleting the link does not, by itself, stop this teacher reaching the
     // student, and it takes away the control that would.
     //
@@ -681,6 +743,8 @@ export async function unlinkTeacher(
         ...SILENCED_PRIVACY,
       },
     });
+
+    await tx.teacherStudent.delete({ where: { id: link.id } });
 
     // Lowercased for the same reason `acceptInvitation` lowercases:
     // `Invitation.email` and `TeacherBlock.email` are always stored
