@@ -688,12 +688,13 @@ export async function unlinkTeacher(
     //
     // It lives in `waitlist.ts` because it must take the class row's `FOR
     // UPDATE` lock, and that convention belongs with the table it protects.
-    // The convention is not universal there and reading one off this line
-    // would hide a real gap: `addToWaitlist`, `promoteNext` and `claimSpot`
-    // each open with that lock, `removeFromWaitlist` takes none at all. Why
-    // that gap cannot reach this call site is recorded in that function's
-    // own docblock, along with why it must run before this transaction's
-    // other writes — a deadlock question, not a preference.
+    // A comment at this exact call site has already gone stale twice for
+    // naming which functions in that module do and do not take it — once
+    // under #166, again under #174 once `removeFromWaitlist` picked the
+    // lock up — so this one names none: see that function's own docblock
+    // (`waitlist.ts:669-732`) for the current, authoritative account of who
+    // locks and why, and for why this call must run before this
+    // transaction's other writes — a deadlock question, not a preference.
     await withdrawWaitingEntriesForTeacher(tx, {
       teacherId: input.teacherId,
       studentId: input.studentId,

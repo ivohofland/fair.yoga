@@ -67,22 +67,25 @@ export async function processEmailFallback(
       // 1. `deleteTeacherAccount` (services/gdpr.ts) deletes every
       //    `recipientType: 'teacher'` Notification for the erased teacher in
       //    the SAME transaction that sets `deletedAt`, and cancels every
-      //    draft/open/in_progress class of theirs in it too. Of the three
-      //    writers of a teacher-recipient notification, two gate on one of
-      //    those statuses under the class row lock that transaction holds
-      //    (`POST /api/registrations`, `class-transitions`' auto-cancel), so
-      //    no fresh one can be written afterwards. **`completeClass` is the
-      //    exception: it reads its class without `FOR UPDATE`**, so a sweep
-      //    already inside it can commit after the `deleteMany`. That is the
-      //    same window (2) covers, and it is filed as #174 — which also
-      //    records the larger consequence, that such a sweep can flip a
-      //    `cancelled` class back to `completed` and create `Payment` rows
-      //    against it.
+      //    draft/open/in_progress class of theirs in it too. All three
+      //    writers of a teacher-recipient notification now gate on one of
+      //    those statuses under the class row lock that transaction holds:
+      //    `POST /api/registrations` takes `FOR UPDATE` directly;
+      //    `completeClass` and `class-transitions`' auto-cancel each take it
+      //    via `lockClassRow`. So no fresh one can be written afterwards.
+      //    `completeClass` was the exception until #174 — it used to read
+      //    its class without `FOR UPDATE`, so a sweep already inside it
+      //    could commit after the `deleteMany`, flipping a `cancelled` class
+      //    back to `completed` and creating `Payment` rows against it. #174
+      //    closed that window by giving `completeClass` the lock, not
+      //    merely by tracking it.
       // 2. The same transaction rewrites `Teacher.email` to
-      //    `deleted-<id>@deleted.invalid`. So even a row that slipped through
-      //    — a transition sweep committing its `completeClass` in the instant
-      //    after that `deleteMany` is the one window — carries no real
-      //    address to send to.
+      //    `deleted-<id>@deleted.invalid`. Kept as a second line rather than
+      //    deleted now that (1) is structural: (1)'s guarantee depends on
+      //    all three writers above continuing to take the lock before they
+      //    write; this one does not depend on any writer's behaviour at
+      //    all, so it still catches a stray notification if a future writer
+      //    is added, or an existing one's lock discipline regresses.
       //
       // A `deletedAt` filter is deliberately NOT added: with (1) holding,
       // nothing could drive it, and an untestable guard is what this branch

@@ -680,7 +680,7 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
 // and its students had already been told to pay.
 //
 // A test that merely completes the class BEFORE calling `deleteTeacherAccount`
-// proves nothing: the erasure `findMany` at `gdpr.ts:423` filters to
+// proves nothing: the erasure `findMany` at `gdpr.ts:593` filters to
 // `draft`/`open`/`in_progress`, so an already-`completed` class is never
 // selected into `upcoming` and the loop never touches it — the assertion
 // passes on the unfixed code for a reason that has nothing to do with the
@@ -696,17 +696,24 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
 // and `invitations.revive.test.ts:99`. `deleteTeacherAccount` calls
 // `class.findMany` twice — once before the transaction (to find classes to
 // `completeClass` directly) and once inside it (to find classes to cancel) —
-// so the hook has to tell those two calls apart. It does that by call order,
-// not by inspecting `args`: the first call is filtered to exclude this
-// fixture's class (standing in for a completion sweep that has not reached
-// this row yet, so the class is still genuinely `in_progress` for the second
-// call to read); the second call's real, unmodified read is what the
-// erasure transaction acts on. The side effect — a real, separately
-// committed `updateMany` moving the row to `completed` — runs inside that
-// same hook, after the real read resolves and before control returns to
-// `deleteTeacherAccount`, so it is guaranteed to land before the loop's
-// per-row write for this class, exactly the ordering the docblock at
-// `gdpr.ts:433` describes.
+// so the hook has to tell those two calls apart. It does that by args
+// shape, not by call order (round 1 review, Important 1: keying on call
+// order went silently vacuous when an unrelated extra `class.findMany`
+// landed before the transaction's own read — the concurrent completion
+// fired on the wrong call, the real read then saw an already-`completed`
+// row and excluded it via its own `WHERE`, and the buggy unconditional
+// update never got a row to clobber): the pre-transaction sweep selects
+// only `id` on `status: 'in_progress'` with no `include`, so it is filtered
+// to exclude this fixture's class (standing in for a completion sweep that
+// has not reached this row yet, so the class is still genuinely
+// `in_progress` for the transaction's own read); the transaction's read is
+// the one that includes `registrations`, and its real, unmodified rows are
+// what the erasure transaction acts on. The side effect — a real,
+// separately committed `updateMany` moving the row to `completed` — runs
+// inside that same hook, after the real read resolves and before control
+// returns to `deleteTeacherAccount`, so it is guaranteed to land before the
+// loop's per-row write for this class, exactly the ordering
+// `gdpr.ts:604-614` describes.
 describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
   const prisma = new PrismaClient();
   const suffix = `gdpr-cas-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;

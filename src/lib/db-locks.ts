@@ -57,12 +57,16 @@ import type { Prisma } from '@prisma/client';
  * `deleteStudentAccount`'s erasure transaction is time-bound by GDPR's own
  * clock, and an unbounded block there on a row the 60-second transitions
  * sweep can hold would hang a legally time-bound operation. That caller
- * landed in #174 Task 5. All three call sites this issue's plan intended for
- * this helper now exist: `completeClass` below was the first,
+ * landed in #174 Task 5. The three call sites this issue's plan intended for
+ * this helper all exist: `completeClass` below was the first,
  * `removeFromWaitlist` (`waitlist.ts`) picked it up next, and
  * `deleteStudentAccount` (`gdpr.ts`) — called once per class it is about to
- * renumber — is the last. Not the only callers this helper exists to serve,
- * either: nothing about it restricts it to these three.
+ * renumber — was the last of the three. A fourth arrived afterward, outside
+ * the plan: `autoCancelClasses` (`class-transitions.ts`), added by #174 Task
+ * 6's round 1 review once moving its registration count inside the
+ * transaction turned a CAS-only decision into one that reads more state
+ * under the lock. Not the only callers this helper exists to serve, either:
+ * nothing about it restricts it to these four.
  *
  * Must be given a transaction client for the lock to have anywhere to live —
  * see the brand paragraph above for what enforces that at compile time.

@@ -303,7 +303,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // Postgres's choice, not this code's. Locking every affected class here,
     // before any write, makes this transaction's acquisition order match
     // theirs (Class row, then its children) — the same convention
-    // `waitlist.ts:703–707` documents as "a correctness requirement rather
+    // `waitlist.ts:719–723` documents as "a correctness requirement rather
     // than a style note," now for the same reason there as here.
     //
     // Not covered by the escape argument in `waitlist.ts`'s
