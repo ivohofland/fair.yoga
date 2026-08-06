@@ -294,12 +294,15 @@ describe('class transitions (DB, timezone-aware)', () => {
   //
   // The registration write in this test is not a bare `prisma.registration
   // .create` the way the test above's is — it goes through `lockClassRow`
-  // first, the same as every production registration writer (`POST
-  // /api/registrations`; `waitlist.ts`'s `activateRegistration`). That is
-  // deliberate: a writer that does not contend for the Class row lock at
-  // all cannot be used to demonstrate that taking the lock closes anything,
-  // since nothing it does could ever have been blocked by a lock on the
-  // other side.
+  // first, so it takes the same Class row lock every production writer that
+  // CREATES a registration takes (`POST /api/registrations`; `waitlist.ts`'s
+  // `activateRegistration`). Those two take it with their own inline `SELECT
+  // … FOR UPDATE` rather than through this helper — `db-locks.ts` records
+  // them as deliberately not adopting it — so what is shared here is the
+  // lock, not the code path. That is deliberate: a writer that does not
+  // contend for the Class row lock at all cannot be used to demonstrate that
+  // taking the lock closes anything, since nothing it does could ever have
+  // been blocked by a lock on the other side.
   //
   // The interposition point is `registration.count` rather than
   // `class.findMany`: that is the exact statement the timeline above pins
@@ -362,12 +365,13 @@ describe('class transitions (DB, timezone-aware)', () => {
               hookCalls += 1;
               const result = await query(args);
 
-              // A real, separately committed transaction, going through
-              // the same `lockClassRow` every production registration
-              // writer does — awaited to completion (success or the
-              // lock-timeout failure) before this hook returns, so the
-              // ordering is deterministic rather than racing real
-              // scheduling.
+              // A real, separately committed transaction, taking the same
+              // Class row lock every production registration-creating writer
+              // takes (through `lockClassRow` here; those writers take it
+              // with their own inline `FOR UPDATE`) — awaited to completion
+              // (success or the lock-timeout failure) before this hook
+              // returns, so the ordering is deterministic rather than racing
+              // real scheduling.
               try {
                 await prisma.$transaction(async (tx2) => {
                   await lockClassRow(tx2, cls.id);
@@ -407,7 +411,17 @@ describe('class transitions (DB, timezone-aware)', () => {
       // not merely slow — so a future change that made this pass for an
       // unrelated reason (e.g. the write silently no-op'ing) would still
       // be caught here.
-      expect(competingWriteError).not.toBeNull();
+      //
+      // The SQLSTATE, not `not.toBeNull()`. That weaker assertion accepted
+      // any throw at all: a `P2028` from an unrelated transaction budget, a
+      // `P2024` from an exhausted pool, a unique-constraint violation from a
+      // fixture collision would each have satisfied it while proving nothing
+      // about the lock — the exact "green for the wrong cause" failure this
+      // branch cites elsewhere as its reason for shape-keying every hook.
+      // `55P03` is what a `SET LOCAL lock_timeout` expiry actually is;
+      // `invitations-lock-order.test.ts` already asserts `40P01` this way for
+      // the same reason.
+      expect(String(competingWriteError)).toMatch(/55P03|lock timeout/);
 
       const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
       expect(updated.status).toBe('cancelled');
@@ -418,6 +432,140 @@ describe('class transitions (DB, timezone-aware)', () => {
     },
     10_000,
   );
+
+  /**
+   * #174 four-specialist review, Important 3. Round 1 of task 6 moved the
+   * registration COUNT under the lock and stopped there, which left the
+   * WINDOW itself decided from the pre-lock snapshot: `date`, `startTime`,
+   * `autoCancelCheck` and `minStudents` all still came from the sweep's outer
+   * `findMany`.
+   *
+   * `date` and `startTime` are not economic fields, so `settingsLocked` does
+   * not freeze them — a teacher can reschedule an `open` class that already
+   * has registrations, at any moment, including while this sweep is in
+   * flight. The consequence is not cosmetic: the class is cancelled against a
+   * window it is no longer in, every registered student is emailed that it is
+   * off, and `cancelled` is terminal in Postgres since this branch, so the
+   * teacher cannot put it back from inside the app.
+   *
+   * Reproduced the same way the two tests above reproduce their races — the
+   * reschedule lands strictly between the outer read and the transaction, not
+   * before the call, because a reschedule before the call is seen by the
+   * sweep's own `findMany` and would pass on fixed and unfixed code alike.
+   */
+  it('does not cancel a class rescheduled out of its window after the sweep read it', async () => {
+    const cls = await makeClass({ autoCancelCheck: 'HOURS_2', minStudents: 2 });
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId, status: 'registered', tierAtBooking: 3 },
+    });
+
+    let hookCalls = 0;
+    const racing = prisma.$extends({
+      query: {
+        class: {
+          async findMany({ args, query }) {
+            // Shape-keyed, per the house rule for every hook in this file:
+            // `autoCancelClasses`'s own sweep read is the one filtering on a
+            // bare `status: 'open'`.
+            const where = args.where as { status?: unknown } | undefined;
+            if (where?.status !== 'open') return query(args);
+
+            hookCalls += 1;
+            const rows = await query(args);
+            // A week later, so 15:00Z on July 20 is nowhere near the new
+            // 14:00Z–16:00Z window on July 27. Committed before the sweep's
+            // per-class transaction opens, so the snapshot it is walking is
+            // stale by exactly one reschedule.
+            await prisma.class.update({
+              where: { id: cls.id },
+              data: { date: new Date('2026-07-27') },
+            });
+            return rows;
+          },
+        },
+      },
+      // Same cast rationale as the tests above.
+    }) as unknown as PrismaClient;
+
+    const cancelledCount = await autoCancelClasses(racing, new Date('2026-07-20T15:00:00Z'));
+
+    expect(hookCalls).toBe(1);
+    expect(cancelledCount).toBe(0);
+
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(updated.status).toBe('open');
+
+    // Nobody was told a class was cancelled that wasn't. Pre-fix this is 2 —
+    // one for the student, one for the teacher.
+    expect(
+      await prisma.notification.count({ where: { relatedClassId: cls.id, type: 'class_cancelled' } }),
+    ).toBe(0);
+
+    await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+    await prisma.registration.deleteMany({ where: { classId: cls.id } });
+    await prisma.class.delete({ where: { id: cls.id } });
+  });
+
+  /**
+   * #174 four-specialist review, Important 4. The pre-gate this sweep used to
+   * have (`activeCount < minStudents`, from the eager-loaded registrations)
+   * was deleted along with the eager-load when the count moved under the
+   * lock. Without it the sweep opens a transaction, issues a `SET LOCAL` and
+   * takes a `FOR UPDATE` on every in-window open class every 60 seconds —
+   * the healthy majority included — and every concurrent registration on one
+   * of those classes queues behind a lock taken to confirm nothing needed
+   * doing.
+   *
+   * `registration.count` is the observable: it is the first statement the
+   * transaction issues after the lock, and this class is `open` and inside
+   * its window, so if the transaction had opened at all that count would have
+   * run. Zero calls therefore means the transaction never opened — no
+   * transaction, no `SET LOCAL`, no `FOR UPDATE`.
+   *
+   * Correctness is unaffected either way, which is why this is an
+   * optimisation and not a fix: the authoritative check is still inside the
+   * lock, so a pre-filter reading a stale snapshot can only delay a
+   * cancellation to the next tick, never cause a wrong one.
+   */
+  it('does not open a transaction for a class that already meets its minimum', async () => {
+    const cls = await makeClass({ autoCancelCheck: 'HOURS_2', minStudents: 1 });
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId, status: 'registered', tierAtBooking: 3 },
+    });
+
+    let decisionCounts = 0;
+    const watched = prisma.$extends({
+      query: {
+        registration: {
+          async count({ args, query }) {
+            // Same shape key as the interleaving test above: a single class
+            // id plus the active-status set is `autoCancelClasses`'s own
+            // decision count and nothing else.
+            const where = args.where as
+              | { classId?: unknown; status?: { in?: unknown } }
+              | undefined;
+            if (where?.classId === cls.id && Array.isArray(where?.status?.in)) {
+              decisionCounts += 1;
+            }
+            return query(args);
+          },
+        },
+      },
+      // Same cast rationale as the tests above.
+    }) as unknown as PrismaClient;
+
+    // 15:00Z is inside the 14:00Z–16:00Z window, so the window is not what
+    // skips this class — the pre-filter is.
+    await autoCancelClasses(watched, new Date('2026-07-20T15:00:00Z'));
+
+    expect(decisionCounts).toBe(0);
+
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(updated.status).toBe('open');
+
+    await prisma.registration.deleteMany({ where: { classId: cls.id } });
+    await prisma.class.delete({ where: { id: cls.id } });
+  });
 
   it('auto-completes an in-progress class after its local end time', async () => {
     const cls = await makeClass({ status: 'in_progress', minStudents: 1 });
