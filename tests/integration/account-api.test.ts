@@ -193,9 +193,37 @@ describe('DELETE /api/account', () => {
     };
   };
 
+  /**
+   * A student-only account: one Account carrying a Student and no Teacher.
+   * The dual seed above cannot stand in for it — the two failure paths below
+   * are `deleteStudentAccount`'s own, and on a dual account a student-half
+   * failure is indistinguishable in the response from a teacher-half one.
+   */
+  const seedStudentOnly = async (label: string) => {
+    const mail = `accdel-${label}-${suffix}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Del',
+        lastName: label,
+        email: mail,
+        claimedAt: new Date(),
+        account: { create: { email: mail } },
+      },
+    });
+    const studentAccountId = student.accountId as string;
+    seededAccountIds.push(studentAccountId);
+    seededStudentIds.push(student.id);
+    return {
+      accountId: studentAccountId,
+      studentId: student.id,
+      token: await seedSession(prisma, studentAccountId),
+    };
+  };
+
   afterAll(async () => {
     // Erasure soft-deletes, so every row these tests made is still here, and
     // dependants must go before their parents.
+    await prisma.waitlistEntry.deleteMany({ where: { classId: { in: seededClassIds } } });
     await prisma.payment.deleteMany({
       where: { registration: { classId: { in: seededClassIds } } },
     });
@@ -343,4 +371,150 @@ describe('DELETE /api/account', () => {
     const account = await prisma.account.findUniqueOrThrow({ where: { id: acc.accountId } });
     expect(account.email).toBe(`deleted-${acc.accountId}@deleted.invalid`);
   });
+
+  /**
+   * The `ERASURE_FAILED` half of the route's catch. Its `PARTIAL_ERASURE`
+   * sibling above has been covered by injection since it landed; this branch
+   * had zero coverage, which is how it kept the retry advice its wording no
+   * longer justifies.
+   *
+   * Same three properties as that injection — real data, uncaught, reversible
+   * — on a different collision. `deleteStudentAccount` rewrites the account
+   * email to `deleted-<accountId>@deleted.invalid` when the last live profile
+   * on it goes, and `Account.email` is `@unique`, so an Account already
+   * holding that exact address makes the write throw `P2002`. Permanent, not
+   * transient: retrying changes nothing until somebody removes the other row.
+   *
+   * What this pins is the discrimination, not just the code: `P2002` is not
+   * in `isTransientDbError`'s set, so the answer must be a 500 that does NOT
+   * tell the caller to press Delete again — the behaviour before #174's fix
+   * wave, where every failure got the same "Press Delete again to finish."
+   */
+  it('reports ERASURE_FAILED, without retry advice, when the student half fails permanently', async () => {
+    const acc = await seedStudentOnly('failed');
+
+    const blocker = await prisma.account.create({
+      data: { email: `deleted-${acc.accountId}@deleted.invalid` },
+    });
+    seededAccountIds.push(blocker.id);
+
+    const del = () =>
+      fetch(`${BASE_URL}/api/account`, { method: 'DELETE', headers: cookie(acc.token) });
+
+    const first = await del();
+    expect(first.status).toBe(500);
+    const body = (await first.json()) as { error: { message: string; code?: string } };
+    expect(body.error.code).toBe('ERASURE_FAILED');
+    // The assertion is on what the message TELLS them to do, not on whether
+    // the word "again" appears — this message names the retry precisely in
+    // order to rule it out ("pressing Delete again will not fix it"), which a
+    // naive `not.toMatch(/again/)` would read as a failure.
+    expect(body.error.message).toMatch(/will not fix it/i);
+    expect(body.error.message).toMatch(/contact support/i);
+
+    // "Nothing was changed" is a claim the message makes; this is the check
+    // that it is true. The whole erasure is one transaction, so a throw out
+    // of it rolls every write back — including the profile anonymisation.
+    const student = await prisma.student.findUniqueOrThrow({ where: { id: acc.studentId } });
+    expect(student.deletedAt).toBeNull();
+    expect(student.firstName).toBe('Del');
+    expect(await prisma.session.count({ where: { accountId: acc.accountId } })).toBe(1);
+
+    // And the failure really was the collision, not something incidental:
+    // clear it and the identical request goes through.
+    await prisma.account.delete({ where: { id: blocker.id } });
+    const second = await del();
+    expect(second.status).toBe(200);
+    const after = await prisma.student.findUniqueOrThrow({ where: { id: acc.studentId } });
+    expect(after.deletedAt).not.toBeNull();
+  }, 30_000);
+
+  /**
+   * The other side of the same discrimination, and the one the branch made
+   * reachable: a lost lock race is a 503 that DOES tell the caller to try
+   * again, because the next attempt can win.
+   *
+   * Provoked with the real mechanism rather than a mock — this test holds the
+   * `Class` row that `deleteStudentAccount`'s own `lockClassRow` loop must
+   * take (the student is `waiting` in that class), for longer than the 2s
+   * `SET LOCAL lock_timeout` that loop sets. Postgres cancels the erasure's
+   * `FOR UPDATE` with `55P03`, the whole transaction rolls back, and the
+   * route has to recognise it as contention rather than a defect.
+   */
+  it('reports ERASURE_BUSY with retry advice when the erasure loses a lock race', async () => {
+    const acc = await seedStudentOnly('busy');
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Busy Venue',
+        address: `${suffix} Busy St`,
+        city: 'Testville',
+        postcode: '1234BU',
+        floor: '1',
+        roomName: 'Hall',
+        maxCapacity: 10,
+        createdById: teacherId,
+      },
+    });
+    seededRoomIds.push(room.id);
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId: room.id, capacityOverride: 8, rentalRate: 15 },
+    });
+    seededTeacherRoomIds.push(teacherRoom.id);
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId: teacherRoom.id,
+        classType: 'Busy Flow',
+        date: new Date('2099-06-01'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 8,
+        status: 'open',
+      },
+    });
+    seededClassIds.push(cls.id);
+    await prisma.waitlistEntry.create({
+      data: { classId: cls.id, studentId: acc.studentId, position: 1, status: 'waiting' },
+    });
+
+    // Held for 4s — comfortably past the erasure's own 2s bound, so what this
+    // observes is the timeout and not merely a wait.
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
+        await new Promise((r) => setTimeout(r, 4_000));
+      },
+      { timeout: 20_000 },
+    );
+    await new Promise((r) => setTimeout(r, 200));
+
+    try {
+      const res = await fetch(`${BASE_URL}/api/account`, {
+        method: 'DELETE',
+        headers: cookie(acc.token),
+      });
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as { error: { message: string; code?: string } };
+      expect(body.error.code).toBe('ERASURE_BUSY');
+      expect(body.error.message).toMatch(/again/i);
+
+      const student = await prisma.student.findUniqueOrThrow({ where: { id: acc.studentId } });
+      expect(student.deletedAt).toBeNull();
+    } finally {
+      await holder;
+    }
+
+    // The retry the message promises actually works once the contention is
+    // gone — which is the difference from ERASURE_FAILED above.
+    const second = await fetch(`${BASE_URL}/api/account`, {
+      method: 'DELETE',
+      headers: cookie(acc.token),
+    });
+    expect(second.status).toBe(200);
+  }, 40_000);
 });

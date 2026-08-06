@@ -46,7 +46,7 @@ export type ApiLogDetail = Record<string, unknown> & {
  * moment a case needs it.
  */
 export type ApiFailure = {
-  readonly status: 409 | 500;
+  readonly status: 409 | 500 | 503;
   readonly message: string;
   readonly logMessage: string;
   readonly level: 'warn' | 'error';
@@ -94,15 +94,80 @@ function isTerminalStatusViolation(error: unknown): boolean {
 }
 
 /**
+ * Postgres SQLSTATEs that mean "this transaction lost a contention race", not
+ * "this request was wrong". All three abort the whole transaction, so nothing
+ * is half-applied, and the identical request can win the next attempt:
+ *
+ * - `55P03` lock_not_available — a `SET LOCAL lock_timeout` expired. This
+ *   project sets one at every `lockClassRow` call and at the two template
+ *   claims, so it is the one a user is most likely to meet.
+ * - `40P01` deadlock_detected — Postgres broke an AB-BA cycle by killing one
+ *   side. `docs/lock-order.md` records two live cycles against the template
+ *   sites, so this is reachable today, not hypothetical.
+ * - `40001` serialization_failure — nothing here uses a serializable or
+ *   repeatable-read transaction yet, so this cannot fire at present; it is
+ *   listed because it belongs to the same family and adding it later would
+ *   otherwise be a second edit at a second moment.
+ */
+const TRANSIENT_SQLSTATES = ['40001', '40P01', '55P03'] as const;
+
+/**
+ * Prisma's own codes for the same class of failure — contention, not a bad
+ * request. `P2028` is the interactive-transaction budget expiring (which
+ * `deleteStudentAccount`'s sized `timeout` can hit under load) and `P2024` is
+ * the connection pool handing out nothing in time.
+ */
+const TRANSIENT_PRISMA_CODES = new Set(['P2024', 'P2028']);
+
+/**
+ * True when the failure is a lost contention race that a retry can win.
+ *
+ * Two different error shapes carry the same SQLSTATE, and both were measured
+ * against this project's own database rather than assumed — a matcher built
+ * for one of them silently misses the other:
+ *
+ *   // tx.class.updateMany(...) blocked past `SET LOCAL lock_timeout`
+ *   PrismaClientUnknownRequestError: ... ConnectorError(ConnectorError {
+ *     ... kind: QueryError(PostgresError { code: "55P03", message:
+ *     "canceling statement due to lock timeout", ... }) ... })
+ *
+ *   // tx.$queryRaw`SELECT ... FOR UPDATE` blocked past the same timeout
+ *   PrismaClientKnownRequestError (code P2010): ... Raw query failed.
+ *     Code: `55P03`. Message: `ERROR: canceling statement due to lock timeout`
+ *
+ * `lockClassRow` (`src/lib/db-locks.ts`) issues exactly the second shape, and
+ * every model write after it in the same transaction issues the first, so
+ * both reach routes from the same helper.
+ *
+ * Matched on the SQLSTATE inside its Postgres framing (`code: "55P03"` /
+ * `Code: \`55P03\``) rather than as a bare substring. A bare
+ * `message.includes('40001')` would relabel any error whose text happens to
+ * quote that as a digit string — a postcode, an amount, an id fragment — as
+ * "the database is busy, try again", which is exactly the wrong advice and
+ * exactly the trap `isTerminalStatusViolation` above documents for `23514`.
+ */
+export function isTransientDbError(error: unknown): boolean {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (TRANSIENT_PRISMA_CODES.has(error.code)) return true;
+  }
+  if (!(error instanceof Error)) return false;
+  return TRANSIENT_SQLSTATES.some(
+    (state) =>
+      error.message.includes(`code: "${state}"`) || error.message.includes(`Code: \`${state}\``),
+  );
+}
+
+/**
  * Classify anything thrown out of a route handler. Total: every input,
  * including non-Error throwables, yields an ApiFailure.
  *
- * This is the obvious home for further mappings — a lock-race loser to 503,
- * say — but nothing is queued to land here. #113, which wants that mapping,
- * currently proposes the other route: a `busy` variant on the archive
- * services' result unions, so that the routes' exhaustive narrowing turns an
- * unhandled variant into a compile error. A catch-all classifier cannot offer
- * that, so the two are alternatives, not a plan.
+ * The lock-race-to-503 mapping this docblock used to describe as unqueued has
+ * landed (the transient branch below). It does NOT close #113, and reading it
+ * that way would be the mistake: #113 wants a `busy` variant on the archive
+ * services' result unions, so a route that forgets to handle contention is a
+ * COMPILE error. A catch-all classifier cannot offer that — it only makes the
+ * failure legible once it has already escaped. The two are complementary, not
+ * substitutes.
  */
 export function classifyApiError(error: unknown): ApiFailure {
   // The terminality trigger (migration 20260805120000) raises with SQLSTATE
@@ -119,6 +184,30 @@ export function classifyApiError(error: unknown): ApiFailure {
       status: 409,
       message: 'That class can no longer change status',
       logMessage: 'terminal class status change reached the DB trigger',
+      level: 'warn',
+    };
+  }
+
+  // A lost contention race, not a bad request. Before this branch these
+  // reached the user as "Internal server error" at `level: 'error'` — which
+  // is wrong twice over. Wrong for the user, because the one thing that helps
+  // is the one thing that message does not say: try again. And wrong for the
+  // operator, because `error` is the level that pages someone, while a
+  // `lock_timeout` on a contended row is the system doing what it was
+  // configured to do. Concretely: a student tapping "leave waitlist" while
+  // the 60-second transitions sweep holds their class row got a 500 for it,
+  // where before #174 bounded that wait they simply blocked and succeeded.
+  //
+  // Checked BEFORE the P2002 branch below on purpose — a `P2024`/`P2028` is a
+  // `PrismaClientKnownRequestError` too, and ordering these the other way
+  // round would leave the transient codes to fall past a branch that does not
+  // match them into the generic 500, i.e. exactly the behaviour this branch
+  // exists to remove.
+  if (isTransientDbError(error)) {
+    return {
+      status: 503,
+      message: 'The system was busy and could not finish that. Please try again.',
+      logMessage: 'transient database contention surfaced to a client',
       level: 'warn',
     };
   }
