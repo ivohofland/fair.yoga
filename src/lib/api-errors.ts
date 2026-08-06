@@ -58,10 +58,11 @@ export type ApiFailure = {
  * `20260805120000_class_terminal_status_trigger` (`class_terminal_status_
  * guard`, `RAISE EXCEPTION ... USING ERRCODE = '23514'`).
  *
- * Measured directly rather than assumed (`tests/integration/class-terminal-
- * status.test.ts`) — the brief this shipped from deliberately did not
- * predict which Prisma error class would wrap a trigger's SQLSTATE. What was
- * observed:
+ * Measured directly rather than assumed (`src/services/class-terminal-
+ * status.test.ts`, which also pins `classifyApiError(caught).status === 409`
+ * against the real thrown error, not just this file's hand-written fixture)
+ * — the brief this shipped from deliberately did not predict which Prisma
+ * error class would wrap a trigger's SQLSTATE. What was observed:
  *
  *   PrismaClientUnknownRequestError: Invalid `prisma.class.update()` invocation
  *   Error occurred during query execution:
@@ -110,12 +111,15 @@ export function classifyApiError(error: unknown): ApiFailure {
   // is a 409 and a `warn`, the same reading as the P2002 branch below: not an
   // outage, but worth knowing a guard was bypassed.
   if (isTerminalStatusViolation(error)) {
+    // No `detail`: `withErrorHandler` always logs `err: error`, and the
+    // trigger's own message already names the class id and both statuses —
+    // there is nothing this branch could add that isn't in one of those two
+    // places already.
     return {
       status: 409,
       message: 'That class can no longer change status',
       logMessage: 'terminal class status change reached the DB trigger',
       level: 'warn',
-      detail: {},
     };
   }
 

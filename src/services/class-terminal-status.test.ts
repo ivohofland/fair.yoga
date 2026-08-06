@@ -1,10 +1,44 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import type { ClassStatus } from '@prisma/client';
-import { uniqueSuffix } from '../helpers';
+import { classifyApiError } from '@/lib/api-errors';
 
+/**
+ * A pure DB-invariant test — no HTTP surface, nothing here calls the app on
+ * `:3000` — so it lives here, in the `unit` project, rather than
+ * `tests/integration/`. `tests/setup/unit-db.ts` forces this project onto
+ * the isolated `DATABASE_URL_TEST` automatically; the sibling DB-invariant
+ * files it matches for shape (`class-lifecycle.test.ts`, `gdpr.test.ts`) are
+ * unit-project files for the same reason. This file used to live in
+ * `tests/integration/`, which by design runs against the **dev** database
+ * (`docs/test-database.md` §3.4) — every mutation-prove-the-trigger run
+ * therefore needed a manual `DATABASE_URL` shell override to reach the test
+ * DB instead, and getting that override wrong drops the trigger on dev.
+ * Moving the file removes the foot-gun rather than documenting around it.
+ *
+ * Manual mutation-proof recipe, if this trigger is ever touched again —
+ * against `DATABASE_URL_TEST`, never dev:
+ *
+ *   docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
+ *     -c 'DROP TRIGGER class_terminal_status_guard ON "Class";'
+ *   npx vitest run --project unit src/services/class-terminal-status.test.ts
+ *   # first test fails: `caught` stays undefined, no exception to catch
+ *
+ * To restore: `CREATE OR REPLACE FUNCTION` (in the migration) is idempotent,
+ * but `CREATE TRIGGER` is not — replaying the migration file only works
+ * because the trigger was just dropped. Replaying it while the trigger still
+ * exists fails with `trigger "class_terminal_status_guard" for relation
+ * "Class" already exists`. Either confirm it's actually gone first, then:
+ *
+ *   docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
+ *     < prisma/migrations/20260805120000_class_terminal_status_trigger/migration.sql
+ *
+ * or reset the whole test database from scratch instead of replaying by
+ * hand: `DATABASE_URL_TEST=... npx prisma migrate reset` (safe — it never
+ * touches dev).
+ */
 const prisma = new PrismaClient();
-const suffix = uniqueSuffix();
+const uniqueSuffix = Date.now();
 
 let teacherId: string;
 let accountId: string;
@@ -40,10 +74,10 @@ beforeAll(async () => {
     data: {
       firstName: 'Terminal',
       lastName: 'Status',
-      email: `terminal-status-${suffix}@test.local`,
-      account: { create: { email: `terminal-status-${suffix}@test.local` } },
+      email: `terminal-status-${uniqueSuffix}@test.local`,
+      account: { create: { email: `terminal-status-${uniqueSuffix}@test.local` } },
       bio: 'Terminal status trigger tests',
-      pageSlug: `terminal-status-${suffix}`,
+      pageSlug: `terminal-status-${uniqueSuffix}`,
     },
   });
   teacherId = teacher.id;
@@ -52,7 +86,7 @@ beforeAll(async () => {
   const room = await prisma.room.create({
     data: {
       venueName: 'Terminal Status Studio',
-      address: `${suffix} Trigger St`,
+      address: `${uniqueSuffix} Trigger St`,
       city: 'Amsterdam',
       postcode: '1234RA',
       floor: '1',
@@ -104,6 +138,17 @@ describe('class terminal status trigger', () => {
     expect(caught).toBeInstanceOf(Prisma.PrismaClientUnknownRequestError);
     expect(String(caught)).toMatch(/23514/);
     expect(String(caught)).toMatch(/which is terminal/);
+
+    // End-to-end pin, not just a unit test against a frozen fixture:
+    // api-errors.test.ts feeds classifyApiError a hand-built string literal
+    // shaped like this error, which proves the *matcher* is right about the
+    // shape it was told to expect but not that the shape is still real. This
+    // line closes that gap by running the real classifier against the real
+    // error this test just caught — a Prisma upgrade that reshapes the
+    // ConnectorError/PostgresError debug formatting the matcher depends on
+    // fails here even if the frozen fixture in api-errors.test.ts stays
+    // green.
+    expect(classifyApiError(caught).status).toBe(409);
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
     expect(after.status).toBe('cancelled');
