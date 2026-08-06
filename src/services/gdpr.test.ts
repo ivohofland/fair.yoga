@@ -1302,14 +1302,14 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
    * read once. These print on every `--project unit` run, next to the tests
    * that pin the cycles that WERE closed.
    *
-   * ISSUE PLACEHOLDER: `#TEMPLATE-LOCK-ORDER` below is not a real issue
-   * number — substitute the one filed for the template-family lock order.
+   * Delete both when #180 lands — they exist to keep the open cycles visible,
+   * not to describe them.
    */
   it.todo(
-    '#TEMPLATE-LOCK-ORDER: syncTemplateInstances vs deleteStudentAccount deadlocks (40P01, reproduced, unfixed)',
+    '#180: syncTemplateInstances vs deleteStudentAccount deadlocks (40P01, reproduced, unfixed)',
   );
   it.todo(
-    '#TEMPLATE-LOCK-ORDER: archiveOrUnarchiveTemplate vs deleteStudentAccount deadlocks (same cycle, same fix site)',
+    '#180: archiveOrUnarchiveTemplate vs deleteStudentAccount deadlocks (same cycle, same fix site)',
   );
 });
 
