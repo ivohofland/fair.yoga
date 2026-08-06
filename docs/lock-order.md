@@ -49,20 +49,58 @@ that suffix.
 ## Ordering WITHIN `Class`
 
 The list above orders the *tables*. It says nothing about the order of two rows
-of the SAME table, and `Class` is the one table where that matters: three sites
-lock more than one `Class` row inside a single transaction, and two of them
-taking the same pair in opposite sequences is an AB-BA cycle exactly like any
-cross-table one.
+of the SAME table, and `Class` is the one table where that matters: **five**
+sites lock more than one `Class` row inside a single transaction, and two of
+them taking the same pair in opposite sequences is an AB-BA cycle exactly like
+any cross-table one.
 
-**The rule: ascending by `id`.** All three sites take it that way.
+**The rule: ascending by `id`. Three of the five follow it; two do not, and the
+disagreement is live** — see "The two that do not" below before assuming this
+section describes a solved problem. An earlier version of this section said
+"three sites" and "all three take it that way"; both were false, and an
+enumeration asserted as complete is exactly what stops the next reader looking
+for the ones it missed.
 
-| Site | How it locks | How it orders |
+| Site | How it locks | Order it takes |
 |---|---|---|
-| `deleteStudentAccount` (`gdpr.ts`) | `lockClassRow` in a loop | `[...ids].sort()` in JS, before the loop |
-| `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) | one `SELECT … FOR UPDATE OF c` | `ORDER BY c.id` in SQL |
-| `deleteTeacherAccount` (`gdpr.ts`) | the per-class cancel CAS `UPDATE`, one per iteration | `orderBy: { id: 'asc' }` on the read the loop walks |
+| `deleteStudentAccount` (`gdpr.ts`) | `lockClassRow` in a loop | ascending — `[...ids].sort()` in JS, before the loop |
+| `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) | one `SELECT … FOR UPDATE OF c` | ascending — `ORDER BY c.id` in SQL |
+| `deleteTeacherAccount` (`gdpr.ts`) | the per-class cancel CAS `UPDATE`, one per iteration | ascending — `orderBy: { id: 'asc' }` on the read the loop walks |
+| `syncTemplateInstances` (`template-sync.ts`) | `class.deleteMany` (wrong-day) then `class.updateMany` (same-day), each multi-row | **none** — statement order first, then heap order within each statement |
+| `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | one multi-row `class.deleteMany` | **none** — heap order |
 
-Two things about that table are easy to get wrong and are the reason it exists:
+### How that enumeration was derived
+
+Mechanically, not by recall — the defect being fixed was an incomplete list
+asserted as complete. A `Class` row lock can only come from `UPDATE`, `DELETE`
+or `SELECT … FOR UPDATE` on that table, so the candidate set is what these
+three greps return over `src/`, minus `*.test.ts` (re-runnable; deliberately
+greps rather than a count, since a count rots on the first unrelated change and
+one of these hits a docblock rather than a call):
+
+1. `\bclass\.\(update\|updateMany\|delete\|deleteMany\|upsert\)(` — the Prisma
+   writes;
+2. `'"Class"'` — the raw statements. All but one are single-id `FOR UPDATE`
+   (four of them through `lockClassRow`); the exception is
+   `withdrawWaitingEntriesForTeacher`'s join;
+3. `lockClassRow(` — the helper's callers;
+4. **parent deletes that cascade onto `Class` without naming it** — the
+   category a grep for `class.` misses. `Class` has three inbound FKs:
+   `teacher` (`onDelete: Cascade`), `template` (`onDelete: SetNull`), and
+   `teacherRoom` (no action given, so `Restrict` — a required relation, so it
+   errors rather than writing). A `teacher.delete` or `classTemplate.delete`
+   would therefore issue a mass `DELETE`/`UPDATE` across `Class` rows. Neither
+   exists anywhere in `src/`: erasure soft-deletes teachers and archiving
+   soft-deletes templates. If either ever becomes a hard delete, it joins this
+   table.
+
+Each candidate was then classified by multiplicity — can this transaction end
+up holding more than one `Class` row lock? Single-`id` writes and single-`id`
+`FOR UPDATE`s cannot; a loop or a multi-row predicate can. That leaves the five
+above. Note `autoCancelClasses` is *not* one of them: it opens a separate
+`db.$transaction` per class, so it holds one row lock at a time.
+
+Three things about that table are easy to get wrong and are the reason it exists:
 
 **The lock order of a loop is the order of the read it walks.** `deleteTeacherAccount`
 takes no explicit lock at all — its `UPDATE` is the lock — so there is no line
@@ -78,14 +116,84 @@ disagreement with `withdrawWaitingEntriesForTeacher`, which has sorted since
 #166.
 
 **JS and SQL have to agree, and that was checked, not assumed.** One of the
-three sites sorts in JavaScript and two sort in Postgres, so `[...].sort()` and
-`ORDER BY id` producing different sequences would reintroduce the cycle with
-every site looking individually correct. Verified directly against this
-project's database: `Class.id` is `text` with the default collation, the
-database is `en_US.utf8`, and over 4000 random uuids the JS-sorted and
-SQL-sorted sequences were identical element for element. The check is scoped to
-uuid-shaped ids (`[0-9a-f-]` only) — that is all `Class.id` ever holds — and
-should be re-run rather than assumed if that ever stops being true.
+three ordered sites sorts in JavaScript and two sort in Postgres, so
+`[...].sort()` and `ORDER BY id` producing different sequences would
+reintroduce the cycle with every site looking individually correct. Verified
+directly against this project's database: `Class.id` is `text` with the default
+collation, the database is `en_US.utf8`, and over 4000 random uuids the
+JS-sorted and SQL-sorted sequences were identical element for element. The
+check is scoped to uuid-shaped ids (`[0-9a-f-]` only) — that is all `Class.id`
+ever holds — and should be re-run rather than assumed if that ever stops being
+true.
+
+**Sorting the id array does NOT order a multi-row write.** This is the trap the
+two unordered sites sit in, and it is why neither was "fixed" with a one-line
+sort. `class.deleteMany({ where: { id: { in: ids } } })` compiles to
+`… WHERE id = ANY($1)`, and the row-visit order — which *is* the lock order —
+is chosen by the planner, never by the array. Measured directly: one
+transaction holding a row, the multi-row `UPDATE` blocked on it, and a third
+transaction probing the other row with `FOR UPDATE NOWAIT` gave an identical
+answer for both array orders, in both directions. The array order changed
+nothing.
+
+Which order you actually get depends on the plan, and therefore on table size
+and statistics — the measured fixture took a `Seq Scan` (heap order), a large
+table may take a bitmap scan (also heap order) or a btree `ScalarArrayOp` index
+scan (index order, which for `id` would *coincidentally* be ascending). Do not
+build on that coincidence: it can change under you with no code change at all,
+which is worse than a plainly wrong order because it will test green.
+`archiveOrUnarchiveTemplate` does not even pass ids — its `deleteMany` takes a
+predicate, so it has no array to sort in the first place.
+
+Ordering a multi-row write means locking the rows first, explicitly: an
+`ORDER BY … FOR UPDATE` (what `withdrawWaitingEntriesForTeacher` does) or a
+`lockClassRow` loop over a sorted read (what `deleteStudentAccount` does).
+
+### The two that do not — live, unfixed, and partly branch-caused
+
+`syncTemplateInstances` and `archiveOrUnarchiveTemplate` take their `Class` row
+locks in heap order. Against the three ordered sites that is a real cycle, and
+it was reproduced against the real functions:
+
+```
+syncTemplateInstances : ok {"synced":1,"regenerated":1,"kept":0}
+deleteStudentAccount  : REJECTED 40P01,deadlock detected
+```
+
+The trigger is ordinary: a student waitlisted on two instances of one recurring
+template deletes their account while the teacher edits or archives that
+template.
+
+**The `deleteTeacherAccount` pairing is inherited; the `deleteStudentAccount`
+pairing is new in #174.** Proven by mutation rather than argued: with #174 task
+5's `lockClassRow` loop removed — pre-branch behaviour, where the erasure took
+no `Class` lock at all — the same race gives `syncTemplateInstances : ok` /
+`deleteStudentAccount : ok`. Restore the loop and the `40P01` returns. The
+branch took that trade knowingly in the other direction: without the loop the
+erasure renumbers a queue with no class lock, which is silent corruption, where
+this is a rare and retryable 500 on one side or the other.
+
+**Recorded rather than resolved, deliberately.** Three reasons, in order of
+weight:
+
+1. The cheap fix does not work. See the paragraph above — sorting the ids at
+   either site changes no lock order at all. Shipping it would leave the cycle
+   live under a comment saying it was closed, which is the failure mode this
+   whole document exists to prevent.
+2. The working fix is an ordered pre-lock ahead of the writes, and it has to
+   land at **both** sites or the pairing stays live through the other. Both are
+   request paths: `syncTemplateInstances` runs under Prisma's 5s default and
+   `archiveOrUnarchiveTemplate` under an explicit `{ timeout: 10_000 }`, and
+   adding N × 2s `lockClassRow` waits to either needs the same timeout
+   arithmetic `deleteStudentAccount` carries — get it wrong and a rare deadlock
+   becomes a routine `P2028` on an everyday action (editing a recurring
+   template), which is a worse failure more often.
+3. The template family is already filed here as an open decision — see "Known
+   violation, not fixed here" below, which parks `{Class, ClassTemplate}` for
+   the same reason: choosing an order there touches the whole family.
+
+So this is a decision to be taken with the template family, not from inside a
+lock-discipline fix wave. Nothing here is claimed to be safe.
 
 ## The empty-`update` upsert quirk — read this before "tidying" one
 

@@ -319,16 +319,24 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // erasures lock the same pair of classes in opposite sequences,
     // recreating the exact inversion this sort exists to prevent.
     //
-    // Ascending by id is this project's one order for taking more than one
-    // `Class` row, and all three sites that do now take it: this sort,
+    // Ascending by id is this project's intended order for taking more than
+    // one `Class` row. Five sites do; three take it — this sort,
     // `withdrawWaitingEntriesForTeacher`'s ordered `FOR UPDATE OF c`
-    // (`waitlist.ts`), and `deleteTeacherAccount`'s cancel loop below.
+    // (`waitlist.ts`), and `deleteTeacherAccount`'s cancel loop below — and
+    // two do NOT: `syncTemplateInstances` (`template-sync.ts`) and
+    // `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) lock in
+    // heap order, and THIS function cycles against both for real. Do not read
+    // the sort below as making that safe; `docs/lock-order.md`, "The two that
+    // do not", has the reproduction and why it is recorded rather than fixed.
+    //
     // `deleteTeacherAccount` did NOT sort until the whole-branch review of
     // #174 — an earlier version of this very comment asserted it did, which
     // was false for the one pairing it named, and the cycle was real:
     // reproduced as `40P01`, now pinned by the test "does not deadlock when
     // a teacher erasure and a student erasure overlap on two classes"
-    // (`gdpr.test.ts`). JS `[...].sort()` and SQL `ORDER BY id` agree here
+    // (`gdpr.test.ts`). A later version of it then asserted all three sites
+    // that take multiple `Class` rows now agree — false the same way, and it
+    // missed the two above. JS `[...].sort()` and SQL `ORDER BY id` agree here
     // because these ids are uuid-shaped `text`; see `docs/lock-order.md`,
     // "Ordering WITHIN `Class`", for that check and for the rule itself.
     for (const classId of sortedWaitingClassIds) {
@@ -604,10 +612,12 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // `orderBy` is load-bearing, not tidiness: the loop below takes one
       // `Class` row lock per iteration (the CAS `UPDATE`), so the order this
       // read returns IS this transaction's lock acquisition order. Ascending
-      // by id is the one order the other two multi-`Class` sites also take —
-      // `deleteStudentAccount` above sorts its ids before its `lockClassRow`
-      // loop, `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) sorts inside
-      // its `FOR UPDATE OF c`. Without it this read fell back to whatever the
+      // by id is what `deleteStudentAccount` above and
+      // `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) also take; the two
+      // template sites named in `deleteStudentAccount`'s comment take no order
+      // at all, and this function's disagreement with those two is inherited,
+      // unfixed, and recorded in `docs/lock-order.md` under "The two that do
+      // not". Without this `orderBy` this read fell back to whatever the
       // heap returned, which for a fresh pair of classes is insertion order —
       // and when that disagreed with ascending, a teacher erasure and a
       // student erasure overlapping on two classes formed an AB-BA cycle and

@@ -707,13 +707,19 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
 // landed before the transaction's own read — the concurrent completion
 // fired on the wrong call, the real read then saw an already-`completed`
 // row and excluded it via its own `WHERE`, and the buggy unconditional
-// update never got a row to clobber): the pre-transaction sweep selects
-// only `id` on `status: 'in_progress'` with no `include`, so it is filtered
-// to exclude this fixture's class (standing in for a completion sweep that
-// has not reached this row yet, so the class is still genuinely
-// `in_progress` for the transaction's own read); the transaction's read is
-// the one that includes `registrations`, and its real, unmodified rows are
-// what the erasure transaction acts on. The side effect — a real,
+// update never got a row to clobber): the pre-transaction sweep filters
+// `status: 'in_progress'` — a bare value — so it is filtered to exclude this
+// fixture's class (standing in for a completion sweep that has not reached
+// this row yet, so the class is still genuinely `in_progress` for the
+// transaction's own read); the transaction's read is the one filtering
+// `status: { in: [...] }`, and its real, unmodified rows are what the erasure
+// transaction acts on. (This paragraph used to say the transaction's read
+// "includes `registrations`" and was the discriminator; the whole-branch
+// review of #174 deleted that eager-load — building the cancellation notices
+// from a pre-lock snapshot was itself a defect — and re-keyed the hook onto
+// `status`. The inline comment at the hook was updated in the same change and
+// this one was not, which is the exact species of drift Task 9 exists to
+// remove.) The side effect — a real,
 // separately committed `updateMany` moving the row to `completed` — runs
 // inside that same hook, after the real read resolves and before control
 // returns to `deleteTeacherAccount`, so it is guaranteed to land before the
@@ -1087,8 +1093,11 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
             // Only after the FIRST class is locked. Long enough for the
             // student erasure to take the other class's lock and come back
             // asking for this one — the state a cycle needs — and comfortably
-            // inside both this transaction's Prisma default budget and the
-            // student erasure's own 2s `lock_timeout`.
+            // inside both this transaction's explicit `{ timeout: 10_000 }`
+            // (`deleteTeacherAccount`'s `$transaction` option, NOT Prisma's 5s
+            // default — an earlier version of this comment named the default,
+            // which the comment at that option is specifically about NOT
+            // relying on) and the student erasure's own 2s `lock_timeout`.
             if (casCalls === 1) await new Promise((r) => setTimeout(r, 400));
             return result;
           },
