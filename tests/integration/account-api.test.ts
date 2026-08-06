@@ -218,8 +218,10 @@ describe('DELETE /api/account', () => {
   /**
    * An in-progress class with one charged registration, for the teacher-only
    * erasure test below. `deleteTeacherAccount` completes every in-progress
-   * class it finds BEFORE opening its own transaction, so each of these is a
+   * class it finds BEFORE opening its own transaction, so this is a
    * separately committed unit of work — which is the whole point of the test.
+   * Dated 2099 so the dev server's own `autoCompleteClasses` sweep, which
+   * only completes a class past its end time, cannot be what completed it.
    */
   const seedInProgressClass = async (teacherId: string, label: string) => {
     const room = await prisma.room.create({
@@ -244,7 +246,7 @@ describe('DELETE /api/account', () => {
         teacherId,
         teacherRoomId: teacherRoom.id,
         classType: `Flow ${label}`,
-        date: new Date('2026-06-01'),
+        date: new Date('2099-06-01'),
         startTime: '09:00',
         durationMinutes: 60,
         roomCost: 15,
@@ -506,18 +508,6 @@ describe('DELETE /api/account', () => {
   }, 30_000);
 
   /**
-   * The other side of the same discrimination, and the one the branch made
-   * reachable: a lost lock race is a 503 that DOES tell the caller to try
-   * again, because the next attempt can win.
-   *
-   * Provoked with the real mechanism rather than a mock — this test holds the
-   * `Class` row that `deleteStudentAccount`'s own `lockClassRow` loop must
-   * take (the student is `waiting` in that class), for longer than the 2s
-   * `SET LOCAL lock_timeout` that loop sets. Postgres cancels the erasure's
-   * `FOR UPDATE` with `55P03`, the whole transaction rolls back, and the
-   * route has to recognise it as contention rather than a defect.
-   */
-  /**
    * The teacher-only path, and the one thing its message may NOT say.
    *
    * `deleteTeacherAccount` is not a single transaction: before `db
@@ -528,29 +518,20 @@ describe('DELETE /api/account', () => {
    * billing behind, and the first version of this fix wave answered it with
    * "Nothing was changed", which is a lie about money.
    *
-   * Two in-progress classes make that visible rather than merely arguable:
-   * the first completes and commits, the second collides on the same
-   * `Payment.registrationId` @unique injection the PARTIAL_ERASURE test uses,
-   * so the erasure aborts with the first class already completed and billed.
-   * Asserted directly below — the Payment exists, and the message does not
-   * claim otherwise.
-   *
-   * Ordered by class id, because `deleteTeacherAccount`'s completion sweep
-   * walks an unordered `findMany` and either class could be reached first;
-   * blocking BOTH would leave nothing committed and make this test vacuous,
-   * so exactly one is blocked and the assertion is on "some class completed".
+   * One in-progress class, which completes and commits, and the failure
+   * injected AFTER the loop — the same `Account.email` collision the
+   * ERASURE_FAILED test above uses, which `deleteTeacherAccount` hits inside
+   * its own transaction. Nothing here depends on which row an unordered read
+   * returns first.
    */
   it('does not claim nothing changed when the teacher erasure already billed a class', async () => {
     const acc = await seedTeacherOnly('teacheronly');
+    const billed = await seedInProgressClass(acc.teacherId, 'billed');
 
-    const first = await seedInProgressClass(acc.teacherId, 'first');
-    const second = await seedInProgressClass(acc.teacherId, 'second');
-
-    // Block exactly one of the two. Whichever the sweep reaches first, the
-    // other one completes and commits before the failure.
-    const blockingPayment = await prisma.payment.create({
-      data: { registrationId: second.registrationId, amount: 1, status: 'pending' },
+    const blocker = await prisma.account.create({
+      data: { email: `deleted-${acc.accountId}@deleted.invalid` },
     });
+    seededAccountIds.push(blocker.id);
 
     const res = await fetch(`${BASE_URL}/api/account`, {
       method: 'DELETE',
@@ -565,21 +546,31 @@ describe('DELETE /api/account', () => {
     expect(body.error.message).not.toMatch(/Nothing was changed/i);
     expect(body.error.message).toMatch(/closed and billed/i);
 
-    // And something really did — the unblocked class completed, in its own
-    // committed transaction, before the failure.
-    const completed = await prisma.class.findUniqueOrThrow({ where: { id: first.classId } });
+    // And something really did — the class completed, in its own committed
+    // transaction, before the failure.
+    const completed = await prisma.class.findUniqueOrThrow({ where: { id: billed.classId } });
     expect(completed.status).toBe('completed');
     expect(
-      await prisma.payment.count({ where: { registrationId: first.registrationId } }),
+      await prisma.payment.count({ where: { registrationId: billed.registrationId } }),
     ).toBe(1);
 
     // The teacher is still there — the erasure itself did not land.
     const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: acc.teacherId } });
     expect(teacher.deletedAt).toBeNull();
-
-    await prisma.payment.delete({ where: { id: blockingPayment.id } });
   }, 30_000);
 
+  /**
+   * The other side of the same discrimination, and the one the branch made
+   * reachable: a lost lock race is a 503 that DOES tell the caller to try
+   * again, because the next attempt can win.
+   *
+   * Provoked with the real mechanism rather than a mock — this test holds the
+   * `Class` row that `deleteStudentAccount`'s own `lockClassRow` loop must
+   * take (the student is `waiting` in that class), for longer than the 2s
+   * `SET LOCAL lock_timeout` that loop sets. Postgres cancels the erasure's
+   * `FOR UPDATE` with `55P03`, the whole transaction rolls back, and the
+   * route has to recognise it as contention rather than a defect.
+   */
   it('reports ERASURE_BUSY with retry advice when the erasure loses a lock race', async () => {
     const acc = await seedStudentOnly('busy');
 

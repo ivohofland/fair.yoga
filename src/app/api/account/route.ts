@@ -57,15 +57,18 @@ import { deleteStudentAccount, deleteTeacherAccount } from '@/services/gdpr';
  */
 function erasureFailure(err: unknown, opts: { half: 'student' | 'teacher'; partial: boolean }) {
   const transient = isTransientDbError(err);
+  // The teacher erasure's committed-before-the-transaction exposure. Every
+  // failure of that half carries it, `partial` included.
+  const billed = 'Any class that was still in progress may already have been closed and billed.';
   if (opts.partial) {
     return transient
       ? respondError(
-          'Your student data was removed, but the system was busy and could not remove your teaching data. Wait a moment, then press Delete again to finish.',
+          `Your student data was removed. ${billed} The system was busy and could not remove the rest of your teaching data. Wait a moment, then press Delete again to finish.`,
           503,
           'PARTIAL_ERASURE_BUSY',
         )
       : respondError(
-          'Your student data was removed, but removing your teaching data failed. Pressing Delete again will not fix it — please contact support.',
+          `Your student data was removed. ${billed} Removing the rest of your teaching data failed. Pressing Delete again will not fix it — please contact support.`,
           500,
           'PARTIAL_ERASURE',
         );
@@ -75,7 +78,7 @@ function erasureFailure(err: unknown, opts: { half: 'student' | 'teacher'; parti
   const stateNote =
     opts.half === 'student'
       ? 'Nothing was changed.'
-      : 'Any class that was still in progress may already have been closed and billed; the rest of your data is unchanged.';
+      : `${billed} The rest of your data is unchanged.`;
   return transient
     ? respondError(
         `The system was busy and could not remove your account. ${stateNote} Wait a moment, then press Delete again.`,

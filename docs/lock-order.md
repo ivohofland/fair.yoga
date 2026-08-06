@@ -337,9 +337,10 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   deliberately runs against dev.
 
   Two tests, not one, and the split is deliberate. The deadlock reproduction
-  needs a handshake to widen a window one round trip wide — unforced,
-  whichever side is faster simply wins and both orders come back clean. So
-  the write ORDER is pinned separately and unconditionally by "takes
+  needs a handshake to widen a window one round trip wide; unforced it is a
+  race, not a reproduction — with the reorder reverted and the handshake
+  removed, 1 of 6 runs deadlocked. So the write ORDER is pinned separately
+  and unconditionally by "takes
   TeacherStudent before Invitation, and accepts". An earlier version of this
   entry claimed no reproduction was possible at all; that was wrong, and
   wrong because it generalised from a counterparty that upserted

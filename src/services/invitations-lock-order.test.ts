@@ -373,8 +373,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * reproduce one. Because this assertion holds regardless of scheduling.
    * The cycle below needs the booking to have inserted its `TeacherStudent`
    * row before the accept reaches its own, which is one round trip wide and
-   * has to be forced with a handshake; unforced, whichever side is faster
-   * simply wins and both orders look fine. The write order is the property
+   * has to be forced with a handshake. The write order is the property
    * the fix actually changed, and it is observable without racing anything.
    *
    * (An earlier version of this docblock asserted that NO counterparty could
@@ -485,9 +484,9 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    *
    * The handshake is not optional and does not create the inversion. The
    * window between the booking's insert and the accept's is one round trip
-   * wide; unforced, whichever side is faster simply wins and BOTH orders come
-   * back clean (measured: 3/3 `accept: ok` under each). The same
-   * widen-the-window device the erasure lock tests in `gdpr.test.ts` use.
+   * wide, so unforced this is a race rather than a reproduction: with the
+   * reorder reverted and the handshake removed, 1 of 6 runs deadlocked. The
+   * same widen-the-window device the erasure lock tests in `gdpr.test.ts` use.
    *
    * The assertion is the ABSENCE of `40P01`, not a specific success, and that
    * is deliberate. Under the fixed order the accept still loses this race —

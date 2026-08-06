@@ -575,7 +575,8 @@ describe('class transitions (DB, timezone-aware)', () => {
    * again — it would sit `open` until it started, with nobody in it and
    * nobody told.
    *
-   * Two cancelled registrations against `minStudents: 1`: unfiltered that is
+   * Two inactive registrations (one `cancelled`, one `late_cancel`) against
+   * `minStudents: 1`: unfiltered that is
    * 2 >= 1 and the class survives; filtered it is 0 < 1 and the class is
    * cancelled, which is correct.
    */
