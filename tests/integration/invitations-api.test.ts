@@ -3235,7 +3235,8 @@ describe('StudentPrivacy and TeacherStudent take one lock order (#174 task 7)', 
    * The opposite order — `TeacherStudent` then `StudentPrivacy`, what
    * `unlinkTeacher` took before this task's fix — racing
    * `deleteStudentAccount`'s real order (`StudentPrivacy` then
-   * `TeacherStudent`, `gdpr.ts:346–347`). Forced to interleave the same way
+   * `TeacherStudent` — the two adjacent `deleteMany`s keyed on `studentId`
+   * in `gdpr.ts`). Forced to interleave the same way
    * the `Invitation`/`TeacherStudent` tests above are, because unlike that
    * pair, nothing here can protect the wrong order by accident:
    * `HAND_ROLLED_SILENCED_PRIVACY` is never empty, so both transactions'

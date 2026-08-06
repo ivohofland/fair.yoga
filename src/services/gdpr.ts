@@ -317,10 +317,20 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // Sorted, not "in the order the read above returned them" — that read
     // has no `orderBy`, so trusting return order would let two concurrent
     // erasures lock the same pair of classes in opposite sequences,
-    // recreating the exact inversion this sort exists to prevent. Matches
-    // `withdrawWaitingEntriesForTeacher`'s own ordered `FOR UPDATE OF c`,
-    // for the same reason: two concurrent erasures then take multiple
-    // classes in the same sequence and cannot cycle against each other.
+    // recreating the exact inversion this sort exists to prevent.
+    //
+    // Ascending by id is this project's one order for taking more than one
+    // `Class` row, and all three sites that do now take it: this sort,
+    // `withdrawWaitingEntriesForTeacher`'s ordered `FOR UPDATE OF c`
+    // (`waitlist.ts`), and `deleteTeacherAccount`'s cancel loop below.
+    // `deleteTeacherAccount` did NOT sort until the whole-branch review of
+    // #174 — an earlier version of this very comment asserted it did, which
+    // was false for the one pairing it named, and the cycle was real:
+    // reproduced as `40P01`, now pinned by the test "does not deadlock when
+    // a teacher erasure and a student erasure overlap on two classes"
+    // (`gdpr.test.ts`). JS `[...].sort()` and SQL `ORDER BY id` agree here
+    // because these ids are uuid-shaped `text`; see `docs/lock-order.md`,
+    // "Ordering WITHIN `Class`", for that check and for the rule itself.
     for (const classId of sortedWaitingClassIds) {
       await lockClassRow(tx, classId);
     }
@@ -590,14 +600,29 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
   await db.$transaction(
     async (tx) => {
       // Cancel every upcoming class and tell the people in them.
+      //
+      // `orderBy` is load-bearing, not tidiness: the loop below takes one
+      // `Class` row lock per iteration (the CAS `UPDATE`), so the order this
+      // read returns IS this transaction's lock acquisition order. Ascending
+      // by id is the one order the other two multi-`Class` sites also take —
+      // `deleteStudentAccount` above sorts its ids before its `lockClassRow`
+      // loop, `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) sorts inside
+      // its `FOR UPDATE OF c`. Without it this read fell back to whatever the
+      // heap returned, which for a fresh pair of classes is insertion order —
+      // and when that disagreed with ascending, a teacher erasure and a
+      // student erasure overlapping on two classes formed an AB-BA cycle and
+      // Postgres killed one of them with `40P01`. Reproduced by the test
+      // "does not deadlock when a teacher erasure and a student erasure
+      // overlap on two classes" (`gdpr.test.ts`), which fails with exactly
+      // that error if this `orderBy` is removed. See `docs/lock-order.md`,
+      // "Ordering WITHIN `Class`".
+      //
+      // No `include` of registrations any more: the recipient list is read
+      // inside the loop, under the lock the CAS takes — see there.
       const upcoming = await tx.class.findMany({
         where: { teacherId, status: { in: ['draft', 'open', 'in_progress'] } },
-        include: {
-          registrations: {
-            where: { status: 'registered' },
-            select: { studentId: true },
-          },
-        },
+        orderBy: { id: 'asc' },
+        select: { id: true, classType: true },
       });
 
       for (const cls of upcoming) {
@@ -622,8 +647,29 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
           where: { classId: cls.id, status: 'waiting' },
           data: { status: 'removed' },
         });
-        if (cls.registrations.length > 0) {
-          const notifications: CreateNotificationInput[] = cls.registrations.map((r) => ({
+
+        // Read HERE, under the row lock the CAS above just took — not from
+        // the `findMany` at the top of this transaction, which took no lock
+        // and whose snapshot is already stale by the time the CAS lands. A
+        // student who registered in that gap had their class cancelled by the
+        // statement above and, from the old eager-loaded list, was never told.
+        // The same defect and the same fix as `autoCancelClasses`
+        // (`class-transitions.ts`), for the same reason its comment gives: a
+        // cancelled class nobody was told about is worse than one that stays
+        // open one more sweep. Under the lock, a registration writer either
+        // committed before the CAS — and is in this read — or is blocked
+        // behind it until this transaction ends.
+        //
+        // `status: 'registered'` only, deliberately narrower than the sibling
+        // site's `registered`/`attended`/`no_show`: this predicate is
+        // unchanged from the eager-load it replaces, and widening who an
+        // erasure emails is a product decision, not a lock-discipline fix.
+        const registrations = await tx.registration.findMany({
+          where: { classId: cls.id, status: 'registered' },
+          select: { studentId: true },
+        });
+        if (registrations.length > 0) {
+          const notifications: CreateNotificationInput[] = registrations.map((r) => ({
             recipientType: 'student' as const,
             recipientId: r.studentId,
             type: 'class_cancelled' as const,

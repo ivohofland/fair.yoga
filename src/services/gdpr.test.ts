@@ -6,6 +6,7 @@ import {
   deleteStudentAccount,
   deleteTeacherAccount,
 } from './gdpr';
+import { lockClassRow } from '@/lib/db-locks';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -680,8 +681,8 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
 // and its students had already been told to pay.
 //
 // A test that merely completes the class BEFORE calling `deleteTeacherAccount`
-// proves nothing: the erasure `findMany` at `gdpr.ts:593` filters to
-// `draft`/`open`/`in_progress`, so an already-`completed` class is never
+// proves nothing: the erasure's own `const upcoming = await tx.class.findMany`
+// filters to `draft`/`open`/`in_progress`, so an already-`completed` class is never
 // selected into `upcoming` and the loop never touches it — the assertion
 // passes on the unfixed code for a reason that has nothing to do with the
 // CAS. To pin the actual bug, the interleaving has to be reproduced: the
@@ -716,8 +717,9 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
 // separately committed `updateMany` moving the row to `completed` — runs
 // inside that same hook, after the real read resolves and before control
 // returns to `deleteTeacherAccount`, so it is guaranteed to land before the
-// loop's per-row write for this class, exactly the ordering
-// `gdpr.ts:604-614` describes.
+// loop's per-row write for this class — exactly the ordering the comment
+// above that loop's `class.updateMany` CAS in `gdpr.ts` describes
+// ("`completed` between it and here").
 describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
   const prisma = new PrismaClient();
   const suffix = `gdpr-cas-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -843,13 +845,22 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
             // already-`completed` row and excluded it via its own `WHERE`,
             // and the buggy unconditional update never got a row to
             // clobber). The pre-transaction sweep (`gdpr.ts`, before the
-            // transaction opens) selects only `id` on `status: 'in_progress'`
-            // and never includes `registrations`; the transaction's read of
-            // "upcoming" classes is the only one of the two that does. An
-            // extra `class.findMany` inserted anywhere else now reliably
-            // falls into the "not the transaction's read" branch below
-            // instead of stealing this hook's one shot at the side effect.
-            const isTransactionRead = Boolean(args.include && 'registrations' in args.include);
+            // transaction opens) filters `status: 'in_progress'` — a bare
+            // value; the transaction's read of "upcoming" classes filters
+            // `status: { in: [...] }`, and that `in` object is the only
+            // structural difference between them. (It used to be keyed on
+            // the transaction read's `include: { registrations }`; the
+            // whole-branch review of #174 deleted that eager-load, because
+            // building the cancellation notices from a pre-lock snapshot was
+            // itself the defect — the recipients are re-read under the CAS's
+            // lock now. Keying on `status` survives that change and does not
+            // depend on what either read selects.) An extra `class.findMany`
+            // inserted anywhere else now reliably falls into the "not the
+            // transaction's read" branch below instead of stealing this
+            // hook's one shot at the side effect.
+            const status = (args.where as { status?: unknown } | undefined)?.status;
+            const isTransactionRead =
+              typeof status === 'object' && status !== null && 'in' in status;
             if (!isTransactionRead) {
               // Standing in for a completion sweep that has not reached
               // this row yet — filtered so the class stays genuinely
@@ -919,4 +930,368 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
     expect(teacher.email).toMatch(/@deleted\.invalid$/);
   });
+});
+
+/**
+ * Whole-branch review of #174, Critical. This branch gave
+ * `deleteStudentAccount` a `Class` row lock it never used to take (Task 5),
+ * and sorted the class ids before taking it. `deleteTeacherAccount` takes one
+ * `Class` row lock per iteration too — via its per-class compare-and-swap
+ * `class.updateMany`, which is a lock-taking `UPDATE` — over a `findMany`
+ * that had no `orderBy` at all, so it walked the classes in whatever order
+ * the heap returned them. Two orders that disagree over the same pair of
+ * classes is an AB-BA cycle, and Postgres answers it with `40P01`.
+ *
+ * Both erasures are real here — no transaction shaped "like" either one.
+ * The only synthetic part is a pause inside `deleteTeacherAccount`'s first
+ * CAS, because the two locks it takes are otherwise one round trip apart and
+ * nothing could reliably interleave between them. The pause widens that
+ * window; it does not create the inversion, which is in the read order.
+ */
+describe('the two erasures take multiple Class rows in one order (#174)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-lockorder-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  // Explicit ids, low and high, so "ascending by id" is a known sequence
+  // rather than whatever two `uuid()` calls happened to produce. The pair is
+  // what makes the fixture's heap order (below) the reverse of its sorted
+  // order, which is the whole premise of this test.
+  const LOW_CLASS_ID = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
+  const HIGH_CLASS_ID = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
+  let teacherId: string;
+  let accountId: string;
+  let roomId: string;
+  let studentId: string;
+  let studentAccountId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Order',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'Lock-order fixture',
+        pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Order Studio',
+        address: `${suffix} St`,
+        city: 'Amsterdam',
+        postcode: '1234LO',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+      select: { id: true },
+    });
+    roomId = room.id;
+
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+
+    const base = {
+      teacherId,
+      teacherRoomId: teacherRoom.id,
+      classType: 'Order class',
+      startTime: '09:00',
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 10,
+      status: 'open' as const,
+    };
+    // HIGH inserted FIRST. An unordered `SELECT` over a table this small is a
+    // sequential scan, which returns rows in physical order — insertion order
+    // for rows this fresh — so the unordered read hands back [HIGH, LOW]
+    // while both sorting sites hand back [LOW, HIGH]. The test asserts that
+    // premise below rather than assuming it, so a planner or storage change
+    // that invalidates it fails loudly instead of leaving this test green for
+    // no reason.
+    await prisma.class.create({ data: { ...base, id: HIGH_CLASS_ID, date: new Date('2099-06-01') } });
+    await prisma.class.create({ data: { ...base, id: LOW_CLASS_ID, date: new Date('2099-06-02') } });
+
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Order',
+        lastName: 'Student',
+        email: `${suffix}-student@test.local`,
+        incomeTier: 2,
+        claimedAt: new Date(),
+        account: { create: { email: `${suffix}-student@test.local` } },
+      },
+      select: { id: true, accountId: true },
+    });
+    studentId = student.id;
+    studentAccountId = student.accountId!;
+
+    // Waiting in BOTH classes: that is what makes `deleteStudentAccount`
+    // lock two `Class` rows, which is the only way the orders can disagree.
+    await prisma.waitlistEntry.create({
+      data: { classId: HIGH_CLASS_ID, studentId, position: 1, status: 'waiting' },
+    });
+    await prisma.waitlistEntry.create({
+      data: { classId: LOW_CLASS_ID, studentId, position: 1, status: 'waiting' },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.notification.deleteMany({ where: { recipientId: studentId } });
+    await prisma.waitlistEntry.deleteMany({ where: { studentId } });
+    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.student.deleteMany({ where: { id: studentId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: { in: [accountId, studentAccountId] } } });
+    await prisma.$disconnect();
+  });
+
+  it('does not deadlock when a teacher erasure and a student erasure overlap on two classes', async () => {
+    // The premise, asserted rather than assumed: with no `orderBy`, this
+    // read's natural order is the REVERSE of both sorting sites' order. If
+    // this ever stops holding, the test below can no longer provoke the cycle
+    // and would pass on broken code — so it fails here instead.
+    const heapOrder = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM "Class"
+      WHERE "teacherId" = ${teacherId}
+        AND status IN ('draft', 'open', 'in_progress')
+    `;
+    expect(heapOrder.map((r) => r.id)).toEqual([HIGH_CLASS_ID, LOW_CLASS_ID]);
+
+    let casCalls = 0;
+    const racing = prisma.$extends({
+      query: {
+        class: {
+          async updateMany({ args, query }) {
+            // Keyed on args shape, not call order — the house rule for every
+            // hook in this file since #174 task 3's round 1 review. This is
+            // `deleteTeacherAccount`'s per-class cancel CAS: a single `id`
+            // plus the same status set its read filtered on.
+            const where = args.where as { id?: unknown; status?: { in?: unknown } } | undefined;
+            const isCancelCas = typeof where?.id === 'string' && Array.isArray(where?.status?.in);
+            if (!isCancelCas) return query(args);
+
+            casCalls += 1;
+            const result = await query(args);
+            // Only after the FIRST class is locked. Long enough for the
+            // student erasure to take the other class's lock and come back
+            // asking for this one — the state a cycle needs — and comfortably
+            // inside both this transaction's Prisma default budget and the
+            // student erasure's own 2s `lock_timeout`.
+            if (casCalls === 1) await new Promise((r) => setTimeout(r, 400));
+            return result;
+          },
+        },
+      },
+      // `$extends` returns a client missing `$on`, so it is not assignable to
+      // `deleteTeacherAccount`'s `PrismaClient`-typed `db` parameter even
+      // though every method it calls here is the real one, running against
+      // the real database — same cast as the other hooks in this file.
+    }) as unknown as PrismaClient;
+
+    const teacherErasure = deleteTeacherAccount(racing, teacherId)
+      .then(() => 'teacher-ok' as const)
+      .catch((err: unknown) => ({ error: String(err) }) as const);
+
+    // Enough for the teacher erasure's read and first CAS to land, so it is
+    // holding one class row before the student erasure starts asking for
+    // anything.
+    await new Promise((r) => setTimeout(r, 120));
+
+    const studentErasure = deleteStudentAccount(prisma, studentId)
+      .then(() => 'student-ok' as const)
+      .catch((err: unknown) => ({ error: String(err) }) as const);
+
+    const [teacherOutcome, studentOutcome] = await Promise.all([teacherErasure, studentErasure]);
+
+    // Pre-fix one of these is `{ error: '... 40P01 ...' }` — Postgres picks
+    // the victim, not this code, so both are asserted rather than one.
+    expect(teacherOutcome).toBe('teacher-ok');
+    expect(studentOutcome).toBe('student-ok');
+
+    // Both classes were actually reached, so the hook really did straddle a
+    // two-lock sequence rather than a one-lock one.
+    expect(casCalls).toBe(2);
+  }, 30_000);
+});
+
+/**
+ * Whole-branch review of #174, Important. `deleteTeacherAccount` read its
+ * classes — and, eager-loaded alongside them, the registrations it would
+ * notify — before taking any lock, then cancelled under the CAS's lock and
+ * built the notifications from that pre-lock snapshot. A student who
+ * registered in between had their class cancelled and was never told.
+ *
+ * The identical defect was fixed at the sibling site by #174 task 6:
+ * `autoCancelClasses` (`class-transitions.ts`) re-reads its recipients inside
+ * the transaction, under the same reasoning its own comment states — "a
+ * cancelled class nobody was told about is worse than one that stays open one
+ * more sweep."
+ */
+describe('deleteTeacherAccount notifies whoever is registered when it cancels (#174)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-notify-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let teacherId: string;
+  let accountId: string;
+  let roomId: string;
+  let classId: string;
+  let earlyStudentId: string;
+  let lateStudentId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Notify',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'Notification recency fixture',
+        pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Notify Studio',
+        address: `${suffix} St`,
+        city: 'Amsterdam',
+        postcode: '1234NO',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+      select: { id: true },
+    });
+    roomId = room.id;
+
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId: teacherRoom.id,
+        classType: 'Notify class',
+        date: new Date('2099-06-01'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 1,
+        maxStudents: 10,
+        status: 'open',
+      },
+      select: { id: true },
+    });
+    classId = cls.id;
+
+    const early = await prisma.student.create({
+      data: { firstName: 'Early', lastName: 'Booker', email: `${suffix}-early@test.local`, incomeTier: 2 },
+      select: { id: true },
+    });
+    earlyStudentId = early.id;
+    const late = await prisma.student.create({
+      data: { firstName: 'Late', lastName: 'Booker', email: `${suffix}-late@test.local`, incomeTier: 3 },
+      select: { id: true },
+    });
+    lateStudentId = late.id;
+
+    await prisma.registration.create({
+      data: { classId, studentId: earlyStudentId, status: 'registered', tierAtBooking: 2 },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.notification.deleteMany({
+      where: { recipientId: { in: [earlyStudentId, lateStudentId, teacherId] } },
+    });
+    await prisma.registration.deleteMany({ where: { classId } });
+    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.student.deleteMany({ where: { id: { in: [earlyStudentId, lateStudentId] } } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: accountId } });
+    await prisma.$disconnect();
+  });
+
+  it('tells a student who registered after the class read but before the cancel', async () => {
+    let hookCalls = 0;
+    const racing = prisma.$extends({
+      query: {
+        class: {
+          async findMany({ args, query }) {
+            // Shape-keyed, per the house rule. `deleteTeacherAccount` makes
+            // two `class.findMany` calls: the pre-transaction completion
+            // sweep filters `status: 'in_progress'` (a bare value), and the
+            // transaction's own read filters `status: { in: [...] }`. The
+            // `in` object is what tells them apart.
+            const status = (args.where as { status?: unknown } | undefined)?.status;
+            const isTransactionRead =
+              typeof status === 'object' && status !== null && 'in' in status;
+            if (!isTransactionRead) return query(args);
+
+            hookCalls += 1;
+            const rows = await query(args);
+            // Strictly between the read and the CAS. Routed through
+            // `lockClassRow` — the same Class row lock every production
+            // registration writer takes — rather than a bare `create`, so
+            // this is the real shape of the writer being raced. It cannot
+            // block here: the erasure has not reached its own CAS yet, so
+            // nothing holds this row.
+            await prisma.$transaction(async (tx) => {
+              await lockClassRow(tx, classId);
+              await tx.registration.create({
+                data: { classId, studentId: lateStudentId, status: 'registered', tierAtBooking: 3 },
+              });
+            });
+            return rows;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    await deleteTeacherAccount(racing, teacherId);
+
+    expect(hookCalls).toBe(1);
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    expect(after.status).toBe('cancelled');
+
+    // The student who was already there is told — this half passes either
+    // way, and is here so a regression reads as "the late one was missed"
+    // rather than "notifications broke".
+    expect(
+      await prisma.notification.count({
+        where: { recipientType: 'student', recipientId: earlyStudentId, type: 'class_cancelled', relatedClassId: classId },
+      }),
+    ).toBe(1);
+
+    // The student who arrived inside the window. Pre-fix this is 0: their
+    // registration exists, their class is cancelled, and nothing ever told
+    // them.
+    expect(
+      await prisma.notification.count({
+        where: { recipientType: 'student', recipientId: lateStudentId, type: 'class_cancelled', relatedClassId: classId },
+      }),
+    ).toBe(1);
+  }, 20_000);
 });
