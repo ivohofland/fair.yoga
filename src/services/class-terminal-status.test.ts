@@ -16,6 +16,21 @@ import { classifyApiError } from '@/lib/api-errors';
  * DB instead, and getting that override wrong drops the trigger on dev.
  * Moving the file removes the foot-gun rather than documenting around it.
  *
+ * Correction to the migration's own comment, which cannot be edited (the
+ * migration is applied; `CLAUDE.md` forbids touching one). It explains that
+ * the trigger enforces terminality only, not the whole `VALID_TRANSITIONS`
+ * table, because mirroring the table would reject `open -> completed`, "which
+ * class-template-lifecycle.test.ts:592-597 does deliberately when building a
+ * fixture." The reasoning holds; the line range does not, and did not even
+ * when it shipped — #174 task 9's own one-line edit to that file pushed the
+ * block down, so the cited range no longer contains the
+ * `prisma.class.update({ data: { status } })` that is the entire point of the
+ * citation. The test it means is `class-template-lifecycle.test.ts`'s
+ * "keeps a future %s class — outside the draft/open scope", whose `it.each`
+ * runs `'in_progress'` and `'completed'`. Named rather than re-pinned: this
+ * branch broke three line-number citations by moving code near them, and a
+ * test name only rots if someone renames the test.
+ *
  * Manual mutation-proof recipe, if this trigger is ever touched again —
  * against `DATABASE_URL_TEST`, never dev:
  *

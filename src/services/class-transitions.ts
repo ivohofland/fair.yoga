@@ -134,6 +134,19 @@ export async function autoCancelClasses(
           // count and the update below either way. Without this lock, nothing
           // stops it doing exactly that: reading the count first is not
           // enough by itself, only serializing every writer against it is.
+          //
+          // Scope note, the same one `gdpr.ts` and `waitlist.ts`'s
+          // `removeFromWaitlist` each carry at their own `lockClassRow` call:
+          // `SET LOCAL lock_timeout = '2s'` bounds every statement left in
+          // this transaction, not just the `FOR UPDATE` inside the helper. So
+          // the 2s also governs the `registration.count`, the CAS, the
+          // recipient `findMany` and `createBulkNotifications` below it.
+          // Benign here, unlike at the erasure sites: none of those four waits
+          // on a lock in the normal case, and if one did time out, the
+          // per-class `catch` at the bottom of this loop logs it and the sweep
+          // moves to the next class — no partial write survives, because the
+          // whole transaction rolls back. Written down because it is
+          // non-obvious from this line, not because it is a hazard.
           await lockClassRow(tx, cls.id);
 
           // Counted HERE, not from the sweep's outer `findMany` at the top of

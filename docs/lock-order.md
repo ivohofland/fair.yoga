@@ -29,8 +29,13 @@ that is a bug regardless: all three of those sites lock `Class` first, so only
 one of them can ever be past that lock for a given class at a time — they
 cannot hold conflicting `WaitlistEntry`/`Registration` locks concurrently
 regardless of which table each reaches for second, or whether it reaches for
-it at all. That protection is real but conditional on the `Class` lock actually
-being taken, which is why the entries further down this list matter: several
+it at all. That protection is real but conditional twice over — on the `Class`
+lock actually being taken, and on it covering the rows the transaction goes on
+to write. `deleteStudentAccount` under "Known conformance" is a case where the
+second condition fails (its `Class` lock set is strictly smaller than its
+`WaitlistEntry` write set) and the cycle outside that set was reproduced, so do
+not read this section as a blanket escape. The first condition is why the
+entries further down this list matter: several
 sites reach `StudentPrivacy`, `TeacherStudent`, `Invitation` or `TeacherBlock`
 for a (teacher, student) or (teacher, email) pair with **no** `Class` row in
 scope at all (`unlinkTeacher` when the student is not waiting in any of that
@@ -40,6 +45,47 @@ suffix of the list — `StudentPrivacy → TeacherStudent → Invitation →
 TeacherBlock` — the order is the *only* thing preventing a cycle, not a
 side-effect of a shared lock elsewhere. Both of #174 task 7's fixes are in
 that suffix.
+
+## Ordering WITHIN `Class`
+
+The list above orders the *tables*. It says nothing about the order of two rows
+of the SAME table, and `Class` is the one table where that matters: three sites
+lock more than one `Class` row inside a single transaction, and two of them
+taking the same pair in opposite sequences is an AB-BA cycle exactly like any
+cross-table one.
+
+**The rule: ascending by `id`.** All three sites take it that way.
+
+| Site | How it locks | How it orders |
+|---|---|---|
+| `deleteStudentAccount` (`gdpr.ts`) | `lockClassRow` in a loop | `[...ids].sort()` in JS, before the loop |
+| `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) | one `SELECT … FOR UPDATE OF c` | `ORDER BY c.id` in SQL |
+| `deleteTeacherAccount` (`gdpr.ts`) | the per-class cancel CAS `UPDATE`, one per iteration | `orderBy: { id: 'asc' }` on the read the loop walks |
+
+Two things about that table are easy to get wrong and are the reason it exists:
+
+**The lock order of a loop is the order of the read it walks.** `deleteTeacherAccount`
+takes no explicit lock at all — its `UPDATE` is the lock — so there is no line
+of code that "takes the locks" to inspect. Its `findMany` had no `orderBy` until
+the whole-branch review of #174, which meant its lock order was whatever the
+heap returned: for freshly inserted rows, physical (insertion) order, which is
+uncorrelated with id. Against `deleteStudentAccount`, which sorts, that is a
+live cycle and it was reproduced — Postgres `40P01 deadlock detected`, either
+side the victim. Pinned by `gdpr.test.ts`, "does not deadlock when a teacher
+erasure and a student erasure overlap on two classes"; that test fails with
+that error if the `orderBy` is removed. The same fix closes the inherited
+disagreement with `withdrawWaitingEntriesForTeacher`, which has sorted since
+#166.
+
+**JS and SQL have to agree, and that was checked, not assumed.** One of the
+three sites sorts in JavaScript and two sort in Postgres, so `[...].sort()` and
+`ORDER BY id` producing different sequences would reintroduce the cycle with
+every site looking individually correct. Verified directly against this
+project's database: `Class.id` is `text` with the default collation, the
+database is `en_US.utf8`, and over 4000 random uuids the JS-sorted and
+SQL-sorted sequences were identical element for element. The check is scoped to
+uuid-shaped ids (`[0-9a-f-]` only) — that is all `Class.id` ever holds — and
+should be re-run rather than assumed if that ever stops being true.
 
 ## The empty-`update` upsert quirk — read this before "tidying" one
 
@@ -101,32 +147,66 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   atomic path and shows the old order deadlocking under it while the new one
   does not.
 - **`deleteStudentAccount`** (`src/services/gdpr.ts`) — `Class`, looped via
-  `lockClassRow` over every class the student is `waiting` in (sorted),
-  hoisted ahead of every row write by #174 task 5. Then `Registration`
-  (`gdpr.ts:329`), `StudentPrivacy`, `TeacherStudent`, `WaitlistEntry`
-  (`gdpr.ts:348`), `Invitation` (anonymized in place, not deleted). Was
+  `lockClassRow` over every class the student is `waiting` in (sorted
+  ascending; see "Ordering WITHIN `Class`"), hoisted ahead of every row write
+  by #174 task 5. Then `Registration`, `StudentPrivacy`, `TeacherStudent`,
+  `WaitlistEntry`, `Invitation` (anonymized in place, not deleted). Was
   already `StudentPrivacy` before `TeacherStudent`; not the outlier on that
-  pair. **Not** listed as conformant on `Registration`/`WaitlistEntry` order,
-  though: it writes `Registration` before `WaitlistEntry`, the opposite of
-  this document's canonical line, and "`Class` is the real gate" above does
-  not cover it — that escape is scoped to sites that lock `Class` before
-  touching either table, and this function's `lockClassRow` loop covers only
-  classes the student is `waiting` in, not the (potentially different) set
-  of classes whose `Registration` rows it cancels. Round 1 review of #174
-  task 7 could not construct a live counterparty — the one candidate
-  disagreement, `promoteNext`'s conditional stale-head drop above, needs the
-  erased student to hold both an active `Registration` and a `waiting`
-  `WaitlistEntry` for the same class at once, a state `POST /api/registrations`'s
-  own waitlist-resolution step actively prevents in the normal booking flow —
-  but "no counterparty found" is not the same claim as "safe," and none is
-  made here. Left open, not resolved: no code changed for this.
+  pair.
+
+  It is the outlier on `WaitlistEntry`, though, and in **three** ways, not the
+  one this entry used to name: it writes `Registration`, `StudentPrivacy` AND
+  `TeacherStudent` all before `WaitlistEntry`, where the canonical line puts
+  `WaitlistEntry` before all three. The whole-branch review of #174 added the
+  two that were missing here.
+
+  What protects all three is the same thing, and it is partial. "`Class` is
+  the real gate" above applies, but only to the classes this function actually
+  locked — the ones the student was `waiting` in **as of its own read of that
+  set**. Its `waitlistEntry.deleteMany` is keyed on `studentId` alone, with no
+  class scope, so its `WaitlistEntry` write set is strictly larger than its
+  `Class` lock set: an entry that appears after that read is written but was
+  never gated. Both halves were reproduced directly against the real
+  functions (#174 whole-branch review):
+
+  - **Inside the gate — no cycle.** Student already `waiting` in the class:
+    a real `unlinkTeacher` racing this erasure did not deadlock (it failed
+    instead with the unrelated `P2025` filed at the bottom of this document),
+    and a real `deleteTeacherAccount` racing it completed cleanly. Both of
+    those counterparties take the canonical direction (`WaitlistEntry` before
+    `StudentPrivacy`/`TeacherStudent`), so they are the disagreement, and the
+    shared `Class` lock is what makes it harmless.
+  - **Outside the gate — a live cycle.** With the `waiting` entry appearing
+    only after this function read its waiting set, the same two counterparties
+    both deadlocked: `40P01 deadlock detected`, raised at `unlinkTeacher`'s
+    `studentPrivacy.upsert` and at `deleteTeacherAccount`'s
+    `studentPrivacy.deleteMany` respectively.
+
+  That residual window is the unscoped `waitlistEntry.deleteMany` already
+  filed as a separate concern, not a new one, and nothing here changes it —
+  recorded so the next reader does not re-derive "the `Class` gate covers it"
+  and stop one step early, which is what the entry above used to invite. The
+  `Registration` half stays as it was: round 1 review of #174 task 7 could not
+  construct a live counterparty — the one candidate disagreement,
+  `promoteNext`'s conditional stale-head drop above, needs the erased student
+  to hold both an active `Registration` and a `waiting` `WaitlistEntry` for
+  the same class at once, a state `POST /api/registrations`'s own
+  waitlist-resolution step actively prevents in the normal booking flow — but
+  "no counterparty found" is not the same claim as "safe," and none is made
+  here. All three left open, not resolved: no code changed for any of them.
 - **`deleteTeacherAccount`** (`src/services/gdpr.ts`) — `Class`, via a
   per-class compare-and-swap `class.updateMany` inside a loop over upcoming
   classes (not `lockClassRow`, but still a lock-taking `UPDATE`, and still
-  first). Then, per class, `WaitlistEntry`. After the loop: `StudentPrivacy`,
-  `TeacherStudent`, `Invitation` (deleted, not anonymized — the teacher is
-  soft-deleted, not scrubbed like a student's identity is). Was already
-  `StudentPrivacy` before `TeacherStudent`; not the outlier.
+  first), the loop walking an `orderBy: { id: 'asc' }` read — see "Ordering
+  WITHIN `Class`" for why that `orderBy` is a lock and not a presentation
+  choice. Then, per class, `WaitlistEntry` and the `Registration` read that
+  chooses who gets the cancellation notice — that read moved inside the lock
+  in the whole-branch review of #174, having been an eager-load on the
+  pre-lock `findMany` until then, which meant a student registering in the gap
+  had their class cancelled and was never told. After the loop:
+  `StudentPrivacy`, `TeacherStudent`, `Invitation` (deleted, not anonymized —
+  the teacher is soft-deleted, not scrubbed like a student's identity is). Was
+  already `StudentPrivacy` before `TeacherStudent`; not the outlier.
 - **`completeClass`** (`src/services/class-lifecycle.ts`) — `Class` via
   `lockClassRow`, then `Registration`, `Payment`. `transitionClass`'s own
   docblock (`class-lifecycle.ts:117-120`) names this and `autoCancelClasses`
