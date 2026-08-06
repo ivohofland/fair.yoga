@@ -748,4 +748,67 @@ describe('StudentPrivacy and TeacherStudent take one lock order (#174 task 7)', 
     expect(unlinkResult).toEqual({ status: 'fulfilled', value: { ok: true } });
     expect(erasureResult.status).toBe('fulfilled');
   });
+
+  /**
+   * #174 four-specialist review, Important 6 — the counterparty the test
+   * above had to avoid, now handled instead of avoided.
+   *
+   * `unlinkTeacher` reads the `TeacherStudent` row's id with a plain
+   * `findUnique` BEFORE opening its transaction and later deletes it BY that
+   * id. A concurrent `deleteStudentAccount`/`deleteTeacherAccount` that
+   * deletes and commits the same row in the gap leaves that id pointing at
+   * nothing, and Prisma throws `P2025` — which `classifyApiError` has no
+   * branch for, so it reached a student-facing route as a bare 500. The route
+   * already models the right answer: `DELETE /api/teacher-links/[teacherId]`
+   * returns 404 for `NOT_LINKED`, which is exactly what "the link is not
+   * there" means however it got that way.
+   *
+   * The delete is interposed in the pre-transaction `findUnique` hook, so it
+   * lands in the precise gap the bug lives in. `docs/lock-order.md` calls
+   * this a stale-read race and not a lock-order one, and that is why: it does
+   * not depend on `StudentPrivacy`, or on locks, or on any ordering — the
+   * shortest version of it is "the erasure committed first".
+   */
+  it('reports NOT_LINKED when an erasure deletes the link between the read and the delete', async () => {
+    const { teacherId, studentId, email } = await makeLinkedStudentWithSharedPrivacy();
+
+    let hookCalls = 0;
+    const racing = prisma.$extends({
+      query: {
+        teacherStudent: {
+          async findUnique({ args, query }) {
+            // Shape-keyed: `unlinkTeacher`'s pre-transaction read is the one
+            // on the composite `(teacherId, studentId)` key.
+            const where = args.where as { teacherId_studentId?: unknown } | undefined;
+            if (!where?.teacherId_studentId) return query(args);
+
+            hookCalls += 1;
+            const row = await query(args);
+            // Committed now — after the id has been handed back, before the
+            // transaction that deletes by it opens.
+            await prisma.teacherStudent.deleteMany({ where: { teacherId, studentId } });
+            return row;
+          },
+        },
+      },
+      // Same cast rationale as the tests above.
+    }) as unknown as PrismaClient;
+
+    const result = await unlinkTeacher(racing, { teacherId, studentId, accountEmail: email });
+
+    expect(hookCalls).toBe(1);
+    // Pre-fix this REJECTS with `P2025 An operation failed because it depends
+    // on one or more records that were required but not found`.
+    expect(result).toEqual({ ok: false, reason: 'NOT_LINKED' });
+
+    // The whole transaction rolled back with the throw, so the silencing
+    // writes did not half-land either. That matters: a `TeacherBlock` written
+    // for an unlink that reported failure would refuse a re-invite the
+    // student never asked to refuse.
+    expect(
+      await prisma.teacherBlock.findUnique({
+        where: { teacherId_email: { teacherId, email } },
+      }),
+    ).toBeNull();
+  });
 });

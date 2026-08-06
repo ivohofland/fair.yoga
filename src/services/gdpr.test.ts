@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import {
@@ -7,6 +7,7 @@ import {
   deleteTeacherAccount,
 } from './gdpr';
 import { lockClassRow } from '@/lib/db-locks';
+import { log } from '@/lib/log';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -18,8 +19,16 @@ const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
  * rather than reusing the shared `describe('GDPR (DB)', ...)` fixtures —
  * those students get erased by other tests in that block, and test order is
  * not something to depend on.
+ *
+ * `waiting: false` is the case the waitlist-shaped tests below cannot reach
+ * and the one the `SET LOCAL` hoist is about: an erasure with an empty lock
+ * set, where the lock loop never runs. `registered: true` gives that erasure
+ * a `Registration` row of its own to contend over, since with no class lock
+ * there is otherwise nothing for a counterparty to hold.
  */
-async function makeStudentWaitingInClass() {
+async function makeStudentWaitingInClass(
+  { waiting = true, registered = false }: { waiting?: boolean; registered?: boolean } = {},
+) {
   const suffix = `gdpr-lock-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   const teacher = await prisma.teacher.create({
     data: {
@@ -75,15 +84,24 @@ async function makeStudentWaitingInClass() {
     },
     select: { id: true },
   });
-  await prisma.waitlistEntry.create({
-    data: { classId: cls.id, studentId: student.id, position: 1, status: 'waiting' },
-  });
+  if (waiting) {
+    await prisma.waitlistEntry.create({
+      data: { classId: cls.id, studentId: student.id, position: 1, status: 'waiting' },
+    });
+  }
+  const registration = registered
+    ? await prisma.registration.create({
+        data: { classId: cls.id, studentId: student.id, status: 'registered', tierAtBooking: 2 },
+        select: { id: true },
+      })
+    : null;
   return {
     studentId: student.id,
     classId: cls.id,
     teacherId: teacher.id,
     roomId: room.id,
     accountId: teacher.accountId,
+    registrationId: registration?.id ?? null,
   };
 }
 
@@ -327,6 +345,65 @@ let studentAccountId: string;
     }
   }, 15_000);
 
+  /**
+   * #174 four-specialist review, Important 5. The 2s bound used to arrive
+   * only as a side effect of `lockClassRow`, which runs once per class the
+   * erased student is `waiting` in — so a student waiting in ZERO classes,
+   * the common case, got an unbounded wait on every statement in the erasure
+   * transaction. Prisma's own `timeout` cannot rescue that: it refuses to
+   * START a statement past the budget, it cannot cancel one already blocked
+   * inside Postgres, so the erasure simply hung.
+   *
+   * Round 2 review measured exactly this and wrote the asymmetry down as
+   * intended. It was not — nothing in the GDPR-clock reason for bounding an
+   * erasure depends on the subject being on a waitlist.
+   *
+   * The contended row is the student's own `Registration`, unrelated to any
+   * class lock, because with an empty lock set there is nothing else for a
+   * counterparty to hold. Held for 4s, well past the 2s bound, so what this
+   * observes is the timeout and not a wait.
+   */
+  it('bounds its wait even when the student is waiting in no classes at all', async () => {
+    const fixture = await makeStudentWaitingInClass({ waiting: false, registered: true });
+    const { studentId: fixtureStudentId, registrationId } = fixture;
+    try {
+      // The premise: an empty lock set. With a `waiting` entry here the lock
+      // loop would run, `lockClassRow` would set the bound, and this test
+      // would pass without the hoist it exists to pin.
+      expect(
+        await prisma.waitlistEntry.count({
+          where: { studentId: fixtureStudentId, status: 'waiting' },
+        }),
+      ).toBe(0);
+
+      const holder = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Registration" WHERE id = ${registrationId} FOR UPDATE`;
+          await new Promise((r) => setTimeout(r, 4_000));
+        },
+        { timeout: 20_000 },
+      );
+      await new Promise((r) => setTimeout(r, 150));
+
+      const outcome = await deleteStudentAccount(prisma, fixtureStudentId)
+        .then(() => 'returned' as const)
+        .catch((err: unknown) => ({ error: String(err) }) as const);
+      await holder;
+
+      // Unbounded (pre-hoist) this is `'returned'`: the erasure waits out the
+      // full 4s hold and succeeds.
+      expect(outcome).not.toBe('returned');
+      expect(typeof outcome === 'object' ? outcome.error : '').toMatch(/55P03|lock timeout/);
+
+      // And the abort is atomic — nothing half-applied, which is what makes
+      // the route's retry advice sound.
+      const student = await prisma.student.findUniqueOrThrow({ where: { id: fixtureStudentId } });
+      expect(student.deletedAt).toBeNull();
+    } finally {
+      await cleanupStudentWaitingInClass(fixture);
+    }
+  }, 30_000);
+
   it('does not deadlock against a transaction that locks the class first and then writes the erased student\'s waiting entry', async () => {
     // Round 1 review, C1: the previous version of this fix took the row
     // locks below BEFORE requesting the Class lock — the inverse of every
@@ -345,6 +422,21 @@ let studentAccountId: string;
     const fixture = await makeStudentWaitingInClass();
     const { studentId: fixtureStudentId, classId: fixtureClassId } = fixture;
     try {
+      // Canary. Everything this test asserts is an absence — neither side
+      // rejected — so it passes trivially if `deleteStudentAccount` never
+      // takes a `Class` lock at all, and it only takes one when its own
+      // `waitlistEntry.findMany({ where: { studentId, status: 'waiting' } })`
+      // returns something. Drift the fixture's status, or narrow that filter,
+      // and the lock loop stops running while this test stays green with
+      // nothing left to deadlock over. Its sibling above self-protects (a
+      // missing lock means no wait, and the wait IS its assertion); this one
+      // does not, so it says the premise out loud.
+      expect(
+        await prisma.waitlistEntry.count({
+          where: { studentId: fixtureStudentId, status: 'waiting' },
+        }),
+      ).toBe(1);
+
       const other = prisma
         .$transaction(
           async (tx) => {
@@ -835,6 +927,14 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
       data: { classId, studentId: waitingStudentId, position: 1, status: 'waiting' },
     });
 
+    // Spied, not silenced-and-forgotten: the assertions at the tail of this
+    // test are what turn the CAS skip from an unobservable `continue` into a
+    // recorded one.
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    // Registered before anything can throw, so a failing assertion below
+    // still hands `log.warn` back to the describes that run after this one.
+    onTestFinished(() => warn.mockRestore());
+
     let calls = 0;
     let completedConcurrently = false;
     const racing = prisma.$extends({
@@ -935,6 +1035,28 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
     // class, not to abandon the request.
     const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
     expect(teacher.email).toMatch(/@deleted\.invalid$/);
+
+    // #174 four-specialist review, Critical 4. Everything asserted above is
+    // an ABSENCE — the class unchanged, the entry unchanged, the notice not
+    // sent — which is exactly what a skip that never happened at all looks
+    // like too. The skip used to emit nothing and the function returns
+    // `void`, so from outside there was no way to tell "erased 12 classes"
+    // from "erased 12 classes and silently skipped one". This asserts the
+    // positive record, and that it names WHICH of the four causes fired:
+    // `completed` here, not `cancelled`, not a deleted row.
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ classId, observedStatus: 'completed' }),
+      expect.stringContaining('cancel CAS matched nothing'),
+    );
+
+    // The residual the skip leaves behind — a `waiting` entry on a completed
+    // class of an erased teacher — is reported rather than left invisible.
+    // The `waiting` assertion above pins that the entry survives; this pins
+    // that an operator can find out.
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ waitingEntriesLeft: 1 }),
+      expect.anything(),
+    );
   });
 });
 
@@ -1074,6 +1196,21 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
         AND status IN ('draft', 'open', 'in_progress')
     `;
     expect(heapOrder.map((r) => r.id)).toEqual([HIGH_CLASS_ID, LOW_CLASS_ID]);
+
+    // The same premise on the OTHER side of the pairing, which the assertion
+    // above does not cover. `deleteTeacherAccount` walks a `Class` read;
+    // `deleteStudentAccount` walks a `WaitlistEntry` read and sorts the
+    // `classId`s it returns, and that `[...].sort()` is the load-bearing
+    // line — inert if the read already hands them back ascending. Asserting
+    // the heap order on the `Class` side proves nothing about it: they are
+    // different tables with different physical layouts. The entries are
+    // inserted HIGH-then-LOW in `beforeAll`, so an unordered scan returns the
+    // reverse of sorted here too, which is what makes the sort observable.
+    const waitlistHeapOrder = await prisma.$queryRaw<Array<{ classId: string }>>`
+      SELECT "classId" FROM "WaitlistEntry"
+      WHERE "studentId" = ${studentId} AND status = 'waiting'
+    `;
+    expect(waitlistHeapOrder.map((r) => r.classId)).toEqual([HIGH_CLASS_ID, LOW_CLASS_ID]);
 
     let casCalls = 0;
     const racing = prisma.$extends({

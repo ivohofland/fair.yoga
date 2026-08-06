@@ -158,6 +158,29 @@ export function isTransientDbError(error: unknown): boolean {
 }
 
 /**
+ * True when Prisma refused a write because the row it was told to touch is
+ * not there — `P2025`, "An operation failed because it depends on one or more
+ * records that were required but not found."
+ *
+ * A service should almost never let this reach `classifyApiError`, which has
+ * no branch for it and falls through to a bare 500. It means a row read
+ * before the write vanished in between, and the route that ordered the write
+ * almost always already models that state: `DELETE /api/teacher-links/
+ * [teacherId]` answers 404 when there is no link, `DELETE /api/waitlist/[id]`
+ * answers 404 when there is no entry. Losing the race should produce the same
+ * answer as never having had the row, not an opaque failure.
+ *
+ * Lives beside `isTransientDbError` because it answers the same kind of
+ * question — what does this thrown value MEAN — and splitting the two across
+ * modules by who imports them would put the two halves of one lookup table in
+ * two places. This module imports nothing but `@prisma/client`, so a service
+ * using it stays framework-agnostic.
+ */
+export function isRecordNotFound(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';
+}
+
+/**
  * Classify anything thrown out of a route handler. Total: every input,
  * including non-Error throwables, yields an ApiFailure.
  *

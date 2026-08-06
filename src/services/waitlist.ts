@@ -12,6 +12,7 @@ import { classStartInstant } from '@/lib/timezone';
 import { createBulkNotifications } from './notifications';
 import { resolveInvitationOnLink } from './link-consent';
 import { lockClassRow } from '@/lib/db-locks';
+import { isRecordNotFound } from '@/lib/api-errors';
 
 /** Raised when a promotion/claim is not allowed in the current class state. */
 export class WaitlistPromotionError extends Error {
@@ -293,42 +294,70 @@ export async function addToWaitlist(
  * ordered by position and reorders them sequentially starting at 1.
  *
  * Wrapped in a transaction so removal and reordering are atomic.
+ *
+ * `NOT_FOUND` covers the one race the caller cannot pre-empt: the entry is
+ * keyed by `(classId, studentId)`, and a concurrent `deleteStudentAccount`
+ * (`gdpr.ts`) deletes every `WaitlistEntry` the student holds. `DELETE
+ * /api/waitlist/[id]` reads the entry before calling this and 404s when it is
+ * missing; if it disappears in the gap, the honest answer is the same 404,
+ * not the bare 500 that `P2025` used to fall through to (`classifyApiError`
+ * has no branch for it).
+ *
+ * The window is NARROWER since #174, not wider: this function now takes the
+ * class row lock first, so an erasure either committed before this
+ * transaction opened — the case handled here — or blocks behind the lock
+ * until this one is done. Before that, the two interleaved unlocked and the
+ * failure modes were less describable than one clean `P2025`.
+ *
+ * No sentinel-error dance is needed, unlike `acceptInvitation`'s
+ * `NotPendingError` (`invitations.ts`): there, the decision to give up is
+ * made by our own code inside the transaction, where a bare `return` would
+ * commit the writes above it. Here Prisma itself throws, which aborts the
+ * transaction on the way out — so catching it OUTSIDE `$transaction` is
+ * already the rollback, and the translation is the only thing left to do.
  */
 export async function removeFromWaitlist(
   db: PrismaClient,
   classId: string,
   studentId: string,
-): Promise<void> {
-  await db.$transaction(async (tx) => {
-    // The same row and `FOR UPDATE` mode `addToWaitlist`, `promoteNext`,
-    // `claimSpot` and `withdrawWaitingEntriesForTeacher` take — though this
-    // wait is bounded to 2s by `lockClassRow`'s `SET LOCAL lock_timeout`,
-    // unlike those four inline sites' unbounded wait (#104; not this
-    // branch's to fix). Without the lock at all, two renumberings of one
-    // queue interleave, each having read a snapshot the other invalidated,
-    // and nothing errors: there is no unique on `(classId, position)`, only
-    // a plain index. `promoteNext` then picks its head by lowest position
-    // and promotes the wrong student.
-    //
-    // `SET LOCAL` bounds every statement left in this transaction, not just
-    // the `FOR UPDATE` above it — including the reorder loop's own
-    // `UPDATE`s below (`lockClassRow`'s docblock). `deleteStudentAccount`
-    // (`gdpr.ts`) takes the same bounded lock on the same queue too, since
-    // #174 Task 5 — so a race between the two now waits, up to 2s, on
-    // whichever of them got there first, rather than interleaving unlocked.
-    // At 2s the loser gets a Postgres `lock_timeout`, surfaced as a 500 by
-    // `withErrorHandler` — not swallowed — rather than blocking further.
-    await lockClassRow(tx, classId);
+): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' }> {
+  try {
+    await db.$transaction(async (tx) => {
+      // The same row and `FOR UPDATE` mode `addToWaitlist`, `promoteNext`,
+      // `claimSpot` and `withdrawWaitingEntriesForTeacher` take — though this
+      // wait is bounded to 2s by `lockClassRow`'s `SET LOCAL lock_timeout`,
+      // unlike those four inline sites' unbounded wait (#104; not this
+      // branch's to fix). Without the lock at all, two renumberings of one
+      // queue interleave, each having read a snapshot the other invalidated,
+      // and nothing errors: there is no unique on `(classId, position)`, only
+      // a plain index. `promoteNext` then picks its head by lowest position
+      // and promotes the wrong student.
+      //
+      // `SET LOCAL` bounds every statement left in this transaction, not just
+      // the `FOR UPDATE` above it — including the reorder loop's own
+      // `UPDATE`s below (`lockClassRow`'s docblock). `deleteStudentAccount`
+      // (`gdpr.ts`) takes the same bounded lock on the same queue too, since
+      // #174 Task 5 — so a race between the two now waits, up to 2s, on
+      // whichever of them got there first, rather than interleaving unlocked.
+      // At 2s the loser gets a Postgres `lock_timeout`, which
+      // `classifyApiError` now answers with a 503 and "please try again"
+      // rather than the 500 it used to — not swallowed either way.
+      await lockClassRow(tx, classId);
 
-    // Mark as removed
-    await tx.waitlistEntry.update({
-      where: { classId_studentId: { classId, studentId } },
-      data: { status: 'removed' },
+      // Mark as removed
+      await tx.waitlistEntry.update({
+        where: { classId_studentId: { classId, studentId } },
+        data: { status: 'removed' },
+      });
+
+      // Reorder remaining 'waiting' entries
+      await reorderWaitingEntries(tx, classId);
     });
-
-    // Reorder remaining 'waiting' entries
-    await reorderWaitingEntries(tx, classId);
-  });
+  } catch (err) {
+    if (isRecordNotFound(err)) return { ok: false, reason: 'NOT_FOUND' };
+    throw err;
+  }
+  return { ok: true };
 }
 
 /**

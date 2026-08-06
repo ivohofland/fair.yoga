@@ -12,6 +12,7 @@ import type { PrismaClient, Prisma } from '@prisma/client';
 import { withdrawWaitingEntriesForTeacher } from './waitlist';
 import { createNotification } from './notifications';
 import { sendInvitationEmail } from '@/lib/email';
+import { isRecordNotFound } from '@/lib/api-errors';
 
 export type InviteRefusal =
   | 'ALREADY_INVITED'
@@ -672,7 +673,7 @@ export async function unlinkTeacher(
   });
   if (!link) return { ok: false, reason: 'NOT_LINKED' };
 
-  await db.$transaction(async (tx) => {
+  const unlinked = await db.$transaction(async (tx) => {
     // FIRST, before any write below. A `waiting` entry for one of this
     // teacher's classes is a standing request the student is walking away
     // from along with the link — left in place, it hands the teacher a lever
@@ -747,6 +748,16 @@ export async function unlinkTeacher(
       },
     });
 
+    // Delete-by-id, from a `findUnique` taken BEFORE this transaction opened.
+    // If a concurrent `deleteStudentAccount` or `deleteTeacherAccount`
+    // (`gdpr.ts`) removed and committed that same row in the gap, this id
+    // points at nothing and Prisma throws `P2025` — which used to fall
+    // through `classifyApiError` to a bare 500 on a student-facing route.
+    // `docs/lock-order.md` ("Related, but not a lock-order issue") records
+    // the race itself, which has two shapes and does not depend on lock order
+    // at all: the erasure can commit before this transaction even opens, or
+    // while this transaction sits blocked on a lock it holds. The catch below
+    // translates both into the answer this route already models.
     await tx.teacherStudent.delete({ where: { id: link.id } });
 
     // Lowercased for the same reason `acceptInvitation` lowercases:
@@ -771,6 +782,24 @@ export async function unlinkTeacher(
       update: {},
       create: { teacherId: input.teacherId, email },
     });
+    return true;
+  }).catch((err: unknown) => {
+    // A concurrent erasure deleted the link out from under this transaction.
+    // `NOT_LINKED` is what `DELETE /api/teacher-links/[teacherId]` turns into
+    // a 404, which is the same answer the caller would have got a moment
+    // earlier from the `findUnique` above: there is no link. Losing that race
+    // should not read differently from never having had the row.
+    //
+    // No sentinel-error class is needed here, unlike `acceptInvitation`'s
+    // `NotPendingError` above. That one exists because OUR code decides to
+    // give up mid-transaction, where a bare `return` would commit the writes
+    // taken before it. Here Prisma throws, which already aborts the
+    // transaction and rolls back the withdrawal and the privacy write with
+    // it — this catch is outside `$transaction`, so all it does is translate
+    // an outcome that has already happened.
+    if (isRecordNotFound(err)) return false;
+    throw err;
   });
+  if (!unlinked) return { ok: false, reason: 'NOT_LINKED' };
   return { ok: true };
 }

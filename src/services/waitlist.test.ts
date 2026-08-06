@@ -1225,7 +1225,10 @@ describe('removeFromWaitlist takes the class lock (DB)', () => {
     });
 
     // Three waiting students — position 2 gets removed mid-lock below, so
-    // the reorder that follows has real work to do (2 → 1).
+    // the reorder that follows has real work to do: position 3 moves to 2.
+    // (An earlier version of this comment said "2 → 1", which describes no
+    // move this fixture makes — position 1 is untouched, and 2 is the entry
+    // being removed rather than one being renumbered.)
     for (let i = 1; i <= 3; i++) {
       const student = await prisma.student.create({
         data: {
@@ -1292,5 +1295,51 @@ describe('removeFromWaitlist takes the class lock (DB)', () => {
       orderBy: { position: 'asc' },
     });
     expect(remaining.map((e) => e.position)).toEqual([1, 2]);
+  });
+
+  /**
+   * #174 four-specialist review, Important 6. `removeFromWaitlist` updates
+   * the entry by its `(classId, studentId)` key, and a concurrent
+   * `deleteStudentAccount` (`gdpr.ts`) deletes every `WaitlistEntry` the
+   * student holds — so the row can vanish between the route's own pre-read
+   * and this write. Prisma answers that with `P2025`, and `classifyApiError`
+   * has no branch for it, so a student tapping "leave waitlist" at the wrong
+   * moment got a bare 500 on a request whose whole meaning was "make this
+   * entry go away".
+   *
+   * The delete is interposed inside the `waitlistEntry.update` hook rather
+   * than issued before the call, so it lands after `removeFromWaitlist` has
+   * already taken the class lock and decided to proceed — the actual shape of
+   * the race, not a rearrangement of it that would also pass on unfixed code.
+   */
+  it('reports NOT_FOUND when the entry is deleted after the lock but before the write', async () => {
+    const victimId = studentIds[2]!;
+    let hookCalls = 0;
+
+    const racing = prisma.$extends({
+      query: {
+        waitlistEntry: {
+          async update({ args, query }) {
+            // Shape-keyed, per the house rule: `removeFromWaitlist`'s own
+            // write is the one keyed on the composite `(classId, studentId)`.
+            const where = args.where as { classId_studentId?: unknown } | undefined;
+            if (!where?.classId_studentId) return query(args);
+
+            hookCalls += 1;
+            await prisma.waitlistEntry.deleteMany({ where: { classId, studentId: victimId } });
+            return query(args);
+          },
+        },
+      },
+      // `$extends` returns a client missing `$on`, so it is not assignable to
+      // `removeFromWaitlist`'s `PrismaClient`-typed parameter even though
+      // every method it calls here is the real one — same cast as the hooks
+      // in `gdpr.test.ts` and `class-transitions.test.ts`.
+    }) as unknown as PrismaClient;
+
+    const result = await removeFromWaitlist(racing, classId, victimId);
+
+    expect(hookCalls).toBe(1);
+    expect(result).toEqual({ ok: false, reason: 'NOT_FOUND' });
   });
 });

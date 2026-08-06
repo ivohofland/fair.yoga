@@ -31,6 +31,14 @@ export const DELETE = withErrorHandler(async (
     }
   }
 
-  await removeFromWaitlist(prisma, entry.classId, entry.studentId);
+  // The entry read above can be gone by the time the removal runs — a
+  // concurrent `deleteStudentAccount` deletes every `WaitlistEntry` the
+  // student holds. That used to reach the client as a bare 500 (Prisma
+  // `P2025`, which `classifyApiError` has no branch for). The same 404 the
+  // pre-read already returns is the honest answer: whichever way it went, the
+  // entry is not there.
+  const result = await removeFromWaitlist(prisma, entry.classId, entry.studentId);
+  if (!result.ok) return respondError('Waitlist entry not found', 404);
+
   return respondOk({ message: 'Removed from waitlist' });
 });

@@ -7,6 +7,7 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import { getNextOccurrences } from './class-generator';
+import { LOCK_TIMEOUT_SQL } from '@/lib/db-locks';
 import { classStartInstant } from '@/lib/timezone';
 import { log } from '@/lib/log';
 
@@ -21,14 +22,6 @@ const DEFAULT_WEEKS = 4;
 type StudioTemplateWithTimezone = Prisma.StudioClassTemplateGetPayload<{
   include: { teacher: { select: { defaultTimezone: true } } };
 }>;
-
-/**
- * How long a claim waits for the template's row lock before giving up.
- * A literal, not a bound parameter: Postgres does not accept bind parameters
- * in `SET`. It is interpolated from this constant only — never from input —
- * which is why `$executeRawUnsafe` is safe here.
- */
-const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
 
 /**
  * Claims a studio template for generation, or reports it is no longer
@@ -94,6 +87,10 @@ export async function claimStudioTemplateForGeneration(
   tx: Prisma.TransactionClient,
   templateId: string,
 ): Promise<StudioTemplateWithTimezone | null> {
+  // `LOCK_TIMEOUT_SQL` (`@/lib/db-locks`) — shared with `lockClassRow`, which
+  // takes the `Class` row lock this one deadlocks against, so the two waits
+  // are the same length by construction rather than by coincidence. Its
+  // docblock carries the reason `$executeRawUnsafe` is safe for it.
   await tx.$executeRawUnsafe(LOCK_TIMEOUT_SQL);
   const rows = await tx.$queryRaw<Array<{ id: string }>>`
     SELECT "id" FROM "StudioClassTemplate"

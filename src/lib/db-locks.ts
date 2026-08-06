@@ -1,6 +1,62 @@
 import type { Prisma } from '@prisma/client';
 
 /**
+ * A Prisma client that must be an interactive transaction client, never the
+ * bare `PrismaClient`.
+ *
+ * Named and exported because three sibling functions carry the identical
+ * hazard and each re-declares the brand inline today:
+ * `claimTemplateForGeneration` (`class-generator.ts`),
+ * `claimStudioTemplateForGeneration` (`studio-class-generator.ts`) and
+ * `setLockTimeout` below. See `lockClassRow`'s docblock for what the brand
+ * is doing and why `Prisma.TransactionClient` alone does not do it.
+ */
+export type TransactionClientOnly = Prisma.TransactionClient & { $transaction?: never };
+
+/**
+ * How long any bounded wait in this project waits for a row lock before
+ * giving up.
+ *
+ * A literal, not a bound parameter: Postgres does not accept bind parameters
+ * in `SET`. It is interpolated from this constant only — never from input —
+ * which is why the `$executeRawUnsafe` below is safe.
+ *
+ * Lives here rather than in each caller because it had drifted into three
+ * separate copies of the same string literal (this module and the two
+ * template-claim sites), and a bound that is silently different in one place
+ * is worse than one that is uniformly wrong: the two template claims and the
+ * `Class` row lock deadlock against each other today (`docs/lock-order.md`,
+ * "The two that do not"), and reasoning about which side loses that race
+ * assumes both sides wait the same length of time.
+ */
+export const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
+
+/**
+ * Bounds every remaining statement in `tx` to the shared lock timeout,
+ * without taking any lock itself.
+ *
+ * `SET LOCAL` is transaction-scoped, so this governs the whole rest of the
+ * transaction and resets on `COMMIT` or `ROLLBACK` however it ends. Calling
+ * it more than once is safe — verified in psql that a later `SET LOCAL
+ * lock_timeout` overwrites the earlier one rather than erroring or stacking
+ * — which is what lets `lockClassRow` below issue it per call while a caller
+ * also issues it once up front.
+ *
+ * Split out from `lockClassRow` for `deleteStudentAccount` (`gdpr.ts`),
+ * which needs the bound whether or not it ends up locking anything: its
+ * lock loop runs only when the erased student is waiting in at least one
+ * class, so before this existed, a student waiting in zero classes got an
+ * UNBOUNDED wait on a contended `registration.updateMany` — and that
+ * asymmetry made the transaction's own `Math.min` ceiling a wish rather than
+ * a guarantee, since Prisma's interactive-transaction timeout cannot roll
+ * back a statement already blocked inside Postgres, only refuse to start a
+ * new one.
+ */
+export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
+  await tx.$executeRawUnsafe(LOCK_TIMEOUT_SQL);
+}
+
+/**
  * Takes the `Class` row lock with a bounded wait.
  *
  * `tx`'s type carries an extra `{ $transaction?: never }` brand on top of
@@ -19,9 +75,12 @@ import type { Prisma } from '@prisma/client';
  * `lockClassRow(prisma, classId)` — the full client — is now a compile
  * error: `Argument of type 'PrismaClient<...>' is not assignable to
  * parameter of type 'TransactionClient & { $transaction?: undefined; }'`.
- * Verified directly: a throwaway call site passing the bare client failed
- * `tsc --noEmit` with exactly that error before this brand was added, and
- * compiled clean after.
+ * That was originally verified with a throwaway call site that was then
+ * deleted, which threw the verification away with it; `db-locks.test.ts`
+ * now keeps it permanently, as a `// @ts-expect-error` on a never-called
+ * function — `tsconfig.json` includes every `.ts` file in the repo, test
+ * files among them, so weakening the brand is a failing `tsc --noEmit`
+ * rather than a silently-passing suite.
  *
  * `SET LOCAL` scopes the timeout to the calling transaction: it governs
  * every statement left in that transaction, not just the `FOR UPDATE`
@@ -43,9 +102,10 @@ import type { Prisma } from '@prisma/client';
  * rather than trusting the 5s default; the arithmetic lives there, not
  * here.
  *
- * 2s matches the two template-claim sites (`class-generator.ts:140`,
- * `studio-class-generator.ts:31`) — the only other bounded lock waits in the
- * codebase.
+ * The bound itself is `LOCK_TIMEOUT_SQL` above, shared with the two
+ * template-claim sites (`claimTemplateForGeneration`,
+ * `claimStudioTemplateForGeneration`) — the only other bounded lock waits in
+ * the codebase, and the ones this lock deadlocks against.
  *
  * Five pre-existing `FOR UPDATE` sites deliberately do NOT use this and keep
  * their inline SQL: four in `waitlist.ts` (`addToWaitlist`, `promoteNext`,
@@ -71,10 +131,7 @@ import type { Prisma } from '@prisma/client';
  * Must be given a transaction client for the lock to have anywhere to live —
  * see the brand paragraph above for what enforces that at compile time.
  */
-export async function lockClassRow(
-  tx: Prisma.TransactionClient & { $transaction?: never },
-  classId: string,
-): Promise<void> {
-  await tx.$executeRawUnsafe("SET LOCAL lock_timeout = '2s'");
+export async function lockClassRow(tx: TransactionClientOnly, classId: string): Promise<void> {
+  await setLockTimeout(tx);
   await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
 }

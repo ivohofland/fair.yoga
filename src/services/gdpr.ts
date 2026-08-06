@@ -14,7 +14,7 @@ import type { PrismaClient } from '@prisma/client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { completeClass } from './class-lifecycle';
 import { handleSpotFreed, reorderWaitingEntries } from './waitlist';
-import { lockClassRow } from '@/lib/db-locks';
+import { lockClassRow, setLockTimeout } from '@/lib/db-locks';
 import { log } from '@/lib/log';
 
 // ---------------------------------------------------------------------------
@@ -261,6 +261,28 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
   const waitingCount = await db.waitlistEntry.count({ where: { studentId, status: 'waiting' } });
 
   const freedClassIds = await db.$transaction(async (tx) => {
+    // FIRST statement, unconditionally — not left to `lockClassRow` below.
+    //
+    // The bound used to arrive only as a side effect of the lock loop, which
+    // runs only when `sortedWaitingClassIds` is non-empty. A student waiting
+    // in zero classes — the common case — therefore got an UNBOUNDED wait on
+    // every statement in this transaction, including a `registration
+    // .updateMany` that can contend with the 60-second transitions sweep, and
+    // the erasure hung with no feedback until Prisma's own transaction
+    // timeout eventually refused to start the NEXT statement. That timeout
+    // cannot roll back a statement already blocked inside Postgres, only
+    // decline to begin another one, which is what made the `Math.min` ceiling
+    // below a wish rather than a guarantee for exactly those erasures. Round 2
+    // review measured both halves of that asymmetry directly (see the
+    // `timeout` option's own comment); it was recorded there as intended,
+    // which it was not — nothing in the GDPR-clock rationale for bounding
+    // this transaction depends on the subject being on a waitlist.
+    //
+    // Idempotent with the lock loop's own `SET LOCAL`: a later one overwrites
+    // the earlier rather than stacking (`db-locks.ts`, and `db-locks.test.ts`
+    // checks it).
+    await setLockTimeout(tx);
+
     // Record which open classes free a spot — the waitlist hook runs on
     // them after the erasure commits. A read, so it carries no lock-ordering
     // obligation — see the lock loop below for what does.
@@ -502,29 +524,34 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // sequence.
     //
     // That term does not cover everything the 2s bound applies to, though —
-    // in two different directions. First, once the lock loop above has run
-    // at all (any `waitingCount` > 0), `SET LOCAL lock_timeout` is already
-    // set for the rest of THIS transaction, and it governs every statement
-    // left in it, not just `FOR UPDATE`s — so `registration.updateMany` and
-    // every other write between here and the reorder loop also now waits at
-    // most 2s on any row they contend for, whether or not that row has
-    // anything to do with a class this transaction locked. Round 2 review
-    // probed exactly this with a lock on the erased student's own
-    // `Registration` row, unrelated to any waitlist: with the student
-    // waiting in at least one class, `registration.updateMany` failed at
-    // ~2086ms with Postgres `55P03 canceling statement due to lock
-    // timeout`; with the student waiting in none (the lock loop never ran,
-    // so `SET LOCAL` was never set), the same contention just waited out the
-    // full ~3s hold and succeeded. That asymmetry is intended, not an
-    // accident of the hoist: bounded beats unbounded for a time-bound
-    // erasure regardless of which row is contended, the abort is atomic and
-    // retryable (`api/account/route.ts` tells the caller so — round 1
-    // review, M6), and this per-statement bound is what makes the
-    // `Math.min` ceiling below enforceable rather than nominal — Prisma's
-    // own interactive-transaction timeout cannot
-    // roll back a statement already blocked inside Postgres, only refuse to
-    // start a new one, so without `SET LOCAL` already active, "20s" would be
-    // a wish, not a guarantee. Second, in the other direction,
+    // in two different directions. First, `SET LOCAL lock_timeout` governs
+    // every statement left in this transaction, not just `FOR UPDATE`s — so
+    // `registration.updateMany` and every other write between here and the
+    // reorder loop also waits at most 2s on any row it contends for, whether
+    // or not that row has anything to do with a class this transaction
+    // locked. Round 2 review measured that with a lock on the erased
+    // student's own `Registration` row, unrelated to any waitlist:
+    // `registration.updateMany` failed at ~2086ms with Postgres `55P03
+    // canceling statement due to lock timeout`.
+    //
+    // That measurement had a second half, and the second half was a defect
+    // rather than a design: with the student waiting in NO classes, the lock
+    // loop never ran, so `SET LOCAL` was never issued, and the same
+    // contention waited out the full ~3s hold and succeeded — unbounded. It
+    // was written down as intended, which it was not; nothing in the
+    // GDPR-clock rationale for bounding this transaction depends on the
+    // subject being on a waitlist, and it is the wait-in-zero-classes case
+    // that has the least reason to hang. The `setLockTimeout` call at the
+    // top of this transaction removes the asymmetry, and with it the caveat
+    // on the `Math.min` ceiling: that ceiling is enforceable rather than
+    // nominal only while a per-statement bound is already active, because
+    // Prisma's own interactive-transaction timeout cannot roll back a
+    // statement already blocked inside Postgres, only refuse to start a new
+    // one. Bounded beats unbounded for a time-bound erasure regardless of
+    // which row is contended: the abort is atomic and retryable, and
+    // `api/account/route.ts` now tells the caller exactly that, with a 503
+    // and retry advice rather than a bare 500. Second, in the other
+    // direction,
     // `reorderWaitingEntries`'s (`waitlist.ts`) own `findMany` plus up to M
     // individual `UPDATE`s per class, run after the lock loop above, also
     // inherit the same 2s bound — adding real, uncounted time on top of
@@ -599,8 +626,14 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
     const result = await completeClass(db, cls.id);
     if (!result.ok) {
       // Fall through: the cancel sweep below still picks the class up.
-      console.error(
-        `[gdpr] could not complete in-progress class ${cls.id} before erasure: ${result.error}`,
+      //
+      // `log`, not `console.error` — it is imported and used elsewhere in
+      // this file, and a bare `console.error` writes a line with no level, no
+      // request context and no structured fields, so it is invisible to every
+      // filtered view an operator actually reads.
+      log.error(
+        { teacherId, classId: cls.id, reason: result.error },
+        'teacher erasure: could not complete an in-progress class first',
       );
     }
   }
@@ -643,15 +676,57 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
         // it anyway would strip a class that already has Payment rows and
         // students who have been asked to pay.
         //
-        // Skipping is the whole handling: a completed class is one erasure
-        // deliberately leaves standing (see this function's docblock), so
-        // landing on one late is not an error, it is the same outcome by a
-        // different route.
+        // Skipping the CANCEL is the right handling: a completed class is one
+        // erasure deliberately leaves standing (see this function's
+        // docblock), so landing on one late is not an error, it is the same
+        // outcome by a different route.
+        //
+        // Skipping SILENTLY was not. `count === 0` has four distinct causes —
+        // the class completed concurrently, it was cancelled concurrently,
+        // the row was deleted, or something nobody has thought of — and a
+        // bare `continue` distinguished none of them, emitted nothing, and
+        // returned `void`, so from outside this function the difference
+        // between "erased 12 classes" and "erased 12 classes and skipped one
+        // it could not explain" was invisible. Re-read to say WHICH cause
+        // fired, following the precedent `updateClass` (`class-lifecycle.ts`)
+        // sets for its own second check. `warn`, not `error`: the two
+        // expected causes are races this CAS exists to lose gracefully.
         const cancelled = await tx.class.updateMany({
           where: { id: cls.id, status: { in: ['draft', 'open', 'in_progress'] } },
           data: { status: 'cancelled' },
         });
-        if (cancelled.count === 0) continue;
+
+        if (cancelled.count === 0) {
+          const observed = await tx.class.findUnique({
+            where: { id: cls.id },
+            select: { status: true },
+          });
+          // The `continue` below skips the waitlist sweep too, deliberately —
+          // "does not touch the waitlist" is exactly what the test "leaves a
+          // class that completed after the erasure read alone, and still
+          // erases" pins, because a HALF-applied skip (CAS refused, waitlist
+          // and notifications applied anyway) would tell a student their
+          // class was cancelled after `completeClass` had already asked them
+          // to pay for it. The cost is a residual: any `waiting` entry on
+          // that class survives, on a class that can never promote anyone,
+          // belonging to a teacher who no longer exists. Counted into this
+          // line rather than left invisible — an operator seeing a non-zero
+          // `waitingEntriesLeft` knows there is a row to clean up, which is
+          // the whole difference between a known residual and a silent one.
+          const waitingEntriesLeft = await tx.waitlistEntry.count({
+            where: { classId: cls.id, status: 'waiting' },
+          });
+          log.warn(
+            {
+              teacherId,
+              classId: cls.id,
+              observedStatus: observed?.status ?? 'row-deleted',
+              waitingEntriesLeft,
+            },
+            'teacher erasure: class cancel CAS matched nothing',
+          );
+          continue;
+        }
 
         await tx.waitlistEntry.updateMany({
           where: { classId: cls.id, status: 'waiting' },
