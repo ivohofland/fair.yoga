@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
+import { requireNormalised } from '@/lib/schemas';
 
 export interface ResolvedAccount {
   accountId: string;
@@ -12,11 +13,22 @@ export interface ResolvedAccount {
  * CRM-created student carries this email, this is the claim moment: the
  * human just proved they own the address (magic link), so the account is
  * created, linked, and claimedAt stamped. Unknown emails resolve to null.
+ *
+ * `requireNormalised` (#170): this takes an address from a caller —
+ * `verifyMagicLinkToken`'s `record.email`, itself a
+ * `MagicLinkToken_email_lowercase_check` column — and compares it with two
+ * case-SENSITIVE lookups, `account.findUnique` and `student.findFirst`,
+ * below. An un-normalised miss here is worse than a silent no-match: it
+ * falls through to `db.account.create` and mints a second `Account` for a
+ * person who already has one, splitting their bookings across both. Same
+ * assertion, same reason, as the seven `src/services/` entry points that
+ * already carry it.
  */
 export async function resolveOrClaimAccount(
   db: PrismaClient,
-  email: string,
+  rawEmail: string,
 ): Promise<ResolvedAccount | null> {
+  const email = requireNormalised(rawEmail);
   const account = await db.account.findUnique({
     where: { email },
     select: {
