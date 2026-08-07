@@ -729,3 +729,50 @@ Not plan steps — they belong to the branch's finish, per `solve-issue`:
    `beforeAll` already exits 1; the rule named the wrong file; zero headroom).
 5. Rebase-merge, never squash. Then update `docs/backlog-roadmap.md`, leaving it
    untracked.
+6. **File the `passkey/authenticate/options` issue** (decided 2026-08-07: after
+   merge, not in this PR). Everything needed is below — do not re-derive it.
+
+## Spun out, to file after merge — not this PR's work
+
+Found while establishing which of the 10 fetches in the two edited test files
+reach a rate-limited route. Deliberately **not** fixed here: this branch's
+subject is test idempotency and a local gate, and a production auth change
+belongs in a PR whose reviewers are reading auth.
+
+**Census first, because "the two endpoints in my table" was a sampling
+artifact.** `find src/app/api -name route.ts` gives 56 routes; 7 have no session
+guard; 3 of those are rate-limited. The 4 that are not:
+
+| route | verdict |
+|---|---|
+| `health` | Public health check. Fine. |
+| `auth/magic-link/verify` | Token is `crypto.randomBytes(32)` — 256 bits, stored as a hash, 15-minute TTL. Brute force infeasible. **Ruled out.** |
+| `auth/passkey/authenticate/verify` | Gated on a one-time 5-minute challenge plus WebAuthn signature verification; `redirect` is `relativePath.optional()` in `passkeyAuthVerifySchema`, so the docblock's open-redirect claim holds. **Ruled out.** |
+| `auth/passkey/authenticate/options` | **Two defects.** Below. |
+
+**Defect 1 — account-enumeration oracle.**
+`src/app/api/auth/passkey/authenticate/options/route.ts` looks the email up and
+passes `credentialIds` to `generatePasskeyAuthenticationOptions`, which sets
+`allowCredentials: allowedCredentialIds?.map((id) => ({ id }))`
+(`src/lib/auth/passkey.ts:165`). The key is present when the email maps to an
+account with at least one passkey and absent otherwise, so an unauthenticated
+caller reads account existence off the response shape. The project designs
+against this everywhere else — `student-signup`'s docblock ("The response is
+identical whether the email was new, an existing student, or a teacher — no
+account enumeration") and `magic-link/send`'s 200-either-way branch.
+
+**This half is a decision, not a task.** `allowCredentials` exists so the
+authenticator can pre-select a credential; omitting it forces a
+discoverable-credential flow with different UX and uneven authenticator support.
+File it with the options stated — uniform response vs. keep the hint — rather
+than as work someone can pick up.
+
+**Defect 2 — unbounded in-memory challenge store.** `storeChallenge`
+(`src/lib/auth/passkey.ts:46`) calls `cleanupExpired()`, which evicts only
+*expired* entries. Within the 5-minute TTL an unauthenticated caller adds one
+entry per request with no ceiling. `src/lib/rate-limit.ts` bounds its own map at
+`MAX_KEYS = 10_000`, commented "so a scanner cycling keys cannot grow memory
+unbounded" — the same threat model, handled there and not here, on the 2 GB VPS
+this project targets. This half is uncontroversial and needs no decision.
+
+One issue, not two: same endpoint, same request path.
