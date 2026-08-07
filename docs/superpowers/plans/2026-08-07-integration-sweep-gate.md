@@ -274,7 +274,11 @@ every test would stay green until the second sweep.
 `tests/helpers.test.ts` matches none of them and would be collected by no
 project — silently never run, which is the exact failure this issue is about.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the test**
+
+This one is not red-then-green: its subject already exists, from Task 1. It earns
+its keep in Step 3, where the helper is broken and the test must fail. Do not
+skip that step — a test that has only ever been seen passing certifies nothing.
 
 Append to the end of `tests/integration/signup-api.test.ts`:
 
@@ -386,7 +390,11 @@ per-IP (`student-signup:${ip}`, 5/hour) and per-email
 *distinct* emails, so the per-email budget never reaches 2. A 429 therefore
 isolates the per-IP check — which is what makes Step 3's mutation meaningful.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the test**
+
+As in Task 2, this is not red-then-green — the limiter it covers already exists
+in production code. Step 3 is where it proves it can fail, by deleting that
+limiter. That step is the task, not a formality.
 
 Append to the end of `tests/integration/signup-api.test.ts`:
 
