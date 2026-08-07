@@ -21,11 +21,11 @@ describe('GET /account/privacy (page)', () => {
   let archivedTeacherId: string;
   let inviteTeacherId: string;
 
-  // Mixed case, and deliberately different from `Student.email` below: this
-  // is what proves the page matches a pending invitation through the
-  // session's own account email rather than `Student.email` — the same
-  // address on both would let that swap pass by coincidence.
-  const accountEmail = `T11-Page-Verify-${suffix}@Test.Local`;
+  // Deliberately different from `Student.email` below: this is what proves
+  // the page matches a pending invitation through the session's own account
+  // email rather than `Student.email` — the same address on both would let
+  // that swap pass by coincidence.
+  const accountEmail = `t11-page-verify-${suffix}@test.local`;
 
   beforeAll(async () => {
     const student = await prisma.student.create({
@@ -71,12 +71,13 @@ describe('GET /account/privacy (page)', () => {
       },
     });
     inviteTeacherId = inviteTeacher.id;
-    // `Invitation.email` is always lowercase by construction (`inviteContact`
-    // normalises on write) — this fixture writes it directly, so it has to
-    // match that convention itself.
+    // `Invitation.email` is always lowercase by construction — enforced at
+    // rest by `Invitation_email_lowercase_check` (writers that go through
+    // Zod get there via `emailField`, src/lib/schemas.ts) — this fixture
+    // writes it directly, so it has to match that convention itself.
     await prisma.invitation.create({
       data: {
-        teacherId: inviteTeacherId, email: accountEmail.toLowerCase(),
+        teacherId: inviteTeacherId, email: accountEmail,
         firstName: 'PageVerify', lastName: 'Student',
       },
     });
@@ -97,9 +98,10 @@ describe('GET /account/privacy (page)', () => {
       await prisma.session.deleteMany({ where: { accountId: studentAccountId } });
     }
     if (studentId) await prisma.student.deleteMany({ where: { id: studentId } });
-    // The two teacher accounts are plain lowercase `test.local` addresses
-    // and match this; `accountEmail` above does not (mixed case, `.Local`),
-    // so the student's own account is deleted explicitly below.
+    // All three accounts — the two teachers and the student's own,
+    // `accountEmail` included now that it is plain lowercase `test.local` —
+    // match this filter; the explicit delete-by-id below is a fail-safe,
+    // not load-bearing.
     await prisma.account.deleteMany({ where: { email: { contains: `-${suffix}@test.local` } } });
     if (studentAccountId) await prisma.account.deleteMany({ where: { id: studentAccountId } });
     await prisma.$disconnect();
@@ -112,7 +114,7 @@ describe('GET /account/privacy (page)', () => {
     expect(html).toContain('PageArchived Teacher');
   });
 
-  it('matches a pending invitation through the session account email, not Student.email, case-insensitively', async () => {
+  it('matches a pending invitation through the session account email, not Student.email', async () => {
     const res = await fetch(`${BASE_URL}/account/privacy`, { headers: cookie(studentToken) });
     expect(res.status).toBe(200);
     const html = await res.text();
