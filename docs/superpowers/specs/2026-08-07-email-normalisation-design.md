@@ -378,8 +378,11 @@ a new migration-constraint test file.
    records the verbatim rejection *and* the verbatim success after the
    constraint is dropped.
 6. `grep -rn "toLowerCase" src/ --include="*.ts" --include="*.tsx" | grep -v "\.test\."`
-   returns exactly 3 lines: the `gdpr.ts` comment, `profile-form.tsx`'s
-   `pageSlug`, and `format.ts`'s last initial. 16 − 13 = 3.
+   returns exactly 4 lines: `emailField` itself, the `gdpr.ts` comment,
+   `profile-form.tsx`'s `pageSlug`, and `format.ts`'s last initial. **17 − 13 =
+   4** — 17, not the 16 measured above, because adding the primitive adds a
+   `toLowerCase` of its own. The pre-implementation census and the
+   post-implementation acceptance count are one apart by construction.
 7. `mode: 'insensitive'` no longer appears as an *equality* match anywhere;
    `hasRosterLink` is a `findUnique`.
 8. Every comment in "Comments that currently say something untrue" is corrected,

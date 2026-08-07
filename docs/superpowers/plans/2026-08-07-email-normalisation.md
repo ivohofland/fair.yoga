@@ -746,8 +746,20 @@ grep -rn "insensitive" src/ --include="*.ts" --include="*.tsx" | grep -v "\.test
 ```
 
 Expected, exactly:
-- **3** `toLowerCase` lines — the `gdpr.ts` comment, `profile-form.tsx:175`
-  (`pageSlug`), `format.ts:12` (last initial). 16 − 13 = 3.
+
+- **4** `toLowerCase` lines, and no others:
+
+  | site | why it stays |
+  |---|---|
+  | `src/lib/schemas.ts:45` | `emailField` itself — the one legitimate normalisation, added by Task 1 |
+  | `src/services/gdpr.ts:63` | the word inside a comment, not a call |
+  | `src/components/settings/profile-form.tsx:175` | slugifies `pageSlug`, unrelated to email |
+  | `src/lib/format.ts:12` | lowercases a last initial, unrelated to email |
+
+  **17 − 13 = 4.** Note the 17: the spec measured 16 before Task 1 existed, and
+  Task 1 added the primitive. If you find 16 or expect 3, you are working from
+  the pre-Task-1 count.
+
 - **9** `insensitive` lines — 5 `contains` search filters (students, rooms) and
   4 comments, with **zero** equality matches. 11 − 2 = 9.
 
