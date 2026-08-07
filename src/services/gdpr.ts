@@ -66,7 +66,7 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
   // Miss it and the export silently omits the rows for anyone whose address
   // carries uppercase — the failure mode of an omission is a quiet, complete
   // absence, which is why it is worth stating.
-  const subjectEmail = student.email.toLowerCase();
+  const subjectEmail = student.email;
   const invitations = await db.invitation.findMany({
     where: { email: subjectEmail },
     select: {
@@ -411,7 +411,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // so a student invited by several teachers anonymises to one value
     // without colliding on `@@unique([teacherId, email])`.
     await tx.invitation.updateMany({
-      where: { email: student.email.toLowerCase() },
+      where: { email: student.email },
       data: {
         email: `deleted-${studentId}@deleted.invalid`,
         firstName: 'Deleted',

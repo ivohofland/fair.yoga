@@ -26,7 +26,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if ('error' in emailParsed) return emailParsed.error;
   const { firstName, lastName, email, redirect } = emailParsed.data;
 
-  const emailCheck = checkRateLimit(`student-signup:email:${email.toLowerCase()}`, 3, 15 * 60 * 1000);
+  const emailCheck = checkRateLimit(`student-signup:email:${email}`, 3, 15 * 60 * 1000);
   if (!emailCheck.allowed) {
     return respondError('Too many signup attempts. Try again later.', 429);
   }

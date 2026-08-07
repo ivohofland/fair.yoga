@@ -97,7 +97,7 @@ export const PUT = withErrorHandler(async (
       // — this column is lowercase by construction, and the uniqueness check
       // and later account-matching both depend on that holding for every row,
       // not just the ones created through POST.
-      data: { ...rest, ...(email !== undefined ? { email: email.toLowerCase() } : {}) },
+      data: { ...rest, ...(email !== undefined ? { email } : {}) },
       select: { id: true },
     });
   } catch (err) {

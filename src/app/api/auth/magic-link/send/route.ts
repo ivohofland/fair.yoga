@@ -26,7 +26,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       ? { allowed: true, retryAfterSeconds: 0 }
       : checkRateLimit(`magic-link:ip:${ip}`, PER_IP_LIMIT, WINDOW_MS);
   const emailCheck = checkRateLimit(
-    `magic-link:email:${email.toLowerCase()}`,
+    `magic-link:email:${email}`,
     PER_EMAIL_LIMIT,
     WINDOW_MS,
   );

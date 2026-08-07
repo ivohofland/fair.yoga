@@ -60,7 +60,7 @@ export async function resolveInvitationOnLink(
   // tombstone — so the student's only route back to a teacher they declined
   // stops working, which is the one escape hatch the whole decline design
   // rests on.
-  const email = input.studentEmail.toLowerCase();
+  const email = input.studentEmail;
 
   // Task 6c moved the block into its own table, and the block is the thing
   // that actually stands between them — so clearing it is what makes booking

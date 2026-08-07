@@ -161,7 +161,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // Same transform `inviteContact` applies before storing `Invitation.email`
     // — recomputed here rather than read back off `result`, since the
     // service returns only `{ id, delivered }` on the wire-shaped success path.
-    void deliverInvitation(session.teacherId, parsed.data.email.toLowerCase()).catch((err) => {
+    void deliverInvitation(session.teacherId, parsed.data.email).catch((err) => {
       // `invitationId`, not just `teacherId` (F4, #166 review). A send that
       // fails leaves a row indistinguishable from one that went out — still
       // `pending`, still listed under Contacts — so without the id an operator

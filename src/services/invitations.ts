@@ -107,8 +107,8 @@ async function hasRosterLink(
   teacherId: string,
   email: string,
 ): Promise<boolean> {
-  const student = await db.student.findFirst({
-    where: { email: { equals: email, mode: 'insensitive' } },
+  const student = await db.student.findUnique({
+    where: { email },
     select: { id: true },
   });
   if (!student) return false;
@@ -173,7 +173,7 @@ export async function inviteContact(
   // match an account to an invitation by lowercasing the account's email in
   // JS before querying, which stays index-friendly exactly because this
   // column is always lowercase.
-  const email = input.email.toLowerCase();
+  const email = input.email;
 
   const existing = await db.invitation.findUnique({
     where: { teacherId_email: { teacherId, email } },
@@ -363,7 +363,7 @@ export async function notifyInvitee(
   // every other email-comparing function in this file does
   // (acceptInvitation, declineInvitation, unlinkTeacher) and the one next
   // door (resolveInvitationOnLink, services/link-consent.ts).
-  const email = input.email.toLowerCase();
+  const email = input.email;
 
   // Structural, not comment-enforced (F3, #166 review): re-check the block
   // here instead of trusting the caller's `delivered` to still be fresh.
@@ -379,8 +379,8 @@ export async function notifyInvitee(
   // the in-app notification, it falls through to the plain-email branch
   // below — which bypasses `Student.emailNotifications` entirely and tells
   // an existing account holder to go and sign up.
-  const student = await db.student.findFirst({
-    where: { email: { equals: email, mode: 'insensitive' } },
+  const student = await db.student.findUnique({
+    where: { email },
     select: { id: true },
   });
 
@@ -444,7 +444,7 @@ export async function listPendingInvitations(
   db: PrismaClient,
   input: { accountEmail: string },
 ): Promise<Array<{ id: string; teacher: { firstName: string; lastName: string } }>> {
-  const email = input.accountEmail.toLowerCase();
+  const email = input.accountEmail;
   return db.invitation.findMany({
     where: {
       email,
@@ -527,7 +527,7 @@ export async function acceptInvitation(
   db: PrismaClient,
   input: { invitationId: string; studentId: string; accountEmail: string },
 ): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_PENDING' }> {
-  const email = input.accountEmail.toLowerCase();
+  const email = input.accountEmail;
   const invitation = await db.invitation.findFirst({
     where: { id: input.invitationId, email, teacher: { deletedAt: null } },
     select: { id: true, teacherId: true },
@@ -633,7 +633,7 @@ export async function declineInvitation(
   input: { invitationId: string; accountEmail: string },
 ): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_PENDING' }> {
   const invitation = await db.invitation.findFirst({
-    where: { id: input.invitationId, email: input.accountEmail.toLowerCase() },
+    where: { id: input.invitationId, email: input.accountEmail },
     select: { id: true },
   });
   if (!invitation) return { ok: false, reason: 'NOT_FOUND' };
@@ -788,7 +788,7 @@ export async function unlinkTeacher(
     // lowercase, `Account.email` never is. A raw address here would miss an
     // existing invitation row and write the block under a different casing
     // than `inviteContact` looks it up by.
-    const email = input.accountEmail.toLowerCase();
+    const email = input.accountEmail;
 
     // An invitation the teacher created keeps its honest declined state —
     // they typed that address, so telling them it is dead discloses nothing
