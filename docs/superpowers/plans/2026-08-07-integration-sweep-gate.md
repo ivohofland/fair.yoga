@@ -44,7 +44,7 @@ after Task 1.
 | File | Change | Responsibility |
 |---|---|---|
 | `tests/helpers.ts` | Modify — add `freshIp()` | Mechanical fixture layer, already owns `BASE_URL`, `uniqueSuffix()`, `cookie()` |
-| `tests/integration/signup-api.test.ts` | Modify — 6 call sites + 2 new tests | The file holding 6 of the 8 rate-limited call sites |
+| `tests/integration/signup-api.test.ts` | Modify — 6 call sites + 3 new tests | The file holding 6 of the 8 rate-limited call sites |
 | `tests/integration/auth-email-case.test.ts` | Modify — 2 call sites | Holds the other 2 |
 | `package.json` | Modify — add `verify` script | — |
 | `README.md` | Modify — command table | — |
@@ -162,7 +162,7 @@ The return type names its key rather than being `Record<string, string>` —
 `noUncheckedIndexedAccess` is on, so a `Record` index would give
 `string | undefined` and Task 2 reads the address back.
 
-`crypto` is already imported at `tests/helpers.ts:19`. Do not add an import.
+`crypto` is already imported at `tests/helpers.ts:18`. Do not add an import.
 
 - [ ] **Step 3: Update the import in `signup-api.test.ts`**
 
@@ -270,7 +270,8 @@ every test would stay green until the second sweep.
 - Produces: nothing later tasks use.
 
 **Why it lives in an integration file.** The three vitest projects glob
-`src/**/*.test.ts`, `tests/integration/**/*.test.ts` and `src/**/*.test.tsx`. A
+`src/**/*.test.ts`, `tests/integration/**/*.test.ts` and
+`['src/components/**/*.test.tsx', 'src/app/**/*.test.tsx']`. A
 `tests/helpers.test.ts` matches none of them and would be collected by no
 project — silently never run, which is the exact failure this issue is about.
 
@@ -619,8 +620,8 @@ project rule that a wrong claim is fixed in every artifact, not just the nearest
 one.
 
 **Files:**
-- Modify: `.claude/skills/solve-issue/SKILL.md:222-225`
-- Modify: `docs/test-database.md:50-52`
+- Modify: `.claude/skills/solve-issue/SKILL.md:223-225`
+- Modify: `docs/test-database.md:51-52`
 - Modify: `docs/superpowers/specs/2026-08-07-integration-sweep-gate-design.md`
 
 **Interfaces:**
@@ -629,7 +630,7 @@ one.
 
 - [ ] **Step 1: Replace the rate-limit hazard in `SKILL.md`**
 
-Lines 222-225 currently read:
+Lines 223-225 currently read:
 
 ```markdown
 - **Never run `npx vitest run --project integration` without a file path.** One file in that
@@ -658,9 +659,20 @@ Replace with:
   via `freshIp()` in `tests/helpers.ts` — so running it costs nothing you need back.
 ```
 
+**Overridden during the build, deliberately:** ship "every file in
+`tests/integration/`", not "all 26 files". A hardcoded count in prose is accurate
+for exactly one branch — which is the argument Step 2 immediately below makes for
+*removing* the counts from `docs/test-database.md`, so prescribing one here
+contradicts the next step. The second bullet's "20 of 26" stays: it reports a
+measurement of a past event, which does not go stale. The whole-branch review
+also corrected the "same whole-tree check CI runs" sentence — `verify` skips the
+build, the migration-drift check, and Playwright — and added the :3000
+prerequisite; see the shipped text in `SKILL.md`, which is authoritative over
+this block.
+
 - [ ] **Step 2: Drop the stale counts in `docs/test-database.md`**
 
-Lines 50-52 currently read:
+Lines 51-52 currently read:
 
 ```markdown
 | `unit` | `src/**/*.test.ts` (28 files: services + lib) | **`ethical_yoga_test`** |
@@ -683,7 +695,7 @@ makes it hold.
 
 - [ ] **Step 3: Extend the spec's account of the stale counts**
 
-The spec says only that line 52 reads "17 files". It missed that line 50 is stale
+The spec says only that line 52 reads "17 files". It missed that line 51 is stale
 too. In `docs/superpowers/specs/2026-08-07-integration-sweep-gate-design.md`, find:
 
 ```markdown
@@ -694,7 +706,7 @@ Line 52 of the same file also still describes the `integration` project as
 Replace with:
 
 ```markdown
-Both counts in the project table of the same file are stale: line 50 calls `unit`
+Both counts in the project table of the same file are stale: line 51 calls `unit`
 "(28 files)" when it is 46, and line 52 calls `integration` "(17 files)" when it
 is 26. Neither is updated below — they are removed.
 ```
@@ -737,7 +749,7 @@ Not plan steps — they belong to the branch's finish, per `solve-issue`:
    falsified — including that the first reading of `clientIp()` was wrong and the
    run corrected it.
 3. `/pr-review-toolkit:review-pr <N>`. Skip `type-design-analyzer`: the only new
-   type is `Record<string, string>`.
+   type is `{ 'x-forwarded-for': string }`, a single-key object literal.
 4. Comment on issue #185 with the measured corrections (CI already runs all 26;
    `beforeAll` already exits 1; the rule named the wrong file; zero headroom).
 5. Rebase-merge, never squash. Then update `docs/backlog-roadmap.md`, leaving it

@@ -181,7 +181,7 @@ Line 108, in the verification steps for the test-database split:
 > Verify: `npm test` twice locally (second run proves idempotency)
 
 That is the right standard and it is already project policy. It is currently
-false. Both counts in the project table of the same file are stale: line 50 calls `unit`
+false. Both counts in the project table of the same file are stale: line 51 calls `unit`
 "(28 files)" when it is 46, and line 52 calls `integration` "(17 files)" when it
 is 26. Neither is updated below — they are removed.
 
@@ -272,10 +272,20 @@ Sequential and fail-fast: typecheck (~3 s) and lint (~10 s) are cheap and catch
 the whole-tree defects that per-diff review structurally cannot, so they run
 before the suite rather than after it.
 
-This is the local equivalent of both CI jobs. It is deliberately **not** wired
-into CI — CI's split between a fast static job and a database-backed one means a
-type error reports in about two minutes instead of after a full build, and
-collapsing them into one script would give that up for nothing.
+This runs the same static gates and the same vitest suite as CI, but it is not
+equivalent to CI: the `test` job also runs `npx prisma validate`, a
+`prisma migrate diff --exit-code` drift check, `npm run build`, a health-gated
+app start, and `npx playwright test`. Green `verify` is a strong signal, not a
+substitute — a defect whose only gate is `next build` (importing the
+server-only `@/lib/log` into a client chain, say) passes `verify` and fails CI.
+
+It also needs the app running on :3000, since the integration project talks to
+it over HTTP.
+
+It is deliberately **not** wired into CI — CI's split between a fast static job
+and a database-backed one means a type error reports in about two minutes
+instead of after a full build, and collapsing them into one script would give
+that up for nothing.
 
 Its guard is proved by breaking an integration fixture, confirming
 `npm run verify` exits non-zero and names the file, and restoring.

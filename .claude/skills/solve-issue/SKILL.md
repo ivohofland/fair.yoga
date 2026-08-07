@@ -223,8 +223,12 @@ restatement of the issue), add anything spun out, re-check the open count agains
 - **Run `npm run verify` before pushing** — typecheck, lint, and the whole suite including
   every file in `tests/integration/`. Per-diff review cannot see a defect that exists only
   in the union of several diffs, which is how #170 shipped both a dark test file and a red
-  lint to a pushed branch past nine reviews. This is the same whole-tree check CI runs, one
-  round-trip earlier. Single files by explicit path
+  lint to a pushed branch past nine reviews. It needs the app running on :3000 (the
+  integration project talks to it over HTTP); without it you get a wall of `ECONNREFUSED`.
+  Green `verify` is a strong signal, **not** a substitute for CI: it runs the same static
+  gates and the same vitest suite, but CI also runs `prisma validate`, a migration-drift
+  check, `npm run build`, and Playwright — so a build-only defect (see the `@/lib/log`
+  hazard below) passes `verify` and fails CI. Single files by explicit path
   (`npx vitest run --project integration <path>`) remain the fast inner loop.
 - **Do not hand-list integration files in a plan.** That habit is what left 20 of 26
   unobserved on #170. The sweep covers them; name a file only when its *order* matters.

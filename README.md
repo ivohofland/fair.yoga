@@ -61,7 +61,7 @@ Open [http://localhost:3000](http://localhost:3000). Go to `/login` and enter `i
 | `npm run dev` | Start Next.js dev server |
 | `npm run build` | Production build |
 | `npm run lint` | Run ESLint |
-| `npm run verify` | Typecheck + lint + all tests — run before pushing |
+| `npm run verify` | Typecheck + lint + all tests — run before pushing. Needs the app running on :3000 (the integration tests call it over HTTP) |
 | `npm test` | Run all tests (Vitest) |
 | `npm run test:watch` | Run tests in watch mode |
 | `npm run test:coverage` | Run tests with coverage report |
