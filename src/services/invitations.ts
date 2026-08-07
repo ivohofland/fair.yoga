@@ -481,12 +481,12 @@ class NotPendingError extends Error {}
  * two people neither of whom agreed. This is the gate-4 ownership family
  * #146, #148, and #162 all belonged to.
  *
- * `accountEmail` is asserted lowercase, not lowercased: `Invitation.email` is
- * written lowercase by `inviteContact` above and by `PUT /api/invitations/[id]`,
- * and `Account.email` is normalised at HTTP ingress (`emailField`,
- * src/lib/schemas.ts) and enforced lowercase by
- * `Account_email_lowercase_check` (#170) — so `requireNormalised` has a real
- * invariant to check, not a difference to paper over.
+ * `accountEmail` is asserted lowercase, not lowercased: both `Invitation.email`
+ * and `Account.email` are normalised at HTTP ingress (`emailField`,
+ * src/lib/schemas.ts) and enforced lowercase at rest by
+ * `Invitation_email_lowercase_check` and `Account_email_lowercase_check`
+ * (#170) — so `requireNormalised` has a real invariant to check, not a
+ * difference to paper over.
  *
  * The block check below is defence in depth, not the primary gate — the
  * student-side pending query (Task 11) already excludes a blocked pair, so
@@ -692,6 +692,22 @@ export async function unlinkTeacher(
   });
   if (!link) return { ok: false, reason: 'NOT_LINKED' };
 
+  // Asserted lowercase for the same reason `acceptInvitation` asserts it:
+  // `Invitation.email` and `TeacherBlock.email` are always stored lowercase,
+  // and `Account.email` is too now (`Account_email_lowercase_check`, #170).
+  // A raw address here would miss an existing invitation row and write the
+  // block under a different casing than `inviteContact` looks it up by —
+  // `requireNormalised` (src/lib/schemas.ts) turns that silent miss into a
+  // thrown error.
+  //
+  // Hoisted above the transaction (#170 whole-branch review): `input.
+  // accountEmail` needs no transaction context, and asserting it after
+  // `tx.teacherStudent.delete` below reads as write-then-validate. Harmless
+  // today — the throw aborts the transaction and the delete rolls back with
+  // it — but there is no reason for the precondition check to run after a
+  // write it does not depend on.
+  const email = requireNormalised(input.accountEmail);
+
   const unlinked = await db.$transaction(async (tx) => {
     // FIRST, before any write below. A `waiting` entry for one of this
     // teacher's classes is a standing request the student is walking away
@@ -778,15 +794,6 @@ export async function unlinkTeacher(
     // while this transaction sits blocked on a lock it holds. The catch below
     // translates both into the answer this route already models.
     await tx.teacherStudent.delete({ where: { id: link.id } });
-
-    // Asserted lowercase for the same reason `acceptInvitation` asserts it:
-    // `Invitation.email` and `TeacherBlock.email` are always stored
-    // lowercase, and `Account.email` is too now
-    // (`Account_email_lowercase_check`, #170). A raw address here would miss
-    // an existing invitation row and write the block under a different
-    // casing than `inviteContact` looks it up by — `requireNormalised`
-    // (src/lib/schemas.ts) turns that silent miss into a thrown error.
-    const email = requireNormalised(input.accountEmail);
 
     // An invitation the teacher created keeps its honest declined state —
     // they typed that address, so telling them it is dead discloses nothing
