@@ -462,10 +462,29 @@ a new migration-constraint test file.
    comment mentioning case-insensitivity in `src/` is then a visible anomaly
    rather than an entry in a total someone must re-derive.
 
-8. `requireNormalised` exists in `src/lib/schemas.ts`, is applied at exactly the
-   seven service entry points that take an address from a caller, is absent from
-   `gdpr.ts`'s two internal readers, and **throws rather than lowercases** — it
-   asserts the invariant, it does not become a third place that implements it.
+8. `requireNormalised` exists in `src/lib/schemas.ts` and **throws rather than
+   lowercases** — it asserts the invariant, it does not become a third place that
+   implements it.
+
+   **The rule for where it goes is a property, not a directory:** *every function
+   that takes an email address from a caller and compares it with a
+   case-sensitive lookup.* That is **eight** sites — the seven in
+   `src/services/` (`inviteContact`, `notifyInvitee`, `listPendingInvitations`,
+   `acceptInvitation`, `declineInvitation`, `unlinkTeacher`,
+   `resolveInvitationOnLink`) plus **`resolveOrClaimAccount`
+   (`src/lib/auth/account.ts`)**.
+
+   The eighth was missed because the rule was first written as "service entry
+   points", and a directory is not a property. It is also the sharpest of the
+   eight: on a miss it does not merely fail to match — it **creates an
+   `Account`**, which is the duplicate-identity defect this whole issue exists to
+   remove, reproduced from the inside.
+
+   Excluded, and the exclusion is recorded rather than silent: `gdpr.ts`'s
+   `exportStudentData` and `deleteStudentAccount` read `student.email` from a row
+   they fetch themselves — verified for every email-comparing read in that file
+   (`:69`, `:81`, `:415`, `:452`, `:822`), no caller supplies an address anywhere
+   in it.
 
 9. Every comment in "Comments that currently say something untrue" is corrected,
    and #170 carries the criterion-1 correction. Note that the sentence which
