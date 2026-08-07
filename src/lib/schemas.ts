@@ -66,8 +66,8 @@ const emailField = z.string().email().transform((s) => s.toLowerCase());
 export function requireNormalised(email: string): string {
   if (email !== email.toLowerCase()) {
     throw new Error(
-      `email reached this service un-normalised: "${email}". Callers source it ` +
-        `from emailField (HTTP) or a *_email_lowercase_check column (DB); a new ` +
+      `email reached this service un-normalised. Callers source it from ` +
+        `emailField (HTTP) or a *_email_lowercase_check column (DB); a new ` +
         `caller must do the same.`,
     );
   }
