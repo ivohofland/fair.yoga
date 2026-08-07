@@ -200,3 +200,37 @@ describe('freshIp', () => {
     expect(freshIp()['x-forwarded-for']).toMatch(/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/);
   });
 });
+
+/**
+ * The only test that fails if the per-IP limiter is removed from
+ * `POST /api/auth/student-signup`. Every other call site in the suite now sends
+ * a fresh address (see `freshIp`), which is what keeps the suite re-runnable —
+ * and which would otherwise leave this limiter with no coverage at all.
+ *
+ * One address for all six requests, deliberately: that is the bucket under
+ * test. Six DISTINCT emails, also deliberately — the route's other budget is
+ * per-email (3 per 15 min), and repeating an address would let that one produce
+ * the 429 instead, which would keep this test green with the IP check deleted.
+ */
+describe('POST /api/auth/student-signup — per-IP budget', () => {
+  it('refuses the sixth signup from one address within the hour', async () => {
+    const ip = freshIp();
+    const statuses: number[] = [];
+
+    for (let i = 0; i < 6; i++) {
+      const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...ip },
+        body: JSON.stringify({
+          firstName: 'Burst',
+          lastName: 'Signup',
+          email: `signup-ip-burst-${i}-${suffix}@test.local`,
+        }),
+      });
+      statuses.push(res.status);
+    }
+
+    expect(statuses.slice(0, 5)).toEqual(Array(5).fill(200));
+    expect(statuses[5]).toBe(429);
+  });
+});
