@@ -181,8 +181,9 @@ Line 108, in the verification steps for the test-database split:
 > Verify: `npm test` twice locally (second run proves idempotency)
 
 That is the right standard and it is already project policy. It is currently
-false. Line 52 of the same file also still describes the `integration` project as
-"(17 files)"; it is 26.
+false. Both counts in the project table of the same file are stale: line 50 calls `unit`
+"(28 files)" when it is 46, and line 52 calls `integration` "(17 files)" when it
+is 26. Neither is updated below — they are removed.
 
 ## The design
 

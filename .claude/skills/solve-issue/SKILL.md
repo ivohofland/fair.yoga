@@ -220,9 +220,16 @@ restatement of the issue), add anything spun out, re-check the open count agains
 
 ## Project hazards that have actually bitten
 
-- **Never run `npx vitest run --project integration` without a file path.** One file in that
-  project is IP rate-limited and the whole-project run trips it. Single files by explicit path
-  are fine and are often required.
+- **Run `npm run verify` before pushing** — typecheck, lint, and the whole suite including
+  every file in `tests/integration/`. Per-diff review cannot see a defect that exists only
+  in the union of several diffs, which is how #170 shipped both a dark test file and a red
+  lint to a pushed branch past nine reviews. This is the same whole-tree check CI runs, one
+  round-trip earlier. Single files by explicit path
+  (`npx vitest run --project integration <path>`) remain the fast inner loop.
+- **Do not hand-list integration files in a plan.** That habit is what left 20 of 26
+  unobserved on #170. The sweep covers them; name a file only when its *order* matters.
+  The suite is re-runnable — every rate-limited request carries its own `x-forwarded-for`
+  via `freshIp()` in `tests/helpers.ts` — so running it costs nothing you need back.
 - **Never start or restart the dev server on :3000.** The user runs it; it serves this
   checkout, and integration tests need it live.
 - **`@/lib/log` is pino and server-only.** Before importing into a module that a `'use client'`
