@@ -14,6 +14,7 @@ import {
   updateStudentSchema,
   isSafeRelativePath,
   MAX_CLASS_SIZE,
+  requireNormalised,
 } from './schemas';
 import type { NoneOf } from './type-pins';
 
@@ -486,5 +487,20 @@ describe('email fields normalise', () => {
     const shape = (schema as { shape: Record<string, unknown> }).shape;
     const field = shape.email as z.ZodType<unknown, unknown>;
     expect(field.parse('Mixed@Example.COM')).toBe('mixed@example.com');
+  });
+});
+
+describe('requireNormalised', () => {
+  // The only guard on this branch nobody has broken (#170 whole-branch
+  // review, item 6) — three test files (`invitations.pending.test.ts`,
+  // `invitations.revive.test.ts`, `invitations.notify.test.ts`) pattern-match
+  // on `/un-normalised/` in the thrown message, so that message is
+  // load-bearing and was otherwise unpinned by a direct test of its own.
+  it('returns a lowercase address unchanged', () => {
+    expect(requireNormalised('already-lower@example.com')).toBe('already-lower@example.com');
+  });
+
+  it('throws on a mixed-case address, matching /un-normalised/', () => {
+    expect(() => requireNormalised('Mixed@Example.com')).toThrow(/un-normalised/);
   });
 });
