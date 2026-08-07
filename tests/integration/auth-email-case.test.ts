@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, uniqueSuffix } from '../helpers';
+import { BASE_URL, uniqueSuffix, freshIp } from '../helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -53,7 +53,7 @@ describe('sign-in and signup are case-insensitive on email', () => {
   it('issues a magic-link token when the address is typed in mixed case', async () => {
     const res = await fetch(`${BASE_URL}/api/auth/magic-link/send`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
       body: JSON.stringify({ email: studentEmail.toUpperCase() }),
     });
     expect(res.status).toBe(200);
@@ -72,7 +72,7 @@ describe('sign-in and signup are case-insensitive on email', () => {
 
     const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
       body: JSON.stringify({
         firstName: 'Dup', lastName: 'Attempt',
         email: studentEmail.toUpperCase(),

@@ -94,6 +94,39 @@ export function uniqueSuffix(): string {
 }
 
 /**
+ * A unique `x-forwarded-for` per call, so a request lands in a rate-limit
+ * bucket nothing else has touched.
+ *
+ * Three routes throttle per IP — `POST /api/auth/magic-link/send` (10/15min),
+ * `POST /api/auth/student-signup` (5/hour) and `POST /api/teachers` (3/hour) —
+ * and `clientIp()` reads the first comma-separated entry of this header. The
+ * integration suite calls those routes 8 times, which against a limit of 5 is
+ * exactly zero headroom: one pass spent the budget and the next 429'd, so the
+ * suite could not be run twice in an hour and therefore was never run whole.
+ *
+ * A fresh address *per request* — not per file — is what fixes that. No bucket
+ * ever reaches a count of 2, so the limits become unreachable rather than
+ * merely roomy, and adding a sixth signup test costs nothing. Per-file
+ * uniqueness would leave signup-api's four calls sharing a bucket against a
+ * limit of 5: the same tripwire with a bigger number.
+ *
+ * The random octet keeps two overlapping runs (watch mode plus a manual one)
+ * off each other's buckets; the sequence guarantees distinctness within a run
+ * rather than leaving it to chance, which matters because a test pins it.
+ * 10.0.0.0/8 is private, so one of these in a log is obviously synthetic.
+ *
+ * Callers that want several requests to share a bucket — the limiter's own
+ * test — call this once and reuse the result.
+ */
+const ipOctet = crypto.randomInt(256);
+let ipSeq = 0;
+
+export function freshIp(): { 'x-forwarded-for': string } {
+  const n = ipSeq++;
+  return { 'x-forwarded-for': `10.${ipOctet}.${(n >> 8) & 0xff}.${n & 0xff}` };
+}
+
+/**
  * Seeds a Session row directly and returns the RAW token for the cookie.
  *
  * Deliberately NOT `@/lib/auth`'s `createSession`, despite the near-identical

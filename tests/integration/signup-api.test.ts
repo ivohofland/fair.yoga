@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { generateMagicLinkToken } from '@/lib/auth';
-import { BASE_URL, uniqueSuffix } from '../helpers';
+import { BASE_URL, uniqueSuffix, freshIp } from '../helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -64,7 +64,7 @@ describe('POST /api/teachers', () => {
   it('rejects an email that already owns an account (student profile counts)', async () => {
     const res = await fetch(`${BASE_URL}/api/teachers`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
       body: JSON.stringify({
         firstName: 'Grab',
         lastName: 'Attempt',
@@ -84,7 +84,7 @@ describe('POST /api/teachers', () => {
     const email = `signup-fresh-teacher-${suffix}@test.local`;
     const res = await fetch(`${BASE_URL}/api/teachers`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
       body: JSON.stringify({
         firstName: 'Fresh',
         lastName: 'Teacher',
@@ -109,7 +109,7 @@ describe('POST /api/auth/student-signup', () => {
     const email = `signup-fresh-student-${suffix}@test.local`;
     const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
       body: JSON.stringify({ firstName: 'Fresh', lastName: 'Student', email }),
     });
 
@@ -124,7 +124,7 @@ describe('POST /api/auth/student-signup', () => {
   it('does not create an account for an unclaimed CRM email — claim happens at verify', async () => {
     const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
       body: JSON.stringify({ firstName: 'C', lastName: 'C', email: unclaimedEmail }),
     });
 
@@ -137,7 +137,7 @@ describe('POST /api/auth/student-signup', () => {
   it('does not attach a student profile to a teacher-only account either', async () => {
     const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
       body: JSON.stringify({ firstName: 'T', lastName: 'T', email: teacherOnlyEmail }),
     });
 
@@ -148,7 +148,7 @@ describe('POST /api/auth/student-signup', () => {
   it('does not attach a student profile to an existing account', async () => {
     const res = await fetch(`${BASE_URL}/api/auth/student-signup`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...freshIp() },
       body: JSON.stringify({ firstName: 'T', lastName: 'T', email: takenEmail }),
     });
 
