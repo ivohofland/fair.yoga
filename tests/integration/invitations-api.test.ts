@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { inviteContact, notifyInvitee, unlinkTeacher } from '@/services/invitations';
+// `notifyInvitee` is no longer imported: the one test that called it directly
+// ("finds a Student row whose OWN address carries uppercase") was removed in
+// #170, because the row it built is unrepresentable under
+// `Student_email_lowercase_check`. It is still named in comments below, and
+// still covered through the real route — see the tombstone above the
+// registered-invitee notification test.
+import { inviteContact, unlinkTeacher } from '@/services/invitations';
 import { promoteNext } from '@/services/waitlist';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor } from '../helpers';
 
