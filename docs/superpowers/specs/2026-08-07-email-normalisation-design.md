@@ -57,15 +57,40 @@ No `citext`, no ICU collation, no `COLLATE` clause — `grep -rn "citext\|COLLAT
 The backfill is therefore a measured no-op on both environments, and no collision
 can exist to resolve.
 
-### Every generated test address is lowercase
+### ~~Every generated test address is lowercase~~ — WRONG, corrected during implementation
 
-The CHECK constraints cannot turn the suite red. Every dynamically built test
-email interpolates one of `Date.now()` (digits) or
-`crypto.randomBytes(n).toString('hex')` (lowercase hex) into a lowercase literal
-prefix. The only two mixed-case email literals in the tree are
-`invitation-constraints.test.ts:62` and `:93`, which exist to prove the
-*existing* `Invitation`/`TeacherBlock` CHECK constraints reject uppercase — they
-target tables this change does not touch.
+**This section originally claimed "the CHECK constraints cannot turn the suite
+red." That is false, and it was measured false only after the constraints
+landed.** Five `unit` files failed. Two of them build fixtures the constraints
+now reject:
+
+```
+23514: new row for relation "Account" violates check constraint
+"Account_email_lowercase_check"
+Failing row: Gdpr-Inv-gdpr-inv-1786125233216-617085@Test.Local
+```
+
+`src/services/gdpr.test.ts` and `src/services/waitlist.test.ts` (its
+`makeStudent` helper) deliberately store mixed-case `Student`/`Account` rows in
+order to prove the services lowercased them.
+`tests/integration/invitations-api.test.ts:1284` does the same.
+
+**Why the census missed them.** The grep anchored on `email:` followed by a
+quote, so it could only see uppercase inside a *literal*. It could not see
+`email.toUpperCase()`, nor a mixed-case value bound to a variable first — which
+is how every one of these fixtures is built. Worse: an earlier, wider grep *did*
+surface these files, and was dismissed wholesale because the hits it showed were
+false positives from uppercase inside `${uniqueSuffix}` **variable names**. A
+sample was checked and the conclusion generalised to the list. That is the exact
+failure this project's roadmap records over and over, committed here while
+quoting the rule against it.
+
+What does hold, re-measured: every *generated* address interpolates `Date.now()`
+(digits) or `crypto.randomBytes(n).toString('hex')` (lowercase hex) into a
+lowercase prefix. The error was concluding that generated addresses were the only
+kind.
+
+The repair is Task 3b — see "Services assert their precondition" below.
 
 `gdpr.ts` writes five synthesized addresses of the form
 `deleted-${id}@deleted.invalid`. Every one of those ids is `@default(uuid())`,
@@ -237,6 +262,34 @@ justifications are false, measured:
 
 Thirty lines removed for a strictly better diagnostic. `MagicLinkToken` cannot
 collide regardless: its `email` column carries no unique index.
+
+### Services assert their precondition (decided during implementation)
+
+The deletions below stand, but they exposed a gap the original framing missed.
+"The CHECK is the guarantee" is **true for writes and false for reads**:
+`notifyInvitee` looks `TeacherBlock` up with a case-SENSITIVE `findUnique`, so an
+un-normalised argument does not fail loudly — it matches nothing, and the
+invitation email goes to the person who blocked that teacher. `invitations.ts`
+had a docblock predicting exactly that, naming the exact test that would fail.
+It did.
+
+A call-site census settled how much this matters: **8 call sites, all already
+normalised** — four fed by Zod's `emailField`, four reading a
+`*_email_lowercase_check` column. There is no ninth source; `schema.prisma:112-115`
+records that there is deliberately no email-change flow. So nothing is reachable
+today.
+
+The chosen resolution is a `requireNormalised(email)` assertion at the seven
+service entry points that take an address *from a caller* — not at `gdpr.ts`'s
+two, which read the value from a row they fetch themselves. It never fires in
+production. It exists so a future ninth caller gets a stack trace instead of a
+silently unmatched block, and — the deciding argument — because it is the only
+option under which the three tests broken by the deletions still assert something
+capable of failing. The alternative rewrote them into duplicates of coverage that
+already existed.
+
+It asserts the invariant; it does not re-implement it. The rule still lives in
+two places.
 
 ### All 13 compensations come out, including the two write-side ones
 

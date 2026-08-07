@@ -810,6 +810,192 @@ git commit -m "refactor: 15 compensations for an invariant that now holds, delet
 
 ---
 
+### Task 3b: Assert the precondition, and repair the suite Tasks 2-3 turned red
+
+**Why this task exists.** Task 3's deletions were correct and stand. But running
+the full `unit` project afterwards showed **5 files failing from two causes**, and
+the second cause reopened a decision:
+
+- **Cause A — Task 2's constraints reject mixed-case test fixtures.**
+  `gdpr.test.ts` and `waitlist.test.ts` build `Student`/`Account` rows with
+  addresses like `Join-a-<suffix>@Test.Local` to prove the service lowercased
+  them. Those rows can no longer exist. Verbatim:
+  `23514: new row for relation "Account" violates check constraint "Account_email_lowercase_check"`.
+- **Cause B — Task 3 deleted normalisation three tests assert.**
+  `notifyInvitee`'s own docblock predicted this and *named the test*: "Drop this
+  line and an invitee address carrying uppercase misses the block entirely — and
+  the send goes out to the exact person who blocked this teacher."
+
+**The decision taken** (human, after a call-site census): the input is already
+normalised at **all 8 call sites** — four from Zod's `emailField`, four read from
+a `*_email_lowercase_check` column — so nothing is at risk in production today.
+The services nonetheless assert their precondition, so a future ninth caller
+sourcing an address from neither Zod nor the database gets a loud error rather
+than a silently unmatched block. This keeps one normalisation point, and it is
+the only option that leaves the three failing tests asserting something that can
+actually fail.
+
+**Files:**
+- Modify: `src/lib/schemas.ts` (add `requireNormalised`, exported, beside `emailField`)
+- Modify: `src/services/invitations.ts` (6 functions), `src/services/link-consent.ts` (1)
+- Modify: `src/services/gdpr.test.ts`, `src/services/waitlist.test.ts` (fixtures)
+- Modify: `src/services/invitations.notify.test.ts`, `invitations.pending.test.ts`, `invitations.revive.test.ts`
+
+**Interfaces:**
+- Consumes: `emailField` (Task 1), the four CHECK constraints (Task 2), Task 3's deletions.
+- Produces: `export function requireNormalised(email: string): string` from `src/lib/schemas.ts`.
+
+- [ ] **Step 1: Add the helper**
+
+It goes in `src/lib/schemas.ts`, **exported**, immediately after `emailField`.
+That is the right home for three reasons: it is the other end of the same
+invariant; `link-consent.ts` exists specifically to break an
+`invitations.ts` ↔ `waitlist.ts` import cycle, so neither service may own it; and
+`schemas.ts` already exports a plain function (`isSafeRelativePath`) which the
+server-owned-field walk skips via `if (!(schema instanceof z.ZodType)) continue`
+— so exporting a non-schema value here has precedent and will not trip the guard
+that blocked Task 1.
+
+```ts
+/**
+ * Assert what every caller already guarantees (#170).
+ *
+ * Never fires in production: an address reaches these services either through
+ * `emailField` above (HTTP) or straight out of a `*_email_lowercase_check`
+ * column (Account, Student). A census at the time of writing found 8 call sites
+ * and no ninth source — there is deliberately no email-change flow
+ * (`prisma/schema.prisma:112-115`).
+ *
+ * It exists for the ninth caller. These functions compare addresses with
+ * case-SENSITIVE `findUnique` lookups, so an un-normalised argument does not
+ * throw — it silently matches nothing. `notifyInvitee` is the sharp case: a miss
+ * on `TeacherBlock` sends an invitation to the exact person who blocked that
+ * teacher. This turns that silence into a stack trace.
+ *
+ * It asserts the invariant; it does not re-implement it. Normalising here would
+ * put the rule in three places, which is what #170 set out to end.
+ */
+export function requireNormalised(email: string): string {
+  if (email !== email.toLowerCase()) {
+    throw new Error(
+      `email reached this service un-normalised: "${email}". Callers source it ` +
+        `from emailField (HTTP) or a *_email_lowercase_check column (DB); a new ` +
+        `caller must do the same.`,
+    );
+  }
+  return email;
+}
+```
+
+- [ ] **Step 2: Apply it at the seven service entry points**
+
+Each takes an address **from its caller** and compares it. Locate by function
+name, not line number.
+
+| file | function | parameter |
+|---|---|---|
+| `src/services/invitations.ts` | `inviteContact` | `input.email` |
+| `src/services/invitations.ts` | `notifyInvitee` | `input.email` |
+| `src/services/invitations.ts` | `listPendingInvitations` | `input.accountEmail` |
+| `src/services/invitations.ts` | `acceptInvitation` | `input.accountEmail` |
+| `src/services/invitations.ts` | `declineInvitation` | `input.accountEmail` |
+| `src/services/invitations.ts` | `unlinkTeacher` | `input.accountEmail` |
+| `src/services/link-consent.ts` | `resolveInvitationOnLink` | `input.studentEmail` |
+
+Each becomes `const email = requireNormalised(input.<param>);` at the point the
+deleted `.toLowerCase()` used to sit.
+
+**`gdpr.ts` is deliberately excluded.** `exportStudentData` and
+`deleteStudentAccount` read `student.email` from a row they fetch themselves — no
+caller supplies it, and the column's CHECK already guarantees the value. An
+assertion there would guard nothing.
+
+- [ ] **Step 3: Repair the two Cause-A fixtures**
+
+Both currently create a row with a mixed-case address and keep a lowercased copy
+for assertions. The row must now be lowercase; the lowercased copy becomes the
+only form.
+
+- `src/services/waitlist.test.ts`, `makeStudent`: `` const email = `Join-${label}-${uniqueSuffix}@Test.Local`; `` followed by `const lower = email.toLowerCase();`. Create the `Student` with the lowercase form and collapse the two bindings into one.
+- `src/services/gdpr.test.ts`: the `typedEmail` fixture used for both `student.email` and the nested `account: { create: { email } }`.
+
+Where a test's *name or comment* claims it covers a mixed-case stored row,
+update that prose — such a row is now unrepresentable. Do not delete the test;
+its subject (erasure reach, waitlist link resolution) is unrelated to case.
+
+- [ ] **Step 4: Convert the three Cause-B tests**
+
+Each currently proves a service tolerates mixed case. Each becomes a proof that
+the service *rejects* it. Keep the fixtures' uppercase — it is now the input
+under test rather than a stored value.
+
+| file | test | becomes |
+|---|---|---|
+| `invitations.notify.test.ts` | "sends nothing at all for a blocked address, even one typed with uppercase" | `notifyInvitee` rejects the un-normalised address; add/keep a lowercase case proving the block still suppresses the send |
+| `invitations.pending.test.ts` | "returns a pending invitation addressed to the account, matched case-insensitively" | `listPendingInvitations` rejects an un-normalised `accountEmail` |
+| `invitations.revive.test.ts` | the two revive/tombstone cases passing a mixed-case address | `inviteContact` rejects it; the revive behaviour itself is re-asserted with a lowercase address so the original subject stays covered |
+
+Assert on the message, not merely that it threw:
+`.rejects.toThrow(/un-normalised/)` (or `expect(() => …).toThrow` for the
+synchronous path). A bare `toThrow()` would be satisfied by an unrelated error.
+
+**Do not lose the original subject of any test.** `invitations.revive.test.ts`'s
+two cases are about a revive losing a race with `unlinkTeacher` — that race must
+still be covered, with a lowercase address.
+
+- [ ] **Step 5: Prove the guard bites**
+
+```bash
+npx vitest run --project unit src/services/invitations.notify.test.ts
+```
+
+Then delete the `if (email !== email.toLowerCase())` body's `throw` (return
+`email` unconditionally) and re-run. Expected: the new rejection tests fail.
+Record the verbatim failure. Restore, re-run green.
+
+- [ ] **Step 6: The whole unit project must be green**
+
+```bash
+npx vitest run --project unit
+```
+
+Expected: **0 failed**, across all 46 files. This is the acceptance for the task
+— the branch currently stands at 5 failed / 4 tests failed, and anything short of
+zero means a cause was missed.
+
+Then the integration files, **each by explicit path** (never the bare project):
+
+```bash
+npx vitest run --project integration tests/integration/invitations-api.test.ts
+npx vitest run --project integration tests/integration/students-api.test.ts
+npx vitest run --project integration tests/integration/auth-email-case.test.ts
+npx vitest run --project integration tests/integration/email-lowercase-constraints.test.ts
+npx vitest run --project integration tests/integration/invitation-constraints.test.ts
+npx vitest run --project integration tests/integration/account-api.test.ts
+```
+
+`invitations-api.test.ts` and `students-api.test.ts` were reported failing during
+Task 3; `invitations-api.test.ts:1284` writes a `Student` with
+`email.toUpperCase()`, which the `Student` constraint now rejects. Repair them by
+the same rule as Step 3.
+
+- [ ] **Step 7: Typecheck and commit**
+
+```bash
+npm run typecheck
+git add src/lib/schemas.ts src/services/invitations.ts src/services/link-consent.ts \
+        src/services/invitations.notify.test.ts src/services/invitations.pending.test.ts \
+        src/services/invitations.revive.test.ts src/services/gdpr.test.ts \
+        src/services/waitlist.test.ts tests/integration/invitations-api.test.ts \
+        tests/integration/students-api.test.ts
+git commit -m "fix: services assert the lowercase precondition, and the fixtures that built impossible rows are repaired (#170)"
+```
+
+Stage only the files you actually changed — drop any from the list above that you
+did not touch.
+
+---
+
 ### Task 4: Correct every claim the change falsified
 
 **Files:**
