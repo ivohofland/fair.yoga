@@ -89,19 +89,14 @@ export const REFUSAL_MESSAGES: Record<InviteRefusal, string> = {
  * able to tell those two apart, or it becomes the account-enumeration oracle
  * the old `POST /api/students` was.
  *
- * Matched case-insensitively, because the two sides are normalised
- * differently: `email` is always lowercase (`inviteContact` below normalises
- * on write), `Student.email` is stored exactly as typed
- * (`auth/student-signup`, `account/student-profile`). A case-sensitive
- * `findUnique` here misses any student whose stored address carries
- * uppercase, and the miss is silent — the refusal never fires and the
- * teacher gets a pending invitation for someone already on their roster.
- *
- * `findFirst`, not `findUnique`: an insensitive match cannot use the unique
- * index, so this is a scan of `Student` on a path that runs at most 50 times
- * an hour per teacher (`checkStudentWriteLimit`). Normalising the column on
- * write is the real fix and is filed separately; it is not something to
- * half-do from in here.
+ * A plain, case-SENSITIVE `findUnique`, safe because both sides are
+ * guaranteed lowercase now (#170): this `email` argument already passed
+ * through `requireNormalised` at the caller (`inviteContact` below), and
+ * `Student.email` can only ever hold lowercase —
+ * `Student_email_lowercase_check` rejects anything else at rest. Neither
+ * guarantee existed when this ran a case-folding `findFirst` instead; both
+ * do now, which is what makes the plain unique-index lookup below correct
+ * instead of merely convenient.
  */
 async function hasRosterLink(
   db: PrismaClient,
@@ -366,11 +361,13 @@ export async function notifyInvitee(
   });
   if (blocked) return;
 
-  // Case-insensitive for the same reason as `inviteContact`'s own Student
-  // lookup, but with a worse consequence: a miss here does not merely skip
-  // the in-app notification, it falls through to the plain-email branch
-  // below — which bypasses `Student.emailNotifications` entirely and tells
-  // an existing account holder to go and sign up.
+  // A plain, case-SENSITIVE `findUnique` — safe for the same reason
+  // `hasRosterLink`'s is (`Student_email_lowercase_check` plus the
+  // `requireNormalised` above) — but with a worse consequence if that ever
+  // stops holding: a miss here does not merely skip the in-app notification,
+  // it falls through to the plain-email branch below — which bypasses
+  // `Student.emailNotifications` entirely and tells an existing account
+  // holder to go and sign up.
   const student = await db.student.findUnique({
     where: { email },
     select: { id: true },
