@@ -814,12 +814,14 @@ describe('claimSpot (DB)', () => {
  * describe covers what a join writes beyond the `WaitlistEntry` on each of
  * `addToWaitlist`'s three exits, and what a promotion no longer writes.
  *
- * Every student address here carries uppercase, deliberately.
- * `Invitation.email` and `TeacherBlock.email` are stored lowercase by
- * construction; `Student.email` is stored exactly as typed. An all-lowercase
- * fixture would make `resolveInvitationOnLink`'s `.toLowerCase()`
- * indistinguishable from its absence, which is the shape of a test that
- * cannot fail (#166 F1).
+ * Every student address here used to carry uppercase, deliberately, so an
+ * all-lowercase fixture couldn't make `resolveInvitationOnLink`'s bridging
+ * indistinguishable from its absence (#166 F1). That row is unrepresentable
+ * now: `Student_email_lowercase_check` (#170 Task 2) rejects it, and the
+ * bridging itself is gone — `resolveInvitationOnLink` asserts its input is
+ * already lowercase (`requireNormalised`, src/lib/schemas.ts) rather than
+ * normalising it (#170 Task 3). Every address below is lowercase by
+ * construction, matching what the column now enforces.
  */
 describe('addToWaitlist links the student and resolves their invitation (DB)', () => {
   let teacherId: string;
@@ -834,7 +836,7 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
 
   const classIds: string[] = [];
   const studentIds: string[] = [];
-  /** Student id → the lowercase form of that student's mixed-case address. */
+  /** Student id → that student's (lowercase) address. */
   const emailOf = new Map<string, string>();
 
   let pendingId: string;
@@ -859,27 +861,27 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
     });
 
   /**
-   * A student whose stored address carries uppercase, plus (optionally) the
-   * invitation this teacher sent them — written lowercase, the way
-   * `inviteContact` writes it.
+   * A student, plus (optionally) the invitation this teacher sent them —
+   * both lowercase, the way `inviteContact` writes an invitation and the
+   * way `Student_email_lowercase_check` (#170) now requires a Student row
+   * to be.
    */
   const makeStudent = async (
     label: string,
     invitation?: { status: 'pending' | 'declined'; blocked?: boolean },
   ): Promise<string> => {
-    const email = `Join-${label}-${uniqueSuffix}@Test.Local`;
-    const lower = email.toLowerCase();
+    const email = `Join-${label}-${uniqueSuffix}@Test.Local`.toLowerCase();
     const student = await prisma.student.create({
       data: { firstName: 'Join', lastName: label, email, incomeTier: 3 },
       select: { id: true },
     });
     studentIds.push(student.id);
-    emailOf.set(student.id, lower);
+    emailOf.set(student.id, email);
     if (invitation) {
       await prisma.invitation.create({
         data: {
           teacherId,
-          email: lower,
+          email,
           firstName: 'Join',
           lastName: label,
           status: invitation.status,
@@ -887,7 +889,7 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
         },
       });
       if (invitation.blocked) {
-        await prisma.teacherBlock.create({ data: { teacherId, email: lower } });
+        await prisma.teacherBlock.create({ data: { teacherId, email } });
       }
     }
     return student.id;

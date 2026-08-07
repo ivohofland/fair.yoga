@@ -19,6 +19,7 @@
  */
 
 import type { Prisma } from '@prisma/client';
+import { requireNormalised } from '@/lib/schemas';
 
 /**
  * A student's own act is acceptance, so it resolves whatever invitation
@@ -54,13 +55,15 @@ export async function resolveInvitationOnLink(
   tx: Prisma.TransactionClient,
   input: { teacherId: string; studentEmail: string },
 ): Promise<void> {
-  // Lowercased again, and for the same reason each time: invitation emails
-  // are always stored lowercase, `Student.email` and `Account.email` never
-  // are. Miss it here and a booking silently fails to clear the declined
-  // tombstone — so the student's only route back to a teacher they declined
-  // stops working, which is the one escape hatch the whole decline design
-  // rests on.
-  const email = input.studentEmail;
+  // Asserted lowercase again, for the same reason each time: invitation
+  // emails are always stored lowercase, and `Student.email` and
+  // `Account.email` are too now (`*_email_lowercase_check`, #170). Miss this
+  // and a booking silently fails to clear the declined tombstone — so the
+  // student's only route back to a teacher they declined stops working,
+  // which is the one escape hatch the whole decline design rests on.
+  // `requireNormalised` (src/lib/schemas.ts) turns that silent miss into a
+  // thrown error instead of letting it happen.
+  const email = requireNormalised(input.studentEmail);
 
   // Task 6c moved the block into its own table, and the block is the thing
   // that actually stands between them — so clearing it is what makes booking

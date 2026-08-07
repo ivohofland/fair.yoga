@@ -519,14 +519,17 @@ describe('PATCH /api/invitations/[id]', () => {
 });
 
 describe('POST /api/invitations/[id]/respond', () => {
-  // The account's own email is stored exactly as typed at sign-up, unlike
-  // `Invitation.email`, which `inviteContact` and `PUT` both lowercase on
-  // write (services/invitations.ts). Mixed case here is deliberate: it is
-  // what proves `acceptInvitation`/`declineInvitation` lowercase before
-  // matching, rather than merely happening to compare equal because both
-  // fixtures used the same case.
-  const acceptEmail = `Accept-Responder-${suffix}@Test.Local`;
-  const declineEmail = `Decline-Responder-${suffix}@Test.Local`;
+  // Mixed case here used to be deliberate — it proved
+  // `acceptInvitation`/`declineInvitation` lowercased `accountEmail` before
+  // matching it against `Invitation.email`, rather than merely happening to
+  // compare equal because both fixtures used the same case. That row is
+  // unrepresentable now: `Account_email_lowercase_check` (#170 Task 2)
+  // rejects a mixed-case `Account.email`, and the services no longer
+  // lowercase (#170 Task 3) — they assert the precondition instead
+  // (`requireNormalised`, src/lib/schemas.ts), which a lowercase Account row
+  // always satisfies.
+  const acceptEmail = `accept-responder-${suffix}@test.local`;
+  const declineEmail = `decline-responder-${suffix}@test.local`;
 
   let respondingStudentId: string;
   let respondingAccountId: string;
@@ -567,14 +570,14 @@ describe('POST /api/invitations/[id]/respond', () => {
 
     const invite = await prisma.invitation.create({
       data: {
-        teacherId, email: acceptEmail.toLowerCase(), firstName: 'Accept', lastName: 'Responder',
+        teacherId, email: acceptEmail, firstName: 'Accept', lastName: 'Responder',
       },
     });
     inviteId = invite.id;
 
     const decline = await prisma.invitation.create({
       data: {
-        teacherId, email: declineEmail.toLowerCase(), firstName: 'Decline', lastName: 'Responder',
+        teacherId, email: declineEmail, firstName: 'Decline', lastName: 'Responder',
       },
     });
     declineId = decline.id;
@@ -742,7 +745,7 @@ describe('POST /api/invitations/[id]/respond', () => {
     // this pair, which is exactly what erasure leaves behind and exactly
     // what the broken code moves away from. Seeded with a link, the
     // `expect(...).toBeNull()` below could not fail.
-    const erasedEmail = `Inv-Erased-Responder-${suffix}@Test.Local`;
+    const erasedEmail = `inv-erased-responder-${suffix}@test.local`;
     let erasedTeacher: { id: string; accountId: string } | undefined;
     let erasedInvite: { id: string } | undefined;
     let erasedStudentId: string | undefined;
@@ -774,13 +777,16 @@ describe('POST /api/invitations/[id]/respond', () => {
       erasedStudentAccountId = erasedStudent.accountId as string;
       const erasedToken = await seedSession(prisma, erasedStudentAccountId);
 
-      // Lowercase on the invitation, mixed case on the account — the same
-      // split every other test in this describe uses, so the guard being
-      // added here cannot pass by accidentally short-circuiting the
-      // lowercasing that already has to happen.
+      // Used to be lowercase on the invitation, mixed case on the account —
+      // the same split every other test in this describe used, so the guard
+      // being added here couldn't pass by accidentally short-circuiting the
+      // lowercasing that already had to happen. That split is unrepresentable
+      // now (`Account_email_lowercase_check`, #170 Task 2) and the services
+      // no longer lowercase (#170 Task 3) — one lowercase literal is both the
+      // only representable form and the correct one.
       erasedInvite = await prisma.invitation.create({
         data: {
-          teacherId: erasedTeacher.id, email: erasedEmail.toLowerCase(),
+          teacherId: erasedTeacher.id, email: erasedEmail,
           firstName: 'Erased', lastName: 'Responder',
         },
         select: { id: true },
@@ -849,16 +855,20 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
   // `Invitation.email` is always stored in (inviteContact,
   // services/invitations.ts). Every DB lookup below, and the re-invite
   // POST body, use this literal string.
+  //
+  // Used for BOTH `Student.email` and the nested `Account.email` below.
+  // They used to deliberately differ in case, to prove `unlinkTeacher`
+  // lowercased its `accountEmail` argument independently of
+  // `acceptInvitation`/`declineInvitation`'s own lowercasing (respond
+  // describe, above) — F1 in review caught a same-case fixture that would
+  // have made that normalisation indistinguishable from its absence. A
+  // mixed-case `Account.email` is unrepresentable now
+  // (`Account_email_lowercase_check`, #170 Task 2), and `unlinkTeacher` no
+  // longer lowercases — it asserts (`requireNormalised`, src/lib/schemas.ts)
+  // — so one lowercase literal is both the only representable form and the
+  // correct one: `Student.email` and `Account.email` match by construction
+  // for a claimed profile (`prisma/schema.prisma:112`).
   const studentEmail = `unlink-student-${suffix}@test.local`;
-
-  // The signed-in account's OWN email, typed as at sign-up per this app's
-  // Account.email convention (never normalised) — deliberately a
-  // DIFFERENT, mixed-case string from `studentEmail` above. `unlinkTeacher`
-  // has its own `.toLowerCase()` call on this value, independent of
-  // `acceptInvitation`/`declineInvitation`'s (respond describe, above).
-  // A same-case fixture here would make that normalisation a no-op no test
-  // could tell apart from its absence — this is what F1 in review caught.
-  const studentAccountEmail = `Unlink-Student-${suffix}@Test.Local`;
 
   let studentId: string;
   let studentAccountId: string;
@@ -888,7 +898,7 @@ describe('DELETE /api/teacher-links/[teacherId]', () => {
       data: {
         firstName: 'Unlink', lastName: 'Student',
         email: studentEmail, claimedAt: new Date(),
-        account: { create: { email: studentAccountEmail } },
+        account: { create: { email: studentEmail } },
       },
       select: { id: true, accountId: true },
     });
@@ -1273,15 +1283,19 @@ describe('POST /api/students — re-inviting once the link is gone (#166 review 
     // address has to match the invitation's rather than merely being some
     // other student's. A check that stopped at "is there a Student with this
     // address" would refuse here just as the status read did; only one that
-    // goes on to `TeacherStudent` lets this through. Uppercased, so the
-    // case-insensitive match is doing real work: `Invitation.email` is
-    // lowercase by construction and `Student.email` is stored as typed, so a
-    // case-SENSITIVE lookup would miss this row and the test would pass for
-    // the wrong reason — the "no Student at all" path.
+    // goes on to `TeacherStudent` lets this through. This used to carry
+    // uppercase, to prove `hasRosterLink`'s (then case-insensitive) match
+    // found the row despite the difference. That row is unrepresentable now
+    // — `Student_email_lowercase_check` (#170 Task 2) rejects it — and the
+    // case-insensitivity itself is gone (#170 Task 3: `hasRosterLink` is a
+    // plain `findUnique`). Every email in this app is lowercase by
+    // construction, so the same-case address is not merely sufficient here,
+    // it is the only state that can exist — and the roster-link check this
+    // test is really about is still exercised for real.
     let strangerId: string | undefined;
     try {
       const stranger = await prisma.student.create({
-        data: { firstName: 'Not', lastName: 'Linked', email: email.toUpperCase() },
+        data: { firstName: 'Not', lastName: 'Linked', email },
         select: { id: true },
       });
       strangerId = stranger.id;
@@ -1313,14 +1327,18 @@ describe('POST /api/students — re-inviting once the link is gone (#166 review 
     const { email, invitationId } = await seedAcceptedWithoutLink('linked');
     let studentId: string | undefined;
     try {
-      // Mixed case on `Student.email` — stored as typed everywhere in this
-      // app, unlike `Invitation.email`. With the roster lookup's
-      // `mode: 'insensitive'` dropped, this student is invisible, the guard
-      // finds no link and the row is revived: this test is what notices.
+      // Used to carry uppercase, to prove `hasRosterLink`'s (then
+      // case-insensitive) match found this student despite the difference.
+      // That gap is closed from the other side now too:
+      // `Student_email_lowercase_check` (#170 Task 2) makes a mixed-case row
+      // unrepresentable, so every stored address matches `hasRosterLink`'s
+      // plain `findUnique` (#170 Task 3) by construction — the same-case
+      // address here is the only representable one, and the roster-link
+      // check below is still exercised for real.
       const student = await prisma.student.create({
         data: {
           firstName: 'Still', lastName: 'Linked',
-          email: email.toUpperCase(),
+          email,
           teacherStudents: { create: { teacherId } },
         },
         select: { id: true },
@@ -1627,47 +1645,19 @@ describe('POST /api/students notifies the invitee (#166 task 8)', () => {
     }
   });
 
-  it('finds a Student row whose OWN address carries uppercase (whole-branch I2)', async () => {
-    // The one test in this file that certifies `mode: 'insensitive'` on
-    // `notifyInvitee`'s Student lookup, and the direction that was broken.
-    // Its former partner — Student stored lowercase, mixed case passed in —
-    // is gone: an insensitive lookup finds that row with or without the
-    // leading `.toLowerCase()`, and an exact lookup finds it too once the
-    // `.toLowerCase()` has run, so no single mutation could make it fail.
-    // What that partner claimed to test now lives where it is observable,
-    // against the case-SENSITIVE `TeacherBlock` re-check
-    // (`invitations.notify.test.ts`). Here the STORED
-    // address is mixed case — the shape `auth/student-signup` and
-    // `account/student-profile` actually write, since neither normalises —
-    // and the address handed in is the canonical lowercase one every caller
-    // supplies. A case-sensitive lookup finds nothing, skips the
-    // notification, and falls through to the stranger email: an existing
-    // account holder told to go and sign up, with their own
-    // `emailNotifications` preference never consulted.
-    const storedMixedCase = `Notify-Stored-Mixed-${suffix}@Test.Local`;
-    let student: { id: string } | undefined;
-    try {
-      student = await prisma.student.create({
-        data: { firstName: 'Notify', lastName: 'StoredMixed', email: storedMixedCase },
-        select: { id: true },
-      });
-
-      await notifyInvitee(prisma, {
-        teacherId, email: storedMixedCase.toLowerCase(), teacherName: 'Some Teacher',
-      });
-
-      const notifications = await prisma.notification.findMany({
-        where: { recipientType: 'student', recipientId: student.id, type: 'teacher_invitation' },
-      });
-      expect(notifications).toHaveLength(1);
-    } finally {
-      if (student) {
-        await prisma.notification.deleteMany({ where: { recipientId: student.id } });
-        await prisma.student.delete({ where: { id: student.id } });
-      }
-    }
-  });
-
+  // `'finds a Student row whose OWN address carries uppercase (whole-branch
+  // I2)'` used to live here. Its whole premise is gone (#170 Task 3b): the
+  // row it built is unrepresentable now (`Student_email_lowercase_check`,
+  // Task 2), and the case-insensitive `notifyInvitee` Student lookup it
+  // certified was itself deleted (Task 3, `hasRosterLink`-style — this
+  // lookup is a plain `findUnique` now, same as the rest). Its own docblock
+  // already recorded this file once losing its "former partner" test to the
+  // same kind of change, with the surviving coverage said to live at the
+  // case-SENSITIVE `TeacherBlock` re-check (`invitations.notify.test.ts`);
+  // that is now also where this test's own case-sensitivity guarantee
+  // lives. Its same-case happy path was never unique to this test either —
+  // `'creates an in-app notification for a registered invitee'` above
+  // covers it through the real route.
 });
 
 describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
@@ -1686,19 +1676,18 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
   let claimClassId: string;
 
   // Booked directly by the student, after their invitation was declined —
-  // the exact shape resolveInvitationOnLink exists to reverse. Mixed case,
-  // exactly as this student's own address sits on `Student.email` and
-  // `Account.email` — this is what proves resolveInvitationOnLink's own
-  // `.toLowerCase()` does real work rather than comparing an already-lower
-  // string to itself. The file's unlink describe established the same
-  // pattern at :713-720 with `Unlink-Student-...@Test.Local` (this is F1
-  // from review: every fixture in this describe used to be all-lowercase by
-  // construction via `uniqueSuffix()`, which made the normalisation a no-op
-  // no test could tell apart from its absence). `Invitation.email` is always
-  // stored lowercase — `declineEmailLower` is that canonical form, used
-  // everywhere this file queries or writes an Invitation row directly.
-  const declineEmail = `Resolve-Decline-${suffix}@Test.Local`;
-  const declineEmailLower = declineEmail.toLowerCase();
+  // the exact shape resolveInvitationOnLink exists to reverse. This used to
+  // carry uppercase on `Student.email`/`Account.email`, deliberately
+  // different from the lowercase `Invitation.email`, to prove
+  // `resolveInvitationOnLink` bridged the two rather than comparing an
+  // already-lower string to itself (F1 from review — see the same history at
+  // the unlink describe above). That row is unrepresentable now:
+  // `Student_email_lowercase_check` and `Account_email_lowercase_check`
+  // (#170 Task 2) reject it, and the bridging itself is gone —
+  // `resolveInvitationOnLink` asserts its input is already lowercase
+  // (`requireNormalised`, src/lib/schemas.ts) rather than normalising it
+  // (#170 Task 3). One lowercase literal, used everywhere.
+  const declineEmail = `resolve-decline-${suffix}@test.local`;
   let declineStudentId: string;
   let declineAccountId: string;
   let declineToken: string;
@@ -1829,7 +1818,7 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
     declineToken = await seedSession(prisma, declineAccountId);
     await prisma.invitation.create({
       data: {
-        teacherId: resolveTeacherId, email: declineEmailLower,
+        teacherId: resolveTeacherId, email: declineEmail,
         firstName: 'Resolve', lastName: 'Decline',
         status: 'accepted', respondedAt: new Date(),
       },
@@ -1984,7 +1973,7 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
     try {
       // Decline first.
       await prisma.invitation.update({
-        where: { teacherId_email: { teacherId: resolveTeacherId, email: declineEmailLower } },
+        where: { teacherId_email: { teacherId: resolveTeacherId, email: declineEmail } },
         data: { status: 'declined', respondedAt: new Date() },
       });
       await prisma.teacherStudent.deleteMany({
@@ -2002,13 +1991,15 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
         where: { teacherId_studentId: { teacherId: resolveTeacherId, studentId: declineStudentId } },
       })).not.toBeNull();
 
-      // The write this test is really about: `Student.email` above is mixed
-      // case, `Invitation.email` is queried here by its canonical lowercase
-      // form — a dropped `.toLowerCase()` in resolveInvitationOnLink would
-      // leave this row stuck at `declined` even though the booking above
-      // succeeded (#166 F1).
+      // The write this test is really about: booking must clear the
+      // `declined` tombstone via `resolveInvitationOnLink`, which now
+      // asserts (rather than normalises) that `Student.email` arrives
+      // already lowercase (`requireNormalised`, src/lib/schemas.ts) — a
+      // guard that would have thrown during the booking above had it fired,
+      // not left this row silently stuck at `declined` (#166 F1, #170 Task
+      // 3b).
       const inv = await prisma.invitation.findUniqueOrThrow({
-        where: { teacherId_email: { teacherId: resolveTeacherId, email: declineEmailLower } },
+        where: { teacherId_email: { teacherId: resolveTeacherId, email: declineEmail } },
       });
       expect(inv.status).toBe('accepted');
     } finally {

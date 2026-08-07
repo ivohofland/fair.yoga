@@ -94,21 +94,35 @@ describe('listPendingInvitations', () => {
     await prisma.$disconnect();
   });
 
-  it('returns a pending invitation addressed to the account, matched case-insensitively', async () => {
+  it('returns a pending invitation addressed to the account', async () => {
     const email = `pending-list-student-${suffix}@test.local`;
     const invitation = await prisma.invitation.create({
       data: { teacherId, email, firstName: 'Some', lastName: 'Student' },
       select: { id: true },
     });
     try {
-      // Mixed case on the account side is the point: this proves the
-      // lowercasing, not merely that two identically-cased strings match.
-      const result = await listPendingInvitations(prisma, { accountEmail: email.toUpperCase() });
+      const result = await listPendingInvitations(prisma, { accountEmail: email });
       expect(result.map((r) => r.id)).toEqual([invitation.id]);
       expect(result[0]!.teacher).toEqual({ firstName: 'Pending', lastName: 'Teacher' });
     } finally {
       await prisma.invitation.deleteMany({ where: { id: invitation.id } });
     }
+  });
+
+  it('rejects an un-normalised accountEmail rather than silently matching nothing (#170)', async () => {
+    // Cause B, #170 Task 3b: this used to prove `listPendingInvitations`
+    // lowercased `accountEmail` before the match, matching it
+    // case-insensitively against a lowercase `Invitation.email`. #170 Task 3
+    // deleted that lowercasing — the precondition is now every caller's job
+    // (Zod's `emailField` on the HTTP side, `Account_email_lowercase_check`
+    // on the DB side) — so this now proves the assertion that replaced it:
+    // an un-normalised `accountEmail` throws loudly instead of silently
+    // returning no rows, which would read to the student as "no pending
+    // invitations" rather than the truth.
+    const email = `pending-list-rejects-${suffix}@test.local`;
+    await expect(
+      listPendingInvitations(prisma, { accountEmail: email.toUpperCase() }),
+    ).rejects.toThrow(/un-normalised/);
   });
 
   it('excludes an invitation already accepted or declined', async () => {

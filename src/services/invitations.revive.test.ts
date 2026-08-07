@@ -99,11 +99,13 @@ describe('inviteContact — a revive that loses its race with unlinkTeacher', ()
     const racing = prisma.$extends({
       query: {
         student: {
-          // `hasRosterLink`'s first query: after the status read, before the
-          // revive. Hooked here rather than on `teacherStudent.findUnique`
-          // because that second query only runs when a Student row exists,
-          // and this window has to close whether or not one does.
-          async findFirst({ args, query }) {
+          // `hasRosterLink`'s first query — `student.findUnique` (#170 Task
+          // 3 replaced its case-insensitive `findFirst` with this) — after
+          // the status read, before the revive. Hooked here rather than on
+          // `teacherStudent.findUnique` because that second query only runs
+          // when a Student row exists, and this window has to close whether
+          // or not one does.
+          async findUnique({ args, query }) {
             if (!unlinked) {
               unlinked = true;
               const res = await unlinkTeacher(prisma, {
@@ -155,5 +157,21 @@ describe('inviteContact — a revive that loses its race with unlinkTeacher', ()
     });
     if (result.ok) throw new Error('expected the retry to meet the tombstone');
     expect(result.reason).toBe('DECLINED');
+  });
+
+  it('rejects an un-normalised address before touching the roster (#170)', async () => {
+    // #170 Task 3b. `inviteContact` used to lowercase `input.email` itself;
+    // Task 3 deleted that, on the finding that every caller already supplies
+    // a normalised address (Zod's `emailField` on the HTTP side, a
+    // `*_email_lowercase_check` column on the DB side). `requireNormalised`
+    // (src/lib/schemas.ts) asserts that precondition instead — a distinct
+    // address, unrelated to this describe's shared fixture, so the throw is
+    // provably before any read or write of it.
+    await expect(
+      inviteContact(prisma, {
+        teacherId, email: `Revive-Rejects-${suffix}@Test.Local`,
+        firstName: 'Rejected', lastName: 'Case',
+      }),
+    ).rejects.toThrow(/un-normalised/);
   });
 });

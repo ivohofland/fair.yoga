@@ -45,6 +45,35 @@ const timeHHmm = z
 const emailField = z.string().email().transform((s) => s.toLowerCase());
 
 /**
+ * Assert what every caller already guarantees (#170).
+ *
+ * Never fires in production: an address reaches these services either through
+ * `emailField` above (HTTP) or straight out of a `*_email_lowercase_check`
+ * column (Account, Student). A census at the time of writing found 8 call sites
+ * and no ninth source — there is deliberately no email-change flow
+ * (`prisma/schema.prisma:112-115`).
+ *
+ * It exists for the ninth caller. These functions compare addresses with
+ * case-SENSITIVE `findUnique` lookups, so an un-normalised argument does not
+ * throw — it silently matches nothing. `notifyInvitee` is the sharp case: a miss
+ * on `TeacherBlock` sends an invitation to the exact person who blocked that
+ * teacher. This turns that silence into a stack trace.
+ *
+ * It asserts the invariant; it does not re-implement it. Normalising here would
+ * put the rule in three places, which is what #170 set out to end.
+ */
+export function requireNormalised(email: string): string {
+  if (email !== email.toLowerCase()) {
+    throw new Error(
+      `email reached this service un-normalised: "${email}". Callers source it ` +
+        `from emailField (HTTP) or a *_email_lowercase_check column (DB); a new ` +
+        `caller must do the same.`,
+    );
+  }
+  return email;
+}
+
+/**
  * Upper bound for min/max students. Generous for any real class, and a hard
  * ceiling for the price-estimate tables the public booking page renders per
  * seat — unbounded values would let anyone allocate absurd arrays there.

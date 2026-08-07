@@ -13,6 +13,7 @@ import { withdrawWaitingEntriesForTeacher } from './waitlist';
 import { createNotification } from './notifications';
 import { sendInvitationEmail } from '@/lib/email';
 import { isRecordNotFound } from '@/lib/api-errors';
+import { requireNormalised } from '@/lib/schemas';
 
 export type InviteRefusal =
   | 'ALREADY_INVITED'
@@ -158,22 +159,13 @@ export async function inviteContact(
 
   // The CRM is the one place in this app where one human types ANOTHER
   // human's address, and a case slip here fails silently: the teacher sees a
-  // pending invitation, the student never sees anything. So invitation emails
-  // are normalised on write, and this column is lowercase by construction.
-  //
-  // Normalised here rather than in `createInvitationSchema`, because a
-  // `.transform()` there would hide the schema's `.shape` from the
-  // server-owned-field walk in `src/lib/schemas.test.ts` ("are declared only
-  // where EXPECTED says so, and everywhere it says so").
-  //
-  // Deliberately scoped to Invitation. Account and Student emails are stored
-  // as typed and compared case-sensitively throughout this app (magic-link
-  // send looks accounts up with the raw string) — a systemic, pre-existing
-  // bug, filed separately, not one to half-fix from in here. Later tasks
-  // match an account to an invitation by lowercasing the account's email in
-  // JS before querying, which stays index-friendly exactly because this
-  // column is always lowercase.
-  const email = input.email;
+  // pending invitation, the student never sees anything. The column is
+  // lowercase by construction — `createInvitationSchema` normalises `email`
+  // at HTTP ingress via `emailField` (src/lib/schemas.ts) — so this asserts
+  // that precondition rather than normalising a second time. See
+  // `requireNormalised`'s own docblock for why an assertion, not a
+  // re-normalisation.
+  const email = requireNormalised(input.email);
 
   const existing = await db.invitation.findUnique({
     where: { teacherId_email: { teacherId, email } },
@@ -347,23 +339,23 @@ export async function notifyInvitee(
   db: PrismaClient,
   input: { teacherId: string; email: string; teacherName: string },
 ): Promise<void> {
-  // Load-bearing for the block re-check below, not for the Student lookup
-  // under it. The Student lookup matches `mode: 'insensitive'` and finds its
-  // row either way; `TeacherBlock` is a `findUnique` on a case-SENSITIVE
-  // `@@unique([teacherId, email])` whose column can only ever hold lowercase
-  // (`TeacherBlock_email_lowercase_check`, prisma/migrations/…
-  // _invitation_check_constraints). Drop this line and an invitee address
-  // carrying uppercase misses the block entirely — and the send goes out to
-  // the exact person who blocked this teacher, which is the channel the
-  // block exists to close. `invitations.notify.test.ts`'s blocked-address
-  // test is the one that fails when it goes; nothing observable at the
-  // Student lookup can.
+  // Load-bearing for both reads below, `TeacherBlock` and `Student` alike:
+  // both are plain, case-SENSITIVE `findUnique`s on columns that can only
+  // ever hold lowercase (`TeacherBlock_email_lowercase_check`,
+  // `Student_email_lowercase_check`). An un-normalised `input.email` used to
+  // be silently lowercased here; now it throws instead of reaching either
+  // lookup. Drop the assertion and an invitee address carrying uppercase
+  // misses the block entirely — and the send goes out to the exact person
+  // who blocked this teacher, which is the channel the block exists to
+  // close. `invitations.notify.test.ts` covers both halves: the throw on an
+  // un-normalised address, and that a properly-lowercase blocked address
+  // still gets no send.
   //
-  // Done here rather than trusting a caller already did it, the same way
-  // every other email-comparing function in this file does
-  // (acceptInvitation, declineInvitation, unlinkTeacher) and the one next
-  // door (resolveInvitationOnLink, services/link-consent.ts).
-  const email = input.email;
+  // Asserted here rather than trusted from the caller, the same way every
+  // other email-comparing function in this file does (acceptInvitation,
+  // declineInvitation, unlinkTeacher) and the one next door
+  // (resolveInvitationOnLink, services/link-consent.ts).
+  const email = requireNormalised(input.email);
 
   // Structural, not comment-enforced (F3, #166 review): re-check the block
   // here instead of trusting the caller's `delivered` to still be fresh.
@@ -427,9 +419,12 @@ export async function notifyInvitee(
  * teacher would see that teacher's invitation reappear here as if nothing
  * had happened.
  *
- * `accountEmail` is lowercased for the same reason every other email match
- * in this file is: `Invitation.email` and `TeacherBlock.email` are always
- * written lowercase, `Account.email` never is.
+ * `accountEmail` is asserted lowercase, not lowercased — for the same reason
+ * every other email match in this file now is: `Invitation.email` and
+ * `TeacherBlock.email` are written lowercase by construction, and
+ * `Account.email` is too now (`Account_email_lowercase_check`, #170), so
+ * `requireNormalised` (src/lib/schemas.ts) has a real precondition to check
+ * rather than a difference to paper over.
  *
  * `deletedAt: null` is the other half of `acceptInvitation`'s own liveness
  * check (F7, #166 review). Erasure (`deleteTeacherAccount`, services/gdpr.ts)
@@ -444,7 +439,7 @@ export async function listPendingInvitations(
   db: PrismaClient,
   input: { accountEmail: string },
 ): Promise<Array<{ id: string; teacher: { firstName: string; lastName: string } }>> {
-  const email = input.accountEmail;
+  const email = requireNormalised(input.accountEmail);
   return db.invitation.findMany({
     where: {
       email,
@@ -489,11 +484,12 @@ class NotPendingError extends Error {}
  * two people neither of whom agreed. This is the gate-4 ownership family
  * #146, #148, and #162 all belonged to.
  *
- * `accountEmail` is lowercased before the comparison: `Invitation.email` is
+ * `accountEmail` is asserted lowercase, not lowercased: `Invitation.email` is
  * written lowercase by `inviteContact` above and by `PUT /api/invitations/[id]`,
- * but `Account.email` is stored exactly as typed at sign-up. Comparing the
- * two without normalising this side would hide a pending invitation from
- * anyone whose account email carries any uppercase.
+ * and `Account.email` is normalised at HTTP ingress (`emailField`,
+ * src/lib/schemas.ts) and enforced lowercase by
+ * `Account_email_lowercase_check` (#170) — so `requireNormalised` has a real
+ * invariant to check, not a difference to paper over.
  *
  * The block check below is defence in depth, not the primary gate — the
  * student-side pending query (Task 11) already excludes a blocked pair, so
@@ -527,7 +523,7 @@ export async function acceptInvitation(
   db: PrismaClient,
   input: { invitationId: string; studentId: string; accountEmail: string },
 ): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_PENDING' }> {
-  const email = input.accountEmail;
+  const email = requireNormalised(input.accountEmail);
   const invitation = await db.invitation.findFirst({
     where: { id: input.invitationId, email, teacher: { deletedAt: null } },
     select: { id: true, teacherId: true },
@@ -632,8 +628,11 @@ export async function declineInvitation(
   db: PrismaClient,
   input: { invitationId: string; accountEmail: string },
 ): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_PENDING' }> {
+  // Same precondition as `acceptInvitation` above: `accountEmail` and
+  // `Invitation.email` must already be lowercase for this match to work.
+  const email = requireNormalised(input.accountEmail);
   const invitation = await db.invitation.findFirst({
-    where: { id: input.invitationId, email: input.accountEmail },
+    where: { id: input.invitationId, email },
     select: { id: true },
   });
   if (!invitation) return { ok: false, reason: 'NOT_FOUND' };
@@ -783,12 +782,14 @@ export async function unlinkTeacher(
     // translates both into the answer this route already models.
     await tx.teacherStudent.delete({ where: { id: link.id } });
 
-    // Lowercased for the same reason `acceptInvitation` lowercases:
+    // Asserted lowercase for the same reason `acceptInvitation` asserts it:
     // `Invitation.email` and `TeacherBlock.email` are always stored
-    // lowercase, `Account.email` never is. A raw address here would miss an
-    // existing invitation row and write the block under a different casing
-    // than `inviteContact` looks it up by.
-    const email = input.accountEmail;
+    // lowercase, and `Account.email` is too now
+    // (`Account_email_lowercase_check`, #170). A raw address here would miss
+    // an existing invitation row and write the block under a different
+    // casing than `inviteContact` looks it up by — `requireNormalised`
+    // (src/lib/schemas.ts) turns that silent miss into a thrown error.
+    const email = requireNormalised(input.accountEmail);
 
     // An invitation the teacher created keeps its honest declined state —
     // they typed that address, so telling them it is dead discloses nothing

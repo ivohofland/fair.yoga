@@ -615,13 +615,14 @@ describe('GDPR on dual-role accounts', () => {
 describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
   const prisma = new PrismaClient();
   const suffix = `gdpr-inv-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-  // Mixed case on purpose. `Student.email` is stored exactly as typed;
-  // `Invitation.email` and `TeacherBlock.email` are lowercase by DB
-  // constraint. Every one of these lookups has to bridge that, and a fixture
-  // whose student address is already lowercase cannot tell a bridged lookup
-  // from an unbridged one.
-  const typedEmail = `Gdpr-Inv-${suffix}@Test.Local`;
-  const storedEmail = typedEmail.toLowerCase();
+  // Used to carry uppercase on purpose, to prove the invitation/block
+  // lookups bridged `Student.email`'s typed casing to `Invitation.email` and
+  // `TeacherBlock.email`'s lowercase-by-construction one. That row is
+  // unrepresentable now: `Student_email_lowercase_check` and
+  // `Account_email_lowercase_check` (#170 Task 2) reject it, and the
+  // bridging itself is gone (#170 Task 3) — every email below is lowercase
+  // by construction, matching what every column now enforces.
+  const email = `Gdpr-Inv-${suffix}@Test.Local`.toLowerCase();
   let inviterId: string;
   let inviterAccountId: string;
   let blockerId: string;
@@ -657,9 +658,9 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
       data: {
         firstName: 'Inv',
         lastName: 'Subject',
-        email: typedEmail,
+        email,
         claimedAt: new Date(),
-        account: { create: { email: typedEmail } },
+        account: { create: { email } },
       },
       select: { id: true, accountId: true },
     });
@@ -672,17 +673,17 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     // exercised from both sides of it.
     await prisma.invitation.create({
       data: {
-        teacherId: inviterId, email: storedEmail, firstName: 'Sam', lastName: 'Typo',
+        teacherId: inviterId, email, firstName: 'Sam', lastName: 'Typo',
         status: 'accepted', respondedAt: new Date('2026-02-03T04:05:06.000Z'),
       },
     });
     await prisma.invitation.create({
       data: {
-        teacherId: blockerId, email: storedEmail, firstName: 'Sammy', lastName: 'Typo',
+        teacherId: blockerId, email, firstName: 'Sammy', lastName: 'Typo',
         status: 'declined', respondedAt: new Date('2026-03-04T05:06:07.000Z'),
       },
     });
-    await prisma.teacherBlock.create({ data: { teacherId: blockerId, email: storedEmail } });
+    await prisma.teacherBlock.create({ data: { teacherId: blockerId, email } });
 
     // Somebody else entirely, on the teacher who gets erased last: the point
     // of clearing a teacher's contacts is that they hold OTHER people's
@@ -749,7 +750,7 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
     // on this branch is placed to make, and this asserts the current
     // behaviour so a change to it is a decision rather than a drift.
     const block = await prisma.teacherBlock.findFirst({ where: { teacherId: blockerId } });
-    expect(block?.email).toBe(storedEmail);
+    expect(block?.email).toBe(email);
   });
 
   it('erasing a teacher deletes the contacts they typed about other people', async () => {
