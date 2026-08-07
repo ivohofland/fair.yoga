@@ -164,12 +164,22 @@ bypassing Zod entirely. They are safe under a lowercase CHECK (uuid is lowercase
 hex, measured), but an unnamed writer is exactly how a CHECK constraint breaks
 something, so they are named here.
 
-**4. The collision scenario the migration was told to plan for does not exist.**
-Criterion 2 warns that "two accounts differing only in case may already exist"
-and that "a migration that assumes no collision and dies half-way is worse than
-none." Measured: zero non-lowercase rows across all four tables in both
-databases, and fair.yoga is pre-launch with no production data. The migration
-still guards, but it aborts loudly rather than merging — see Decisions.
+**4. The collision scenario the migration was told to plan for does not exist,
+and it could not "die half-way" if it did.** Criterion 2 warns that "two
+accounts differing only in case may already exist" and that "a migration that
+assumes no collision and dies half-way is worse than none."
+
+Both halves measured. Zero non-lowercase rows across all four tables in both
+databases, and fair.yoga is pre-launch with no production data — so no collision
+exists to resolve. And half-application is not a failure mode available to this
+migration: **Prisma 6.19.3 runs each migration file in a transaction.** Verified
+by applying a deliberately-colliding two-statement migration to a scratch
+database and confirming its first statement left no row behind
+(`probe_marker rows: 0`).
+
+The backfill is kept — `ADD CONSTRAINT ... CHECK` validates pre-existing rows,
+also measured — but the collision guard the issue asks for is not built. See
+Decisions.
 
 **5. Every line number in the issue is stale.** PR #179 (#174) shifted
 `invitations.ts` by up to 101 lines and `gdpr.ts` by up to 116. The issue's
@@ -202,12 +212,31 @@ writes, test fixtures and raw SQL bypass Zod — they are not normalised, they a
 The *normalisation* is not universal, deliberately, because a writer that
 bypasses the schema layer should fail loudly rather than be quietly corrected.
 
-### The migration aborts on collision rather than merging
+### The migration backfills, and does not guard against collisions
 
-Because there is no production data and zero non-lowercase rows, no merge policy
-is designed. The migration pre-checks for collisions and raises, so it either
-completes or changes nothing — satisfying the issue's "worse than none" bar
-without building a resolution strategy for a state that does not exist.
+Two separate calls, and only the first survived measurement.
+
+**The backfill stays.** `ALTER TABLE ... ADD CONSTRAINT ... CHECK` validates rows
+that already exist — `check constraint "…" of relation "…" is violated by some
+row` — so on any database holding one mixed-case address, the constraint fails
+without it. Re-seeding is not the alternative it looks like: a migration is the
+artifact that ships, it runs on contributors' databases nobody here can measure,
+and `db:reset` would destroy their work while being a step they have no reason to
+know about. Four lines, provably inert today, correct elsewhere.
+
+**The collision pre-check does not get built.** An earlier draft of this spec
+guarded the backfill with a `DO $$ … RAISE EXCEPTION` block, on the issue's
+reasoning that a migration which "dies half-way is worse than none." Both of its
+justifications are false, measured:
+
+- **It cannot die half-way.** Prisma 6.19.3 wraps each migration in a
+  transaction; a colliding statement rolls the whole file back.
+- **Its error would be worse than the one it replaced.** Postgres reports
+  `DETAIL: Key (email)=(foo@x.com) already exists.` — naming the offending
+  address. The custom `RAISE EXCEPTION` could only report a count.
+
+Thirty lines removed for a strictly better diagnostic. `MagicLinkToken` cannot
+collide regardless: its `email` column carries no unique index.
 
 ### All 13 compensations come out, including the two write-side ones
 
@@ -256,17 +285,18 @@ change exposes rather than creates.
 
 Hand-authored (Prisma cannot express CHECK), following
 `prisma/migrations/20260805074500_invitation_check_constraints/` for both
-structure and the explanatory-docblock style. Three parts, in this order:
+structure and the explanatory-docblock style. Two parts, in this order:
 
-1. A `DO $$ … RAISE EXCEPTION` pre-check per table that aborts if lowercasing
-   would collide on the unique index. Either the migration completes or it
-   changes nothing.
-2. `UPDATE "<table>" SET email = lower(email) WHERE email <> lower(email)` for
+1. `UPDATE "<table>" SET email = lower(email) WHERE email <> lower(email)` for
    `Account`, `Teacher`, `Student`, `MagicLinkToken`. A measured no-op here;
-   present because the migration must be correct on an environment nobody has
-   measured.
-3. `CHECK (email = lower(email))` on the same four tables, named
+   required because part 2 validates pre-existing rows, and present because the
+   migration must be correct on an environment nobody has measured.
+2. `CHECK (email = lower(email))` on the same four tables, named
    `<Table>_email_lowercase_check` to match the #166 pair.
+
+Nothing else. The collision guard is deliberately absent — see "The migration
+backfills, and does not guard against collisions" above for the two measurements
+that removed it.
 
 ### The 15 sites
 

@@ -54,7 +54,7 @@ deleted.
 | `src/lib/schemas.ts` | Owns `emailField`; the six address fields adopt it | 1 |
 | `src/lib/schemas.test.ts` | Exhaustive pin: every exported schema with an `email` key normalises | 1 |
 | `tests/integration/auth-email-case.test.ts` | **Create.** The three user-facing regressions | 1 |
-| `prisma/migrations/<ts>_email_lowercase_checks/migration.sql` | **Create.** Collision pre-check, backfill, 4 CHECK constraints | 2 |
+| `prisma/migrations/<ts>_email_lowercase_checks/migration.sql` | **Create.** Backfill, then 4 CHECK constraints | 2 |
 | `tests/integration/email-lowercase-constraints.test.ts` | **Create.** Each constraint rejects uppercase, at the database | 2 |
 | `src/services/invitations.ts` | 7 compensations removed; 2 lookups revert to `findUnique` | 3 |
 | `src/services/gdpr.ts` | 2 compensations removed | 3 |
@@ -423,46 +423,34 @@ prose docblock is required, matching the precedent's style.
 -- the two columns #166 added. Those two are already constrained and untouched
 -- here.
 
--- Collision pre-check, before anything is written. Lowercasing two rows that
--- differ only in case would violate the unique index and abort the migration
--- half-applied; this aborts it before it has changed anything, and names the
--- table so the operator can resolve it by hand. Measured 0 collisions in both
--- `ethical_yoga` and `ethical_yoga_test` at authoring time, and fair.yoga has
--- no production data — this exists for the environment nobody has measured.
+-- Backfill first, because `ADD CONSTRAINT ... CHECK` validates rows that
+-- already exist — measured:
 --
--- MagicLinkToken is absent by design: its `email` column carries no unique
--- index, so no collision is possible there.
-DO $$
-DECLARE
-  offending integer;
-BEGIN
-  SELECT count(*) INTO offending FROM (
-    SELECT lower(email) FROM "Account" GROUP BY lower(email) HAVING count(*) > 1
-  ) c;
-  IF offending > 0 THEN
-    RAISE EXCEPTION
-      'Account: % address(es) differ only in case. Resolve by hand before migrating; lowercasing them would violate Account_email_key.', offending;
-  END IF;
-
-  SELECT count(*) INTO offending FROM (
-    SELECT lower(email) FROM "Teacher" GROUP BY lower(email) HAVING count(*) > 1
-  ) c;
-  IF offending > 0 THEN
-    RAISE EXCEPTION
-      'Teacher: % address(es) differ only in case. Resolve by hand before migrating; lowercasing them would violate Teacher_email_key.', offending;
-  END IF;
-
-  SELECT count(*) INTO offending FROM (
-    SELECT lower(email) FROM "Student" GROUP BY lower(email) HAVING count(*) > 1
-  ) c;
-  IF offending > 0 THEN
-    RAISE EXCEPTION
-      'Student: % address(es) differ only in case. Resolve by hand before migrating; lowercasing them would violate Student_email_key.', offending;
-  END IF;
-END $$;
-
--- Backfill. A measured no-op on both known databases; present because the
--- migration must be correct on one nobody has measured.
+--   ERROR:  check constraint "probe_lower" of relation "probe_check"
+--           is violated by some row
+--
+-- so on any database holding one mixed-case row, the constraint below fails
+-- without this. A measured no-op on both `ethical_yoga` (711 accounts) and
+-- `ethical_yoga_test` (10,636) at authoring time, and fair.yoga has no
+-- production data — this exists for a contributor's database nobody has
+-- measured, where `db:reset` would be the alternative and would destroy their
+-- work.
+--
+-- There is deliberately NO collision pre-check here. Two rows differing only
+-- in case would collide on the unique key, and an earlier draft guarded that
+-- with a `DO $$ ... RAISE EXCEPTION` block. Both of its justifications were
+-- measured false. Prisma 6.19.3 runs each migration in a transaction, so a
+-- collision rolls the whole file back having changed nothing — verified by
+-- applying a deliberately-colliding migration and confirming its first
+-- statement left no row behind. And Postgres's own error is *better* than the
+-- one that block raised, because it names the offending address rather than
+-- counting them:
+--
+--   ERROR: duplicate key value violates unique constraint "Account_email_key"
+--   DETAIL: Key (email)=(foo@x.com) already exists.
+--
+-- MagicLinkToken cannot collide at all: its `email` column carries no unique
+-- index.
 UPDATE "Account"        SET email = lower(email) WHERE email <> lower(email);
 UPDATE "Teacher"        SET email = lower(email) WHERE email <> lower(email);
 UPDATE "Student"        SET email = lower(email) WHERE email <> lower(email);
@@ -920,7 +908,9 @@ Correction from the implementation, recorded here because acceptance criterion 1
 
 Only an object-level transform — one wrapping the whole `z.object({...})` — removes `.shape`. The source comment the claim came from (`invitations.ts:164-167`) did not distinguish the two, and this issue inherited that. The fix therefore uses a shared `emailField` primitive in `schemas.ts`, which is what criterion 1 ruled out.
 
-Three further corrections: "8 email lines in schemas.ts" is **6**; the five named ingress points are **ten** (`gdpr.ts` writes five synthesized addresses that bypass Zod); and the collision scenario criterion 2 plans for has **zero** instances across both databases, so the migration aborts loudly rather than merging.
+**Criterion 2 is also overbuilt.** It asks the migration to state a collision policy because "a migration that assumes no collision and dies half-way is worse than none." Measured: **Prisma 6.19.3 runs each migration in a transaction** — a deliberately-colliding two-statement migration applied to a scratch database left its first statement's row absent (`probe_marker rows: 0`), so half-application is not available. And Postgres's native error names the offending address (`DETAIL: Key (email)=(foo@x.com) already exists.`), which is strictly better than the count a custom `RAISE EXCEPTION` could report. The migration therefore backfills and constrains, with no collision guard. The backfill itself is kept, because `ADD CONSTRAINT ... CHECK` validates pre-existing rows — also measured.
+
+Two further corrections: "8 email lines in schemas.ts" is **6**; and the five named ingress points are **ten** (`gdpr.ts` writes five synthesized addresses that bypass Zod).
 EOF
 )"
 ```
