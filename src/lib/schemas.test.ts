@@ -451,3 +451,40 @@ describe('server-owned fields', () => {
     ).toEqual(expected);
   });
 });
+
+describe('email fields normalise', () => {
+  // Exhaustive by construction: walks every export rather than a hand-kept
+  // list, so a new schema with an `email` field is covered the moment it is
+  // written. The roster assertion below is what makes adding one a deliberate
+  // act rather than a silent opt-out.
+  //
+  // Asserts against `shape.email` — the field schema — not the parent object,
+  // because parsing the parent would need valid values for every sibling
+  // required field and would test those instead.
+  const emailBearing: string[] = [];
+
+  for (const [name, schema] of Object.entries(schemas)) {
+    if (!(schema instanceof z.ZodType)) continue;
+    const shape = (schema as { shape?: Record<string, unknown> }).shape;
+    if (!shape || !('email' in shape)) continue;
+    emailBearing.push(name);
+  }
+
+  it('covers exactly the six schemas that carry an address', () => {
+    expect([...emailBearing].sort()).toEqual([
+      'createInvitationSchema',
+      'createTeacherSchema',
+      'magicLinkSendSchema',
+      'passkeyAuthOptionsSchema',
+      'studentSignupSchema',
+      'updateInvitationSchema',
+    ]);
+  });
+
+  it.each(emailBearing)('%s lowercases its email field', (name) => {
+    const schema = (schemas as Record<string, unknown>)[name];
+    const shape = (schema as { shape: Record<string, unknown> }).shape;
+    const field = shape.email as z.ZodType<unknown, unknown>;
+    expect(field.parse('Mixed@Example.COM')).toBe('mixed@example.com');
+  });
+});

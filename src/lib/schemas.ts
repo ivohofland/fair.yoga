@@ -17,6 +17,34 @@ const timeHHmm = z
   .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Must be HH:mm (00:00-23:59)');
 
 /**
+ * Every email that enters over HTTP, lowercased once (#170).
+ *
+ * Postgres compares these columns case-sensitively under `en_US.utf8`, and the
+ * unique keys on Account/Teacher/Student are plain btree over the raw column —
+ * so without this, `Foo@x.com` and `foo@x.com` are two distinct keys. That cost
+ * a person their sign-in (the lookup misses and the route still answers "if an
+ * account exists, a magic link has been sent") and could hand them a second
+ * Account with their bookings split across both.
+ *
+ * Field-level, deliberately: an object-level `.transform()` would remove the
+ * schema's `.shape` and blind the server-owned-field walk in `schemas.test.ts`.
+ * A field-level one does not — measured against Zod 4.4.3, `.shape` stays
+ * readable and the walk still sees every key.
+ *
+ * This normalises HTTP ingress only. Writers that bypass Zod — `prisma/seed.ts`,
+ * `gdpr.ts`'s anonymisation, raw SQL — are not normalised, they are rejected by
+ * the `*_email_lowercase_check` constraints. That asymmetry is intentional: a
+ * writer that skips the schema layer should fail loudly, not be quietly fixed.
+ *
+ * Module-private, like `isoDate`, `timeHHmm` and `relativePath` above. Exporting
+ * it fails the server-owned-field walk in `schemas.test.ts`, which requires every
+ * exported `ZodType` to have a readable `.shape` — a field primitive has none.
+ * That walk is right to refuse to guess, and nothing outside this file validates
+ * an email, so the export bought nothing.
+ */
+const emailField = z.string().email().transform((s) => s.toLowerCase());
+
+/**
  * Upper bound for min/max students. Generous for any real class, and a hard
  * ceiling for the price-estimate tables the public booking page renders per
  * seat — unbounded values would let anyone allocate absurd arrays there.
@@ -41,14 +69,14 @@ export function isSafeRelativePath(path: string): boolean {
 const relativePath = z.string().max(200).refine(isSafeRelativePath, 'Must be a relative path');
 
 export const magicLinkSendSchema = z.object({
-  email: z.string().email(),
+  email: emailField,
   redirect: relativePath.optional(),
 });
 
 export const studentSignupSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
-  email: z.string().email(),
+  email: emailField,
   redirect: relativePath.optional(),
 });
 
@@ -61,7 +89,7 @@ export const passkeyRegisterVerifySchema = z.object({
 });
 
 export const passkeyAuthOptionsSchema = z.object({
-  email: z.string().email().optional(),
+  email: emailField.optional(),
 });
 
 export const passkeyAuthVerifySchema = z.object({
@@ -94,7 +122,7 @@ const RESERVED_SLUGS = new Set([
 export const createTeacherSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
-  email: z.string().email(),
+  email: emailField,
   bio: z.string().max(250),
   pageSlug: z
     .string()
@@ -134,7 +162,7 @@ export const updateTeacherSchema = z.object({
 export const createInvitationSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().optional().default(''),
-  email: z.string().email(),
+  email: emailField,
 }).strict();
 
 /**
@@ -145,7 +173,7 @@ export const createInvitationSchema = z.object({
 export const updateInvitationSchema = z.object({
   firstName: z.string().min(1).optional(),
   lastName: z.string().optional(),
-  email: z.string().email().optional(),
+  email: emailField.optional(),
 }).strict();
 
 /**
