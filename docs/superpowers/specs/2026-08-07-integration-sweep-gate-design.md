@@ -198,14 +198,20 @@ Add to `tests/helpers.ts`:
  * A unique `x-forwarded-for` so a request lands in its own per-IP rate-limit
  * bucket. …
  */
-export function freshIp(): Record<string, string>
+export function freshIp(): { 'x-forwarded-for': string }
 ```
 
-It returns an `x-forwarded-for` header carrying a random `10.x.y.z` address —
-private range, so it reads as obviously synthetic to anyone who finds one in a
-log. `clientIp()` takes the first comma-separated entry, so a single address is
+It returns an `x-forwarded-for` header carrying a `10.x.y.z` address — private
+range, so it reads as obviously synthetic to anyone who finds one in a log.
+`clientIp()` takes the first comma-separated entry, so a single address is
 enough; the value only has to be unique, but looking like an address keeps the
 mechanism legible.
+
+The return type names the key rather than being `Record<string, string>`. Under
+`noUncheckedIndexedAccess` — which this repo sets — a `Record` index yields
+`string | undefined`, so the test that reads the address back would be asserting
+on a maybe-undefined. The literal type makes that read a `string`, and it
+documents the one key a caller gets.
 
 Spread it into the headers of all **8** call sites that reach an IP-limited
 endpoint, which fall in two files:
