@@ -492,6 +492,7 @@ from `TRUE`).
 
 ```ts
 import { describe, it, expect, afterAll } from 'vitest';
+import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import { uniqueSuffix } from '../helpers';
 
@@ -580,12 +581,16 @@ describe('email lowercase check constraints', () => {
   });
 
   it("accepts gdpr.ts's synthesized erasure address", async () => {
-    // `deleted-${uuid}@deleted.invalid`, the shape gdpr.ts writes at five
-    // sites. uuid is lowercase hex, so it satisfies the constraint — this
-    // pins that, because erasure bypasses Zod entirely and a CHECK that
-    // rejected it would break the right-to-erasure path.
+    // `deleted-<uuid>@deleted.invalid` is the shape gdpr.ts writes at five
+    // sites during erasure, bypassing Zod entirely. Prisma's `@default(uuid())`
+    // is lowercase hex, so it satisfies the constraint — pinned here because a
+    // CHECK that rejected it would break the right-to-erasure path, and that
+    // failure would surface only when someone actually erased an account.
+    //
+    // Uses a real uuid rather than a hand-shaped literal: the point is that
+    // whatever `uuid()` produces passes, so generating one is the honest probe.
     const row = await prisma.account.create({
-      data: { email: `deleted-11111111-2222-3333-4444-${suffix.replace(/[^a-z0-9]/g, '').slice(0, 12).padEnd(12, '0')}@deleted.invalid` },
+      data: { email: `deleted-${randomUUID()}@deleted.invalid` },
       select: { id: true },
     });
     created.push(row.id);
