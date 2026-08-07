@@ -220,8 +220,25 @@ Applied uniformly to all three endpoints, including `magic-link/send` where
 there is no pressure today, because a uniform rule is what stops the tripwire
 coming back.
 
-After this, the budget is no longer shared, the headroom column stops existing,
-and `npm test` twice is green twice.
+**One bucket per request, not per file — this is what closes the zero-headroom
+tripwire, and it closes it outright rather than widening it.** Called at each
+call site, every request lands in a bucket that has never been hit before, so no
+bucket ever reaches a count of 2. A limit of 5/hour is then not merely
+comfortable, it is unreachable: the headroom column does not get larger, it stops
+being a quantity. Adding a sixth `student-signup` test, or a sixtieth, costs
+nothing and cannot break an unrelated file.
+
+Per-*file* uniqueness would not do this. It would leave `signup-api.test.ts`'s
+four `student-signup` calls sharing one bucket against a limit of 5 — headroom 1,
+a tripwire one test away, which is the same defect with a bigger number.
+
+Two consequences worth stating:
+
+- **The limiter's bucket map is bounded** (`MAX_KEYS = 10_000`, oldest-evicted),
+  so 8 new keys per sweep against a long-lived dev server is not a leak.
+- **`freshIp()` returns a value, so a caller can reuse one.** Test B needs six
+  requests from *one* address; it calls the helper once and reuses the result.
+  Same helper, no second mechanism.
 
 **Explicit spread at each site, not a wrapped `fetch`.** The sites stay
 greppable and a reader sees at the call why the header is there. A global wrapper
@@ -282,6 +299,13 @@ Its guard is proved by breaking an integration fixture, confirming
 - [ ] Two consecutive `npm test` runs are green, restoring the invariant
       `docs/test-database.md:108` already claims. This is the headline check —
       it currently fails, so it cannot pass vacuously.
+- [ ] **The zero-headroom tripwire is closed, and pinned.** A test asserts that
+      consecutive `freshIp()` calls yield distinct addresses — the single
+      property that makes every bucket a fresh one. Proved by making the helper
+      return a constant, recording both the failure of that test and the 429 it
+      reintroduces in the second sweep, then restoring. It lives beside test B
+      in `tests/integration/`, because that glob is the only one of the three
+      projects that collects anything under `tests/`.
 - [ ] A test asserts the per-IP 429 on `student-signup`, and is proved to fail
       when the limiter is deleted from the route (error text recorded, restored).
 - [ ] `npm run verify` is proved to go red on a deliberately broken integration
