@@ -999,56 +999,40 @@ did not touch.
 ### Task 4: Correct every claim the change falsified
 
 **Files:**
-- Modify: `src/services/invitations.ts` (comments at 91, 99, 164-167, 169-175, 351, 377)
-- Modify: `src/services/gdpr.ts` (comments at 64-65, 396-397, 408)
+- Modify: `src/lib/schemas.ts` (one docblock line)
+- Modify: `src/services/gdpr.ts` (comments at ~65, ~397, ~408 — locate by content)
 - Modify: `docs/data-model.md`
 - Comment on issue #170 (via `gh`)
 
 **Interfaces:** none. Prose only — no behaviour changes in this task.
 
-- [ ] **Step 1: Correct `invitations.ts:164-167` — the sentence that misled #170**
+> **Scope reduced twice — read this before starting.** This task originally owned
+> six comment regions in `src/services/invitations.ts`. **All of them are already
+> done and must not be touched again:**
+>
+> - The `.transform()`-would-hide-`.shape` comment that misled #170 into declaring
+>   the right fix unavailable **no longer exists** — Task 3 deleted the
+>   normalisation it explained, and the comment went with it.
+> - `hasRosterLink`'s docblock and `notifyInvitee`'s two comments were corrected in
+>   Task 3b's fix round (`1e8681e`), verified by re-review.
+>
+> Measured at head: `grep -rn "insensitive" src/ --include="*.ts" --include="*.tsx" | grep -v "\.test\."`
+> returns exactly **5** lines, all of them `contains` search filters in
+> `students/route.ts` and `rooms/route.ts`, and **zero comments**. That is the
+> invariant to preserve — if your work changes it, something is wrong.
 
-It currently reads:
+- [ ] **Step 1: Fix the `relativePath` file-order slip in `src/lib/schemas.ts`**
 
-```
-  // Normalised here rather than in `createInvitationSchema`, because a
-  // `.transform()` there would hide the schema's `.shape` from the
-  // server-owned-field walk in `src/lib/schemas.test.ts` ("are declared only
-  // where EXPECTED says so, and everywhere it says so").
-```
-
-This is false for field-level transforms and is what led #170 to declare the
-right fix unavailable. Replace the whole `inviteContact` normalisation docblock
-(roughly lines 158-175, ending at the `const email =` line) with:
-
-```ts
-  // Normalisation lives in `emailField` (`src/lib/schemas.ts`), not here (#170).
-  //
-  // The comment this replaces claimed a `.transform()` in the schema would hide
-  // `.shape` from the server-owned-field walk in `schemas.test.ts`. That is true
-  // only of an OBJECT-level transform, one wrapping the whole `z.object({...})`.
-  // A field-level transform leaves `.shape` fully readable — measured against
-  // Zod 4.4.3 — and that imprecision is why #170 was filed believing the obvious
-  // fix was unavailable.
-  //
-  // Account, Student, Teacher and MagicLinkToken emails are now lowercase too,
-  // by `emailField` at ingress and `*_email_lowercase_check` at rest, so the
-  // JS-side lowercasing that used to bridge the two normalisations is gone.
-```
-
-- [ ] **Step 2: Correct the four case-insensitivity comments**
-
-At `invitations.ts:91`, `:99`, `:351` and `:377`. Each explains why a lookup is
-case-insensitive; none of them is any longer. `:99` in particular reads:
+Carried over from Task 1's review as a Minor. `emailField`'s docblock says:
 
 ```
- * `findFirst`, not `findUnique`: an insensitive match cannot use the unique
+ * Module-private, like `isoDate`, `timeHHmm` and `relativePath` above. Exporting
 ```
 
-Rewrite each to describe what the code now does. Where a comment's only content
-was the insensitivity rationale, delete it rather than narrowing it — an accurate
-short comment beats a corrected long one, and the roadmap records deleting a
-sentence as the thing that worked when narrowing failed.
+`isoDate` (`:9`) and `timeHHmm` (`:15`) are above it. **`relativePath` is at `:98`,
+below.** Replace `above` with `elsewhere in this file`, or drop `relativePath`
+from the list — either is fine; the substantive claim (module-private, matching
+convention) is true and must survive.
 
 - [ ] **Step 3: Correct the two `gdpr.ts` claims**
 

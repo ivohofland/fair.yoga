@@ -431,15 +431,45 @@ a new migration-constraint test file.
    records the verbatim rejection *and* the verbatim success after the
    constraint is dropped.
 6. `grep -rn "toLowerCase" src/ --include="*.ts" --include="*.tsx" | grep -v "\.test\."`
-   returns exactly 4 lines: `emailField` itself, the `gdpr.ts` comment,
-   `profile-form.tsx`'s `pageSlug`, and `format.ts`'s last initial. **17 − 13 =
-   4** — 17, not the 16 measured above, because adding the primitive adds a
-   `toLowerCase` of its own. The pre-implementation census and the
-   post-implementation acceptance count are one apart by construction.
-7. `mode: 'insensitive'` no longer appears as an *equality* match anywhere;
-   `hasRosterLink` is a `findUnique`.
-8. Every comment in "Comments that currently say something untrue" is corrected,
-   and #170 carries the criterion-1 correction.
+   returns exactly **5** lines, and each is accounted for:
+
+   | line | why it stays |
+   |---|---|
+   | `schemas.ts` `emailField` | the one normalisation |
+   | `schemas.ts` `requireNormalised` | a **comparison**, not a normalisation |
+   | `gdpr.ts` | the word inside a comment |
+   | `profile-form.tsx` | slugifies `pageSlug` |
+   | `format.ts` | lowercases a last initial |
+
+   **This number moved twice during implementation and both moves were errors of
+   mine caught late.** The spec first said 3 (from a 16-line census taken before
+   `emailField` existed), then 4 (17 − 13), and the answer is 5 once
+   `requireNormalised` lands. The lesson is in the table, not the number: a count
+   with a reason per row survives the next change; a bare total does not.
+
+7. `grep -rn "insensitive" src/ --include="*.ts" --include="*.tsx" | grep -v "\.test\."`
+   returns exactly **5** lines, **all of them `contains` search filters** (3 in
+   `students/route.ts`, 2 in `rooms/route.ts`) and **zero comments**. No
+   `mode: 'insensitive'` equality match survives anywhere, and `hasRosterLink` is
+   a `findUnique`. Stated as a shape rather than a tally on purpose: any future
+   comment mentioning case-insensitivity in `src/` is then a visible anomaly
+   rather than an entry in a total someone must re-derive.
+
+8. `requireNormalised` exists in `src/lib/schemas.ts`, is applied at exactly the
+   seven service entry points that take an address from a caller, is absent from
+   `gdpr.ts`'s two internal readers, and **throws rather than lowercases** — it
+   asserts the invariant, it does not become a third place that implements it.
+
+9. Every comment in "Comments that currently say something untrue" is corrected,
+   and #170 carries the criterion-1 correction. Note that the sentence which
+   misled #170 — the `.transform()`-hides-`.shape` claim — is not *rewritten* but
+   **gone**: Task 3 deleted the normalisation it explained, and the comment went
+   with it.
+
+10. The full `unit` project passes with **0 failed**, and each named integration
+    file passes when run by explicit path. This criterion was added during
+    implementation, after the CHECK constraints turned five files red — a state
+    the spec had claimed was impossible.
 
 ## What this does not do
 
