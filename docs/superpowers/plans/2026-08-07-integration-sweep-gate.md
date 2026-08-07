@@ -317,9 +317,14 @@ Temporarily replace the body of `freshIp()` in `tests/helpers.ts` with a constan
 
 ```ts
 export function freshIp(): Record<string, string> {
-  return { 'x-forwarded-for': '10.0.0.1' };
+  return { 'x-forwarded-for': '203.0.113.1' };
 }
 ```
+
+Use an address outside `10.0.0.0/8` — `203.0.113.0/24` (RFC 5737 TEST-NET-3) —
+because a constant inside `freshIp()`'s own output range can land on a real
+rate-limit bucket and poison it for up to an hour, surfacing later as an
+unrelated test's 429.
 
 Run:
 

@@ -110,20 +110,33 @@ export function uniqueSuffix(): string {
  * uniqueness would leave signup-api's four calls sharing a bucket against a
  * limit of 5: the same tripwire with a bigger number.
  *
- * The random octet keeps two overlapping runs (watch mode plus a manual one)
- * off each other's buckets; the sequence guarantees distinctness within a run
- * rather than leaving it to chance, which matters because a test pins it.
- * 10.0.0.0/8 is private, so one of these in a log is obviously synthetic.
+ * A random 24-bit base picks the starting point somewhere in 10.0.0.0/8, and
+ * the sequence walks forward from there by construction — not chance — so
+ * distinctness within one process is guaranteed (a wrap needs 16.7M calls,
+ * far more than any run makes) rather than merely likely. Two *overlapping*
+ * runs (watch mode plus a manual one) only collide if their consumed ranges
+ * overlap, which at a handful of calls out of 16.7M is on the order of 1e-5 —
+ * far below the old 1/256, but still probabilistic across processes, same as
+ * before. 10.0.0.0/8 is private, so one of these in a log is obviously
+ * synthetic.
  *
  * Callers that want several requests to share a bucket — the limiter's own
  * test — call this once and reuse the result.
+ *
+ * If you are temporarily mutating this function's body to prove a guard bites
+ * (see the `describe('freshIp', ...)` tests below), use an address this
+ * function cannot emit — 203.0.113.0/24 (RFC 5737 TEST-NET-3) — never a
+ * literal inside 10.0.0.0/8. A constant in this function's own range can land
+ * on a real rate-limit bucket and poison it for up to an hour; that happened
+ * once with `10.0.0.1`, and the collision surfaced later as a 429 in an
+ * unrelated test run.
  */
-const ipOctet = crypto.randomInt(256);
+const ipBase = crypto.randomInt(1 << 24);
 let ipSeq = 0;
 
 export function freshIp(): { 'x-forwarded-for': string } {
-  const n = ipSeq++;
-  return { 'x-forwarded-for': `10.${ipOctet}.${(n >> 8) & 0xff}.${n & 0xff}` };
+  const n = (ipBase + ipSeq++) % (1 << 24);
+  return { 'x-forwarded-for': `10.${(n >> 16) & 0xff}.${(n >> 8) & 0xff}.${n & 0xff}` };
 }
 
 /**
