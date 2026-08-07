@@ -75,15 +75,25 @@ case returns 500 instead of passing. Task 3's deletions are safe only once Tasks
 ### Task 1: `emailField`, adopted everywhere, pinned exhaustively
 
 **Files:**
-- Modify: `src/lib/schemas.ts` (add primitive after line 41; adopt at lines 44, 51, 64, 97, 137, 148)
+- Modify: `src/lib/schemas.ts` (add module-private primitive in the shared-validators section after line 17; adopt at lines 44, 51, 64, 97, 137, 148)
 - Modify: `src/lib/schemas.test.ts` (append one `describe` block)
 - Create: `tests/integration/auth-email-case.test.ts`
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
-- Produces: `export const emailField: z.ZodType<string, string>` from
-  `src/lib/schemas.ts`. Task 3 relies on its existence to justify deleting the 13
-  compensations. Task 2's constraints assume it is already normalising.
+- Produces: a **module-private** `emailField` in `src/lib/schemas.ts` — not
+  exported. Task 3 relies on its existence to justify deleting the 13
+  compensations; Task 2's constraints assume it is already normalising. Neither
+  imports it.
+
+> **Do not export it.** The three existing shared field validators in this file
+> — `isoDate`, `timeHHmm`, `relativePath` — are all module-private `const`, and
+> nothing outside `schemas.ts` validates an email (measured: `grep -rn "\.email()"`
+> over `src/` returns hits only in that file). An earlier draft of this plan said
+> `export const`, and it broke the build: `schemas.test.ts`'s server-owned-field
+> walk asserts that every exported `ZodType` has a readable `.shape`, and a field
+> primitive has none. The walk is correct and must not be weakened to accommodate
+> an export nothing needs.
 
 - [ ] **Step 1: Write the failing schema pin**
 
@@ -271,8 +281,11 @@ issue's premise was real.
 
 - [ ] **Step 5: Add the primitive and adopt it**
 
-In `src/lib/schemas.ts`, immediately after the `relativePath` definition on line
-41, add:
+In `src/lib/schemas.ts`, in the `// Shared field validators` section at the top
+of the file — immediately after `timeHHmm` (line 17) and before the
+`MAX_CLASS_SIZE` docblock — add the following. It goes there, beside `isoDate`
+and `timeHHmm`, because it is cross-cutting: AUTH schemas and STUDENTS schemas
+both use it. Note it is `const`, **not** `export const`:
 
 ```ts
 /**
@@ -295,8 +308,13 @@ In `src/lib/schemas.ts`, immediately after the `relativePath` definition on line
  * the `*_email_lowercase_check` constraints. That asymmetry is intentional: a
  * writer that skips the schema layer should fail loudly, not be quietly fixed.
  */
-export const emailField = z.string().email().transform((s) => s.toLowerCase());
+const emailField = z.string().email().transform((s) => s.toLowerCase());
 ```
+
+Module-private, matching `isoDate`, `timeHHmm` and `relativePath` above it.
+Exporting it fails `schemas.test.ts`'s server-owned-field walk, which requires
+every exported `ZodType` to have a readable `.shape` — a field primitive has
+none, and that walk is right to refuse to guess.
 
 Then replace the address field at each of the six sites. Lines 44, 51, 97 and 137
 become:

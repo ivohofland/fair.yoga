@@ -254,7 +254,12 @@ which a surviving `.toLowerCase()` would suppress.
 ### `src/lib/schemas.ts`
 
 ```ts
-export const emailField = z.string().email().transform((s) => s.toLowerCase());
+// Module-private, beside `isoDate` and `timeHHmm` in the shared-validators
+// section — NOT exported. `schemas.test.ts`'s server-owned-field walk requires
+// every exported `ZodType` to have a readable `.shape`, and a field primitive
+// has none. Nothing outside this file validates an email, so the export buys
+// nothing; the three existing shared validators are private for the same reason.
+const emailField = z.string().email().transform((s) => s.toLowerCase());
 ```
 
 Adopted at all six address fields:
