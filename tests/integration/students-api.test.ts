@@ -331,9 +331,10 @@ describe('POST /api/students', () => {
 
   // The CRM is the one place in this app where one human types ANOTHER
   // human's address, so a case slip is silent: the teacher sees a pending
-  // invitation and the student never sees a thing. `inviteContact`
-  // normalises on write, which is what lets later tasks match an account to
-  // an invitation by lowercasing in JS instead of reaching for
+  // invitation and the student never sees a thing. `createInvitationSchema`
+  // normalises `email` via `emailField` (src/lib/schemas.ts) at HTTP
+  // ingress, which is what lets later tasks match an account to an
+  // invitation with a plain, case-sensitive lookup instead of reaching for
   // `mode: 'insensitive'`.
   it('stores the invitation email lowercased', async () => {
     const typed = `CRM-Mixed-${suffix}@Test.Local`;

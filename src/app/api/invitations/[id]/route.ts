@@ -93,10 +93,12 @@ export const PUT = withErrorHandler(async (
   try {
     updated = await prisma.invitation.update({
       where: { id },
-      // Lowercased on write, matching `inviteContact` (services/invitations.ts)
-      // — this column is lowercase by construction, and the uniqueness check
-      // and later account-matching both depend on that holding for every row,
-      // not just the ones created through POST.
+      // Nothing here lowercases `email` — it arrives already normalised
+      // by `emailField` (`updateInvitationSchema`, src/lib/schemas.ts) at
+      // HTTP ingress, and `Invitation_email_lowercase_check` rejects
+      // anything else at rest. The column is lowercase by construction, and
+      // the uniqueness check and later account-matching both depend on that
+      // holding for every row, not just the ones created through POST.
       data: { ...rest, ...(email !== undefined ? { email } : {}) },
       select: { id: true },
     });

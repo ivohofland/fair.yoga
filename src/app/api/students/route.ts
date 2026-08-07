@@ -158,9 +158,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // The explicit `.catch` is required, not optional: without it, a rejection
   // here becomes an unhandled promise rejection instead of a log line.
   if (result.value.delivered) {
-    // Same transform `inviteContact` applies before storing `Invitation.email`
-    // — recomputed here rather than read back off `result`, since the
-    // service returns only `{ id, delivered }` on the wire-shaped success path.
+    // Recomputed here rather than read back off `result` — the service
+    // returns only `{ id, delivered }` on the wire-shaped success path, so
+    // this is the same already-normalised `parsed.data.email` `inviteContact`
+    // itself was called with above, not a second normalisation.
     void deliverInvitation(session.teacherId, parsed.data.email).catch((err) => {
       // `invitationId`, not just `teacherId` (F4, #166 review). A send that
       // fails leaves a row indistinguishable from one that went out — still

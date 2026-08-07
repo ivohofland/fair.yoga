@@ -29,8 +29,9 @@ export default async function PrivacySettingsPage() {
   // Invitations match the authenticated account's own email, not
   // Student.email — they agree by construction for a live linked profile,
   // but the account address is what this person actually proved they own
-  // at sign-in. See `listPendingInvitations` (services/invitations.ts) for
-  // why it does its own lowercasing on top of this.
+  // at sign-in. See `listPendingInvitations` (services/invitations.ts) — it
+  // asserts this address is already lowercase (`requireNormalised`,
+  // src/lib/schemas.ts) rather than lowercasing it again.
   const account = await prisma.account.findUniqueOrThrow({
     where: { id: session.accountId },
     select: { email: true },

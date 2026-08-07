@@ -291,10 +291,11 @@ describe('PUT /api/invitations/[id]', () => {
   });
 
   it('updates a pending contact and stores a changed email lowercased', async () => {
-    // Mixed-case on the wire — inviteContact's own lowercasing test
-    // (students-api.test.ts) does the same, and PUT must match it: this is
-    // the same column, so a case slip here reopens the mismatch #166's
-    // normalisation exists to prevent.
+    // Mixed-case on the wire — `students-api.test.ts`'s "stores the
+    // invitation email lowercased" test does the same for POST, and PUT
+    // must match it: this is the same column, normalised the same way
+    // (`emailField`, src/lib/schemas.ts), so a case slip here reopens the
+    // mismatch #166's normalisation exists to prevent.
     const typed = `INV-PUT-UPDATED-${suffix}@Test.Local`;
     const res = await fetch(`${BASE_URL}/api/invitations/${putTargetId}`, {
       method: 'PUT',
@@ -381,8 +382,9 @@ describe('PUT /api/invitations/[id]', () => {
       const res = await fetch(`${BASE_URL}/api/invitations/${putTargetId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
-        // Mixed case: the route lowercases before writing, so the collision
-        // has to be found on the normalised value, not the typed one.
+        // Mixed case: `updateInvitationSchema` normalises it via `emailField`
+        // (src/lib/schemas.ts) before the route ever sees it, so the
+        // collision has to be found on the normalised value, not the typed one.
         body: JSON.stringify({ email: occupiedEmail.toUpperCase() }),
       });
       expect(res.status).toBe(409);
@@ -852,9 +854,11 @@ describe('POST /api/invitations/[id]/respond', () => {
 
 describe('DELETE /api/teacher-links/[teacherId]', () => {
   // The canonical, lowercase form of this student's address — the shape
-  // `Invitation.email` is always stored in (inviteContact,
-  // services/invitations.ts). Every DB lookup below, and the re-invite
-  // POST body, use this literal string.
+  // `Invitation_email_lowercase_check` requires `Invitation.email` to hold at
+  // rest, which `inviteContact` (services/invitations.ts) writes it in
+  // because `emailField` (src/lib/schemas.ts) already normalised `email` at
+  // HTTP ingress before the service ever saw it. Every DB lookup below, and
+  // the re-invite POST body, use this literal string.
   //
   // Used for BOTH `Student.email` and the nested `Account.email` below.
   // They used to deliberately differ in case, to prove `unlinkTeacher`
