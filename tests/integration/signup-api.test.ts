@@ -182,3 +182,21 @@ describe('POST /api/auth/magic-link/verify — the claim moment over HTTP', () =
     expect(student.accountId).not.toBeNull();
   });
 });
+
+/**
+ * `freshIp()` is what makes this suite re-runnable: a fresh bucket per request
+ * means no per-IP limit is ever reached. That rests entirely on consecutive
+ * calls differing, and nothing else in the repository would fail if they
+ * stopped — the symptom is a 429 on the *second* full sweep, an hour of
+ * confusion away from the cause. So assert it directly.
+ */
+describe('freshIp', () => {
+  it('yields a distinct address on every call', () => {
+    const seen = new Set(Array.from({ length: 100 }, () => freshIp()['x-forwarded-for']));
+    expect(seen.size).toBe(100);
+  });
+
+  it('is a private-range address, so one in a log is obviously synthetic', () => {
+    expect(freshIp()['x-forwarded-for']).toMatch(/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/);
+  });
+});
