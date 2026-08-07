@@ -60,12 +60,10 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
 
   // Keyed by address, not by `studentId` — a teacher can type an address into
   // their CRM before (or without) the owner ever holding a Student row, which
-  // is the whole point of `Invitation` being a separate table. `.toLowerCase()`
-  // bridges the two normalisations: `Invitation.email`/`TeacherBlock.email` are
-  // lowercase by CHECK constraint, `Student.email` is stored exactly as typed.
-  // Miss it and the export silently omits the rows for anyone whose address
-  // carries uppercase — the failure mode of an omission is a quiet, complete
-  // absence, which is why it is worth stating.
+  // is the whole point of `Invitation` being a separate table. The match
+  // below needs no case-normalisation: all six email columns — Account,
+  // Teacher, Student, MagicLinkToken, Invitation, TeacherBlock — are
+  // lowercase by `*_email_lowercase_check` (#170).
   const subjectEmail = student.email;
   const invitations = await db.invitation.findMany({
     where: { email: subjectEmail },
@@ -393,8 +391,8 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
 
     // Invitations are keyed by address, not by `studentId` — a teacher can
     // hold a CRM contact for someone with no Student row at all — so this
-    // matches on the address and lowercases it first (`Invitation.email` is
-    // lowercase by CHECK constraint, `Student.email` is stored as typed).
+    // matches on the address directly, with no normalisation needed: all six
+    // email columns are lowercase by CHECK constraint (#170).
     //
     // Anonymised rather than deleted, and the reason is the teacher's side:
     // a `declined` row is the tombstone that stops that teacher re-inviting
@@ -406,10 +404,13 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     //
     // The replacement satisfies both constraints the branch added:
     // `Invitation_email_lowercase_check` (uuid + `@deleted.invalid` is
-    // already lowercase) and `Invitation_responded_at_status_check` (this
-    // write touches neither side of it). It also stays unique per teacher,
-    // so a student invited by several teachers anonymises to one value
-    // without colliding on `@@unique([teacherId, email])`.
+    // already lowercase — true of every `deleted-<uuid>@deleted.invalid`
+    // write in this file, so it equally satisfies the matching CHECK on
+    // `Account`, `Student` and `Teacher`) and
+    // `Invitation_responded_at_status_check` (this write touches neither
+    // side of it). It also stays unique per teacher, so a student invited by
+    // several teachers anonymises to one value without colliding on
+    // `@@unique([teacherId, email])`.
     await tx.invitation.updateMany({
       where: { email: student.email },
       data: {

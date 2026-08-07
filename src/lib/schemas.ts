@@ -36,11 +36,12 @@ const timeHHmm = z
  * the `*_email_lowercase_check` constraints. That asymmetry is intentional: a
  * writer that skips the schema layer should fail loudly, not be quietly fixed.
  *
- * Module-private, like `isoDate`, `timeHHmm` and `relativePath` above. Exporting
- * it fails the server-owned-field walk in `schemas.test.ts`, which requires every
- * exported `ZodType` to have a readable `.shape` — a field primitive has none.
- * That walk is right to refuse to guess, and nothing outside this file validates
- * an email, so the export bought nothing.
+ * Module-private, like `isoDate`, `timeHHmm` and `relativePath` elsewhere in
+ * this file. Exporting it fails the server-owned-field walk in
+ * `schemas.test.ts`, which requires every exported `ZodType` to have a
+ * readable `.shape` — a field primitive has none. That walk is right to
+ * refuse to guess, and nothing outside this file validates an email, so the
+ * export bought nothing.
  */
 const emailField = z.string().email().transform((s) => s.toLowerCase());
 

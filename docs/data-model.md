@@ -11,7 +11,7 @@
 | Field | Type | Notes |
 |---|---|---|
 | **id** (PK) | uuid | |
-| email | string, unique | The authenticated identity — sessions and passkeys key off this, not off Teacher/Student |
+| email | string, unique | The authenticated identity — sessions and passkeys key off this, not off Teacher/Student. Lowercased on write by `emailField` and pinned by `Account_email_lowercase_check` (#170) — Postgres compares this column case-sensitively, so without it a case variant is a second identity. |
 | **Timestamps** | | |
 | created_at | datetime | |
 
@@ -24,7 +24,7 @@ One Account per human. Teacher and Student are profiles optionally linked to it 
 | **id** (PK) | uuid | |
 | first_name | string | |
 | last_name | string | |
-| email | string, unique | Denormalized copy of the account email |
+| email | string, unique | Denormalized copy of the account email. Lowercase by `Teacher_email_lowercase_check` (#170). |
 | photo_url | string, nullable | |
 | bio | string(250) | |
 | page_slug | string, unique | Public booking page URL |
@@ -50,7 +50,7 @@ One Account per human. Teacher and Student are profiles optionally linked to it 
 | **id** (PK) | uuid | |
 | first_name | string | Required |
 | last_name | string | Required |
-| email | string, unique | Required. Contact email; copies the account email once claimed |
+| email | string, unique | Required. Contact email; copies the account email once claimed. Lowercase by `Student_email_lowercase_check` (#170). |
 | income_tier | int (1-5) | Global tier, can change anytime |
 | **Optional fields** | | |
 | phone | string, nullable | |
@@ -394,6 +394,14 @@ When sent, creates one Notification per recipient student. Class-scoped (specifi
 - **Notification** uses a polymorphic recipient (teacher or student) so both user types share the same inbox infrastructure.
 - **rental_rate** on TeacherRoom is private to each teacher — never exposed to other teachers using the same room.
 - **Authentication** hangs off the Account entity: one Account per human owns the authenticated email, sessions, and passkeys. Teacher and Student are profiles optionally linked to it via their unique `account_id` — a dual-role person (a teacher who attends classes) has one account with both profiles. Student.account_id is nullable, but nothing creates a new unclaimed Student any more (#166): a CRM contact is an Invitation until accepted, and accepting requires an already-signed-in account. The nullable column and the claim-on-first-authenticate path only still serve pre-existing unclaimed rows created before that change. Profile email fields are denormalized copies set at link time.
+- **Email is lowercase everywhere** (#170). All six email columns — Account,
+  Teacher, Student, MagicLinkToken, Invitation, TeacherBlock — carry a
+  `CHECK (email = lower(email))` constraint. `emailField` in `src/lib/schemas.ts`
+  normalises everything arriving over HTTP; anything else (seed, GDPR
+  anonymisation, psql) is rejected rather than rewritten. Before this, the plain
+  btree unique keys under `en_US.utf8` made `Foo@x.com` and `foo@x.com` two
+  distinct identities: sign-in silently missed, and signup could create a second
+  Account for one human.
 - **Invitation and TeacherBlock** (#166) exist because a teacher may not link a student unilaterally. `POST /api/students` creates only an Invitation; the TeacherStudent link forms when the invitee accepts it or books a class. Declining leaves the Invitation row itself as a tombstone against re-inviting; unlinking after being linked additionally writes a TeacherBlock, so the two "no" states aren't uniform — a bare decline blocks re-invites without a TeacherBlock row, only an unlink writes one.
 
 ## Open Questions
