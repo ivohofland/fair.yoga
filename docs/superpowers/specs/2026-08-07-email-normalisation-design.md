@@ -431,21 +431,28 @@ a new migration-constraint test file.
    records the verbatim rejection *and* the verbatim success after the
    constraint is dropped.
 6. `grep -rn "toLowerCase" src/ --include="*.ts" --include="*.tsx" | grep -v "\.test\."`
-   returns exactly **5** lines, and each is accounted for:
+   returns exactly **4** lines, and **not one of them lowercases an email for
+   comparison**:
 
-   | line | why it stays |
+   | line | what it is |
    |---|---|
    | `schemas.ts` `emailField` | the one normalisation |
    | `schemas.ts` `requireNormalised` | a **comparison**, not a normalisation |
-   | `gdpr.ts` | the word inside a comment |
-   | `profile-form.tsx` | slugifies `pageSlug` |
-   | `format.ts` | lowercases a last initial |
+   | `profile-form.tsx` | slugifies `pageSlug` — unrelated to email |
+   | `format.ts` | lowercases a last initial — unrelated to email |
 
-   **This number moved twice during implementation and both moves were errors of
-   mine caught late.** The spec first said 3 (from a 16-line census taken before
-   `emailField` existed), then 4 (17 − 13), and the answer is 5 once
-   `requireNormalised` lands. The lesson is in the table, not the number: a count
-   with a reason per row survives the next change; a bare total does not.
+   **This number moved three times and every move was mine.** 3 (from a 16-line
+   census taken before `emailField` existed) → 4 (17 − 13) → 5 (once
+   `requireNormalised` added a comparison) → 4 (once Task 4 deleted a `gdpr.ts`
+   comment that merely contained the word, as part of correcting a false claim in
+   it).
+
+   The last move is the instructive one: that fifth row's stated reason was "the
+   word inside a comment," which is not a reason to stay — it is an incidental.
+   A row whose justification does not survive being read aloud was never load
+   bearing. What the table says now is the actual invariant, and it is stronger
+   than any count: **the only email lowercasing left in `src/` is the single
+   normalisation and the assertion that checks it.**
 
 7. `grep -rn "insensitive" src/ --include="*.ts" --include="*.tsx" | grep -v "\.test\."`
    returns exactly **5** lines, **all of them `contains` search filters** (3 in
