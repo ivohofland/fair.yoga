@@ -2,10 +2,10 @@
  * Shared fixture helpers for the integration AND e2e suites.
  *
  * Owns the mechanical layer most files were hand-rolling: `BASE_URL`,
- * `hashToken`, `cookie(token)`, `sessionCookie(token)`, `uniqueSuffix()`, and
- * `seedSession(db, accountId)`. Semantic fixtures (which class is open, which
- * payment is pending, what a teacher's rates are) stay in each test file so a
- * test's setup stays readable where it is used.
+ * `hashToken`, `cookie(token)`, `sessionCookie(token)`, `uniqueSuffix()`,
+ * `freshIp()`, and `seedSession(db, accountId)`. Semantic fixtures (which class
+ * is open, which payment is pending, what a teacher's rates are) stay in each
+ * test file so a test's setup stays readable where it is used.
  *
  * This module imports nothing from vitest and takes `PrismaClient` as a
  * parameter rather than constructing one — that's what makes it usable from
@@ -99,32 +99,45 @@ export function uniqueSuffix(): string {
  *
  * Three routes throttle per IP — `POST /api/auth/magic-link/send` (10/15min),
  * `POST /api/auth/student-signup` (5/hour) and `POST /api/teachers` (3/hour) —
- * and `clientIp()` reads the first comma-separated entry of this header. The
- * integration suite calls those routes 8 times, which against a limit of 5 is
- * exactly zero headroom: one pass spent the budget and the next 429'd, so the
- * suite could not be run twice in an hour and therefore was never run whole.
+ * and `clientIp()` reads the first comma-separated entry of this header.
+ * Before this helper the suite made 8 such calls, and *five of them* hit
+ * `student-signup`'s 5/hour budget — exactly zero headroom, so one pass spent
+ * it and the next 429'd. The suite could not be run twice in an hour and
+ * therefore was never run whole. The aggregate was never the number that
+ * mattered; one route's own budget was. The other two were roomy by comparison
+ * (2 against `/api/teachers`' 3, 1 against `magic-link/send`'s 10).
  *
  * A fresh address *per request* — not per file — is what fixes that. No bucket
- * ever reaches a count of 2, so the limits become unreachable rather than
- * merely roomy, and adding a sixth signup test costs nothing. Per-file
- * uniqueness would leave signup-api's four calls sharing a bucket against a
- * limit of 5: the same tripwire with a bigger number.
+ * reaches a count of 2 except where a test deliberately reuses one address (the
+ * per-IP budget test in `tests/integration/signup-api.test.ts`), so the limits
+ * become unreachable rather than merely roomy: the suite now makes 14 of these
+ * calls and could make many more for free. Per-file uniqueness would have left
+ * signup-api's four calls sharing a bucket against a limit of 5 — the same
+ * tripwire with a bigger number.
  *
  * A random 24-bit base picks the starting point somewhere in 10.0.0.0/8, and
  * the sequence walks forward from there by construction — not chance — so
- * distinctness within one process is guaranteed (a wrap needs 16.7M calls,
- * far more than any run makes) rather than merely likely. Two *overlapping*
- * runs (watch mode plus a manual one) only collide if their consumed ranges
- * overlap, which at a handful of calls out of 16.7M is on the order of 1e-5 —
- * far below the old 1/256, but still probabilistic across processes, same as
- * before. 10.0.0.0/8 is private, so one of these in a log is obviously
- * synthetic.
+ * distinctness is guaranteed *per module load*, not per process: vitest's
+ * default `isolate: true` gives each test file its own module registry and so
+ * its own `ipBase` (one file would have to make 16.7M calls to wrap). Between
+ * files, and between overlapping runs, it stays probabilistic.
+ *
+ * The numbers, since they are easy to get wrong: `signup-api.test.ts` draws
+ * ~100,008 addresses per module load, 100,000 of them inside the distinctness
+ * guard. Two loads therefore overlap in *range* with probability
+ * ≈ 2 × 100k / 16.7M ≈ 1e-2. That is almost entirely harmless — all but 7 of
+ * those draws are pure computation and never reach the network — so the figure
+ * that matters is two loads colliding on a *request-issuing* address, which is
+ * ≈ 7² / 16.7M ≈ 3e-6. Far below the old 1/256, still probabilistic across
+ * processes, same as before. 10.0.0.0/8 is private, so one of these in a log
+ * is obviously synthetic.
  *
  * Callers that want several requests to share a bucket — the limiter's own
  * test — call this once and reuse the result.
  *
  * If you are temporarily mutating this function's body to prove a guard bites
- * (see the `describe('freshIp', ...)` tests below), use an address this
+ * (the `describe('freshIp', ...)` tests in
+ * `tests/integration/signup-api.test.ts`), use an address this
  * function cannot emit — 203.0.113.0/24 (RFC 5737 TEST-NET-3) — never a
  * literal inside 10.0.0.0/8. A constant in this function's own range can land
  * on a real rate-limit bucket and poison it for up to an hour; that happened

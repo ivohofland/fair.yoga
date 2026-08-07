@@ -189,11 +189,23 @@ describe('POST /api/auth/magic-link/verify — the claim moment over HTTP', () =
  * calls differing, and nothing else in the repository would fail if they
  * stopped — the symptom is a 429 on the *second* full sweep, an hour of
  * confusion away from the cause. So assert it directly.
+ *
+ * 100,000 draws, and the count is the point — do not "optimise" it back down.
+ * At 100 it passes against the implementation this one replaced
+ * (`10.${randomInt(256)}.${(n >> 8) & 0xff}.${n & 0xff}`, distinct for
+ * n = 0..99 too), whose narrow lane space caused a real 429 during this
+ * branch's work. 100,000 exceeds 2^16, so it fails against anything with fewer
+ * than 2^17 lanes and pins the 16.7M-wide space the helper's docblock claims.
+ *
+ * It costs no rate-limit budget and issues no HTTP: the addresses are computed
+ * and counted in-process, never sent. That is also why this is the only test
+ * safe to run under a temporary mutation of `freshIp()` — see the warning in
+ * `tests/helpers.ts`.
  */
 describe('freshIp', () => {
   it('yields a distinct address on every call', () => {
-    const seen = new Set(Array.from({ length: 100 }, () => freshIp()['x-forwarded-for']));
-    expect(seen.size).toBe(100);
+    const seen = new Set(Array.from({ length: 100_000 }, () => freshIp()['x-forwarded-for']));
+    expect(seen.size).toBe(100_000);
   });
 
   it('is a private-range address, so one in a log is obviously synthetic', () => {
