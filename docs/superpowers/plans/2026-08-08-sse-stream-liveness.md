@@ -28,7 +28,7 @@
 |---|---|---|
 | `tests/integration/notifications-stream.test.ts` | **create** | The whole of the route's coverage: liveness, cross-route delivery, and the two auth refusals. Owns its own fixtures and its own `openStream` helper. |
 | `tests/e2e/visual.spec.ts` | **modify** (comment only, at `hydrationSignal`, ~line 155–163) | Records why a trace duration cannot be read as stream lifetime, and points at the new test. |
-| `src/app/api/notifications/stream/route.ts` | **temporarily mutated, always restored** | Mutations 1 and 3. |
+| `src/app/api/notifications/stream/route.ts` | **temporarily mutated, always restored** | Mutations 1 and 3 as planned; 4, 5 and 6 added later — see the corrections note at the end. |
 | `src/services/notifications.ts` | **temporarily mutated, always restored** | Mutation 2. |
 
 `openStream` lives in the test file rather than `tests/helpers.ts`: it is the only consumer, and `helpers.ts` is shared by 26 files where an unused SSE reader would be noise. If a second file ever needs it, that is the moment to promote it.
@@ -56,7 +56,7 @@ Established by measurement before this plan was written; an implementer should n
 
 **Interfaces:**
 - Consumes: `BASE_URL`, `cookie`, `uniqueSuffix`, `seedSession`, `waitFor` from `../helpers`.
-- Produces: the file, its `describe` block, its fixtures (`teacherToken`, `studentToken`, `studentId`, `studentAccountId`, `studentEmail`), and the `openStream(token?: string): Promise<OpenStream>` helper with `OpenStream = { status: number; contentType: string | null; text(): string; ended: boolean; close(): void }`. **Task 2 extends this same file and reuses all of it** — Task 2 cannot start until Task 1 is committed.
+- Produces: the file, its `describe` block, its fixtures (`teacherToken`, `studentToken`, `studentId`, `studentAccountId`, `studentEmail`), and the `openStream(token?: string): Promise<OpenStream>` helper with `OpenStream = { status: number; contentType: string | null; text(): string; ended: boolean; error: unknown; close(): void }`. **Task 2 extends this same file and reuses all of it** — Task 2 cannot start until Task 1 is committed.
 
 - [ ] **Step 1: Confirm the app is live before writing anything**
 
@@ -66,6 +66,14 @@ Expected: `200`. If anything else, **stop and report** — do not start a server
 - [ ] **Step 2: Create the test file**
 
 Create `tests/integration/notifications-stream.test.ts`:
+
+> **This block is the code as planned, with two safety corrections applied after
+> the fact (the `afterAll` guards and the read loop's `error` capture — see the
+> corrections note at the end).** The shipped file has since diverged further:
+> it also carries a `firstDataFrame` helper, a second student fixture, and T1c,
+> none of which are reproduced here. **Read the file, not this block,** if you
+> want to know what the suite does; this block is the record of what was
+> instructed.
 
 ```ts
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -104,10 +112,17 @@ interface OpenStream {
   contentType: string | null;
   /** Everything the server has sent so far, concatenated. */
   text(): string;
-  /** True only when the SERVER ended the response. Aborting via `close()`
-   *  deliberately does not set it — the assertions are about the server's
-   *  behaviour, not ours. */
+  /** True only when the SERVER ended the response GRACEFULLY — the reader
+   *  observed `done`. Aborting via `close()` deliberately does not set it —
+   *  the assertions are about the server's behaviour, not ours. */
   ended: boolean;
+  /** Set when the read loop rejected for a reason that was NOT our own
+   *  `close()`: a socket reset, the server process dying, an HTTP/2 RST, a
+   *  proxy kill, a `controller.error()` in the route. Those are deaths too,
+   *  and every one of them leaves `ended` false — so `ended` alone cannot
+   *  tell them from a healthy stream. `unknown`, not `Error`: a rejection
+   *  can carry anything. */
+  error: unknown;
   close(): void;
 }
 
@@ -119,6 +134,15 @@ interface OpenStream {
  * must `close()` in a `finally` — the route caps an account at 5 concurrent
  * streams (MAX_STREAMS_PER_USER), so a leaked connection would surface as a
  * 429 in a later test or a later run rather than here.
+ *
+ * The result reports THREE states, not two: `ended` (the server closed the
+ * response gracefully), `error` (the connection died some other way), and
+ * neither of those (still open). A liveness assertion has to check both
+ * negatives. `ended === false` on its own is equally what a socket reset, a
+ * dead server process, an HTTP/2 RST or a route-side `controller.error()`
+ * looks like, because all of those REJECT `reader.read()` rather than
+ * resolving it with `done` — so a stream that died non-gracefully would be
+ * reported as healthy by the very test written to prove it does not die.
  */
 async function openStream(token?: string): Promise<OpenStream> {
   const ac = new AbortController();
@@ -133,6 +157,7 @@ async function openStream(token?: string): Promise<OpenStream> {
     contentType: res.headers.get('content-type'),
     text: () => chunks.join(''),
     ended: false,
+    error: undefined,
     close: () => ac.abort(),
   };
 
@@ -153,9 +178,15 @@ async function openStream(token?: string): Promise<OpenStream> {
         }
         chunks.push(decoder.decode(value, { stream: true }));
       }
-    } catch {
-      // Our own abort() lands here. Leaving `ended` false is correct: it
-      // records whether the SERVER closed, which is what is under test.
+    } catch (err) {
+      // The catch itself is load-bearing: without it this detached IIFE
+      // turns our own `close()` into an unhandled rejection. But it must not
+      // SWALLOW what it catches. Our abort leaves `ended` false correctly —
+      // `ended` records whether the SERVER closed gracefully, which is what
+      // is under test. Every other rejection here (socket reset, server
+      // crash, `controller.error()`) also leaves `ended` false, and that is
+      // a death being reported as health. Record it instead.
+      if (!ac.signal.aborted) state.error = err;
     }
   })();
 
@@ -185,8 +216,9 @@ describe('GET /api/notifications/stream', () => {
 
     // `claimedAt` set: the invitation path only creates an in-app
     // notification when a Student row already exists for the email
-    // (services/invitations.ts:372) — an unclaimed stranger gets an email
-    // instead, and this test would have nothing to receive.
+    // (the `if (student)` gate at services/invitations.ts:376, whose
+    // `createNotification` call is :381) — an unclaimed stranger gets an
+    // email instead, and this test would have nothing to receive.
     const student = await prisma.student.create({
       data: {
         firstName: 'Stream',
@@ -202,19 +234,39 @@ describe('GET /api/notifications/stream', () => {
     studentToken = await seedSession(prisma, studentAccountId);
   });
 
+  // Every delete below is guarded on its id actually being defined, per the
+  // convention in tests/integration/announcements-api.test.ts. This is not
+  // defensive padding: **Prisma STRIPS `undefined` from a `where`**, so a
+  // `beforeAll` that throws between the creates turns
+  // `notification.deleteMany({ where: { recipientId: studentId } })` into
+  // `deleteMany({})` — every Notification row in the shared dev database.
+  // Vitest still runs `afterAll` after a failed `beforeAll`. The
+  // `{ in: [...] }` forms are safe for a DIFFERENT reason (an empty array
+  // matches nothing), so do not read one shape as licence for the other. The
+  // try/finally is the same hazard one level up: a throw mid-hook used to
+  // strand rows AND skip `$disconnect()`. It rethrows — cleanup stays loud.
   afterAll(async () => {
-    await prisma.notification.deleteMany({ where: { recipientId: studentId } });
-    await prisma.invitation.deleteMany({ where: { teacherId } });
-    await prisma.teacherStudent.deleteMany({ where: { teacherId } });
-    await prisma.session.deleteMany({
-      where: { accountId: { in: [teacherAccountId, studentAccountId] } },
-    });
-    await prisma.student.delete({ where: { id: studentId } });
-    await prisma.teacher.delete({ where: { id: teacherId } });
-    await prisma.account.deleteMany({
-      where: { id: { in: [teacherAccountId, studentAccountId] } },
-    });
-    await prisma.$disconnect();
+    try {
+    const studentIds = [studentId].filter(Boolean);
+    if (studentIds.length) {
+      await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
+    }
+    if (teacherId) {
+      await prisma.invitation.deleteMany({ where: { teacherId } });
+      await prisma.teacherStudent.deleteMany({ where: { teacherId } });
+    }
+    const accountIds = [teacherAccountId, studentAccountId].filter(Boolean);
+    if (accountIds.length) {
+      await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
+    }
+    if (studentIds.length) await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    if (teacherId) await prisma.teacher.delete({ where: { id: teacherId } });
+    if (accountIds.length) {
+      await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+    }
+    } finally {
+      await prisma.$disconnect();
+    }
   });
 
   it('stays open well past the millisecond-scale duration a trace reports for it', async () => {
@@ -230,7 +282,11 @@ describe('GET /api/notifications/stream', () => {
 
       await new Promise((resolve) => setTimeout(resolve, HOLD_MS));
 
+      // Both negatives, because "still open" is the conjunction of them:
+      // `ended` catches a graceful close, `error` catches every other way
+      // the connection can die. See `openStream`'s docblock.
       expect(stream.ended).toBe(false);
+      expect(stream.error).toBeUndefined();
     } finally {
       stream.close();
     }
@@ -286,7 +342,10 @@ describe('GET /api/notifications/stream', () => {
       });
       expect(payload).toMatchObject({ id: row.id });
 
+      // Still open AFTER delivering — a distinct property from the liveness
+      // test's "still open after a hold". Both negatives, same reason.
       expect(stream.ended).toBe(false);
+      expect(stream.error).toBeUndefined();
     } finally {
       stream.close();
     }
@@ -478,10 +537,15 @@ Insert these two `it` blocks immediately after the delivery test, still inside t
   it('refuses a request with no session cookie', async () => {
     const stream = await openStream();
     try {
-      expect(stream.status).toBe(401);
+      // `.soft`, not a throwing `expect`: both properties below must be
+      // independently observable under a single mutation, otherwise the
+      // second is decoration. A throwing first assertion would abort before
+      // the second ever ran, so a broken content-type guard could hide
+      // behind a broken status guard indefinitely.
+      expect.soft(stream.status).toBe(401);
       // Not just the status: a regression that hands a live stream to an
       // anonymous caller must fail here even if it somehow kept a 401.
-      expect(stream.contentType ?? '').not.toContain('text/event-stream');
+      expect.soft(stream.contentType ?? '').not.toContain('text/event-stream');
     } finally {
       stream.close();
     }
@@ -499,13 +563,17 @@ Insert these two `it` blocks immediately after the delivery test, still inside t
 
     const stream = await openStream(token);
     try {
-      expect(stream.status).toBe(401);
-      expect(stream.contentType ?? '').not.toContain('text/event-stream');
+      // `.soft`, not a throwing `expect`, for the reason the sibling test
+      // above spells out.
+      expect.soft(stream.status).toBe(401);
+      expect.soft(stream.contentType ?? '').not.toContain('text/event-stream');
     } finally {
       stream.close();
     }
   });
 ```
+
+**`expect.soft` is not optional here, and this is the second time it has had to be written down.** With a throwing `expect`, Step 5's mutation stops each test at the status assertion and the content-type assertion never runs — so the claim this task exists to make ("status *and* content-type") would be untestable, and was in fact untested for two commits. See the corrections note at the end of this plan.
 
 - [ ] **Step 3: Run — all four must pass**
 
@@ -545,7 +613,7 @@ This is the realistic shape of the regression — not "someone edited the 401 li
 - [ ] **Step 5: Run — the two auth tests must fail, the two Task 1 tests must still pass**
 
 Run: `npx vitest run --project integration tests/integration/notifications-stream.test.ts`
-Expected: `2 failed | 2 passed`. Both auth tests fail on `expect(stream.status).toBe(401)` receiving `200`; each would also fail its content-type assertion.
+Expected: `2 failed | 2 passed`, and **four** reported failures — because the assertions are `expect.soft`, each auth test fails on *both* of its assertions in the same run: `expect.soft(stream.status).toBe(401)` receives `200`, and `expect.soft(stream.contentType ?? '').not.toContain('text/event-stream')` receives a genuine `text/event-stream`. Two tests × two assertions. That is what the mutation log records, not a prediction about what "would also" fail.
 
 Record both failures verbatim in `docs/superpowers/plans/2026-08-08-sse-stream-liveness-mutations.md` under `## Mutation 3 — both auth guards bypassed`.
 
@@ -607,22 +675,22 @@ Replace the docblock (leave the function body untouched) with:
  * Effects run only after hydration, so the request doubles as a reliable
  * "hydration finished" signal. Must be armed before page.goto.
  *
- * `waitForResponse` resolves on response HEADERS, so this says the stream
- * OPENED — never that it stayed open. Do not read it, or a trace, as
- * evidence about the stream's lifetime: a trace's `time` for an SSE
- * response is the sum of its non-negative timing phases, and an unfinished
- * response has `receive: -1`, so `time` collapses to the wait for headers.
- * Measured on 2026-08-08 against a stream held provably open for 12s
- * (`readyState` 1 throughout, `requestfinished` never fired): the trace
- * reported `time: 18.7ms, wait: 18.7, receive: -1, bodySize: -1`, while
- * completed requests in the same trace all had `receive >= 0`. That 18.7
- * is what issue #41 read as the stream dying.
+ * `waitForResponse` resolves on response HEADERS, so this says the
+ * stream OPENED — never that it stayed open. Do not read it, or a
+ * trace, as evidence about the stream's lifetime: a trace's `time`
+ * for an unfinished SSE response is the wait for headers, nothing
+ * more (`receive: -1`). In the measured trace an open stream reported
+ * `time: 18.7ms` — that number is what issue #41 read as the stream
+ * dying. Full measurement:
+ * docs/superpowers/specs/2026-08-08-sse-stream-liveness-design.md
  *
  * The property this cannot check is checked by
  * `tests/integration/notifications-stream.test.ts`.
  */
 function hydrationSignal(page: Page): Promise<unknown> {
 ```
+
+This is the **trimmed** version — the dated narrative and the full phase table live in the spec, which the comment now links, rather than being duplicated in a test helper. It is deliberately shorter than the first draft of this step; see the corrections note at the end of this plan.
 
 - [ ] **Step 2: Confirm the e2e file still compiles and lints**
 
@@ -686,3 +754,70 @@ silently, per this project's habit of making corrections visible.
 **Placeholder scan:** none. Every code step contains the literal text to write.
 
 **Type consistency:** `OpenStream` is defined once in Task 1 and used unchanged in Task 2; `openStream(token?: string)` is optional-arg from the start, so Task 2's no-cookie call needs no signature change. The mutation-3 session stub matches `SessionUser`'s second union branch (`teacherId: null`, `studentId: string`) and so type-checks.
+
+---
+
+## Corrections applied after the fact
+
+The steps above have been edited **after** they were executed. A plan is read
+as an instruction by whoever runs it next, so a wrong literal in it re-creates
+the defect verbatim — leaving the drift silent would be the same failure this
+branch is about. Each change, and why:
+
+**1. Task 2's literal code said `expect(...)`; it should have said
+`expect.soft(...)`.** Fixed in Steps 2 and 5. Commit `131ffe1` claimed to have
+fixed "the spec, the plan, and commit `49ccdc3`'s message" — it fixed the spec
+and the shipped test, and **missed the plan**, so for two commits the plan
+still prescribed exactly the assertion shape the branch had just proved was
+unreachable. An executor following it would have re-created a content-type
+assertion that can never run, and Mutation 3 would once again have been unable
+to observe it.
+
+**2. Task 2 Step 5 said each auth test "would also fail its content-type
+assertion".** Replaced with what the mutation log records: four failures in one
+run, two tests × two assertions. "Would also" was itself the never-observed
+claim — the exact species of statement this branch exists to object to,
+sitting in the branch's own plan.
+
+**3. Task 3 Step 1 still specified the untrimmed `hydrationSignal`
+docblock.** The dated narrative and the timing-phase table were trimmed out of
+the source per a user ruling in `131ffe1`, leaving the spec as the single place
+that carries the measurement. The plan calls that block literal text, so plan
+and source were asserting different things about the same comment.
+
+**4. That docblock also said "a stream held provably open for 12s reported
+`time: 18.7ms`".** The measured trace has **two** open-stream rows (236.185 and
+18.739) and nothing in the record pins which of them the `readyState` evidence
+tracked. Now "in the measured trace an open stream reported `time: 18.7ms`",
+in both the source and this plan. The argument — a trace duration cannot tell
+an open stream from a closed one — needs no more than that, and the stronger
+sentence was not supported.
+
+**5. Two guards this plan never contained, added in the PR fix wave.** Both
+follow the plan's own mutation discipline and are recorded in the mutation log.
+Where the fix touched code this plan quotes literally — the `OpenStream`
+interface, the read loop's `catch`, the `afterAll` — **Task 1's block has been
+patched to match**, for the reason in correction 1: a literal in a plan is an
+instruction, and leaving a known hazard in one re-issues it.
+
+- **The route's ownership predicate was unguarded.** Replacing it with
+  `const mine = true` left all four planned tests passing, because each opens
+  one stream and asserts only presence. A fifth test (`delivers a notification
+  only to the stream it belongs to`) opens a second stream as the teacher and
+  asserts the absence, via the control-then-assert-absence idiom
+  `tests/helpers.ts` documents. Mutation 5 proves it.
+- **`openStream` reported a dirty connection death as "still open".** The bare
+  `catch {}` in the read loop discarded every rejection, so `ended === false`
+  was equally true for our own abort, a socket reset, a dead server process and
+  a `controller.error()`. `OpenStream` now carries `error: unknown`, and every
+  `expect(stream.ended).toBe(false)` is paired with
+  `expect(stream.error).toBeUndefined()`. Mutation 6 proves it.
+
+**6. The `afterAll` could have deleted every Notification row in the shared
+database.** Prisma strips `undefined` from a `where`, so a `beforeAll` that
+threw between the creates turned `deleteMany({ where: { recipientId:
+studentId } })` into `deleteMany({})`. Now guarded per the convention in
+`tests/integration/announcements-api.test.ts`, with `$disconnect()` in a
+`finally`. No mutation for this one: it is a fixture-teardown hazard, not a
+guard on the route, and the proof that matters is the reasoning about Prisma's
+`undefined` handling plus the guards themselves.
