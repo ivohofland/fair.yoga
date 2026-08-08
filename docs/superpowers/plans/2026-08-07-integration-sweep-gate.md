@@ -317,7 +317,7 @@ nothing on its own — Step 3 is what establishes it can fail.
 Temporarily replace the body of `freshIp()` in `tests/helpers.ts` with a constant:
 
 ```ts
-export function freshIp(): Record<string, string> {
+export function freshIp(): { 'x-forwarded-for': string } {
   return { 'x-forwarded-for': '203.0.113.1' };
 }
 ```

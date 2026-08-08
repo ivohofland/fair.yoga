@@ -191,11 +191,15 @@ describe('POST /api/auth/magic-link/verify — the claim moment over HTTP', () =
  * confusion away from the cause. So assert it directly.
  *
  * 100,000 draws, and the count is the point — do not "optimise" it back down.
- * At 100 it passes against the implementation this one replaced
- * (`10.${randomInt(256)}.${(n >> 8) & 0xff}.${n & 0xff}`, distinct for
- * n = 0..99 too), whose narrow lane space caused a real 429 during this
- * branch's work. 100,000 exceeds 2^16, so it fails against anything with fewer
- * than 2^17 lanes and pins the 16.7M-wide space the helper's docblock claims.
+ * The implementation this one replaced drew its first octet once, at module
+ * load (`const ipOctet = randomInt(256)`), then varied only the low two
+ * octets per call (`` `10.${ipOctet}.${(n >> 8) & 0xff}.${n & 0xff}` ``) —
+ * those two octets repeat every 2^16 = 65,536 calls, so with the octet fixed
+ * it could never emit more than 65,536 distinct addresses. That ceiling was
+ * invisible at 100 draws (n = 0..99 alone is already distinct) but caused a
+ * real 429 during this branch's work. 100,000 exceeds 65,536, so it fails
+ * against that implementation and pins the 2^24 (16.7M)-wide space the
+ * helper's docblock claims.
  *
  * It costs no rate-limit budget and issues no HTTP: the addresses are computed
  * and counted in-process, never sent. That is also why this is the only test
