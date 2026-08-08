@@ -162,7 +162,7 @@ async function freezeDates(page: Page): Promise<void> {
  * stream OPENED — never that it stayed open. Do not read it, or a
  * trace, as evidence about the stream's lifetime: a trace's `time`
  * for an unfinished SSE response is the wait for headers, nothing
- * more (`receive: -1`). A stream held provably open for 12s reported
+ * more (`receive: -1`). In the measured trace an open stream reported
  * `time: 18.7ms` — that number is what issue #41 read as the stream
  * dying. Full measurement:
  * docs/superpowers/specs/2026-08-08-sse-stream-liveness-design.md

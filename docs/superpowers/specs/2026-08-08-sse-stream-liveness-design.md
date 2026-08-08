@@ -106,15 +106,17 @@ chosen below.
 
 ### 3. `next start` and the standalone server run the same server
 
-- `next/dist/cli/next-start.js:13,102` — `require("../server/lib/start-server")`,
-  then `startServer({…})`.
+- `node_modules/next/dist/cli/next-start.js:13,102` (**Next 16.2.10** — these line
+  numbers are pinned to that version and rot on any `next` bump) —
+  `require("../server/lib/start-server")`, then `startServer({…})`.
 - `.next-build/standalone/server.js` (generated) — `require('next/dist/server/lib/start-server')`,
   then `startServer({…})`.
 
 The standalone entry differs only in setting `__NEXT_PRIVATE_STANDALONE_CONFIG` and
 skipping the `next.config.ts` read. The request-handling pipeline is the same code.
 
-The warning itself is advisory. `next/dist/server/next.js:227` is a bare `log.warn`
+The warning itself is advisory. `node_modules/next/dist/server/next.js:227`
+(**Next 16.2.10**, same rot caveat) is a bare `log.warn`
 for `output: 'standalone'`; three lines below, `output: 'export'` **throws**. Next
 distinguishes "you did not need this" from "this will not work," and standalone is
 the former. So *"CI is exercising a serving mode nothing else uses"* overstates it:
@@ -161,7 +163,9 @@ its docblock says.
 
 ### 7. Nothing in the suite covers this route
 
-`/api/notifications/stream` appears nowhere in `tests/` except `visual.spec.ts:162`:
+Before this branch, `/api/notifications/stream` appeared nowhere in `tests/` except
+inside `hydrationSignal` (`visual.spec.ts`) — a helper that waits for the request,
+not for the route's behaviour:
 
 ```ts
 function hydrationSignal(page: Page): Promise<unknown> {
@@ -192,8 +196,9 @@ fixtures and for `afterAll` cleanup.
 
 Fixtures: teacher `T` with a session; student `S` with a claimed account and a
 session. (`claimedAt` matters — the invitation path only creates an in-app
-notification when a `Student` row already exists for the email, `invitations.ts:372`;
-an unclaimed stranger gets an email instead and the test would have nothing to
+notification when a `Student` row already exists for the email: the `if (student)`
+gate at `invitations.ts:376`, whose `createNotification` call is `:381`. An
+unclaimed stranger gets an email instead and the test would have nothing to
 receive.)
 
 **T1a — the stream stays open.** Open as `S` → assert `200` and
@@ -257,6 +262,49 @@ data-frame `waitFor` — neither ever reaches T1b's own trailing
 `expect(stream.ended).toBe(false)`, so without Mutation 4 that assertion had never
 been watched failing.
 
+### Added after this spec was written — T1c, and Mutations 5 and 6
+
+Two guards the design above does not contain. Both came out of the PR review,
+both were found the same way the spec argues for — by trying to break the
+thing and watching what stayed green — and both are recorded in the mutation
+log. Written here rather than folded into the sections above, so what was
+*designed* stays distinguishable from what was *discovered*.
+
+| # | Mutation | Required failure |
+|---|---|---|
+| 5 | `const mine = true` in `route.ts`'s bus handler — the ownership predicate always true | **T1c only.** T1a, T1b, T2, T3 all still pass |
+| 6 | `setTimeout(() => controller.error(new Error(...)), 200)` in `route.ts`'s stream `start`, after the `: connected` send | **T1a only**, on its `stream.error` assertion specifically — `stream.ended` stays `false` and still passes |
+
+**T1c — a notification reaches only the stream it belongs to.** Mutation 5 is
+the finding: `const mine = true` left every one of T1a, T1b, T2 and T3
+passing, because each opens a single stream and asserts only *presence*. What
+that leaves unprotected is every notification's `title` and `body` — student
+names, class names — going to every stream open on the box, which against a
+privacy-first product is the worst thing this route can do. T1c opens a second
+stream as the teacher alongside a second student's, triggers the invitation,
+waits for the student's frame, and asserts the teacher's stream carries no
+`data:` frame. The absence is provable rather than merely probable because
+`notificationBus` is a plain `EventEmitter` and dispatches synchronously in
+registration order — the control-then-assert-absence idiom `tests/helpers.ts`
+documents on `waitFor`. It needs its own second student fixture: T1b already
+spends the first student's invitation, and re-inviting a spent address emits
+nothing to wait on.
+
+**Mutation 6 — and why `ended` alone was never a liveness signal.** T1a's only
+liveness evidence is the negative `expect(stream.ended).toBe(false)`; nothing
+is expected to arrive after the preamble, since keepalive is 30 s and the hold
+is 1 s. But the test helper's read loop had a bare `catch {}`, and *every*
+rejection of `reader.read()` leaves `ended` false — the test's own `abort()`,
+yes, but equally a socket reset, the server process dying, an HTTP/2 RST, a
+proxy kill. Those are precisely #41's hypothesis class, and T1a reported them
+as health. `OpenStream` now carries `error: unknown`, set only when the signal
+was not our own abort, asserted alongside every `ended` check. Note the
+*deferred* `controller.error`: a synchronous one destroys the socket before
+any response byte is written, so `fetch()` itself rejects and the assertion
+under test is never reached — that variant is recorded in the log as rejected.
+No **graceful** mutation reaches the dirty path at all, because `send()`
+catches a failing `enqueue` and routes it to `cleanup()` → `controller.close()`.
+
 ### One comment, no production code
 
 A comment beside `hydrationSignal` in `tests/e2e/visual.spec.ts` recording that
@@ -286,9 +334,12 @@ the moment someone reads an SSE trace, which is exactly when #41 was filed.
 ## Acceptance
 
 - `tests/integration/notifications-stream.test.ts` exists with T1a, T1b, T2 and T3 —
-  four tests — and passes against the running app.
+  four tests — and passes against the running app. **Amended after PR review:** five,
+  with T1c (see "Added after this spec was written").
 - Each of the four mutations has been run, its exact failure output recorded in the
-  PR body, and the source restored.
+  PR body, and the source restored. **Amended:** six, adding Mutations 5 and 6. The
+  durable record is `docs/superpowers/plans/2026-08-08-sse-stream-liveness-mutations.md`;
+  the PR body summarises it.
 - `npm run verify` is green.
 - `visual.spec.ts` carries the trace-measurement comment.
 - #41 is closed with the measurement, naming which of its claims were false.
