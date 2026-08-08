@@ -186,27 +186,41 @@ build in CI**. That makes §2's one unmeasured case something CI proves on every
 A vitest unit test would import the module directly and prove nothing about
 bundling; a Playwright test would spend a browser on a server-side property.
 
-Follows the existing integration conventions: `BASE_URL`, `cookie()`, `seedSession()`,
-`uniqueSuffix()`, `freshIp()` from `tests/helpers.ts`; Prisma for fixtures and for
-`afterAll` cleanup.
-
-**T1 — the stream delivers, and is still open afterwards.** Load-bearing.
+Follows the existing integration conventions: `BASE_URL`, `cookie()`, `hashToken()`,
+`seedSession()`, `uniqueSuffix()`, `waitFor()` from `tests/helpers.ts`; Prisma for
+fixtures and for `afterAll` cleanup.
 
 Fixtures: teacher `T` with a session; student `S` with a claimed account and a
-session.
+session. (`claimedAt` matters — the invitation path only creates an in-app
+notification when a `Student` row already exists for the email, `invitations.ts:372`;
+an unclaimed stranger gets an email instead and the test would have nothing to
+receive.)
 
-1. `GET /api/notifications/stream` as `S` → assert `200` and
-   `content-type: text/event-stream`.
-2. Read until the `: connected` preamble arrives.
-3. `POST /api/students` as `T` with `S`'s email and a `freshIp()` header → assert
-   `201`. This runs `createNotification` **server-side**
-   (`src/services/invitations.ts:381`), which is what makes the test cross-route.
-4. Assert a `data:` frame arrives whose parsed `type` is `teacher_invitation` and
-   whose `id` equals the `Notification` row's id. (`createNotification` emits the real
-   id; `createBulkNotifications` emits the literal `'bulk'` — so the id assertion also
-   pins which path was taken.)
-5. Assert the reader has **not** observed `done` — the stream is still open *after*
-   delivering.
+**T1a — the stream stays open.** Open as `S` → assert `200` and
+`content-type: text/event-stream`; read until the `: connected` preamble; hold
+1000 ms; assert the reader has **not** observed `done`. 1000 ms is a ~50× margin over
+the top of the 5–21 ms band §1 shows is really TTFB. Deliberately short of the 30 s
+keepalive: pinning that would cost 30 s of CI per run to prove something no user
+depends on.
+
+**T1b — the stream delivers, and is still open after.** Open as `S`; read until
+`: connected`; `POST /api/students` as `T` with `S`'s email → assert `201`, which runs
+`createNotification` **server-side** (`src/services/invitations.ts:381`) and is what
+makes the test cross-route; assert a `data:` frame arrives whose parsed `type` is
+`teacher_invitation` and whose `id` equals the `Notification` row's id
+(`createNotification` emits the real id, `createBulkNotifications` emits the literal
+`'bulk'`, so the id assertion also pins which path ran); assert `done` still not
+observed.
+
+**T1a and T1b are two `it` blocks, not one.** As a single test, the still-open
+assertion would sit after the delivery assertion and mutation 2 below would abort
+before reaching it — making the claim "mutation 2 fails delivery only" unobservable.
+The split is what makes the two properties independently checkable, which is the
+entire point of running two mutations.
+
+No `freshIp()` on the `POST`: `checkStudentWriteLimit` keys on `students:${teacherId}`
+(50/hour), not on IP. A fresh teacher per run is already a fresh bucket, and the
+header would key nothing while implying the endpoint is IP-limited.
 
 **T2 — no session cookie → 401. T3 — expired session → 401.** T3 seeds a session and
 then ages it with `prisma.session.update`, the technique `tests/integration/auth.test.ts`
@@ -216,19 +230,24 @@ fails rather than merely returning the wrong status.
 
 ### Proving each guard bites
 
-Three mutations, because T1 pins two independent properties and a single mutation
+Three mutations, because T1a and T1b pin independent properties and a single mutation
 would not show they are independent. Each: break it, record the exact error text,
-restore, re-verify.
+restore, re-verify. The mutation **is** the red step — the code is already correct, so
+a newly written test passes immediately, and a test nobody has watched fail is not a
+guard.
 
 | # | Mutation | Required failure |
 |---|---|---|
-| 1 | In `route.ts`, call `cleanup()` immediately after `send(': connected\n\n')` — exactly the regression #41 hypothesised | T1 fails on **both** the delivery assertion and the still-open assertion |
-| 2 | Make `emitToBus` in `src/services/notifications.ts` a no-op | T1 fails on delivery **only**; still-open still passes — proving the two assertions are independent |
-| 3 | Let the `!token` branch in `route.ts` fall through | T2 fails |
+| 1 | In `route.ts`, call `cleanup()` immediately after `send(': connected\n\n')` — exactly the regression #41 hypothesised | **Both** T1a and T1b fail |
+| 2 | `return;` as the first statement of `emitToBus` in `src/services/notifications.ts` | **T1b only.** T1a must still pass |
+| 3 | Bypass both auth guards in `route.ts` — take `getSessionToken`'s result unchecked and default `validateSession`'s null to a stub `SessionUser`, so an anonymous caller gets a genuine `200 text/event-stream` | T2 and T3 both fail, on status **and** content-type |
 
-Mutation 2 is the one that matters most: without it, a T1 that passes proves only
-that *something* kept the connection open, and the delivery assertion could be
-riding on the liveness one.
+Mutation 2 is the one that matters most, and its required *asymmetry* is the
+assertion: if both tests fail, the delivery test was riding on liveness; if neither
+does, it is not observing the bus at all. Mutation 3 is deliberately the
+"guards stopped standing between the caller and the stream" shape rather than
+"someone edited the `401` literal" — the latter is easy to write and tests almost
+nothing.
 
 ### One comment, no production code
 
@@ -258,8 +277,8 @@ the moment someone reads an SSE trace, which is exactly when #41 was filed.
 
 ## Acceptance
 
-- `tests/integration/notifications-stream.test.ts` exists with T1–T3 and passes
-  against the running app.
+- `tests/integration/notifications-stream.test.ts` exists with T1a, T1b, T2 and T3 —
+  four tests — and passes against the running app.
 - Each of the three mutations has been run, its exact failure output recorded in the
   PR body, and the source restored.
 - `npm run verify` is green.
