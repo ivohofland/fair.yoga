@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor } from '../helpers';
+import { BASE_URL, cookie, hashToken, uniqueSuffix, seedSession, waitFor } from '../helpers';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -247,4 +247,35 @@ describe('GET /api/notifications/stream', () => {
     // 5000ms" instead of the `waitFor`'s descriptive message.
     20_000,
   );
+
+  it('refuses a request with no session cookie', async () => {
+    const stream = await openStream();
+    try {
+      expect(stream.status).toBe(401);
+      // Not just the status: a regression that hands a live stream to an
+      // anonymous caller must fail here even if it somehow kept a 401.
+      expect(stream.contentType ?? '').not.toContain('text/event-stream');
+    } finally {
+      stream.close();
+    }
+  });
+
+  it('refuses an expired session', async () => {
+    // Seed a real session, then age it — the technique
+    // tests/integration/auth.test.ts uses. `validateSession` deletes the row
+    // on the way to returning null, so afterAll has nothing extra to clean.
+    const token = await seedSession(prisma, studentAccountId);
+    await prisma.session.update({
+      where: { id: hashToken(token) },
+      data: { expiresAt: new Date(Date.now() - 1_000) },
+    });
+
+    const stream = await openStream(token);
+    try {
+      expect(stream.status).toBe(401);
+      expect(stream.contentType ?? '').not.toContain('text/event-stream');
+    } finally {
+      stream.close();
+    }
+  });
 });

@@ -212,3 +212,108 @@ delivers one is unaffected.
 
 Restored via `git checkout src/app/api/notifications/stream/route.ts`;
 re-verified `2 passed` afterward.
+
+## Mutation 3 — both auth guards bypassed
+
+`src/app/api/notifications/stream/route.ts`, replaced:
+
+```ts
+  const token = getSessionToken(request);
+  if (!token) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+  const session = await validateSession(prisma, token);
+  if (!session) {
+    return new Response('Session expired', { status: 401 });
+  }
+```
+
+with:
+
+```ts
+  // MUTATION 3 — REMOVE, restore the block below from git
+  const token = getSessionToken(request);
+  const session = (await validateSession(prisma, token ?? '')) ?? {
+    sessionId: 'mutant',
+    accountId: 'mutant-account',
+    teacherId: null,
+    studentId: 'mutant-student',
+  };
+```
+
+This is the realistic shape of the regression — not "someone edited the 401
+literal" but "the auth guards stopped standing between an anonymous request
+and the stream." An anonymous caller now receives a genuine
+`200 text/event-stream`.
+
+Result: `2 failed | 2 passed`, exactly as predicted — the two new auth tests
+fail, the liveness and delivery tests are unaffected. Verbatim output:
+
+```
+ RUN  v4.1.10 /Users/ivohofland/Projects/fair.yoga
+
+ ❯ |integration| tests/integration/notifications-stream.test.ts (4 tests | 2 failed) 1325ms
+     × refuses a request with no session cookie 9ms
+     × refuses an expired session 13ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| tests/integration/notifications-stream.test.ts > GET /api/notifications/stream > refuses a request with no session cookie
+AssertionError: expected 200 to be 401 // Object.is equality
+
+- Expected
++ Received
+
+- 401
++ 200
+
+ ❯ tests/integration/notifications-stream.test.ts:254:29
+    252|     const stream = await openStream();
+    253|     try {
+    254|       expect(stream.status).toBe(401);
+       |                             ^
+    255|       // Not just the status: a regression that hands a live stream to…
+    256|       // anonymous caller must fail here even if it somehow kept a 401.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  |integration| tests/integration/notifications-stream.test.ts > GET /api/notifications/stream > refuses an expired session
+AssertionError: expected 200 to be 401 // Object.is equality
+
+- Expected
++ Received
+
+- 401
++ 200
+
+ ❯ tests/integration/notifications-stream.test.ts:275:29
+    273|     const stream = await openStream(token);
+    274|     try {
+    275|       expect(stream.status).toBe(401);
+       |                             ^
+    276|       expect(stream.contentType ?? '').not.toContain('text/event-strea…
+    277|     } finally {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 2 passed (4)
+   Start at  08:29:58
+   Duration  1.52s (transform 31ms, setup 0ms, import 79ms, tests 1.32s, environment 0ms)
+```
+
+Both failures land on `expect(stream.status).toBe(401)` receiving `200` —
+the mutation grants a real stream to the fabricated mutant session before
+the content-type assertion is ever reached, so that second assertion never
+gets to run in this recording (its purpose — catching a regression that
+somehow keeps the 401 while leaking a stream — is a distinct property this
+mutation doesn't happen to isolate; Mutation 3 removes the whole guard, so
+the status check alone already fails). The liveness and delivery tests
+(`refuses a request with no session cookie` and `refuses an expired
+session`'s siblings) are absent from the failures list — `2 passed` in the
+summary confirms both were unaffected by an anonymous caller's guard being
+bypassed.
+
+Restored via `git checkout src/app/api/notifications/stream/route.ts`;
+`git status --porcelain src/` was empty afterward; re-verified `4 passed`.
