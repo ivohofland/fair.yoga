@@ -235,7 +235,11 @@ fails rather than merely returning the wrong status.
 
 ### Proving each guard bites
 
-Four mutations. T1a and T1b pin independent properties and a single mutation would
+Four mutations *as designed here*; six were run by the end. See "Added after this
+spec was written" below for Mutations 5 and 6 — this section is the design-time
+plan, not a live count.
+
+T1a and T1b pin independent properties and a single mutation would
 not show they are independent — that is what Mutations 1–3 establish. A fourth,
 added during Task 1's fix round rather than planned up front, pins a property
 neither of the first two reaches: T1b's own trailing assertion, "still open *after
