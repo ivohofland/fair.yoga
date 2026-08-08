@@ -28,16 +28,27 @@ let studentId: string;
 let studentAccountId: string;
 let studentToken: string;
 let studentEmail: string;
+let student2Id: string;
+let student2AccountId: string;
+let student2Token: string;
+let student2Email: string;
 
 interface OpenStream {
   status: number;
   contentType: string | null;
   /** Everything the server has sent so far, concatenated. */
   text(): string;
-  /** True only when the SERVER ended the response. Aborting via `close()`
-   *  deliberately does not set it — the assertions are about the server's
-   *  behaviour, not ours. */
+  /** True only when the SERVER ended the response GRACEFULLY — the reader
+   *  observed `done`. Aborting via `close()` deliberately does not set it —
+   *  the assertions are about the server's behaviour, not ours. */
   ended: boolean;
+  /** Set when the read loop rejected for a reason that was NOT our own
+   *  `close()`: a socket reset, the server process dying, an HTTP/2 RST, a
+   *  proxy kill, a `controller.error()` in the route. Those are deaths too,
+   *  and every one of them leaves `ended` false — so `ended` alone cannot
+   *  tell them from a healthy stream. `unknown`, not `Error`: a rejection
+   *  can carry anything. */
+  error: unknown;
   close(): void;
 }
 
@@ -51,6 +62,15 @@ interface OpenStream {
  * that cap for the rest of this run and could surface as a 429 in a later
  * test here. It cannot carry over to a later run: `sseCounts` keys on
  * `accountId`, and every run mints a fresh account.
+ *
+ * The result reports THREE states, not two: `ended` (the server closed the
+ * response gracefully), `error` (the connection died some other way), and
+ * neither of those (still open). A liveness assertion has to check both
+ * negatives. `ended === false` on its own is equally what a socket reset, a
+ * dead server process, an HTTP/2 RST or a route-side `controller.error()`
+ * looks like, because all of those REJECT `reader.read()` rather than
+ * resolving it with `done` — so a stream that died non-gracefully would be
+ * reported as healthy by the very test written to prove it does not die.
  */
 async function openStream(token?: string): Promise<OpenStream> {
   const ac = new AbortController();
@@ -65,6 +85,7 @@ async function openStream(token?: string): Promise<OpenStream> {
     contentType: res.headers.get('content-type'),
     text: () => chunks.join(''),
     ended: false,
+    error: undefined,
     close: () => ac.abort(),
   };
 
@@ -85,13 +106,36 @@ async function openStream(token?: string): Promise<OpenStream> {
         }
         chunks.push(decoder.decode(value, { stream: true }));
       }
-    } catch {
-      // Our own abort() lands here. Leaving `ended` false is correct: it
-      // records whether the SERVER closed, which is what is under test.
+    } catch (err) {
+      // The catch itself is load-bearing: without it this detached IIFE
+      // turns our own `close()` into an unhandled rejection. But it must not
+      // SWALLOW what it catches. Our abort leaves `ended` false correctly —
+      // `ended` records whether the SERVER closed gracefully, which is what
+      // is under test. Every other rejection here (socket reset, server
+      // crash, `controller.error()`) also leaves `ended` false, and that is
+      // a death being reported as health. Record it instead.
+      if (!ac.signal.aborted) state.error = err;
     }
   })();
 
   return state;
+}
+
+/**
+ * The first COMPLETE `data:` frame the server has sent, or `undefined`.
+ *
+ * Drops the last split element: if the buffered text doesn't yet end with
+ * '\n' (a decoder chunk boundary landing mid-frame), that last element is an
+ * in-flight partial line — e.g. a truncated `data: {"id":"5a1f` — and a
+ * caller's `JSON.parse` would throw on it. Every element before the last was
+ * already followed by a newline when `split()` saw it, so it is complete.
+ *
+ * Only for asserting a frame is PRESENT. To assert one is absent, test the
+ * raw `text()` instead: a partial frame is still a leaked frame.
+ */
+function firstDataFrame(stream: OpenStream): string | undefined {
+  const completeLines = stream.text().split('\n').slice(0, -1);
+  return completeLines.find((line) => line.startsWith('data: '));
 }
 
 describe('GET /api/notifications/stream', () => {
@@ -100,6 +144,7 @@ describe('GET /api/notifications/stream', () => {
 
     const teacherEmail = `sse-stream-t-${suffix}@test.local`;
     studentEmail = `sse-stream-s-${suffix}@test.local`;
+    student2Email = `sse-stream-s2-${suffix}@test.local`;
 
     const teacher = await prisma.teacher.create({
       data: {
@@ -117,36 +162,80 @@ describe('GET /api/notifications/stream', () => {
 
     // `claimedAt` set: the invitation path only creates an in-app
     // notification when a Student row already exists for the email
-    // (services/invitations.ts:372) — an unclaimed stranger gets an email
-    // instead, and this test would have nothing to receive.
-    const student = await prisma.student.create({
-      data: {
-        firstName: 'Stream',
-        lastName: 'Student',
-        email: studentEmail,
-        incomeTier: 3,
-        claimedAt: new Date(),
-        account: { create: { email: studentEmail } },
-      },
-    });
+    // (the `if (student)` gate at services/invitations.ts:376, whose
+    // `createNotification` call is :381) — an unclaimed stranger gets an
+    // email instead, and this test would have nothing to receive.
+    const makeStudent = (email: string) =>
+      prisma.student.create({
+        data: {
+          firstName: 'Stream',
+          lastName: 'Student',
+          email,
+          incomeTier: 3,
+          claimedAt: new Date(),
+          account: { create: { email } },
+        },
+      });
+
+    const student = await makeStudent(studentEmail);
     studentId = student.id;
     studentAccountId = student.accountId!;
     studentToken = await seedSession(prisma, studentAccountId);
+
+    // A SECOND student, with its own account and session. The ownership test
+    // cannot reuse the first: the delivery test above spends that address's
+    // invitation, and re-inviting an address the teacher has already invited
+    // produces no second `teacher_invitation` notification to wait on.
+    const student2 = await makeStudent(student2Email);
+    student2Id = student2.id;
+    student2AccountId = student2.accountId!;
+    student2Token = await seedSession(prisma, student2AccountId);
   });
 
+  // Every delete below is guarded on its id actually being defined, per the
+  // convention in tests/integration/announcements-api.test.ts. This is not
+  // defensive padding:
+  //
+  //   **Prisma STRIPS `undefined` from a `where`.** If `beforeAll` throws
+  //   between the creates — a P2002 from an overlapping run, a DB blip —
+  //   then `studentId` is `undefined` and
+  //   `notification.deleteMany({ where: { recipientId: studentId } })`
+  //   is `deleteMany({})`: every Notification row in the shared dev
+  //   database, not this file's. Vitest still runs `afterAll` after a
+  //   failed `beforeAll`, so that path is reachable, not theoretical.
+  //
+  // The `{ in: [...] }` forms are safe for a DIFFERENT reason — an empty
+  // array matches nothing rather than everything — so do not read one of
+  // these shapes as licence for the other. The `filter(Boolean)` guards are
+  // what make them safe, not the `in`.
+  //
+  // The try/finally is the same hazard one level up: a throw mid-hook used
+  // to strand the remaining rows AND skip `$disconnect()`, leaking a client
+  // for the rest of the run. It rethrows — a failed cleanup must stay loud.
   afterAll(async () => {
-    await prisma.notification.deleteMany({ where: { recipientId: studentId } });
-    await prisma.invitation.deleteMany({ where: { teacherId } });
-    await prisma.teacherStudent.deleteMany({ where: { teacherId } });
-    await prisma.session.deleteMany({
-      where: { accountId: { in: [teacherAccountId, studentAccountId] } },
-    });
-    await prisma.student.delete({ where: { id: studentId } });
-    await prisma.teacher.delete({ where: { id: teacherId } });
-    await prisma.account.deleteMany({
-      where: { id: { in: [teacherAccountId, studentAccountId] } },
-    });
-    await prisma.$disconnect();
+    try {
+      const studentIds = [studentId, student2Id].filter(Boolean);
+      if (studentIds.length) {
+        await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
+      }
+      if (teacherId) {
+        await prisma.invitation.deleteMany({ where: { teacherId } });
+        await prisma.teacherStudent.deleteMany({ where: { teacherId } });
+      }
+      const accountIds = [teacherAccountId, studentAccountId, student2AccountId].filter(Boolean);
+      if (accountIds.length) {
+        await prisma.session.deleteMany({ where: { accountId: { in: accountIds } } });
+      }
+      if (studentIds.length) {
+        await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+      }
+      if (teacherId) await prisma.teacher.delete({ where: { id: teacherId } });
+      if (accountIds.length) {
+        await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+      }
+    } finally {
+      await prisma.$disconnect();
+    }
   });
 
   it(
@@ -164,7 +253,11 @@ describe('GET /api/notifications/stream', () => {
 
         await new Promise((resolve) => setTimeout(resolve, HOLD_MS));
 
+        // Both negatives, because "still open" is the conjunction of them:
+        // `ended` catches a graceful close, `error` catches every other way
+        // the connection can die. See `openStream`'s docblock.
         expect(stream.ended).toBe(false);
+        expect(stream.error).toBeUndefined();
       } finally {
         stream.close();
       }
@@ -208,22 +301,10 @@ describe('GET /api/notifications/stream', () => {
         });
         expect(invited.status).toBe(201);
 
-        const frame = await waitFor(
-          () => {
-            // Drop the last split element: if the buffered text doesn't yet
-            // end with '\n' (a decoder chunk boundary landing mid-frame),
-            // that last element is an in-flight partial line — e.g. a
-            // truncated `data: {"id":"5a1f` — and JSON.parse below would
-            // throw on it. Every element before the last was already
-            // followed by a newline when split() saw it, so it is complete.
-            const completeLines = stream.text().split('\n').slice(0, -1);
-            return Promise.resolve(completeLines.find((line) => line.startsWith('data: ')));
-          },
-          {
-            timeoutMs: 8_000,
-            description: 'an SSE data frame for the invitation notification',
-          },
-        );
+        const frame = await waitFor(() => Promise.resolve(firstDataFrame(stream)), {
+          timeoutMs: 8_000,
+          description: 'an SSE data frame for the invitation notification',
+        });
 
         const payload: unknown = JSON.parse(frame.slice('data: '.length));
         expect(payload).toMatchObject({ type: 'teacher_invitation' });
@@ -236,7 +317,11 @@ describe('GET /api/notifications/stream', () => {
         });
         expect(payload).toMatchObject({ id: row.id });
 
+        // Still open AFTER delivering — a distinct property from the
+        // liveness test's "still open after a hold". Both negatives, for the
+        // reason `openStream`'s docblock gives.
         expect(stream.ended).toBe(false);
+        expect(stream.error).toBeUndefined();
       } finally {
         stream.close();
       }
@@ -247,6 +332,80 @@ describe('GET /api/notifications/stream', () => {
     // the 8_000ms `waitFor` slack is illusory: vitest's own timeout would
     // kill the test first, every time, and report only "Test timed out in
     // 5000ms" instead of the `waitFor`'s descriptive message.
+    20_000,
+  );
+
+  it(
+    'delivers a notification only to the stream it belongs to',
+    async () => {
+      // Without this, the route's ownership predicate is unguarded:
+      // `const mine = true` passes every other test in this file, because
+      // each of them opens ONE stream and only ever asserts presence. What
+      // slips through is every notification's title and body — student
+      // names, class names — broadcast to every stream open on the box.
+      //
+      // Proving an absence needs the control-then-assert-absence idiom
+      // `tests/helpers.ts` documents on `waitFor`: a negative cannot be
+      // proven by polling for it, so wait for a CONTROL signal that would
+      // have arrived after the thing being asserted absent, then assert the
+      // absence. Here the control is the intended recipient's own frame.
+      //
+      // Why that ordering holds: `notificationBus` is a plain EventEmitter,
+      // so `emitNotification` calls every registered listener SYNCHRONOUSLY,
+      // in registration order, before it returns. The teacher's stream is
+      // opened first and so is registered first — a frame wrongly sent to it
+      // is written before the student's legitimate one. Once the student's
+      // frame has arrived, a wrongly-delivered copy is already present. The
+      // ordering is deterministic, not a race.
+      const teacherStream = await openStream(teacherToken);
+      const studentStream = await openStream(student2Token);
+      try {
+        expect(teacherStream.status).toBe(200);
+        expect(studentStream.status).toBe(200);
+
+        await waitFor(
+          () =>
+            Promise.resolve(
+              teacherStream.text().includes(': connected') &&
+                studentStream.text().includes(': connected'),
+            ),
+          { timeoutMs: 5_000, description: "both SSE ': connected' preambles" },
+        );
+
+        const invited = await fetch(`${BASE_URL}/api/students`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+          body: JSON.stringify({
+            firstName: 'Stream',
+            lastName: 'Other',
+            email: student2Email,
+          }),
+        });
+        expect(invited.status).toBe(201);
+
+        const frame = await waitFor(() => Promise.resolve(firstDataFrame(studentStream)), {
+          timeoutMs: 8_000,
+          description: "the second student's own SSE data frame (the control)",
+        });
+        const payload: unknown = JSON.parse(frame.slice('data: '.length));
+        expect(payload).toMatchObject({ type: 'teacher_invitation' });
+
+        // Before the absence: a teacher stream that had died would receive
+        // nothing either, and would satisfy the assertion below vacuously.
+        expect(teacherStream.ended).toBe(false);
+        expect(teacherStream.error).toBeUndefined();
+
+        // Raw text, not `firstDataFrame`: for an absence, a half-written
+        // frame is still a leaked frame.
+        expect(teacherStream.text()).not.toContain('data: ');
+      } finally {
+        teacherStream.close();
+        studentStream.close();
+      }
+    },
+    // Same reasoning as the delivery test above: 5_000ms preamble wait + the
+    // POST round trip + 8_000ms control wait is well past vitest's
+    // unconfigured 5000ms default.
     20_000,
   );
 
@@ -279,9 +438,8 @@ describe('GET /api/notifications/stream', () => {
 
     const stream = await openStream(token);
     try {
-      // `.soft` for the same reason as the sibling test above: both
-      // properties must be independently observable under a single
-      // mutation, otherwise the second is decoration.
+      // `.soft`, not a throwing `expect`, for the reason the sibling test
+      // above spells out.
       expect.soft(stream.status).toBe(401);
       expect.soft(stream.contentType ?? '').not.toContain('text/event-stream');
     } finally {
