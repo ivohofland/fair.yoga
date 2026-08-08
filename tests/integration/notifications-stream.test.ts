@@ -147,78 +147,104 @@ describe('GET /api/notifications/stream', () => {
     await prisma.$disconnect();
   });
 
-  it('stays open well past the millisecond-scale duration a trace reports for it', async () => {
-    const stream = await openStream(studentToken);
-    try {
-      expect(stream.status).toBe(200);
-      expect(stream.contentType).toContain('text/event-stream');
+  it(
+    'stays open well past the millisecond-scale duration a trace reports for it',
+    async () => {
+      const stream = await openStream(studentToken);
+      try {
+        expect(stream.status).toBe(200);
+        expect(stream.contentType).toContain('text/event-stream');
 
-      await waitFor(() => Promise.resolve(stream.text().includes(': connected')), {
-        timeoutMs: 5_000,
-        description: "the SSE ': connected' preamble",
-      });
+        await waitFor(() => Promise.resolve(stream.text().includes(': connected')), {
+          timeoutMs: 5_000,
+          description: "the SSE ': connected' preamble",
+        });
 
-      await new Promise((resolve) => setTimeout(resolve, HOLD_MS));
+        await new Promise((resolve) => setTimeout(resolve, HOLD_MS));
 
-      expect(stream.ended).toBe(false);
-    } finally {
-      stream.close();
-    }
-  });
+        expect(stream.ended).toBe(false);
+      } finally {
+        stream.close();
+      }
+    },
+    // Explicit, above the sum of this test's own budgets (5_000ms preamble
+    // wait + HOLD_MS's 1_000ms = 6_000ms), which already exceeds vitest's
+    // unconfigured 5000ms default (vitest.config.ts sets no `testTimeout`).
+    // Without this, a slow preamble would be killed by vitest's own generic
+    // "Test timed out in 5000ms" before the inner `waitFor` — which carries
+    // the actual diagnostic — ever gets to report its own message.
+    10_000,
+  );
 
-  it('delivers a notification created by a different route, and stays open after', async () => {
-    const stream = await openStream(studentToken);
-    try {
-      await waitFor(() => Promise.resolve(stream.text().includes(': connected')), {
-        timeoutMs: 5_000,
-        description: "the SSE ': connected' preamble",
-      });
+  it(
+    'delivers a notification created by a different route, and stays open after',
+    async () => {
+      const stream = await openStream(studentToken);
+      try {
+        expect(stream.status).toBe(200);
+        expect(stream.contentType).toContain('text/event-stream');
 
-      // A different route, in the same server process. `notificationBus` is a
-      // plain module singleton (the route's own `sseCounts` is on globalThis
-      // precisely because this codebase has been bitten by per-bundle module
-      // duplication), so "the emitter and the streamer share one bus" is a
-      // real property, not a given — and it is only ever exercised against
-      // the PRODUCTION bundle in CI.
-      const invited = await fetch(`${BASE_URL}/api/students`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
-        body: JSON.stringify({
-          firstName: 'Stream',
-          lastName: 'Student',
-          email: studentEmail,
-        }),
-      });
-      expect(invited.status).toBe(201);
+        await waitFor(() => Promise.resolve(stream.text().includes(': connected')), {
+          timeoutMs: 5_000,
+          description: "the SSE ': connected' preamble",
+        });
 
-      const frame = await waitFor(
-        () =>
-          Promise.resolve(
-            stream
-              .text()
-              .split('\n')
-              .find((line) => line.startsWith('data: ')),
-          ),
-        {
-          timeoutMs: 8_000,
-          description: 'an SSE data frame for the invitation notification',
-        },
-      );
+        // A different route, in the same server process. `notificationBus` is a
+        // plain module singleton (the route's own `sseCounts` is on globalThis
+        // precisely because this codebase has been bitten by per-bundle module
+        // duplication), so "the emitter and the streamer share one bus" is a
+        // real property, not a given — and it is only ever exercised against
+        // the PRODUCTION bundle in CI.
+        const invited = await fetch(`${BASE_URL}/api/students`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...cookie(teacherToken) },
+          body: JSON.stringify({
+            firstName: 'Stream',
+            lastName: 'Student',
+            email: studentEmail,
+          }),
+        });
+        expect(invited.status).toBe(201);
 
-      const payload: unknown = JSON.parse(frame.slice('data: '.length));
-      expect(payload).toMatchObject({ type: 'teacher_invitation' });
+        const frame = await waitFor(
+          () => {
+            // Drop the last split element: if the buffered text doesn't yet
+            // end with '\n' (a decoder chunk boundary landing mid-frame),
+            // that last element is an in-flight partial line — e.g. a
+            // truncated `data: {"id":"5a1f` — and JSON.parse below would
+            // throw on it. Every element before the last was already
+            // followed by a newline when split() saw it, so it is complete.
+            const completeLines = stream.text().split('\n').slice(0, -1);
+            return Promise.resolve(completeLines.find((line) => line.startsWith('data: ')));
+          },
+          {
+            timeoutMs: 8_000,
+            description: 'an SSE data frame for the invitation notification',
+          },
+        );
 
-      // The id ties the frame to the row AND to the code path: only
-      // `createNotification` emits a real id — `createBulkNotifications`
-      // emits the literal 'bulk'.
-      const row = await prisma.notification.findFirstOrThrow({
-        where: { recipientId: studentId, type: 'teacher_invitation' },
-      });
-      expect(payload).toMatchObject({ id: row.id });
+        const payload: unknown = JSON.parse(frame.slice('data: '.length));
+        expect(payload).toMatchObject({ type: 'teacher_invitation' });
 
-      expect(stream.ended).toBe(false);
-    } finally {
-      stream.close();
-    }
-  });
+        // The id ties the frame to the row AND to the code path: only
+        // `createNotification` emits a real id — `createBulkNotifications`
+        // emits the literal 'bulk'.
+        const row = await prisma.notification.findFirstOrThrow({
+          where: { recipientId: studentId, type: 'teacher_invitation' },
+        });
+        expect(payload).toMatchObject({ id: row.id });
+
+        expect(stream.ended).toBe(false);
+      } finally {
+        stream.close();
+      }
+    },
+    // Explicit, above the sum of this test's own budgets (5_000ms preamble
+    // wait + the POST round trip + 8_000ms data-frame wait ≈ 13_000ms+),
+    // which vitest's unconfigured 5000ms default cannot cover. Without this,
+    // the 8_000ms `waitFor` slack is illusory: vitest's own timeout would
+    // kill the test first, every time, and report only "Test timed out in
+    // 5000ms" instead of the `waitFor`'s descriptive message.
+    20_000,
+  );
 });
