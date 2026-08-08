@@ -47,8 +47,10 @@ interface OpenStream {
  * Reading in the background rather than awaiting the body is the whole point:
  * an SSE body never finishes, so `res.text()` would hang forever. Every caller
  * must `close()` in a `finally` — the route caps an account at 5 concurrent
- * streams (MAX_STREAMS_PER_USER), so a leaked connection would surface as a
- * 429 in a later test or a later run rather than here.
+ * streams (MAX_STREAMS_PER_USER), so a leaked connection would count against
+ * that cap for the rest of this run and could surface as a 429 in a later
+ * test here. It cannot carry over to a later run: `sseCounts` keys on
+ * `accountId`, and every run mints a fresh account.
  */
 async function openStream(token?: string): Promise<OpenStream> {
   const ac = new AbortController();
@@ -251,10 +253,15 @@ describe('GET /api/notifications/stream', () => {
   it('refuses a request with no session cookie', async () => {
     const stream = await openStream();
     try {
-      expect(stream.status).toBe(401);
+      // `.soft`, not a throwing `expect`: both properties below must be
+      // independently observable under a single mutation, otherwise the
+      // second is decoration. A throwing first assertion would abort before
+      // the second ever ran, so a broken content-type guard could hide
+      // behind a broken status guard indefinitely.
+      expect.soft(stream.status).toBe(401);
       // Not just the status: a regression that hands a live stream to an
       // anonymous caller must fail here even if it somehow kept a 401.
-      expect(stream.contentType ?? '').not.toContain('text/event-stream');
+      expect.soft(stream.contentType ?? '').not.toContain('text/event-stream');
     } finally {
       stream.close();
     }
@@ -272,8 +279,11 @@ describe('GET /api/notifications/stream', () => {
 
     const stream = await openStream(token);
     try {
-      expect(stream.status).toBe(401);
-      expect(stream.contentType ?? '').not.toContain('text/event-stream');
+      // `.soft` for the same reason as the sibling test above: both
+      // properties must be independently observable under a single
+      // mutation, otherwise the second is decoration.
+      expect.soft(stream.status).toBe(401);
+      expect.soft(stream.contentType ?? '').not.toContain('text/event-stream');
     } finally {
       stream.close();
     }

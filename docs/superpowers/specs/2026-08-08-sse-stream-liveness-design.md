@@ -230,10 +230,14 @@ fails rather than merely returning the wrong status.
 
 ### Proving each guard bites
 
-Three mutations, because T1a and T1b pin independent properties and a single mutation
-would not show they are independent. Each: break it, record the exact error text,
-restore, re-verify. The mutation **is** the red step — the code is already correct, so
-a newly written test passes immediately, and a test nobody has watched fail is not a
+Four mutations. T1a and T1b pin independent properties and a single mutation would
+not show they are independent — that is what Mutations 1–3 establish. A fourth,
+added during Task 1's fix round rather than planned up front, pins a property
+neither of the first two reaches: T1b's own trailing assertion, "still open *after
+delivering*" — distinct from T1a's "still open after an idle hold," and reached by
+no other mutation. Each mutation: break it, record the exact error text, restore,
+re-verify. The mutation **is** the red step — the code is already correct, so a
+newly written test passes immediately, and a test nobody has watched fail is not a
 guard.
 
 | # | Mutation | Required failure |
@@ -241,13 +245,17 @@ guard.
 | 1 | In `route.ts`, call `cleanup()` immediately after `send(': connected\n\n')` — exactly the regression #41 hypothesised | **Both** T1a and T1b fail |
 | 2 | `return;` as the first statement of `emitToBus` in `src/services/notifications.ts` | **T1b only.** T1a must still pass |
 | 3 | Bypass both auth guards in `route.ts` — take `getSessionToken`'s result unchecked and default `validateSession`'s null to a stub `SessionUser`, so an anonymous caller gets a genuine `200 text/event-stream` | T2 and T3 both fail, on status **and** content-type |
+| 4 | In `route.ts`'s bus handler, call `cleanup()` immediately after the `send(...)` that delivers a matching event | **T1b only**, on its trailing `stream.ended` assertion specifically — the data frame still arrives, since `send` runs before `cleanup`. T1a must still pass |
 
 Mutation 2 is the one that matters most, and its required *asymmetry* is the
 assertion: if both tests fail, the delivery test was riding on liveness; if neither
 does, it is not observing the bus at all. Mutation 3 is deliberately the
 "guards stopped standing between the caller and the stream" shape rather than
 "someone edited the `401` literal" — the latter is easy to write and tests almost
-nothing.
+nothing. Mutation 4 exists because Mutations 1 and 2 both fail T1b earlier, at the
+data-frame `waitFor` — neither ever reaches T1b's own trailing
+`expect(stream.ended).toBe(false)`, so without Mutation 4 that assertion had never
+been watched failing.
 
 ### One comment, no production code
 
@@ -279,7 +287,7 @@ the moment someone reads an SSE trace, which is exactly when #41 was filed.
 
 - `tests/integration/notifications-stream.test.ts` exists with T1a, T1b, T2 and T3 —
   four tests — and passes against the running app.
-- Each of the three mutations has been run, its exact failure output recorded in the
+- Each of the four mutations has been run, its exact failure output recorded in the
   PR body, and the source restored.
 - `npm run verify` is green.
 - `visual.spec.ts` carries the trace-measurement comment.

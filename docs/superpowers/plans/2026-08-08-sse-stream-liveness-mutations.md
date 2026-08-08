@@ -19,6 +19,16 @@ budgets (10_000ms for the liveness test, 20_000ms for the delivery test), so
 the inner `waitFor` is now the binding constraint and its message is what
 actually surfaces. The entries below are the re-recorded, corrected output.
 
+**Numbering note.** Mutation 4 appears *before* Mutation 3 below. Mutations 1
+and 2 were planned and run under Task 1; Mutation 3 was planned and run under
+Task 2. Mutation 4 was added later — during a whole-branch review's fix round,
+to prove the delivery test's trailing `stream.ended` assertion, a property
+neither Mutation 1 nor Mutation 2 reaches. It is numbered 4 because Mutation 3
+already existed by the time it was written, but it is filed here next to
+Mutations 1 and 2 because all three exercise the delivery test's own guards;
+the ordering in this file is by task and by what each mutation proves, not by
+mutation number.
+
 ## Mutation 1 — cleanup() immediately after ': connected'
 
 `src/app/api/notifications/stream/route.ts`, inserted after `send(': connected\n\n');`:
@@ -27,7 +37,13 @@ actually surfaces. The entries below are the re-recorded, corrected output.
 cleanup(); // MUTATION 1 — REMOVE
 ```
 
-Result: `2 failed` (matches the brief's top-level prediction). Verbatim output:
+Result: `2 failed` (matches the brief's top-level prediction). **Provenance:**
+recorded when the file held only these two tests (T2/T3 did not exist yet),
+so the summary below reads `(2 tests | 2 failed)`. Re-running today against
+the four-test file gives `2 failed | 2 passed` — the same liveness and
+delivery tests fail, and the two auth tests pass, unaffected: the 401 guards
+return before `ReadableStream.start()` runs, so no stream-body mutation can
+affect them. The conclusion is unchanged. Verbatim output:
 
 ```
  RUN  v4.1.10 /Users/ivohofland/Projects/fair.yoga
@@ -99,7 +115,13 @@ function emitToBus(input: CreateNotificationInput, id: string): void {
 ```
 
 Result: `1 failed | 1 passed`, as predicted — the liveness test passed and only
-the delivery test failed. Verbatim output:
+the delivery test failed. **Provenance:** recorded when the file held only
+these two tests, so the summary below reads `(2 tests | 1 failed)`.
+Re-running today against the four-test file gives `1 failed | 3 passed` — the
+delivery test still fails, and the liveness test plus the two auth tests
+pass, unaffected: this mutation silences `emitToBus` in
+`src/services/notifications.ts`, a file the 401 guards never reach. The
+conclusion is unchanged. Verbatim output:
 
 ```
  RUN  v4.1.10 /Users/ivohofland/Projects/fair.yoga
@@ -166,7 +188,14 @@ event"):
 Result: `1 failed | 1 passed`, as predicted — the liveness test passed, and
 the delivery test failed specifically on its trailing `stream.ended`
 assertion (not on the data-frame `waitFor`: the frame *did* arrive, since
-`send` runs before `cleanup` in the mutated handler). Verbatim output:
+`send` runs before `cleanup` in the mutated handler). **Provenance:** recorded
+when the file held only these two tests, so the summary below reads
+`(2 tests | 1 failed)`. Re-running today against the four-test file gives
+`1 failed | 3 passed` — the delivery test still fails on the same trailing
+assertion, and the liveness test plus the two auth tests pass, unaffected:
+this mutation is inside the bus-delivery handler, which runs only once a
+session has already passed the 401 guards. The conclusion is unchanged.
+Verbatim output:
 
 ```
  RUN  v4.1.10 /Users/ivohofland/Projects/fair.yoga
@@ -246,15 +275,26 @@ literal" but "the auth guards stopped standing between an anonymous request
 and the stream." An anonymous caller now receives a genuine
 `200 text/event-stream`.
 
-Result: `2 failed | 2 passed`, exactly as predicted — the two new auth tests
-fail, the liveness and delivery tests are unaffected. Verbatim output:
+**Re-recorded for the whole-branch review's finding F1.** Both auth tests'
+status and content-type assertions were changed from a throwing `expect` to
+`expect.soft` (see the test file), specifically so this mutation could show
+both assertions failing in the same run. Under the original throwing
+`expect`, the content-type line was never reached once the status assertion
+threw first — the recording below replaces the original, which showed only
+the status failure, even though three artifacts (the spec, the plan, and
+commit `49ccdc3`'s message) already claimed both had been observed failing.
+They had not; this run is that observation.
+
+Result: `2 failed | 2 passed` — the two new auth tests fail, each now on
+**both** its status and content-type assertions; the liveness and delivery
+tests are unaffected. Verbatim output:
 
 ```
  RUN  v4.1.10 /Users/ivohofland/Projects/fair.yoga
 
- ❯ |integration| tests/integration/notifications-stream.test.ts (4 tests | 2 failed) 1325ms
-     × refuses a request with no session cookie 9ms
-     × refuses an expired session 13ms
+ ❯ |integration| tests/integration/notifications-stream.test.ts (4 tests | 2 failed) 1368ms
+     × refuses a request with no session cookie 11ms
+     × refuses an expired session 16ms
 
 ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
 
@@ -267,15 +307,27 @@ AssertionError: expected 200 to be 401 // Object.is equality
 - 401
 + 200
 
- ❯ tests/integration/notifications-stream.test.ts:254:29
-    252|     const stream = await openStream();
-    253|     try {
-    254|       expect(stream.status).toBe(401);
-       |                             ^
-    255|       // Not just the status: a regression that hands a live stream to…
-    256|       // anonymous caller must fail here even if it somehow kept a 401.
+ ❯ tests/integration/notifications-stream.test.ts:261:34
+    259|       // the second ever ran, so a broken content-type guard could hide
+    260|       // behind a broken status guard indefinitely.
+    261|       expect.soft(stream.status).toBe(401);
+       |                                  ^
+    262|       // Not just the status: a regression that hands a live stream to…
+    263|       // anonymous caller must fail here even if it somehow kept a 401.
 
-⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  |integration| tests/integration/notifications-stream.test.ts > GET /api/notifications/stream > refuses a request with no session cookie
+AssertionError: expected 'text/event-stream' not to contain 'text/event-stream'
+ ❯ tests/integration/notifications-stream.test.ts:264:49
+    262|       // Not just the status: a regression that hands a live stream to…
+    263|       // anonymous caller must fail here even if it somehow kept a 401.
+    264|       expect.soft(stream.contentType ?? '').not.toContain('text/event-…
+       |                                                 ^
+    265|     } finally {
+    266|       stream.close();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
 
  FAIL  |integration| tests/integration/notifications-stream.test.ts > GET /api/notifications/stream > refuses an expired session
 AssertionError: expected 200 to be 401 // Object.is equality
@@ -286,34 +338,47 @@ AssertionError: expected 200 to be 401 // Object.is equality
 - 401
 + 200
 
- ❯ tests/integration/notifications-stream.test.ts:275:29
-    273|     const stream = await openStream(token);
-    274|     try {
-    275|       expect(stream.status).toBe(401);
-       |                             ^
-    276|       expect(stream.contentType ?? '').not.toContain('text/event-strea…
-    277|     } finally {
+ ❯ tests/integration/notifications-stream.test.ts:285:34
+    283|       // properties must be independently observable under a single
+    284|       // mutation, otherwise the second is decoration.
+    285|       expect.soft(stream.status).toBe(401);
+       |                                  ^
+    286|       expect.soft(stream.contentType ?? '').not.toContain('text/event-…
+    287|     } finally {
 
-⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  |integration| tests/integration/notifications-stream.test.ts > GET /api/notifications/stream > refuses an expired session
+AssertionError: expected 'text/event-stream' not to contain 'text/event-stream'
+ ❯ tests/integration/notifications-stream.test.ts:286:49
+    284|       // mutation, otherwise the second is decoration.
+    285|       expect.soft(stream.status).toBe(401);
+    286|       expect.soft(stream.contentType ?? '').not.toContain('text/event-…
+       |                                                 ^
+    287|     } finally {
+    288|       stream.close();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
 
 
  Test Files  1 failed (1)
       Tests  2 failed | 2 passed (4)
-   Start at  08:29:58
-   Duration  1.52s (transform 31ms, setup 0ms, import 79ms, tests 1.32s, environment 0ms)
+   Start at  08:53:55
+   Duration  1.58s (transform 36ms, setup 0ms, import 88ms, tests 1.37s, environment 0ms)
 ```
 
-Both failures land on `expect(stream.status).toBe(401)` receiving `200` —
-the mutation grants a real stream to the fabricated mutant session before
-the content-type assertion is ever reached, so that second assertion never
-gets to run in this recording (its purpose — catching a regression that
-somehow keeps the 401 while leaking a stream — is a distinct property this
-mutation doesn't happen to isolate; Mutation 3 removes the whole guard, so
-the status check alone already fails). The liveness and delivery tests
-(`refuses a request with no session cookie` and `refuses an expired
-session`'s siblings) are absent from the failures list — `2 passed` in the
-summary confirms both were unaffected by an anonymous caller's guard being
-bypassed.
+Both failing tests now fail on two independent assertions:
+`expect.soft(stream.status).toBe(401)` receives `200`, and
+`expect.soft(stream.contentType ?? '').not.toContain('text/event-stream')`
+fails because the mutation hands a genuine `text/event-stream` response to
+an anonymous caller — the content-type guard the status check alone cannot
+prove. Soft assertions are what make both visible in one run; a throwing
+`expect` would have stopped at the first, which is exactly what the original
+recording did. The liveness and delivery tests are absent from the failures
+list — `2 passed` in the summary confirms both were unaffected by an
+anonymous caller's guard being bypassed. (The two failures listed above are
+`refuses a request with no session cookie` and `refuses an expired
+session` — the auth tests themselves, not the liveness/delivery pair.)
 
 Restored via `git checkout src/app/api/notifications/stream/route.ts`;
 `git status --porcelain src/` was empty afterward; re-verified `4 passed`.

@@ -297,7 +297,7 @@ describe('GET /api/notifications/stream', () => {
 - [ ] **Step 3: Run the tests — they must PASS**
 
 Run: `npx vitest run --project integration tests/integration/notifications-stream.test.ts`
-Expected: `2 passed`. The code is already correct; a pass here proves nothing on its own, which is what Steps 4–9 are for.
+Expected: `2 passed`. The code is already correct; a pass here proves nothing on its own, which is what Steps 4–12 are for.
 
 If either test fails, **stop and report the output** — that would mean the measurement in the spec does not reproduce, which is a finding, not something to code around.
 
@@ -367,12 +367,62 @@ Run: `git checkout src/services/notifications.ts`
 Then: `npx vitest run --project integration tests/integration/notifications-stream.test.ts`
 Expected: `2 passed`.
 
-- [ ] **Step 10: Confirm no mutation survives**
+- [ ] **Step 10: Mutation 4 — bus handler closes the stream right after sending**
+
+**Added during Task 1's fix round, not in the original plan.** A whole-branch
+review found that Mutations 1 and 2 both fail T1b earlier than its own
+trailing assertion — at the data-frame `waitFor` — so neither ever reaches
+`expect(stream.ended).toBe(false)`. That assertion had never been watched
+failing. This mutation pins it: "still open *after delivering*," distinct
+from T1a's "still open after an idle hold," and reached by no other
+mutation.
+
+In `src/app/api/notifications/stream/route.ts`, find, inside the bus
+`handler`, the `send(...)` call it makes when an event is for this
+connection:
+
+```ts
+        if (mine) {
+          send(`data: ${JSON.stringify(event.notification)}\n\n`);
+        }
+```
+
+and insert one line right after it — a plausible real regression ("the
+stream closes after its first event"):
+
+```ts
+        if (mine) {
+          send(`data: ${JSON.stringify(event.notification)}\n\n`);
+          cleanup(); // MUTATION 4 — REMOVE
+        }
+```
+
+- [ ] **Step 11: Run — exactly ONE test must fail, on its trailing assertion**
+
+Run: `npx vitest run --project integration tests/integration/notifications-stream.test.ts`
+Expected: the delivery test fails, and specifically on
+`expect(stream.ended).toBe(false)` — not on the data-frame `waitFor`, since
+the frame still arrives (`send` runs before `cleanup` in the mutated
+handler). The liveness test must still pass, and, once Task 2's auth tests
+exist, so must they — this mutation touches only the bus-delivery handler,
+which the 401 guards never reach.
+
+Record the failure verbatim under `## Mutation 4 — bus handler closes the
+stream right after sending` in
+`docs/superpowers/plans/2026-08-08-sse-stream-liveness-mutations.md`.
+
+- [ ] **Step 12: Restore and re-verify**
+
+Run: `git checkout src/app/api/notifications/stream/route.ts`
+Then: `npx vitest run --project integration tests/integration/notifications-stream.test.ts`
+Expected: all tests present at the time pass.
+
+- [ ] **Step 13: Confirm no mutation survives**
 
 Run: `git status --porcelain src/`
 Expected: **no output.** If anything is listed, restore it before committing.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 14: Commit**
 
 ```bash
 git add tests/integration/notifications-stream.test.ts docs/superpowers/plans/2026-08-08-sse-stream-liveness-mutations.md
@@ -613,7 +663,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 | Spec acceptance | Task/step |
 |---|---|
 | Test file exists with T1–T3 and passes | T1 S2–S3, T2 S2–S3 |
-| Each mutation run, output recorded, source restored | T1 S4–S10, T2 S4–S7 |
+| Each mutation run, output recorded, source restored | T1 S4–S13, T2 S4–S7 |
 | `npm run verify` green | T3 S3 |
 | `visual.spec.ts` carries the trace comment | T3 S1 |
 | #41 closed with the measurement | Post-merge, after PR review — not a plan task |
@@ -623,6 +673,15 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 1. The spec describes T1 as one test with a delivery assertion and a still-open assertion. **Split into two `it` blocks.** As one test, mutation 2 would abort at the delivery `waitFor` and the still-open assertion would never execute — so the spec's own claim that mutation 2 "fails delivery only, still-open still passes" would have been unobservable. The split is what makes that claim checkable.
 2. The spec says to send `POST /api/students` with a `freshIp()` header. **Dropped.** `checkStudentWriteLimit` keys on `students:${teacherId}` (50/hour), not on IP; a fresh teacher per run means a fresh bucket, and the header would key nothing while falsely implying the endpoint is IP-limited.
+
+**A third correction, found after implementation started rather than while
+writing this plan.** Task 1's Steps 10–12 (Mutation 4, bus handler closes the
+stream right after sending) were added during a whole-branch review's fix
+round, not planned here originally. Mutations 1 and 2 both fail T1b earlier
+than its own trailing assertion — at the data-frame `waitFor` — so neither
+ever reaches `expect(stream.ended).toBe(false)`; that assertion had never
+been watched failing until Mutation 4. Recorded here rather than folded in
+silently, per this project's habit of making corrections visible.
 
 **Placeholder scan:** none. Every code step contains the literal text to write.
 

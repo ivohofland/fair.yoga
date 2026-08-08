@@ -158,16 +158,14 @@ async function freezeDates(page: Page): Promise<void> {
  * Effects run only after hydration, so the request doubles as a reliable
  * "hydration finished" signal. Must be armed before page.goto.
  *
- * `waitForResponse` resolves on response HEADERS, so this says the stream
- * OPENED — never that it stayed open. Do not read it, or a trace, as
- * evidence about the stream's lifetime: a trace's `time` for an SSE
- * response is the sum of its non-negative timing phases, and an unfinished
- * response has `receive: -1`, so `time` collapses to the wait for headers.
- * Measured on 2026-08-08 against a stream held provably open for 12s
- * (`readyState` 1 throughout, `requestfinished` never fired): the trace
- * reported `time: 18.7ms, wait: 18.7, receive: -1, bodySize: -1`, while
- * completed requests in the same trace all had `receive >= 0`. That 18.7
- * is what issue #41 read as the stream dying.
+ * `waitForResponse` resolves on response HEADERS, so this says the
+ * stream OPENED — never that it stayed open. Do not read it, or a
+ * trace, as evidence about the stream's lifetime: a trace's `time`
+ * for an unfinished SSE response is the wait for headers, nothing
+ * more (`receive: -1`). A stream held provably open for 12s reported
+ * `time: 18.7ms` — that number is what issue #41 read as the stream
+ * dying. Full measurement:
+ * docs/superpowers/specs/2026-08-08-sse-stream-liveness-design.md
  *
  * The property this cannot check is checked by
  * `tests/integration/notifications-stream.test.ts`.
