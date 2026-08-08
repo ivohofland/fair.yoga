@@ -76,6 +76,10 @@ highest-value step in the process, and it belongs before the brainstorm, not aft
 - #39 also claimed a restructure makes the `arr[i]!` pattern "disappear". It doesn't —
   indexing is still `T | undefined` under `noUncheckedIndexedAccess`. *Iterating* removes it.
 - #96 inherited a "byte-identical" claim from an earlier PR that was false.
+- #185 asked for a pre-merge gate. CI already ran every part of it, on the merge commit, as a
+  required check — two of the issue's three headline claims were false. **When an issue proposes
+  a check, read `.github/workflows/ci.yml` first and ask what already runs.** Building a second
+  copy of an existing gate is the expensive failure here, and it looks like progress.
 - #140's "the fix is one line" **did** hold. Check anyway, and say so when it holds.
 
 Sweep and classify the whole surface first. Write what you measured, not what the issue said.
@@ -111,6 +115,25 @@ degrading one without breaking a single test.
 Separately, **ask whether a verification could have failed at all.** On #138 a manual check
 ran at a UTC hour when both code paths rendered identically — a pass that proved nothing.
 `prisma/seed.ts` carries a comment warning about exactly that window.
+
+**Break it the way it actually broke.** A guard proved against a convenient mutation can still
+be blind to the realistic one. #185 added a test drawing 100 addresses to pin a helper's
+uniqueness, proved it by mutating the helper to a *constant*, and caught that — but the
+regression that had actually occurred was a *narrow address space*, and at 100 draws the test
+passed against that too. It took 100,000 draws to fail against it. Ask what the plausible
+regression is, not what mutation is easy to write.
+
+**A mutation must use a value the code under test cannot produce.** #185's mutation constant
+was `10.0.0.1`, which sat inside the range the helper itself generates. It poisoned a live
+rate-limit bucket for an hour and resurfaced later as a 429 in an unrelated test, on a run
+nobody connected to the mutation. Reach for a reserved or impossible value —
+`203.0.113.0/24` (RFC 5737) for addresses, and the same instinct elsewhere.
+
+**A diagnosis has to survive arithmetic, not just sound right.** The first explanation offered
+for that 429 was a 1-in-256 collision. It pointed the right way and the numbers did not work —
+the limit needed four coincident hits, not two. Deriving the real cause took measuring 8 runs.
+A mechanism that explains the *shape* of a symptom is a hypothesis; one whose numbers close is
+a diagnosis.
 
 ## 4. Correct a claim in every artifact, not just the one in front of you
 
