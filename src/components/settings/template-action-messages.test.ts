@@ -5,6 +5,7 @@ import {
   archiveStudioMessage,
   resolveTemplateConfirmation,
   resolveStudioConfirmation,
+  resumeStudioMessage,
 } from './template-action-messages';
 
 describe('pauseMessage', () => {
@@ -159,5 +160,40 @@ describe('resolveStudioConfirmation', () => {
   // reach, so captioning it would describe something that did not happen.
   it.each(['active', 'unarchived', 'unchanged'] as const)('says nothing for %s', (action) => {
     expect(resolveStudioConfirmation({ action })).toBeNull();
+  });
+});
+
+describe('resumeStudioMessage', () => {
+  it('reports the window when the resume filled it', () => {
+    expect(resumeStudioMessage(4, 4)).toBe('4 classes on your schedule.');
+  });
+
+  it('says nothing needed adding when the window was already full', () => {
+    expect(resumeStudioMessage(0, 4)).toBe(
+      '4 classes on your schedule. Nothing needed adding.',
+    );
+  });
+
+  it('reports a short window without claiming why it is short', () => {
+    expect(resumeStudioMessage(2, 2)).toBe('2 classes on your schedule.');
+  });
+
+  it('agrees in number at one class', () => {
+    expect(resumeStudioMessage(1, 1)).toBe('1 class on your schedule.');
+    expect(resumeStudioMessage(0, 1)).toBe(
+      '1 class on your schedule. Nothing needed adding.',
+    );
+  });
+
+  it('reports an empty window without naming a cause', () => {
+    expect(resumeStudioMessage(0, 0)).toBe('Nothing is scheduled from this template.');
+  });
+
+  // The guard on the argument order, which is delta-first to match
+  // `archiveStudioMessage` even though the sentence leads with the second
+  // argument. Two adjacent numbers are a transposition waiting to happen; these
+  // two calls must not agree, or the order stops being checkable at all.
+  it('distinguishes its arguments, so a transposed call site cannot pass', () => {
+    expect(resumeStudioMessage(0, 4)).not.toBe(resumeStudioMessage(4, 0));
   });
 });

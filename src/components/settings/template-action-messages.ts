@@ -9,10 +9,9 @@ import type { LastScheduledClass } from '@/services/class-template-lifecycle';
  * That used to be justified as "resuming needs no explanation", which was
  * true when resuming did nothing but flip a flag. It is not true any more:
  * since #94 resuming a studio template generates its four-week window on the
- * spot, as the class family already did. So resuming now does something a
- * teacher might reasonably want told about, and this seam says nothing.
- * Whether it should say something is a copy decision, deliberately not taken
- * here — only the stale justification is removed.
+ * spot, as the class family already did. `resumeStudioMessage` below is the
+ * studio side's answer to that (#119); the class family's resume still says
+ * nothing, tracked on #116.
  */
 export function pauseMessage(lastScheduled: LastScheduledClass | null): string {
   return lastScheduled
@@ -82,6 +81,46 @@ export function archiveStudioMessage(deleted: number, remaining: number): string
   }
 
   return `Deleted ${deleted} scheduled studio ${deletedWord}. ${remaining} ${classWord} still on the schedule — cancel individually if needed.`;
+}
+
+/**
+ * Confirmation shown after resuming a studio class template (#119).
+ *
+ * Reports what the window *holds*, not only what this click *added* —
+ * mirroring `archiveStudioMessage`'s `deleted`/`remaining` pair, because the
+ * same asymmetry applies: the teacher is on Settings and the effect lands on
+ * the Schedule tab, so a bare delta is unreadable without its baseline.
+ *
+ * Deliberately makes no "for the next 4 weeks" claim. `scheduled` is counted
+ * with `scheduledWhere(templateId, { gte: today })` — the same unbounded
+ * from-today predicate archive's `remaining` uses — so no upper boundary backs
+ * such a phrase. Bounding the count to the window would mean re-deriving the
+ * generator's date *set* as a *range*, and two boundaries that can disagree at
+ * the edges is the gt/gte defect this codebase has already paid for twice.
+ *
+ * The `scheduled === 0` branch names no cause. It is reachable exactly when
+ * every candidate date holds a cancelled row — `pause → archive → un-archive →
+ * resume` at its limit, the sequence #119 was filed about. That inference is
+ * sound today and rests on generator internals, so it stays out of the copy:
+ * occupancy is checkable by whoever reads the message, cause is not.
+ *
+ * Argument order is delta-first, matching `archiveStudioMessage(deleted,
+ * remaining)`, even though the sentence leads with the second argument. A
+ * transposed call site cannot pass this file's tests: `(0, 4)` reads "4 classes
+ * on your schedule. Nothing needed adding." where `(4, 0)` reads "Nothing is
+ * scheduled from this template."
+ *
+ * No verb after the count, for the reason `archiveMessage` records above:
+ * nothing left that can fall out of agreement with `classWord`.
+ */
+export function resumeStudioMessage(added: number, scheduled: number): string {
+  if (scheduled === 0) return 'Nothing is scheduled from this template.';
+
+  const classWord = scheduled === 1 ? 'class' : 'classes';
+
+  return added === 0
+    ? `${scheduled} ${classWord} on your schedule. Nothing needed adding.`
+    : `${scheduled} ${classWord} on your schedule.`;
 }
 
 /** The `data` payload of a successful PATCH on a class template. */
