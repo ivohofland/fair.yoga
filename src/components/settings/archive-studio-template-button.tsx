@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { readErrorMessage } from '@/lib/client-errors';
-import { resolveStudioConfirmation, type TemplateToggleResponse } from './template-action-messages';
+import { resolveStudioConfirmation, type StudioTemplateToggleResponse } from './template-action-messages';
 
 interface ArchiveStudioTemplateButtonProps {
   templateId: string;
@@ -26,7 +26,7 @@ export function ArchiveStudioTemplateButton({ templateId, isArchived }: ArchiveS
         method: 'PATCH',
       });
       if (res.ok) {
-        const { data } = (await res.json()) as { data: TemplateToggleResponse };
+        const { data } = (await res.json()) as { data: StudioTemplateToggleResponse };
         setMessage(resolveStudioConfirmation(data) ?? '');
         router.refresh();
       } else {

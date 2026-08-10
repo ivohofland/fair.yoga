@@ -155,10 +155,19 @@ describe('resolveStudioConfirmation', () => {
     );
   });
 
+  it('returns the resume message when the template was resumed', () => {
+    expect(resolveStudioConfirmation({ action: 'active', scheduled: 4, added: 4 })).toBe(
+      '4 classes on your schedule.',
+    );
+  });
+
   // Same reasoning as `resolveTemplateConfirmation`'s equivalent case:
   // `unchanged` is what a stale second tab and a retry-after-lost-response
-  // reach, so captioning it would describe something that did not happen.
-  it.each(['active', 'unarchived', 'unchanged'] as const)('says nothing for %s', (action) => {
+  // reach, so captioning it would describe something that did not happen. The
+  // studio resolver's `active` is deliberately absent here — it speaks now
+  // (#119), which is exactly why this `it.each` lists two actions where its
+  // class-family sibling lists three.
+  it.each(['unarchived', 'unchanged'] as const)('says nothing for %s', (action) => {
     expect(resolveStudioConfirmation({ action })).toBeNull();
   });
 });

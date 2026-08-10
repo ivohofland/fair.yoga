@@ -42,8 +42,13 @@ describe('ToggleStudioTemplateButton', () => {
     }),
   };
 
+  const activeOk = {
+    ok: true,
+    json: async () => ({ data: { action: 'active', scheduled: 4, added: 4 } }),
+  };
+
   it('sends state=active when the template is not active', async () => {
-    stubFetch({ ok: true, json: async () => ({ data: { action: 'active' } }) });
+    stubFetch(activeOk);
     render(<ToggleStudioTemplateButton templateId="tpl-1" isActive={false} />);
 
     fireEvent.click(screen.getByRole('button'));
@@ -85,6 +90,17 @@ describe('ToggleStudioTemplateButton', () => {
         'No new classes will be added to your schedule. The last one still scheduled is Friday, 12 Jun · 09:30.',
       ),
     ).toBeInTheDocument();
+    await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+  });
+
+  it('renders the resume confirmation, where it used to render nothing', async () => {
+    stubFetch(activeOk);
+    render(<ToggleStudioTemplateButton templateId="tpl-1" isActive={false} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    // The whole string. #119's whole content is that this seam was `''`.
+    expect(await screen.findByText('4 classes on your schedule.')).toBeInTheDocument();
     await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
   });
 

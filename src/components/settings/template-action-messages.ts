@@ -130,6 +130,28 @@ export type TemplateToggleResponse =
   | { action: 'active' | 'unarchived' | 'unchanged' };
 
 /**
+ * The `data` payload of a successful PATCH on a *studio* class template (#119).
+ *
+ * Split from `TemplateToggleResponse` rather than adding optional fields to its
+ * shared `active` arm. The optional-field version is the smaller diff and
+ * certifies nothing: the class family would carry `scheduled?`/`added?` it
+ * never sets, and nothing would notice if the studio route stopped setting
+ * them. That is the failure `resolveTemplateConfirmation` records below — #93's
+ * wrong-shape bug, where `archiveStudioMessage` had the wrong signature and the
+ * button silently discarded `remaining` — and the one #136's pins exist to
+ * prevent.
+ *
+ * `scheduled` and `added` are required, not optional. The route sends both on
+ * every `active` response; a type that allowed their absence would be
+ * describing a payload the server cannot produce.
+ */
+export type StudioTemplateToggleResponse =
+  | { action: 'paused'; lastScheduled: { date: string; startTime: string } | null }
+  | { action: 'archived'; deleted: number; remaining: number }
+  | { action: 'active'; scheduled: number; added: number }
+  | { action: 'unarchived' | 'unchanged' };
+
+/**
  * Decides whether the button says anything, and what.
  *
  * `null` means "say nothing", which is the correct answer for three of the five
@@ -153,15 +175,32 @@ export function resolveTemplateConfirmation(data: TemplateToggleResponse): strin
 
 /**
  * The studio sibling of `resolveTemplateConfirmation`. A separate function
- * rather than a parameter, because only the archive wording differs and
- * threading a message function through would put most of the English in the
- * caller — the two families are kept parallel-but-separate throughout.
+ * rather than a parameter: the two families now differ in the archive wording
+ * *and* in whether resuming says anything at all (#119), so threading a message
+ * function through would put most of the English in the caller — and they are
+ * kept parallel-but-separate throughout regardless.
+ *
+ * `null` is the right answer for two of the five actions here, not the class
+ * family's three: `active` speaks now. `unchanged` is the one that still must
+ * not — it is what a stale second tab and a retry-after-lost-response reach, so
+ * a confirmation there would describe something that did not happen.
+ *
+ * Nothing is said on **create**, and that is a decision rather than an
+ * oversight to be tidied up later. Creating a weekly template means "put this
+ * on my schedule weekly", so four classes appearing is the definition of the
+ * thing working, not a consequence needing disclosure — and both families'
+ * create forms navigate to their own settings list, where the teacher sees the
+ * template they just made. The class family settled the same question for its
+ * own POST: see
+ * `docs/superpowers/specs/2026-07-23-template-generate-on-create-design.md`
+ * ("Response shapes are unchanged … The front-end needs no changes").
  */
-export function resolveStudioConfirmation(data: TemplateToggleResponse): string | null {
+export function resolveStudioConfirmation(data: StudioTemplateToggleResponse): string | null {
   if (data.action === 'paused') {
     const last = data.lastScheduled;
     return pauseMessage(last ? { date: new Date(last.date), startTime: last.startTime } : null);
   }
   if (data.action === 'archived') return archiveStudioMessage(data.deleted, data.remaining);
+  if (data.action === 'active') return resumeStudioMessage(data.added, data.scheduled);
   return null;
 }
