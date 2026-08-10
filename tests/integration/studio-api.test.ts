@@ -19,6 +19,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { generateStudioInstancesForTemplate } from '@/services/studio-class-generator';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 
 const prisma = new PrismaClient();
@@ -142,6 +143,67 @@ describe('POST /api/studio-class-templates', () => {
 
     const { data } = (await res.json()) as { data: { id: string; teacherId: string } };
     expect(data.teacherId).toBe(ownerId);
+  });
+
+  /**
+   * #120. The class family's POST has generated inside its own transaction
+   * since #56; the studio POST was a plain `create`, so a new template sat
+   * `isActive: true` with an empty window until the next hourly sweep — up to
+   * 60 minutes during which the only control the teacher can see ("Resume
+   * studio class") answers `200 unchanged` and generates nothing.
+   */
+  it('fills the window, so a new template is not empty until the next sweep', async () => {
+    const res = await send('POST', ownerToken, '/api/studio-class-templates', {
+      classType: 'Generates On Create',
+      dayOfWeek: 2,
+      startTime: '11:00',
+      durationMinutes: 60,
+      location: 'Generating Studio',
+      hourlyRate: 55,
+    });
+    expect(res.status).toBe(201);
+
+    const { data } = (await res.json()) as { data: { id: string } };
+    expect(await prisma.studioClass.count({ where: { templateId: data.id } })).toBe(4);
+  });
+
+  /**
+   * Atomicity, ported from the class family's proven pattern in
+   * `class-templates-api.test.ts`: force a *deterministic* FK failure (P2003)
+   * rather than the P2002 the generator hedges and swallows, and assert the
+   * whole transaction rolled back. A template that persists while its window
+   * does not is the state #56 removed for the class family.
+   */
+  it('rolls the template back when generation fails', async () => {
+    const before = await prisma.studioClassTemplate.count({ where: { teacherId: ownerId } });
+
+    await expect(
+      prisma.$transaction(async (tx) => {
+        const created = await tx.studioClassTemplate.create({
+          data: {
+            teacherId: ownerId,
+            classType: 'Rolls Back',
+            dayOfWeek: 4,
+            startTime: '12:00',
+            durationMinutes: 60,
+            location: 'Doomed Studio',
+            hourlyRate: 40,
+          },
+          include: { teacher: { select: { defaultTimezone: true } } },
+        });
+        // A teacherId no Teacher row has: `studioClass.create` fails its FK
+        // check with P2003, which nothing in the generator catches.
+        await generateStudioInstancesForTemplate(tx, {
+          ...created,
+          teacherId: '00000000-0000-0000-0000-000000000000',
+        });
+      }),
+    ).rejects.toThrow();
+
+    expect(await prisma.studioClassTemplate.count({ where: { teacherId: ownerId } })).toBe(before);
+    expect(
+      await prisma.studioClass.count({ where: { location: 'Doomed Studio' } }),
+    ).toBe(0);
   });
 });
 

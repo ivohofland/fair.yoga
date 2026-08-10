@@ -72,8 +72,12 @@ type StudioTemplateWithTimezone = Prisma.StudioClassTemplateGetPayload<{
  * claim first, whatever that caller is: the invariant lives in the lock, not
  * in a roster of who currently holds it. `generateStudioClassInstances`'s
  * sweep and `pauseOrResumeStudioTemplate`'s resume (`studio-class-template-
- * lifecycle.ts`, #94) both do; a future caller that skips the claim and goes
- * straight to `generateStudioInstancesForTemplate` would reopen it.
+ * lifecycle.ts`, #94) both do. `api/studio-class-templates/route.ts`'s POST
+ * (#120) does not, and does not reopen the branch either: it generates from a
+ * row it created inside its own transaction, whose uuid nothing else can
+ * reference yet, so there is no concurrent insert to collide with — the same
+ * exemption the class family's POST has above. A caller that skips the claim
+ * against an *existing* row would reopen it.
  *
  * Returns the locked row rather than a boolean, so a caller cannot generate
  * from the snapshot its outer `findMany` read minutes earlier (#102). The raw
@@ -149,10 +153,12 @@ export async function generateStudioInstancesForTemplate(
     // Unreachable for any caller holding this template's claim: no other
     // insert for this templateId can land while the row lock is held, so
     // nothing is left to collide with `@@unique([templateId, date])`. In
-    // production, `generateStudioClassInstances`'s sweep and
-    // `pauseOrResumeStudioTemplate`'s resume both claim before calling this
-    // function. This file's own tests call it directly, with no claim, to
-    // exercise it on its own, and split along the same axis
+    // production there are three callers: `generateStudioClassInstances`'s
+    // sweep and `pauseOrResumeStudioTemplate`'s resume both claim before
+    // calling this function, and `api/studio-class-templates/route.ts`'s POST
+    // does not — its row is new inside its own transaction, so its hedge is
+    // dead rather than broken (#120). This file's own tests call it directly,
+    // with no claim, to exercise it on its own, and split along the same axis
     // `claimStudioTemplateForGeneration` documents for the class family,
     // though the other way round — that roster is one bare caller out of
     // three, this is one transactional caller out of six: all but one pass a

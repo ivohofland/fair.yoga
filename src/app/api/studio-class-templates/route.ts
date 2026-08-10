@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { respondOk, requireTeacher, parseBody, isErrorResponse, withErrorHandler } from '@/lib/api-utils';
 import { createStudioClassTemplateSchema } from '@/lib/schemas';
+import { generateStudioInstancesForTemplate } from '@/services/studio-class-generator';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -22,12 +23,33 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const parsed = await parseBody(request, createStudioClassTemplateSchema);
   if ('error' in parsed) return parsed.error;
 
-  const template = await prisma.studioClassTemplate.create({
-    data: {
-      teacherId: session.teacherId,
-      ...parsed.data,
-    },
+  // Atomic, matching `api/class-templates/route.ts` (#56): a generation failure
+  // rolls the template create back and propagates a 500, rather than leaving a
+  // template flagged live that produces no classes. Before this the studio POST
+  // was a plain `create`, so a new template sat `isActive: true` with an empty
+  // window until the hourly sweep — and the only control on screen ("Resume
+  // studio class") answers `200 unchanged` and generates nothing (#120).
+  //
+  // No claim is taken, and that is reasoning rather than omission: this row's
+  // uuid is brand-new inside this transaction, so nothing else can reference it
+  // yet and nothing can race the insert. The generator's P2002 hedge is
+  // therefore dead for this caller, not load-bearing — the same argument
+  // `claimStudioTemplateForGeneration` already makes for the class family's
+  // POST, and the reason it does not generalise to a caller that reuses this
+  // shape against an *existing* row.
+  const template = await prisma.$transaction(async (tx) => {
+    const created = await tx.studioClassTemplate.create({
+      data: {
+        teacherId: session.teacherId,
+        ...parsed.data,
+      },
+      include: { teacher: { select: { defaultTimezone: true } } },
+    });
+    await generateStudioInstancesForTemplate(tx, created);
+    return created;
   });
 
-  return respondOk(template, 201);
+  const { teacher, ...created } = template;
+  void teacher;
+  return respondOk(created, 201);
 });
