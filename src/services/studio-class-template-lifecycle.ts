@@ -42,9 +42,15 @@ import {
 
 /**
  * Outcome of a pause/resume PATCH. `paused` carries the furthest-out class
- * still on the schedule, for the pause confirmation; `active` and
- * `unchanged` report nothing beyond the template itself — mirroring
- * `PauseTemplateResult` in the class family.
+ * still on the schedule, for the pause confirmation; `active` carries what the
+ * window holds and what this resume added (#119); `unchanged` reports nothing
+ * beyond the template itself.
+ *
+ * `active` is where this stops mirroring `PauseTemplateResult` in the class
+ * family. `pauseOrResumeTemplate` (`class-template-lifecycle.ts`) generates on
+ * resume too and discards the count identically — deliberately not fixed
+ * alongside this, because that resume generates *without* taking the claim, so
+ * a count from it would be a count from a racy generation. Tracked on #116.
  */
 export type PauseStudioTemplateResult =
   | {
@@ -53,7 +59,22 @@ export type PauseStudioTemplateResult =
       template: StudioClassTemplate;
       lastScheduled: LastScheduledClass | null;
     }
-  | { ok: true; action: 'active'; template: StudioClassTemplate }
+  | {
+      ok: true;
+      action: 'active';
+      template: StudioClassTemplate;
+      /**
+       * Uncancelled studio classes for this template from the start of the
+       * teacher's today onward — the same predicate and boundary
+       * `ArchiveStudioTemplateResult`'s `remaining` uses, so the two numbers a
+       * teacher sees from archiving and from resuming mean the same thing.
+       * Unbounded above; see `resumeStudioMessage` for why the copy therefore
+       * promises no window.
+       */
+      scheduled: number;
+      /** Rows this resume created. `scheduled >= added`, always. */
+      added: number;
+    }
   | { ok: true; action: 'unchanged'; template: StudioClassTemplate }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
@@ -116,7 +137,12 @@ type ResumeTransactionOutcome =
   | { outcome: 'archived' }
   | { outcome: 'unchanged'; template: StudioClassTemplate }
   | { outcome: 'paused'; template: StudioClassTemplate }
-  | { outcome: 'active'; template: StudioClassTemplate };
+  | {
+      outcome: 'active';
+      template: StudioClassTemplate;
+      scheduled: number;
+      added: number;
+    };
 
 /**
  * Pause or resume generation. Deletes nothing: pausing means "no new classes",
@@ -339,11 +365,25 @@ export async function pauseOrResumeStudioTemplate(
       // `testTimeout` is 5000ms and fires first — a property of the harness,
       // not of Prisma or of this code. Do not read that 5s as the real
       // budget, and do not "correct" the 10s above to match it.
-      await generateStudioInstancesForTemplate(tx, claimed);
+      const added = await generateStudioInstancesForTemplate(tx, claimed);
+
+      // Same helper and same boundary as `archiveOrUnarchiveStudioTemplate`'s
+      // `remaining`, so archiving and resuming report on one basis. `gte`, not
+      // `gt`: this path deletes nothing, so there is no spare-today carve-out
+      // to mirror — a class dated today is on the schedule and must be counted.
+      //
+      // Inside the transaction, under the claim's `FOR UPDATE`, and from the
+      // *locked* row's timezone rather than the pre-transaction snapshot's —
+      // unlike the `paused` arm below, which derives its boundary after the
+      // transaction has committed and has no lock left to read under.
+      const today = startOfLocalDay(new Date(), claimed.teacher.defaultTimezone);
+      const scheduled = await tx.studioClass.count({
+        where: scheduledWhere(templateId, { gte: today }),
+      });
 
       const { teacher: _claimTeacher, ...bareClaimed } = claimed;
       void _claimTeacher;
-      return { outcome: 'active', template: bareClaimed };
+      return { outcome: 'active', template: bareClaimed, scheduled, added };
     },
     // The sweep's claim can hold this row for its own full 10s transaction;
     // Prisma's 5s default would abort us mid-wait.
@@ -368,7 +408,13 @@ export async function pauseOrResumeStudioTemplate(
     case 'unchanged':
       return { ok: true, action: 'unchanged', template: result.template };
     case 'active':
-      return { ok: true, action: 'active', template: result.template };
+      return {
+        ok: true,
+        action: 'active',
+        template: result.template,
+        scheduled: result.scheduled,
+        added: result.added,
+      };
     case 'paused':
       break;
     default: {
