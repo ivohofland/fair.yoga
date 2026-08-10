@@ -511,147 +511,6 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
   const DAY = 24 * 60 * 60 * 1000;
   const futureOn = (daysFromNow: number) => new Date(Date.now() + daysFromNow * DAY);
 
-  /**
-   * A `dayOfWeek` two days out, so a generated window never contains a class
-   * dated today. The archive's delete boundary is `gt: today` while the counts
-   * are `gte: today`, so a today-dated class changes the expected numbers in
-   * the two tests below — and whether one exists depends on what weekday the
-   * suite happens to run on. Pinned rather than left to chance: a test whose
-   * expectations shift with the calendar is the #138 shape, where a check
-   * passed because both code paths agreed at the hour it ran.
-   *
-   * Two days rather than one so a run that crosses local midnight cannot turn
-   * "tomorrow" into "today" mid-test.
-   */
-  const dayOfWeekNeverToday = () => {
-    const jsDay = new Date().getUTCDay(); // 0=Sun … 6=Sat
-    const schemaToday = (jsDay + 6) % 7; // schema: 0=Mon … 6=Sun
-    return (schemaToday + 2) % 7;
-  };
-
-  const makeTemplateOn = (classType: string, dayOfWeek: number) =>
-    prisma.studioClassTemplate.create({
-      data: {
-        teacherId,
-        classType,
-        dayOfWeek,
-        startTime: '09:30',
-        durationMinutes: 60,
-        location: 'Studio Loft',
-        hourlyRate: 45,
-      },
-    });
-
-  /**
-   * The case #119 exists for. `pause → archive → un-archive → resume` is the
-   * sequence #94's PR body named: the archive deliberately spares cancelled
-   * classes (they are income records), and the generator's existence probe has
-   * no `cancelledAt` filter, so those dates cannot be regenerated either —
-   * `@@unique([templateId, date])` makes it unrepresentable. The teacher
-   * therefore gets back fewer classes than the archive withdrew, and before
-   * this test nothing said so.
-   */
-  it('reports a window shortened by cancelled classes, not the four it withdrew', async () => {
-    const t = await makeTemplateOn('Resume After Archive', dayOfWeekNeverToday());
-    await prisma.studioClassTemplate.update({
-      where: { id: t.id },
-      data: { isActive: false },
-    });
-
-    const filled = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
-    expect(filled.ok).toBe(true);
-    if (!filled.ok) throw new Error('expected ok');
-    if (filled.action !== 'active') throw new Error('expected the active action');
-    expect(filled.added).toBe(4);
-    expect(filled.scheduled).toBe(4);
-
-    // Cancel the two furthest-out. `.slice(2)` rather than indexing, so this
-    // needs no non-null assertions under `noUncheckedIndexedAccess`.
-    const generated = await prisma.studioClass.findMany({
-      where: { templateId: t.id },
-      orderBy: { date: 'asc' },
-      select: { id: true },
-    });
-    expect(generated).toHaveLength(4);
-    const toCancel = generated.slice(2).map((c) => c.id);
-    expect(toCancel).toHaveLength(2);
-    await prisma.studioClass.updateMany({
-      where: { id: { in: toCancel } },
-      data: { cancelledAt: new Date() },
-    });
-
-    await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');
-    const archived = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived');
-    expect(archived.ok).toBe(true);
-    if (!archived.ok) throw new Error('expected ok');
-    if (archived.action !== 'archived') throw new Error('expected the archived action');
-    // Two of the four: the cancelled pair is spared.
-    expect(archived.deleted).toBe(2);
-    await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'unarchived');
-
-    const resumed = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
-
-    expect(resumed.ok).toBe(true);
-    if (!resumed.ok) throw new Error('expected ok');
-    if (resumed.action !== 'active') throw new Error('expected the active action');
-    // Two, not four. Only the dates the archive emptied come back.
-    expect(resumed.added).toBe(2);
-    expect(resumed.scheduled).toBe(2);
-    // `scheduled >= added` — every added row is future-dated and uncancelled,
-    // so it necessarily falls inside `scheduled`'s range.
-    expect(resumed.scheduled).toBeGreaterThanOrEqual(resumed.added);
-
-    // The spared pair still stands: the archive left them and the resume did
-    // not resurrect them.
-    expect(
-      await prisma.studioClass.count({
-        where: { templateId: t.id, cancelledAt: { not: null } },
-      }),
-    ).toBe(2);
-  });
-
-  /**
-   * The two filters inside `scheduled`'s count, each pinned by a row the other
-   * filter would not move: one dated exactly on the `gte` boundary, one
-   * cancelled and comfortably inside it. Both sit off the template's own
-   * weekday, so generation neither creates nor touches them.
-   */
-  it('counts a class dated today, and excludes a cancelled one', async () => {
-    const t = await makeTemplateOn('Resume Counts Boundary', dayOfWeekNeverToday());
-    await prisma.studioClassTemplate.update({
-      where: { id: t.id },
-      data: { isActive: false },
-    });
-
-    // Exactly on the `gte: today` boundary.
-    await makeClass(t.id, new Date(), '07:00');
-    // Inside the boundary but cancelled. `futureOn(1)` cannot collide with the
-    // generated window, which starts two days out by construction.
-    await prisma.studioClass.create({
-      data: {
-        teacherId,
-        templateId: t.id,
-        classType: 'Pause Rule',
-        date: futureOn(1),
-        startTime: '07:30',
-        durationMinutes: 60,
-        location: 'Studio Loft',
-        hourlyRate: 45,
-        cancelledAt: new Date(),
-      },
-    });
-
-    const resumed = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
-
-    expect(resumed.ok).toBe(true);
-    if (!resumed.ok) throw new Error('expected ok');
-    if (resumed.action !== 'active') throw new Error('expected the active action');
-    expect(resumed.added).toBe(4);
-    // Four generated plus today's = 5. The cancelled one does not count.
-    expect(resumed.scheduled).toBe(5);
-    expect(resumed.scheduled).toBeGreaterThanOrEqual(resumed.added);
-  });
-
   let teacherId: string;
   let accountId: string;
   let otherTeacherId: string;
@@ -684,6 +543,37 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
       },
     });
 
+  /**
+   * A `dayOfWeek` two days out, so a generated window never contains a class
+   * dated today. The archive's delete boundary is `gt: today` while the counts
+   * are `gte: today`, so a today-dated class changes the expected numbers in
+   * the two tests below — and whether one exists depends on what weekday the
+   * suite happens to run on. Pinned rather than left to chance: a test whose
+   * expectations shift with the calendar is the #138 shape, where a check
+   * passed because both code paths agreed at the hour it ran.
+   *
+   * Two days rather than one so a run that crosses local midnight cannot turn
+   * "tomorrow" into "today" mid-test.
+   */
+  const dayOfWeekNeverToday = () => {
+    const jsDay = new Date().getUTCDay(); // 0=Sun … 6=Sat
+    const schemaToday = (jsDay + 6) % 7; // schema: 0=Mon … 6=Sun
+    return (schemaToday + 2) % 7;
+  };
+
+  const makeTemplateOn = (classType: string, dayOfWeek: number) =>
+    prisma.studioClassTemplate.create({
+      data: {
+        teacherId,
+        classType,
+        dayOfWeek,
+        startTime: '09:30',
+        durationMinutes: 60,
+        location: 'Studio Loft',
+        hourlyRate: 45,
+      },
+    });
+
   beforeAll(async () => {
     await prisma.$connect();
     const seeded = await seedTeacher('pause');
@@ -694,7 +584,6 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     otherTeacherId = other.teacherId;
     otherAccountId = other.accountId;
   });
-
   afterAll(async () => {
     for (const [t, a] of [
       [teacherId, accountId],
@@ -864,6 +753,128 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     // only one of them cannot say the pair stayed together.
     const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
     expect(after.isActive).toBe(true);
+  });
+
+  /**
+   * The case #119 exists for. `pause → archive → un-archive → resume` is the
+   * sequence #94's PR body named: the archive deliberately spares cancelled
+   * classes (they are income records), and the generator's existence probe has
+   * no `cancelledAt` filter, so those dates cannot be regenerated either —
+   * `@@unique([templateId, date])` makes it unrepresentable. The teacher
+   * therefore gets back fewer classes than the archive withdrew, and before
+   * this test nothing said so.
+   */
+  it('reports a window shortened by cancelled classes, not the four it withdrew', async () => {
+    const t = await makeTemplateOn('Resume After Archive', dayOfWeekNeverToday());
+    await prisma.studioClassTemplate.update({
+      where: { id: t.id },
+      data: { isActive: false },
+    });
+
+    const filled = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
+    expect(filled.ok).toBe(true);
+    if (!filled.ok) throw new Error('expected ok');
+    if (filled.action !== 'active') throw new Error('expected the active action');
+    expect(filled.added).toBe(4);
+    expect(filled.scheduled).toBe(4);
+
+    // Cancel the two furthest-out. `.slice(2)` rather than indexing, so this
+    // needs no non-null assertions under `noUncheckedIndexedAccess`.
+    const generated = await prisma.studioClass.findMany({
+      where: { templateId: t.id },
+      orderBy: { date: 'asc' },
+      select: { id: true },
+    });
+    expect(generated).toHaveLength(4);
+    const toCancel = generated.slice(2).map((c) => c.id);
+    expect(toCancel).toHaveLength(2);
+    await prisma.studioClass.updateMany({
+      where: { id: { in: toCancel } },
+      data: { cancelledAt: new Date() },
+    });
+
+    await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');
+    const archived = await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'archived');
+    expect(archived.ok).toBe(true);
+    if (!archived.ok) throw new Error('expected ok');
+    if (archived.action !== 'archived') throw new Error('expected the archived action');
+    // Two of the four: the cancelled pair is spared.
+    //
+    // This line, not the `scheduled` assertion below, is where this test dies
+    // if `scheduledWhere` loses its `cancelledAt: null`. That helper feeds the
+    // archive's `deleteMany` as well as the resume's count, so the archive
+    // starts deleting the cancelled pair and fails here — `expected 4 to be 2`,
+    // measured, not assumed — before the resume is ever reached.
+    //
+    // So read this test as a pin on the whole `pause → archive → un-archive →
+    // resume` *sequence*, which is what #119 was filed about. What isolates the
+    // resume count's own `cancelledAt` filter is the boundary test below
+    // ("counts a class dated today, and excludes a cancelled one"): it calls no
+    // archive, so the same mutation surfaces there as `expected 6 to be 5`.
+    expect(archived.deleted).toBe(2);
+    await archiveOrUnarchiveStudioTemplate(prisma, t.id, teacherId, 'unarchived');
+
+    const resumed = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
+
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) throw new Error('expected ok');
+    if (resumed.action !== 'active') throw new Error('expected the active action');
+    // Two, not four. Only the dates the archive emptied come back.
+    expect(resumed.added).toBe(2);
+    expect(resumed.scheduled).toBe(2);
+    // `scheduled >= added` — every added row is future-dated and uncancelled,
+    // so it necessarily falls inside `scheduled`'s range.
+    expect(resumed.scheduled).toBeGreaterThanOrEqual(resumed.added);
+
+    // The spared pair still stands: the archive left them and the resume did
+    // not resurrect them.
+    expect(
+      await prisma.studioClass.count({
+        where: { templateId: t.id, cancelledAt: { not: null } },
+      }),
+    ).toBe(2);
+  });
+
+  /**
+   * The two filters inside `scheduled`'s count, each pinned by a row the other
+   * filter would not move: one dated exactly on the `gte` boundary, one
+   * cancelled and comfortably inside it. Both sit off the template's own
+   * weekday, so generation neither creates nor touches them.
+   */
+  it('counts a class dated today, and excludes a cancelled one', async () => {
+    const t = await makeTemplateOn('Resume Counts Boundary', dayOfWeekNeverToday());
+    await prisma.studioClassTemplate.update({
+      where: { id: t.id },
+      data: { isActive: false },
+    });
+
+    // Exactly on the `gte: today` boundary.
+    await makeClass(t.id, new Date(), '07:00');
+    // Inside the boundary but cancelled. `futureOn(1)` cannot collide with the
+    // generated window, which starts two days out by construction.
+    await prisma.studioClass.create({
+      data: {
+        teacherId,
+        templateId: t.id,
+        classType: 'Pause Rule',
+        date: futureOn(1),
+        startTime: '07:30',
+        durationMinutes: 60,
+        location: 'Studio Loft',
+        hourlyRate: 45,
+        cancelledAt: new Date(),
+      },
+    });
+
+    const resumed = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
+
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) throw new Error('expected ok');
+    if (resumed.action !== 'active') throw new Error('expected the active action');
+    expect(resumed.added).toBe(4);
+    // Four generated plus today's = 5. The cancelled one does not count.
+    expect(resumed.scheduled).toBe(5);
+    expect(resumed.scheduled).toBeGreaterThanOrEqual(resumed.added);
   });
 
   it('generates nothing when pausing', async () => {
