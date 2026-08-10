@@ -1,6 +1,10 @@
 services:
   db:
     image: postgres:16-alpine
+    # Come back after a Docker daemon restart or reboot, but respect a
+    # deliberate `docker compose stop` — otherwise the dev server's scheduler
+    # sweeps fail every minute until someone notices the container is gone.
+    restart: unless-stopped
     ports:
       - '5432:5432'
     environment:
