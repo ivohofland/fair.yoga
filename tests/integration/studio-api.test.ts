@@ -409,6 +409,30 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
   });
 });
 
+describe('PATCH /api/studio-class-templates/[id] — resume reporting', () => {
+  /**
+   * #119. The service produced this number and four layers dropped it, ending
+   * at `setMessage('')`. This is the wire half of that chain.
+   */
+  it('carries what the window holds and what the resume added', async () => {
+    const t = await makeTemplate(ownerId, 'Resume Reports');
+    await prisma.studioClassTemplate.update({
+      where: { id: t.id },
+      data: { isActive: false },
+    });
+
+    const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${t.id}?state=active`);
+    expect(res.status).toBe(200);
+
+    const { data } = (await res.json()) as {
+      data: { action: string; scheduled: number; added: number };
+    };
+    expect(data.action).toBe('active');
+    expect(data.added).toBe(4);
+    expect(data.scheduled).toBe(4);
+  });
+});
+
 describe('/api/studio-classes', () => {
   it('creates against the calling teacher', async () => {
     const res = await send('POST', ownerToken, '/api/studio-classes', {

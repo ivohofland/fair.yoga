@@ -101,9 +101,33 @@ export const PATCH = withErrorHandler(async (
   const result = await pauseOrResumeStudioTemplate(prisma, id, session.teacherId, state);
 
   if (result.ok) {
-    return result.action === 'paused'
-      ? respondOk({ ...result.template, action: result.action, lastScheduled: result.lastScheduled })
-      : respondOk({ ...result.template, action: result.action });
+    // A `switch` rather than the two-way ternary this replaces. `active` now
+    // carries fields of its own (#119), and the ternary's `else` limb would
+    // have dropped them silently while staying correct for `unchanged` — the
+    // same accidental-exhaustiveness failure `pauseOrResumeStudioTemplate`
+    // records for its own switch, where a new arm compiled clean and was
+    // answered with the wrong action.
+    switch (result.action) {
+      case 'paused':
+        return respondOk({
+          ...result.template,
+          action: result.action,
+          lastScheduled: result.lastScheduled,
+        });
+      case 'active':
+        return respondOk({
+          ...result.template,
+          action: result.action,
+          scheduled: result.scheduled,
+          added: result.added,
+        });
+      case 'unchanged':
+        return respondOk({ ...result.template, action: result.action });
+      default: {
+        const unhandled: never = result;
+        return unhandled;
+      }
+    }
   }
 
   if (result.reason === 'not_found') return respondError('Studio class template not found', 404);
