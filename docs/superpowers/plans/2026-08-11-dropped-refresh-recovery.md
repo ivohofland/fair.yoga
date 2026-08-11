@@ -1133,7 +1133,16 @@ Record the exact test totals per project. Green `verify` is a strong signal but 
 
 - [ ] **Step 3: Reconcile the test count arithmetically**
 
-Compute and record: previous `components` project total, plus tests added per file in Tasks 1–7, equals the new total. State it as arithmetic a reviewer can re-derive, e.g. `32 + 5 (mark-unpaid) + 3 (sign-out) + 4 (passkey) + 3 (invitation, net of 1 replaced) + 2 (privacy, net of 1 replaced) + 1 (template) + 1 (studio) = 51`. Do not assert a number you have not read off the runner.
+Compute and record: previous `components` project total, plus tests added per file in Tasks 1–7, equals the new total. State it as arithmetic a reviewer can re-derive.
+
+**Measured baseline on this branch's base commit (`e99ecd3`), read off the runner:**
+
+```
+components project:  32 files, 159 tests
+unit + components:   78 files, 776 passed + 2 todo = 778
+```
+
+**Count tests, not files.** `32` is the file count and `159` is the test count; conflating them is the exact error this project's process warns about. The reconciliation is against **159**, e.g. `159 + 5 (mark-unpaid) + 3 (sign-out) + 4 (passkey) + 2 net (invitation: 3 added, 1 replaced) + 1 net (privacy: 2 added, 1 replaced) + 1 (template) + 1 (studio) = 176`. Two of the seven files *replace* an existing test rather than adding one — count them net, and say so. Do not assert a number you have not read off the runner.
 
 - [ ] **Step 4: File the duplicate-endpoint issue**
 
