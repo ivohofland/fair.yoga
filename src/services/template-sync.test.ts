@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { syncTemplateInstances } from './template-sync';
+import { getNextOccurrences, generateInstancesForTemplate } from './class-generator';
+import { classStartInstant } from '@/lib/timezone';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -155,6 +157,77 @@ describe('syncTemplateInstances', () => {
     // Template inactive → no refill; only the untouchable rows remain.
     expect(after.length).toBe(2);
     expect(after.every((c) => c.settingsLocked || c.status === 'in_progress')).toBe(true);
+    // A paused template skips the refill entirely, so nothing was added and
+    // nothing was blocked — `regenerated` above is a delete count on its own.
+    expect(result.refilled).toBe(0);
+    expect(result.blockedByCancelled).toBe(0);
+    expect(result.slotTaken).toBe(0);
+  });
+
+  /**
+   * The reason `refilled` exists as a separate number from `regenerated`.
+   *
+   * `regenerated` counts instances DELETED from the old day. Until #196's slot
+   * pre-check, the refill created one row per deleted one, so rendering the
+   * delete count as "N rescheduled to the new day" happened to be true. It is
+   * not any more: if the teacher already has a class at that time on the new
+   * day, every candidate date is `slot_taken` and the refill creates nothing —
+   * four classes destroyed, four waitlists cascaded, and the old message said
+   * they had moved.
+   */
+  it('reports deletes and refills separately when the new day is already occupied', async () => {
+    // Self-contained: the preceding test leaves this template with no mutable
+    // instances, so this one generates its own window before moving it. A test
+    // that depends on a sibling's leftovers is how the first draft of this
+    // asserted `regenerated > 0` against a zero.
+    await prisma.classTemplate.update({ where: { id: templateId }, data: { isActive: true } });
+    const seed = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id: templateId },
+      include: { teacher: { select: { defaultTimezone: true } } },
+    });
+    const seeded = await generateInstancesForTemplate(prisma, seed);
+    expect(seeded.created).toBeGreaterThan(0);
+
+    const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id: templateId } });
+    const newDay = (template.dayOfWeek + 2) % 7;
+
+    // Occupy every candidate slot on the new day with classes of no template.
+    const targets = getNextOccurrences(newDay, new Date(), 5)
+      .filter((d) => classStartInstant(d, template.startTime, 'UTC') > new Date())
+      .slice(0, 4);
+    for (const date of targets) {
+      await prisma.class.create({
+        data: {
+          teacherId: template.teacherId,
+          teacherRoomId: template.teacherRoomId,
+          templateId: null,
+          classType: 'Occupier',
+          date,
+          startTime: template.startTime,
+          durationMinutes: 60,
+          roomCost: 10,
+          minRate: 5,
+          targetRate: 10,
+          minStudents: 1,
+          maxStudents: 5,
+          cancelDeadline: 'HOURS_24',
+          autoCancelCheck: 'HOURS_2',
+          status: 'open',
+        },
+      });
+    }
+
+    await prisma.classTemplate.update({
+      where: { id: templateId },
+      data: { dayOfWeek: newDay, isActive: true },
+    });
+
+    const result = await syncTemplateInstances(prisma, templateId);
+
+    expect(result.regenerated).toBeGreaterThan(0); // deleted from the old day
+    expect(result.refilled).toBe(0); // and none created on the new one
+    expect(result.slotTaken).toBe(targets.length);
+    expect(result.blockedByCancelled).toBe(0);
   });
 });
 

@@ -614,6 +614,55 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     expect(await prisma.studioClass.count({ where: { templateId: id } })).toBe(4);
   });
 
+  /**
+   * The studio twin of the class family's log test, and a coverage regression
+   * this branch caused before it was noticed: `main` carried a
+   * `vi.spyOn(log, 'warn')` test here for the P2002 hedge, which was deleted
+   * with the hedge and replaced with nothing. So the family whose issue (#192)
+   * is entirely about operator visibility had no assertion on its log line at
+   * all, while the class family had one.
+   *
+   * The silence half is the load-bearing one: it is what keeps the noise answer
+   * true on an hourly sweep, where every steady-state template would otherwise
+   * emit a line per run forever.
+   */
+  it('logs blocked dates once per call, and stays silent for plain idempotency', async () => {
+    const now = new Date();
+    const id = await makeTemplate(eastTeacherId, 3, '11:15');
+    const tpl = await withZone(id);
+    const spy = vi.spyOn(log, 'warn').mockImplementation(() => log);
+
+    try {
+      await generateStudioInstancesForTemplate(prisma, tpl, now);
+      expect(spy).not.toHaveBeenCalled(); // four fresh creates — nothing to say
+
+      await generateStudioInstancesForTemplate(prisma, tpl, now);
+      expect(spy).not.toHaveBeenCalled(); // four already_generated — the noise rule
+
+      const rows = await prisma.studioClass.findMany({
+        where: { templateId: id },
+        orderBy: { date: 'asc' },
+        select: { id: true, date: true },
+      });
+      await prisma.studioClass.update({
+        where: { id: rows[1]!.id },
+        data: { cancelledAt: new Date() },
+      });
+
+      await generateStudioInstancesForTemplate(prisma, tpl, now);
+      expect(spy).toHaveBeenCalledTimes(1);
+      // The date, not only the reason: an operator greps this line to find
+      // which date is short, and a `new Date()` here instead of `s.date` would
+      // name today on every run.
+      expect(spy.mock.calls[0]![0]).toMatchObject({
+        templateId: id,
+        skipped: [{ date: rows[1]!.date.toISOString().slice(0, 10), reason: 'blocked_by_cancelled' }],
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('names a cancelled own instance as blocked_by_cancelled', async () => {
     const now = new Date();
     const id = await makeTemplate(eastTeacherId, 3, '09:00');
