@@ -414,7 +414,7 @@ git commit -m "fix: the slot key a teacher cannot violate twice, now in Postgres
 
 ## Task 2: Make #204's future-tense claims true
 
-PR #204 was written against an index that did not exist. Five comments say so, and each becomes false the moment Task 1 lands. This is its own task because "correct the claim in every artifact" is a deliverable here, not a tidy-up — a comment asserting a missing backstop is what stops the next reader trusting the one that now exists.
+PR #204 was written against an index that did not exist. Four comments say so, and each becomes false the moment Task 1 lands. This is its own task because "correct the claim in every artifact" is a deliverable here, not a tidy-up — a comment asserting a missing backstop is what stops the next reader trusting the one that now exists.
 
 **Files:**
 - Modify: `src/services/class-generator.ts:86`, `:88-90`, `:160-163`
@@ -439,7 +439,7 @@ At `class-generator.ts:86`, `the partial index #196 *will* add` becomes `the par
  *     commit — so a slot race now costs its own date and nothing else.
 ```
 
-At `:160-163`, `no such index exists yet, so this pre-check is currently the only thing enforcing it` becomes `the index backs it since #196; this pre-check is what names the reason, not what enforces it`. Make the equivalent two edits in `studio-class-generator.ts`, naming `StudioClass_teacher_slot_unique` and its `WHERE "cancelledAt" IS NULL` predicate.
+At `:160-163`, `no such index exists yet, so this pre-check is currently the only thing enforcing it` becomes `the index backs it since #196; this pre-check is what names the reason, not what enforces it`. Make the equivalent edit at `studio-class-generator.ts:165`, naming `StudioClass_teacher_slot_unique` and its `WHERE "cancelledAt" IS NULL` predicate. (This originally said "two edits"; `studio-class-generator.ts:107` was the presumed second and needed none — the same miscount recorded in Step 1.)
 
 - [ ] **Step 3: Verify nothing else went stale**
 
