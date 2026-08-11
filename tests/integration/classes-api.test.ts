@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { formatDayHeader } from '@/lib/format';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -14,6 +15,11 @@ let roomId: string;
 let teacherRoomId: string;
 let classId: string;
 let cancelClassId: string;
+
+// #200. A second cancel fixture, this one WITH a recipient — the notice body
+// is what this pins, and the sibling fixture above deliberately has nobody to
+// notify.
+let noticeClassId: string;
 
 // Dedicated fixtures for the PUT /api/classes/[id] economic-lock tests —
 // kept separate from classId/cancelClassId above, which the existing tests
@@ -148,14 +154,40 @@ beforeAll(async () => {
       `Fixture setup: expected the locking registration to succeed (201), got ${lockRes.status}`,
     );
   }
+
+  // `open`, not the file's `draft` default: `registrations/route.ts:126` sets
+  // `allowedStatuses = isTeacher ? ['open','in_progress'] : ['open']`, so a
+  // student booking a draft class gets a ClassStatusError. Registered over HTTP
+  // by the same student the lock fixture uses — `Registration` is unique on
+  // (classId, studentId), so a second class is fine, and reusing the student
+  // avoids a second account/session/teardown chain.
+  const noticeCls = await makeClass('Classes API Notice', 'open');
+  noticeClassId = noticeCls.id;
+
+  const noticeRes = await fetch(`${BASE_URL}/api/registrations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...cookie(lockStudentToken) },
+    body: JSON.stringify({ classId: noticeClassId }),
+  });
+  if (noticeRes.status !== 201) {
+    throw new Error(
+      `Fixture setup: expected the notice registration to succeed (201), got ${noticeRes.status}`,
+    );
+  }
 });
 
 afterAll(async () => {
   // registration -> class, per the lock fixtures' FK direction.
-  if (lockedClassId) {
-    await prisma.registration.deleteMany({ where: { classId: lockedClassId } });
+  for (const id of [lockedClassId, noticeClassId].filter(Boolean)) {
+    await prisma.registration.deleteMany({ where: { classId: id } });
   }
-  const allClassIds = [classId, cancelClassId, economicsClassId, lockedClassId].filter(Boolean);
+  const allClassIds = [
+    classId,
+    cancelClassId,
+    economicsClassId,
+    lockedClassId,
+    noticeClassId,
+  ].filter(Boolean);
   if (allClassIds.length > 0) {
     await prisma.notification.deleteMany({ where: { relatedClassId: { in: allClassIds } } });
     await prisma.class.deleteMany({ where: { id: { in: allClassIds } } });
@@ -299,6 +331,39 @@ describe('POST /api/classes/[id]/transition', () => {
 
     const cancelled = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId } });
     expect(cancelled.status).toBe('cancelled');
+  });
+
+  /**
+   * #200. The body is the only thing that identifies the class to the student.
+   * `studentNotificationHref` (`lib/notification-links.ts`) returns a URL only
+   * while the class is `open`, so a cancelled class's inbox row is inert even
+   * though `relatedClassId` is set — and if the recipient had been on the
+   * waitlist, this same transaction closes their entry to `removed`, dropping
+   * the class off `/bookings` too.
+   *
+   * Reachable only over HTTP: the transaction, the recipient fan-out and the
+   * body string all live inline in the route handler, so there is no service
+   * to call from a unit test.
+   */
+  it('names the class in the cancellation notice it sends', async () => {
+    const res = await transition(ownerToken, noticeClassId, { status: 'cancelled' });
+    expect(res.status).toBe(200);
+
+    const note = await prisma.notification.findFirstOrThrow({
+      where: {
+        recipientType: 'student',
+        recipientId: lockStudentId,
+        relatedClassId: noticeClassId,
+        type: 'class_cancelled',
+      },
+    });
+
+    // Derived from the fixture, not hard-coded: `makeClass` dates every class
+    // 2099-06-01 at 09:00, and `formatDayHeader` is the renderer the other
+    // three cancellation bodies use.
+    expect(note.body).toContain('Classes API Notice');
+    expect(note.body).toContain(formatDayHeader(new Date('2099-06-01')));
+    expect(note.body).toContain('09:00');
   });
 
   it('409s cancelling an already-cancelled class', async () => {

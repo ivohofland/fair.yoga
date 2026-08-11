@@ -10,6 +10,7 @@ import {
 } from '@/lib/api-utils';
 import { transitionClass } from '@/services/class-lifecycle';
 import { transitionClassSchema } from '@/lib/schemas';
+import { formatDayHeader } from '@/lib/format';
 import { createBulkNotifications, type CreateNotificationInput } from '@/services/notifications';
 
 export const POST = withErrorHandler(async (
@@ -55,12 +56,19 @@ export const POST = withErrorHandler(async (
         });
       }
 
+      // Named in full — type, day, time — like the three service paths #112
+      // fixed. `relatedClassId` below is set and still does not help: this
+      // transaction has just moved the class to `cancelled`, and
+      // `studentNotificationHref` (`lib/notification-links.ts`) links only an
+      // `open` class, deliberately, so the inbox row is inert. A waitlisted
+      // recipient has even less — their entry was closed to `removed` a few
+      // lines above, which drops the class off `/bookings`.
       const notifications: CreateNotificationInput[] = [...registrations, ...waiting].map((r) => ({
         recipientType: 'student' as const,
         recipientId: r.studentId,
         type: 'class_cancelled' as const,
         title: 'Class cancelled',
-        body: `${cls.classType} has been cancelled by your teacher.`,
+        body: `${cls.classType} class on ${formatDayHeader(cls.date)} at ${cls.startTime} has been cancelled by your teacher.`,
         relatedClassId: id,
       }));
       if (notifications.length > 0) {
