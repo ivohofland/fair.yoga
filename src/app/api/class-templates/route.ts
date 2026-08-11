@@ -73,8 +73,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // creating a second template on a day and time they already occupy gets a
   // live template whose every candidate date is taken. That used to be
   // impossible, so 201 with no counts was a complete answer; it no longer is.
-  // Same four fields the PATCH `active` arm carries, so the create form can say
-  // the same sentence the resume flow does.
+  // The same counts the PATCH `active` arm carries. **The create form does not
+  // render them yet** — it calls `router.push` on 201 and reads nothing from
+  // this body (`template-form.tsx`), so today these fields serve the operator
+  // via the generator's `log.warn` and any client that asks. Emitting them is
+  // what makes the teacher-facing half a copy change rather than a plumbing
+  // one; see the note at that push.
   return respondOk(
     {
       ...created,

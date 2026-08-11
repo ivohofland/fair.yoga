@@ -234,8 +234,14 @@ async function dispatch(notification: CreateNotification): Promise<void> {
 Runs hourly as part of the in-process scheduler (see Background Jobs below). For each active, unarchived ClassTemplate it tops up the rolling 4-week window, and reports every candidate date it could **not** fill along with the reason:
 
 ```typescript
-// generateInstancesForTemplate — one template, one window
-const dates = nextFourOccurrences(template);
+// generateInstancesForTemplate — one template, one window.
+// Real identifiers, bodies elided: `dates` and `free` are the actual locals,
+// `getNextOccurrences` and `classStartInstant` the actual helpers. A sketch
+// that invents names is a sketch nobody can grep, which is how the loop this
+// replaced went on being documented after it was gone.
+const dates = getNextOccurrences(template.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
+  .filter((d) => classStartInstant(d, template.startTime, tz) > startDate)
+  .slice(0, DEFAULT_WEEKS);
 
 // ONE query classifies every candidate: already generated, blocked by a
 // cancelled instance of this template, or the teacher's slot taken by another
@@ -247,8 +253,9 @@ const occupants = await db.class.findMany({
 // ONE insert. `skipDuplicates` compiles to a bare `ON CONFLICT DO NOTHING`,
 // so a date lost to a concurrent insert costs that date and nothing else.
 const inserted = await db.class.createManyAndReturn({
-  data: freeDates.map(rowFor),
+  data: free.map((date) => ({ /* template's fields + date */ })),
   skipDuplicates: true,
+  select: { date: true },
 });
 
 return { created: inserted.length, skipped }; // GenerationResult

@@ -271,6 +271,15 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         // classes. The push below normally unmounts this form; when it does not
         // commit, `created` is what stops a populated, re-enabled form inviting
         // the click that duplicates the teacher's whole schedule.
+        // Known gap, recorded here because this is where it is fixed. The POST
+        // now returns `added`, `blockedByCancelled` and `slotTaken`, and this
+        // branch reads none of them: a teacher creating a template onto a day
+        // and time they already occupy gets a live template, an empty window,
+        // and a silent redirect to the list. The operator learns of it from the
+        // generator's `log.warn`; the teacher learns of it by noticing no
+        // classes. Surfacing it means either not navigating on a short window
+        // or carrying the message to the list — a UX decision, not a wiring
+        // one, which is why the data is here and the sentence is not.
         setCreated(true);
         router.push(RECURRING_LIST_PATH);
       } else {

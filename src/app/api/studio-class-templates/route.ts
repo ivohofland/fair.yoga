@@ -51,9 +51,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const { teacher, ...created } = template.created;
   void teacher;
 
-  // Same four fields the PATCH `active` arm carries — see the class family's
+  // The same counts the PATCH `active` arm carries — see the class family's
   // POST for why 201 with no counts stopped being a complete answer once the
-  // slot pre-check could decline every candidate date.
+  // slot pre-check could decline every candidate date, and for the note that no
+  // create form renders them yet.
   return respondOk(
     {
       ...created,
