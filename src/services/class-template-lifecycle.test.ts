@@ -7,6 +7,7 @@ import {
   pauseOrResumeTemplate,
 } from './class-template-lifecycle';
 import { startOfLocalDay } from '@/lib/timezone';
+import { formatDateShort } from '@/lib/format';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -326,6 +327,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   let roomId: string;
   let teacherRoomId: string;
   let studentId: string;
+  let waiterId: string;
   let otherTeacherId: string;
   let otherAccountId: string;
   let otherRoomId: string;
@@ -354,14 +356,14 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   // block's makeTemplate does.
   const makeClass = async (
     templateId: string,
-    opts: { date: Date; status?: 'draft' | 'open' | 'cancelled' },
+    opts: { date: Date; status?: 'draft' | 'open' | 'cancelled'; classType?: string },
   ) =>
     prisma.class.create({
       data: {
         teacherId,
         teacherRoomId,
         templateId,
-        classType: 'Archive Rule',
+        classType: opts.classType ?? 'Archive Rule',
         date: opts.date,
         startTime: '09:00',
         durationMinutes: 60,
@@ -416,10 +418,28 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       },
     });
     studentId = student.id;
+
+    // #112. A second student who only ever waits — the spared-class test needs
+    // a registrant and a waiter who are different people, or "the waiter was
+    // not notified" is indistinguishable from "the registrant was not".
+    const waiter = await prisma.student.create({
+      data: {
+        firstName: 'Archive',
+        lastName: 'Waiter',
+        email: `archive-waiter-${uniqueSuffix}@test.local`,
+      },
+    });
+    waiterId = waiter.id;
   });
 
   afterAll(async () => {
-    await prisma.student.delete({ where: { id: studentId } });
+    // Archive notifications outlive their class: `Notification.relatedClass`
+    // is `onDelete: SetNull` (`schema.prisma:563`), so the class deletes below
+    // do NOT reap them. Delete by recipient, before the students go.
+    await prisma.notification.deleteMany({ where: { recipientId: { in: [studentId, waiterId] } } });
+    await prisma.waitlistEntry.deleteMany({ where: { studentId: { in: [studentId, waiterId] } } });
+    await prisma.registration.deleteMany({ where: { studentId: { in: [studentId, waiterId] } } });
+    await prisma.student.deleteMany({ where: { id: { in: [studentId, waiterId] } } });
     for (const [t, r, a] of [
       [teacherId, roomId, accountId],
       [otherTeacherId, otherRoomId, otherAccountId],
@@ -540,6 +560,68 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     await prisma.class.delete({ where: { id: c.id } });
 
     expect(await prisma.waitlistEntry.count({ where: { id: entry.id } })).toBe(0);
+  });
+
+  /**
+   * #112. The archive's recipients are destroyed by the same statement that
+   * makes them recipients, so the notification has to be built before the
+   * delete — and `Notification.relatedClass` being `SetNull` means it survives
+   * with a null link. The body therefore has to name the class itself; a
+   * student opening their inbox has nothing else left to identify it by.
+   */
+  it('tells a waiting student when archiving withdraws their class', async () => {
+    const t = await makeTemplate('Withdraw Notice');
+    const c = await makeClass(t.id, { date: future(), classType: 'Withdraw Notice' });
+    await register(c.id, studentId, 'cancelled'); // not charged — class is deletable
+    await prisma.waitlistEntry.create({
+      data: { classId: c.id, studentId: waiterId, position: 1, status: 'waiting' },
+    });
+
+    const result = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'));
+    expect(result.deleted).toBe(1);
+    expect(await prisma.class.count({ where: { id: c.id } })).toBe(0);
+
+    const note = await prisma.notification.findFirstOrThrow({
+      where: { recipientType: 'student', recipientId: waiterId, type: 'class_cancelled' },
+    });
+    // The link is gone with the class; the body is the only durable record,
+    // so it has to carry all three identifying fields. Derived from the
+    // fixture rather than hard-coded — a literal '16 Aug' would rot in five
+    // days, since `future()` is relative to the run.
+    expect(note.relatedClassId).toBeNull();
+    expect(note.body).toContain('Withdraw Notice');
+    expect(note.body).toContain(formatDateShort(c.date));
+    expect(note.body).toContain('09:00'); // makeClass's startTime
+
+    // The spared test below counts notifications for `waiterId` and expects
+    // zero; this test's notice must not leak into it.
+    await prisma.notification.deleteMany({ where: { recipientId: waiterId } });
+  });
+
+  /**
+   * The complement, and the more important of the two: a class the delete
+   * SPARED must not generate a notice. Without this, notifying straight from
+   * the candidate read passes the test above and quietly lies to every student
+   * whose class survived.
+   */
+  it('does not tell a waiting student when the class was spared', async () => {
+    const t = await makeTemplate('Spared Notice');
+    const c = await makeClass(t.id, { date: future() });
+    await register(c.id, studentId, 'registered'); // charged — class survives
+    await prisma.waitlistEntry.create({
+      data: { classId: c.id, studentId: waiterId, position: 1, status: 'waiting' },
+    });
+
+    const result = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'));
+    expect(result.deleted).toBe(0);
+    expect(await prisma.class.count({ where: { id: c.id } })).toBe(1);
+
+    expect(
+      await prisma.notification.count({ where: { recipientId: waiterId, type: 'class_cancelled' } }),
+    ).toBe(0);
+    // And the entry is untouched — the class is still on, the queue with it.
+    const entry = await prisma.waitlistEntry.findFirstOrThrow({ where: { classId: c.id } });
+    expect(entry.status).toBe('waiting');
   });
 
   it('keeps a future class with a registered student', async () => {

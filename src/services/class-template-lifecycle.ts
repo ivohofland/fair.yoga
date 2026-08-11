@@ -29,6 +29,8 @@ import type { z } from 'zod';
 import type { updateClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { startOfLocalDay } from '@/lib/timezone';
+import { formatDateShort } from '@/lib/format';
+import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { syncTemplateInstances, type TemplateSyncResult } from './template-sync';
 import { generateInstancesForTemplate } from './class-generator';
 import { CHARGED_STATUSES } from './class-lifecycle';
@@ -680,6 +682,38 @@ export async function archiveOrUnarchiveTemplate(
       const now = new Date();
       const today = startOfLocalDay(now, timeZone);
 
+      // #112. Who is waiting on a class this archive is about to withdraw.
+      //
+      // Read BEFORE the delete because `WaitlistEntry.class` is
+      // `onDelete: Cascade` (`schema.prisma:517`) — after the delete these
+      // rows do not exist to be read. Filtered AFTER it (below) because this
+      // read is not the delete's own evaluation: a registration can commit in
+      // between and spare a class, and locking the candidates would not close
+      // that window — `registrations/route.ts` never calls `lockClassRow`, and
+      // its only class-row write (`settingsLocked: true`, `:195`) is skipped
+      // when the row is already locked, which it always is here.
+      //
+      // The predicate mirrors the delete's exactly. It is allowed to drift
+      // pessimistically (name a class the delete spares) because step three
+      // catches that; it must never drift optimistically.
+      const candidates = await tx.waitlistEntry.findMany({
+        where: {
+          status: 'waiting',
+          class: {
+            ...scheduledWhere(templateId, { gt: today }),
+            registrations: { none: { status: { in: [...CHARGED_STATUSES] } } },
+          },
+        },
+        select: {
+          studentId: true,
+          classId: true,
+          // Type, date AND time: the notification outlives the class row with
+          // a null link, so these three fields are the only identity it will
+          // ever have. A student with two weekly classes needs the time.
+          class: { select: { classType: true, date: true, startTime: true } },
+        },
+      });
+
       // Deliberately one statement, not a `findMany` followed by a
       // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
       // registration commit in the gap between them under READ COMMITTED, and
@@ -696,6 +730,39 @@ export async function archiveOrUnarchiveTemplate(
           registrations: { none: { status: { in: [...CHARGED_STATUSES] } } },
         },
       });
+
+      // Which candidates' classes actually went. `deleteMany` returns a count,
+      // not ids, and its predicate was re-evaluated at execution time — so
+      // this read, not the candidate read, is what says who was withdrawn.
+      //
+      // Notifying from `candidates` alone would be simpler and wrong: a
+      // booking landing between the two statements spares that class, and its
+      // waiter would be told the class was withdrawn while their entry is
+      // still `waiting` and the class is still open on the teacher's page — a
+      // message the app itself contradicts.
+      if (candidates.length > 0) {
+        const survivors = await tx.class.findMany({
+          where: { id: { in: candidates.map((c) => c.classId) } },
+          select: { id: true },
+        });
+        const survived = new Set(survivors.map((s) => s.id));
+        const withdrawn = candidates.filter((c) => !survived.has(c.classId));
+
+        if (withdrawn.length > 0) {
+          // No `relatedClassId`: the row is gone and the FK is `SetNull`
+          // (`schema.prisma:563`), so the notification outlives its class with
+          // a null link. The body has to name the class or the student is left
+          // with an inbox entry they cannot place.
+          const notifications: CreateNotificationInput[] = withdrawn.map((c) => ({
+            recipientType: 'student' as const,
+            recipientId: c.studentId,
+            type: 'class_cancelled' as const,
+            title: 'Class cancelled',
+            body: `The ${c.class.classType} class on ${formatDateShort(c.class.date)} at ${c.class.startTime} has been withdrawn by your teacher. You were on its waiting list.`,
+          }));
+          await createBulkNotifications(tx, notifications);
+        }
+      }
 
       // `gte`, where the delete used `gt`. The delete deliberately spares a
       // class dated today — "a class hours from starting should not shift under
