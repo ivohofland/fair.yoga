@@ -51,7 +51,9 @@ type StudioTemplateWithTimezone = Prisma.StudioClassTemplateGetPayload<{
  * on #164, both directions.
  *
  * That is a claim about races, not about correctness under one:
- * `generateStudioClassInstances` no longer has a P2002 branch to be broken.
+ * `generateStudioInstancesForTemplate` no longer has a P2002 branch to be
+ * broken — the per-template generator below, not the sweep, which never had
+ * one because it issues no insert of its own.
  * Its `ON CONFLICT DO NOTHING` makes a lost race cost one date and abort
  * nothing, with or without this lock. The lock still earns its place by
  * keeping the values this claim returns authoritative (#102).
@@ -160,7 +162,9 @@ export async function generateStudioInstancesForTemplate(
       continue;
     }
 
-    // Mirrors #196's studio index predicate exactly (`WHERE "cancelledAt" IS NULL`).
+    // Mirrors the predicate #196's studio index will carry (`WHERE
+    // "cancelledAt" IS NULL`); no such index exists yet, so this pre-check is
+    // currently the only thing enforcing it.
     if (onDate.some((c) => c.startTime === template.startTime && c.cancelledAt === null)) {
       skipped.push({ date, reason: 'slot_taken' });
       continue;

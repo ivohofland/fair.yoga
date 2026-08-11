@@ -51,11 +51,19 @@ import {
  * window holds and what this resume added (#119); `unchanged` reports nothing
  * beyond the template itself.
  *
- * `active` is where this stops mirroring `PauseTemplateResult` in the class
- * family. `pauseOrResumeTemplate` (`class-template-lifecycle.ts`) generates on
- * resume too and discards the count identically — deliberately not fixed
- * alongside this, because that resume generates *without* taking the claim, so
- * a count from it would be a count from a racy generation. Tracked on #116.
+ * `active` mirrors `PauseTemplateResult`'s own `active` arm exactly: both
+ * families now report `scheduled`, `added`, `blockedByCancelled` and
+ * `slotTaken`.
+ *
+ * This used to say the class family was "deliberately not fixed alongside
+ * this", because its resume generates *without* taking the claim and a count
+ * from an unclaimed generation would be a racy count. That reason has not gone
+ * away — `pauseOrResumeTemplate` still takes no claim, and **#116 is still
+ * open** — but it stopped being a reason to withhold the numbers: since #164
+ * a lost race costs one date and reports it, rather than aborting the
+ * transaction, so the count is honest about a smaller window instead of being
+ * a count of rows that were rolled back. #116 makes the race rarer; it is no
+ * longer what makes the number safe to publish.
  */
 export type PauseStudioTemplateResult =
   | {

@@ -3,15 +3,14 @@ import type { LastScheduledClass } from '@/services/class-template-lifecycle';
 
 /**
  * Confirmation shown after pausing a template. Only ever called on the pause
- * direction: both `resolveTemplateConfirmation` and
- * `resolveStudioConfirmation` answer `null` for `active`.
+ * direction — both resolvers reach it solely from their `paused` arm.
  *
- * That used to be justified as "resuming needs no explanation", which was
- * true when resuming did nothing but flip a flag. It is not true any more:
- * since #94 resuming a studio template generates its four-week window on the
- * spot, as the class family already did. `resumeStudioMessage` below is the
- * studio side's answer to that (#119); the class family's resume still says
- * nothing, tracked on #116.
+ * That used to be justified by "both resolvers answer `null` for `active`",
+ * which is no longer true in either family: `resolveStudioConfirmation` has
+ * answered with a sentence since #119, and `resolveTemplateConfirmation` does
+ * too since #164/#192 gave the class family's resume counts of its own. The
+ * conclusion survives its premise — this function is still only called from
+ * the `paused` arm, which is checkable from the two call sites.
  */
 export function pauseMessage(lastScheduled: LastScheduledClass | null): string {
   return lastScheduled
@@ -120,8 +119,9 @@ export function archiveStudioMessage(deleted: number, remaining: number): string
  * fixture now use `scheduled: 4, added: 0`, so a swap fails them; keep at least
  * one resolver-level case unequal or this paragraph stops being true again.
  *
- * No verb after the count, for the reason `archiveMessage` records above:
- * nothing left that can fall out of agreement with `classWord`.
+ * The head of this sentence keeps `archiveMessage`'s no-verb-after-the-count
+ * rule. The cause clauses `resumeMessage` appends do not — see its docblock for
+ * which of them can fall out of agreement and which cannot.
  */
 export function resumeStudioMessage(
   added: number,
@@ -289,7 +289,7 @@ export type StudioTemplateToggleResponse =
 /**
  * Decides whether the button says anything, and what.
  *
- * `null` means "say nothing", which is the correct answer for three of the five
+ * `null` means "say nothing", which is the correct answer for two of the five
  * actions — and `unchanged` is the one that matters: it is what a stale second
  * tab and a retry-after-lost-response reach, so showing either confirmation
  * there would describe something that did not happen.
@@ -325,13 +325,17 @@ export function resolveTemplateConfirmation(data: TemplateToggleResponse): strin
 
 /**
  * The studio sibling of `resolveTemplateConfirmation`. A separate function
- * rather than a parameter: the two families now differ in the archive wording
- * *and* in whether resuming says anything at all (#119), so threading a message
- * function through would put most of the English in the caller — and they are
- * kept parallel-but-separate throughout regardless.
+ * rather than a parameter: the two families differ in the archive wording, so
+ * threading a message function through would put most of the English in the
+ * caller — and they are kept parallel-but-separate throughout regardless.
+ *
+ * They no longer differ in whether resuming says anything. That was true from
+ * #119 until #164/#192 gave the class family counts too, and both resume
+ * sentences are now word for word identical — `resumeStudioMessage` delegates,
+ * and a test pins that they agree.
  *
  * `null` is now the right answer for exactly one of the five actions, not the
- * class family's three: `active` speaks (#119) and so does `unarchived` (see
+ * class family's two: `active` speaks (#119) and so does `unarchived` (see
  * `UNARCHIVE_STUDIO_MESSAGE`). `unchanged` is the one that still must not — it
  * is what a stale second tab and a retry-after-lost-response reach, so a
  * confirmation there would describe something that did not happen.

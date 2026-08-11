@@ -348,9 +348,16 @@ export type LastScheduledClass = { date: Date; startTime: string };
 
 /**
  * Outcome of a pause/resume PATCH. `paused` carries the furthest-out class
- * still on the schedule, for the pause confirmation; `active` and
- * `unchanged` report nothing beyond the template itself — resuming needs no
- * explanation, and `unchanged` describes a request that changed nothing.
+ * still on the schedule, for the pause confirmation; `active` reports what the
+ * window holds and why it is not fuller — `scheduled`, `added`,
+ * `blockedByCancelled`, `slotTaken`; `unchanged` reports nothing beyond the
+ * template itself, because it describes a request that changed nothing.
+ *
+ * This paragraph used to say "resuming needs no explanation", ten lines above
+ * the arm that now carries four counts. That is exactly the shape #164 was
+ * caused by — a header disagreeing with the declaration beneath it — so it is
+ * worth stating why it survived: it was true when resuming only flipped a flag,
+ * and nothing forces a docblock to be re-read when the type under it grows.
  */
 export type PauseTemplateResult =
   | {
@@ -516,9 +523,13 @@ export async function pauseOrResumeTemplate(
       // Note what this `catch` is actually attached to: the whole
       // `$transaction`, not the `update` alone — so it covers
       // `generateInstancesForTemplate` too. It is tight today only by
-      // accident of that function's contents, which are a `class.findMany`
-      // and an unchecked `class.createManyAndReturn` (`class-generator.ts`):
-      // P2003 or P2002, never P2025. So the `update` above really is the only
+      // accident of what runs under it, which is now three statements, not
+      // two: the `update` above, `generateInstancesForTemplate`'s
+      // `class.findMany` + `class.createManyAndReturn` (`class-generator.ts`),
+      // and this transaction's own `class.count`. P2003 only — never P2002,
+      // which the insert's bare `ON CONFLICT DO NOTHING` absorbs rather than
+      // raises, and never P2025, which neither a `findMany` nor a `count` can
+      // produce. So the `update` above really is the only
       // P2025 source under here, and the guard says `not_found` about the only
       // thing that can go missing. Add an *unprotected* `findUniqueOrThrow`
       // or single-record `update` inside this transaction and that stops

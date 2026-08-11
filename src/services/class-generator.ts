@@ -83,8 +83,12 @@ type TemplateWithTimezone = Prisma.ClassTemplateGetPayload<{
  *     it. It is a read-then-write and so is not race-safe on its own;
  *   - `createManyAndReturn({ skipDuplicates: true })` compiles to a BARE
  *     `ON CONFLICT DO NOTHING` — no conflict target, so it covers every unique
- *     constraint on the table, including the partial index #196 adds. That is
- *     what makes a clash cost only its own date.
+ *     constraint on the table, including the partial index #196 *will* add.
+ *     That is what makes a clash cost only its own date. Note the tense: today
+ *     the only unique key here is `@@unique([templateId, date])`, so the slot
+ *     pre-check below has no database backstop yet and a true slot race can
+ *     still double-book. #196 closes that; this shape is what lets its index
+ *     land without the migration costing a whole window.
  *
  * This function used to claim it was idempotent via "`@@unique([templateId,
  * date])` + P2002-skip". It was not, and the correction is the reason this
@@ -99,7 +103,9 @@ type TemplateWithTimezone = Prisma.ClassTemplateGetPayload<{
  * `generateClassInstances` below, and `pauseOrResumeTemplate`
  * (`class-template-lifecycle.ts`) all pass a transaction client;
  * `syncTemplateInstances` (`template-sync.ts`) is the one that does not, and
- * passes a bare `PrismaClient`. Do not reintroduce a `catch` here; there is
+ * passes a bare `PrismaClient`. In production, that is: this file's own tests
+ * call it directly with a bare `prisma` too, which is why the roster says
+ * production rather than pretending to be exhaustive. Do not reintroduce a `catch` here; there is
  * nothing it can do that the constraint does not.
  *
  * Accepts a transaction client so a route can create the template and its
@@ -151,7 +157,9 @@ export async function generateInstancesForTemplate(
       continue;
     }
 
-    // Mirrors #196's index predicate exactly (`WHERE "status" <> 'cancelled'`).
+    // Mirrors the predicate #196's index will carry (`WHERE "status" <>
+    // 'cancelled'`); no such index exists yet, so this pre-check is currently
+    // the only thing enforcing it.
     // Widen or narrow one without the other and this pre-check starts
     // disagreeing with the constraint that backs it — see the spec's §4.1.
     if (onDate.some((c) => c.startTime === template.startTime && c.status !== 'cancelled')) {

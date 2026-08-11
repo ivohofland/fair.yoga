@@ -1,11 +1,17 @@
 /**
  * The result shape both instance generators return.
  *
- * Import-free on purpose. `template-action-messages.ts` is reached from
- * `'use client'` components, and this module's names travel that far; keeping it
- * free of imports means no future edit here can drag `@/lib/log` (pino,
- * server-only) into a client bundle. `src/lib/tiers.ts` and
- * `src/lib/class-fields.ts` exist for the same reason.
+ * Import-free on purpose, but note what that claim rests on: today the only
+ * importers are the two server-side generators, both via `import type`. It is
+ * not, at present, load-bearing for any client bundle — unlike `src/lib/tiers.ts`
+ * and `src/lib/class-fields.ts`, which each name real `'use client'` files that
+ * *value*-import them.
+ *
+ * The rule is kept anyway because these names are meant to reach the copy layer
+ * — `template-action-messages.ts` takes the counts as bare numbers now, and a
+ * later change that hands it a `SkipReason` should not have to relocate this
+ * module first. Being import-free is what keeps that option open; it is a
+ * precaution, not a fix for an existing bundle problem.
  */
 
 /**
@@ -13,7 +19,7 @@
  * they are not interchangeable and the copy layer treats them differently.
  */
 export type SkipReason =
-  /** This template's own live instance is already on that date. Correct idempotency; never logged. */
+  /** This template's own non-cancelled instance is already on that date. Correct idempotency; never logged. Includes `completed`/`in_progress` rows, which the classification does not distinguish — only `cancelled` is split out, because only `cancelled` is what the copy needs to explain. */
   | 'already_generated'
   /** This template's own CANCELLED instance holds the date. `@@unique([templateId, date])` makes it permanently unfillable (#192). */
   | 'blocked_by_cancelled'
