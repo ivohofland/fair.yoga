@@ -76,11 +76,18 @@ export const POST = withErrorHandler(async (
       // the old day. Before #200 only `classType` was stale, which changes far
       // less often.
       //
-      // Left as-is on purpose: closing it means a re-read plus a lock in a
-      // route that takes neither, no test can observe a window this narrow,
-      // and an untestable behaviour change does not belong in a copy fix.
-      // Written here rather than filed because the person who needs it is
-      // whoever next edits this body.
+      // Left as-is on purpose: no test can observe a window this narrow, the
+      // harm is wrong words rather than a wrong write, and an untestable
+      // behaviour change does not belong in a copy fix.
+      //
+      // Not filed as work — pointed at from #182 instead, which owns this
+      // mechanism for the sites where it corrupts a *decision* rather than a
+      // message. This route already satisfies #182's rule: its CAS above is
+      // status-predicated and status is the only input to the decision. If
+      // that issue's in-transaction re-read lands, doing the same here is
+      // about four lines (`tx.class.findUnique` after the CAS, interpolate
+      // from that) and needs no new lock, because the CAS is already the
+      // serialization point.
       const notifications: CreateNotificationInput[] = [...registrations, ...waiting].map((r) => ({
         recipientType: 'student' as const,
         recipientId: r.studentId,
