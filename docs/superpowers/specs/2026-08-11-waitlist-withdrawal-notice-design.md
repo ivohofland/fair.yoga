@@ -32,7 +32,7 @@ beats counting them:
 
 - `class-template-lifecycle.ts:693` — `tx.class.deleteMany` (archive)
 - `template-sync.ts:68` — `tx.class.deleteMany` (day-change sync)
-- `studio-class-template-lifecycle.ts:536` — `tx.studioClass.deleteMany`
+- `studio-class-template-lifecycle.ts:625` — `tx.studioClass.deleteMany`
 
 Adding the three production writes of `status: 'cancelled'` onto a class —
 `class-transitions.ts:283`, `gdpr.ts:701`, `transition/route.ts:37` (the other
@@ -63,7 +63,9 @@ Paths 2, 3 and 4 are in scope. Path 1 is the reference implementation.
 
 `StudioClass` has no registrations and no waitlist — it is *"disconnected from
 Room/Student — pure calendar + income tracking"* (CLAUDE.md). The studio
-archive at `studio-class-template-lifecycle.ts:536` needs no change.
+archive at `studio-class-template-lifecycle.ts:625` needs no change — a line
+that moved from `:536` when #119/#120 landed, which is the standing reason to
+re-derive a citation rather than trust one.
 
 ## What #86 decided, and what it got wrong
 
