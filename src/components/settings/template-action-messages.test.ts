@@ -129,17 +129,27 @@ describe('resolveTemplateConfirmation', () => {
     );
   });
 
+  /**
+   * All four numbers distinct, for the reason the studio sibling below records
+   * about the first two: equal values make a transposition invisible. That rule
+   * was added for `scheduled`/`added` after a measured live slip and was not
+   * extended when `blockedByCancelled`/`slotTaken` arrived — so swapping
+   * arguments 3 and 4 at this resolver's call site left the whole unit suite
+   * green. Keep all four unequal.
+   */
   it('returns the class resume message for an active payload', () => {
     expect(
       resolveTemplateConfirmation({
         action: 'active',
         templateKind: 'class',
         scheduled: 4,
-        added: 0,
-        blockedByCancelled: 0,
-        slotTaken: 0,
+        added: 3,
+        blockedByCancelled: 2,
+        slotTaken: 1,
       }),
-    ).toBe('4 classes on your schedule. Nothing needed adding.');
+    ).toBe(
+      '4 classes on your schedule. 1 date already had a class. 2 cancelled classes still hold those dates.',
+    );
   });
 
   /**
@@ -182,16 +192,21 @@ describe('resolveStudioConfirmation', () => {
    * Keep the two numbers unequal.
    */
   it('returns the resume message, with the arguments in the order it passes them', () => {
+    // All four distinct — see the class sibling above. Two unequal numbers
+    // caught a transposition of arguments 1 and 2; it took four to catch one of
+    // 3 and 4, which passed 43/43 until this fixture changed.
     expect(
       resolveStudioConfirmation({
         action: 'active',
         templateKind: 'studio',
         scheduled: 4,
-        added: 0,
-        blockedByCancelled: 0,
-        slotTaken: 0,
+        added: 3,
+        blockedByCancelled: 2,
+        slotTaken: 1,
       }),
-    ).toBe('4 classes on your schedule. Nothing needed adding.');
+    ).toBe(
+      '4 classes on your schedule. 1 date already had a class. 2 cancelled classes still hold those dates.',
+    );
   });
 
   /**
@@ -319,6 +334,29 @@ describe('resumeMessage (class)', () => {
       '2 classes on your schedule. 2 cancelled classes still hold those dates.',
     );
   });
+
+  // Reachable, and it said nothing until the causes were assembled before the
+  // empty-window branch: every candidate date held by another of this teacher's
+  // classes. `slotTaken` was measured correctly and then discarded.
+  it('names the taken slots on an empty window, not just the cancelled ones', () => {
+    expect(resumeMessage(0, 0, 0, 4)).toBe(
+      'Nothing is scheduled from this template. 4 dates already had a class.',
+    );
+  });
+
+  it('names both causes on an empty window that has each', () => {
+    expect(resumeMessage(0, 0, 2, 2)).toBe(
+      'Nothing is scheduled from this template. 2 dates already had a class. 2 cancelled classes still hold those dates.',
+    );
+  });
+
+  // `slotTaken > 1` was unreached — every fixture used 0 or 1 — so replacing
+  // the plural branch with a bare 'date' shipped "2 date already had a class."
+  it('pluralises the taken-slot count', () => {
+    expect(resumeMessage(1, 4, 0, 3)).toBe(
+      '4 classes on your schedule. 3 dates already had a class.',
+    );
+  });
 });
 
 describe('the two families resume with one sentence', () => {
@@ -333,6 +371,9 @@ describe('the two families resume with one sentence', () => {
       [0, 0, 4, 0],
       [0, 0, 1, 0],
       [0, 2, 1, 1],
+      [0, 0, 0, 4],
+      [0, 0, 2, 2],
+      [1, 1, 0, 0],
       [0, 0, 0, 0],
     ];
     for (const [added, scheduled, blocked, taken] of cases) {

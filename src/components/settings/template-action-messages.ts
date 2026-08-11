@@ -162,9 +162,12 @@ export function resumeStudioMessage(
  * is the silence #192 was filed about.
  *
  * The cancelled clause carries its own verb agreement rather than a shared
- * `classWord`, because it is the one sentence here with a verb after the count
- * — the shape `archiveMessage` warns about above, and which read "1 cancelled
- * class still hold those dates" until it was pinned.
+ * `classWord`. Both clauses put a verb after the count — the shape
+ * `archiveMessage` warns about above — but only this one's verb *inflects for
+ * number*: "holds/hold" changes, while the slot clause's "had" reads the same
+ * for one date and four. That is the distinction that carries the guarantee,
+ * and missing it is how this read "1 cancelled class still hold those dates"
+ * until a singular case was pinned.
  */
 export function resumeMessage(
   added: number,
@@ -172,29 +175,33 @@ export function resumeMessage(
   blockedByCancelled: number,
   slotTaken: number,
 ): string {
-  const cancelledClause =
-    blockedByCancelled === 1
-      ? '1 cancelled class still holds that date.'
-      : `${blockedByCancelled} cancelled classes still hold those dates.`;
-
-  if (scheduled === 0) {
-    return blockedByCancelled === 0
-      ? 'Nothing is scheduled from this template.'
-      : `Nothing is scheduled from this template. ${cancelledClause}`;
-  }
-
-  const classWord = scheduled === 1 ? 'class' : 'classes';
-  const head = `${scheduled} ${classWord} on your schedule.`;
-
+  // Assembled before the `scheduled === 0` branch, deliberately. An earlier
+  // version built the causes only on the non-empty branch, so a teacher whose
+  // every candidate date was taken by another class — `slotTaken: 4`, measured
+  // correctly and carried the whole way over the wire — was told "Nothing is
+  // scheduled from this template." and nothing else. That is #192's silence
+  // reproduced one reason over, inside the function written to end it. Both
+  // causes apply to both heads.
   const causes: string[] = [];
   if (slotTaken > 0) {
     const dateWord = slotTaken === 1 ? 'date' : 'dates';
     causes.push(`${slotTaken} ${dateWord} already had a class.`);
   }
-  if (blockedByCancelled > 0) causes.push(cancelledClause);
+  if (blockedByCancelled > 0) {
+    causes.push(
+      blockedByCancelled === 1
+        ? '1 cancelled class still holds that date.'
+        : `${blockedByCancelled} cancelled classes still hold those dates.`,
+    );
+  }
+
+  const head =
+    scheduled === 0
+      ? 'Nothing is scheduled from this template.'
+      : `${scheduled} ${scheduled === 1 ? 'class' : 'classes'} on your schedule.`;
 
   if (causes.length > 0) return [head, ...causes].join(' ');
-  return added === 0 ? `${head} Nothing needed adding.` : head;
+  return scheduled > 0 && added === 0 ? `${head} Nothing needed adding.` : head;
 }
 
 /**

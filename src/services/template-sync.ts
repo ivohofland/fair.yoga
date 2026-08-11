@@ -19,12 +19,25 @@ export interface TemplateSyncResult {
   /** Instances updated in place. */
   synced: number;
   /**
-   * Wrong-day instances removed. The window is refilled on the new day only
+   * Wrong-day instances **removed**. The window is refilled on the new day only
    * when the template is active — a paused template's `dayOfWeek` edit still
    * deletes the wrong-day instances and reports that count here, but skips
    * the refill.
+   *
+   * This is a delete count and has never been anything else. It was rendered
+   * as "N rescheduled to the new day", which was true only while the refill
+   * below could not fail: before #164/#192 it created one row per deleted one.
+   * The slot pre-check can now decline every candidate date, so the delete
+   * count and the create count are two numbers, and `refilled` is the other
+   * one. Do not report this one as an arrival.
    */
   regenerated: number;
+  /** Instances the refill actually created on the new day. */
+  refilled: number;
+  /** Candidate dates the refill skipped because a cancelled instance holds them (#192). */
+  blockedByCancelled: number;
+  /** Candidate dates the refill skipped because another class holds that slot (#196). */
+  slotTaken: number;
   /** Future instances left untouched because bookings locked them. */
   kept: number;
 }
@@ -101,8 +114,15 @@ export async function syncTemplateInstances(
     return { synced: sameDay.length, regenerated: wrongDay.length, kept };
   });
 
-  // Refill the window after a day change (idempotent — the unique
-  // (templateId, date) constraint guards against racing cron runs).
+  // Refill the window after a day change. Idempotent, but not by the
+  // `(templateId, date)` constraint alone any more: `generateInstancesForTemplate`
+  // pre-checks occupancy and inserts with a bare `ON CONFLICT DO NOTHING`, so a
+  // racing cron run costs one date rather than the transaction (#164).
+  //
+  // The result is **consumed**, not discarded. It used to be safe to drop
+  // because the refill created one row per deleted row; since #196's slot
+  // pre-check it can decline every candidate date, and the caller renders these
+  // numbers to the teacher who just lost the old ones.
   //
   // Per-template, not the cron/teacher-wide `generateClassInstances`: this
   // runs on a request path, not a job, so a failure here must not become a
@@ -115,9 +135,15 @@ export async function syncTemplateInstances(
   // template actually edited, and documented as accepting a transaction
   // client precisely so a caller can compose it — which is what would close
   // the seam described above, if that ever happens.
-  if (result.regenerated > 0 && template.isActive) {
-    await generateInstancesForTemplate(db, template);
-  }
+  const refill =
+    result.regenerated > 0 && template.isActive
+      ? await generateInstancesForTemplate(db, template)
+      : { created: 0, skipped: [] };
 
-  return result;
+  return {
+    ...result,
+    refilled: refill.created,
+    blockedByCancelled: refill.skipped.filter((s) => s.reason === 'blocked_by_cancelled').length,
+    slotTaken: refill.skipped.filter((s) => s.reason === 'slot_taken').length,
+  };
 }

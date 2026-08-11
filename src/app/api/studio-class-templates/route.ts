@@ -44,11 +44,25 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       },
       include: { teacher: { select: { defaultTimezone: true } } },
     });
-    await generateStudioInstancesForTemplate(tx, created);
-    return created;
+    const generation = await generateStudioInstancesForTemplate(tx, created);
+    return { created, generation };
   });
 
-  const { teacher, ...created } = template;
+  const { teacher, ...created } = template.created;
   void teacher;
-  return respondOk(created, 201);
+
+  // Same four fields the PATCH `active` arm carries — see the class family's
+  // POST for why 201 with no counts stopped being a complete answer once the
+  // slot pre-check could decline every candidate date.
+  return respondOk(
+    {
+      ...created,
+      added: template.generation.created,
+      blockedByCancelled: template.generation.skipped.filter(
+        (s) => s.reason === 'blocked_by_cancelled',
+      ).length,
+      slotTaken: template.generation.skipped.filter((s) => s.reason === 'slot_taken').length,
+    },
+    201,
+  );
 });

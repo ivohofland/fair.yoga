@@ -6,6 +6,12 @@ import type { z } from 'zod';
 import type { createClassTemplateSchema, updateClassTemplateSchema } from '@/lib/schemas';
 import type { CancelDeadline, AutoCancelCheck } from '@prisma/client';
 import type { NoneOf } from '@/lib/type-pins';
+// `import type` only — it erases completely, so `template-sync`'s transitive
+// `@/lib/log` (pino, server-only) never reaches this client bundle. Imported
+// rather than re-declared inline because the inline copy that used to live at
+// the fetch below silently omitted every field added server-side, which is how
+// a delete count kept being rendered as an arrival count.
+import type { TemplateSyncResult } from '@/services/template-sync';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
@@ -271,7 +277,7 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         // Say honestly what the edit reached: mutable upcoming instances
         // sync, booked ones keep their settings.
         const json: {
-          data?: { sync?: { synced: number; regenerated: number; kept: number } };
+          data?: { sync?: TemplateSyncResult };
         } = await res.json();
         const sync = json.data?.sync;
         const parts: string[] = ['Saved.'];
@@ -280,7 +286,32 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
             parts.push(`Applied to ${sync.synced} upcoming ${sync.synced === 1 ? 'class' : 'classes'}.`);
           }
           if (sync.regenerated > 0) {
-            parts.push(`${sync.regenerated} rescheduled to the new day.`);
+            // Two numbers, not one. `regenerated` counts classes DELETED from
+            // the old day; `refilled` counts those created on the new one.
+            // Reporting the delete count as "rescheduled" was true only while
+            // the refill could not fail — since #196's slot pre-check it can
+            // create nothing, and the old sentence then told a teacher four
+            // classes had moved when four had been destroyed (their waitlists
+            // cascade with them). Say what happened to each side.
+            if (sync.refilled === sync.regenerated) {
+              parts.push(`${sync.regenerated} rescheduled to the new day.`);
+            } else {
+              parts.push(
+                `${sync.regenerated} removed from the old day, ${sync.refilled} added to the new day.`,
+              );
+              if (sync.slotTaken > 0) {
+                parts.push(
+                  `${sync.slotTaken} ${sync.slotTaken === 1 ? 'date' : 'dates'} already had a class.`,
+                );
+              }
+              if (sync.blockedByCancelled > 0) {
+                parts.push(
+                  sync.blockedByCancelled === 1
+                    ? '1 cancelled class still holds that date.'
+                    : `${sync.blockedByCancelled} cancelled classes still hold those dates.`,
+                );
+              }
+            }
           }
           if (sync.kept > 0) {
             parts.push(

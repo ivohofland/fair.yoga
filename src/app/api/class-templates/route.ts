@@ -60,11 +60,30 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       },
       include: { teacher: { select: { defaultTimezone: true } } },
     });
-    await generateInstancesForTemplate(tx, created);
-    return created;
+    const generation = await generateInstancesForTemplate(tx, created);
+    return { created, generation };
   });
 
-  const { teacher, ...created } = template;
+  const { teacher, ...created } = template.created;
   void teacher;
-  return respondOk(created, 201);
+
+  // The atomicity note above guarantees a generation *failure* rolls the
+  // template back. It does not cover generation *succeeding* having created
+  // nothing, which #196's slot pre-check made an ordinary outcome: a teacher
+  // creating a second template on a day and time they already occupy gets a
+  // live template whose every candidate date is taken. That used to be
+  // impossible, so 201 with no counts was a complete answer; it no longer is.
+  // Same four fields the PATCH `active` arm carries, so the create form can say
+  // the same sentence the resume flow does.
+  return respondOk(
+    {
+      ...created,
+      added: template.generation.created,
+      blockedByCancelled: template.generation.skipped.filter(
+        (s) => s.reason === 'blocked_by_cancelled',
+      ).length,
+      slotTaken: template.generation.skipped.filter((s) => s.reason === 'slot_taken').length,
+    },
+    201,
+  );
 });

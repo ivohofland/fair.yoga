@@ -924,7 +924,27 @@ describe('generateClassInstances (DB)', () => {
      * The row the resume parks on must be in flight when its insert runs,
      * and the holder must not be waiting on anything the resume holds.
      */
-    async function raceResumeAgainst(collide: Date): Promise<void> {
+    /**
+     * Runs the race and reports which dates the generator classified `raced`.
+     *
+     * The reason is the only thing that distinguishes a reproduced race from no
+     * race at all, and it is not reachable from the resume's return value —
+     * `PauseTemplateResult` carries `blockedByCancelled` and `slotTaken`, not
+     * `raced`. It reaches the log and nowhere else, so the log is what the
+     * callers below assert on.
+     *
+     * Why they need it: `isActive === true` and a row count of 4 both hold in a
+     * world where the holder's row committed *before* the resume started — no
+     * parking, no `ON CONFLICT` skip, the date simply read as
+     * `already_generated`. Measured: with the collision pre-committed, both
+     * tests passed unchanged. The 400ms below was the only thing keeping them
+     * on the code path they exist for, so a slower box or one extra `await` in
+     * `pauseOrResumeTemplate` would have turned them green and empty.
+     */
+    async function raceResumeAgainst(
+      collide: Date,
+    ): Promise<{ racedDates: string[] }> {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
       const holder = new PrismaClient();
       let release!: () => void;
       let collided!: () => void;
@@ -950,7 +970,19 @@ describe('generateClassInstances (DB)', () => {
       await holding;
       await resuming;
       await holder.$disconnect();
+
+      const racedDates = warn.mock.calls.flatMap((call) => {
+        const payload = call[0] as { skipped?: Array<{ date: string; reason: string }> };
+        return (payload.skipped ?? [])
+          .filter((s) => s.reason === 'raced')
+          .map((s) => s.date);
+      });
+      warn.mockRestore();
+      return { racedDates };
     }
+
+    /** `YYYY-MM-DD`, the form `logSkippedSlots` writes. */
+    const day = (d: Date): string => d.toISOString().slice(0, 10);
 
     it('leaves isActive committed when the clash lands on the last free date', async () => {
       const now = new Date();
@@ -958,7 +990,11 @@ describe('generateClassInstances (DB)', () => {
       // Only the last date is free, so the resume issues exactly one insert.
       for (const d of dates.slice(0, 3)) await prisma.class.create({ data: classRow(d) });
 
-      await raceResumeAgainst(dates[3]!);
+      const { racedDates } = await raceResumeAgainst(dates[3]!);
+
+      // First: the race reproduced. Without this the two assertions below pass
+      // against a pre-committed row and prove nothing.
+      expect(racedDates).toEqual([day(dates[3]!)]);
 
       const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: templateId } });
       expect(after.isActive).toBe(true);
@@ -970,7 +1006,9 @@ describe('generateClassInstances (DB)', () => {
       const dates = candidates(now);
       for (const d of dates.slice(0, 2)) await prisma.class.create({ data: classRow(d) });
 
-      await raceResumeAgainst(dates[2]!);
+      const { racedDates } = await raceResumeAgainst(dates[2]!);
+
+      expect(racedDates).toEqual([day(dates[2]!)]);
 
       const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: templateId } });
       expect(after.isActive).toBe(true);
