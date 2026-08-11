@@ -358,12 +358,23 @@ describe('POST /api/classes/[id]/transition', () => {
       },
     });
 
-    // Derived from the fixture, not hard-coded: `makeClass` dates every class
-    // 2099-06-01 at 09:00, and `formatDayHeader` is the renderer the other
-    // three cancellation bodies use.
-    expect(note.body).toContain('Classes API Notice');
-    expect(note.body).toContain(formatDayHeader(new Date('2099-06-01')));
-    expect(note.body).toContain('09:00');
+    // Read the stored row rather than restating `makeClass`'s literals. Two
+    // reasons, and the second is the one that matters:
+    //
+    // - Change `makeClass`'s date — `2099-06-01` is arbitrary — and hard-coded
+    //   copies here fail on the day assertion while the route is perfectly
+    //   correct, sending the next reader to the wrong file.
+    // - `formatDayHeader` reads with `getUTC*` accessors, so rendering the
+    //   value the database actually returned is what would catch the route
+    //   drifting off UTC midnight. Two independent literals agree with each
+    //   other no matter what came back from the column.
+    const stored = await prisma.class.findUniqueOrThrow({
+      where: { id: noticeClassId },
+      select: { classType: true, date: true, startTime: true },
+    });
+    expect(note.body).toContain(stored.classType);
+    expect(note.body).toContain(formatDayHeader(stored.date));
+    expect(note.body).toContain(stored.startTime);
   });
 
   it('409s cancelling an already-cancelled class', async () => {
