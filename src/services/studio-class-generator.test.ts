@@ -8,6 +8,11 @@ import {
   generateStudioInstancesForTemplate,
 } from './studio-class-generator';
 import { archiveOrUnarchiveStudioTemplate } from './studio-class-template-lifecycle';
+// The studio family shares the class family's date maths (#94), so the tests
+// compute candidate dates the same way the generator does rather than
+// hardcoding them — a window-logic change then fails loudly instead of drifting.
+import { getNextOccurrences } from './class-generator';
+import { classStartInstant } from '@/lib/timezone';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -599,6 +604,86 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
     expect(east).not.toContain('2026-08-05');
     expect(west).toContain('2026-08-05');
+  });
+
+  /**
+   * The occupancy read is scoped `where: { teacherId }`, and dropping that
+   * scope passed the entire suite — the spec's §4.1 asymmetry, in the direction
+   * it calls the only real defect: a pre-check *stricter* than the index
+   * silently under-fills a window and nothing raises.
+   *
+   * Two teachers, same weekday, same start time. The other teacher's class must
+   * be invisible here: #196's slot key is `(teacherId, date, startTime)`, so it
+   * can never block this one. Unscoped, every one of these dates reads
+   * `slot_taken` and this teacher's window comes back empty — with a log line
+   * naming the wrong teacher's schedule.
+   */
+  it('ignores another teacher holding the same weekday and time', async () => {
+    const now = new Date();
+    const otherId = await makeTemplate(westTeacherId, 5, '16:45');
+    const other = await generateStudioInstancesForTemplate(prisma, await withZone(otherId), now);
+    expect(other.created).toBe(4);
+
+    const mineId = await makeTemplate(eastTeacherId, 5, '16:45');
+    const mine = await generateStudioInstancesForTemplate(prisma, await withZone(mineId), now);
+
+    expect(mine.created).toBe(4);
+    expect(mine.skipped).toEqual([]);
+  });
+
+  /**
+   * The studio twin of the class family's `raced` test. Without it, deleting
+   * the `landed` diff loop in this file passes — the ledger's row 6 mutated
+   * only the class generator, so half of that guard was untested.
+   *
+   * Same lever: the holder's row is in flight, so the occupancy read cannot see
+   * it while its pending unique entry already blocks the insert.
+   */
+  it('names a date lost to a concurrent insert as raced, not as filled', async () => {
+    const now = new Date();
+    const id = await makeTemplate(eastTeacherId, 6, '07:30');
+    const tpl = await withZone(id);
+    const dates = getNextOccurrences(6, now, 5)
+      .filter((d) => classStartInstant(d, '07:30', tpl.teacher.defaultTimezone) > now)
+      .slice(0, 4);
+    const collide = dates[2]!;
+
+    const holder = new PrismaClient();
+    let release!: () => void;
+    let parkedResolve!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const parked = new Promise<void>((r) => { parkedResolve = r; });
+
+    const holding = holder.$transaction(
+      async (tx) => {
+        await tx.studioClass.create({
+          data: {
+            teacherId: eastTeacherId,
+            templateId: id,
+            classType: 'Holder',
+            date: collide,
+            startTime: '07:30',
+            durationMinutes: 60,
+            location: 'Elsewhere',
+            hourlyRate: 40,
+          },
+        });
+        parkedResolve();
+        await released;
+      },
+      { timeout: 20_000 },
+    );
+
+    await parked;
+    const generating = generateStudioInstancesForTemplate(prisma, tpl, now);
+    await new Promise((r) => setTimeout(r, 400));
+    release();
+    await holding;
+    const result = await generating;
+    await holder.$disconnect();
+
+    expect(result.created).toBe(3);
+    expect(result.skipped).toEqual([{ date: collide, reason: 'raced' }]);
   });
 
   it('accepts a transaction client, so a caller can compose it', async () => {

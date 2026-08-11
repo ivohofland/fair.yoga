@@ -501,7 +501,21 @@ export async function pauseOrResumeTemplate(
         // keying the count's boundary to a *different* read of that column is
         // the one way `scheduled < added` becomes reachable — a zone change
         // committing between the two reads moves the `gte today` boundary past
-        // a row generation just added. Do not "simplify" this to
+        // a row generation just added.
+        //
+        // **No test pins this, deliberately — know that before trusting it.**
+        // Making the two reads disagree needs a zone change injected between
+        // them (the `$extends` lever this file's tests already use) *and* a
+        // wall-clock hour at which the two zones' local days straddle a
+        // generated date. This function reads `new Date()` internally and takes
+        // no injectable clock, so such a test would pass vacuously at most
+        // hours — the #138 failure, where a check ran at a time when both code
+        // paths rendered identically and therefore proved nothing. Adding a
+        // `now` parameter to production code for a test to steer is the other
+        // thing this project declines to do. The guard is this paragraph and
+        // the studio twin's; if you change this line, nothing will stop you.
+        //
+        // Do not "simplify" this to
         // `template.teacher.…`.
         const today = startOfLocalDay(new Date(), t.teacher.defaultTimezone);
         const scheduled = await tx.class.count({

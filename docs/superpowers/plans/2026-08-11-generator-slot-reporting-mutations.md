@@ -70,3 +70,61 @@ Mutation 6 then failed it, and rows 1b/1c cross-pin the same test.
 - Each mutation was reverted and its target file re-run green before the next
   one: `class-generator.test.ts` 27/27, `studio-class-generator.test.ts`
   20/20, `npm run typecheck` clean after row 8's revert.
+
+---
+
+## Round 2 — added after the five-agent PR review of #204
+
+The review found four guards that could not fail. Three of them are mutations
+this ledger claimed to cover and did not, because the *test* they were checked
+against could not distinguish the mutated behaviour from the correct one. Each
+row below was applied, watched to fail, reverted, and the target file re-run
+green.
+
+| # | Guard | Mutation | Test that failed | Observed |
+|---|---|---|---|---|
+| 10 | T1/T2 reproduce the race at all | commit the holder's row *before* the resume starts (`void released` in `raceResumeAgainst`) | both `a clash during generation (#164)` tests | `AssertionError: expected [] to deeply equal [ '2026-09-08' ]` and `[ '2026-09-01' ]` |
+| 11 | resolver argument order, arguments 3 and 4 | swap `data.blockedByCancelled` and `data.slotTaken` at `resolveTemplateConfirmation`'s call site | `returns the class resume message for an active payload` | `AssertionError: expected '4 classes on your schedule. 2 dates a…' to be '…1 date al…'` |
+| 12 | `blockedByCancelled`'s filter | `s.reason === 'blocked_by_cancelled'` → `'already_generated'` in `pauseOrResumeTemplate` | `counts cancelled dates separately from taken slots` | `AssertionError: expected { ok: true, action: 'active', …(5) } to match object { …(2) }` |
+| 13 | occupancy scoping (class) | drop `teacherId` from `class.findMany`'s `where` | `ignores another teacher holding the same date and time` | `AssertionError: expected +0 to be 4` |
+| 14 | occupancy scoping (studio) | drop `teacherId` from `studioClass.findMany`'s `where` | `ignores another teacher holding the same weekday and time` | `AssertionError: expected +0 to be 4` |
+| 15 | `raced` (studio) | delete the studio `landed` diff loop | `names a date lost to a concurrent insert as raced, not as filled` | `AssertionError: expected [] to deeply equal [ { …(2) } ]` |
+
+## What round 1 could not see, and why
+
+**Row 10 is the important one.** Rows 1 and 1b were run against tests that
+asserted only `isActive === true` and a row count of 4 — and both of those hold
+in a world where the collision never raced, because the holder's row committed
+first and the date simply read `already_generated`. The reviewer measured that
+directly: with the row pre-committed, both tests passed. So rows 1 and 1b were
+real (the race *did* reproduce when they ran) but **unrepeatable** — a slower
+box, a warm-up delay, or one extra `await` in `pauseOrResumeTemplate` would have
+turned them green and empty, and this ledger would have gone on claiming they
+covered #164. The tests now assert the generator classified the date `raced`,
+which is the only observable that separates the two worlds.
+
+**Rows 13–15 were absent, not weak.** Round 1 mutated the class generator only,
+so half of `raced` and both occupancy scopings had no row at all. The scoping
+mutation is §4.1's "stricter than the index" direction, which the spec calls the
+only real defect of the two — and it passed the entire suite in both families,
+because `class-generator.test.ts` had one teacher in its fixture and the one
+studio test with two teachers asserted nothing that a wrongly-blocked window
+would break.
+
+**Row 12 needed its arithmetic checked, not just its assertion.** The first
+draft of that test cancelled two of four dates — so `blocked_by_cancelled` and
+`already_generated` were both `2`, the mis-wired filter returned the right number
+by coincidence, and the mutation passed. Three of four makes them `3` and `1`,
+which cannot collide. A guard is only as strong as the arithmetic separating the
+right answer from the wrong one.
+
+## One guard deliberately left unpinned
+
+The in-transaction `defaultTimezone` read at `class-template-lifecycle.ts:495`
+(added by the review itself) has **no test**, and the reasoning is recorded
+beside the code rather than hidden here: making the two reads disagree needs
+both an injected zone change and a wall-clock hour at which the zones' local
+days straddle a generated date. `pauseOrResumeTemplate` takes no injectable
+clock, so the test would pass vacuously at most hours — #138's failure mode —
+and adding a `now` parameter to production code for a test to steer is something
+this project declines to do. Recorded as a known gap, not as coverage.

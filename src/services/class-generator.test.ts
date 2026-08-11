@@ -748,6 +748,74 @@ describe('generateClassInstances (DB)', () => {
       expect(await prisma.class.count({ where: { templateId } })).toBe(3);
     });
 
+    /**
+     * The occupancy read is scoped `where: { teacherId }`, and dropping that
+     * scope passed the entire suite — this file's fixture has one teacher, so
+     * nothing here could have failed. It is §4.1's asymmetry in the direction
+     * the spec calls the only real defect: a pre-check *stricter* than the
+     * index silently under-fills a window and nothing raises.
+     *
+     * #196's slot key is `(teacherId, date, startTime)`, so another teacher's
+     * class can never block this one. Unscoped, every candidate date here reads
+     * `slot_taken`, this teacher's window comes back empty, and the log line
+     * names the wrong teacher's schedule.
+     */
+    it('ignores another teacher holding the same date and time', async () => {
+      const now = new Date();
+      const dates = candidates(now);
+
+      const other = await prisma.teacher.create({
+        data: {
+          firstName: 'Other',
+          lastName: 'Teacher',
+          email: `other-gen-${uniqueSuffix}@test.local`,
+          account: { create: { email: `other-gen-${uniqueSuffix}@test.local` } },
+          bio: 'second teacher for the scoping guard',
+          pageSlug: `other-gen-${uniqueSuffix}`,
+        },
+      });
+      const otherRoom = await prisma.teacherRoom.create({
+        data: { teacherId: other.id, roomId, capacityOverride: 10, rentalRate: 30 },
+      });
+
+      try {
+        // The other teacher occupies every candidate slot, same date and time.
+        for (const date of dates) {
+          await prisma.class.create({
+            data: {
+              teacherId: other.id,
+              teacherRoomId: otherRoom.id,
+              templateId: null,
+              classType: 'Someone else',
+              date,
+              startTime: '09:00',
+              durationMinutes: 60,
+              roomCost: 40,
+              minRate: 15,
+              targetRate: 30,
+              minStudents: 4,
+              maxStudents: 12,
+              cancelDeadline: 'HOURS_24',
+              autoCancelCheck: 'HOURS_2',
+              status: 'open',
+            },
+          });
+        }
+
+        const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+
+        expect(result.created).toBe(4);
+        expect(result.skipped).toEqual([]);
+      } finally {
+        await prisma.class.deleteMany({ where: { teacherId: other.id } });
+        await prisma.teacherRoom.delete({ where: { id: otherRoom.id } });
+        await prisma.teacher.delete({ where: { id: other.id } });
+        await prisma.account.deleteMany({
+          where: { email: `other-gen-${uniqueSuffix}@test.local` },
+        });
+      }
+    });
+
     it('does not treat a cancelled neighbour as occupying the slot', async () => {
       const now = new Date();
       const dates = candidates(now);
