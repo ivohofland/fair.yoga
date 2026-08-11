@@ -5,6 +5,7 @@ const prisma = new PrismaClient();
 const suffix = `slot-${Date.now()}`;
 let teacherId: string;
 let otherTeacherId: string;
+const accountIds: string[] = [];
 
 async function makeTeacher(tag: string): Promise<string> {
   const email = `${tag}-${suffix}@test.local`;
@@ -14,6 +15,7 @@ async function makeTeacher(tag: string): Promise<string> {
       pageSlug: `${tag}-${suffix}`, account: { create: { email } },
     },
   });
+  accountIds.push(t.accountId);
   return t.id;
 }
 
@@ -70,6 +72,11 @@ afterAll(async () => {
   await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teachers } } });
   await prisma.room.deleteMany({ where: { createdById: { in: teachers } } });
   await prisma.teacher.deleteMany({ where: { id: { in: teachers } } });
+  // `Teacher.accountId` has no `onDelete: Cascade` (prisma/schema.prisma),
+  // so the Account row each makeTeacher() created survives the teacher
+  // delete above and must be removed separately, only after it — Account
+  // is what Teacher.accountId references.
+  await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
   await prisma.$disconnect();
 });
 
@@ -94,7 +101,13 @@ describe('teacher slot unique indexes', () => {
   });
 
   it('does not block another teacher at the same date and time', async () => {
-    await expect(prisma.studioClass.create({ data: studio(otherTeacherId, 4) })).resolves.toBeTruthy();
+    // Seeds its own colliding row (day 6, distinct from the day-4 fixture
+    // above) rather than relying on the preceding test's row: under the
+    // Step 9 mutation that drops `teacherId` from the index, this is what
+    // makes the assertion actually exercise the guard instead of vacuously
+    // passing when run in isolation.
+    await prisma.studioClass.create({ data: studio(teacherId, 6) });
+    await expect(prisma.studioClass.create({ data: studio(otherTeacherId, 6) })).resolves.toBeTruthy();
   });
 
   it('a cancelled studio class does not block re-creating that slot', async () => {
@@ -181,7 +194,13 @@ describe('Room identity indexes', () => {
   });
 
   it('scopes private rooms per creator: a different teacher is allowed', async () => {
-    await expect(prisma.room.create({ data: room(otherTeacherId, false, 'PrivA') }))
+    // Seeds its own colliding row ('PrivB', distinct from the 'PrivA' row
+    // above) rather than relying on the preceding test's row: under the
+    // Step 9 mutation that drops `createdById` from the index, this is what
+    // makes the assertion actually exercise the guard instead of vacuously
+    // passing when run in isolation.
+    await prisma.room.create({ data: room(teacherId, false, 'PrivB') });
+    await expect(prisma.room.create({ data: room(otherTeacherId, false, 'PrivB') }))
       .resolves.toBeTruthy();
   });
 });
