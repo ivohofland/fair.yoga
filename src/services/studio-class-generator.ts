@@ -162,9 +162,9 @@ export async function generateStudioInstancesForTemplate(
       continue;
     }
 
-    // Mirrors the predicate #196's studio index will carry (`WHERE
-    // "cancelledAt" IS NULL`); no such index exists yet, so this pre-check is
-    // currently the only thing enforcing it.
+    // Mirrors the predicate `StudioClass_teacher_slot_unique` carries (`WHERE
+    // "cancelledAt" IS NULL`); the index backs it since #196; this pre-check
+    // is what names the reason, not what enforces it.
     if (onDate.some((c) => c.startTime === template.startTime && c.cancelledAt === null)) {
       skipped.push({ date, reason: 'slot_taken' });
       continue;

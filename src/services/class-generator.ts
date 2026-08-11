@@ -83,12 +83,13 @@ type TemplateWithTimezone = Prisma.ClassTemplateGetPayload<{
  *     it. It is a read-then-write and so is not race-safe on its own;
  *   - `createManyAndReturn({ skipDuplicates: true })` compiles to a BARE
  *     `ON CONFLICT DO NOTHING` — no conflict target, so it covers every unique
- *     constraint on the table, including the partial index #196 *will* add.
- *     That is what makes a clash cost only its own date. Note the tense: today
- *     the only unique key here is `@@unique([templateId, date])`, so the slot
- *     pre-check below has no database backstop yet and a true slot race can
- *     still double-book. #196 closes that; this shape is what lets its index
- *     land without the migration costing a whole window.
+ *     constraint on the table, including the partial index #196 added.
+ *     That is what makes a clash cost only its own date. Since #196 that
+ *     backstop exists: `Class_teacher_slot_unique` on (teacherId, date,
+ *     startTime) WHERE status <> 'cancelled'. The bare `ON CONFLICT DO
+ *     NOTHING` was measured absorbing exactly that index — inside a
+ *     transaction, which then went on to run another statement and commit —
+ *     so a slot race now costs its own date and nothing else.
  *
  * This function used to claim it was idempotent via "`@@unique([templateId,
  * date])` + P2002-skip". It was not, and the correction is the reason this
@@ -157,9 +158,9 @@ export async function generateInstancesForTemplate(
       continue;
     }
 
-    // Mirrors the predicate #196's index will carry (`WHERE "status" <>
-    // 'cancelled'`); no such index exists yet, so this pre-check is currently
-    // the only thing enforcing it.
+    // Mirrors the predicate #196's index carries (`WHERE "status" <>
+    // 'cancelled'`); the index backs it since #196; this pre-check is what
+    // names the reason, not what enforces it.
     // Widen or narrow one without the other and this pre-check starts
     // disagreeing with the constraint that backs it — see the spec's §4.1.
     if (onDate.some((c) => c.startTime === template.startTime && c.status !== 'cancelled')) {
