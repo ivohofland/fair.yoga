@@ -624,6 +624,63 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     expect(entry.status).toBe('waiting');
   });
 
+  /**
+   * #112. The one guard in this change that needs real concurrency to bite.
+   *
+   * Without this test, notifying from the candidate read and notifying from
+   * the survivor filter are indistinguishable — every non-concurrent case
+   * produces identical output, so the filter could be deleted and the suite
+   * would stay green while students were told their live classes had been
+   * withdrawn.
+   *
+   * The archive transaction locks the TEMPLATE row, not these classes, so the
+   * registration below commits from outside it. Under READ COMMITTED the
+   * `deleteMany` re-evaluates its predicate when it runs, sees a charged
+   * registration, and spares the class — #86's whole reason for keeping that
+   * delete a single statement.
+   */
+  it('does not notify a waiter whose class was booked after the candidate read', async () => {
+    const t = await makeTemplate('Race Spare');
+    const c = await makeClass(t.id, { date: future() });
+    await prisma.waitlistEntry.create({
+      data: { classId: c.id, studentId: waiterId, position: 1, status: 'waiting' },
+    });
+
+    let raced = false;
+    const interposing = prisma.$extends({
+      query: {
+        waitlistEntry: {
+          async findMany({ args, query }) {
+            const rows = await query(args);
+            // Once, and only after the candidate read has returned: commit a
+            // charged registration from outside the archive transaction.
+            if (!raced) {
+              raced = true;
+              await prisma.registration.create({
+                data: { classId: c.id, studentId, tierAtBooking: 3, status: 'registered' },
+              });
+            }
+            return rows;
+          },
+        },
+      },
+    }) as unknown as typeof prisma;
+
+    const result = expectArchived(
+      await archiveOrUnarchiveTemplate(interposing, t.id, teacherId, 'archived'),
+    );
+
+    // The interposition fired, or this test proves nothing.
+    expect(raced).toBe(true);
+    // The delete re-evaluated and spared the class.
+    expect(result.deleted).toBe(0);
+    expect(await prisma.class.count({ where: { id: c.id } })).toBe(1);
+    // So the waiter must NOT have been told it was withdrawn.
+    expect(
+      await prisma.notification.count({ where: { recipientId: waiterId, type: 'class_cancelled' } }),
+    ).toBe(0);
+  });
+
   it('keeps a future class with a registered student', async () => {
     const t = await makeTemplate('Keep Registered');
     const c = await makeClass(t.id, { date: future() });
