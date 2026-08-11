@@ -46,9 +46,12 @@ describe('SettledNotice', () => {
    * Review F5. This never arrives on a page the user is reading: it replaces
    * the control they just activated, so focus drops to `document.body` at the
    * same moment. Before #40 that control stayed mounted-but-disabled, so at
-   * least focus survived. `role="status"` is what makes the swap audible — it
-   * is the only live region in `src/` — and the focus ring is what makes the
-   * one remaining exit findable by keyboard once tabbed back to.
+   * least focus survived. `role="status"` is what makes the swap audible —
+   * the first polite live region in `src/`, and the only one on a path where
+   * the mutation *succeeded*; the pre-existing `role="alert"` regions are
+   * assertive form-error announcements and none of them is reachable from
+   * here — and the focus ring is what makes the one remaining exit findable
+   * by keyboard once tabbed back to.
    *
    * Moving focus into the notice is the fuller answer and is not in this
    * change; this pins the two halves that are.

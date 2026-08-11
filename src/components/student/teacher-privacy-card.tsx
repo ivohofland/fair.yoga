@@ -191,8 +191,16 @@ export function TeacherPrivacyCard({
       <div className="mt-5 pt-4 border-t border-border">
         {/*
           #40, whole-branch review F2. `unlinked` is tested *first*, ahead of
-          `confirmingUnlink` — the ordering the four sibling components get for
-          free by early-returning above their whole render. It used to sit
+          `confirmingUnlink` — the ordering `mark-unpaid-button` and
+          `pending-invitation-card` get for free, because each early-returns on
+          its settled flag above its whole render and so above its own confirm
+          branch. Those two are the only siblings this applies to; the rest
+          render their notice from an inline ternary with no confirm sub-state
+          to be ordered against, so there is nothing there to get for free. Not
+          a count, because a count is exactly what a fifth confirm-cluster
+          component would silently falsify — the same reason
+          `tests/setup/components.ts` and `settled-notice.test.tsx` both refuse
+          to carry one. It used to sit
           inside the confirm branch, and Rule 3 un-disabling Cancel opened the
           path that exposed it: confirm → DELETE in flight → Cancel → the
           DELETE resolves ok. `setUnlinked(true)` ran with nothing to render

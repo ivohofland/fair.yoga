@@ -425,8 +425,13 @@ traps here:
   mutation that reaches it.
 - **The fix here is `created` plus the button ternary — not a removed `finally`.**
   `finally { setSubmitting(false) }` was never taken out of either form and still
-  runs on the create arm (`template-form.tsx:278-280`,
-  `studio-template-form.tsx:134-136`). "Restore the `finally`" is therefore a no-op
+  runs on the create arm — it is the `finally` closing `handleSubmit` in
+  `template-form.tsx` and the one closing `handleSubmit` in
+  `studio-template-form.tsx`. (Cited by enclosing function, not by line: this
+  entry first read `template-form.tsx:278-280` / `studio-template-form.tsx:134-136`,
+  correct at `4b3f763` and pushed down to `:296` / `:145` by later commits on this
+  same branch — inside one branch, a line citation rotted.) "Restore the `finally`"
+  is therefore a no-op
   mutation: it changes nothing, the suite stays green, and a maintainer running it
   would conclude this branch's highest-value guard is decorative. It is the
   false-negative this section exists to prevent, and it stood in this table until
