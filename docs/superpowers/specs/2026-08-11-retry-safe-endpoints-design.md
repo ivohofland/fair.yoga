@@ -351,7 +351,23 @@ would make it routine**, because a manually created class at the same slot is an
 ordinary state, and one blocked date would roll back the entire window and the
 template with it.
 
-**Design: pre-check the slot, never rely on the catch.**
+**This is already filed, twice, and branch 1 waits on it.** The 25P02 mechanism
+is **#164** ("Generator: continue cannot continue an aborted transaction"), which
+identifies the same abort and names `template-sync.ts`'s unlocked caller as the
+reachable path. The reporting change is **#192** ("The studio generator cannot
+tell idempotent skip from a permanently unfillable date"), filed as a decision
+with three costed options, of which this design is its **Option C**. The
+probe below re-derived #164 rather than discovering it; what it adds is a
+reproduction and the observation that the *class* generator's docblock still
+claims the idempotency the *studio* generator's comment already denies.
+
+**Decision (Ivo, 2026-08-11): #164 and #192 are fixed first, on their own
+branch.** Branch 1 of #196 is sequenced behind them. The design below is
+recorded as the shape #196 needs, not as work #196 performs — whichever fix
+those two issues choose must satisfy it, and this section is the constraint they
+inherit rather than a competing proposal.
+
+**The shape #196 needs: pre-check the slot, never rely on the catch.**
 
 1. Compute the candidate dates exactly as now.
 2. **One** query per run for the occupied slots — both "this template already has
@@ -481,7 +497,20 @@ a docblock is exactly the kind of claim that gets inherited rather than checked.
 
 Split by whether a migration is needed (Ivo, 2026-08-11):
 
-**Branch 1 — this branch.** One migration, six indexes, five endpoints:
+**Blocked on #164 and #192.** The `Class` and `StudioClass` indexes cannot land
+before the generators pre-check the slot (§5.1): the generator inserts at
+`(teacherId, date, startTime)` while its probe only checks `{templateId, date}`,
+so it cannot see a manually created class there, and every such date would abort
+the generation transaction. The `Room`, `ClassTemplate` and
+`StudioClassTemplate` indexes have no such dependency — they are shippable
+independently if this branch is ever split further.
+
+Worth recording because it inverts #192's own cost estimate: that issue rejected
+Option C partly because it "drags in the class family". #196 puts an index on
+both families, so both generators need the pre-check regardless. **#196 makes
+#192's expensive option the cheap one.**
+
+**Branch 1 — after #164/#192.** One migration, six indexes, five endpoints:
 `POST /api/classes`, `/api/studio-classes`, `/api/class-templates`,
 `/api/studio-class-templates`, `/api/rooms`. Plus §5.1's generator slot
 pre-check, its skipped-slot reporting and its docblock correction, and §5.2's
@@ -514,6 +543,11 @@ mutation reverted. A guard that compiles but cannot fail certifies nothing.
 | `StudioClassTemplate_…` + predicate | Same pair |
 | `Room_public_identity_unique` | Drop → concurrent duplicate public room test must fail |
 | `Room_private_identity_unique` | Drop → duplicate private room test must fail |
+The generator's two guards belong to #164/#192's branch, not this one, and are
+stated here as the bar #196 needs them to clear:
+
+| Guard (on #164/#192's branch) | Mutation that must break it |
+|---|---|
 | Generator slot pre-check (§5.1) | Remove the "teacher already has a class at this slot" clause → the test asserting the **other three dates still generate** must fail with `25P02`, not merely with a wrong count |
 | Skipped-slot reporting | Return only `created` → the test asserting the skipped list must fail |
 
@@ -535,10 +569,12 @@ and resurfaced as an unexplained failure in another suite an hour later.
    round added and a sequential-only test would not observe it.
 3. Partial semantics are pinned: a cancelled class and an archived template each
    fail to block a legitimate re-create.
-4. The generator reports skipped slots (§5.1), with a test — and a separate test
-   that a template whose window contains **one** blocked date still generates
-   **every other date**, and still creates the template. One clash must not cost
-   the teacher the rest of their four weeks.
+4. **Precondition, satisfied by #164/#192's branch, not by this one:** the
+   generator reports skipped slots (§5.1), and a template whose window contains
+   **one** blocked date still generates **every other date** and still creates
+   the template. One clash must not cost the teacher the rest of their four
+   weeks. #196's `Class`/`StudioClass` indexes must not be applied until this
+   holds.
 5. The deadlock probe (§5.2) is run, its result recorded in the PR body, and
    `docs/lock-order.md` updated if an edge is found.
 6. Production is checked for constraint violations **before** the migration is
