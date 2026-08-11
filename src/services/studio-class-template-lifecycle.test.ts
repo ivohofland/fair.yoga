@@ -893,6 +893,47 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
   });
 
   /**
+   * The all-cancelled extreme of #192: every candidate date holds a cancelled
+   * own row, so the resume creates nothing and `scheduled` is 0 because the
+   * rows that block it are exactly the rows the count excludes. The teacher
+   * already learns this (`resumeStudioMessage`'s `scheduled === 0` branch);
+   * what this pins is that the result names *which* mechanism filled the
+   * window's dates — the count that makes the operator-facing `log.warn` (and
+   * the Task 6 copy) a measured number rather than an inference.
+   */
+  it('reports the cancelled classes holding the window', async () => {
+    const t = await makeTemplate('Blocked By Cancelled');
+    await prisma.studioClassTemplate.update({
+      where: { id: t.id },
+      data: { isActive: false },
+    });
+
+    const filled = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
+    expect(filled.ok).toBe(true);
+    if (!filled.ok) throw new Error('expected ok');
+    if (filled.action !== 'active') throw new Error('expected the active action');
+    // Precondition: a full window stood before anything was cancelled, so the
+    // 0s below are caused by the cancels, not by a starved fixture.
+    expect(filled.added).toBe(4);
+
+    await prisma.studioClass.updateMany({
+      where: { templateId: t.id },
+      data: { cancelledAt: new Date() },
+    });
+
+    await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');
+    const resumed = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
+
+    expect(resumed).toMatchObject({
+      ok: true,
+      action: 'active',
+      added: 0,
+      scheduled: 0,
+      blockedByCancelled: 4,
+    });
+  });
+
+  /**
    * The two filters inside `scheduled`'s count, each pinned by a row the other
    * filter would not move: one dated exactly on the `gte` boundary, one
    * cancelled and comfortably inside it. Both sit off the template's own

@@ -88,9 +88,22 @@ export type PauseStudioTemplateResult =
        * today). Nothing else can insert for this `templateId` while the claim
        * holds it, and this transaction's own uncommitted rows cannot be
        * cancelled by anyone else. See the count below for the one input that
-       * could break it — a second, disagreeing read of `defaultTimezone`.
+       *        could break it — a second, disagreeing read of `defaultTimezone`.
        */
       added: number;
+      /**
+       * Candidate dates a cancelled instance of this template holds (#192).
+       * The count that makes the `scheduled === 0` operator warn (and the
+       * Task 6 resume copy) a measured number rather than an inference:
+       * `added + blockedByCancelled + slotTaken` is the window's candidate
+       * count, always — every date generation did not fill is one of these
+       * two reasons.
+       */
+      blockedByCancelled: number;
+      /**
+       * Candidate dates another of this teacher's studio classes holds (#196).
+       */
+      slotTaken: number;
     }
   | { ok: true; action: 'unchanged'; template: StudioClassTemplate }
   | { ok: false; reason: 'not_found' }
@@ -159,6 +172,8 @@ type ResumeTransactionOutcome =
       template: StudioClassTemplate;
       scheduled: number;
       added: number;
+      blockedByCancelled: number;
+      slotTaken: number;
     };
 
 /**
@@ -382,7 +397,12 @@ export async function pauseOrResumeStudioTemplate(
       // `testTimeout` is 5000ms and fires first — a property of the harness,
       // not of Prisma or of this code. Do not read that 5s as the real
       // budget, and do not "correct" the 10s above to match it.
-      const added = (await generateStudioInstancesForTemplate(tx, claimed)).created;
+      const generation = await generateStudioInstancesForTemplate(tx, claimed);
+      const added = generation.created;
+      const blockedByCancelled = generation.skipped.filter(
+        (s) => s.reason === 'blocked_by_cancelled',
+      ).length;
+      const slotTaken = generation.skipped.filter((s) => s.reason === 'slot_taken').length;
 
       // Same helper and same boundary as `archiveOrUnarchiveStudioTemplate`'s
       // `remaining`, so archiving and resuming report on one basis. `gte`, not
@@ -413,20 +433,28 @@ export async function pauseOrResumeStudioTemplate(
       // failing*: every candidate date already holds a cancelled row, so
       // generation creates nothing and there is no throw for `withErrorHandler`
       // to classify. The teacher is told (`resumeStudioMessage`'s
-      // `scheduled === 0` branch); without this line nobody on the operator
-      // side ever is, and a later copy change would make the condition wholly
-      // invisible. Rare enough not to be noise: only fires on a resume that
-      // leaves the window empty.
+      // `scheduled === 0` branch); this line carries the measured breakdown to
+      // the operator side — the counting that used to stop at "every candidate
+      // date is blocked" without saying which mechanism blocked them. Rare
+      // enough not to be noise: only fires on a resume that leaves the window
+      // empty.
       if (scheduled === 0) {
         log.warn(
-          { templateId, teacherId },
-          'studio template resumed live with an empty window — every candidate date is blocked',
+          { templateId, teacherId, added, blockedByCancelled, slotTaken },
+          'studio template resumed live with an empty window',
         );
       }
 
       const { teacher: _claimTeacher, ...bareClaimed } = claimed;
       void _claimTeacher;
-      return { outcome: 'active', template: bareClaimed, scheduled, added };
+      return {
+        outcome: 'active',
+        template: bareClaimed,
+        scheduled,
+        added,
+        blockedByCancelled,
+        slotTaken,
+      };
     },
     // The sweep's claim can hold this row for its own full 10s transaction;
     // Prisma's 5s default would abort us mid-wait.
@@ -457,6 +485,8 @@ export async function pauseOrResumeStudioTemplate(
         template: result.template,
         scheduled: result.scheduled,
         added: result.added,
+        blockedByCancelled: result.blockedByCancelled,
+        slotTaken: result.slotTaken,
       };
     case 'paused':
       break;

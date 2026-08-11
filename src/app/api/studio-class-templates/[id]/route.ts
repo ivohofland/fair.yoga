@@ -120,6 +120,8 @@ export const PATCH = withErrorHandler(async (
           action: result.action,
           scheduled: result.scheduled,
           added: result.added,
+          blockedByCancelled: result.blockedByCancelled,
+          slotTaken: result.slotTaken,
         });
       case 'unchanged':
         return respondOk({ ...result.template, action: result.action });
