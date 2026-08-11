@@ -4,7 +4,9 @@
 
 **Goal:** Make every control whose success depends on a router action reach a truthful, usable state when that router action never commits — so no control freezes, shows a red error over a succeeded action, or permits a duplicate submission.
 
-**Architecture:** One invariant, applied to seven components: *after a successful mutation a control never returns to idle; it goes to settled.* Where a retry is provably harmless (two components) a plain reset suffices instead. Escape controls (`Keep` / `Cancel`) stop carrying the pending flag, which is the only fix for a request that hangs rather than resolves. No shared abstraction — measurement found four distinct control-flow shapes among just these seven, and thirteen across the codebase.
+**Architecture:** One invariant, applied to seven components: *after a successful mutation a control never returns to idle; it goes to settled.* Where a retry is provably harmless (two components) a plain reset suffices instead. Escape controls (`Keep` / `Cancel`) stop carrying the pending flag, which is the only fix for a request that hangs rather than resolves.
+
+**No shared abstraction over mutation flow** — measurement found four distinct control-flow shapes among just these seven components, and thirteen across the codebase. **One shared presentational component**, `SettledNotice` (Task 1): presentation is the axis on which the five settled states genuinely are the same, and a named component makes the invariant discoverable in a way the rejected ESLint rule could not.
 
 **Tech Stack:** Next.js 16 App Router, React 19, TypeScript strict, Vitest + Testing Library (`components` project), Tailwind v4 tokens.
 
@@ -13,7 +15,7 @@
 ## Global Constraints
 
 - **TypeScript strict.** No `any`, no implicit types.
-- **Settled confirmation styling is an existing idiom:** `type-caption text-teal`, as at `teacher-privacy-card.tsx:184`. Do not invent a new success treatment.
+- **Settled confirmation styling is an existing idiom:** `type-caption text-teal`, as at `teacher-privacy-card.tsx:184`. Do not invent a new success treatment. From Task 2 onward, render it via `SettledNotice` (Task 1) rather than hand-rolling the markup.
 - **Settled copy, verbatim:** "Marked unpaid" / "Accepted" / "Declined" / "Removed" / "Created".
 - **The retry control is labelled "Refresh"** and calls `router.refresh()` (or re-issues the same `router.push` where the original success was a push). Never `location.reload()`.
 - **Test project:** `components`. Run single files with `npx vitest run --project components <path>`.
@@ -27,19 +29,174 @@
 
 ## Task order
 
-Task 1 is deliberately first: it is the reference implementation of the settled-state pattern that Tasks 4–7 follow. Tasks 2–7 are otherwise independent. Task 8 is paperwork and must be last, because it reconciles counts against the finished branch.
+**Task 1 must come first** — Tasks 2, 5, 6, 7 and 8 all import the component it creates. Task 2 is the reference implementation of the settled-state *wiring* that Tasks 5–8 follow. Tasks 3–8 are otherwise independent. Task 9 is paperwork and must be last, because it reconciles counts against the finished branch.
 
 ---
 
-### Task 1: `MarkUnpaidButton` — settled state and a live escape
+### Task 1: `SettledNotice` — the shared settled-state presentation
+
+**Files:**
+- Create: `src/components/ui/settled-notice.tsx`
+- Create: `src/components/ui/settled-notice.test.tsx`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: `SettledNotice`, imported by Tasks 2, 5, 6, 7, 8 as
+  `import { SettledNotice } from '@/components/ui/settled-notice';`
+  with this exact signature:
+  ```ts
+  interface SettledNoticeProps {
+    label: string;
+    actionLabel: string;
+    onAction: () => void;
+    size?: 'caption' | 'sm';
+  }
+  ```
+
+**Why this exists.** Five components need the same settled presentation: a teal label, a middot, and a control that retries the navigation that did not commit. The spec rejected a shared *hook* on measurement — thirteen distinct control-flow shapes across the codebase, four among these seven files — but that measurement was about mutation flow. Presentation is the axis on which these five genuinely are the same. A named component also makes the invariant discoverable, which the ESLint rule considered in spec §6 could not do.
+
+`size` exists because the two template forms sit beside an existing `text-sm text-teal` success line and must stay internally consistent, while the button-style components use `type-caption text-teal`.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `src/components/ui/settled-notice.test.tsx`:
+
+```tsx
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { SettledNotice } from './settled-notice';
+
+/**
+ * #40. The settled state a control reaches once its mutation has committed but
+ * the router action that should have replaced it did not. Five components share
+ * it, so it is one component rather than five copies — and the name is how the
+ * next person finds the invariant.
+ */
+describe('SettledNotice', () => {
+  it('renders the label and an operable action', () => {
+    const onAction = vi.fn();
+    render(<SettledNotice label="Marked unpaid" actionLabel="Refresh" onAction={onAction} />);
+
+    expect(screen.getByText('Marked unpaid')).toBeInTheDocument();
+
+    const action = screen.getByRole('button', { name: 'Refresh' });
+    expect(action).toBeEnabled();
+    fireEvent.click(action);
+    expect(onAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the caption scale by default and the sm scale on request', () => {
+    const { rerender } = render(
+      <SettledNotice label="Removed" actionLabel="Refresh" onAction={() => {}} />,
+    );
+    expect(screen.getByText('Removed')).toHaveClass('type-caption');
+
+    rerender(
+      <SettledNotice label="Created" actionLabel="Go to recurring classes" onAction={() => {}} size="sm" />,
+    );
+    expect(screen.getByText('Created')).toHaveClass('text-sm');
+  });
+
+  // The action is never disabled: this component exists because something else
+  // failed, so it must always be the way out.
+  it('never renders a disabled action', () => {
+    render(<SettledNotice label="Accepted" actionLabel="Refresh" onAction={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Refresh' })).not.toBeDisabled();
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run --project components src/components/ui/settled-notice.test.tsx`
+Expected: FAIL — `Failed to resolve import "./settled-notice"`.
+
+- [ ] **Step 3: Implement the component**
+
+Create `src/components/ui/settled-notice.tsx`. Match the conventions of
+`src/components/ui/button.tsx`: named export, a props interface, a `Record`
+keyed by the variant, and no client directive (this is presentational and holds
+no state — the `onAction` closure comes from a `'use client'` parent).
+
+```tsx
+type SettledSize = 'caption' | 'sm';
+
+interface SettledNoticeProps {
+  /** What happened, in the past tense: "Marked unpaid", "Accepted", "Created". */
+  label: string;
+  /** The control's accessible name — "Refresh", or where the failed push was going. */
+  actionLabel: string;
+  onAction: () => void;
+  size?: SettledSize;
+}
+
+const sizeClasses: Record<SettledSize, string> = {
+  caption: 'type-caption',
+  sm: 'text-sm',
+};
+
+/**
+ * #40. The state a control reaches when its mutation committed but the
+ * `router.refresh()` / `router.push()` that should have replaced it did not —
+ * both return `void`, so the caller cannot know which happened.
+ *
+ * Re-offering the original action would be wrong twice over: it has already
+ * succeeded, and on a non-idempotent endpoint the retry earns a 4xx in red over
+ * an action that worked. Leaving the control disabled — the previous answer, and
+ * review finding F7's — freezes it instead. This says what happened and offers
+ * the repaint that failed.
+ *
+ * The action is deliberately never disabled. This component only renders
+ * because something else did not work; it must always be the way out.
+ */
+export function SettledNotice({
+  label,
+  actionLabel,
+  onAction,
+  size = 'caption',
+}: SettledNoticeProps) {
+  const scale = sizeClasses[size];
+
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className={`${scale} text-teal`}>{label}</span>
+      <span aria-hidden="true" className={`${scale} text-teal`}>
+        ·
+      </span>
+      <button type="button" onClick={onAction} className={`${scale} text-teal min-h-[44px] px-1`}>
+        {actionLabel}
+      </button>
+    </span>
+  );
+}
+```
+
+The middot is `aria-hidden` because it is a visual separator; a screen reader
+should hear "Marked unpaid" then the button, not a stray punctuation mark.
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `npx vitest run --project components src/components/ui/settled-notice.test.tsx`
+Expected: PASS, 3 tests.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/components/ui/settled-notice.tsx src/components/ui/settled-notice.test.tsx
+git commit -m "feat: one settled state for five controls that outlive their refresh"
+```
+
+---
+
+### Task 2: `MarkUnpaidButton` — settled state and a live escape
 
 **Files:**
 - Modify: `src/components/class/mark-unpaid-button.tsx`
 - Create: `src/components/class/mark-unpaid-button.test.tsx`
 
 **Interfaces:**
-- Consumes: nothing from earlier tasks.
-- Produces: the settled-state shape (`const [done, setDone] = useState(false)`, an early `if (done) return …` render, `type-caption text-teal` + a "Refresh" button) that Tasks 4–7 copy.
+- Consumes: `SettledNotice` from Task 1.
+- Produces: the settled-state *wiring* that Tasks 5–8 follow — `const [done, setDone] = useState(false)`, `setDone(true)` before the router call, an early `if (done) return <SettledNotice … />`, and an escape control that no longer carries the pending flag.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -200,21 +357,18 @@ Replace the body of `handleUnpaid`'s success branch so the whole function reads:
   }
 ```
 
+Add the import:
+
+```tsx
+import { SettledNotice } from '@/components/ui/settled-notice';
+```
+
 Add the settled render **above** the `if (!confirming)` block:
 
 ```tsx
   if (done) {
     return (
-      <span className="inline-flex items-center gap-2">
-        <span className="type-caption text-teal">Marked unpaid</span>
-        <button
-          type="button"
-          onClick={() => router.refresh()}
-          className="type-caption text-teal min-h-[44px] px-1"
-        >
-          Refresh
-        </button>
-      </span>
+      <SettledNotice label="Marked unpaid" actionLabel="Refresh" onAction={() => router.refresh()} />
     );
   }
 ```
@@ -261,7 +415,7 @@ git commit -m "fix: a dropped refresh no longer traps the mark-unpaid confirm"
 
 ---
 
-### Task 2: `SignOutButton` — reset on an idempotent action
+### Task 3: `SignOutButton` — reset on an idempotent action
 
 **Files:**
 - Modify: `src/components/account/sign-out-button.tsx`
@@ -388,7 +542,7 @@ git commit -m "fix: sign out re-enables when the navigation never commits"
 
 ---
 
-### Task 3: `PasskeySignIn` — an explicit reset that must not clobber the error
+### Task 4: `PasskeySignIn` — an explicit reset that must not clobber the error
 
 **Files:**
 - Modify: `src/components/booking/passkey-sign-in.tsx`
@@ -559,14 +713,14 @@ git commit -m "fix: passkey sign-in no longer freezes the gate on a dropped nav"
 
 ---
 
-### Task 4: `PendingInvitationCard` — settled state, and correcting F7's test
+### Task 5: `PendingInvitationCard` — settled state, and correcting F7's test
 
 **Files:**
 - Modify: `src/components/student/pending-invitation-card.tsx`
 - Modify: `src/components/student/pending-invitation-card.test.tsx:61-70`
 
 **Interfaces:**
-- Consumes: the settled-state shape from Task 1.
+- Consumes: `SettledNotice` from Task 1; the settled-state wiring from Task 2.
 - Produces: nothing consumed later.
 
 **Read first:** spec §7. This file's non-reset is documented at lines 40–46 as the fix for review finding **F7**, and F7's conclusion is *kept* — a plain `finally` here is a regression, because the retry lands on a real 409 (`ALREADY_ANSWERED`). What changes is the alternative: a settled state avoids both the false error and the freeze. **The existing test at line 67 asserts the defect** (`expect(acceptButton).toBeDisabled()`), and must be corrected, not left.
@@ -670,15 +824,20 @@ Add the settled render immediately before the existing `return (` of the compone
     return (
       <section className="bg-sand-soft border border-border rounded-card p-5">
         <h3 className="type-label text-ink font-semibold mb-2">{teacherName}</h3>
-        <p className="type-caption text-teal">
-          {done === 'accept' ? 'Accepted' : 'Declined'} ·{' '}
-          <button type="button" onClick={() => router.refresh()} className="type-caption text-teal">
-            Refresh
-          </button>
-        </p>
+        <SettledNotice
+          label={done === 'accept' ? 'Accepted' : 'Declined'}
+          actionLabel="Refresh"
+          onAction={() => router.refresh()}
+        />
       </section>
     );
   }
+```
+
+Add the import:
+
+```tsx
+import { SettledNotice } from '@/components/ui/settled-notice';
 ```
 
 Remove `disabled={submitting}` from the `Cancel` button (line 76), adding above it:
@@ -709,14 +868,14 @@ git commit -m "fix: an answered invitation settles instead of freezing all four 
 
 ---
 
-### Task 5: `TeacherPrivacyCard` — settled unlink, and correcting F7's second test
+### Task 6: `TeacherPrivacyCard` — settled unlink, and correcting F7's second test
 
 **Files:**
 - Modify: `src/components/student/teacher-privacy-card.tsx`
 - Modify: `src/components/student/teacher-privacy-card.test.tsx:165-185`
 
 **Interfaces:**
-- Consumes: the settled-state shape from Task 1.
+- Consumes: `SettledNotice` from Task 1; the settled-state wiring from Task 2.
 - Produces: nothing consumed later.
 
 **Scope note:** only `handleUnlink` changes. `handleSave` (lines 77–108) already resets in a `finally` at 106–107 and stays mounted after a successful save — it is correct and must not be touched. Touching one arm of a two-arm component is exactly the partial edit this project has shipped before; keep the diff to the unlink arm.
@@ -807,16 +966,11 @@ Replace the confirm cluster's buttons (lines 197–208) so the settled state ren
 
 ```tsx
             {unlinked ? (
-              <p className="type-caption text-teal">
-                Removed ·{' '}
-                <button
-                  type="button"
-                  onClick={() => router.refresh()}
-                  className="type-caption text-teal"
-                >
-                  Refresh
-                </button>
-              </p>
+              <SettledNotice
+                label="Removed"
+                actionLabel="Refresh"
+                onAction={() => router.refresh()}
+              />
             ) : (
               <div className="flex items-center gap-3">
                 <Button variant="destructive" onClick={handleUnlink} disabled={unlinking}>
@@ -852,14 +1006,14 @@ git commit -m "fix: a completed unlink settles instead of freezing its confirm"
 
 ---
 
-### Task 6: `TemplateForm` create mode — the duplicate-schedule guard
+### Task 7: `TemplateForm` create mode — the duplicate-schedule guard
 
 **Files:**
 - Modify: `src/components/settings/template-form.tsx`
 - Modify: `src/components/settings/template-form.test.tsx`
 
 **Interfaces:**
-- Consumes: the settled-state shape from Task 1.
+- Consumes: `SettledNotice` from Task 1; the settled-state wiring from Task 2.
 - Produces: nothing consumed later.
 
 **Why this is the highest-value task in the branch:** `POST /api/class-templates` is a DUPLICATE endpoint — a second request creates a second template *and* re-runs `generateInstancesForTemplate`, materialising a full duplicate set of bookable `Class` rows. On create the form resets in a `finally` (line 267) and pushes (line 240). If that push does not commit, the form sits fully populated and re-enabled, looking exactly like a click that never landed — and the natural second click duplicates the teacher's entire recurring schedule, phantom copies included, bookable by students.
@@ -948,16 +1102,12 @@ Replace the submit button (lines 432–434) with:
 
 ```tsx
       {created ? (
-        <p className="text-sm text-teal">
-          Created ·{' '}
-          <button
-            type="button"
-            onClick={() => router.push('/settings/recurring')}
-            className="text-sm text-teal underline"
-          >
-            Go to recurring classes
-          </button>
-        </p>
+        <SettledNotice
+          label="Created"
+          actionLabel="Go to recurring classes"
+          size="sm"
+          onAction={() => router.push('/settings/recurring')}
+        />
       ) : (
         <Button type="submit" disabled={submitting}>
           {submitting ? 'Saving...' : mode === 'create' ? 'Create' : 'Save'}
@@ -985,14 +1135,14 @@ git commit -m "fix: a dropped create push can no longer duplicate a recurring sc
 
 ---
 
-### Task 7: `StudioTemplateForm` create mode
+### Task 8: `StudioTemplateForm` create mode
 
 **Files:**
 - Modify: `src/components/settings/studio-template-form.tsx`
 - Modify: `src/components/settings/studio-template-form.test.tsx`
 
 **Interfaces:**
-- Consumes: the settled-state shape from Task 1; the same structure as Task 6.
+- Consumes: `SettledNotice` from Task 1; the settled-state wiring from Task 2; the same structure as Task 7.
 - Produces: nothing consumed later.
 
 `POST /api/studio-class-templates` has the identical shape and the identical defect: a duplicate template plus a duplicate generated window, double-counting the teacher's studio income projection. Splitting the two families is how they drift — the reason #98 widened from four endpoints to six.
@@ -1065,16 +1215,12 @@ Replace the submit button (lines 183–185) with:
 
 ```tsx
       {created ? (
-        <p className="text-sm text-teal">
-          Created ·{' '}
-          <button
-            type="button"
-            onClick={() => router.push('/settings/studio-classes')}
-            className="text-sm text-teal underline"
-          >
-            Go to studio classes
-          </button>
-        </p>
+        <SettledNotice
+          label="Created"
+          actionLabel="Go to studio classes"
+          size="sm"
+          onAction={() => router.push('/settings/studio-classes')}
+        />
       ) : (
         <Button type="submit" disabled={submitting}>
           {submitting ? 'Saving...' : mode === 'create' ? 'Create' : 'Save'}
@@ -1100,7 +1246,7 @@ git commit -m "fix: the studio create push gets the same duplicate guard as its 
 
 ---
 
-### Task 8: Correct the artifacts, run the full gate, file the follow-ups
+### Task 9: Correct the artifacts, run the full gate, file the follow-ups
 
 **Files:**
 - Modify: `tests/e2e/teacher-journey.spec.ts:244-247`
@@ -1123,6 +1269,22 @@ git commit -m "fix: the studio create push gets the same duplicate guard as its 
     // is correct regardless of which cause drops the commit.
 ```
 
+- [ ] **Step 1b: Amend the spec, which Task 1 falsified**
+
+Spec §6's first rejected design reads "A single shared hook for all 44 call sites" and concludes "The artifact this design ships is therefore a stated invariant with a test per instance, not an abstraction." Task 1 ships a presentational abstraction, so that last clause is now wrong.
+
+Edit `docs/superpowers/specs/2026-08-11-dropped-refresh-recovery-design.md` so the conclusion reads:
+
+```
+**Even across just the seven in scope there are four shapes.** The artifact this
+design ships is therefore a stated invariant with a test per instance, plus one
+shared *presentational* component (`SettledNotice`) — the axis on which the five
+settled states genuinely are identical. It holds no state, performs no fetch and
+makes no routing decision, so none of the measurement above bears on it.
+```
+
+A claim corrected in the plan and left standing in the spec is the failure mode this project keeps hitting; both artifacts must agree.
+
 - [ ] **Step 2: Run the full gate**
 
 Run: `npm run verify`
@@ -1133,7 +1295,7 @@ Record the exact test totals per project. Green `verify` is a strong signal but 
 
 - [ ] **Step 3: Reconcile the test count arithmetically**
 
-Compute and record: previous `components` project total, plus tests added per file in Tasks 1–7, equals the new total. State it as arithmetic a reviewer can re-derive.
+Compute and record: previous `components` project total, plus tests added per file in Tasks 1–8, equals the new total. State it as arithmetic a reviewer can re-derive.
 
 **Measured baseline on this branch's base commit (`e99ecd3`), read off the runner:**
 
@@ -1142,7 +1304,7 @@ components project:  32 files, 159 tests
 unit + components:   78 files, 776 passed + 2 todo = 778
 ```
 
-**Count tests, not files.** `32` is the file count and `159` is the test count; conflating them is the exact error this project's process warns about. The reconciliation is against **159**, e.g. `159 + 5 (mark-unpaid) + 3 (sign-out) + 4 (passkey) + 2 net (invitation: 3 added, 1 replaced) + 1 net (privacy: 2 added, 1 replaced) + 1 (template) + 1 (studio) = 176`. Two of the seven files *replace* an existing test rather than adding one — count them net, and say so. Do not assert a number you have not read off the runner.
+**Count tests, not files.** `32` is the file count and `159` is the test count; conflating them is the exact error this project's process warns about. The reconciliation is against **159**, e.g. `159 + 3 (settled-notice) + 5 (mark-unpaid) + 3 (sign-out) + 4 (passkey) + 2 net (invitation: 3 added, 1 replaced) + 1 net (privacy: 2 added, 1 replaced) + 1 (template) + 1 (studio) = 179`. Two of the eight files *replace* an existing test rather than adding one — count them net, and say so. Do not assert a number you have not read off the runner.
 
 - [ ] **Step 4: File the duplicate-endpoint issue**
 
@@ -1179,10 +1341,12 @@ PR body requirements: state which inherited claims were checked and which held (
 
 ## Self-review
 
-**Spec coverage.** §5 Rule 1 → Tasks 1, 4, 5, 6, 7. Rule 2 → Tasks 2, 3. Rule 3 → Tasks 1, 4, 5. §7 F7 correction → Tasks 4, 5 (both comment and test). §8 filed follow-ups → Task 8 Steps 4–5. §8 e2e comment → Task 8 Step 1. §9 guards G1–G9 → the mutation step of each task (G1/G2 in 1, G3 in 2, G4/G5 in 3, G6 in 4, G7 in 5, G8 in 6, G9 in 7). §10 acceptance items 1–4 are the tests; 5 the mutation steps; 6 Task 8 Steps 2–3; 7 Task 8 Steps 4–5.
+**Spec coverage.** §5 Rule 1 → Tasks 2, 5, 6, 7, 8, with the presentation shared via Task 1. Rule 2 → Tasks 3, 4. Rule 3 → Tasks 2, 5, 6. §7 F7 correction → Tasks 5, 6 (both comment and test). §8 filed follow-ups → Task 9 Steps 4–5. §8 e2e comment → Task 9 Step 1. §9 guards G1–G9 → the mutation step of each task (G1/G2 in 2, G3 in 3, G4/G5 in 4, G6 in 5, G7 in 6, G8 in 7, G9 in 8). §10 acceptance items 1–4 are the tests; 5 the mutation steps; 6 Task 9 Steps 2–3; 7 Task 9 Steps 4–5.
 
-**Placeholders.** None: every code step carries the actual code, every run step the actual command and expected output. Task 7 Step 1 contains one conditional instruction (match the file's existing render helper) — this is a read-then-match instruction with a named fallback, not a TBD.
+**One deliberate departure from the spec, recorded so a reviewer does not read it as a violation.** Spec §6 rejects a shared abstraction; Task 1 adds one. The rejection was measured against *mutation flow* — thirteen control-flow shapes across the codebase, four among these seven files — and Task 1 abstracts only *presentation*, the axis on which the five settled states genuinely are identical. It holds no state, performs no fetch, and makes no routing decision. The spec's measurement does not contradict it, but the spec's prose does, so the spec is amended in Task 9 alongside the other artifact corrections.
 
-**Type consistency.** `done` is `boolean` in Tasks 1 and 5 (`unlinked`), and `'accept' | 'decline' | null` in Task 4 — deliberately, because that card must render which answer was given. `created` is `boolean` in Tasks 6 and 7. `routerRefresh` / `routerPush` are imported from `tests/setup/components` throughout and never redeclared.
+**Placeholders.** None: every code step carries the actual code, every run step the actual command and expected output. Task 8 Step 1 contains one conditional instruction (match the file's existing render helper) — a read-then-match instruction with a named fallback, not a TBD.
 
-**Known risk to watch during execution.** Tasks 6 and 7 edit one arm of a two-arm handler. A subagent that "tidies" the edit arm has exceeded scope — the edit arm stays mounted after save and is correct as it is.
+**Type consistency.** `done` is `boolean` in Task 2, `unlinked` is `boolean` in Task 6, and `done` is `'accept' | 'decline' | null` in Task 5 — deliberately, because that card must render which answer was given. `created` is `boolean` in Tasks 7 and 8. `SettledNotice`'s props are fixed by Task 1 (`label`, `actionLabel`, `onAction`, `size?`) and used unchanged thereafter — `size="sm"` only in Tasks 7 and 8. `routerRefresh` / `routerPush` are imported from `tests/setup/components` throughout and never redeclared.
+
+**Known risk to watch during execution.** Tasks 7 and 8 edit one arm of a two-arm handler. A subagent that "tidies" the edit arm has exceeded scope — the edit arm stays mounted after save and is correct as it is.
