@@ -1784,11 +1784,13 @@ describe('Booking and waitlisting resolve invitations (#166 task 7)', () => {
 
     // auto_promote window: far enough out that promoteNext's own window
     // check never trips — same trick as waitlist-api.test.ts's
-    // `promoteClassId`.
+    // `promoteClassId`. Distinct date from openClassId above: same teacher,
+    // and Class_teacher_slot_unique is (teacherId, date, startTime) —
+    // reusing openClassId's slot would collide with that still-open class.
     const promoteClass = await prisma.class.create({
       data: {
         teacherId: resolveTeacherId, teacherRoomId, classType: 'Resolve Promote',
-        date: new Date('2099-06-01'), startTime: '09:00', durationMinutes: 60,
+        date: new Date('2099-06-02'), startTime: '09:00', durationMinutes: 60,
         roomCost: 20, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 2,
         status: 'open',
       },
