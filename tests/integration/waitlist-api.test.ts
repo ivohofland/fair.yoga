@@ -16,6 +16,12 @@ let teacherRoomId: string;
 let farFutureClassId: string;
 let freedSpotClassId: string;
 
+// Shared anchor for freedSpotClassId (below) and claimClassId (in the
+// nested describe further down) — see the comment where each is derived
+// for why they must share one `new Date()` read rather than each taking
+// their own.
+let baseNow: Date;
+
 function claim(token: string | null, body: unknown) {
   return fetch(`${BASE_URL}/api/waitlist/claim`, {
     method: 'POST',
@@ -113,12 +119,18 @@ beforeAll(async () => {
   // freedom is how that hour is split between "budget for the suite to reach
   // this test" and "slack against clock skew".
   //
-  // classStart = now + 6h50m with a HOURS_6 deadline gives deadline now+50m,
-  // cutoff now−10m: a 50-minute budget and 10 minutes of skew slack. It was
-  // 15/45, which is the wrong way round — the test process and the server are
-  // the same machine on localhost, so skew is effectively zero, while the
-  // budget is the thing that actually fails (the window flips to `frozen`
-  // past it). The suite runs in ~20s locally and ~3m in CI.
+  // classStart = baseNow + 6h50m with a HOURS_6 deadline gives deadline
+  // baseNow+50m, cutoff baseNow−10m: a 50-minute budget and 10 minutes of
+  // skew slack. It was 15/45, which is the wrong way round — the test
+  // process and the server are the same machine on localhost, so skew is
+  // effectively zero, while the budget is the thing that actually fails (the
+  // window flips to `frozen` past it). The suite runs in ~20s locally and
+  // ~3m in CI.
+  //
+  // baseNow (module scope) rather than a locally-scoped `now`: claimClassId
+  // in the nested describe below derives from this same instant, at a fixed
+  // one-minute-less offset, so the two classes land on guaranteed-distinct
+  // minutes without either one giving up budget — see that comment for why.
   //
   // #66 unit-covered claimSpot's whole window matrix deterministically, which
   // is why this no longer needs to prove anything about *windows*. It stays
@@ -126,8 +138,8 @@ beforeAll(async () => {
   // 201 rather than 200, and the response shape — which no service test can
   // reach. Teacher timezone is UTC (see above), so classStartInstant is plain
   // Date.UTC arithmetic.
-  const now = new Date();
-  const classStart = new Date(now.getTime() + (6 * 60 + 50) * 60 * 1000);
+  baseNow = new Date();
+  const classStart = new Date(baseNow.getTime() + (6 * 60 + 50) * 60 * 1000);
   const freedSpotDate = new Date(
     Date.UTC(classStart.getUTCFullYear(), classStart.getUTCMonth(), classStart.getUTCDate()),
   );
@@ -340,18 +352,21 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
     });
 
     // first_come_first_claimed window — same style as freedSpotClassId above
-    // (HOURS_6 deadline), but a 6h20m offset rather than freedSpotClassId's
-    // 6h50m: cutoff now-40m, deadline now+20m, still comfortably inside the
-    // final-hour window. Both classes share `teacherId`, and both start
-    // times are derived from `new Date()` captured only moments apart (this
-    // beforeAll runs right after the describe-block-1 tests that consume
-    // freedSpotClassId) — same offset would floor to the same
-    // (date, startTime) minute and collide on Class_teacher_slot_unique.
-    // The 30-minute gap between 6h20m and 6h50m is far larger than any
-    // realistic delay between the two `now()` captures, so the two classes
-    // can never land on the same slot.
-    const now = new Date();
-    const classStart = new Date(now.getTime() + (6 * 60 + 20) * 60 * 1000);
+    // (HOURS_6 deadline), derived from that same `baseNow` (module scope)
+    // rather than a fresh `new Date()` here. Both classes share `teacherId`,
+    // so a fresh read would only be *probably* distinct from
+    // freedSpotClassId's — floored to the minute, two independent reads
+    // this close together (this beforeAll runs right after the
+    // describe-block-1 tests that consume freedSpotClassId) could land in
+    // the same minute and collide on Class_teacher_slot_unique; that this
+    // never fired in practice was luck, not a guarantee. Anchoring both to
+    // one instant makes it a guarantee instead: 6h49m here vs
+    // freedSpotClassId's 6h50m is a fixed one-minute difference from a
+    // shared clock read, so the two floored minutes are exactly one apart
+    // regardless of any real delay — deadline baseNow+49m, cutoff
+    // baseNow−11m, a 49/11 split essentially matching freedSpotClassId's
+    // 50/10 rather than sacrificing budget for separation.
+    const classStart = new Date(baseNow.getTime() + (6 * 60 + 49) * 60 * 1000);
     const claimDate = new Date(
       Date.UTC(classStart.getUTCFullYear(), classStart.getUTCMonth(), classStart.getUTCDate()),
     );
