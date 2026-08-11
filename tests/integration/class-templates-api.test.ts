@@ -40,16 +40,16 @@ let otherSessionToken: string;
 const DAY_OF_WEEK = (((new Date().getUTCDay() + 6) % 7) + 2) % 7;
 const EXPECTED_JS_DAY = (DAY_OF_WEEK + 1) % 7;
 
-// startTime defaults to '09:30' for the one test that still asserts that
-// literal value (the very first template this file creates, before any
-// other template exists to collide with). Every other caller below passes
-// its own distinct startTime: ClassTemplate_teacher_slot_unique is
-// (teacherId, dayOfWeek, startTime) WHERE isArchived = false, this file
-// reuses one teacher and one dayOfWeek throughout, and most of these
-// templates are never archived by the end of their test (that is what
-// several of them are proving) — so the only way for later templates to
-// coexist with earlier still-active ones is a startTime of their own.
-function templateBody(classType: string, startTime = '09:30') {
+// startTime is required, not defaulted — every call site below must state
+// its own: ClassTemplate_teacher_slot_unique is (teacherId, dayOfWeek,
+// startTime) WHERE isArchived = false, this file reuses one teacher and one
+// dayOfWeek throughout, and most of these templates are never archived by
+// the end of their test (that is what several of them are proving) — so the
+// only way for later templates to coexist with earlier still-active ones is
+// a startTime of their own. A default here would silently reopen the exact
+// collision this file was repaired for, the moment a ninth inline caller
+// forgot to pass one.
+function templateBody(classType: string, startTime: string) {
   return {
     teacherRoomId,
     classType,
@@ -175,7 +175,7 @@ describe('POST /api/class-templates', () => {
     const res = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('Instant Flow')),
+      body: JSON.stringify(templateBody('Instant Flow', '09:30')),
     });
     expect(res.status).toBe(201);
     const { data: template } = (await res.json()) as { data: { id: string } };
