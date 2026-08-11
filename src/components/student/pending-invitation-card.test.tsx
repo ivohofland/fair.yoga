@@ -167,6 +167,42 @@ describe('PendingInvitationCard', () => {
     expect(screen.queryByText('Could not respond. Try again.')).toBeNull();
   });
 
+  /**
+   * PR #198 review P4, the ordering nothing exercised anywhere: every
+   * in-flight test on this branch released `{ ok: true }`, so a request
+   * abandoned via the escape and *failing* afterwards was untested in all
+   * three confirm components.
+   *
+   * Cancel is a state reset, not an abort, so that failure still runs its
+   * branch. What must hold is that it lands on an operable card — both
+   * answers available, nothing frozen — and that the failure is still
+   * reported rather than swallowed. It is reported without context, which is
+   * untidy; that is recorded here rather than fixed, because suppressing a
+   * late failure needs an abandonment flag, and the same flag would have to
+   * keep letting a late *success* through, which the settled-state test above
+   * requires.
+   */
+  it('stays operable, and still reports, when a cancelled decline fails afterwards', async () => {
+    let release!: (value: { ok: boolean; status: number; json: () => Promise<unknown> }) => void;
+    fetchMock.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    render(<PendingInvitationCard invitationId="inv-1" teacherName="Jane Teacher" />);
+    fireEvent.click(screen.getByRole('button', { name: /^decline$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /decline invitation/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /declining/i })).toBeDisabled());
+
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    release({ ok: false, status: 500, json: async () => ({}) });
+
+    expect(await screen.findByText('Could not respond. Try again.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^accept$/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^decline$/i })).toBeEnabled();
+  });
+
   it('renders no decline confirmation, and fetches nothing, until the trigger is clicked', () => {
     stubFetch();
     render(<PendingInvitationCard invitationId="inv-1" teacherName="Jane Teacher" />);
