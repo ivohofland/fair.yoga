@@ -77,18 +77,26 @@ beforeAll(async () => {
   });
   teacherRoomId = teacherRoom.id;
 
-  // Local fixture helper — the four class creates below share every field
-  // except classType and status. teacherRoom.id is already in scope here, so
-  // this closes over it directly rather than reading it back off a
+  // Local fixture helper — the class creates below share every field except
+  // classType, status and startTime. teacherRoom.id is already in scope
+  // here, so this closes over it directly rather than reading it back off a
   // module-level let.
-  function makeClass(classType: string, status: 'draft' | 'open' = 'draft') {
+  //
+  // startTime defaults to '09:00' but each call below passes a distinct
+  // value: all five land on the same ownerId + date, and
+  // `Class_teacher_slot_unique` (Task 1, #196) now rejects a second live
+  // (teacherId, date, startTime) row, where "live" excludes only `cancelled`
+  // — `draft` and `open` both count. Measured: five calls at the shared
+  // default collide on the second one, `prisma.class.create` throwing P2002
+  // before a single test in this file runs.
+  function makeClass(classType: string, status: 'draft' | 'open' = 'draft', startTime = '09:00') {
     return prisma.class.create({
       data: {
         teacherId: ownerId,
         teacherRoomId: teacherRoom.id,
         classType,
         date: new Date('2099-06-01'),
-        startTime: '09:00',
+        startTime,
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -110,7 +118,7 @@ beforeAll(async () => {
   // mutates status away from `draft`, which the tests above depend on staying
   // put. No registrations/waitlist entries here, so the cancel transaction's
   // notification fan-out has nothing to notify (see the cancel test below).
-  const cancelCls = await makeClass('Classes API Cancel');
+  const cancelCls = await makeClass('Classes API Cancel', 'draft', '09:15');
   cancelClassId = cancelCls.id;
 
   // -- PUT /api/classes/[id] economic-lock fixtures ------------------------
@@ -122,10 +130,10 @@ beforeAll(async () => {
   // what makes the 200-vs-409 pair between them a meaningful contrast, rather
   // than two differently-shaped fixtures that happen to land on different
   // status codes for unrelated reasons.
-  const economicsCls = await makeClass('Classes API Lock (unlocked)', 'open');
+  const economicsCls = await makeClass('Classes API Lock (unlocked)', 'open', '09:30');
   economicsClassId = economicsCls.id;
 
-  const lockedCls = await makeClass('Classes API Lock (locked)', 'open');
+  const lockedCls = await makeClass('Classes API Lock (locked)', 'open', '09:45');
   lockedClassId = lockedCls.id;
 
   // A student who books lockedClassId over HTTP — the same trigger path
@@ -164,7 +172,7 @@ beforeAll(async () => {
   // by the same student the lock fixture uses — `Registration` is unique on
   // (classId, studentId), so a second class is fine, and reusing the student
   // avoids a second account/session/teardown chain.
-  const noticeCls = await makeClass('Classes API Notice', 'open');
+  const noticeCls = await makeClass('Classes API Notice', 'open', '10:00');
   noticeClassId = noticeCls.id;
 
   const noticeRes = await fetch(`${BASE_URL}/api/registrations`, {
@@ -673,8 +681,18 @@ describe('POST /api/classes', () => {
   // another teacher's template id used to squat the (templateId, date) unique
   // pair, which silently stops the victim's generator from ever filling that
   // date.
+  //
+  // startTime overridden away from baseBody()'s '10:00': the previous test
+  // ('creates a class against the calling teacher') already created a real row
+  // at ownerId/2099-08-01/10:00, and `Class_teacher_slot_unique` (#196) now
+  // refuses a second live row at that same slot. Not the concern this test
+  // pins, so it moves to a slot of its own rather than sharing one.
   it("ignores another teacher's templateId instead of attaching it", async () => {
-    const res = await post(ownerToken, { ...baseBody(), templateId: victimTemplateId });
+    const res = await post(ownerToken, {
+      ...baseBody(),
+      templateId: victimTemplateId,
+      startTime: '10:15',
+    });
     expect(res.status).toBe(201);
 
     const { data } = (await res.json()) as { data: { id: string } };
@@ -711,5 +729,55 @@ describe('POST /api/classes', () => {
   it('refuses an unknown teacherRoomId', async () => {
     const res = await post(ownerToken, { ...baseBody(), teacherRoomId: UNKNOWN_CLASS_ID });
     expect(res.status).toBe(400);
+  });
+
+  describe('POST /api/classes is retry-safe on the slot key (#196)', () => {
+    // The parent describe's own afterAll (above) only clears `classType:
+    // 'Create Route'` from `teacherRoomId`, so the 'Slot Yoga' rows this
+    // block creates would otherwise survive it and FK-block the top-level
+    // afterAll's `teacherRoom.deleteMany({ where: { teacherId: ownerId } })`
+    // — the same failure mode that comment documents for its own rows.
+    // Nested `afterAll`s run before their parent's, so this clears the way
+    // in time.
+    afterAll(async () => {
+      await prisma.class.deleteMany({ where: { teacherId: ownerId, classType: 'Slot Yoga' } });
+    });
+
+    const slotBody = () => ({
+      teacherRoomId, classType: 'Slot Yoga', date: '2027-04-05', startTime: '07:15',
+      durationMinutes: 60, roomCost: 20, minRate: 30, targetRate: 60,
+      minStudents: 3, maxStudents: 10,
+    });
+    const post = (body: unknown) =>
+      fetch(`${BASE_URL}/api/classes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
+        body: JSON.stringify(body),
+      });
+
+    it('answers a repeated identical create with 409 and leaves exactly one class', async () => {
+      const first = await post(slotBody());
+      expect(first.status).toBe(201);
+
+      const second = await post(slotBody());
+      expect(second.status).toBe(409);
+      expect((await second.json()).error.code).toBe('DUPLICATE_CLASS_SLOT');
+
+      const rows = await prisma.class.findMany({
+        where: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: '07:15' },
+      });
+      expect(rows).toHaveLength(1);
+    });
+
+    it('leaves exactly one class when two identical creates are in flight at once', async () => {
+      const body = { ...slotBody(), startTime: '07:45' };
+      const [a, b] = await Promise.all([post(body), post(body)]);
+      expect([a.status, b.status].sort()).toEqual([201, 409]);
+
+      const rows = await prisma.class.findMany({
+        where: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: '07:45' },
+      });
+      expect(rows).toHaveLength(1);
+    });
   });
 });

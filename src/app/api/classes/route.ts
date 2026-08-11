@@ -9,6 +9,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { createClassSchema } from '@/lib/schemas';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -59,25 +60,38 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return respondError('Invalid teacher room', 400);
   }
 
-  const cls = await prisma.class.create({
-    data: {
-      teacherId: session.teacherId,
-      teacherRoomId: body.teacherRoomId,
-      classType: body.classType,
-      description: body.description ?? null,
-      date: new Date(body.date),
-      startTime: body.startTime,
-      durationMinutes: body.durationMinutes,
-      roomCost: body.roomCost,
-      minRate: body.minRate,
-      targetRate: body.targetRate,
-      minStudents: body.minStudents,
-      maxStudents: body.maxStudents,
-      cancelDeadline: body.cancelDeadline,
-      autoCancelCheck: body.autoCancelCheck,
-      status: 'draft',
-    },
-  });
-
-  return respondOk(cls, 201);
+  try {
+    const cls = await prisma.class.create({
+      data: {
+        teacherId: session.teacherId,
+        teacherRoomId: body.teacherRoomId,
+        classType: body.classType,
+        description: body.description ?? null,
+        date: new Date(body.date),
+        startTime: body.startTime,
+        durationMinutes: body.durationMinutes,
+        roomCost: body.roomCost,
+        minRate: body.minRate,
+        targetRate: body.targetRate,
+        minStudents: body.minStudents,
+        maxStudents: body.maxStudents,
+        cancelDeadline: body.cancelDeadline,
+        autoCancelCheck: body.autoCancelCheck,
+        status: 'draft',
+      },
+    });
+    return respondOk(cls, 201);
+  } catch (err) {
+    // The slot key, not the template key. `@@unique([templateId, date])` also
+    // raises P2002 here and means something else entirely, so the column list
+    // is what tells them apart.
+    if (isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])) {
+      return respondError(
+        'You already have a class at that date and time.',
+        409,
+        'DUPLICATE_CLASS_SLOT',
+      );
+    }
+    throw err;
+  }
 });
