@@ -474,6 +474,41 @@ let studentAccountId: string;
     }
   }, 15_000);
 
+  /**
+   * #112. `waiting: true, registered: false` is the load-bearing shape: a
+   * class whose ONLY audience is its queue. `gdpr.ts` already closes these
+   * entries (`:736`) but built its recipient list from registrations alone,
+   * and gated the whole build behind `if (registrations.length > 0)` — so
+   * this exact fixture is the one that catches both halves. A fixture with a
+   * registered student too would pass against the unfixed guard, because the
+   * build would run for the registered student and the waiter would ride
+   * along on the concatenation.
+   */
+  it('tells a queued student when the teacher erases their account, with nobody registered', async () => {
+    const fixture = await makeStudentWaitingInClass({ waiting: true, registered: false });
+    try {
+      await deleteTeacherAccount(prisma, fixture.teacherId);
+
+      const note = await prisma.notification.findFirst({
+        where: {
+          recipientType: 'student',
+          recipientId: fixture.studentId,
+          relatedClassId: fixture.classId,
+          type: 'class_cancelled',
+        },
+      });
+      expect(note).not.toBeNull();
+
+      const entry = await prisma.waitlistEntry.findFirstOrThrow({
+        where: { classId: fixture.classId, studentId: fixture.studentId },
+      });
+      expect(entry.status).toBe('removed');
+    } finally {
+      await prisma.notification.deleteMany({ where: { recipientId: fixture.studentId } });
+      await cleanupStudentWaitingInClass(fixture);
+    }
+  });
+
   it('teacher deletion cancels upcoming classes, notifies, and anonymizes', async () => {
     // Fresh student registered on the teacher's open class (recreate an
     // open class since the previous one now has a cancelled registration).

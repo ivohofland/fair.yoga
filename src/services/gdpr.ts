@@ -733,6 +733,14 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
           continue;
         }
 
+        // #112. Read before closing them: `updateMany` returns a count, not
+        // rows, and these students are recipients. The update itself is
+        // unchanged — this path has always closed the queue correctly and has
+        // simply never told anyone it had.
+        const waiting = await tx.waitlistEntry.findMany({
+          where: { classId: cls.id, status: 'waiting' },
+          select: { studentId: true },
+        });
         await tx.waitlistEntry.updateMany({
           where: { classId: cls.id, status: 'waiting' },
           data: { status: 'removed' },
@@ -758,8 +766,15 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
           where: { classId: cls.id, status: 'registered' },
           select: { studentId: true },
         });
-        if (registrations.length > 0) {
-          const notifications: CreateNotificationInput[] = registrations.map((r) => ({
+        // Guard on the CONCATENATED list, not on `registrations`. A class
+        // whose only audience is its queue has no registrations at all, and
+        // that is precisely the case #112 exists to cover — keying this on
+        // `registrations.length` drops the notification for exactly the
+        // student it was added for, and every fixture with both audiences
+        // passes anyway.
+        const recipients = [...registrations, ...waiting];
+        if (recipients.length > 0) {
+          const notifications: CreateNotificationInput[] = recipients.map((r) => ({
             recipientType: 'student' as const,
             recipientId: r.studentId,
             type: 'class_cancelled' as const,
