@@ -505,6 +505,9 @@ describe('POST /api/classes is retry-safe on the slot key (#196)', () => {
     const [a, b] = await Promise.all([post(body), post(body)]);
     expect([a.status, b.status].sort()).toEqual([201, 409]);
 
+    const loser = a.status === 409 ? a : b;
+    expect((await loser.json()).error.code).toBe('DUPLICATE_CLASS_SLOT');
+
     const rows = await prisma.class.findMany({
       where: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: '07:45' },
     });
@@ -518,7 +521,9 @@ The second test is the one a sequential-only suite cannot write, and it is the c
 - [ ] **Step 2: Run and watch them fail**
 
 Run: `npx vitest run --project integration tests/integration/classes-api.test.ts -t '#196'`
-Expected: test 1 FAILS with `expected 500 to be 409` or `expected 409 to be …` depending on ordering — the route has no branch, so `P2002` reaches the generic fallback as 409 `"Resource already exists"` with `code` undefined. Test 2 FAILS on the code assertion for the same reason. **Both must fail on the `code`, not on the row count** — the row count already passes because Task 1's index is doing its job. Record that distinction; it is what shows the tests are testing the route and not the index.
+Expected: test 1 FAILS with `expected 500 to be 409` or `expected 409 to be …` depending on ordering — the route has no branch, so `P2002` reaches the generic fallback as 409 `"Resource already exists"` with `code` undefined. Test 2 FAILS on the code assertion for the same reason: it reads whichever response came back 409 and asserts `error.code`, same as test 1. **Both must fail on the `code`, not on the row count** — the row count already passes because Task 1's index is doing its job. Record that distinction; it is what shows the tests are testing the route and not the index.
+
+*(Correction, recorded after Task 3's review: an earlier draft of test 2 asserted only the status pair and row count, with no `code` check. Both of those already held before the route branch existed — Task 1's index alone serializes the concurrent writes to `[201, 409]`, and the pre-existing generic P2002→409 fallback already returned a bare 409. That draft passed at Step 2 and stayed passing under the Step 6 mutation, giving the concurrent path no coverage of this task's own change. The `code` assertion above is the fix; it is what actually pins the new branch under concurrency.)*
 
 - [ ] **Step 3: Write the shared predicate**
 
@@ -540,6 +545,17 @@ import { Prisma } from '@prisma/client';
  * Compared as a set. Two unique keys over the same columns in a different
  * order cannot meaningfully coexist, and an order-sensitive check would turn a
  * harmless index rewrite into a silently unreachable branch.
+ *
+ * Deliberately ignores `err.meta?.modelName`, so this is safe only as long as
+ * a single `try` block can raise P2002 from just one model. That holds for
+ * every caller today, but not by any guarantee: `(teacherId, date,
+ * startTime)` names both `Class_teacher_slot_unique` and
+ * `StudioClass_teacher_slot_unique`, and `(teacherId, dayOfWeek, startTime)`
+ * names both `ClassTemplate_teacher_slot_unique` and
+ * `StudioClassTemplate_teacher_slot_unique`. A route whose transaction can
+ * raise P2002 from two models sharing a column-name set — e.g. a
+ * `ClassTemplate` create that also generates `Class` rows, if `dayOfWeek` and
+ * `date` ever converged — would need `modelName` added to disambiguate them.
  */
 export function isUniqueConflictOn(err: unknown, columns: readonly string[]): boolean {
   if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') return false;
