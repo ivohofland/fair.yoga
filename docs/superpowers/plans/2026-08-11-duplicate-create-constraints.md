@@ -41,9 +41,40 @@
 
 ---
 
-## Task 0: Production violation gate — BLOCKING, no code
+## Task 0: Violation gate — NOT APPLICABLE, and why that is recorded rather than deleted
 
-`CREATE UNIQUE INDEX` fails outright against violating rows. Dev holds 16 classes and 1 template, which proves nothing. **Do not proceed to Task 1 until this returns all zeros or the user has decided on remediation.**
+`CREATE UNIQUE INDEX` fails outright against violating rows, so a data check normally gates this migration.
+
+**There is no production database. The project is development-only** (confirmed by Ivo, 2026-08-11). So there is no dataset this migration can fail against except dev and test, and both were measured clean: 0 duplicate groups on each of the six keys, against 16 `Class`, 7 `StudioClass` and 1 `ClassTemplate` rows.
+
+Kept in the plan rather than deleted, because the reasoning expires: **the moment a production database exists, it will be created by running this migration history**, so the index is in place before any row is written and no violating row can ever accumulate. That is a stronger guarantee than a pre-flight count would have given — but it holds only for a database built from these migrations. A database seeded any other way needs the six counting queries first; they are preserved below for that reader.
+
+<details><summary>The six counting queries, for a database not built from this migration history</summary>
+
+```sql
+SELECT 'Class live dup groups' AS k, count(*) FROM (
+  SELECT "teacherId","date","startTime" FROM "Class" WHERE status <> 'cancelled'
+  GROUP BY 1,2,3 HAVING count(*)>1) s
+UNION ALL SELECT 'StudioClass live dup groups', count(*) FROM (
+  SELECT "teacherId","date","startTime" FROM "StudioClass" WHERE "cancelledAt" IS NULL
+  GROUP BY 1,2,3 HAVING count(*)>1) s
+UNION ALL SELECT 'ClassTemplate live dup groups', count(*) FROM (
+  SELECT "teacherId","dayOfWeek","startTime" FROM "ClassTemplate" WHERE "isArchived" = false
+  GROUP BY 1,2,3 HAVING count(*)>1) s
+UNION ALL SELECT 'StudioClassTemplate live dup groups', count(*) FROM (
+  SELECT "teacherId","dayOfWeek","startTime" FROM "StudioClassTemplate" WHERE "isArchived" = false
+  GROUP BY 1,2,3 HAVING count(*)>1) s
+UNION ALL SELECT 'Room public dup groups', count(*) FROM (
+  SELECT "address","floor","roomName" FROM "Room" WHERE "isPublic" = true
+  GROUP BY 1,2,3 HAVING count(*)>1) s
+UNION ALL SELECT 'Room private dup groups', count(*) FROM (
+  SELECT "createdById","address","floor","roomName" FROM "Room" WHERE "isPublic" = false
+  GROUP BY 1,2,3,4 HAVING count(*)>1) s;
+```
+
+</details>
+
+**No steps. Proceed directly to Task 1.**
 
 **Files:** none.
 
