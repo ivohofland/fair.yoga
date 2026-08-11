@@ -231,23 +231,32 @@ async function dispatch(notification: CreateNotification): Promise<void> {
 
 ### Class Generator (`services/class-generator.ts`)
 
-Runs as a cron job (daily). For each active ClassTemplate, ensures instances exist for the next 4 weeks:
+Runs hourly as part of the in-process scheduler (see Background Jobs below). For each active, unarchived ClassTemplate it tops up the rolling 4-week window, and reports every candidate date it could **not** fill along with the reason:
 
 ```typescript
-async function generateUpcomingClasses(): Promise<void> {
-  const templates = await getActiveTemplates();
-  const horizon = addWeeks(new Date(), 4);
+// generateInstancesForTemplate — one template, one window
+const dates = nextFourOccurrences(template);
 
-  for (const template of templates) {
-    const existingDates = await getGeneratedDates(template.id);
-    const missingDates = calculateMissingDates(template.dayOfWeek, horizon, existingDates);
+// ONE query classifies every candidate: already generated, blocked by a
+// cancelled instance of this template, or the teacher's slot taken by another
+// class. The reasons are what the teacher and the operator get told.
+const occupants = await db.class.findMany({
+  where: { teacherId: template.teacherId, date: { in: dates } },
+});
 
-    for (const date of missingDates) {
-      await createClassFromTemplate(template, date);
-    }
-  }
-}
+// ONE insert. `skipDuplicates` compiles to a bare `ON CONFLICT DO NOTHING`,
+// so a date lost to a concurrent insert costs that date and nothing else.
+const inserted = await db.class.createManyAndReturn({
+  data: freeDates.map(rowFor),
+  skipDuplicates: true,
+});
+
+return { created: inserted.length, skipped }; // GenerationResult
 ```
+
+**Not a per-date insert loop, deliberately.** It was one until #164. Four of this function's call sites pass a transaction client, and Prisma does not savepoint individual queries inside an interactive transaction — so a per-date insert that hit a unique violation aborted the whole transaction, and a clash on the last date let `COMMIT` return the `ROLLBACK` tag with no error at all. A teacher resuming a template was told it worked while the template stayed paused. See `docs/superpowers/specs/2026-08-11-generator-slot-reporting-design.md`.
+
+`services/studio-class-generator.ts` is the studio twin and has the same shape and the same `GenerationResult`.
 
 ---
 

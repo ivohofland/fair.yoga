@@ -88,16 +88,21 @@ export type PauseStudioTemplateResult =
        * today). Nothing else can insert for this `templateId` while the claim
        * holds it, and this transaction's own uncommitted rows cannot be
        * cancelled by anyone else. See the count below for the one input that
-       *        could break it — a second, disagreeing read of `defaultTimezone`.
+       * could break it — a second, disagreeing read of `defaultTimezone`.
        */
       added: number;
       /**
        * Candidate dates a cancelled instance of this template holds (#192).
-       * The count that makes the `scheduled === 0` operator warn (and the
-       * Task 6 resume copy) a measured number rather than an inference:
-       * `added + blockedByCancelled + slotTaken` is the window's candidate
-       * count, always — every date generation did not fill is one of these
-       * two reasons.
+       * The count that makes the `scheduled === 0` operator warn, and the
+       * resume copy, a measured number rather than an inference.
+       *
+       * These two counts do **not** sum with `added` to the window: they are
+       * two of the four `SkipReason` members (`src/lib/generation.ts`), and
+       * they omit `already_generated` — the common case — and `raced`. On a
+       * steady-state hourly sweep all three of these numbers are zero while
+       * the window still has four candidate dates. The invariant that does
+       * hold is `GenerationResult`'s own: `created + skipped.length` is the
+       * candidate count.
        */
       blockedByCancelled: number;
       /**

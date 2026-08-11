@@ -295,6 +295,52 @@ describe('resumeMessage (class)', () => {
   it('stays silent about cause when there is none to name', () => {
     expect(resumeMessage(0, 0, 0, 0)).toBe('Nothing is scheduled from this template.');
   });
+
+  // The singular was unreachable by the pins above, which only ever passed 4.
+  // It read "1 cancelled class still hold those dates" — a verb after the
+  // count, the shape `archiveMessage`'s docblock warns about.
+  it('agrees with its verb when a single cancelled class holds a date', () => {
+    expect(resumeMessage(0, 0, 1, 0)).toBe(
+      'Nothing is scheduled from this template. 1 cancelled class still holds that date.',
+    );
+  });
+
+  // `scheduled` counts only draft/open, so live and cancelled dates coexist in
+  // one window. Naming only the taken slot here is the silence #192 was filed
+  // about.
+  it('names both causes on a window that has each', () => {
+    expect(resumeMessage(0, 2, 1, 1)).toBe(
+      '2 classes on your schedule. 1 date already had a class. 1 cancelled class still holds that date.',
+    );
+  });
+
+  it('names the cancelled dates even when some classes are scheduled', () => {
+    expect(resumeMessage(0, 2, 2, 0)).toBe(
+      '2 classes on your schedule. 2 cancelled classes still hold those dates.',
+    );
+  });
+});
+
+describe('the two families resume with one sentence', () => {
+  // They are word-for-word identical, and `resumeStudioMessage` delegates so
+  // they cannot drift. If a future change makes them differ on purpose, delete
+  // this test in the same commit — do not let it rot into a false claim.
+  it('answers identically for every case pinned above', () => {
+    const cases: Array<[number, number, number, number]> = [
+      [4, 4, 0, 0],
+      [0, 4, 0, 0],
+      [3, 4, 0, 1],
+      [0, 0, 4, 0],
+      [0, 0, 1, 0],
+      [0, 2, 1, 1],
+      [0, 0, 0, 0],
+    ];
+    for (const [added, scheduled, blocked, taken] of cases) {
+      expect(resumeStudioMessage(added, scheduled, blocked, taken)).toBe(
+        resumeMessage(added, scheduled, blocked, taken),
+      );
+    }
+  });
 });
 
 describe('the two toggle payloads are not interchangeable', () => {

@@ -94,8 +94,13 @@ type TemplateWithTimezone = Prisma.ClassTemplateGetPayload<{
  * on the *last* date there is no next statement — `COMMIT` on an aborted
  * transaction returns the `ROLLBACK` tag with no error, so `$transaction`
  * resolved successfully while every row it reported was discarded (#164).
- * Four of the five call sites pass a transaction client. Do not reintroduce a
- * `catch` here; there is nothing it can do that the constraint does not.
+ * Named rather than counted, because a count goes stale on the first unrelated
+ * change and this one was wrong on arrival: `api/class-templates/route.ts`,
+ * `generateClassInstances` below, and `pauseOrResumeTemplate`
+ * (`class-template-lifecycle.ts`) all pass a transaction client;
+ * `syncTemplateInstances` (`template-sync.ts`) is the one that does not, and
+ * passes a bare `PrismaClient`. Do not reintroduce a `catch` here; there is
+ * nothing it can do that the constraint does not.
  *
  * Accepts a transaction client so a route can create the template and its
  * window atomically.

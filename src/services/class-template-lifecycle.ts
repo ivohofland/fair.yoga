@@ -366,8 +366,15 @@ export type PauseTemplateResult =
       /**
        * Scheduled classes for this template from the start of the teacher's
        * today onward — the same predicate and boundary `remaining` uses, so
-       * archiving and resuming report on one basis. Mirrors the studio
-       * family's `scheduled` (#119) exactly.
+       * archiving and resuming report on one basis.
+       *
+       * Mirrors the studio family's `scheduled` (#119) in the three ways that
+       * carry the guarantee, not just in name: counted after generation,
+       * inside the same transaction, off the same `defaultTimezone` read the
+       * generator filtered its candidate dates with. An earlier draft counted
+       * it outside the transaction against the pre-transaction read of that
+       * column, which is the one input the studio twin's docblock names as
+       * making `scheduled < added` reachable.
        */
       scheduled: number;
       /** Rows this resume created. */
@@ -470,10 +477,30 @@ export async function pauseOrResumeTemplate(
           data: { isActive: desiredActive },
           include: { teacher: { select: { defaultTimezone: true } } },
         });
-        const generation = t.isActive
-          ? await generateInstancesForTemplate(tx, t)
-          : { created: 0, skipped: [] };
-        return { template: t, generation };
+        if (!t.isActive) {
+          return { template: t, generation: { created: 0, skipped: [] }, scheduled: 0 };
+        }
+        const generation = await generateInstancesForTemplate(tx, t);
+
+        // Inside the transaction, on `tx`, and keyed to `t.teacher` — all
+        // three deliberately, to match `pauseOrResumeStudioTemplate` rather
+        // than merely resemble it.
+        //
+        // `t.teacher.defaultTimezone`, not the `template.teacher` read at the
+        // top of this function. That is the studio twin's rule, and its
+        // reasoning carries over unchanged: `generateInstancesForTemplate`
+        // filtered its candidate dates with `classStartInstant(date,
+        // startTime, t.teacher.defaultTimezone)` off this same object, so
+        // keying the count's boundary to a *different* read of that column is
+        // the one way `scheduled < added` becomes reachable — a zone change
+        // committing between the two reads moves the `gte today` boundary past
+        // a row generation just added. Do not "simplify" this to
+        // `template.teacher.…`.
+        const today = startOfLocalDay(new Date(), t.teacher.defaultTimezone);
+        const scheduled = await tx.class.count({
+          where: scheduledWhere(templateId, { gte: today }),
+        });
+        return { template: t, generation, scheduled };
       },
       // The claim in `class-generator.ts` holds this row's lock for up to its
       // own 10s transaction; Prisma's 5s default would abort us mid-wait.
@@ -513,7 +540,7 @@ export async function pauseOrResumeTemplate(
 
   if (updated === null) return { ok: false, reason: 'not_found' };
 
-  const { template: updatedTemplate, generation } = updated;
+  const { template: updatedTemplate, generation, scheduled } = updated;
 
   // The include above is only for `generateInstancesForTemplate`'s benefit —
   // `PauseTemplateResult` carries a plain `ClassTemplate`, so the joined
@@ -536,13 +563,8 @@ export async function pauseOrResumeTemplate(
     return { ok: true, action: 'paused', template: template_, lastScheduled };
   }
 
-  // After the transaction, on a committed `active`: the same `gte` today
-  // boundary `remaining` uses, so archiving and resuming report on one basis.
-  const today = startOfLocalDay(new Date(), template.teacher.defaultTimezone);
-  const scheduled = await db.class.count({
-    where: scheduledWhere(templateId, { gte: today }),
-  });
-
+  // `scheduled` was counted inside the transaction above — see the comment
+  // there for why it is not recomputed here.
   return {
     ok: true,
     action: 'active',

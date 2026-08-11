@@ -93,7 +93,13 @@ a call):
 1. `\bclass\.\(update\|updateMany\|delete\|deleteMany\|upsert\)(` — the Prisma
    writes **that can lock an existing row**. `create`/`createMany` are
    deliberately absent: a freshly inserted row's lock conflicts with nothing,
-   so it carries no ordering obligation;
+   so it carries no ordering obligation. **`createManyAndReturn` joins them**,
+   for the same reason and not by oversight: #164/#192 replaced both
+   generators' per-date `create` loop with one `createManyAndReturn`, which is
+   still only inserts. Re-run at that time: this grep returned 14 on the branch
+   and 14 on `main`, so the candidate set did not move. The occupancy
+   `findMany` those generators gained, and the `class.count` on the class
+   family's resume, are reads — no locks under READ COMMITTED, no edges;
 2. `'"Class"'` — the raw statements. All but one are single-id `FOR UPDATE`:
    four written inline, plus `lockClassRow`'s body (itself called from exactly
    four places, grep 3). The exception is `withdrawWaitingEntriesForTeacher`'s

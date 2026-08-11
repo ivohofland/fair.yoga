@@ -129,20 +129,14 @@ export function resumeStudioMessage(
   blockedByCancelled: number,
   slotTaken: number,
 ): string {
-  if (scheduled === 0) {
-    if (blockedByCancelled === 0) return 'Nothing is scheduled from this template.';
-    const cancelledWord = blockedByCancelled === 1 ? 'class' : 'classes';
-    return `Nothing is scheduled from this template. ${blockedByCancelled} cancelled ${cancelledWord} still hold those dates.`;
-  }
-
-  const classWord = scheduled === 1 ? 'class' : 'classes';
-  const head = `${scheduled} ${classWord} on your schedule.`;
-
-  if (slotTaken > 0) {
-    const dateWord = slotTaken === 1 ? 'date' : 'dates';
-    return `${head} ${slotTaken} ${dateWord} already had a class.`;
-  }
-  return added === 0 ? `${head} Nothing needed adding.` : head;
+  // Delegates rather than duplicates. The two families' resume sentences are
+  // identical word for word — unlike `archiveMessage`/`archiveStudioMessage`,
+  // which are split because their wording genuinely differs — and this file
+  // already shares `pauseMessage` between both resolvers on exactly that
+  // basis. Kept as a separate export so the studio resolver's call site stays
+  // family-specific and a future divergence has somewhere to land; delegating
+  // so that until it does, the two cannot drift apart unnoticed.
+  return resumeMessage(added, scheduled, blockedByCancelled, slotTaken);
 }
 
 /**
@@ -156,13 +150,21 @@ export function resumeStudioMessage(
  * declined to. `blockedByCancelled` and `slotTaken` are now counted by the
  * generator and carried over the wire, so the sentence can say what happened.
  *
- * One clause at a time, in a fixed order: a blocked window names the cancelled
- * classes (its cause), a full window names the taken slots (its cause), and a
- * window that simply matched nothing names nothing. `blockedByCancelled` is
- * never named beside a non-zero `scheduled` — it cannot co-occur (a date
- * blocked by a cancelled own row is not on the schedule), and `slotTaken` can
- * co-occur with it only on a mixed window, which this function does not
- * enumerate branch by branch.
+ * Every cause that applies is named, rather than one at a time. An earlier
+ * draft claimed `blockedByCancelled` "cannot co-occur" with a non-zero
+ * `scheduled`; it can, and the case it dismissed is the one #192 exists for.
+ * `scheduled` counts only `SCHEDULED_STATUSES` — `draft` and `open`
+ * (`class-template-lifecycle.ts`) — so a cancelled instance is excluded from it
+ * while still producing `blocked_by_cancelled`. A window whose first two dates
+ * hold live classes and whose last two the teacher cancelled reports
+ * `scheduled: 2` and `blockedByCancelled: 2` together. Naming only the taken
+ * slots there would leave two permanently unfillable dates unexplained, which
+ * is the silence #192 was filed about.
+ *
+ * The cancelled clause carries its own verb agreement rather than a shared
+ * `classWord`, because it is the one sentence here with a verb after the count
+ * — the shape `archiveMessage` warns about above, and which read "1 cancelled
+ * class still hold those dates" until it was pinned.
  */
 export function resumeMessage(
   added: number,
@@ -170,19 +172,28 @@ export function resumeMessage(
   blockedByCancelled: number,
   slotTaken: number,
 ): string {
+  const cancelledClause =
+    blockedByCancelled === 1
+      ? '1 cancelled class still holds that date.'
+      : `${blockedByCancelled} cancelled classes still hold those dates.`;
+
   if (scheduled === 0) {
-    if (blockedByCancelled === 0) return 'Nothing is scheduled from this template.';
-    const cancelledWord = blockedByCancelled === 1 ? 'class' : 'classes';
-    return `Nothing is scheduled from this template. ${blockedByCancelled} cancelled ${cancelledWord} still hold those dates.`;
+    return blockedByCancelled === 0
+      ? 'Nothing is scheduled from this template.'
+      : `Nothing is scheduled from this template. ${cancelledClause}`;
   }
 
   const classWord = scheduled === 1 ? 'class' : 'classes';
   const head = `${scheduled} ${classWord} on your schedule.`;
 
+  const causes: string[] = [];
   if (slotTaken > 0) {
     const dateWord = slotTaken === 1 ? 'date' : 'dates';
-    return `${head} ${slotTaken} ${dateWord} already had a class.`;
+    causes.push(`${slotTaken} ${dateWord} already had a class.`);
   }
+  if (blockedByCancelled > 0) causes.push(cancelledClause);
+
+  if (causes.length > 0) return [head, ...causes].join(' ');
   return added === 0 ? `${head} Nothing needed adding.` : head;
 }
 
