@@ -189,7 +189,21 @@ export function TeacherPrivacyCard({
       {error && <p className="text-sm text-danger mt-2">{error}</p>}
 
       <div className="mt-5 pt-4 border-t border-border">
-        {confirmingUnlink ? (
+        {/*
+          #40, whole-branch review F2. `unlinked` is tested *first*, ahead of
+          `confirmingUnlink` — the ordering the four sibling components get for
+          free by early-returning above their whole render. It used to sit
+          inside the confirm branch, and Rule 3 un-disabling Cancel opened the
+          path that exposed it: confirm → DELETE in flight → Cancel → the
+          DELETE resolves ok. `setUnlinked(true)` ran with nothing to render
+          it, so the card fell back to the full privacy UI and offered to
+          remove a teacher already removed — a committed destructive action,
+          reported as if it had never happened, with a `TeacherBlock` behind it
+          that only booking one of that teacher's classes can lift.
+        */}
+        {unlinked ? (
+          <SettledNotice label="Removed" actionLabel="Refresh" onAction={() => router.refresh()} />
+        ) : confirmingUnlink ? (
           <div className="flex flex-col gap-3">
             <p className="type-body">
               {teacherName} stops sending you announcements, and everything on this card is
@@ -197,27 +211,19 @@ export function TeacherPrivacyCard({
               you&apos;re holding on their waitlists is given up. They won&apos;t be able to add
               you again — but you can always reconnect by booking one of their classes.
             </p>
-            {unlinked ? (
-              <SettledNotice
-                label="Removed"
-                actionLabel="Refresh"
-                onAction={() => router.refresh()}
-              />
-            ) : (
-              <div className="flex items-center gap-3">
-                <Button variant="destructive" onClick={handleUnlink} disabled={unlinking}>
-                  {unlinking ? 'Removing...' : 'Remove teacher'}
-                </Button>
-                {/*
-                  #40. Not disabled by `unlinking`: a pure client-side reset,
-                  and the only way out if the DELETE hangs rather than
-                  resolving — a case the settled state cannot reach.
-                */}
-                <Button variant="secondary" onClick={() => setConfirmingUnlink(false)}>
-                  Cancel
-                </Button>
-              </div>
-            )}
+            <div className="flex items-center gap-3">
+              <Button variant="destructive" onClick={handleUnlink} disabled={unlinking}>
+                {unlinking ? 'Removing...' : 'Remove teacher'}
+              </Button>
+              {/*
+                #40. Not disabled by `unlinking`: a pure client-side reset,
+                and the only way out if the DELETE hangs rather than
+                resolving — a case the settled state cannot reach.
+              */}
+              <Button variant="secondary" onClick={() => setConfirmingUnlink(false)}>
+                Cancel
+              </Button>
+            </div>
             {unlinkError && <p className="type-caption text-danger">{unlinkError}</p>}
           </div>
         ) : (

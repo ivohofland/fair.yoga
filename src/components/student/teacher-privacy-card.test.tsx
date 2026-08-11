@@ -205,7 +205,20 @@ describe('TeacherPrivacyCard', () => {
       await waitFor(() => expect(screen.getByRole('button', { name: /removing/i })).toBeDisabled());
       expect(cancel).toBeEnabled();
 
+      fireEvent.click(cancel);
       release({ ok: true });
+
+      // Whole-branch review F2. Rule 3 un-disabled Cancel, which opened a path
+      // that did not exist before: confirm → DELETE in flight → Cancel → the
+      // DELETE resolves ok. Cancel cannot recall it, and the link is severed
+      // along with a `TeacherBlock` only booking a class can lift, so the card
+      // must settle. The settled check used to sit *inside* the confirming
+      // branch, so this exact sequence rendered nothing — the card reverted to
+      // the full privacy UI offering "Remove this teacher" for a teacher
+      // already removed. This test used to end at `release` (F7) and therefore
+      // could not see it.
+      expect(await screen.findByText(/^Removed/)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /remove this teacher/i })).toBeNull();
     });
 
     it('DELETEs /api/teacher-links/:teacherId and refreshes on success', async () => {
