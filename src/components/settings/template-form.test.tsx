@@ -251,4 +251,41 @@ describe('TemplateForm', () => {
     // every other assertion here still passed.
     expect(routerPush).toHaveBeenNthCalledWith(2, '/settings/recurring');
   });
+
+  /**
+   * Review F4. `handleSubmit`'s `if (created) return;` cannot be reached
+   * through the UI: settlement removes the only submit button, and HTML's
+   * implicit submission needs one — or a single field that blocks it, where
+   * this form has eight. Its comment used to claim the Enter key as the
+   * trigger, which is a trigger that does not exist, and that false story is
+   * why the guard went unpinned.
+   *
+   * A dispatched submit event reaches the handler where the UI cannot, which
+   * is what defence-in-depth means: the guard is what holds if a submit button
+   * is ever re-added outside the settled branch. Delete the guard and this
+   * test fails on a second POST to a non-idempotent endpoint.
+   */
+  it('ignores a submit event dispatched at the form once created', async () => {
+    stubFetch();
+    render(<TemplateForm mode="create" />);
+
+    const roomSelect = await screen.findByLabelText('Room');
+    fireEvent.change(roomSelect, {
+      target: { value: '11111111-1111-4111-8111-111111111111' },
+    });
+    const classType = screen.getByLabelText('Class type');
+    fireEvent.change(classType, { target: { value: 'Vinyasa' } });
+
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/settings/recurring'));
+
+    const callsAfterFirstSubmit = fetchMock.mock.calls.length;
+    const form = classType.closest('form');
+    if (!form) throw new Error('expected the fields to still be inside a form after settling');
+
+    // Synchronous up to its own `await`: an unguarded handler calls `fetch`
+    // before this line returns, so no waiting is needed to observe it.
+    fireEvent.submit(form);
+    expect(fetchMock.mock.calls.length).toBe(callsAfterFirstSubmit);
+  });
 });

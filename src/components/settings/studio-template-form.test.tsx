@@ -148,4 +148,29 @@ describe('StudioTemplateForm', () => {
     // create push and the settled retry.
     expect(routerPush).toHaveBeenNthCalledWith(2, '/settings/studio-classes');
   });
+
+  /**
+   * Review F4, the studio twin. The `if (created) return;` guard is
+   * unreachable through the UI — no submit button survives settling, and
+   * implicit submission needs one or a single blocking field, where this form
+   * has five — so a dispatched submit event is what pins it. Without the
+   * guard this sends a second POST to a non-idempotent endpoint.
+   */
+  it('ignores a submit event dispatched at the form once created', async () => {
+    stubFetch();
+    render(<StudioTemplateForm mode="create" />);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    const location = screen.getByLabelText('Location');
+    fireEvent.change(location, { target: { value: 'Studio A' } });
+
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/settings/studio-classes'));
+
+    const callsAfterFirstSubmit = fetchMock.mock.calls.length;
+    const form = location.closest('form');
+    if (!form) throw new Error('expected the fields to still be inside a form after settling');
+
+    fireEvent.submit(form);
+    expect(fetchMock.mock.calls.length).toBe(callsAfterFirstSubmit);
+  });
 });

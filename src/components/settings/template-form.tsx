@@ -180,8 +180,17 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // #40. A settled create must not be re-submittable, including by pressing
-    // Enter in a still-mounted field — the button is gone, the form is not.
+    // #40, corrected by whole-branch review F4. Defence-in-depth against a
+    // future shape of this form, not a path the UI can take today. The claim
+    // this comment used to make — that Enter in a still-mounted field would
+    // re-submit — is not what HTML does: implicit submission needs either a
+    // submit button (settlement removes the only one; `SettledNotice`'s
+    // control is `type="button"`) or exactly one field that blocks it, and
+    // this form has eight. That is precisely why no test could pin the guard,
+    // and why a synthetic `fireEvent.submit` pins it instead: the day someone
+    // re-adds a submit button outside the settled branch, or this form is
+    // reduced to a single field, the guard is the second line and the test is
+    // what proves it can still fail.
     if (created) return;
     if (!form.teacherRoomId) {
       setError('Select a room');

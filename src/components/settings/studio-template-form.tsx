@@ -88,8 +88,12 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // #40. A settled create must not be re-submittable, including via Enter in
-    // a still-mounted field.
+    // #40, corrected by whole-branch review F4. Defence-in-depth, on the same
+    // reasoning as `template-form.tsx`'s twin: settlement removes the only
+    // submit button, and implicit submission needs one — or a single field
+    // that blocks it, where this form has five. Unreachable through the UI, so
+    // a synthetic `fireEvent.submit` is what keeps it a guard rather than a
+    // decoration.
     if (created) return;
     if (!form.location.trim()) {
       setError('Location is required');
