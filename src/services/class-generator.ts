@@ -7,6 +7,7 @@
 
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
+import type { GenerationResult, SkippedSlot } from '@/lib/generation';
 import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
 import { classStartInstant } from '@/lib/timezone';
 import { log } from '@/lib/log';
@@ -72,17 +73,39 @@ type TemplateWithTimezone = Prisma.ClassTemplateGetPayload<{
 }>;
 
 /**
- * Generates the rolling 4-week window for ONE template, idempotently
- * (`@@unique([templateId, date])` + P2002-skip). Accepts a transaction
- * client so a route can create the template and its window atomically.
+ * Generates the rolling 4-week window for ONE template, reporting each
+ * candidate date it could not fill and why (`GenerationResult`).
+ *
+ * Two mechanisms, each with a job the other cannot do:
+ *
+ *   - the occupancy `findMany` below names the *reason* a date is skipped, which
+ *     is what lets the teacher be told something true and an operator grep for
+ *     it. It is a read-then-write and so is not race-safe on its own;
+ *   - `createManyAndReturn({ skipDuplicates: true })` compiles to a BARE
+ *     `ON CONFLICT DO NOTHING` — no conflict target, so it covers every unique
+ *     constraint on the table, including the partial index #196 adds. That is
+ *     what makes a clash cost only its own date.
+ *
+ * This function used to claim it was idempotent via "`@@unique([templateId,
+ * date])` + P2002-skip". It was not, and the correction is the reason this
+ * shape exists: Prisma does not savepoint individual queries inside an
+ * interactive transaction, so a caught `P2002` leaves Postgres with an aborted
+ * transaction. The next statement fails with `25P02`, and if the clash landed
+ * on the *last* date there is no next statement — `COMMIT` on an aborted
+ * transaction returns the `ROLLBACK` tag with no error, so `$transaction`
+ * resolved successfully while every row it reported was discarded (#164).
+ * Four of the five call sites pass a transaction client. Do not reintroduce a
+ * `catch` here; there is nothing it can do that the constraint does not.
+ *
+ * Accepts a transaction client so a route can create the template and its
+ * window atomically.
  */
 export async function generateInstancesForTemplate(
   db: PrismaClient | Prisma.TransactionClient,
   template: TemplateWithTimezone,
   from?: Date,
-): Promise<number> {
+): Promise<GenerationResult> {
   const startDate = from ?? new Date();
-  let created = 0;
 
   // The next 4 occurrences whose start is still ahead of startDate. A run
   // after today's start time must not create a class that already happened;
@@ -95,41 +118,109 @@ export async function generateInstancesForTemplate(
     )
     .slice(0, DEFAULT_WEEKS);
 
-  for (const date of dates) {
-    const existing = await db.class.findFirst({ where: { templateId: template.id, date } });
-    if (existing) continue;
+  // One query for the whole window, replacing the per-date `findFirst`. Scoped
+  // to this teacher because the slot key #196 enforces is
+  // `(teacherId, date, startTime)` — another teacher's class can never block
+  // this one and must not be read.
+  const occupants = await db.class.findMany({
+    where: { teacherId: template.teacherId, date: { in: dates } },
+    select: { templateId: true, date: true, startTime: true, status: true },
+  });
 
-    try {
-      await db.class.create({
-        data: {
-          teacherId: template.teacherId,
-          teacherRoomId: template.teacherRoomId,
-          templateId: template.id,
-          classType: template.classType,
-          description: template.description,
-          date,
-          startTime: template.startTime,
-          durationMinutes: template.durationMinutes,
-          roomCost: template.roomCost,
-          minRate: template.minRate,
-          targetRate: template.targetRate,
-          minStudents: template.minStudents,
-          maxStudents: template.maxStudents,
-          cancelDeadline: template.cancelDeadline,
-          autoCancelCheck: template.autoCancelCheck,
-          status: 'open',
-        },
+  const skipped: SkippedSlot[] = [];
+  const free: Date[] = [];
+
+  for (const date of dates) {
+    const onDate = occupants.filter((c) => c.date.getTime() === date.getTime());
+
+    // At most one, by `@@unique([templateId, date])`.
+    const own = onDate.find((c) => c.templateId === template.id);
+    if (own) {
+      // A cancelled own row still holds the date: that unique key does not
+      // care about status, so the date is unfillable for good, not merely
+      // already filled. Telling those two apart is #192.
+      skipped.push({
+        date,
+        reason: own.status === 'cancelled' ? 'blocked_by_cancelled' : 'already_generated',
       });
-    } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        continue; // a concurrent run created this instance first
-      }
-      throw err;
+      continue;
     }
-    created++;
+
+    // Mirrors #196's index predicate exactly (`WHERE "status" <> 'cancelled'`).
+    // Widen or narrow one without the other and this pre-check starts
+    // disagreeing with the constraint that backs it — see the spec's §4.1.
+    if (onDate.some((c) => c.startTime === template.startTime && c.status !== 'cancelled')) {
+      skipped.push({ date, reason: 'slot_taken' });
+      continue;
+    }
+
+    free.push(date);
   }
 
-  return created;
+  const inserted =
+    free.length === 0
+      ? []
+      : await db.class.createManyAndReturn({
+          data: free.map((date) => ({
+            teacherId: template.teacherId,
+            teacherRoomId: template.teacherRoomId,
+            templateId: template.id,
+            classType: template.classType,
+            description: template.description,
+            date,
+            startTime: template.startTime,
+            durationMinutes: template.durationMinutes,
+            roomCost: template.roomCost,
+            minRate: template.minRate,
+            targetRate: template.targetRate,
+            minStudents: template.minStudents,
+            maxStudents: template.maxStudents,
+            cancelDeadline: template.cancelDeadline,
+            autoCancelCheck: template.autoCancelCheck,
+            status: 'open' as const,
+          })),
+          skipDuplicates: true,
+          select: { date: true },
+        });
+
+  // A free date that did not come back lost a race with a concurrent insert.
+  // Before #164 this was the P2002 that poisoned the transaction; it is now an
+  // ordinary skipped date, and the only one whose cause is not in `occupants`.
+  const landed = new Set(inserted.map((r) => r.date.getTime()));
+  for (const date of free) {
+    if (!landed.has(date.getTime())) skipped.push({ date, reason: 'raced' });
+  }
+
+  skipped.sort((a, b) => a.date.getTime() - b.date.getTime());
+  logSkippedSlots(template.id, template.teacherId, skipped);
+
+  return { created: inserted.length, skipped };
+}
+
+/**
+ * One line per generator call, never one per date — that ratio is the answer to
+ * the noise question #192 raised, where per-date logging on an hourly sweep put
+ * ~48 lines/day on a 2GB VPS for a teacher with two blocked dates. Per call it
+ * is 24, and each is complete rather than a fragment.
+ *
+ * `already_generated` is excluded deliberately: it is the correct, expected
+ * outcome of every steady-state run, and logging it *is* the noise.
+ */
+function logSkippedSlots(templateId: string, teacherId: string, skipped: SkippedSlot[]): void {
+  const blocking = skipped.filter((s) => s.reason !== 'already_generated');
+  if (blocking.length === 0) return;
+
+  log.warn(
+    {
+      templateId,
+      teacherId,
+      skipped: blocking.map((s) => ({
+        date: s.date.toISOString().slice(0, 10),
+        reason: s.reason,
+      })),
+    },
+    'class generation could not fill every date in the window',
+  );
 }
 
 /**
@@ -179,14 +270,15 @@ export async function generateInstancesForTemplate(
  *
  * Do not weaken `FOR UPDATE` to `FOR NO KEY UPDATE` to stop blocking `Class`
  * inserts — it looks like a free optimisation but isn't. `FOR UPDATE` is what
- * makes a concurrent insert for this template impossible, which is what makes
- * the P2002 branch in `generateInstancesForTemplate` unreachable whenever it
- * runs after a successful claim. That branch cannot work inside this
- * transaction anyway: Prisma does not savepoint individual queries in an
- * interactive transaction, so a failed insert would poison the rest of it —
- * the next query fails with `25P02`, not a clean P2002 skip. Under `FOR
- * UPDATE` this is moot (dead code, safe); under a weaker lock it is live and
- * broken.
+ * makes a concurrent insert for this template impossible, because an insert's
+ * FK check takes `FOR KEY SHARE` on this row, which `FOR UPDATE` conflicts with
+ * and `FOR NO KEY UPDATE` does not. Measured on #164, both directions.
+ *
+ * That is a claim about races, not about correctness under one:
+ * `generateInstancesForTemplate` no longer has a P2002 branch to be broken.
+ * Its `ON CONFLICT DO NOTHING` makes a lost race cost one date and abort
+ * nothing, with or without this lock. The lock still earns its place by
+ * keeping the values this claim returns authoritative (#102).
  *
  * Returns the locked row rather than a boolean, so a caller cannot generate
  * from the snapshot its outer `findMany` read minutes earlier (#102). The raw
@@ -262,7 +354,8 @@ export async function generateClassInstances(
           if (!fresh) return 0;
           // `fresh`, not `template`: the loop variable is the pre-filter's
           // stale snapshot.
-          return generateInstancesForTemplate(tx, fresh, startDate);
+          const result = await generateInstancesForTemplate(tx, fresh, startDate);
+          return result.created;
         },
         // Comfortably above the claim's own 2s lock_timeout, so Postgres
         // gives up on the lock before Prisma gives up on the transaction.

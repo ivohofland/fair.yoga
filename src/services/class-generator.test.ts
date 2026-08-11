@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
-import { startOfLocalDay } from '@/lib/timezone';
+import { classStartInstant, startOfLocalDay } from '@/lib/timezone';
 import {
   getNextOccurrences,
   generateClassInstances,
@@ -640,7 +640,7 @@ describe('generateClassInstances (DB)', () => {
         // 1. Claim, generate, and commit — the "claim first" arm.
         const created = await prisma.$transaction(async (tx) => {
           expect(await claimTemplateForGeneration(tx, template.id)).not.toBeNull();
-          return generateInstancesForTemplate(tx, template, today);
+          return (await generateInstancesForTemplate(tx, template, today)).created;
         });
         expect(created).toBe(4);
 
@@ -671,6 +671,147 @@ describe('generateClassInstances (DB)', () => {
       }
     });
   });
+
+  describe('generateInstancesForTemplate — slot reporting', () => {
+    /** The same four dates the generator will choose, computed the same way. */
+    function candidates(now: Date): Date[] {
+      return getNextOccurrences(1, now, 5)
+        .filter((d) => classStartInstant(d, '09:00', 'Europe/Amsterdam') > now)
+        .slice(0, 4);
+    }
+
+    afterEach(async () => {
+      await prisma.class.deleteMany({ where: { teacherId } });
+    });
+
+    it('reports an already-generated date rather than counting it', async () => {
+      const now = new Date();
+      const first = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+      expect(first.created).toBe(4);
+      expect(first.skipped).toEqual([]);
+
+      const second = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+      expect(second.created).toBe(0);
+      expect(second.skipped.map((s) => s.reason)).toEqual([
+        'already_generated',
+        'already_generated',
+        'already_generated',
+        'already_generated',
+      ]);
+    });
+
+    it('names a cancelled own instance as blocked_by_cancelled, not as idempotency', async () => {
+      const now = new Date();
+      const dates = candidates(now);
+      const blocked = dates[1]!;
+      await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+      await prisma.class.updateMany({
+        where: { templateId, date: blocked },
+        data: { status: 'cancelled' },
+      });
+
+      const again = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+      expect(again.created).toBe(0);
+      expect(again.skipped).toContainEqual({ date: blocked, reason: 'blocked_by_cancelled' });
+    });
+
+    it('skips only the slot a manually created class occupies, and still fills the rest', async () => {
+      const now = new Date();
+      const dates = candidates(now);
+      const taken = dates[1]!;
+      // templateId: null — a class the teacher created by hand. The old probe
+      // checked {templateId, date} and so could not see this at all.
+      await prisma.class.create({
+        data: {
+          teacherId,
+          teacherRoomId,
+          templateId: null,
+          classType: 'Manual',
+          date: taken,
+          startTime: '09:00',
+          durationMinutes: 60,
+          roomCost: 40,
+          minRate: 15,
+          targetRate: 30,
+          minStudents: 4,
+          maxStudents: 12,
+          cancelDeadline: 'HOURS_24',
+          autoCancelCheck: 'HOURS_2',
+          status: 'open',
+        },
+      });
+
+      const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+
+      expect(result.created).toBe(3);
+      expect(result.skipped).toEqual([{ date: taken, reason: 'slot_taken' }]);
+      expect(await prisma.class.count({ where: { templateId } })).toBe(3);
+    });
+
+    it('does not treat a cancelled neighbour as occupying the slot', async () => {
+      const now = new Date();
+      const dates = candidates(now);
+      const free = dates[1]!;
+      await prisma.class.create({
+        data: {
+          teacherId,
+          teacherRoomId,
+          templateId: null,
+          classType: 'Manual',
+          date: free,
+          startTime: '09:00',
+          durationMinutes: 60,
+          roomCost: 40,
+          minRate: 15,
+          targetRate: 30,
+          minStudents: 4,
+          maxStudents: 12,
+          cancelDeadline: 'HOURS_24',
+          autoCancelCheck: 'HOURS_2',
+          status: 'cancelled',
+        },
+      });
+
+      // #196's index carries `WHERE "status" <> 'cancelled'`, so a cancelled
+      // neighbour does not occupy the slot and must not block generation.
+      const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+      expect(result.created).toBe(4);
+      expect(result.skipped).toEqual([]);
+    });
+
+    it('logs blocked dates once per call, and stays silent for plain idempotency', async () => {
+      const now = new Date();
+      const spy = vi.spyOn(log, 'warn').mockImplementation(() => log);
+      try {
+        await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+        expect(spy).not.toHaveBeenCalled(); // 4 fresh creates — nothing to say
+
+        await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+        expect(spy).not.toHaveBeenCalled(); // 4 already_generated — the noise rule
+
+        await prisma.class.updateMany({
+          where: { templateId, date: candidates(now)[1]! },
+          data: { status: 'cancelled' },
+        });
+        await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(spy.mock.calls[0]![0]).toMatchObject({
+          templateId,
+          skipped: [{ reason: 'blocked_by_cancelled' }],
+        });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
+  /** The template with the `teacher.defaultTimezone` join the generator requires. */
+  async function freshTemplate() {
+    return prisma.classTemplate.findUniqueOrThrow({
+      where: { id: templateId },
+      include: { teacher: { select: { defaultTimezone: true } } },
+    });
+  }
 });
 
 // ===========================================================================
@@ -700,12 +841,20 @@ describe('generateClassInstances (per-template isolation)', () => {
         findUniqueOrThrow: async ({ where: { id } }: { where: { id: string } }) => tmpl(id, 't1'),
       },
       class: {
-        findFirst: async () => null,
-        create: async ({ data }: { data: { templateId: string } }) => {
-          if (data.templateId === 'A') throw new Error('boom-A');
-          if (data.templateId === 'C') throw new Error('boom-C');
-          created.push(data.templateId);
-          return {};
+        // The generator reads the whole window in one query; an empty result
+        // means every candidate date is free to create.
+        findMany: async () => [],
+        createManyAndReturn: async ({
+          data,
+        }: {
+          data: Array<{ templateId: string; date: Date }>;
+        }) => {
+          for (const row of data) {
+            if (row.templateId === 'A') throw new Error('boom-A');
+            if (row.templateId === 'C') throw new Error('boom-C');
+            created.push(row.templateId);
+          }
+          return data.map((row) => ({ date: row.date }));
         },
       },
       // The sweep now claims each template inside its own transaction before

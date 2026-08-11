@@ -207,20 +207,33 @@ defect; both are worth a test.
 
 ## 5. Call sites
 
-Seven in production, nine in tests, all read a number today and read `.created` after.
+Seven in production, nine in tests — and §3's blanket claim that all sixteen "read a
+number today and read `.created` after" was wrong. Measured while implementing
+Task 1: most sites **discard** the return value, so no edit is needed there, and the
+spec's first pass should not have listed them as converting:
 
-**Class family — `generateInstancesForTemplate`:** `api/class-templates/route.ts:63`,
-`class-generator.ts:265`, `class-template-lifecycle.ts:456`, `template-sync.ts:119`
-(4 production); `class-generator.test.ts:643`, `tests/integration/class-templates-api.test.ts:194`
-(2 test).
+- **Discard the return:** `api/class-templates/route.ts:63` (POST),
+  `class-template-lifecycle.ts:456` (Resume), `template-sync.ts:119`,
+  `api/studio-class-templates/route.ts:48` (POST), and the rollback probe at
+  `tests/integration/class-templates-api.test.ts:194`. Their only obligation is to
+  keep calling the generator; the shape change is invisible to them.
+- **Consume the return:** the two sweeps (`class-generator.ts:265`,
+  `studio-class-generator.ts:266`, which read `.created` into their totals) and the
+  resume branches Tasks 4/5 count from.
+
+**Class family — `generateInstancesForTemplate`:** `api/class-templates/route.ts:63`
+(discards), `class-generator.ts:265` (consumes), `class-template-lifecycle.ts:456`
+(discards; Task 4 reads it), `template-sync.ts:119` (discards) (4 production);
+`class-generator.test.ts:643` and the Task 1 slot-reporting suite (consume),
+`tests/integration/class-templates-api.test.ts:194` (discards) (3 test).
 
 **Studio family — `generateStudioInstancesForTemplate`:**
-`api/studio-class-templates/route.ts:48`, `studio-class-generator.ts:266`,
-`studio-class-template-lifecycle.ts:385` (3 production);
-`studio-class-generator.test.ts:538,539,562,585,586,600`,
+`api/studio-class-templates/route.ts:48` (discards), `studio-class-generator.ts:266`
+(consumes), `studio-class-template-lifecycle.ts:385` (consumes; Task 5 counts)
+(3 production); `studio-class-generator.test.ts:538,539,562,585,586,600`,
 `tests/integration/studio-api.test.ts:196` (7 test).
 
-`4 + 3 = 7` production, `2 + 7 = 9` test, 16 total. The two sweeps
+`4 + 3 = 7` production, `3 + 7 = 10` test, 17 total. The two sweeps
 (`generateClassInstances`, `generateStudioClassInstances`) keep returning `number` —
 their callers are the cron route and `scheduler.ts`, which want a total, and the
 per-template detail belongs in the log, not in a sweep-wide sum.
