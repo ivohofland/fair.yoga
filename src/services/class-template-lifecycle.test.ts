@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import type { RegistrationStatus } from '@prisma/client';
 import {
@@ -6,7 +6,8 @@ import {
   archiveOrUnarchiveTemplate,
   pauseOrResumeTemplate,
 } from './class-template-lifecycle';
-import { startOfLocalDay } from '@/lib/timezone';
+import { startOfLocalDay, classStartInstant } from '@/lib/timezone';
+import { getNextOccurrences } from './class-generator';
 import { formatDayHeader } from '@/lib/format';
 
 const prisma = new PrismaClient();
@@ -1502,6 +1503,14 @@ describe('pauseOrResumeTemplate (DB)', () => {
     await prisma.$disconnect();
   });
 
+  // The generator's occupancy check is per-teacher (#196), so one test's
+  // generated window occupies the next test's slots: several tests here resume
+  // templates on the same `dayOfWeek`/`startTime`, and without this a resume
+  // that used to create four would create nothing.
+  beforeEach(async () => {
+    await prisma.class.deleteMany({ where: { teacherId } });
+  });
+
   it('pausing an active template deletes nothing and reports the furthest-out scheduled class', async () => {
     const t = await makeTemplate('Pause Active');
     const soon = await makeClass(t.id, futureOn(3), '08:00');
@@ -1543,6 +1552,48 @@ describe('pauseOrResumeTemplate (DB)', () => {
     // none — the regeneration this test exists to prove wasn't silently
     // dropped when the PATCH route's logic was moved into this function.
     expect(await prisma.class.count({ where: { templateId: t.id } })).toBeGreaterThan(0);
+  });
+
+  /**
+   * A manually created class (templateId null) occupies one of the resume's
+   * candidate slots, so the resume creates three and reports the occupied date
+   * as `slotTaken`. `scheduled` counts the three it created for this template —
+   * the manual class belongs to no template, so it is not counted here.
+   */
+  it('reports what the window holds when a slot is already taken', async () => {
+    const t = await makeTemplate('Slot Taken Report');
+    await pauseOrResumeTemplate(prisma, t.id, teacherId, 'paused');
+
+    const candidates = getNextOccurrences(3, new Date(), 5)
+      .filter((d) => classStartInstant(d, '09:30', 'UTC') > new Date())
+      .slice(0, 4);
+    await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        templateId: null,
+        classType: 'Manual',
+        date: candidates[0]!,
+        startTime: '09:30',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 8,
+        cancelDeadline: 'HOURS_24',
+        autoCancelCheck: 'HOURS_2',
+        status: 'open',
+      },
+    });
+
+    const result = await pauseOrResumeTemplate(prisma, t.id, teacherId, 'active');
+
+    expect(result).toMatchObject({ ok: true, action: 'active', added: 3, slotTaken: 1 });
+    if (result.ok && result.action === 'active') {
+      expect(result.scheduled).toBe(3);
+      expect(result.blockedByCancelled).toBe(0);
+    }
   });
 
   it('pausing a template with no scheduled classes reports lastScheduled: null', async () => {

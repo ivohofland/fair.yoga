@@ -359,7 +359,24 @@ export type PauseTemplateResult =
       template: ClassTemplate;
       lastScheduled: LastScheduledClass | null;
     }
-  | { ok: true; action: 'active'; template: ClassTemplate }
+  | {
+      ok: true;
+      action: 'active';
+      template: ClassTemplate;
+      /**
+       * Scheduled classes for this template from the start of the teacher's
+       * today onward — the same predicate and boundary `remaining` uses, so
+       * archiving and resuming report on one basis. Mirrors the studio
+       * family's `scheduled` (#119) exactly.
+       */
+      scheduled: number;
+      /** Rows this resume created. */
+      added: number;
+      /** Candidate dates a cancelled instance of this template holds (#192). */
+      blockedByCancelled: number;
+      /** Candidate dates another of this teacher's classes holds (#196). */
+      slotTaken: number;
+    }
   | { ok: true; action: 'unchanged'; template: ClassTemplate }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
@@ -453,8 +470,10 @@ export async function pauseOrResumeTemplate(
           data: { isActive: desiredActive },
           include: { teacher: { select: { defaultTimezone: true } } },
         });
-        if (t.isActive) await generateInstancesForTemplate(tx, t);
-        return t;
+        const generation = t.isActive
+          ? await generateInstancesForTemplate(tx, t)
+          : { created: 0, skipped: [] };
+        return { template: t, generation };
       },
       // The claim in `class-generator.ts` holds this row's lock for up to its
       // own 10s transaction; Prisma's 5s default would abort us mid-wait.
@@ -470,10 +489,10 @@ export async function pauseOrResumeTemplate(
       // Note what this `catch` is actually attached to: the whole
       // `$transaction`, not the `update` alone — so it covers
       // `generateInstancesForTemplate` too. It is tight today only by
-      // accident of that function's contents, which are a `class.findFirst`
-      // and an unchecked `class.create` (`class-generator.ts`): P2003 or
-      // P2002, never P2025. So the `update` above really is the only P2025
-      // source under here, and the guard says `not_found` about the only
+      // accident of that function's contents, which are a `class.findMany`
+      // and an unchecked `class.createManyAndReturn` (`class-generator.ts`):
+      // P2003 or P2002, never P2025. So the `update` above really is the only
+      // P2025 source under here, and the guard says `not_found` about the only
       // thing that can go missing. Add an *unprotected* `findUniqueOrThrow`
       // or single-record `update` inside this transaction and that stops
       // being true silently. Whoever does that owes this comment an
@@ -494,10 +513,12 @@ export async function pauseOrResumeTemplate(
 
   if (updated === null) return { ok: false, reason: 'not_found' };
 
+  const { template: updatedTemplate, generation } = updated;
+
   // The include above is only for `generateInstancesForTemplate`'s benefit —
   // `PauseTemplateResult` carries a plain `ClassTemplate`, so the joined
   // `teacher` is dropped rather than leaked back to the caller.
-  const { teacher, ...template_ } = updated;
+  const { teacher, ...template_ } = updatedTemplate;
   void teacher;
 
   if (!desiredActive) {
@@ -515,7 +536,23 @@ export async function pauseOrResumeTemplate(
     return { ok: true, action: 'paused', template: template_, lastScheduled };
   }
 
-  return { ok: true, action: 'active', template: template_ };
+  // After the transaction, on a committed `active`: the same `gte` today
+  // boundary `remaining` uses, so archiving and resuming report on one basis.
+  const today = startOfLocalDay(new Date(), template.teacher.defaultTimezone);
+  const scheduled = await db.class.count({
+    where: scheduledWhere(templateId, { gte: today }),
+  });
+
+  return {
+    ok: true,
+    action: 'active',
+    template: template_,
+    scheduled,
+    added: generation.created,
+    blockedByCancelled: generation.skipped.filter((s) => s.reason === 'blocked_by_cancelled')
+      .length,
+    slotTaken: generation.skipped.filter((s) => s.reason === 'slot_taken').length,
+  };
 }
 
 /**
