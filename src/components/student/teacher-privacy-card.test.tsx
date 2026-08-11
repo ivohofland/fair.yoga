@@ -166,22 +166,46 @@ describe('TeacherPrivacyCard', () => {
       expect(screen.getByText(/switched off/i)).toBeInTheDocument();
     });
 
-    // Review F7: same fix, same reasoning as `PendingInvitationCard`'s test
-    // of the same name — `setUnlinking(false)` used to run in a `finally`,
-    // so it fired right after a successful DELETE too, before
-    // `router.refresh()` had repainted the page and dropped this card. A
-    // second click in that window reached the server for a link that was
-    // already gone.
-    it('stays disabled after a successful unlink, so a second click cannot reach the server', async () => {
+    // Review F7 found that `setUnlinking(false)` in a `finally` fired right
+    // after a successful DELETE, before `router.refresh()` had repainted the
+    // page and dropped this card — so a second click reached the server for a
+    // link that was already gone and showed "not found" over a success.
+    //
+    // F7's conclusion stands and is still pinned: a second click must not
+    // reach the server. #40 changed only the remedy, because F7's left
+    // `unlinking` true forever and froze the confirm cluster when the
+    // refresh never committed.
+    it('settles after a successful unlink, and cannot send a second DELETE', async () => {
       stubFetch();
       renderCard();
       fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
-      const removeButton = screen.getByRole('button', { name: /^remove teacher$/i });
-      fireEvent.click(removeButton);
-      await waitFor(() => expect(routerRefresh).toHaveBeenCalledTimes(1));
-      expect(removeButton).toBeDisabled();
-      fireEvent.click(removeButton);
+      fireEvent.click(screen.getByRole('button', { name: /^remove teacher$/i }));
+
+      expect(await screen.findByText(/^Removed/)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^remove teacher$/i })).toBeNull();
+
+      fireEvent.click(screen.getByRole('button', { name: /refresh/i }));
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    // G7, second half — Mode 2.
+    it('leaves Cancel operable while the DELETE is in flight', async () => {
+      let release!: (value: { ok: boolean }) => void;
+      fetchMock.mockReturnValue(
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      renderCard();
+      fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^remove teacher$/i }));
+
+      const cancel = screen.getByRole('button', { name: /^cancel$/i });
+      await waitFor(() => expect(screen.getByRole('button', { name: /removing/i })).toBeDisabled());
+      expect(cancel).toBeEnabled();
+
+      release({ ok: true });
     });
 
     it('DELETEs /api/teacher-links/:teacherId and refreshes on success', async () => {

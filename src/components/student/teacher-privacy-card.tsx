@@ -6,6 +6,7 @@ import type { z } from 'zod';
 import type { updatePrivacySchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Button } from '@/components/ui/button';
+import { SettledNotice } from '@/components/ui/settled-notice';
 import { readErrorMessage } from '@/lib/client-errors';
 
 export interface TeacherPrivacyValues {
@@ -68,6 +69,7 @@ export function TeacherPrivacyCard({
   const [confirmingUnlink, setConfirmingUnlink] = useState(false);
   const [unlinking, setUnlinking] = useState(false);
   const [unlinkError, setUnlinkError] = useState('');
+  const [unlinked, setUnlinked] = useState(false);
 
   function toggle(key: keyof TeacherPrivacyValues, checked: boolean) {
     setValues((v) => ({ ...v, [key]: checked }));
@@ -119,12 +121,12 @@ export function TeacherPrivacyCard({
    * alone would have left both switched on with no way back to this card.
    * `router.refresh()` on success is what drops this card from the list.
    *
-   * `unlinking` is deliberately left `true` on success rather than reset in
-   * a `finally` (review F7, same fix as `PendingInvitationCard`): the
-   * refresh that removes this card isn't synchronous with this call
-   * resolving, and a `finally` reset would leave a window where a second
-   * click DELETEs an already-gone link and shows "not found" over an
-   * action that had, in fact, succeeded.
+   * `unlinking` is deliberately not reset on success (review F7): the DELETE
+   * has committed, so a second click would earn a 404 ("Teacher link not
+   * found") in red over an action that worked. F7's own remedy — leaving the
+   * flag true — froze this cluster whenever the refresh did not commit, so
+   * #40 replaced it with `unlinked`: the card settles, which blocks the second
+   * DELETE the same way and still leaves the student a control that works.
    */
   async function handleUnlink() {
     setUnlinking(true);
@@ -132,6 +134,7 @@ export function TeacherPrivacyCard({
     try {
       const res = await fetch(`/api/teacher-links/${teacherId}`, { method: 'DELETE' });
       if (res.ok) {
+        setUnlinked(true);
         router.refresh();
         return;
       }
@@ -194,18 +197,27 @@ export function TeacherPrivacyCard({
               you&apos;re holding on their waitlists is given up. They won&apos;t be able to add
               you again — but you can always reconnect by booking one of their classes.
             </p>
-            <div className="flex items-center gap-3">
-              <Button variant="destructive" onClick={handleUnlink} disabled={unlinking}>
-                {unlinking ? 'Removing...' : 'Remove teacher'}
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => setConfirmingUnlink(false)}
-                disabled={unlinking}
-              >
-                Cancel
-              </Button>
-            </div>
+            {unlinked ? (
+              <SettledNotice
+                label="Removed"
+                actionLabel="Refresh"
+                onAction={() => router.refresh()}
+              />
+            ) : (
+              <div className="flex items-center gap-3">
+                <Button variant="destructive" onClick={handleUnlink} disabled={unlinking}>
+                  {unlinking ? 'Removing...' : 'Remove teacher'}
+                </Button>
+                {/*
+                  #40. Not disabled by `unlinking`: a pure client-side reset,
+                  and the only way out if the DELETE hangs rather than
+                  resolving — a case the settled state cannot reach.
+                */}
+                <Button variant="secondary" onClick={() => setConfirmingUnlink(false)}>
+                  Cancel
+                </Button>
+              </div>
+            )}
             {unlinkError && <p className="type-caption text-danger">{unlinkError}</p>}
           </div>
         ) : (
