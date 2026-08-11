@@ -62,6 +62,13 @@ const send = (method: string, token: string, path: string, body?: unknown) =>
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 
+// dayOfWeek/startTime default to 3/'18:00' for the one template this file
+// creates in beforeAll ('Owner Template'), which lives for the whole suite
+// and is never archived. StudioClassTemplate_teacher_slot_unique is
+// (teacherId, dayOfWeek, startTime) WHERE isArchived = false, so every other
+// call below that creates a template unarchived for `ownerId` — or archives
+// it at creation but later un-archives it — passes its own `startTime`
+// through `extra` to land on a slot 'Owner Template' isn't holding.
 const makeTemplate = (teacherId: string, classType: string, extra = {}) =>
   prisma.studioClassTemplate.create({
     data: {
@@ -262,7 +269,7 @@ describe('/api/studio-class-templates/[id] — ownership', () => {
 
 describe('PATCH /api/studio-class-templates/[id]', () => {
   it('reaches paused then active as named, and archiving forces inactive', async () => {
-    const id = (await makeTemplate(ownerId, 'Toggle Target')).id;
+    const id = (await makeTemplate(ownerId, 'Toggle Target', { startTime: '18:01' })).id;
 
     const paused = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=paused`);
     expect(paused.status).toBe(200);
@@ -305,8 +312,15 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
   });
 
   it('un-archiving is still possible, and leaves the template paused rather than live', async () => {
-    const id = (await makeTemplate(ownerId, 'Unarchive Me', { isArchived: true, isActive: false }))
-      .id;
+    // Distinct startTime: this row un-archives before the test ends, joining
+    // the isArchived=false slot-uniqueness set alongside 'Owner Template'.
+    const id = (
+      await makeTemplate(ownerId, 'Unarchive Me', {
+        isArchived: true,
+        isActive: false,
+        startTime: '18:02',
+      })
+    ).id;
 
     const res = await send(
       'PATCH',
@@ -324,7 +338,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
   // #86, mirroring class-templates-api.test.ts's equivalent case: archiving
   // must withdraw the future window, not just flip the flag.
   it('archiving deletes the unbooked future window and reports the counts', async () => {
-    const template = await makeTemplate(ownerId, 'Archive Window');
+    const template = await makeTemplate(ownerId, 'Archive Window', { startTime: '18:03' });
     const makeInstance = (date: string) =>
       prisma.studioClass.create({
         data: {
@@ -355,7 +369,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
   });
 
   it('pausing removes nothing and reports the last scheduled class', async () => {
-    const template = await makeTemplate(ownerId, 'Pause Window');
+    const template = await makeTemplate(ownerId, 'Pause Window', { startTime: '18:04' });
     const later = await prisma.studioClass.create({
       data: {
         teacherId: ownerId,
@@ -381,7 +395,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
   });
 
   it('rejects a PATCH with no state parameter', async () => {
-    const id = (await makeTemplate(ownerId, 'No State')).id;
+    const id = (await makeTemplate(ownerId, 'No State', { startTime: '18:05' })).id;
 
     const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}`);
     expect(res.status).toBe(400);
@@ -392,7 +406,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
   });
 
   it('rejects an unrecognised state value', async () => {
-    const id = (await makeTemplate(ownerId, 'Bad State')).id;
+    const id = (await makeTemplate(ownerId, 'Bad State', { startTime: '18:06' })).id;
 
     const res = await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=sideways`);
     expect(res.status).toBe(400);
@@ -406,7 +420,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
    * identical requests must reach the same state, not opposite ones.
    */
   it('is idempotent: pausing twice leaves the template paused', async () => {
-    const id = (await makeTemplate(ownerId, 'Twice Paused')).id;
+    const id = (await makeTemplate(ownerId, 'Twice Paused', { startTime: '18:07' })).id;
 
     const pause = () =>
       send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=paused`);
@@ -429,7 +443,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
    * template. It must be a no-op — and must NOT withdraw a second time.
    */
   it('is idempotent: archiving twice does not withdraw twice', async () => {
-    const template = await makeTemplate(ownerId, 'Twice Archived');
+    const template = await makeTemplate(ownerId, 'Twice Archived', { startTime: '18:08' });
     await prisma.studioClass.create({
       data: {
         teacherId: ownerId,
@@ -468,7 +482,7 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
    * on the response body alone.
    */
   it('resuming fills the window rather than waiting for the hourly sweep', async () => {
-    const id = (await makeTemplate(ownerId, 'Resume Fills Window')).id;
+    const id = (await makeTemplate(ownerId, 'Resume Fills Window', { startTime: '18:09' })).id;
 
     await send('PATCH', ownerToken, `/api/studio-class-templates/${id}?state=paused`);
     // Start from a genuinely empty window, so the count below can only come
@@ -489,7 +503,7 @@ describe('PATCH /api/studio-class-templates/[id] — resume reporting', () => {
    * at `setMessage('')`. This is the wire half of that chain.
    */
   it('carries what the window holds and what the resume added', async () => {
-    const t = await makeTemplate(ownerId, 'Resume Reports');
+    const t = await makeTemplate(ownerId, 'Resume Reports', { startTime: '18:10' });
     await prisma.studioClassTemplate.update({
       where: { id: t.id },
       data: { isActive: false },
