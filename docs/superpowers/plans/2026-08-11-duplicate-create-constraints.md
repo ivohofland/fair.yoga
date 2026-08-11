@@ -19,6 +19,7 @@
 - **`P2002.meta.target` is the column-name array, not the index name.** Measured: an index Prisma cannot see still yields `{"modelName":"StudioClass","target":["teacherId","date","startTime"]}`, the same shape as a known `@unique` (`["email"]`). All route branching and all test assertions use the column list.
 - **Error body shape is `{ error: { message, code } }`** (`api-utils.ts:18`); tests assert `body.error.code`.
 - **#196 is not closed by this branch.** Branch 2 closes it. Never write "does not close #196" in a commit or PR body — GitHub's auto-close parser ignores the negation (this is how #191 closed #113).
+- **A task that changes the database schema runs the whole `integration` project before it reports DONE** — `npx vitest run --project integration`, not only its own new test file. **Added mid-execution, and the reason is worth carrying:** Task 1 applied a global migration, verified it against its own unit file, and passed two clean reviews while 53 integration tests were red. A per-task review sees one diff; a migration's blast radius is the whole suite. This is the same failure `docs/backlog-roadmap.md` records for #170, where a dark test file and a red lint reached a pushed branch past nine reviews.
 
 ---
 
@@ -594,6 +595,61 @@ Change the column list in the route to `['teacherId', 'date']` and re-run. Expec
 ```bash
 git add src/lib/unique-conflict.ts src/app/api/classes/route.ts tests/integration/classes-api.test.ts
 git commit -m "fix: a second identical class create now says which slot is taken"
+```
+
+---
+
+## Task 3b: Repair the integration fixtures the index exposed
+
+**Added mid-execution. This task exists because of a defect in this plan, recorded rather than quietly patched.**
+
+Task 1 applied a global migration and verified it with `npx vitest run --project unit src/services/slot-constraints.test.ts` — its own new file. The migration's blast radius lands in a project Task 1 never ran. Task 1 passed two clean reviews while the branch was red:
+
+```
+Test Files  5 failed | 22 passed (27)
+     Tests  53 failed | 288 passed | 9 skipped (350)
+```
+
+Failing: `class-templates-api`, `invitations-api`, `registrations-api`, `studio-api`, `waitlist-api`. All failures are constraint-shaped — 26 on `(teacherId, date, startTime)`, 9 on `(teacherId, dayOfWeek, startTime)`, the rest cascading from broken `beforeAll` hooks.
+
+**The fixtures were wrong, not the constraint.** `classes-api.test.ts`'s `beforeAll` created five classes for one teacher at one date and start time — a state the product rule behind this issue says cannot exist. The index did not break valid test data; it exposed test data that was never valid. Repair means spacing the fixtures so each represents a state the domain permits, **never** weakening the index or adding a status/`cancelledAt` escape to make bad data legal.
+
+**Files:**
+- Modify: `tests/integration/class-templates-api.test.ts`
+- Modify: `tests/integration/invitations-api.test.ts`
+- Modify: `tests/integration/registrations-api.test.ts`
+- Modify: `tests/integration/studio-api.test.ts`
+- Modify: `tests/integration/waitlist-api.test.ts`
+
+**Interfaces:** none. Test fixtures only; no production code changes.
+
+- [ ] **Step 1: Record the failing baseline**
+
+Run: `npx vitest run --project integration`
+Capture the failing file list and per-file counts into the report before changing anything. A repair with no recorded baseline cannot be shown to have repaired anything.
+
+- [ ] **Step 2: Repair each file's fixtures, one file per commit**
+
+For each failing file: find the fixtures that collide on `(teacherId, date, startTime)` or `(teacherId, dayOfWeek, startTime)` and separate them — distinct `startTime` values are usually the smallest change, distinct dates where a test's meaning depends on the time.
+
+**The rule that governs every edit:** a fixture may be moved, never made legal by weakening what the test proves. Before changing a colliding fixture, read every downstream assertion that references it. If a test depends on two rows sharing a slot, that test is asserting something the domain forbids and the finding goes in the report rather than being silently rewritten.
+
+Prefer giving a colliding fixture its own teacher over contorting times, where the test does not care which teacher owns the row — the index is per-teacher, so a separate teacher removes the collision without touching any time-dependent assertion.
+
+- [ ] **Step 3: Verify each file green before moving to the next**
+
+Run: `npx vitest run --project integration tests/integration/<file>` after each repair.
+
+- [ ] **Step 4: The whole project green**
+
+Run: `npx vitest run --project integration`
+Expected: `27 passed (27)` files, 0 failed tests. Record the before/after totals side by side in the report.
+
+- [ ] **Step 5: Commit per file**
+
+```bash
+git add tests/integration/<file>
+git commit -m "test: <what that file's fixture was asserting that the domain forbids>"
 ```
 
 ---
