@@ -18,8 +18,11 @@ let cancelClassId: string;
 
 // #200. A second cancel fixture, this one WITH a recipient — the notice body
 // is what this pins, and the sibling fixture above deliberately has nobody to
-// notify.
+// notify. Two recipients, in fact: the route fans out to
+// `[...registrations, ...waiting]`, and the waiting half was reachable by no
+// test in the repo before this one.
 let noticeClassId: string;
+let waitStudentId: string;
 
 // Dedicated fixtures for the PUT /api/classes/[id] economic-lock tests —
 // kept separate from classId/cancelClassId above, which the existing tests
@@ -174,6 +177,20 @@ beforeAll(async () => {
       `Fixture setup: expected the notice registration to succeed (201), got ${noticeRes.status}`,
     );
   }
+
+  // A second recipient, on the waitlist rather than registered. Written
+  // directly rather than through `POST /api/waitlist`: the route under test
+  // only reads the row, and `addToWaitlist` would refuse to queue anyone on a
+  // class that is not full (`maxStudents` is 8 here). No session needed —
+  // this student never makes a request, they only receive a notification.
+  const waitStudentEmail = `classesapi-waitstudent-${suffix}@test.local`;
+  const waitStudent = await prisma.student.create({
+    data: { firstName: 'Wait', lastName: 'Student', email: waitStudentEmail, incomeTier: 3 },
+  });
+  waitStudentId = waitStudent.id;
+  await prisma.waitlistEntry.create({
+    data: { classId: noticeClassId, studentId: waitStudentId, position: 1, status: 'waiting' },
+  });
 });
 
 afterAll(async () => {
@@ -205,6 +222,13 @@ afterAll(async () => {
   }
   if (roomId) {
     await prisma.room.delete({ where: { id: roomId } });
+  }
+  if (waitStudentId) {
+    // `WaitlistEntry.class` cascades, so the entry goes with the class delete
+    // above — but the notification does not (it is keyed on recipient, and its
+    // `relatedClassId` is covered by `allClassIds`), and the student row never
+    // would. No account/session: this fixture never authenticates.
+    await prisma.student.deleteMany({ where: { id: waitStudentId } });
   }
   if (lockStudentId) {
     // Self-booking upserts a TeacherStudent link (registrations route) —
@@ -375,6 +399,37 @@ describe('POST /api/classes/[id]/transition', () => {
     expect(note.body).toContain(stored.classType);
     expect(note.body).toContain(formatDayHeader(stored.date));
     expect(note.body).toContain(stored.startTime);
+
+    // The sentence carrying those three, not just the three. Without this the
+    // student body could be replaced wholesale by the teacher's — "was
+    // cancelled — only 0 of 1 minimum students registered" — and every
+    // assertion above still passes, telling every manually-cancelled student a
+    // reason that is false. PR review demonstrated exactly that mutation
+    // passing 21/21. The sibling teacher test pins its own distinguishing
+    // clause the same way (`class-transitions.test.ts`, "only N of M").
+    expect(note.body).toContain('has been cancelled by your teacher');
+
+    // The waitlisted recipient. The route fans out to
+    // `[...registrations, ...waiting]` and nothing in the repo covered the
+    // second half: PR review dropped `...waiting` and the whole integration
+    // project stayed green (27 files, 348 tests). That is #112's defect — a
+    // queued student told nothing — surviving in the one path #112 used as its
+    // reference implementation.
+    const waitNote = await prisma.notification.findFirstOrThrow({
+      where: {
+        recipientType: 'student',
+        recipientId: waitStudentId,
+        relatedClassId: noticeClassId,
+        type: 'class_cancelled',
+      },
+    });
+    expect(waitNote.body).toBe(note.body); // one body, both audiences
+
+    // …and their entry is closed, not left pointing at a cancelled class.
+    const entry = await prisma.waitlistEntry.findFirstOrThrow({
+      where: { classId: noticeClassId, studentId: waitStudentId },
+    });
+    expect(entry.status).toBe('removed');
   });
 
   it('409s cancelling an already-cancelled class', async () => {

@@ -181,37 +181,47 @@ describe('class transitions (DB, timezone-aware)', () => {
     // HOURS_2 check window before 16:00Z start = 14:00Z–16:00Z.
     const cls = await makeClass({ autoCancelCheck: 'HOURS_2' });
 
-    await autoCancelClasses(prisma, new Date('2026-07-20T15:00:00Z'));
+    // `finally`, the convention this file records at its own `#174` fixture
+    // and cites from `gdpr.test.ts:108`. #200 added four assertions ahead of
+    // the cleanup, so there are now five ways to skip it — and this project's
+    // protocol guarantees repeated deliberately-failing runs of exactly this
+    // test. The leak is inert (the class is already `cancelled`, so no sweep
+    // matches it, and `afterAll` reaps both rows), but inert-by-luck is not
+    // the reason to leave it out.
+    try {
+      await autoCancelClasses(prisma, new Date('2026-07-20T15:00:00Z'));
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(updated.status).toBe('cancelled');
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(updated.status).toBe('cancelled');
 
-    // `findFirstOrThrow`, not `findFirst` + a null check: the three body
-    // assertions below must be reported when they fail, not skipped past by a
-    // conditional that TypeScript needed for narrowing.
-    const teacherNote = await prisma.notification.findFirstOrThrow({
-      where: { recipientType: 'teacher', recipientId: teacherId, relatedClassId: cls.id },
-    });
+      // `findFirstOrThrow`, not `findFirst` + a null check: the body
+      // assertions below must be reported when they fail, not skipped past by
+      // a conditional that TypeScript needed for narrowing.
+      const teacherNote = await prisma.notification.findFirstOrThrow({
+        where: { recipientType: 'teacher', recipientId: teacherId, relatedClassId: cls.id },
+      });
 
-    // #200. The teacher's row is the one that can never link: the inbox page
-    // (`app/(teacher)/inbox/page.tsx`) selects no `relatedClass`, so
-    // `NotificationList`'s `hrefById` arrives undefined and every teacher row
-    // renders inert (filed as #201). The body is not the best channel here —
-    // it is the only one. A teacher running two weekly Hatha classes cannot
-    // otherwise tell which one was cancelled.
-    //
-    // Three separate `toContain`s rather than one whole-string equality: the
-    // realistic regression is a field being dropped in an edit, and a single
-    // equality assertion goes red on any rewording, which teaches the next
-    // person to loosen it.
-    expect(teacherNote.body).toContain('Hatha');
-    expect(teacherNote.body).toContain(formatDayHeader(cls.date));
-    expect(teacherNote.body).toContain('18:00');
-    // The clause that makes this body worth keeping distinct from the
-    // student's — it says WHY, and only this path knows.
-    expect(teacherNote.body).toContain('only 0 of 4 minimum students registered');
-    await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
-    await prisma.class.delete({ where: { id: cls.id } });
+      // #200. The teacher's row is the one that can never link: the inbox page
+      // (`app/(teacher)/inbox/page.tsx`) selects no `relatedClass`, so
+      // `NotificationList`'s `hrefById` arrives undefined and every teacher row
+      // renders inert (filed as #201). The body is not the best channel here —
+      // it is the only one. A teacher running two weekly Hatha classes cannot
+      // otherwise tell which one was cancelled.
+      //
+      // Three separate `toContain`s rather than one whole-string equality: the
+      // realistic regression is a field being dropped in an edit, and a single
+      // equality assertion goes red on any rewording, which teaches the next
+      // person to loosen it.
+      expect(teacherNote.body).toContain('Hatha');
+      expect(teacherNote.body).toContain(formatDayHeader(cls.date));
+      expect(teacherNote.body).toContain('18:00');
+      // The clause that makes this body worth keeping distinct from the
+      // student's — it says WHY, and only this path knows.
+      expect(teacherNote.body).toContain('only 0 of 4 minimum students registered');
+    } finally {
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+      await prisma.class.delete({ where: { id: cls.id } });
+    }
   });
 
   it('does not auto-cancel before the local check window opens', async () => {

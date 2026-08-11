@@ -63,6 +63,24 @@ export const POST = withErrorHandler(async (
       // `open` class, deliberately, so the inbox row is inert. A waitlisted
       // recipient has even less — their entry was closed to `removed` a few
       // lines above, which drops the class off `/bookings`.
+      //
+      // KNOWN RESIDUAL, recorded rather than fixed. `cls` is the read at the
+      // top of this handler, taken before `parseBody`'s await and outside this
+      // transaction — so these three fields are a snapshot, not the row as it
+      // stands here. `autoCancelClasses` deliberately re-reads inside its
+      // transaction under the row lock for exactly this reason, and says so.
+      // This route does not, and #200 is what made that matter: `date` and
+      // `startTime` are NOT in `ECONOMIC_FIELDS` (`lib/class-fields.ts`), so
+      // `settingsLocked` does not freeze them and a teacher can reschedule a
+      // booked open class. Reschedule inside the window and the notice names
+      // the old day. Before #200 only `classType` was stale, which changes far
+      // less often.
+      //
+      // Left as-is on purpose: closing it means a re-read plus a lock in a
+      // route that takes neither, no test can observe a window this narrow,
+      // and an untestable behaviour change does not belong in a copy fix.
+      // Written here rather than filed because the person who needs it is
+      // whoever next edits this body.
       const notifications: CreateNotificationInput[] = [...registrations, ...waiting].map((r) => ({
         recipientType: 'student' as const,
         recipientId: r.studentId,
