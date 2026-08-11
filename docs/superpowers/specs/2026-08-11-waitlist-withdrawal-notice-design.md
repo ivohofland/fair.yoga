@@ -9,6 +9,22 @@ cascade-deleted on the way out.
 
 **This spec changes who gets told. It does not change what gets deleted.**
 
+> **Line citations are as measured against the tree this spec was written on,
+> before the fix landed.** The fix then moved them, so they are provenance, not
+> navigation. In the three files it edited, everything below the new imports
+> shifts by one, and the insertions push more: `class-transitions.ts` +1 above
+> the sweep (`:21`→`:22`, `:34`→`:35`, `:48`→`:49`); `gdpr.ts` +1 above the
+> erasure (`:377`→`:378`) and +4 to +12 inside it (`:701`→`:705`,
+> `:736`→`:748`); `class-template-lifecycle.ts` +2 at the CAS (`:620`→`:622`)
+> and +50 at the delete (`:693`→`:743`). Citations into files the fix did not
+> touch — `waitlist.ts`, `class-lifecycle.ts`, `notification-policy.ts`,
+> `template-sync.ts`, `schemas.ts` — are unmoved and were re-verified.
+>
+> Some citations point at code that no longer exists at all, `gdpr.ts:761`'s
+> `if (registrations.length > 0)` most of all. That is the point of the spec:
+> it records the state that motivated the change. It has not been rewritten to
+> describe the state after it.
+
 ## What the issue said, and what measurement showed
 
 The issue is right that the defect exists and right about its mechanism. Three
@@ -339,11 +355,29 @@ route's precedent (`transition/route.ts:58`), which does not distinguish them.
 A waitlisted student never held a spot, but "this class is cancelled" is true
 for both audiences and two bodies would be two things to keep consistent.
 
-`Notification.relatedClass` is `onDelete: SetNull` (`schema.prisma:563`), so an
-archive notification **survives its class's deletion with a null class link**.
-Its body must therefore name the class itself — type, date, time — rather than
-lean on the relation. Paths 2 and 3 keep a live link, since the class survives
-as `cancelled`.
+**Every path names the class in the body — type, date, time.**
+
+The archive path has no choice: `Notification.relatedClass` is
+`onDelete: SetNull` (`schema.prisma:563`), so its notification survives the
+class's deletion with a null link and the body is all that is left.
+
+The first draft of this spec stopped there, and said paths 2 and 3 could lean on
+the relation instead, "since the class survives as `cancelled`". That was wrong,
+and implementation caught it. A surviving `relatedClassId` is not a usable link:
+
+- `studentNotificationHref` (`src/lib/notification-links.ts`) returns a URL only
+  while `relatedClass.status === 'open'` — deliberately, so a student is not sent
+  to a booking page that can no longer do anything for them. On a cancelled
+  class the inbox row is inert.
+- The waitlist strip on `/bookings` queries `status: 'waiting'`
+  (`src/app/(student)/bookings/page.tsx:41`), and these paths have just closed
+  the entry to `removed`, so the class disappears from there in the same
+  transaction.
+
+So a queued student on paths 2 and 3 is left with exactly what the archive path
+leaves them: the sentence. Someone with two weekly classes cannot tell which one
+was cancelled from `"Hatha class has been cancelled"`. All three bodies name the
+class in full.
 
 One consequence, which closes: `isEmailEligible` reaches its urgent-window path
 only with a non-null `classStart` (`notification-policy.ts:38`), so an archive

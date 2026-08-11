@@ -693,9 +693,25 @@ export async function archiveOrUnarchiveTemplate(
       // its only class-row write (`settingsLocked: true`, `:195`) is skipped
       // when the row is already locked, which it always is here.
       //
-      // The predicate mirrors the delete's exactly. It is allowed to drift
-      // pessimistically (name a class the delete spares) because step three
-      // catches that; it must never drift optimistically.
+      // The predicate mirrors the delete's, and the two reads disagree in only
+      // one direction safely.
+      //
+      // Pessimistic drift — naming a class the delete then spares — is caught
+      // by the survivor filter below, and the concurrency test pins that.
+      //
+      // Optimistic drift is NOT caught, and is accepted: if the last charged
+      // registration on a class is cancelled between this read and the delete,
+      // that class becomes deletable without ever having been a candidate, and
+      // its waiters are cascade-deleted unnotified. A teacher's cancel reaches
+      // this at any hour — `registrations/[id]/route.ts` puts the `late_cancel`
+      // branch behind `if (isStudent)`, so a teacher writes plain `cancelled`,
+      // which is not in `CHARGED_STATUSES`. The filter below can only remove
+      // candidates; it can never add a class that became deletable late.
+      //
+      // Closing it needs a lock on the candidate classes, which nothing in the
+      // booking path takes (see the paragraph above), so this is a residual of
+      // the same shape as #112 itself — strictly narrower than the silence
+      // that issue was opened about, and left recorded rather than closed.
       const candidates = await tx.waitlistEntry.findMany({
         where: {
           status: 'waiting',

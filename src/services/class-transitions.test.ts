@@ -235,64 +235,70 @@ describe('class transitions (DB, timezone-aware)', () => {
       autoCancelCheck: 'HOURS_2',
       cancelDeadline: 'HOURS_24',
     });
-    // Full at 2/2 when the queue formed; one seat later released by a
-    // late-cancel, which nothing promoted into because the window is frozen.
-    await prisma.registration.create({
-      data: { classId: cls.id, studentId, tierAtBooking: 3, status: 'registered' },
-    });
-    await prisma.registration.create({
-      data: {
-        classId: cls.id,
-        studentId: secondStudentId,
-        tierAtBooking: 3,
-        status: 'late_cancel',
-        cancelledAt: new Date('2026-07-20T10:00:00Z'),
-      },
-    });
-    const entry = await prisma.waitlistEntry.create({
-      data: { classId: cls.id, studentId: waiterStudentId, position: 1, status: 'waiting' },
-    });
+    // `finally`, not a trailing statement — the convention `gdpr.test.ts:108`
+    // records after round 1's M5. An assertion failing below must still reap
+    // the class, or the next run of this file starts with a stray cancelled
+    // class on the shared fixture teacher.
+    try {
+      // Full at 2/2 when the queue formed; one seat later released by a
+      // late-cancel, which nothing promoted into because the window is frozen.
+      await prisma.registration.create({
+        data: { classId: cls.id, studentId, tierAtBooking: 3, status: 'registered' },
+      });
+      await prisma.registration.create({
+        data: {
+          classId: cls.id,
+          studentId: secondStudentId,
+          tierAtBooking: 3,
+          status: 'late_cancel',
+          cancelledAt: new Date('2026-07-20T10:00:00Z'),
+        },
+      });
+      const entry = await prisma.waitlistEntry.create({
+        data: { classId: cls.id, studentId: waiterStudentId, position: 1, status: 'waiting' },
+      });
 
-    // 15:00Z is inside the HOURS_2 check window (14:00Z–16:00Z) AND past the
-    // HOURS_24 deadline (2026-07-19T16:00Z). Assert the second half rather
-    // than trusting the arithmetic.
-    const at = new Date('2026-07-20T15:00:00Z');
-    expect(
-      getWaitlistWindow(cls.date, cls.startTime, cls.cancelDeadline, 'Europe/Amsterdam', at),
-    ).toBe('frozen');
+      // 15:00Z is inside the HOURS_2 check window (14:00Z–16:00Z) AND past the
+      // HOURS_24 deadline (2026-07-19T16:00Z). Assert the second half rather
+      // than trusting the arithmetic.
+      const at = new Date('2026-07-20T15:00:00Z');
+      expect(
+        getWaitlistWindow(cls.date, cls.startTime, cls.cancelDeadline, 'Europe/Amsterdam', at),
+      ).toBe('frozen');
 
-    await autoCancelClasses(prisma, at);
+      await autoCancelClasses(prisma, at);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(updated.status).toBe('cancelled');
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(updated.status).toBe('cancelled');
 
-    const waiterNote = await prisma.notification.findFirst({
-      where: {
-        recipientType: 'student',
-        recipientId: waiterStudentId,
-        relatedClassId: cls.id,
-        type: 'class_cancelled',
-      },
-    });
-    expect(waiterNote).not.toBeNull();
+      const waiterNote = await prisma.notification.findFirst({
+        where: {
+          recipientType: 'student',
+          recipientId: waiterStudentId,
+          relatedClassId: cls.id,
+          type: 'class_cancelled',
+        },
+      });
+      expect(waiterNote).not.toBeNull();
 
-    // A waitlist-only student can place the class by nothing but this body:
-    // the entry just closed to `removed` (dropped from /bookings) and a
-    // cancelled class links nowhere in the inbox. Type, date AND time.
-    if (waiterNote) {
-      expect(waiterNote.body).toContain('Hatha');
-      expect(waiterNote.body).toContain(formatDateShort(cls.date));
-      expect(waiterNote.body).toContain('18:00');
+      // A waitlist-only student can place the class by nothing but this body:
+      // the entry just closed to `removed` (dropped from /bookings) and a
+      // cancelled class links nowhere in the inbox. Type, date AND time.
+      if (waiterNote) {
+        expect(waiterNote.body).toContain('Hatha');
+        expect(waiterNote.body).toContain(formatDateShort(cls.date));
+        expect(waiterNote.body).toContain('18:00');
+      }
+
+      // The entry must not be left pointing at a cancelled class.
+      const afterEntry = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
+      expect(afterEntry.status).toBe('removed');
+    } finally {
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+      await prisma.waitlistEntry.deleteMany({ where: { classId: cls.id } });
+      await prisma.registration.deleteMany({ where: { classId: cls.id } });
+      await prisma.class.delete({ where: { id: cls.id } });
     }
-
-    // The entry must not be left pointing at a cancelled class.
-    const afterEntry = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
-    expect(afterEntry.status).toBe('removed');
-
-    await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
-    await prisma.waitlistEntry.deleteMany({ where: { classId: cls.id } });
-    await prisma.registration.deleteMany({ where: { classId: cls.id } });
-    await prisma.class.delete({ where: { id: cls.id } });
   });
 
   // #174 task 6. `autoCancelClasses`'s decision used to come from

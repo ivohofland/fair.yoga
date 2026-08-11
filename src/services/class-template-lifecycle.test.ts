@@ -577,25 +577,31 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       data: { classId: c.id, studentId: waiterId, position: 1, status: 'waiting' },
     });
 
-    const result = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'));
-    expect(result.deleted).toBe(1);
-    expect(await prisma.class.count({ where: { id: c.id } })).toBe(0);
+    // `finally`, not a trailing statement — the convention `gdpr.test.ts:108`
+    // records after round 1's M5. This is the only test in the file that
+    // *creates* a notification for `waiterId`, and the two below both assert
+    // that count is zero. Cleaning up only on the happy path would turn one
+    // real failure here into three, two of them in the very tests a reader
+    // would open to understand the first.
+    try {
+      const result = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'));
+      expect(result.deleted).toBe(1);
+      expect(await prisma.class.count({ where: { id: c.id } })).toBe(0);
 
-    const note = await prisma.notification.findFirstOrThrow({
-      where: { recipientType: 'student', recipientId: waiterId, type: 'class_cancelled' },
-    });
-    // The link is gone with the class; the body is the only durable record,
-    // so it has to carry all three identifying fields. Derived from the
-    // fixture rather than hard-coded — a literal '16 Aug' would rot in five
-    // days, since `future()` is relative to the run.
-    expect(note.relatedClassId).toBeNull();
-    expect(note.body).toContain('Withdraw Notice');
-    expect(note.body).toContain(formatDateShort(c.date));
-    expect(note.body).toContain('09:00'); // makeClass's startTime
-
-    // The spared test below counts notifications for `waiterId` and expects
-    // zero; this test's notice must not leak into it.
-    await prisma.notification.deleteMany({ where: { recipientId: waiterId } });
+      const note = await prisma.notification.findFirstOrThrow({
+        where: { recipientType: 'student', recipientId: waiterId, type: 'class_cancelled' },
+      });
+      // The link is gone with the class; the body is the only durable record,
+      // so it has to carry all three identifying fields. Derived from the
+      // fixture rather than hard-coded — a literal '16 Aug' would rot in five
+      // days, since `future()` is relative to the run.
+      expect(note.relatedClassId).toBeNull();
+      expect(note.body).toContain('Withdraw Notice');
+      expect(note.body).toContain(formatDateShort(c.date));
+      expect(note.body).toContain('09:00'); // makeClass's startTime
+    } finally {
+      await prisma.notification.deleteMany({ where: { recipientId: waiterId } });
+    }
   });
 
   /**
