@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { generateInstancesForTemplate } from '@/services/class-generator';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
@@ -149,6 +149,16 @@ afterAll(async () => {
     await prisma.account.delete({ where: { id: a } });
   }
   await prisma.$disconnect();
+});
+
+beforeEach(async () => {
+  // Every case in this file POSTs (or resumes) templates that generate the
+  // same teacher's dayOfWeek/09:30 window, and the generator now treats a
+  // slot the teacher already holds as taken rather than over-writing it. A
+  // leftover window from a sibling test would starve the next one (0 created
+  // instead of 4), and the dev DB would accumulate windows across runs.
+  // beforeAll seeds no classes, so clearing both teachers' is sufficient.
+  await prisma.class.deleteMany({ where: { teacherId: { in: [teacherId, otherTeacherId] } } });
 });
 
 describe('POST /api/class-templates', () => {
