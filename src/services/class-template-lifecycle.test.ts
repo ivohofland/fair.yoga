@@ -194,7 +194,18 @@ describe('updateClassTemplate (DB)', () => {
     // These counts are deterministic here — a bare template has no
     // instances, so the sync can only be a hard zero — unlike the API test,
     // which cannot pin an exact number without risking clock flakiness.
-    expect(result.sync).toEqual({ synced: 0, regenerated: 0, kept: 0 });
+    // `toEqual`, not `toMatchObject`, deliberately: a whole-shape assertion is
+    // what caught the three fields #204's review added to `TemplateSyncResult`,
+    // and it is the reason the form could not silently keep reading a stale
+    // shape. Keep it exhaustive.
+    expect(result.sync).toEqual({
+      synced: 0,
+      regenerated: 0,
+      refilled: 0,
+      blockedByCancelled: 0,
+      slotTaken: 0,
+      kept: 0,
+    });
   });
 
   /**
@@ -1593,6 +1604,50 @@ describe('pauseOrResumeTemplate (DB)', () => {
     if (result.ok && result.action === 'active') {
       expect(result.scheduled).toBe(3);
       expect(result.blockedByCancelled).toBe(0);
+    }
+  });
+
+  /**
+   * The mirror of the case above, and the reason it has to exist: until this
+   * test, `blockedByCancelled` was only ever asserted at **zero**, in a window
+   * whose skips were all `slot_taken`. Re-pointing its filter to
+   * `already_generated` therefore passed every test in the repo — while telling
+   * a teacher resuming a perfectly healthy template "4 classes on your
+   * schedule. 4 cancelled classes still hold those dates.", because a resumed
+   * window whose four dates are already generated is the *common* case (pausing
+   * deletes nothing).
+   *
+   * Three of four cancelled, not two: with two, `blocked_by_cancelled` and
+   * `already_generated` are both 2, so the mis-wired filter returns the right
+   * number by coincidence and the test passes against the bug. Measured — the
+   * first version of this test did exactly that. Three and one cannot collide.
+   */
+  it('counts cancelled dates separately from taken slots', async () => {
+    const t = await makeTemplate('Blocked By Cancelled Report');
+    // Generate the window, then cancel two of the four dates it created.
+    await pauseOrResumeTemplate(prisma, t.id, teacherId, 'paused');
+    await pauseOrResumeTemplate(prisma, t.id, teacherId, 'active');
+    const made = await prisma.class.findMany({
+      where: { templateId: t.id },
+      orderBy: { date: 'asc' },
+      select: { id: true },
+    });
+    expect(made).toHaveLength(4);
+    await prisma.class.updateMany({
+      where: { id: { in: [made[0]!.id, made[1]!.id, made[2]!.id] } },
+      data: { status: 'cancelled' },
+    });
+
+    await pauseOrResumeTemplate(prisma, t.id, teacherId, 'paused');
+    const result = await pauseOrResumeTemplate(prisma, t.id, teacherId, 'active');
+
+    expect(result).toMatchObject({ ok: true, action: 'active', added: 0, blockedByCancelled: 3 });
+    if (result.ok && result.action === 'active') {
+      // One survivor, still draft/open — cancelled rows are excluded from
+      // `scheduled` by SCHEDULED_STATUSES. Also the `already_generated` count,
+      // which is what a mis-wired filter would report instead of 3.
+      expect(result.scheduled).toBe(1);
+      expect(result.slotTaken).toBe(0);
     }
   });
 
