@@ -4,9 +4,11 @@ import { SettledNotice } from './settled-notice';
 
 /**
  * #40. The settled state a control reaches once its mutation has committed but
- * the router action that should have replaced it did not. Five components share
- * it, so it is one component rather than five copies — and the name is how the
- * next person finds the invariant.
+ * the router action that should have replaced it did not. Every control that
+ * reaches it shows the same thing, so it is one component rather than a copy
+ * per call site — and the name is how the next person finds the invariant.
+ * Deliberately not a count: it was five until the whole-branch review found
+ * two more call sites, which is what a number in a comment always does.
  */
 describe('SettledNotice', () => {
   it('renders the label and an operable action', () => {

@@ -8,6 +8,7 @@ import type { createStudioClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { SettledNotice } from '@/components/ui/settled-notice';
 import { PageHeader } from '@/components/layout/page-header';
 
 /**
@@ -51,6 +52,16 @@ const _formHasNoExtras: NoneOf<Exclude<keyof StudioClassFormValues, keyof Create
 void _formCoversCreate;
 void _formHasNoExtras;
 
+/**
+ * #40 (whole-branch review F1/F8). One definition of where a successful create
+ * navigates — the same reason as the class wizard's twin: the push and the
+ * settled notice's retry are one navigation, and a second literal is how they
+ * drift apart.
+ */
+function studioClassPath(id: string): string {
+  return `/studio-class/${id}`;
+}
+
 export default function NewStudioClassPage() {
   const router = useRouter();
   const [classType, setClassType] = useState('');
@@ -61,9 +72,23 @@ export default function NewStudioClassPage() {
   const [hourlyRate, setHourlyRate] = useState('0');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  /**
+   * #40. The settled flag, holding the created studio class's id rather than a
+   * bare `true` as the two template forms do: this page's destination is the
+   * new row's own page, so the id is kept either way, and a boolean beside it
+   * would be a second piece of state saying the same thing with room to
+   * disagree.
+   */
+  const [createdId, setCreatedId] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // #40 (whole-branch review F4). Defence-in-depth, not a path the UI can
+    // take today: settling removes the only submit button, and HTML's implicit
+    // submission needs one — or exactly one field that blocks it, where this
+    // form has six. Unreachable through the UI, so a synthetic
+    // `fireEvent.submit` is what keeps it a guard rather than a decoration.
+    if (createdId) return;
     if (!location.trim()) {
       setError('Location is required');
       return;
@@ -99,7 +124,17 @@ export default function NewStudioClassPage() {
       }
 
       const json: { data: { id: string } } = await res.json();
-      router.push(`/studio-class/${json.data.id}`);
+      // #40. POST /api/studio-classes is not idempotent, and nothing server-
+      // side catches the second request: the route is a bare
+      // `prisma.studioClass.create` with no dedupe, and `StudioClass`'s only
+      // unique constraint is `@@unique([templateId, date])`, which a manually
+      // logged class cannot trip — its `templateId` is null since #148, and
+      // Postgres treats NULLs as distinct. The push below normally unmounts
+      // this page; when it does not commit, `createdId` is what stops a
+      // populated form with "Log class" re-enabled from inviting the click
+      // that logs the class twice and double-counts the teacher's income.
+      setCreatedId(json.data.id);
+      router.push(studioClassPath(json.data.id));
     } catch {
       setError('Network error. Please try again.');
     } finally {
@@ -127,9 +162,18 @@ export default function NewStudioClassPage() {
 
         {error && <p className="text-sm text-danger">{error}</p>}
 
-        <Button type="submit" disabled={submitting}>
-          {submitting ? 'Creating...' : 'Log class'}
-        </Button>
+        {createdId ? (
+          <SettledNotice
+            label="Created"
+            actionLabel="Go to the studio class"
+            size="sm"
+            onAction={() => router.push(studioClassPath(createdId))}
+          />
+        ) : (
+          <Button type="submit" disabled={submitting}>
+            {submitting ? 'Creating...' : 'Log class'}
+          </Button>
+        )}
       </form>
     </>
   );

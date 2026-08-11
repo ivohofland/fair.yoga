@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import NewStudioClassPage from './page';
+import { routerPush } from '../../../../../tests/setup/components';
 
 /**
  * #136. This page keeps its six fields in separate `useState` hooks and used to
@@ -96,5 +97,81 @@ describe('NewStudioClassPage', () => {
       durationMinutes: 75,
       hourlyRate: 22.5,
     });
+  });
+
+  /**
+   * Fills only what `handleSubmit` gates before the request — location and
+   * date — so the settled-state tests below reach the POST for the same reason
+   * the body tests above do.
+   */
+  function fillRequired() {
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+  }
+
+  /**
+   * #40, whole-branch review F1. This page was outside the branch's census,
+   * which was scoped to `src/components/` and `src/lib/` — but it carries the
+   * same defect in the same shape: `router.push` on success with
+   * `finally { setSubmitting(false) }` behind it, so a push that never commits
+   * leaves a populated form with "Log class" re-enabled.
+   *
+   * `POST /api/studio-classes` is a bare `prisma.studioClass.create` with no
+   * dedupe, and `StudioClass`'s only unique constraint is
+   * `@@unique([templateId, date])`, which a manually logged class cannot trip:
+   * its `templateId` is null, and Postgres treats NULLs as distinct. The
+   * second click logs the class twice and double-counts the teacher's income
+   * for that week.
+   *
+   * Asserted on the fetch count, not on rendered text: a partial fix that only
+   * changed a label would satisfy a text assertion and still allow the second
+   * POST.
+   */
+  it('cannot submit twice when the create push commits nothing', async () => {
+    stubFetch();
+    render(<NewStudioClassPage />);
+    fillRequired();
+
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+    await waitFor(() =>
+      expect(routerPush).toHaveBeenCalledWith('/studio-class/studio-class-1'),
+    );
+
+    const callsAfterFirstSubmit = fetchMock.mock.calls.length;
+    expect(screen.queryByRole('button', { name: /log class/i })).toBeNull();
+    expect(screen.getByText(/^Created/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /go to the studio class/i }));
+    expect(fetchMock.mock.calls.length).toBe(callsAfterFirstSubmit);
+    // One module-level `studioClassPath`, asserted on both pushes (review F8).
+    expect(routerPush).toHaveBeenNthCalledWith(2, '/studio-class/studio-class-1');
+  });
+
+  /**
+   * Review F4. `handleSubmit`'s `if (createdId) return;` cannot be reached
+   * through the UI — settling removes the only submit button, and implicit
+   * submission needs one, or a single field that blocks it where this form has
+   * six. A dispatched submit event reaches the handler where the UI cannot,
+   * which is what defence-in-depth means: the guard is what holds if a submit
+   * control is ever re-added outside the settled branch.
+   */
+  it('ignores a submit event dispatched at the form once created', async () => {
+    stubFetch();
+    render(<NewStudioClassPage />);
+    fillRequired();
+
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+    await waitFor(() =>
+      expect(routerPush).toHaveBeenCalledWith('/studio-class/studio-class-1'),
+    );
+
+    const callsAfterFirstSubmit = fetchMock.mock.calls.length;
+    const form = screen.getByLabelText('Location').closest('form');
+    if (!form) throw new Error('expected the fields to still be inside a form after settling');
+
+    // Synchronous up to its own `await`: an unguarded handler calls `fetch`
+    // before this line returns, so no waiting is needed to observe it.
+    fireEvent.submit(form);
+    expect(fetchMock.mock.calls.length).toBe(callsAfterFirstSubmit);
   });
 });

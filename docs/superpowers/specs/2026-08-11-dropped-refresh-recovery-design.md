@@ -27,8 +27,10 @@ artifacts it rests on have since expired. Re-measure before designing on it."*
 | 7 | Scope: one component | **Wrong, and in two directions.** §3 |
 
 Claim 7 is the substantive correction. The issue names one component. Three
-censuses found a defect class spanning **7 components and 7 endpoints**, of which
-the frozen button is the mildest instance.
+censuses found a defect class spanning **9 components and 9 endpoints**, of which
+the frozen button is the mildest instance. (Seven and seven when this was written;
+the whole-branch review found two more the censuses had excluded by construction —
+§3.)
 
 ---
 
@@ -58,10 +60,28 @@ dropped repaint; only the causal attribution overreaches. Reworded in scope.
 
 ## 3. What was measured
 
+### The censuses' blind spot, found by the whole-branch review
+
+**Censuses 1 and 2 were scoped to `src/components/` and `src/lib/`, so `src/app/`
+was excluded by construction.** Not overlooked — never in range. Two page
+components live there with byte-for-byte the shape the exposure table below marks
+**Exposed**, on two endpoints with no dedupe at all:
+`src/app/(teacher)/class/new/page.tsx` and
+`src/app/(teacher)/studio-class/new/page.tsx`. Because nothing under
+`src/components/` or `src/lib/` calls their endpoints, `POST /api/classes` and
+`POST /api/studio-classes` are absent from the 47-endpoint census too.
+
+The numbers below are corrected to include them, and the correction is written
+out rather than silently applied: a future reader needs to know that a census
+scoped by directory answers only for that directory, which is how a defect class
+named "9 components" was first measured as 7. Everything else in this section
+stands as measured.
+
 ### Census 1 — components holding a pending flag across a mutation
 
 Every non-test file under `src/components/` and `src/lib/` performing a mutating
-`fetch`. No `head`/`tail` limits; all opened and read.
+`fetch` — see the scope note above for what that excluded. No `head`/`tail`
+limits; all opened and read.
 
 ```
 Files with a mutating fetch                      = 44
@@ -78,23 +98,29 @@ Every distinct endpoint those 44 call, with its route handler *and* service read
 assuming the first request already committed:
 
 ```
-Distinct (method, route) pairs                   = 47
+Distinct (method, route) pairs                   = 47   (+2 = 49)
   IDEMPOTENT                                     = 22
   CONFLICT (4xx "already in that state")         = 18
-  DUPLICATE (succeeds, side effect happens twice)=  7
+  DUPLICATE (succeeds, side effect happens twice)=  7   (+2 =  9)
                                                    ----
-  22 + 18 + 7                                    = 47  ✓
+  22 + 18 + 9                                    = 49  ✓
 ```
+
+The `+2` on both lines is the whole-branch review's correction: `POST
+/api/classes` and `POST /api/studio-classes`, reached only from `src/app/` and
+therefore outside the scope this census was run at. Both are DUPLICATE.
 
 All six toggle endpoints #98 named are confirmed idempotent; a seventh of the same
 shape that the spec did not name, `PATCH /api/invitations/[id]`, is idempotent too.
 
-### The seven DUPLICATE endpoints
+### The nine DUPLICATE endpoints
 
 | Endpoint | What a second request does |
 |---|---|
 | `POST /api/class-templates` | Second template **and** a second `generateInstancesForTemplate` run — a full duplicate set of bookable `Class` rows |
 | `POST /api/studio-class-templates` | Same shape; also double-counts studio income |
+| `POST /api/classes` | A second bookable class, identical to the first. A bare `prisma.class.create` (`api/classes/route.ts:48-83`) with no dedupe; `Class`'s only unique constraint is `@@unique([templateId, date])`, and a manually created row's `templateId` is null since #146 — Postgres treats NULLs as distinct, so it never bites |
+| `POST /api/studio-classes` | A second logged studio class, double-counting that week's income. Same shape, same reason: bare create (`api/studio-classes/route.ts:18-43`), `templateId` null since #148 |
 | `POST /api/announcements` | Every student notified twice; a second row in the teacher's history |
 | `POST /api/payments/[id]/remind` | The CAS gates on `status`, which a reminder does not change — a student is dunned twice for one debt |
 | `POST /api/rooms` (private only) | The dedupe check runs only for public rooms — an indistinguishable twin |
@@ -122,6 +148,8 @@ Not every component on a DUPLICATE endpoint is reachable by this defect.
 |---|---|---|---|
 | `settings/template-form.tsx` (create) | class-templates | `router.push` `:240` + `finally` `:267` | **Yes** |
 | `settings/studio-template-form.tsx` (create) | studio-class-templates | `router.push` `:119` + `finally` `:124` | **Yes** |
+| `app/(teacher)/class/new/page.tsx` | classes | `router.push` `:266` + `finally` `:269-271` | **Yes** — found by the whole-branch review, not the census |
+| `app/(teacher)/studio-class/new/page.tsx` | studio-classes | `router.push` `:102` + `finally` `:105-107` | **Yes** — same |
 | `settings/add-room-flow.tsx` | rooms | `setStep('settings')` `:195` | No — local |
 | `class/send-announcement.tsx` | announcements | `setOpen(false)` `:41` | No — local |
 | `booking/booking-sign-in.tsx` | magic-link, student-signup | terminal `'sent'` state `:40` | No — already settled |
@@ -231,11 +259,22 @@ succeeds, the component renders the settled state, which is the honest outcome.
 | `settings/studio-template-form.tsx` (create only) | 1 | "Created" + link to studio classes | check |
 | `account/sign-out-button.tsx` | 2 (`finally`) | — | **new** |
 | `booking/passkey-sign-in.tsx` | 2 (explicit, not `finally`) | — | **new** |
+| `app/(teacher)/class/new/page.tsx` | 1 | "Created" + link to the class | exists |
+| `app/(teacher)/studio-class/new/page.tsx` | 1 | "Created" + link to the studio class | exists |
 
 The two template forms are **mode-branched**: only the `create` arm pushes and is
 exposed. The `edit` arm already sets a success string and refreshes, and stays
 mounted — leave it. Touching only one arm of a shared handler is the kind of
 partial edit this project has shipped before; the plan must state it per arm.
+
+The last two rows are the whole-branch review's addition. Their settled flag is
+the created row's **id**, not a boolean: both navigate to the new record's own
+page, so the id is kept either way and a boolean beside it would be a second
+piece of state saying the same thing. `studio-class/new` also carries the
+re-submit guard, pinned by a synthetic `fireEvent.submit`; `class/new` does not,
+because it has no `<form>` and its handler's only caller is the button settling
+removes — a guard there would have no reachable entry point, and this branch does
+not ship guards that cannot fail.
 
 ---
 
@@ -252,10 +291,12 @@ native OS ceremony where `NotAllowedError` must silently return to idle and
 both its success and error sinks to parent props and deliberately wraps only its
 body-read in `finally`; `add-room-flow` is a three-step wizard with three flags and
 three error strings. A hook configurable enough for these is harder to review than
-the seven edits it would replace. **Even across just the seven in scope there are
-four shapes.** The artifact this
+the nine edits it would replace. **Even across just the nine in scope there are
+five shapes** — `refresh` only (three of them), `push` + `refresh`, the chained
+ceremony, mode-branched (two), and `push` only (the two create pages). The
+artifact this
 design ships is therefore a stated invariant with a test per instance, plus one
-shared *presentational* component (`SettledNotice`) — the axis on which the five
+shared *presentational* component (`SettledNotice`) — the axis on which the
 settled states genuinely are identical. It holds no state, performs no fetch and
 makes no routing decision, so none of the measurement above bears on it.
 
@@ -309,14 +350,14 @@ any assertion that a control *stays* disabled after success now asserts the defe
 
 ## 8. Scope
 
-**In scope:** the seven components in §5, their tests, the two F7 comments, and the
+**In scope:** the nine components in §5, their tests, the two F7 comments, and the
 causal overreach at `teacher-journey.spec.ts:245-247`.
 
 **Filed, not fixed** (each a live defect or a real design question, recorded with
 its measurement):
 
-1. **The 7 DUPLICATE endpoints and the idempotency-key question.** Rule 1 removes
-   the *reachable* path to two of them; the endpoints stay duplicable by any other
+1. **The 9 DUPLICATE endpoints and the idempotency-key question.** Rule 1 removes
+   the *reachable* path to four of them; the endpoints stay duplicable by any other
    double-submit. Includes `send-reminder-button`'s missing cooldown (double
    dunning) and `POST /api/rooms`'s public-only dedupe check.
 2. **The 18 CONFLICT endpoints' raw messages.** They reach users verbatim through
@@ -391,11 +432,11 @@ traps here:
 
 ## 10. Acceptance
 
-1. All seven components reach a usable, truthful state when the router commits
+1. All nine components reach a usable, truthful state when the router commits
    nothing — proven against the existing no-op router double.
 2. No component shows a red error for an action that succeeded.
 3. No component permits a second mutating request after a successful one, in either
-   template form.
+   template form or either create page.
 4. Every escape control in the three confirm-style components is operable while its
    action is in flight.
 5. G1–G9 each observed failing against their mutation, failure text recorded in the

@@ -1,8 +1,17 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import CreateClassPage from './page';
+import { routerPush } from '../../../../../tests/setup/components';
 
 const ROOM_ID = '11111111-1111-4111-8111-111111111111';
+
+const ROOM = {
+  id: ROOM_ID,
+  roomId: 'room-1',
+  capacityOverride: 30,
+  rentalRate: 20,
+  room: { roomName: 'Studio A', venueName: 'Main Venue' },
+};
 
 /**
  * #136. This wizard restates its twelve fields three times — the `FormData`
@@ -26,16 +35,26 @@ describe('NewClassPage', () => {
   function stubFetch() {
     fetchMock.mockResolvedValue({
       ok: true,
-      json: async () => ({
-        data: [{
-          id: ROOM_ID,
-          roomId: 'room-1',
-          capacityOverride: 30,
-          rentalRate: 20,
-          room: { roomName: 'Studio A', venueName: 'Main Venue' },
-        }],
-      }),
+      json: async () => ({ data: [ROOM] }),
     });
+    vi.stubGlobal('fetch', fetchMock);
+  }
+
+  /**
+   * The stub above answers every call with the room list, which is all the
+   * body assertions need. The settled state needs more: the wizard reads
+   * `data.id` off the *create* response to know where it was navigating. This
+   * answers by URL rather than by call order, so an added mount fetch could
+   * not silently feed the room list to the create call.
+   */
+  function stubFetchCreating(id: string) {
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve(
+        url === '/api/classes'
+          ? { ok: true, json: async () => ({ data: { id } }) }
+          : { ok: true, json: async () => ({ data: [ROOM] }) },
+      ),
+    );
     vi.stubGlobal('fetch', fetchMock);
   }
 
@@ -120,5 +139,39 @@ describe('NewClassPage', () => {
       cancelDeadline: 'HOURS_24',
       autoCancelCheck: 'HOURS_2',
     });
+  });
+
+  /**
+   * #40, whole-branch review F1. This wizard was outside the branch's census,
+   * which was scoped to `src/components/` and `src/lib/` — but it is the same
+   * defect in the same shape: `router.push` on success with
+   * `finally { setSubmitting(false) }` behind it, so a push that never commits
+   * leaves a fully populated review step with "Create class" re-enabled.
+   *
+   * Nothing downstream catches the obvious second click. `POST /api/classes`
+   * is a bare `prisma.class.create` with no dedupe, and the only unique
+   * constraint on `Class` is `@@unique([templateId, date])`, which a manually
+   * created row cannot trip: its `templateId` is null, and Postgres treats
+   * NULLs as distinct. Two identical classes, both bookable.
+   *
+   * The assertion is on the fetch count, not on rendered text: a partial fix
+   * that only changed a label would satisfy a text assertion and still allow
+   * the second POST.
+   */
+  it('cannot submit twice when the create push commits nothing', async () => {
+    stubFetchCreating('class-1');
+    await fillAndSubmit();
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/class/class-1'));
+
+    const callsAfterFirstSubmit = fetchMock.mock.calls.length;
+    expect(screen.queryByRole('button', { name: /^create class$/i })).toBeNull();
+    expect(screen.getByText(/^Created/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /go to the class/i }));
+    expect(fetchMock.mock.calls.length).toBe(callsAfterFirstSubmit);
+    // The retry must re-issue the *same* navigation the create did — one
+    // module-level `classPath`, asserted on both pushes (review F8).
+    expect(routerPush).toHaveBeenNthCalledWith(2, '/class/class-1');
   });
 });

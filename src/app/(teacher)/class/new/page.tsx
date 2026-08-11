@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
+import { SettledNotice } from '@/components/ui/settled-notice';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
 import { formatRoomLocation, formatDateWithYear } from '@/lib/format';
 import { CANCEL_DEADLINE_OPTIONS, AUTO_CANCEL_OPTIONS } from '@/lib/class-options';
@@ -126,6 +127,16 @@ function formatAutoCancelLabel(value: string): string {
   return AUTO_CANCEL_OPTIONS.find((o) => o.value === value)?.label ?? value;
 }
 
+/**
+ * #40 (whole-branch review F1/F8). Where a successful create navigates,
+ * written once. The push and the settled notice's retry are the *same*
+ * navigation, and two literals is how a retry ends up somewhere the create did
+ * not go — with the notice's label promising otherwise.
+ */
+function classPath(id: string): string {
+  return `/class/${id}`;
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -139,6 +150,14 @@ export default function CreateClassPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  /**
+   * #40. The settled flag, holding the created class's id rather than a bare
+   * `true` as the two template forms do: this wizard's destination is the new
+   * class's own page, so the id has to be kept anyway, and a boolean beside it
+   * would be a second piece of state saying the same thing with room to
+   * disagree.
+   */
+  const [createdId, setCreatedId] = useState<string | null>(null);
 
   // Fetch teacher rooms on mount
   useEffect(() => {
@@ -246,6 +265,14 @@ export default function CreateClassPage() {
   // -------------------------------------------------------------------------
 
   async function handleSubmit() {
+    // #40 (whole-branch review F1/F4). No `if (createdId) return;` twin of the
+    // two template forms here, deliberately. This wizard has no `<form>`, and
+    // this function's only caller is the step-4 button that settling replaces,
+    // so such a guard would have no reachable entry point — not even the
+    // synthetic `fireEvent.submit` that pins the template forms' — and this
+    // branch does not ship guards that cannot fail. Wrap these steps in a
+    // `<form>`, or give this function a second caller, and the guard becomes
+    // both necessary and pinnable: add it then, as `studio-class/new` has it.
     setSubmitting(true);
     setSubmitError('');
 
@@ -263,7 +290,17 @@ export default function CreateClassPage() {
       }
 
       const json: { data: { id: string } } = await res.json();
-      router.push(`/class/${json.data.id}`);
+      // #40. POST /api/classes is not idempotent, and nothing on the server
+      // side would catch the second request: the route is a bare
+      // `prisma.class.create` with no dedupe (`api/classes/route.ts`), and
+      // `Class`'s only unique constraint is `@@unique([templateId, date])`,
+      // which a manually created row cannot trip — its `templateId` is null
+      // since #146, and Postgres treats NULLs as distinct. The push below
+      // normally unmounts this wizard; when it does not commit, `createdId` is
+      // what stops a populated review step with "Create class" re-enabled from
+      // inviting the click that creates the same class a second time.
+      setCreatedId(json.data.id);
+      router.push(classPath(json.data.id));
     } catch {
       setSubmitError('Network error. Please try again.');
     } finally {
@@ -557,6 +594,13 @@ export default function CreateClassPage() {
           <Button onClick={handleNext} type="button">
             Next
           </Button>
+        ) : createdId ? (
+          <SettledNotice
+            label="Created"
+            actionLabel="Go to the class"
+            size="sm"
+            onAction={() => router.push(classPath(createdId))}
+          />
         ) : (
           <Button onClick={handleSubmit} disabled={submitting} type="button">
             {submitting ? 'Creating...' : 'Create class'}
