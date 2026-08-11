@@ -477,7 +477,7 @@ let studentAccountId: string;
   /**
    * #112. `waiting: true, registered: false` is the load-bearing shape: a
    * class whose ONLY audience is its queue. `gdpr.ts` already closes these
-   * entries (`:736`) but built its recipient list from registrations alone,
+   * entries (`:748`) but built its recipient list from registrations alone,
    * and gated the whole build behind `if (registrations.length > 0)` — so
    * this exact fixture is the one that catches both halves. A fixture with a
    * registered student too would pass against the unfixed guard, because the

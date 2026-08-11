@@ -12,6 +12,7 @@
 import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
 import type { PrismaClient } from '@prisma/client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
+import { formatDateShort } from '@/lib/format';
 import { completeClass } from './class-lifecycle';
 import { handleSpotFreed, reorderWaitingEntries } from './waitlist';
 import { lockClassRow, setLockTimeout } from '@/lib/db-locks';
@@ -670,7 +671,10 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       const upcoming = await tx.class.findMany({
         where: { teacherId, status: { in: ['draft', 'open', 'in_progress'] } },
         orderBy: { id: 'asc' },
-        select: { id: true, classType: true },
+        // `date`/`startTime` for the notification bodies below: a waitlist-only
+        // student can place the class by nothing else (the entry closes to
+        // `removed` and the cancelled class links nowhere in the inbox).
+        select: { id: true, classType: true, date: true, startTime: true },
       });
 
       for (const cls of upcoming) {
@@ -779,7 +783,7 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
             recipientId: r.studentId,
             type: 'class_cancelled' as const,
             title: 'Class cancelled',
-            body: `${cls.classType} has been cancelled — the teacher closed their account.`,
+            body: `${cls.classType} class on ${formatDateShort(cls.date)} at ${cls.startTime} has been cancelled — the teacher closed their account.`,
             relatedClassId: cls.id,
           }));
           await createBulkNotifications(tx, notifications);

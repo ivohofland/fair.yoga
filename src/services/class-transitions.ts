@@ -11,6 +11,7 @@ import type { PrismaClient, RegistrationStatus } from '@prisma/client';
 import { transitionClass, completeClass } from './class-lifecycle';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { classStartInstant } from '@/lib/timezone';
+import { formatDateShort } from '@/lib/format';
 import { log } from '@/lib/log';
 import { lockClassRow } from '@/lib/db-locks';
 
@@ -293,9 +294,9 @@ export async function autoCancelClasses(
         // returns a count, not rows, so the recipient list has to be taken
         // first. A student in this queue was told the class was full and has
         // been waiting for a seat; the class not happening at all is the one
-        // outcome they most need to hear about, and until now this sweep was
-        // the only cancellation path that never told them. The manual-cancel
-        // route (`transition/route.ts:47-58`) is the shape being copied.
+        // outcome they most need to hear about, and until now this sweep never
+        // told them. The manual-cancel route (`transition/route.ts:47-58`) is
+        // the shape being copied.
         const waiting = await tx.waitlistEntry.findMany({
           where: { classId: cls.id, status: 'waiting' },
           select: { studentId: true },
@@ -315,12 +316,20 @@ export async function autoCancelClasses(
         // One body for both audiences, like the manual-cancel route: a
         // waitlisted student never held a spot, but "this class is cancelled"
         // is true for both, and two bodies would be two things to keep in step.
+        //
+        // Type, date AND time, matching the archive path's withdrawal notice:
+        // this audience has nothing else to place the class by. The class
+        // survives as `cancelled` with its `relatedClassId` intact, but the
+        // student's inbox cannot link it (only `open` classes link,
+        // `notification-links.ts`) and their waitlist entry has just been
+        // closed to `removed`, which drops it from `/bookings`. A queued
+        // student with two weekly classes needs the time to tell them apart.
         const notifications: CreateNotificationInput[] = [...registrations, ...waiting].map((r) => ({
           recipientType: 'student' as const,
           recipientId: r.studentId,
           type: 'class_cancelled' as const,
           title: 'Class cancelled',
-          body: `${fresh.classType} class has been cancelled due to insufficient registrations.`,
+          body: `${fresh.classType} class on ${formatDateShort(fresh.date)} at ${fresh.startTime} has been cancelled due to insufficient registrations.`,
           relatedClassId: cls.id,
         }));
         notifications.push({

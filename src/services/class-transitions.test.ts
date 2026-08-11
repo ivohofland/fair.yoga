@@ -7,6 +7,7 @@ import {
 } from './class-transitions';
 import { lockClassRow } from '@/lib/db-locks';
 import { getWaitlistWindow } from './waitlist';
+import { formatDateShort } from '@/lib/format';
 
 // ===========================================================================
 // Automated class transitions (DB) — timezone-aware lifecycle sweeps.
@@ -274,6 +275,15 @@ describe('class transitions (DB, timezone-aware)', () => {
       },
     });
     expect(waiterNote).not.toBeNull();
+
+    // A waitlist-only student can place the class by nothing but this body:
+    // the entry just closed to `removed` (dropped from /bookings) and a
+    // cancelled class links nowhere in the inbox. Type, date AND time.
+    if (waiterNote) {
+      expect(waiterNote.body).toContain('Hatha');
+      expect(waiterNote.body).toContain(formatDateShort(cls.date));
+      expect(waiterNote.body).toContain('18:00');
+    }
 
     // The entry must not be left pointing at a cancelled class.
     const afterEntry = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
