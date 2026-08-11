@@ -40,12 +40,21 @@ let otherSessionToken: string;
 const DAY_OF_WEEK = (((new Date().getUTCDay() + 6) % 7) + 2) % 7;
 const EXPECTED_JS_DAY = (DAY_OF_WEEK + 1) % 7;
 
-function templateBody(classType: string) {
+// startTime defaults to '09:30' for the one test that still asserts that
+// literal value (the very first template this file creates, before any
+// other template exists to collide with). Every other caller below passes
+// its own distinct startTime: ClassTemplate_teacher_slot_unique is
+// (teacherId, dayOfWeek, startTime) WHERE isArchived = false, this file
+// reuses one teacher and one dayOfWeek throughout, and most of these
+// templates are never archived by the end of their test (that is what
+// several of them are proving) — so the only way for later templates to
+// coexist with earlier still-active ones is a startTime of their own.
+function templateBody(classType: string, startTime = '09:30') {
   return {
     teacherRoomId,
     classType,
     dayOfWeek: DAY_OF_WEEK,
-    startTime: '09:30',
+    startTime,
     durationMinutes: 60,
     roomCost: 15,
     minRate: 10,
@@ -219,11 +228,13 @@ describe('PATCH /api/class-templates/[id]', () => {
   // file and is not visible here — this is the same POST-and-extract-id
   // shape, scoped locally rather than shared, matching this block's existing
   // cases (which each POST inline instead of reaching across describes).
-  const newTemplate = async (classType: string): Promise<string> => {
+  // startTime is required, not defaulted, so every call site below is
+  // forced to pick its own slot — see templateBody's comment above.
+  const newTemplate = async (classType: string, startTime: string): Promise<string> => {
     const res = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody(classType)),
+      body: JSON.stringify(templateBody(classType, startTime)),
     });
     expect(res.status).toBe(201);
     return ((await res.json()) as { data: { id: string } }).data.id;
@@ -233,7 +244,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('Toggle Flow')),
+      body: JSON.stringify(templateBody('Toggle Flow', '09:31')),
     });
     expect(create.status).toBe(201);
     const { data: template } = (await create.json()) as { data: { id: string } };
@@ -293,7 +304,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('Shelved Flow')),
+      body: JSON.stringify(templateBody('Shelved Flow', '09:32')),
     });
     expect(create.status).toBe(201);
     const { data: template } = (await create.json()) as { data: { id: string } };
@@ -379,7 +390,7 @@ describe('PATCH /api/class-templates/[id]', () => {
   });
 
   it('archiving deletes the unbooked future window and reports the counts', async () => {
-    const id = await newTemplate('Archive Counts');
+    const id = await newTemplate('Archive Counts', '09:33');
     // The POST generates a 4-week window; every class is unbooked.
     const before = await prisma.class.count({
       where: { templateId: id, date: { gt: new Date() } },
@@ -408,7 +419,7 @@ describe('PATCH /api/class-templates/[id]', () => {
   // the today case: the archive rule deliberately spares a class dated today,
   // so the page's own boundary is what a survivor must be checked against.
   it('archived templates leave nothing the public booking page would show', async () => {
-    const id = await newTemplate('No Longer Bookable');
+    const id = await newTemplate('No Longer Bookable', '09:34');
 
     await fetch(`${BASE_URL}/api/class-templates/${id}?state=archived`, {
       method: 'PATCH',
@@ -427,7 +438,7 @@ describe('PATCH /api/class-templates/[id]', () => {
   });
 
   it('pausing deletes nothing and reports the last scheduled class', async () => {
-    const id = await newTemplate('Pause Counts');
+    const id = await newTemplate('Pause Counts', '09:35');
     const before = await prisma.class.count({ where: { templateId: id } });
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}?state=paused`, {
@@ -440,8 +451,9 @@ describe('PATCH /api/class-templates/[id]', () => {
       data: { lastScheduled: { startTime: string } | null };
     };
     // `toBeNull()` alone also passes on `undefined` — assert the real value
-    // the template's own `startTime` (`templateBody`) would produce.
-    expect(data.lastScheduled?.startTime).toBe('09:30');
+    // the template's own `startTime` (passed to `newTemplate` above) would
+    // produce.
+    expect(data.lastScheduled?.startTime).toBe('09:35');
     expect(await prisma.class.count({ where: { templateId: id } })).toBe(before);
   });
 
@@ -449,7 +461,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('No State')),
+      body: JSON.stringify(templateBody('No State', '09:36')),
     });
     const { data: template } = (await create.json()) as { data: { id: string } };
 
@@ -468,7 +480,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('Bad State')),
+      body: JSON.stringify(templateBody('Bad State', '09:37')),
     });
     const { data: template } = (await create.json()) as { data: { id: string } };
 
@@ -493,7 +505,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('Twice Paused')),
+      body: JSON.stringify(templateBody('Twice Paused', '09:38')),
     });
     const { data: template } = (await create.json()) as { data: { id: string } };
 
@@ -524,7 +536,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('Twice Archived')),
+      body: JSON.stringify(templateBody('Twice Archived', '09:39')),
     });
     const { data: template } = (await create.json()) as { data: { id: string } };
 
@@ -559,7 +571,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('Twice Active')),
+      body: JSON.stringify(templateBody('Twice Active', '09:41')),
     });
     const { data: template } = (await create.json()) as { data: { id: string } };
 
@@ -593,7 +605,7 @@ describe('PATCH /api/class-templates/[id]', () => {
     const create = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody('Twice Unarchived')),
+      body: JSON.stringify(templateBody('Twice Unarchived', '09:42')),
     });
     const { data: template } = (await create.json()) as { data: { id: string } };
 
@@ -623,11 +635,13 @@ describe('PATCH /api/class-templates/[id]', () => {
 });
 
 describe('PUT /api/class-templates/[id]', () => {
-  const createTemplate = async (classType: string): Promise<string> => {
+  // startTime is required, not defaulted, so every call site below is
+  // forced to pick its own slot — see templateBody's comment above.
+  const createTemplate = async (classType: string, startTime: string): Promise<string> => {
     const res = await fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
-      body: JSON.stringify(templateBody(classType)),
+      body: JSON.stringify(templateBody(classType, startTime)),
     });
     expect(res.status).toBe(201);
     const { data } = (await res.json()) as { data: { id: string } };
@@ -635,7 +649,7 @@ describe('PUT /api/class-templates/[id]', () => {
   };
 
   it('updates the template and propagates to its still-mutable instances', async () => {
-    const id = await createTemplate('Editable Flow');
+    const id = await createTemplate('Editable Flow', '09:43');
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
@@ -679,7 +693,7 @@ describe('PUT /api/class-templates/[id]', () => {
   });
 
   it('returns 400 for an empty payload, and writes nothing', async () => {
-    const id = await createTemplate('No Fields');
+    const id = await createTemplate('No Fields', '09:44');
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
@@ -693,7 +707,7 @@ describe('PUT /api/class-templates/[id]', () => {
   });
 
   it("refuses to edit another teacher's template", async () => {
-    const id = await createTemplate('Not Yours');
+    const id = await createTemplate('Not Yours', '09:45');
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
@@ -711,7 +725,7 @@ describe('PUT /api/class-templates/[id]', () => {
   // Prisma is by being declared in the schema — a source edit, which the pins
   // catch. If this test ever fails, the pins are guarding the wrong thing.
   it('rejects an undeclared key — the schema is strict', async () => {
-    const id = await createTemplate('Strict Flow');
+    const id = await createTemplate('Strict Flow', '09:46');
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
@@ -727,7 +741,7 @@ describe('PUT /api/class-templates/[id]', () => {
   });
 
   it("refuses a teacherRoom belonging to another teacher", async () => {
-    const id = await createTemplate('Room Guard');
+    const id = await createTemplate('Room Guard', '09:47');
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
@@ -747,7 +761,7 @@ describe('PUT /api/class-templates/[id]', () => {
   // cheap probe is `{}`, which parses fine and still yields 403 (see the case
   // above), so this ordering tells a prober strictly less, not more.
   it('rejects a malformed body before revealing that the template is not yours', async () => {
-    const id = await createTemplate('Order Guard');
+    const id = await createTemplate('Order Guard', '09:48');
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
@@ -769,7 +783,7 @@ describe('PUT /api/class-templates/[id]', () => {
   // *active* refill path — the one that actually runs in production — gets
   // exercised end-to-end.
   it('a dayOfWeek change deletes the old-day instances and refills the new day', async () => {
-    const id = await createTemplate('Day Shift');
+    const id = await createTemplate('Day Shift', '09:49');
 
     const before = await prisma.class.findMany({ where: { templateId: id } });
     expect(before.length).toBeGreaterThan(0);
@@ -817,7 +831,7 @@ describe('PUT /api/class-templates/[id]', () => {
   // the guarantee holds: editing a shelved template cannot materialize
   // classes, it can only ever shrink or leave empty what already exists.
   it('an archived template accepts the PUT but the day-change refill never runs', async () => {
-    const id = await createTemplate('Shelved Flow');
+    const id = await createTemplate('Shelved Flow', '09:50');
     expect(await prisma.class.count({ where: { templateId: id } })).toBeGreaterThan(0);
 
     const archive = await fetch(`${BASE_URL}/api/class-templates/${id}?state=archived`, {
