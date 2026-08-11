@@ -55,7 +55,7 @@
 
 **Why this exists.** Five components need the same settled presentation: a teal label, a middot, and a control that retries the navigation that did not commit. The spec rejected a shared *hook* on measurement — thirteen distinct control-flow shapes across the codebase, four among these seven files — but that measurement was about mutation flow. Presentation is the axis on which these five genuinely are the same. A named component also makes the invariant discoverable, which the ESLint rule considered in spec §6 could not do.
 
-`size` exists because the two template forms sit beside an existing `text-sm text-teal` success line and must stay internally consistent, while the button-style components use `type-caption text-teal`.
+`size` exists because the two template forms are built on the `text-sm` scale — their error and success paragraphs both use it — while the button-style components sit in `type-caption` rows. Not because of the success line specifically (whole-branch review F9): `text-sm text-teal` is written only by the *edit* arm, and `SettledNotice` renders only in create mode, where `success` is always `''`, so that line can never be on screen beside it. What `sm` matches is the form's own type scale, not an adjacent line.
 
 - [ ] **Step 1: Write the failing test**
 

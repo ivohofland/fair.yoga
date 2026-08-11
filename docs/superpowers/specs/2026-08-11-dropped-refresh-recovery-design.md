@@ -353,13 +353,13 @@ Each guard is broken, its exact failure text recorded, then restored and re-veri
 |---|---|---|
 | G1 | `mark-unpaid` shows "Marked unpaid" after a success that does not commit | Delete `setDone(true)` — the pre-fix behaviour restored verbatim |
 | G2 | `Keep` is enabled while the POST is in flight | Re-add `disabled={busy}` to `Keep` |
-| G3 | `sign-out` re-enables after push+refresh do not commit | Delete the `finally` |
+| G3 | `sign-out` re-enables after push+refresh do not commit | Delete the single line `setBusy(false);` from the `finally`. **Not "delete the `finally`"** (whole-branch review F6): the `finally` is what this fix *adds*, and it carries the two router calls as well — removing the block would change more than the guard under test |
 | G4 | `passkey-sign-in` returns to "Sign in with a passkey" after a non-committing success | Delete the success-path `setState('idle')` |
 | **G5** | **A failed passkey verify still shows its error** | **Replace G4's explicit reset with `finally { setState('idle') }`** — the clobbering bug Rule 2 warns about. Exists to prove the `finally`-vs-explicit distinction is load-bearing, not stylistic |
 | G6 | Both invitation answers reach a terminal state; `Cancel` stays live in flight | Restore the documented F7 non-reset |
 | G7 | Unlink reaches a terminal state; `Cancel` stays live in flight | Restore the documented F7 non-reset |
-| **G8** | **`template-form` in create mode does not re-enable Create after a push that does not commit** | **Restore `finally { setSubmitting(false) }` reaching the create arm.** The highest-value guard here: the mutation is the live duplicate-schedule defect |
-| G9 | `studio-template-form` create mode, same | Same |
+| **G8** | **`template-form` in create mode does not re-enable Create after a push that does not commit** | **Three mutations, all run.** (a) Delete `setCreated(true)` from the create arm — the pre-fix behaviour, and the live duplicate-schedule defect; observed `expected <button …(2)></button> to be null`. (b) Keep `setCreated(true)` but restore the unconditional submit button, so only the label changes; observed as a failed `getByRole` lookup for "Go to recurring classes". (c) Rewire *only* the `SettledNotice`'s `onAction` to a `fetch`; observed `expected 3 to be 2` (mount room fetch + create POST, then the second request). **(c) is the only one of the three that reaches the fetch-count assertion** — (a) and (b) both trip a DOM-presence assertion first |
+| G9 | `studio-template-form` create mode, same | The same three, same order. (c) observed `expected 2 to be 1` — this form has no mount fetch, so its create POST is call one |
 
 In-flight assertions (G2, G6, G7) use a deferred fetch mock — a promise the test
 resolves — so "while in flight" is a controlled state, not a race.
@@ -373,7 +373,19 @@ traps here:
 - **G8/G9** must assert that no second POST is possible, not merely that a label
   changed. The realistic regression is a second `fetch` reaching
   `/api/class-templates`, so the assertion is on the fetch mock's call count after a
-  second click — not on rendered text, which a partial fix would satisfy.
+  second click — not on rendered text, which a partial fix would satisfy. **And the
+  fetch-count assertion needs mutation (c) to be exercised at all**: mutations (a)
+  and (b) both remove or restore a control, so they fail on a DOM-presence
+  assertion several lines earlier and never reach it. A guard is only proven by a
+  mutation that reaches it.
+- **The fix here is `created` plus the button ternary — not a removed `finally`.**
+  `finally { setSubmitting(false) }` was never taken out of either form and still
+  runs on the create arm (`template-form.tsx:278-280`,
+  `studio-template-form.tsx:134-136`). "Restore the `finally`" is therefore a no-op
+  mutation: it changes nothing, the suite stays green, and a maintainer running it
+  would conclude this branch's highest-value guard is decorative. It is the
+  false-negative this section exists to prevent, and it stood in this table until
+  the whole-branch review (F3) caught it.
 
 ---
 
