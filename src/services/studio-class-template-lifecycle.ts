@@ -34,6 +34,11 @@
 
 import type { PrismaClient, StudioClassTemplate } from '@prisma/client';
 import { startOfLocalDay } from '@/lib/timezone';
+// Server-only (pino). Safe here: this module's sole importer is
+// `api/studio-class-templates/[id]/route.ts`, and it already pulls `@/lib/log`
+// transitively through `studio-class-generator`. No `'use client'` component
+// value-imports anything in this chain.
+import { log } from '@/lib/log';
 import type { LastScheduledClass } from './class-template-lifecycle';
 import {
   claimStudioTemplateForGeneration,
@@ -72,7 +77,19 @@ export type PauseStudioTemplateResult =
        * promises no window.
        */
       scheduled: number;
-      /** Rows this resume created. `scheduled >= added`, always. */
+      /**
+       * Rows this resume created. `scheduled >= added`, always — and by
+       * construction rather than by assertion, which is why no test tries to
+       * pin the relation directly. The count runs *after* generation, inside
+       * the same transaction, over a strict superset of what generation
+       * inserts: same `templateId`, `cancelledAt: null` (new rows default to
+       * null), and `date: { gte: today }` (the generator keeps only dates whose
+       * start instant is still ahead, so none can predate the teacher's local
+       * today). Nothing else can insert for this `templateId` while the claim
+       * holds it, and this transaction's own uncommitted rows cannot be
+       * cancelled by anyone else. See the count below for the one input that
+       * could break it — a second, disagreeing read of `defaultTimezone`.
+       */
       added: number;
     }
   | { ok: true; action: 'unchanged'; template: StudioClassTemplate }
@@ -372,14 +389,40 @@ export async function pauseOrResumeStudioTemplate(
       // `gt`: this path deletes nothing, so there is no spare-today carve-out
       // to mirror — a class dated today is on the schedule and must be counted.
       //
-      // Inside the transaction, under the claim's `FOR UPDATE`, and from the
-      // *locked* row's timezone rather than the pre-transaction snapshot's —
-      // unlike the `paused` arm below, which derives its boundary after the
-      // transaction has committed and has no lock left to read under.
+      // `claimed.teacher.defaultTimezone`, and it must be that value rather
+      // than any other read of the same column. Not because it is locked — it
+      // is not: the claim's `FOR UPDATE` is on the `StudioClassTemplate` row,
+      // while `defaultTimezone` lives on `Teacher`, reached by the claim's
+      // `include` join, and it is not a unique column, so a concurrent change
+      // to it takes `FOR NO KEY UPDATE` and commits straight past us. The
+      // reason is stronger than a lock: `generateStudioInstancesForTemplate`
+      // filtered its candidate dates with `classStartInstant(date, startTime,
+      // template.teacher.defaultTimezone)` off this same `claimed`, so keying
+      // the count's boundary to a *different* read of that column is the one
+      // way `scheduled < added` becomes reachable. Concretely, a filter that
+      // admitted today-in-`Pacific/Niue` (UTC-11) against a count whose `today`
+      // came from `Pacific/Kiritimati` (UTC+14) would put the just-added row a
+      // day outside `gte`. Do not "simplify" this to `template.teacher.…`.
       const today = startOfLocalDay(new Date(), claimed.teacher.defaultTimezone);
       const scheduled = await tx.studioClass.count({
         where: scheduledWhere(templateId, { gte: today }),
       });
+
+      // The state the POST's own transaction exists to prevent — a template
+      // flagged live that produces no classes — is reachable here *without
+      // failing*: every candidate date already holds a cancelled row, so
+      // generation creates nothing and there is no throw for `withErrorHandler`
+      // to classify. The teacher is told (`resumeStudioMessage`'s
+      // `scheduled === 0` branch); without this line nobody on the operator
+      // side ever is, and a later copy change would make the condition wholly
+      // invisible. Rare enough not to be noise: only fires on a resume that
+      // leaves the window empty.
+      if (scheduled === 0) {
+        log.warn(
+          { templateId, teacherId },
+          'studio template resumed live with an empty window — every candidate date is blocked',
+        );
+      }
 
       const { teacher: _claimTeacher, ...bareClaimed } = claimed;
       void _claimTeacher;

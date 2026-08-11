@@ -105,10 +105,20 @@ export function archiveStudioMessage(deleted: number, remaining: number): string
  * occupancy is checkable by whoever reads the message, cause is not.
  *
  * Argument order is delta-first, matching `archiveStudioMessage(deleted,
- * remaining)`, even though the sentence leads with the second argument. A
- * transposed call site cannot pass this file's tests: `(0, 4)` reads "4 classes
- * on your schedule. Nothing needed adding." where `(4, 0)` reads "Nothing is
- * scheduled from this template."
+ * remaining)`, even though the sentence leads with the second argument. The
+ * asymmetry that makes a transposition detectable is real — `(0, 4)` reads "4
+ * classes on your schedule. Nothing needed adding." where `(4, 0)` reads
+ * "Nothing is scheduled from this template." — but it only *guards* the sole
+ * production call site if a test drives that site with unequal numbers.
+ *
+ * It did not, until PR review measured it: transposing the arguments at
+ * `resolveStudioConfirmation` below left `tsc` clean and every test in this
+ * file and both button files green, because each resolver-level fixture passed
+ * `scheduled === added === 4`. The unit tests here pin this *function's*
+ * parameter order, which was never the risk — #93 was a wrong-shape *call
+ * site*. Both `resolveStudioConfirmation`'s test and the button's `activeOk`
+ * fixture now use `scheduled: 4, added: 0`, so a swap fails them; keep at least
+ * one resolver-level case unequal or this paragraph stops being true again.
  *
  * No verb after the count, for the reason `archiveMessage` records above:
  * nothing left that can fall out of agreement with `classWord`.
@@ -123,11 +133,53 @@ export function resumeStudioMessage(added: number, scheduled: number): string {
     : `${scheduled} ${classWord} on your schedule.`;
 }
 
-/** The `data` payload of a successful PATCH on a class template. */
+/**
+ * Confirmation shown after un-archiving a studio class template.
+ *
+ * A constant rather than a function, unlike its siblings above: there is
+ * nothing to interpolate, because the `unarchived` arm carries no counts.
+ *
+ * Un-archiving is not the no-op the old `return null` implied. Both directions
+ * of `archiveOrUnarchiveStudioTemplate` force `isActive: false` in the same
+ * write, and the archive already deleted the future classes — so a teacher who
+ * un-archives to get their weekly class back lands on a *paused* template with
+ * an empty window, and before this the only signal was that a differently
+ * labelled button appeared. That is #119's failure mode one arm over, found by
+ * PR review in this same function.
+ *
+ * The class family has the identical gap — `archiveOrUnarchiveTemplate` forces
+ * `isActive: false` too (`class-template-lifecycle.ts`, and its own comment
+ * says so) — and `resolveTemplateConfirmation` still answers `null` there.
+ * Deliberately not fixed alongside this; tracked with the rest of the
+ * class-family reporting work on #116.
+ */
+export const UNARCHIVE_STUDIO_MESSAGE =
+  'Un-archived. This template is paused — resume it to put classes back on your schedule.';
+
+/**
+ * The `data` payload of a successful PATCH on a class template.
+ *
+ * The `scheduled?: never; added?: never` brand on the collapsed arm is what
+ * keeps this type and `StudioTemplateToggleResponse` from being
+ * interchangeable. Without it the studio type is assignable *to* this one —
+ * excess-property checking fires only on fresh object literals, never on a
+ * value of a declared type, and the other arms match verbatim — so
+ * `resolveTemplateConfirmation(studioPayload)` compiled clean. PR review
+ * measured both slips that buys: swapping the resolver in
+ * `toggle-studio-template-button.tsx` restores #119 exactly, and in
+ * `archive-studio-template-button.tsx` it substitutes `archiveMessage` for
+ * `archiveStudioMessage` — #93's wrong-shape bug, the very failure the studio
+ * type's own docblock cites as its justification. Both were caught only by
+ * string-equality component tests; neither by the compiler.
+ *
+ * Same brand idiom as `TransactionClientOnly` in `@/lib/db-locks` — see its
+ * docblock for the reasoning. If #116 ever gives the class family's resume a
+ * count, this brand is what it removes.
+ */
 export type TemplateToggleResponse =
   | { action: 'paused'; lastScheduled: { date: string; startTime: string } | null }
   | { action: 'archived'; deleted: number; remaining: number }
-  | { action: 'active' | 'unarchived' | 'unchanged' };
+  | { action: 'active' | 'unarchived' | 'unchanged'; scheduled?: never; added?: never };
 
 /**
  * The `data` payload of a successful PATCH on a *studio* class template (#119).
@@ -180,10 +232,19 @@ export function resolveTemplateConfirmation(data: TemplateToggleResponse): strin
  * function through would put most of the English in the caller — and they are
  * kept parallel-but-separate throughout regardless.
  *
- * `null` is the right answer for two of the five actions here, not the class
- * family's three: `active` speaks now. `unchanged` is the one that still must
- * not — it is what a stale second tab and a retry-after-lost-response reach, so
- * a confirmation there would describe something that did not happen.
+ * `null` is now the right answer for exactly one of the five actions, not the
+ * class family's three: `active` speaks (#119) and so does `unarchived` (see
+ * `UNARCHIVE_STUDIO_MESSAGE`). `unchanged` is the one that still must not — it
+ * is what a stale second tab and a retry-after-lost-response reach, so a
+ * confirmation there would describe something that did not happen.
+ *
+ * A `switch` with a `never` default rather than an if-chain, for the reason
+ * `api/studio-class-templates/[id]/route.ts` records for its own: an if-chain
+ * ending in `return null` is *accidentally* exhaustive, so a sixth arm on
+ * `StudioTemplateToggleResponse` would compile clean and fall through to
+ * silence — reproducing #119 by adding a field. Measured during PR review: a
+ * fifth arm added to the type left `tsc` at exit 0. The route grew this guard
+ * in the same PR; this is the layer #119's bug actually lived at.
  *
  * Nothing is said on **create**, and that is a decision rather than an
  * oversight to be tidied up later. Creating a weekly template means "put this
@@ -196,11 +257,32 @@ export function resolveTemplateConfirmation(data: TemplateToggleResponse): strin
  * ("Response shapes are unchanged … The front-end needs no changes").
  */
 export function resolveStudioConfirmation(data: StudioTemplateToggleResponse): string | null {
-  if (data.action === 'paused') {
-    const last = data.lastScheduled;
-    return pauseMessage(last ? { date: new Date(last.date), startTime: last.startTime } : null);
+  switch (data.action) {
+    case 'paused': {
+      const last = data.lastScheduled;
+      return pauseMessage(last ? { date: new Date(last.date), startTime: last.startTime } : null);
+    }
+    case 'archived':
+      return archiveStudioMessage(data.deleted, data.remaining);
+    case 'active':
+      // Checked rather than trusted, even though the type says `number`. Both
+      // buttons reach this through an unchecked `as` on `res.json()`, so the
+      // type constrains the server and nothing constrains the wire: a tab
+      // holding this bundle against a rolled-back server receives
+      // `{ action: 'active' }` with no counts, and `resumeStudioMessage`'s
+      // template literal then renders "undefined classes on your schedule."
+      // Saying nothing is the honest fallback — this function's whole contract
+      // is that `null` means "say nothing".
+      if (!Number.isInteger(data.added) || !Number.isInteger(data.scheduled)) return null;
+      return resumeStudioMessage(data.added, data.scheduled);
+    case 'unarchived':
+      return UNARCHIVE_STUDIO_MESSAGE;
+    case 'unchanged':
+      return null;
+    default: {
+      const unhandled: never = data;
+      void unhandled;
+      return null;
+    }
   }
-  if (data.action === 'archived') return archiveStudioMessage(data.deleted, data.remaining);
-  if (data.action === 'active') return resumeStudioMessage(data.added, data.scheduled);
-  return null;
 }

@@ -82,11 +82,12 @@ describe('resumeStudioMessage', () => {
     expect(resumeStudioMessage(0, 0)).toBe('Nothing is scheduled from this template.');
   });
 
-  // The guard on the argument order, which is delta-first to match
-  // `archiveStudioMessage` even though the sentence leads with the second
-  // argument. Two adjacent numbers are a transposition waiting to happen; these
-  // two calls must not agree, or the order stops being checkable at all.
-  it('distinguishes its arguments, so a transposed call site cannot pass', () => {
+  // The argument order is delta-first to match `archiveStudioMessage` even
+  // though the sentence leads with the second argument, so the two outputs must
+  // stay distinguishable. NOTE (corrected after PR review): this pins the
+  // *function's* parameter order only. It does NOT guard the call site — see
+  // Task 4, which is where the real guard had to go.
+  it('distinguishes its two arguments', () => {
     expect(resumeStudioMessage(0, 4)).not.toBe(resumeStudioMessage(4, 0));
   });
 });
@@ -126,10 +127,11 @@ Insert after `archiveStudioMessage` in `src/components/settings/template-action-
  * occupancy is checkable by whoever reads the message, cause is not.
  *
  * Argument order is delta-first, matching `archiveStudioMessage(deleted,
- * remaining)`, even though the sentence leads with the second argument. A
- * transposed call site cannot pass this file's tests: `(0, 4)` reads "4 classes
- * on your schedule. Nothing needed adding." where `(4, 0)` reads "Nothing is
- * scheduled from this template."
+ * remaining)`, even though the sentence leads with the second argument. The
+ * outputs for `(0, 4)` and `(4, 0)` differ, which is what makes a transposition
+ * detectable at all — but see Task 4: detectable is not the same as guarded, and
+ * the version of this docblock that claimed otherwise was false. The shipped
+ * wording is in `template-action-messages.ts`; do not restore this one.
  *
  * No verb after the count, for the reason `archiveMessage` records above:
  * nothing left that can fall out of agreement with `classWord`.

@@ -42,9 +42,13 @@ describe('ToggleStudioTemplateButton', () => {
     }),
   };
 
+  // `scheduled: 4, added: 0`, not 4/4 — unequal on purpose, so this fixture
+  // pins the wire→copy argument order end to end. With equal numbers a
+  // transposition inside `resolveStudioConfirmation` renders identically and
+  // nothing here notices; PR review measured that it survived the whole suite.
   const activeOk = {
     ok: true,
-    json: async () => ({ data: { action: 'active', scheduled: 4, added: 4 } }),
+    json: async () => ({ data: { action: 'active', scheduled: 4, added: 0 } }),
   };
 
   it('sends state=active when the template is not active', async () => {
@@ -100,7 +104,9 @@ describe('ToggleStudioTemplateButton', () => {
     fireEvent.click(screen.getByRole('button'));
 
     // The whole string. #119's whole content is that this seam was `''`.
-    expect(await screen.findByText('4 classes on your schedule.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('4 classes on your schedule. Nothing needed adding.'),
+    ).toBeInTheDocument();
     await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
   });
 

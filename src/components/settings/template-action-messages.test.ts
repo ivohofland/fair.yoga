@@ -6,6 +6,7 @@ import {
   resolveTemplateConfirmation,
   resolveStudioConfirmation,
   resumeStudioMessage,
+  type StudioTemplateToggleResponse,
 } from './template-action-messages';
 
 describe('pauseMessage', () => {
@@ -155,19 +156,46 @@ describe('resolveStudioConfirmation', () => {
     );
   });
 
-  it('returns the resume message when the template was resumed', () => {
-    expect(resolveStudioConfirmation({ action: 'active', scheduled: 4, added: 4 })).toBe(
-      '4 classes on your schedule.',
+  /**
+   * `scheduled: 4, added: 0` deliberately, not 4/4. This is the only test that
+   * drives `resumeStudioMessage`'s argument order at its production call site,
+   * and with equal numbers a transposition is invisible — PR review measured
+   * exactly that: swapping the two arguments in `resolveStudioConfirmation`
+   * left `tsc` clean and all 42 tests across the three importing files green.
+   * Transposed, this case now reads 'Nothing is scheduled from this template.'
+   * Keep the two numbers unequal.
+   */
+  it('returns the resume message, with the arguments in the order it passes them', () => {
+    expect(resolveStudioConfirmation({ action: 'active', scheduled: 4, added: 0 })).toBe(
+      '4 classes on your schedule. Nothing needed adding.',
     );
   });
 
-  // Same reasoning as `resolveTemplateConfirmation`'s equivalent case:
-  // `unchanged` is what a stale second tab and a retry-after-lost-response
-  // reach, so captioning it would describe something that did not happen. The
-  // studio resolver's `active` is deliberately absent here — it speaks now
-  // (#119), which is exactly why this `it.each` lists two actions where its
-  // class-family sibling lists three.
-  it.each(['unarchived', 'unchanged'] as const)('says nothing for %s', (action) => {
+  /**
+   * The type says `scheduled`/`added` are `number`, but both buttons reach the
+   * resolver through an unchecked `as` on `res.json()` — so a tab holding this
+   * bundle against a rolled-back server gets `{ action: 'active' }` with no
+   * counts. Without the guard the template literal renders "undefined classes
+   * on your schedule."
+   */
+  it('says nothing rather than rendering undefined when the counts are missing', () => {
+    const wire = { action: 'active' } as unknown as StudioTemplateToggleResponse;
+    expect(resolveStudioConfirmation(wire)).toBeNull();
+  });
+
+  it('reports that un-archiving left the template paused', () => {
+    expect(resolveStudioConfirmation({ action: 'unarchived' })).toBe(
+      'Un-archived. This template is paused — resume it to put classes back on your schedule.',
+    );
+  });
+
+  // `unchanged` alone now. `active` speaks (#119) and so does `unarchived` —
+  // un-archiving forces `isActive: false`, so silence there let a teacher leave
+  // the page believing a class was restored when the template is paused with an
+  // empty window. `unchanged` is what a stale second tab and a
+  // retry-after-lost-response reach, so captioning it would describe something
+  // that did not happen. Its class-family sibling still lists three.
+  it.each(['unchanged'] as const)('says nothing for %s', (action) => {
     expect(resolveStudioConfirmation({ action })).toBeNull();
   });
 });
@@ -198,11 +226,16 @@ describe('resumeStudioMessage', () => {
     expect(resumeStudioMessage(0, 0)).toBe('Nothing is scheduled from this template.');
   });
 
-  // The guard on the argument order, which is delta-first to match
-  // `archiveStudioMessage` even though the sentence leads with the second
-  // argument. Two adjacent numbers are a transposition waiting to happen; these
-  // two calls must not agree, or the order stops being checkable at all.
-  it('distinguishes its arguments, so a transposed call site cannot pass', () => {
+  // The argument order is delta-first to match `archiveStudioMessage` even
+  // though the sentence leads with the second argument, so the two outputs must
+  // stay distinguishable — otherwise nothing anywhere could detect a swap.
+  //
+  // This pins the *function's* parameter order and nothing more. Its title used
+  // to end "so a transposed call site cannot pass", which was false: the call
+  // site lives in `resolveStudioConfirmation`, and transposing it there passed
+  // this test and every other one. The guard that does bite is the unequal
+  // fixture in `resolveStudioConfirmation`'s own test above.
+  it('distinguishes its two arguments', () => {
     expect(resumeStudioMessage(0, 4)).not.toBe(resumeStudioMessage(4, 0));
   });
 });

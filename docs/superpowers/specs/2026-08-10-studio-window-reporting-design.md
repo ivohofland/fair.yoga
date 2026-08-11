@@ -150,15 +150,33 @@ archive's `deleted`/`remaining`:
   the same helper and the same boundary archive's `remaining` uses, so the two
   numbers a teacher sees from archiving and from resuming mean the same thing.
 
-Both are computed inside the transaction, under the claim's `FOR UPDATE`, from
-`claimed.teacher.defaultTimezone` — authoritative under the lock, unlike the
-paused arm's `today`, which is derived after the transaction from the
-pre-transaction snapshot.
+Both are computed inside the transaction, from `claimed.teacher.defaultTimezone`.
 
-**Invariant: `scheduled >= added`.** Every row `added` creates is future-dated
-with `cancelledAt` null by default, so it necessarily falls inside `scheduled`'s
-range. A consequence worth stating because the copy relies on it:
-`scheduled === 0` implies `added === 0`.
+> **Corrected after PR review.** This paragraph originally said that value was
+> "authoritative under the lock". It is not: the claim's `FOR UPDATE` is on the
+> `StudioClassTemplate` row, while `defaultTimezone` lives on `Teacher`, reached
+> by the claim's `include` **join** — and it is not a unique column, so a
+> concurrent change to it takes `FOR NO KEY UPDATE` and commits straight past.
+> The real reason to use `claimed`'s copy is stronger than a lock:
+> `generateStudioInstancesForTemplate` filtered its candidate dates with
+> `classStartInstant(date, startTime, template.teacher.defaultTimezone)` off that
+> same `claimed`, so keying the count's boundary to any *other* read of the
+> column is the one way `scheduled < added` becomes reachable. The corrected
+> argument is recorded beside the count in the source.
+
+**Invariant: `scheduled >= added`.** Guaranteed by construction, not asserted.
+The count runs *after* generation, in the same transaction, over a strict
+superset of what generation inserts: same `templateId`, `cancelledAt: null` (new
+rows default to null), and `date: { gte: today }` — the generator keeps only
+dates whose start instant is still ahead, so none can predate the teacher's local
+today. Nothing else can insert for this `templateId` while the claim holds it, and
+this transaction's uncommitted rows cannot be cancelled by anyone else. A
+consequence the copy relies on: `scheduled === 0` implies `added === 0`.
+
+Do **not** try to pin this relation with a test assertion. Every case in the
+suite pins both numbers to literals, so `expect(scheduled).toBeGreaterThanOrEqual(added)`
+cannot fail whatever the code does — two such assertions shipped in the first
+implementation pass and were removed at review for exactly that reason.
 
 ### 2. The copy makes no claim the query does not bound
 
@@ -201,12 +219,24 @@ of agreement.
 sentence leads with the *second* argument. Two adjacent `number` parameters whose
 order does not match the prose they produce is a transposition waiting to happen,
 and a signature mismatch in this exact file is what #93 was. Rather than change
-the convention, the risk is closed by test data: the `added: 0, scheduled: 4` row
-yields "4 classes on your schedule. Nothing needed adding.", while its
-transposition (`added: 4, scheduled: 0`) yields "Nothing is scheduled from this
-template." A swapped call site therefore cannot pass the copy tests. That
-asymmetry is the guard — the table in this section must keep at least one row
-where `added !== scheduled`.
+the convention, the risk is closed by test data: `added: 0, scheduled: 4` yields
+"4 classes on your schedule. Nothing needed adding.", while its transposition
+(`added: 4, scheduled: 0`) yields "Nothing is scheduled from this template."
+
+> **Corrected after PR review — the guard as first written could not fail.**
+> This section originally concluded "A swapped call site therefore cannot pass
+> the copy tests." Two reviewers independently transposed the arguments at the
+> sole production call site (`resolveStudioConfirmation`) and got `tsc` clean and
+> every test green. The asymmetry is real, but it only guards anything if a test
+> drives *the call site* with unequal numbers — and every resolver-level fixture
+> passed `scheduled === added === 4`. The unit tests pin the **function's**
+> parameter order, which was never the risk; #93 was a wrong-shape **call site**.
+>
+> Fixed by making two resolver-level fixtures unequal: `resolveStudioConfirmation`'s
+> own test and the button's `activeOk`, both now `scheduled: 4, added: 0`. The
+> rule that replaces the wrong one: **at least one test that reaches the call
+> site must use `added !== scheduled`.** Pinning the bare function is not enough,
+> and the table above is not where the guard lives.
 
 ### 3. The toggle response type splits per family
 

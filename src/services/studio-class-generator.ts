@@ -184,11 +184,20 @@ export async function generateStudioInstancesForTemplate(
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         // Dead under the claim's lock — see the comment above for why. Logged
-        // rather than discarded outright all the same: this is the only place
-        // here that can silently shorten a generated window, and a teacher
-        // looking at three weeks instead of four has nothing else to go on.
-        // Reaching this line means a caller generated without holding the
-        // claim, which is the finding, not the collision itself.
+        // rather than discarded outright all the same: reaching this line means
+        // a caller generated without holding the claim, which is the finding,
+        // not the collision itself.
+        //
+        // This used to claim to be "the only place here that can silently
+        // shorten a generated window". It is not, and the correction matters
+        // because it points at the live path rather than this dead one: the
+        // `if (existing) continue` above shortens the window whenever the
+        // existing row is *cancelled*, since `@@unique([templateId, date])`
+        // makes that date permanently unfillable. That path runs on every sweep
+        // and logs nothing, and the probe does not even select `cancelledAt`,
+        // so it cannot tell correct idempotency from a blocked date. Naming it
+        // is not the fix — see the issue filed from #119's review for the
+        // return-shape decision that would be.
         log.warn(
           { templateId: template.id, date },
           'studio class insert hit @@unique([templateId, date]) — generated without the claim held',

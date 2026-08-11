@@ -554,6 +554,16 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
    *
    * Two days rather than one so a run that crosses local midnight cannot turn
    * "tomorrow" into "today" mid-test.
+   *
+   * This helper is only date-independent because `seedTeacher` pins
+   * `defaultTimezone: 'UTC'` (see its comment, which #123 put there). That pin
+   * is what makes this `getUTCDay()` and the service's `startOfLocalDay(now,
+   * tz)` name the same day, and what makes the boundary test's
+   * `makeClass(t.id, new Date(), …)` land exactly on `gte` rather than a day
+   * off. Under the schema default of `Europe/Amsterdam` the boundary test would
+   * fail deterministically between 00:00 and 02:00 local — the same failure
+   * #123 already fixed once in this file. Do not seed a zone here without
+   * reworking both tests' arithmetic.
    */
   const dayOfWeekNeverToday = () => {
     const jsDay = new Date().getUTCDay(); // 0=Sun … 6=Sat
@@ -584,6 +594,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     otherTeacherId = other.teacherId;
     otherAccountId = other.accountId;
   });
+
   afterAll(async () => {
     for (const [t, a] of [
       [teacherId, accountId],
@@ -756,6 +767,40 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
   });
 
   /**
+   * The ordinary path, and the only input that selects `resumeStudioMessage`'s
+   * "Nothing needed adding." branch: a fast pause → resume, where pausing
+   * deleted nothing so all four dates are still occupied and generation creates
+   * nothing.
+   *
+   * Spec test item 2, missing from the first implementation pass and undeclared
+   * as a deviation — every other test in this file asserts a non-zero `added`,
+   * so that the service can produce `0` at all was unpinned while the copy
+   * branch consuming it was covered. Found by PR review.
+   */
+  it('reports an intact window as nothing needed adding', async () => {
+    const t = await makeTemplateOn('Resume Intact', dayOfWeekNeverToday());
+    await prisma.studioClassTemplate.update({
+      where: { id: t.id },
+      data: { isActive: false },
+    });
+
+    const filled = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
+    expect(filled.ok).toBe(true);
+    if (!filled.ok) throw new Error('expected ok');
+    if (filled.action !== 'active') throw new Error('expected the active action');
+    expect(filled.added).toBe(4);
+
+    await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');
+    const resumed = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'active');
+
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) throw new Error('expected ok');
+    if (resumed.action !== 'active') throw new Error('expected the active action');
+    expect(resumed.added).toBe(0);
+    expect(resumed.scheduled).toBe(4);
+  });
+
+  /**
    * The case #119 exists for. `pause → archive → un-archive → resume` is the
    * sequence #94's PR body named: the archive deliberately spares cancelled
    * classes (they are income records), and the generator's existence probe has
@@ -822,9 +867,13 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     // Two, not four. Only the dates the archive emptied come back.
     expect(resumed.added).toBe(2);
     expect(resumed.scheduled).toBe(2);
-    // `scheduled >= added` — every added row is future-dated and uncancelled,
-    // so it necessarily falls inside `scheduled`'s range.
-    expect(resumed.scheduled).toBeGreaterThanOrEqual(resumed.added);
+    // No `expect(scheduled).toBeGreaterThanOrEqual(added)` here or in the
+    // boundary test below, though both used to carry one. With both operands
+    // pinned to literals on the two lines above, such an assertion cannot fail
+    // whatever the code does — documentation wearing an assertion's clothes,
+    // and this branch's own standard rejects a pin that cannot fail. The
+    // relation is guaranteed by construction, not by test; the argument lives
+    // on `PauseStudioTemplateResult.added`.
 
     // The spared pair still stands: the archive left them and the resume did
     // not resurrect them.
@@ -872,9 +921,10 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     if (!resumed.ok) throw new Error('expected ok');
     if (resumed.action !== 'active') throw new Error('expected the active action');
     expect(resumed.added).toBe(4);
-    // Four generated plus today's = 5. The cancelled one does not count.
+    // Four generated plus today's = 5. The cancelled one does not count. This
+    // is the only place in the branch where the two numbers genuinely differ,
+    // which is what makes it the isolator for the `cancelledAt` filter.
     expect(resumed.scheduled).toBe(5);
-    expect(resumed.scheduled).toBeGreaterThanOrEqual(resumed.added);
   });
 
   it('generates nothing when pausing', async () => {

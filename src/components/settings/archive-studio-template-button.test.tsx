@@ -65,6 +65,27 @@ describe('ArchiveStudioTemplateButton', () => {
     );
   });
 
+  /**
+   * Un-archiving used to render nothing. It is not a no-op: both directions of
+   * `archiveOrUnarchiveStudioTemplate` force `isActive: false`, and the archive
+   * already deleted the future classes — so the teacher lands on a paused
+   * template with an empty window, and silence let them leave believing the
+   * class was restored. Found by PR review as #119's failure mode one arm over.
+   */
+  it('reports that un-archiving left the template paused', async () => {
+    stubFetch({ ok: true, json: async () => ({ data: { action: 'unarchived' } }) });
+    render(<ArchiveStudioTemplateButton templateId="tpl-1" isArchived={true} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(
+      await screen.findByText(
+        'Un-archived. This template is paused — resume it to put classes back on your schedule.',
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+  });
+
   it('renders the confirmation rather than merely computing it', async () => {
     stubFetch(archivedOk);
     render(<ArchiveStudioTemplateButton templateId="tpl-1" isArchived={false} />);
