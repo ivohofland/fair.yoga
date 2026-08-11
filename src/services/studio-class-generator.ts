@@ -6,6 +6,7 @@
 
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
+import type { GenerationResult, SkippedSlot } from '@/lib/generation';
 import { getNextOccurrences } from './class-generator';
 import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
 import { classStartInstant } from '@/lib/timezone';
@@ -112,10 +113,27 @@ export async function claimStudioTemplateForGeneration(
 }
 
 /**
- * Generates one template's rolling window. The studio mirror of
- * `generateInstancesForTemplate` (`class-generator.ts`) — same client union,
- * same optional `from`, same count of rows created — so the two families can
- * be read against each other.
+ * Generates the rolling 4-week window for ONE studio template, reporting each
+ * candidate date it could not fill and why (`GenerationResult`). The studio
+ * twin of `generateInstancesForTemplate` (`class-generator.ts`) — same client
+ * union, same optional `from`, same result shape — so the two families can be
+ * read against each other.
+ *
+ * Same two mechanisms as the class family:
+ *
+ *   - the occupancy `findMany` below names the *reason* a date is skipped,
+ *     which is what lets the teacher be told something true and an operator
+ *     grep for it. It is a read-then-write and so is not race-safe on its own;
+ *   - `createManyAndReturn({ skipDuplicates: true })` compiles to a BARE
+ *     `ON CONFLICT DO NOTHING` — no conflict target, so it covers every unique
+ *     constraint on the table, including the partial index #196 adds. That is
+ *     what makes a clash cost only its own date.
+ *
+ * This function's P2002 hedge used to document the same 25P02 trap the class
+ * family's did (#164): a caught `P2002` inside an interactive transaction
+ * aborts it, and the next statement fails with `25P02`. It is gone for the
+ * same reason — the hedge could not work, only quietly poison. Do not
+ * reintroduce a `catch` here.
  *
  * Takes `PrismaClient | Prisma.TransactionClient` so a caller can compose it
  * into a transaction it already owns. That is the whole reason this function
@@ -127,16 +145,12 @@ export async function generateStudioInstancesForTemplate(
   db: PrismaClient | Prisma.TransactionClient,
   template: StudioTemplateWithTimezone,
   from?: Date,
-): Promise<number> {
+): Promise<GenerationResult> {
   const startDate = from ?? new Date();
-  let created = 0;
 
-  // The next 4 occurrences whose start is still ahead of startDate. A run
-  // after today's start time must not create a class that already happened;
-  // the window slides one week further instead. Ported from the class family
-  // in #94 — the studio side had no such filter, so the hourly sweep could
-  // materialise a class that had already started, and generating on resume
-  // would have put that in front of a teacher who was watching.
+  // The next 4 occurrences whose start is still ahead of startDate. Ported from
+  // the class family in #94 — the studio side had no such filter, so the hourly
+  // sweep could materialise a class that had already started.
   const dates = getNextOccurrences(template.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
     .filter(
       (date) =>
@@ -144,73 +158,90 @@ export async function generateStudioInstancesForTemplate(
     )
     .slice(0, DEFAULT_WEEKS);
 
-  for (const date of dates) {
-    const existing = await db.studioClass.findFirst({
-      where: { templateId: template.id, date },
-    });
-    if (existing) continue;
+  // One query for the whole window. Scoped to this teacher: #196's studio index
+  // is `(teacherId, date, startTime) WHERE "cancelledAt" IS NULL`.
+  const occupants = await db.studioClass.findMany({
+    where: { teacherId: template.teacherId, date: { in: dates } },
+    select: { templateId: true, date: true, startTime: true, cancelledAt: true },
+  });
 
-    // Unreachable for any caller holding this template's claim: no other
-    // insert for this templateId can land while the row lock is held, so
-    // nothing is left to collide with `@@unique([templateId, date])`. In
-    // production there are three callers: `generateStudioClassInstances`'s
-    // sweep and `pauseOrResumeStudioTemplate`'s resume both claim before
-    // calling this function, and `api/studio-class-templates/route.ts`'s POST
-    // does not — its row is new inside its own transaction, so its hedge is
-    // dead rather than broken (#120). This file's own tests call it directly,
-    // with no claim, to exercise it on its own, and split along the same axis
-    // `claimStudioTemplateForGeneration` documents for the class family,
-    // though the other way round — that roster is one bare caller out of
-    // three, this is one transactional caller out of six: all but one pass a
-    // bare `prisma`, so each insert autocommits on its own and a genuine
-    // collision there is a clean, harmless P2002. The exception is
-    // the one named "accepts a transaction client…", which wraps the call in
-    // its own `$transaction` with no claim — the only caller here that would
-    // actually find this hedge broken rather than merely unnecessary, for the
-    // same 25P02 reason.
-    try {
-      await db.studioClass.create({
-        data: {
-          teacherId: template.teacherId,
-          templateId: template.id,
-          classType: template.classType,
-          date,
-          startTime: template.startTime,
-          durationMinutes: template.durationMinutes,
-          location: template.location,
-          hourlyRate: template.hourlyRate,
-        },
+  const skipped: SkippedSlot[] = [];
+  const free: Date[] = [];
+
+  for (const date of dates) {
+    const onDate = occupants.filter((c) => c.date.getTime() === date.getTime());
+
+    const own = onDate.find((c) => c.templateId === template.id);
+    if (own) {
+      // `@@unique([templateId, date])` ignores cancellation, so a cancelled own
+      // row makes the date permanently unfillable rather than already filled.
+      // This is the live path #192 was filed about: it runs on every sweep and,
+      // before this change, said nothing.
+      skipped.push({
+        date,
+        reason: own.cancelledAt !== null ? 'blocked_by_cancelled' : 'already_generated',
       });
-    } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        // Dead under the claim's lock — see the comment above for why. Logged
-        // rather than discarded outright all the same: reaching this line means
-        // a caller generated without holding the claim, which is the finding,
-        // not the collision itself.
-        //
-        // This used to claim to be "the only place here that can silently
-        // shorten a generated window". It is not, and the correction matters
-        // because it points at the live path rather than this dead one: the
-        // `if (existing) continue` above shortens the window whenever the
-        // existing row is *cancelled*, since `@@unique([templateId, date])`
-        // makes that date permanently unfillable. That path runs on every sweep
-        // and logs nothing, and the probe does not even select `cancelledAt`,
-        // so it cannot tell correct idempotency from a blocked date. Naming it
-        // is not the fix — see the issue filed from #119's review for the
-        // return-shape decision that would be.
-        log.warn(
-          { templateId: template.id, date },
-          'studio class insert hit @@unique([templateId, date]) — generated without the claim held',
-        );
-        continue;
-      }
-      throw err;
+      continue;
     }
 
-    created++;
+    // Mirrors #196's studio index predicate exactly (`WHERE "cancelledAt" IS NULL`).
+    if (onDate.some((c) => c.startTime === template.startTime && c.cancelledAt === null)) {
+      skipped.push({ date, reason: 'slot_taken' });
+      continue;
+    }
+
+    free.push(date);
   }
 
-  return created;
+  const inserted =
+    free.length === 0
+      ? []
+      : await db.studioClass.createManyAndReturn({
+          data: free.map((date) => ({
+            teacherId: template.teacherId,
+            templateId: template.id,
+            classType: template.classType,
+            date,
+            startTime: template.startTime,
+            durationMinutes: template.durationMinutes,
+            location: template.location,
+            hourlyRate: template.hourlyRate,
+          })),
+          skipDuplicates: true,
+          select: { date: true },
+        });
+
+  const landed = new Set(inserted.map((r) => r.date.getTime()));
+  for (const date of free) {
+    if (!landed.has(date.getTime())) skipped.push({ date, reason: 'raced' });
+  }
+
+  skipped.sort((a, b) => a.date.getTime() - b.date.getTime());
+  logSkippedStudioSlots(template.id, template.teacherId, skipped);
+
+  return { created: inserted.length, skipped };
+}
+
+/** Studio twin of `logSkippedSlots` (`class-generator.ts`) — see it for the noise rule. */
+function logSkippedStudioSlots(
+  templateId: string,
+  teacherId: string,
+  skipped: SkippedSlot[],
+): void {
+  const blocking = skipped.filter((s) => s.reason !== 'already_generated');
+  if (blocking.length === 0) return;
+
+  log.warn(
+    {
+      templateId,
+      teacherId,
+      skipped: blocking.map((s) => ({
+        date: s.date.toISOString().slice(0, 10),
+        reason: s.reason,
+      })),
+    },
+    'studio class generation could not fill every date in the window',
+  );
 }
 
 /**
@@ -263,7 +294,8 @@ export async function generateStudioClassInstances(
 
           // `fresh`, not `template`: the loop variable is the pre-filter's
           // snapshot and may be minutes old. #102.
-          return generateStudioInstancesForTemplate(tx, fresh, startDate);
+          const result = await generateStudioInstancesForTemplate(tx, fresh, startDate);
+          return result.created;
         },
         // Comfortably above the claim's own 2s lock_timeout, so Postgres
         // gives up on the lock before Prisma gives up on the transaction.

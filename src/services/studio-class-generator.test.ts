@@ -510,6 +510,15 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
       select: { date: true },
     });
 
+  // Slot-reporting tests generate and hand-cancel rows under these teachers.
+  // Without this, one test's leftover classes occupy the next test's slots —
+  // the generator's occupancy check is scoped per teacher (mirroring #196).
+  afterEach(async () => {
+    await prisma.studioClass.deleteMany({
+      where: { teacherId: { in: [eastTeacherId, westTeacherId] } },
+    });
+  });
+
   beforeAll(async () => {
     const east = await seedTeacher('east', EAST);
     eastTeacherId = east.teacherId;
@@ -538,8 +547,8 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     const first = await generateStudioInstancesForTemplate(prisma, tpl);
     const second = await generateStudioInstancesForTemplate(prisma, tpl);
 
-    expect(first).toBe(4);
-    expect(second).toBe(0);
+    expect(first.created).toBe(4);
+    expect(second.created).toBe(0);
     expect(await prisma.studioClass.count({ where: { templateId: id } })).toBe(4);
   });
 
@@ -561,7 +570,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
     const created = await generateStudioInstancesForTemplate(prisma, tpl, from);
 
-    expect(created).toBe(4);
+    expect(created.created).toBe(4);
     const dates = (await datesFor(id)).map((d) => d.date.toISOString().slice(0, 10));
     expect(dates).not.toContain('2026-08-05');
     expect(dates[0]).toBe('2026-08-12');
@@ -601,8 +610,105 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
       { timeout: 10_000 },
     );
 
-    expect(created).toBe(4);
+    expect(created.created).toBe(4);
     expect(await prisma.studioClass.count({ where: { templateId: id } })).toBe(4);
+  });
+
+  it('names a cancelled own instance as blocked_by_cancelled', async () => {
+    const now = new Date();
+    const id = await makeTemplate(eastTeacherId, 3, '09:00');
+    const tpl = await withZone(id);
+
+    const first = await generateStudioInstancesForTemplate(prisma, tpl, now);
+    expect(first.created).toBe(4);
+    expect(first.skipped).toEqual([]);
+
+    const rows = await prisma.studioClass.findMany({
+      where: { templateId: tpl.id },
+      orderBy: { date: 'asc' },
+      select: { id: true, date: true },
+    });
+    await prisma.studioClass.update({
+      where: { id: rows[1]!.id },
+      data: { cancelledAt: new Date() },
+    });
+
+    const again = await generateStudioInstancesForTemplate(prisma, tpl, now);
+    expect(again.created).toBe(0);
+    expect(again.skipped).toContainEqual({
+      date: rows[1]!.date,
+      reason: 'blocked_by_cancelled',
+    });
+  });
+
+  it('skips only the slot another studio class occupies', async () => {
+    const now = new Date();
+    const id = await makeTemplate(eastTeacherId, 3, '09:00');
+    const tpl = await withZone(id);
+
+    const first = await generateStudioInstancesForTemplate(prisma, tpl, now);
+    const dates = (
+      await prisma.studioClass.findMany({
+        where: { templateId: tpl.id },
+        orderBy: { date: 'asc' },
+        select: { date: true },
+      })
+    ).map((r) => r.date);
+    expect(first.created).toBe(4);
+    await prisma.studioClass.deleteMany({ where: { templateId: tpl.id } });
+
+    await prisma.studioClass.create({
+      data: {
+        teacherId: tpl.teacherId,
+        templateId: null,
+        classType: 'Manual',
+        date: dates[1]!,
+        startTime: tpl.startTime,
+        durationMinutes: 60,
+        location: 'Elsewhere',
+        hourlyRate: 50,
+      },
+    });
+
+    const result = await generateStudioInstancesForTemplate(prisma, tpl, now);
+    expect(result.created).toBe(3);
+    expect(result.skipped).toEqual([{ date: dates[1]!, reason: 'slot_taken' }]);
+  });
+
+  it('does not treat a cancelled neighbour as occupying the slot', async () => {
+    const now = new Date();
+    const id = await makeTemplate(eastTeacherId, 3, '09:00');
+    const tpl = await withZone(id);
+
+    const first = await generateStudioInstancesForTemplate(prisma, tpl, now);
+    const dates = (
+      await prisma.studioClass.findMany({
+        where: { templateId: tpl.id },
+        orderBy: { date: 'asc' },
+        select: { date: true },
+      })
+    ).map((r) => r.date);
+    expect(first.created).toBe(4);
+    await prisma.studioClass.deleteMany({ where: { templateId: tpl.id } });
+
+    await prisma.studioClass.create({
+      data: {
+        teacherId: tpl.teacherId,
+        templateId: null,
+        classType: 'Manual',
+        date: dates[1]!,
+        startTime: tpl.startTime,
+        durationMinutes: 60,
+        location: 'Elsewhere',
+        hourlyRate: 50,
+        cancelledAt: new Date(),
+      },
+    });
+
+    // #196's studio index carries `WHERE "cancelledAt" IS NULL`.
+    const result = await generateStudioInstancesForTemplate(prisma, tpl, now);
+    expect(result.created).toBe(4);
+    expect(result.skipped).toEqual([]);
   });
 });
 
@@ -641,12 +747,18 @@ describe('generateStudioClassInstances (per-template isolation)', () => {
         findUniqueOrThrow: async ({ where: { id } }: { where: { id: string } }) => tmpl(id, 't1'),
       },
       studioClass: {
-        findFirst: async () => null,
-        create: async ({ data }: { data: { templateId: string } }) => {
-          if (data.templateId === 'A') throw new Error('boom-A');
-          if (data.templateId === 'C') throw new Error('boom-C');
-          created.push(data.templateId);
-          return {};
+        findMany: async () => [],
+        createManyAndReturn: async ({
+          data,
+        }: {
+          data: Array<{ templateId: string; date: Date }>;
+        }) => {
+          for (const row of data) {
+            if (row.templateId === 'A') throw new Error('boom-A');
+            if (row.templateId === 'C') throw new Error('boom-C');
+            created.push(row.templateId);
+          }
+          return data.map((row) => ({ date: row.date }));
         },
       },
       // The sweep now claims each template inside its own transaction before
@@ -667,51 +779,6 @@ describe('generateStudioClassInstances (per-template isolation)', () => {
     const loggedTemplateIds = spy.mock.calls.map((c) => (c[0] as { templateId?: string }).templateId);
     expect(loggedTemplateIds).toContain('A');
     expect(loggedTemplateIds).toContain('C');
-    spy.mockRestore();
-  });
-
-  /**
-   * The P2002 branch is dead under the claim's row lock — that is the point
-   * of the claim, and two reviewers checked it empirically. This test does
-   * not dispute that; it pins what happens if a future caller ever reaches
-   * the branch anyway by generating without claiming first. Absorbing the
-   * collision is right (the row exists, which is what the caller wanted), but
-   * absorbing it in silence means a window that came back a week short with
-   * nothing anywhere saying why. A stub is the only way in: with the claim
-   * held, no concurrent insert for this templateId can exist to collide with.
-   */
-  it('logs the collision rather than silently shortening the window', async () => {
-    const from = new Date('2099-01-05T00:00:00Z');
-    const collision = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-      code: 'P2002',
-      clientVersion: 'test',
-    });
-    const stub = {
-      studioClassTemplate: {
-        findMany: async () => [tmpl('D', 't1')],
-        findUniqueOrThrow: async ({ where: { id } }: { where: { id: string } }) => tmpl(id, 't1'),
-      },
-      studioClass: {
-        findFirst: async () => null,
-        create: async () => {
-          throw collision;
-        },
-      },
-      $executeRawUnsafe: async () => 0,
-      $queryRaw: async () => [{ id: 'stub' }],
-      $transaction: async (fn: (tx: unknown) => Promise<number>) => fn(stub),
-    } as unknown as import('@prisma/client').PrismaClient;
-
-    const spy = vi.spyOn(log, 'warn').mockImplementation(() => log);
-
-    // Still absorbed: the sweep resolves rather than throwing, and reports
-    // the nothing it created. Only the silence is gone.
-    await expect(generateStudioClassInstances(stub, from)).resolves.toBe(0);
-
-    expect(spy).toHaveBeenCalled();
-    const [context] = spy.mock.calls[0] as [{ templateId?: string; date?: Date }];
-    expect(context.templateId).toBe('D');
-    expect(context.date).toBeInstanceOf(Date);
     spy.mockRestore();
   });
 });

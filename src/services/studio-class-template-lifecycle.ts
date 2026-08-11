@@ -382,7 +382,7 @@ export async function pauseOrResumeStudioTemplate(
       // `testTimeout` is 5000ms and fires first — a property of the harness,
       // not of Prisma or of this code. Do not read that 5s as the real
       // budget, and do not "correct" the 10s above to match it.
-      const added = await generateStudioInstancesForTemplate(tx, claimed);
+      const added = (await generateStudioInstancesForTemplate(tx, claimed)).created;
 
       // Same helper and same boundary as `archiveOrUnarchiveStudioTemplate`'s
       // `remaining`, so archiving and resuming report on one basis. `gte`, not

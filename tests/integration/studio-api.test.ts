@@ -17,7 +17,7 @@
  * sweep would materialise classes for it. Both guards now match; the
  * generator half is pinned in `src/services/studio-class-generator.test.ts`.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { generateStudioInstancesForTemplate } from '@/services/studio-class-generator';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
@@ -116,6 +116,18 @@ afterAll(async () => {
   await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
   await prisma.account.deleteMany({ where: { id: { in: [ownerAccountId, otherAccountId] } } });
   await prisma.$disconnect();
+});
+
+// Template-generated studio classes occupy per-teacher slots under #196's
+// occupancy rule, so the window one resume test generates would block a
+// sibling resume. The beforeAll `studioClassId` row has `templateId: null`
+// and is exempt. Clearing template-scoped rows before every test keeps this
+// file order-independent and re-runnable against a dev DB that accumulates
+// rows between runs.
+beforeEach(async () => {
+  await prisma.studioClass.deleteMany({
+    where: { teacherId: { in: [ownerId, otherId] }, templateId: { not: null } },
+  });
 });
 
 describe('POST /api/studio-class-templates', () => {

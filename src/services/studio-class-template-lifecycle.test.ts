@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import {
   archiveOrUnarchiveStudioTemplate,
@@ -593,6 +593,14 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     const other = await seedTeacher('pause-other');
     otherTeacherId = other.teacherId;
     otherAccountId = other.accountId;
+  });
+
+  // The generator's occupancy check is scoped per teacher (#196), so one
+  // test's generated window would occupy the next test's slots: several tests
+  // here resume templates on the same `dayOfWeek`/`startTime`, and without
+  // this a resume that used to create four would create nothing.
+  beforeEach(async () => {
+    await prisma.studioClass.deleteMany({ where: { teacherId } });
   });
 
   afterAll(async () => {
