@@ -99,6 +99,59 @@ describe('MarkUnpaidButton', () => {
     expect(screen.queryByRole('button', { name: /mark unpaid/i })).toBeNull();
   });
 
+  /**
+   * PR #198 review P3/P4. G2 above proves Keep is *clickable* in flight. It
+   * does not prove Keep achieves anything: it only reset `confirming`, so
+   * `busy` walked out of the confirm view still true. The POST is hung —
+   * deliberately never released — so nothing will ever clear it, and the
+   * teacher's next click on "Mark unpaid" reopens a confirm whose only action
+   * reads "Updating…" and is disabled. That is #40's frozen control exactly,
+   * relocated one click later.
+   *
+   * The release is omitted on purpose: a test that has to resolve the promise
+   * to reach its assertion is testing the resolution, not the escape.
+   */
+  it('leaves no in-flight state behind, so a reopened confirm is operable', async () => {
+    fetchMock.mockReturnValue(new Promise(() => {}));
+    vi.stubGlobal('fetch', fetchMock);
+    openConfirm();
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm unpaid/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /updating/i })).toBeDisabled());
+
+    fireEvent.click(screen.getByRole('button', { name: /keep/i }));
+    fireEvent.click(screen.getByRole('button', { name: /mark unpaid/i }));
+
+    expect(screen.queryByRole('button', { name: /updating/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /^confirm unpaid$/i })).toBeEnabled();
+  });
+
+  /**
+   * PR #198 review P4. The same leak in the error channel. `error` renders
+   * inside the confirm branch, so Keep hides it without clearing it — and the
+   * next "Mark unpaid" reopens the confirm with a red server message from an
+   * attempt the teacher already walked away from, attached to a click they
+   * have not made yet.
+   */
+  it('clears a failed attempt, so a reopened confirm is not pre-labelled as failed', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: 'Cannot undo: current status is "pending". Must be "paid".' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    openConfirm();
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm unpaid/i }));
+    await screen.findByText('Cannot undo: current status is "pending". Must be "paid".');
+
+    fireEvent.click(screen.getByRole('button', { name: /keep/i }));
+    fireEvent.click(screen.getByRole('button', { name: /mark unpaid/i }));
+
+    expect(
+      screen.queryByText('Cannot undo: current status is "pending". Must be "paid".'),
+    ).toBeNull();
+  });
+
   it('shows the server error and re-enables on a failed POST', async () => {
     fetchMock.mockResolvedValue({
       ok: false,

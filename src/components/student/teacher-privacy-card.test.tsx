@@ -226,6 +226,53 @@ describe('TeacherPrivacyCard', () => {
       expect(screen.queryByRole('button', { name: /remove this teacher/i })).toBeNull();
     });
 
+    /**
+     * PR #198 review P3. The test above proves Cancel is clickable in flight;
+     * this proves it leaves the flight behind. Cancel only reset
+     * `confirmingUnlink`, so `unlinking` stayed true — and on a DELETE that
+     * hangs rather than resolving, nothing will ever clear it. Reopening the
+     * confirm then offers "Removing…", disabled, forever.
+     *
+     * Never released, deliberately: the escape's guarantee is exactly that it
+     * does not need the request to come back.
+     */
+    it('leaves no in-flight state behind, so a reopened confirm is operable', async () => {
+      fetchMock.mockReturnValue(new Promise(() => {}));
+      vi.stubGlobal('fetch', fetchMock);
+      renderCard();
+      fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^remove teacher$/i }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /removing/i })).toBeDisabled());
+
+      fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+      fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
+
+      expect(screen.queryByRole('button', { name: /removing/i })).toBeNull();
+      expect(screen.getByRole('button', { name: /^remove teacher$/i })).toBeEnabled();
+    });
+
+    // PR #198 review P4. Same leak in the error channel: `unlinkError` renders
+    // inside the confirm branch, so Cancel hid it without clearing it and the
+    // next confirm opened already carrying a red message from an attempt the
+    // student walked away from.
+    it('clears a failed unlink, so a reopened confirm is not pre-labelled as failed', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 404,
+        json: async () => ({ error: { message: 'Teacher link not found' } }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      renderCard();
+      fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^remove teacher$/i }));
+      await screen.findByText('Teacher link not found');
+
+      fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+      fireEvent.click(screen.getByRole('button', { name: /remove this teacher/i }));
+
+      expect(screen.queryByText('Teacher link not found')).toBeNull();
+    });
+
     it('DELETEs /api/teacher-links/:teacherId and refreshes on success', async () => {
       stubFetch();
       renderCard();

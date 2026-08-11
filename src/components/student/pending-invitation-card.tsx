@@ -58,6 +58,32 @@ export function PendingInvitationCard({ invitationId, teacherName }: PendingInvi
     }
   }
 
+  /**
+   * #40, PR #198 review P3/P4. The escape from the decline confirm, never
+   * disabled by `submitting`: it touches no network, and it is the only way
+   * out if the POST hangs rather than resolving — a case the settled state
+   * cannot reach.
+   *
+   * It clears `submitting` and `error` as well as `confirmingDecline`. Resetting
+   * only the confirm flag made the "only way out" claim false in the very case
+   * it was written for: Accept below is `disabled={submitting}`, so a hung
+   * decline followed by Cancel left the student on the neutral card able to
+   * give neither answer, with no error and no explanation — #40's frozen
+   * control, relocated one control over. `error` leaks further still, because
+   * `{error && …}` renders at section scope outside the ternary below: an
+   * abandoned decline's message sat under the Accept/Decline choice with
+   * nothing left on screen to say what it referred to.
+   *
+   * It cannot recall the POST. A decline that lands after Cancel still settles
+   * — `done` is checked above this whole return, so it wins over this reset —
+   * and one that fails after Cancel still reports its failure.
+   */
+  function handleCancelDecline() {
+    setConfirmingDecline(false);
+    setSubmitting(false);
+    setError('');
+  }
+
   if (done) {
     return (
       <section className="bg-sand-soft border border-border rounded-card p-5">
@@ -86,12 +112,9 @@ export function PendingInvitationCard({ invitationId, teacherName }: PendingInvi
             <Button variant="destructive" onClick={() => respond('decline')} disabled={submitting}>
               {submitting ? 'Declining...' : 'Decline invitation'}
             </Button>
-            {/*
-              #40. Not disabled by `submitting`: a pure client-side reset, and
-              the only way out of this confirm if the POST hangs rather than
-              resolving — a case the settled state cannot reach.
-            */}
-            <Button variant="secondary" onClick={() => setConfirmingDecline(false)}>
+            {/* Never disabled by `submitting` — see `handleCancelDecline` for
+                why, and for what the reset does and does not guarantee. */}
+            <Button variant="secondary" onClick={handleCancelDecline}>
               Cancel
             </Button>
           </div>

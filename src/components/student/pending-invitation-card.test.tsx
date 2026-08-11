@@ -122,6 +122,51 @@ describe('PendingInvitationCard', () => {
     expect(screen.queryByRole('button', { name: /^accept$/i })).toBeNull();
   });
 
+  /**
+   * PR #198 review P3. The test above proves Cancel is clickable in flight.
+   * This proves it accomplishes something. Cancel only reset
+   * `confirmingDecline`, so `submitting` came back out to the neutral view
+   * still true — and Accept is `disabled={submitting}`. On a decline POST that
+   * hangs rather than resolving, the student landed on a card where neither
+   * answer could be given, with no error and no explanation: the exact frozen
+   * control #40 exists to remove, one control over from where it was fixed.
+   *
+   * The promise is never released. Cancel's whole claim is that it works
+   * without the request coming back, so releasing it to reach the assertion
+   * would test the release instead.
+   */
+  it('leaves no in-flight state behind, so Accept survives a cancelled decline', async () => {
+    fetchMock.mockReturnValue(new Promise(() => {}));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<PendingInvitationCard invitationId="inv-1" teacherName="Jane Teacher" />);
+    fireEvent.click(screen.getByRole('button', { name: /^decline$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /decline invitation/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /declining/i })).toBeDisabled());
+
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    expect(screen.getByRole('button', { name: /^accept$/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^decline$/i })).toBeEnabled();
+  });
+
+  /**
+   * PR #198 review P4. Worse here than in its two siblings: `{error && …}`
+   * renders at section scope, outside the confirm ternary, so a message earned
+   * by a decline the student abandoned stays on screen underneath the neutral
+   * Accept/Decline choice — with nothing left to explain what it refers to.
+   */
+  it('clears a failed decline when Cancel leaves the confirm', async () => {
+    stubFailure(500);
+    render(<PendingInvitationCard invitationId="inv-1" teacherName="Jane Teacher" />);
+    fireEvent.click(screen.getByRole('button', { name: /^decline$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /decline invitation/i }));
+    await screen.findByText('Could not respond. Try again.');
+
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    expect(screen.queryByText('Could not respond. Try again.')).toBeNull();
+  });
+
   it('renders no decline confirmation, and fetches nothing, until the trigger is clicked', () => {
     stubFetch();
     render(<PendingInvitationCard invitationId="inv-1" teacherName="Jane Teacher" />);

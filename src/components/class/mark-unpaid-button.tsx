@@ -47,6 +47,32 @@ export function MarkUnpaidButton({ paymentId }: MarkUnpaidButtonProps) {
     }
   }
 
+  /**
+   * #40, PR #198 review P3/P4. The escape from the confirm cluster, and
+   * deliberately never disabled by `busy`: it touches no network, and it is
+   * the only way out if the POST hangs rather than resolving — a case the
+   * settled state cannot reach, because there is no success path yet.
+   *
+   * It resets the whole cluster, not only `confirming`. Leaving `busy` and
+   * `error` standing moved the freeze instead of lifting it: a hung POST kept
+   * `busy` true with nothing left to clear it, so the next "Mark unpaid"
+   * reopened a confirm whose only action read "Updating…" and was disabled;
+   * and a failed attempt's red message came back with it, attached to a fresh
+   * click the teacher had not yet made.
+   *
+   * What it cannot do is recall the request — this is a state reset, not an
+   * abort. If the abandoned POST later succeeds, `done` renders the settled
+   * state (checked above the `confirming` branch precisely so it wins over
+   * this reset); if it later fails, its message is set on a cluster the
+   * teacher has already left. Both are the honest report of what the server
+   * did, not a promise that leaving the confirm undid it.
+   */
+  function handleKeep() {
+    setConfirming(false);
+    setBusy(false);
+    setError('');
+  }
+
   if (done) {
     return (
       <SettledNotice label="Marked unpaid" actionLabel="Refresh" onAction={() => router.refresh()} />
@@ -75,17 +101,11 @@ export function MarkUnpaidButton({ paymentId }: MarkUnpaidButtonProps) {
       >
         {busy ? 'Updating...' : 'Confirm unpaid'}
       </button>
-      {/*
-        #40. Deliberately NOT disabled by `busy`. `Keep` is a pure client-side
-        state reset that touches no network, and it is the only way out of this
-        confirm cluster if the request hangs rather than resolving — a case the
-        settled state above cannot reach, because there is no success path yet.
-        It cannot cancel an in-flight request; if that request later succeeds,
-        the settled state renders, which is the honest outcome.
-      */}
+      {/* Never disabled by `busy` — see `handleKeep` for why, and for what
+          the reset does and does not guarantee. */}
       <button
         type="button"
-        onClick={() => setConfirming(false)}
+        onClick={handleKeep}
         className="type-caption text-teal min-h-[44px] px-1"
       >
         Keep

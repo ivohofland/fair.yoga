@@ -146,6 +146,29 @@ export function TeacherPrivacyCard({
     }
   }
 
+  /**
+   * #40, PR #198 review P3/P4. The escape from the unlink confirm, never
+   * disabled by `unlinking`: it touches no network, and it is the only way out
+   * if the DELETE hangs rather than resolving — a case the settled state
+   * cannot reach.
+   *
+   * It clears `unlinking` and `unlinkError` as well as `confirmingUnlink`.
+   * Resetting only the confirm flag carried the in-flight state out with it: a
+   * hung DELETE left `unlinking` true with nothing left to clear it, so
+   * reopening the confirm offered "Removing…", disabled, permanently — and a
+   * failed attempt's message reopened with it, over a click the student had
+   * not yet made.
+   *
+   * It cannot recall the DELETE. An unlink that lands after Cancel still
+   * settles — `unlinked` is tested first in the block below, see the comment
+   * there — and one that fails after Cancel still reports its failure.
+   */
+  function handleCancelUnlink() {
+    setConfirmingUnlink(false);
+    setUnlinking(false);
+    setUnlinkError('');
+  }
+
   return (
     <section className="bg-sand-soft border border-border rounded-card p-5">
       <div className="mb-3">
@@ -223,12 +246,9 @@ export function TeacherPrivacyCard({
               <Button variant="destructive" onClick={handleUnlink} disabled={unlinking}>
                 {unlinking ? 'Removing...' : 'Remove teacher'}
               </Button>
-              {/*
-                #40. Not disabled by `unlinking`: a pure client-side reset,
-                and the only way out if the DELETE hangs rather than
-                resolving — a case the settled state cannot reach.
-              */}
-              <Button variant="secondary" onClick={() => setConfirmingUnlink(false)}>
+              {/* Never disabled by `unlinking` — see `handleCancelUnlink` for
+                  why, and for what the reset does and does not guarantee. */}
+              <Button variant="secondary" onClick={handleCancelUnlink}>
                 Cancel
               </Button>
             </div>
