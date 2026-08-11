@@ -39,4 +39,23 @@ describe('SettledNotice', () => {
     render(<SettledNotice label="Accepted" actionLabel="Refresh" onAction={() => {}} />);
     expect(screen.getByRole('button', { name: 'Refresh' })).not.toBeDisabled();
   });
+
+  /**
+   * Review F5. This never arrives on a page the user is reading: it replaces
+   * the control they just activated, so focus drops to `document.body` at the
+   * same moment. Before #40 that control stayed mounted-but-disabled, so at
+   * least focus survived. `role="status"` is what makes the swap audible — it
+   * is the only live region in `src/` — and the focus ring is what makes the
+   * one remaining exit findable by keyboard once tabbed back to.
+   *
+   * Moving focus into the notice is the fuller answer and is not in this
+   * change; this pins the two halves that are.
+   */
+  it('announces itself as a live region, and rings its action on focus', () => {
+    render(<SettledNotice label="Marked unpaid" actionLabel="Refresh" onAction={() => {}} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Marked unpaid');
+    expect(screen.getByRole('button', { name: 'Refresh' })).toHaveClass(
+      'focus-visible:shadow-focus',
+    );
+  });
 });

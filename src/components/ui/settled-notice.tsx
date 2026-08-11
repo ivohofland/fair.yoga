@@ -27,6 +27,21 @@ const sizeClasses: Record<SettledSize, string> = {
  *
  * The action is deliberately never disabled. This component only renders
  * because something else did not work; it must always be the way out.
+ *
+ * `role="status"` because of how this arrives (whole-branch review F5):
+ * activating a control unmounts it and inserts this in its place, so focus
+ * falls to `document.body` and, with no live region anywhere else in `src/`,
+ * a screen-reader user was told nothing at all — a money-correcting action
+ * reported by silence, its only exit to be re-found by traversal. The polite
+ * announcement is what replaces the disabled-but-focused control the pre-#40
+ * code left behind. `focus-visible:shadow-focus` on the action is the other
+ * half: the ring `ui/button.tsx` gives its own control, so tabbing back to
+ * this one shows where you are. (Without `focus:outline-none` beside it —
+ * this is a text-scale control with no filled surface, so the browser's own
+ * outline is worth keeping as well as the ring.)
+ *
+ * Moving focus *into* the notice is a further step, deliberately not taken
+ * here and filed separately.
  */
 export function SettledNotice({
   label,
@@ -37,12 +52,16 @@ export function SettledNotice({
   const scale = sizeClasses[size];
 
   return (
-    <span className="inline-flex items-center gap-2">
+    <span role="status" className="inline-flex items-center gap-2">
       <span className={`${scale} text-teal`}>{label}</span>
       <span aria-hidden="true" className={`${scale} text-teal`}>
         ·
       </span>
-      <button type="button" onClick={onAction} className={`${scale} text-teal min-h-[44px] px-1`}>
+      <button
+        type="button"
+        onClick={onAction}
+        className={`${scale} text-teal min-h-[44px] px-1 focus-visible:shadow-focus`}
+      >
         {actionLabel}
       </button>
     </span>
