@@ -16,24 +16,35 @@ of its supporting claims do not survive checking, and one of them matters.
 
 | Issue claim | Verdict |
 |---|---|
-| `WaitlistEntry.class` is `onDelete: Cascade` | **Holds.** At `prisma/schema.prisma:517`, not `:421` — that line is `Registration`'s. |
-| The archive transaction creates no notification anywhere | **Holds.** It is CAS → `deleteMany` → `count` → `update` (`class-template-lifecycle.ts:539`, with the delete at `:693`, the count at `:706` and the record at `:723`). |
+| `WaitlistEntry.class` is `onDelete: Cascade` | **Holds.** At `prisma/schema.prisma:517`. The issue's `:421` is not `Registration`'s either — it is a doc-comment line inside `ClassTemplate.archivedAt`; `Registration.class` cascades at `:497`. |
+| The archive transaction creates no notification anywhere | **Holds.** It is CAS → `deleteMany` → `count` → `update` — the CAS `updateMany` at `class-template-lifecycle.ts:620`, the delete at `:693`, the count at `:706`, the record at `:723`. |
 | `class_cancelled` is an established type | **Holds**, and it is in `ESSENTIAL_NOTIFICATION_TYPES` (`notification-policy.ts:16`). |
 | *"`autoCancelClasses` and `completeClass` both persist notifications inside their transaction for exactly this kind of event"* — offered as the comparison point | **False as a comparison.** `autoCancelClasses` builds its list from `tx.registration.findMany` only (`class-transitions.ts:287`) and never reads `waitlistEntry`. It has the same bug. The only path that gets this right is the manual-cancel route. |
 | *"Narrow, but…"* — reachable only when every registration was cancelled | **Understated.** The `late_cancel` branch is gated on `if (isStudent)` (`registrations/[id]/route.ts:149`), so a **teacher** cancelling a registration writes plain `cancelled` at any time, deadline irrelevant. `CHARGED_STATUSES` excludes `cancelled`, so a teacher clearing a class produces the zero-charged state directly. |
 
 ### The census
 
-`grep deleteMany` across `src/services/` and `src/app/` returns 46 hits; 43 are
-in `*.test.ts`. Of the 3 production hits, 2 are on `Class` and 1 on
-`StudioClass`. Adding the 3 production writes of `status: 'cancelled'` onto a
-class gives five paths by which a scheduled class stops being offered:
+Anchor the pattern to the model, or the count is meaningless: a bare
+`grep -rn deleteMany src` returns **271** lines across every table in the schema,
+plus prose in comments. `grep -rni 'class\.deleteMany' src` returns **45**, of
+which **42** are in `*.test.ts`, leaving three production sites — and naming them
+beats counting them:
+
+- `class-template-lifecycle.ts:693` — `tx.class.deleteMany` (archive)
+- `template-sync.ts:68` — `tx.class.deleteMany` (day-change sync)
+- `studio-class-template-lifecycle.ts:536` — `tx.studioClass.deleteMany`
+
+Adding the three production writes of `status: 'cancelled'` onto a class —
+`class-transitions.ts:283`, `gdpr.ts:701`, `transition/route.ts:37` (the other
+two hits for that string, `gdpr.ts:377` and `registrations/[id]/route.ts:173`,
+write it onto a `Registration`) — gives five paths by which a scheduled class
+stops being offered:
 
 | # | Path | Location | Registrations told | Waitlist told | Entries left as |
 |---|---|---|---|---|---|
 | 1 | Manual cancel | `app/api/classes/[id]/transition/route.ts:47-70` | yes | **yes** | `removed` |
 | 2 | Auto-cancel below minimum | `services/class-transitions.ts:287-312` | yes | **no** | `waiting`, on a `cancelled` class |
-| 3 | Teacher account erasure | `services/gdpr.ts:757-772` | yes | **no** | `waiting`, on a `cancelled` class |
+| 3 | Teacher account erasure | `services/gdpr.ts:736-771` | yes | **no** | already `removed` (`gdpr.ts:736`) |
 | 4 | Template archive | `services/class-template-lifecycle.ts:693` | n/a — none are charged | **no** | **cascade-deleted** |
 | 5 | Template day-change sync | `services/template-sync.ts:68` | n/a | no | **cascade-deleted** |
 
@@ -196,9 +207,11 @@ argument above, not the argument itself — a future enum value could close the
 gap in hours while leaving the ordering intact.
 
 **What makes the count actually fall** is one status asymmetry: a student
-cancelling after the deadline gets `late_cancel`, which is in
-`CHARGED_STATUSES` but **not** in `ACTIVE_REGISTRATION_STATUSES`
-(`waitlist.ts:45`). Auto-cancel counts by the latter. So the seat is released
+cancelling after the deadline gets `late_cancel`, which is in `CHARGED_STATUSES`
+(`class-lifecycle.ts:167`) but **not** in `ACTIVE_REGISTRATION_STATUSES`, the
+list auto-cancel counts by at `class-transitions.ts:34`. (That triple is defined
+twice — `waitlist.ts:45` holds an identical private copy. Both agree today; cite
+the one the code under test actually reads.) So the seat is released
 while the registration stays billable — the class is simultaneously
 fully-paid-for and below its minimum.
 
@@ -221,9 +234,31 @@ shape the invariant forbids. `autoCancelClasses(db, now)` takes an explicit
 
 `gdpr.ts:701` cancels the teacher's future classes and `:757` notifies only
 `registered` students. No fullness or timing precondition applies — any class
-with a live queue reaches this. Note that `gdpr.ts:756` flags the recipient set
-as *"a product decision, not a lock-discipline fix"*; widening it is exactly
-that product decision, taken here.
+with a live queue reaches this.
+
+**This path is already half-fixed, which the first draft of this spec missed.**
+`gdpr.ts:736` runs `waitlistEntry.updateMany({ classId, status: 'waiting' } →
+'removed')` immediately after the CAS, so the queue is closed correctly here
+today. The gap is only that the recipient list built twenty lines later never
+learns those students existed: their entry is closed and they are not told.
+So path 3's change is **notification-only** — no status update to add, and an
+existing update to pin.
+
+Two things about this path that must survive the change:
+
+- **The CAS-refused branch at `:733` deliberately skips the waitlist sweep**,
+  and `:709-720` documents the residual it accepts: a `waiting` entry left on a
+  class that can never promote anyone, counted into a `warn` line as
+  `waitingEntriesLeft` so it is a known residual rather than a silent one. That
+  `continue` must keep skipping — half-applying a skip is what the existing test
+  pins. Notification belongs after the CAS matched, alongside the update that is
+  already there.
+- **`gdpr.ts:753-756` defers a different question than the one taken here.**
+  Its *"a product decision, not a lock-discipline fix"* is about registration
+  statuses — `registered` only, versus the sibling site's
+  `registered`/`attended`/`no_show`. Widening to waiting students is an adjacent
+  decision and is the one taken in this spec; the status question stays deferred
+  and out of scope.
 
 ## The rule
 
@@ -243,17 +278,28 @@ const notifications: CreateNotificationInput[] = [...registrations, ...waiting].
 
 | Path | Class becomes | Waiting entries | Change |
 |---|---|---|---|
-| 2 — auto-cancel | `cancelled` | **→ `removed`** | add a `waitlistEntry.findMany({ status: 'waiting' })` inside the existing transaction, concatenate into the existing `CreateNotificationInput[]`, add an `updateMany` |
-| 3 — erasure | `cancelled` | **→ `removed`** | same shape, inside the existing per-class transaction |
+| 2 — auto-cancel | `cancelled` | `waiting` **→ `removed`** (new) | add a `waitlistEntry.findMany({ status: 'waiting' })` inside the existing transaction, concatenate into the existing `CreateNotificationInput[]`, add an `updateMany` |
+| 3 — erasure | `cancelled` | already `removed` (`gdpr.ts:736`) | **notification only** — read the entries the existing `updateMany` is about to close, concatenate, and fix the empty-list guard below |
 | 4 — archive | deleted (unchanged) | cascade away (unchanged) | notify before the delete, filtered by what the delete actually took — see below |
 
 Paths 2 and 3 are additive: both already open a transaction, already build a
 `CreateNotificationInput[]`, and already call `createBulkNotifications(tx, …)`,
-which accepts a transaction client (`notifications.ts:101`, `Db = PrismaClient |
-Prisma.TransactionClient`).
+which accepts a transaction client (`notifications.ts:101`; the `Db =
+PrismaClient | Prisma.TransactionClient` union it takes is declared at `:25`).
 
-Both must set surviving entries to `removed` — the status `removeFromWaitlist`
-and the manual-cancel route already use. Not a new state.
+Only path 2 needs a new status write. `removed` is not a new state — it is what
+`removeFromWaitlist`, the manual-cancel route (`transition/route.ts:52`) and
+erasure (`gdpr.ts:736`) all already use. Auto-cancel is the one path that closes
+a class and leaves its queue pointing at it.
+
+**The empty-list guard is a trap on path 3.** `gdpr.ts:761` wraps the
+notification build in `if (registrations.length > 0)`. A class whose only
+audience is its queue has `registrations.length === 0`, so leaving that guard
+alone silently drops exactly the notification this spec exists to send. It must
+test the concatenated list, not the registration list. Path 2 has no such guard —
+it always pushes a teacher notification at `class-transitions.ts:304`, so its
+array is never empty — and path 1 already gets this right at
+`transition/route.ts:66`, testing `notifications.length`.
 
 ### Path 4's ordering problem
 
@@ -332,6 +378,10 @@ of cases rather than edits to existing ones.
 - **Path 2:** the worked example above, constructed as a fixture → auto-cancel →
   waiters notified, and their entries are `removed`, not `waiting`.
 - **Path 3:** teacher erasure with a queued student → notified, entry `removed`.
+  Give this class a waiter and **no** `registered` registration, so it fails
+  against the `if (registrations.length > 0)` guard at `gdpr.ts:761` if that
+  guard is left keyed on the wrong list. A fixture with both audiences passes
+  either way and would certify nothing.
 - **Cascade pin (#86's unwritten test):** assert directly that deleting a
   `Class` removes its `WaitlistEntry` rows, so a later migration changing
   `onDelete` fails here rather than silently.
@@ -351,7 +401,9 @@ then restored and re-verified.
 | Path 4's waitlist read | delete it | archive notification test |
 | Path 4's **survivor filter** | notify all candidates instead of non-survivors | the concurrency test below |
 | Path 2's waitlist read | delete it | auto-cancel notification test |
-| Path 2/3's `removed` update | delete it | entry-status assertions |
+| Path 2's new `removed` update | delete it | auto-cancel entry-status assertion |
+| Path 3's **empty-list guard** | revert it to `if (registrations.length > 0)` | the queue-only erasure test above |
+| Path 3's *existing* `removed` update (`gdpr.ts:736`) | delete it | erasure entry-status assertion — this one pins behaviour that already works, so it must be shown to fail too, or it is a test of nothing |
 | Cascade | change `WaitlistEntry.class` to `SetNull` in a scratch schema | cascade pin |
 
 The survivor filter is the one guard that needs real concurrency to bite, and
