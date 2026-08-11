@@ -45,6 +45,13 @@ export function PasskeySignIn({ email, redirect }: PasskeySignInProps) {
       const verified = (await verifyRes.json()) as { data: { redirectTo: string } };
       router.push(verified.data.redirectTo);
       router.refresh();
+      // #40. Explicitly NOT a `finally`: `state` carries the error too, so a
+      // blanket reset would erase the `'error'` the catch below sets and the
+      // user would be told nothing when a verify fails. Reset here, on the
+      // success path only. Sign-in is idempotent — a retry mints a fresh
+      // challenge and succeeds again — so returning to idle is safe, and it
+      // beats freezing the gate to the whole app when the push never commits.
+      setState('idle');
     } catch (err) {
       if (err instanceof Error && err.name === 'NotAllowedError') {
         setState('idle');
