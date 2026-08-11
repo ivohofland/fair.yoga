@@ -35,7 +35,7 @@
 | `src/app/api/rooms/route.ts` | **modify** — private dedupe + 409 on both branches |
 | `src/app/api/class-templates/route.ts` | **modify** — 409 `DUPLICATE_TEMPLATE_SLOT` |
 | `src/app/api/studio-class-templates/route.ts` | **modify** — 409 `DUPLICATE_STUDIO_TEMPLATE_SLOT` |
-| `src/services/class-generator.ts`, `src/services/studio-class-generator.ts` | **modify** — comments only; five claims written in the future tense by #204 become false when the migration lands |
+| `src/services/class-generator.ts`, `src/services/studio-class-generator.ts` | **modify** — comments only; four claims written in the future tense by #204 become false when the migration lands (the plan first said five; `studio-class-generator.ts:107` turned out already present-tense — see Task 2 Step 1) |
 | `tests/integration/{classes,studio,rooms,class-templates}-api.test.ts` | **modify** — HTTP-level duplicate + concurrent tests |
 | `docs/lock-order.md` | **modify, conditionally** — only if Task 7's probe finds a new edge |
 
@@ -75,33 +75,6 @@ UNION ALL SELECT 'Room private dup groups', count(*) FROM (
 </details>
 
 **No steps. Proceed directly to Task 1.**
-
-**Files:** none.
-
-- [ ] **Step 1: Run the four counting queries against production**
-
-```sql
-SELECT 'Class live dup groups' AS k, count(*) FROM (
-  SELECT "teacherId","date","startTime" FROM "Class" WHERE status <> 'cancelled'
-  GROUP BY 1,2,3 HAVING count(*)>1) s
-UNION ALL SELECT 'StudioClass live dup groups', count(*) FROM (
-  SELECT "teacherId","date","startTime" FROM "StudioClass" WHERE "cancelledAt" IS NULL
-  GROUP BY 1,2,3 HAVING count(*)>1) s
-UNION ALL SELECT 'ClassTemplate live dup groups', count(*) FROM (
-  SELECT "teacherId","dayOfWeek","startTime" FROM "ClassTemplate" WHERE "isArchived" = false
-  GROUP BY 1,2,3 HAVING count(*)>1) s
-UNION ALL SELECT 'StudioClassTemplate live dup groups', count(*) FROM (
-  SELECT "teacherId","dayOfWeek","startTime" FROM "StudioClassTemplate" WHERE "isArchived" = false
-  GROUP BY 1,2,3 HAVING count(*)>1) s
-UNION ALL SELECT 'Room public dup groups', count(*) FROM (
-  SELECT "address","floor","roomName" FROM "Room" WHERE "isPublic" = true
-  GROUP BY 1,2,3 HAVING count(*)>1) s
-UNION ALL SELECT 'Room private dup groups', count(*) FROM (
-  SELECT "createdById","address","floor","roomName" FROM "Room" WHERE "isPublic" = false
-  GROUP BY 1,2,3,4 HAVING count(*)>1) s;
-```
-
-- [ ] **Step 2: Record the output verbatim in the PR body.** A zero that was never measured is worth nothing. If any row is non-zero, **stop** and report — this plan has no remediation step and inventing one is out of scope.
 
 ---
 
