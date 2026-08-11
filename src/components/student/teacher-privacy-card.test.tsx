@@ -186,6 +186,11 @@ describe('TeacherPrivacyCard', () => {
 
       fireEvent.click(screen.getByRole('button', { name: /refresh/i }));
       expect(fetchMock).toHaveBeenCalledTimes(1);
+      // The fetch count proves no second DELETE; it cannot prove the button
+      // does anything. `routerRefresh` renders nothing, so an inert
+      // `onAction={() => {}}` reads as 1 here too — measured green under that
+      // mutation before this line existed.
+      expect(routerRefresh).toHaveBeenCalledTimes(2);
     });
 
     // G7, second half — Mode 2.

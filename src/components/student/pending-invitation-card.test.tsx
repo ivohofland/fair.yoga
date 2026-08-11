@@ -73,6 +73,12 @@ describe('PendingInvitationCard', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /refresh/i }));
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    // …and the fetch count alone cannot say whether Refresh does anything.
+    // `routerRefresh` is a bare `vi.fn()` that renders nothing, so
+    // `onAction={() => {}}` leaves the count at 1 exactly as the real wiring
+    // does — measured: both suites stayed green under that mutation. An inert
+    // way out is the one failure `SettledNotice` promises cannot happen.
+    expect(routerRefresh).toHaveBeenCalledTimes(2);
   });
 
   it('settles to "Declined" after a successful decline', async () => {
