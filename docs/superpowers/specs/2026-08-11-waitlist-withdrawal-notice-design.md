@@ -102,7 +102,49 @@ Neither path has any waitlist coverage at all.
 ## Reachability
 
 Each in-scope path needs its own argument, because they reach the state
-differently.
+differently. All three, however, must first get past the same objection, so it
+is settled once here.
+
+### The drain invariant, and the three ways it fails
+
+There is a strong argument that none of this is reachable, and it is worth
+stating properly because it is nearly right:
+
+> A queue only forms when the class is full. A full class is above its minimum,
+> and has no free seat to lose. So a class carrying a queue is never a class
+> in trouble.
+
+**The invariant is real, and it is actively maintained.** Not merely true at
+join time: when a seat frees, `handleSpotFreed` promotes the head of the queue,
+which refills the seat. Queue of 3 at 8/8 → one cancels → promoted → 8/8, queue
+of 2. `activeCount` never dips. So for as long as promotion runs, a class
+carrying a queue has its count *pinned* at `maxStudents`; the queue drains to
+empty before the count is free to fall at all.
+
+**Exactly one mechanism maintains it.** Nothing else clears entries in response
+to the class emptying — `removeFromWaitlist`, `claimSpot` and
+`withdrawWaitingEntriesForTeacher` are each driven by someone's explicit act,
+not by capacity. So every reachable state in this spec is a state where that
+one mechanism did not run. There are three such states:
+
+1. **`frozen`** — past the cancel deadline, `handleSpotFreed` returns
+   `{action:'frozen'}` (`waitlist.ts:645`) and promotes nobody. Seats still
+   free; nothing refills them.
+2. **`first_come_first_claimed` with no claim** — in the final hour before the
+   deadline the queue is broadcast to rather than promoted from, so entries
+   stay `waiting` until someone claims.
+3. **A promotion that failed and was swallowed** — promotion is best-effort.
+   `promoteAfterCancel` (`registrations/[id]/route.ts:188`) logs and discards
+   every error so a promotion failure cannot turn a successful cancel into a
+   500, and `handleSpotFreed` maps `WaitlistPromotionError` to
+   `{action:'none'}`. This route needs no timing argument: it can leave the
+   count below `maxStudents` with the queue intact at any point.
+
+Routes 1 and 2 are deliberate product behaviour, not defects — freezing exists
+so the roster stops churning in the final hours. The gap this spec closes sits
+underneath them: the queue is a record of a *past* state ("this class was full
+when I asked"), while `minStudents` and `CHARGED_STATUSES` test the *present*
+one, and suspending the drain is what lets the two drift apart.
 
 ### Path 4 — archive
 
@@ -120,41 +162,60 @@ reach zero charged registrations from there, every registration must end as
 - **Students cancel before the deadline**, which writes `cancelled`.
 
 In both cases `handleSpotFreed` fires and would normally promote a waiter into
-a `registered` registration — which is charged, and would spare the class. So
-the surviving state additionally requires promotion *not* to have fired: the
-window must be `frozen` (past the cancel deadline) or `first_come_first_claimed`
-with nobody claiming (`waitlist.ts:645`).
+a `registered` registration — which is charged, and would spare the class.
+By the drain invariant above, the surviving state additionally requires
+promotion *not* to have fired — via any of its three failure routes, all of
+which reach this path.
 
 Archive deletes only `date > today`, so the class is at least one calendar day
 out — comfortably compatible with a `HOURS_48` or `HOURS_24` deadline having
-already passed.
+already passed. Unlike Path 2, no timing argument is *required* here: the
+swallowed-failure route and a teacher's cancellations both reach this state
+without reference to the deadline.
 
 ### Path 2 — auto-cancel
 
-**A queue is guaranteed to be present and stale at the moment auto-cancel runs.**
+This is the path where the objection above bites hardest, and it fails hardest:
+**auto-cancel can only ever run inside failure route 1.** Not sometimes — always.
 
-`DEADLINE_HOURS` is `{48, 24, 12, 6}` (`waitlist.ts:96`) — the waitlist freezes
-at T−6h at the latest. `CANCEL_CHECK_HOURS` is `{4, 2, 1}`
-(`class-transitions.ts:21`) — `inCancelWindow`
-returns `at >= start − checkHours && at < start` (`class-transitions.ts:48`), so
-auto-cancel fires at T−4h at the earliest.
+The two windows are pushed together by their own purposes, not by coincidence.
+Auto-cancel must run late, because it is deciding whether the class happens.
+Freezing must happen before that, because it exists to stop the roster churning
+in the final hours. So the interval in which the drain is suspended is
+precisely the interval auto-cancel operates in.
 
-`min(deadline) = 6 > max(check) = 4`. Across all 4 × 3 = 12 configurations,
-auto-cancel fires strictly after the freeze, with at least a two-hour margin.
-There is no setting where the windows overlap.
+The configuration confirms it: `DEADLINE_HOURS` is `{48, 24, 12, 6}`
+(`waitlist.ts:96`), so the freeze begins at T−6h at the latest;
+`CANCEL_CHECK_HOURS` is `{4, 2, 1}` (`class-transitions.ts:21`) and
+`inCancelWindow` returns `at >= start − checkHours && at < start`
+(`class-transitions.ts:48`), so the sweep fires at T−4h at the earliest.
+`min(deadline) = 6 > max(check) = 4`, so across all 4 × 3 = 12 configurations
+auto-cancel runs strictly inside the frozen window, with at least a two-hour
+margin. There is no setting where they overlap. This is evidence for the
+argument above, not the argument itself — a future enum value could close the
+gap in hours while leaving the ordering intact.
 
-The consequence: between the deadline and the check, students cancelling get
-`late_cancel`, which is in `CHARGED_STATUSES` but **not** in
-`ACTIVE_REGISTRATION_STATUSES` (`waitlist.ts:45`). Auto-cancel counts by the
-latter, so `activeCount` falls while every registration stays billable — and
-the freeze means `handleSpotFreed` returns `{action:'frozen'}` and drains
-nothing. A class can therefore be full-with-queue at the deadline and below
-minimum at the check, with every waiting entry untouched.
+**What makes the count actually fall** is one status asymmetry: a student
+cancelling after the deadline gets `late_cancel`, which is in
+`CHARGED_STATUSES` but **not** in `ACTIVE_REGISTRATION_STATUSES`
+(`waitlist.ts:45`). Auto-cancel counts by the latter. So the seat is released
+while the registration stays billable — the class is simultaneously
+fully-paid-for and below its minimum.
 
 Worked example: `maxStudents 8`, `minStudents 4`, `HOURS_24` deadline,
 `HOURS_2` check. Class fills to 8/8, three students queue. Between T−24h and
-T−2h, five students late-cancel; `activeCount` is 3. At T−2h auto-cancel sees
-`3 < 4` and cancels. Three entries are still `waiting`.
+T−2h, five students late-cancel; nothing promotes, so `activeCount` is 3. At
+T−2h auto-cancel sees `3 < 4` and cancels. Three entries are still `waiting`.
+
+Failure route 3 also reaches this path, without needing the freeze — but it is
+not what the test should pin, because route 1 is the guaranteed case.
+
+**Consequence for the test:** the fixture must place `now` inside the frozen
+window, not merely construct a below-minimum class with a waiting entry. The
+latter state is one production cannot reach before the deadline, so a test
+built that way would pass without exercising the mechanism and would pin a
+shape the invariant forbids. `autoCancelClasses(db, now)` takes an explicit
+`now`, so this is controllable.
 
 ### Path 3 — teacher account erasure
 
