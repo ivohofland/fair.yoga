@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import { SettledNotice } from '@/components/ui/settled-notice';
 import { readErrorMessage } from '@/lib/client-errors';
 
 interface PendingInvitationCardProps {
@@ -26,6 +27,7 @@ export function PendingInvitationCard({ invitationId, teacherName }: PendingInvi
   const [confirmingDecline, setConfirmingDecline] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [done, setDone] = useState<'accept' | 'decline' | null>(null);
 
   async function respond(response: 'accept' | 'decline') {
     setSubmitting(true);
@@ -37,13 +39,14 @@ export function PendingInvitationCard({ invitationId, teacherName }: PendingInvi
         body: JSON.stringify({ response }),
       });
       if (res.ok) {
-        // Left `submitting` true rather than resetting it in a `finally`:
-        // this card disappears once `router.refresh()` repaints (review
-        // F7), but that repaint isn't synchronous with this call resolving
-        // — a `finally` reset here would leave a moment where a second
-        // click reaches the server on an invitation that already has its
-        // answer, surfacing "already answered" in red over an action that
-        // in fact succeeded.
+        // #40, superseding review F7. F7 was right that a `finally` reset is
+        // wrong here — the answer has committed, so a second click earns a 409
+        // (`ALREADY_ANSWERED`) in red over an action that worked. Its remedy
+        // was to leave `submitting` true, which froze all four controls when
+        // the refresh never committed: a student could give neither answer.
+        // Settling blocks the second POST the same way and still leaves them
+        // somewhere they can act.
+        setDone(response);
         router.refresh();
         return;
       }
@@ -53,6 +56,19 @@ export function PendingInvitationCard({ invitationId, teacherName }: PendingInvi
       setError('Network error. Try again.');
       setSubmitting(false);
     }
+  }
+
+  if (done) {
+    return (
+      <section className="bg-sand-soft border border-border rounded-card p-5">
+        <h3 className="type-label text-ink font-semibold mb-2">{teacherName}</h3>
+        <SettledNotice
+          label={done === 'accept' ? 'Accepted' : 'Declined'}
+          actionLabel="Refresh"
+          onAction={() => router.refresh()}
+        />
+      </section>
+    );
   }
 
   return (
@@ -70,11 +86,12 @@ export function PendingInvitationCard({ invitationId, teacherName }: PendingInvi
             <Button variant="destructive" onClick={() => respond('decline')} disabled={submitting}>
               {submitting ? 'Declining...' : 'Decline invitation'}
             </Button>
-            <Button
-              variant="secondary"
-              onClick={() => setConfirmingDecline(false)}
-              disabled={submitting}
-            >
+            {/*
+              #40. Not disabled by `submitting`: a pure client-side reset, and
+              the only way out of this confirm if the POST hangs rather than
+              resolving — a case the settled state cannot reach.
+            */}
+            <Button variant="secondary" onClick={() => setConfirmingDecline(false)}>
               Cancel
             </Button>
           </div>

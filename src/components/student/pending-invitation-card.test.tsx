@@ -52,21 +52,58 @@ describe('PendingInvitationCard', () => {
     await waitFor(() => expect(routerRefresh).toHaveBeenCalledTimes(1));
   });
 
-  // Review F7: `setSubmitting(false)` used to run in a `finally`, so it fired
-  // regardless of outcome — including right after the success branch called
-  // `router.refresh()`, before that refresh had actually repainted the page
-  // and dropped this card. A second click in that window reached the server
-  // for an invitation that was already answered, surfacing a red
-  // "already answered" error over an action that had, in fact, succeeded.
-  it('stays disabled after a successful accept, so a second click cannot reach the server', async () => {
+  // Review F7 found that `setSubmitting(false)` in a `finally` fired right
+  // after the success branch called `router.refresh()`, before that refresh had
+  // repainted the page and dropped this card. A second click in that window
+  // reached the server for an invitation that was already answered, surfacing a
+  // red "already answered" over an action that had, in fact, succeeded.
+  //
+  // F7's conclusion stands and is still pinned below: a second click must not
+  // reach the server. #40 changed only its remedy. F7 left `submitting` true
+  // forever, which froze all four controls when the refresh never committed —
+  // a student could give neither answer. The card now settles instead, which
+  // blocks the second POST *and* leaves the student somewhere they can act.
+  it('settles after a successful accept, and cannot send a second POST', async () => {
     stubFetch();
     render(<PendingInvitationCard invitationId="inv-1" teacherName="Jane Teacher" />);
-    const acceptButton = screen.getByRole('button', { name: /^accept$/i });
-    fireEvent.click(acceptButton);
-    await waitFor(() => expect(routerRefresh).toHaveBeenCalledTimes(1));
-    expect(acceptButton).toBeDisabled();
-    fireEvent.click(acceptButton);
+    fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
+
+    expect(await screen.findByText(/^Accepted/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^accept$/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /refresh/i }));
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles to "Declined" after a successful decline', async () => {
+    stubFetch();
+    render(<PendingInvitationCard invitationId="inv-1" teacherName="Jane Teacher" />);
+    fireEvent.click(screen.getByRole('button', { name: /^decline$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /decline invitation/i }));
+
+    expect(await screen.findByText(/^Declined/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /decline invitation/i })).toBeNull();
+  });
+
+  // G6, second half — Mode 2. If the POST hangs rather than resolving, the
+  // settled state never renders, and Cancel is the only way out.
+  it('leaves Cancel operable while the decline is in flight', async () => {
+    let release!: (value: { ok: boolean }) => void;
+    fetchMock.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    render(<PendingInvitationCard invitationId="inv-1" teacherName="Jane Teacher" />);
+    fireEvent.click(screen.getByRole('button', { name: /^decline$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /decline invitation/i }));
+
+    const cancel = screen.getByRole('button', { name: /^cancel$/i });
+    await waitFor(() => expect(screen.getByRole('button', { name: /declining/i })).toBeDisabled());
+    expect(cancel).toBeEnabled();
+
+    release({ ok: true });
   });
 
   it('renders no decline confirmation, and fetches nothing, until the trigger is clicked', () => {
