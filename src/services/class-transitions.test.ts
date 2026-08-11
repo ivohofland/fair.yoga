@@ -6,6 +6,7 @@ import {
   autoCompleteClasses,
 } from './class-transitions';
 import { lockClassRow } from '@/lib/db-locks';
+import { getWaitlistWindow } from './waitlist';
 
 // ===========================================================================
 // Automated class transitions (DB) — timezone-aware lifecycle sweeps.
@@ -22,6 +23,7 @@ describe('class transitions (DB, timezone-aware)', () => {
   let teacherRoomId: string;
   let studentId: string;
   let secondStudentId: string;
+  let waiterStudentId: string;
 
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
@@ -84,20 +86,37 @@ describe('class transitions (DB, timezone-aware)', () => {
       },
     });
     secondStudentId = secondStudent.id;
+
+    // #112. A third student, never registered, only ever queued — the whole
+    // point is that a waiting entry is a person the recipient list cannot see
+    // by reading registrations. Hoisted for the same reason the second one is.
+    const waiter = await prisma.student.create({
+      data: {
+        firstName: 'Tz',
+        lastName: 'Waiter',
+        email: `tz-waiter-${uniqueSuffix}@test.local`,
+        incomeTier: 3,
+      },
+    });
+    waiterStudentId = waiter.id;
   });
 
   afterAll(async () => {
     await prisma.notification.deleteMany({
-      where: { recipientId: { in: [teacherId, studentId, secondStudentId] } },
+      where: { recipientId: { in: [teacherId, studentId, secondStudentId, waiterStudentId] } },
     });
     await prisma.payment.deleteMany({
-      where: { registration: { studentId: { in: [studentId, secondStudentId] } } },
+      where: { registration: { studentId: { in: [studentId, secondStudentId, waiterStudentId] } } },
     });
-    await prisma.registration.deleteMany({ where: { studentId: { in: [studentId, secondStudentId] } } });
+    await prisma.registration.deleteMany({
+      where: { studentId: { in: [studentId, secondStudentId, waiterStudentId] } },
+    });
     await prisma.class.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
-    await prisma.student.deleteMany({ where: { id: { in: [studentId, secondStudentId] } } });
+    await prisma.student.deleteMany({
+      where: { id: { in: [studentId, secondStudentId, waiterStudentId] } },
+    });
     await prisma.teacher.delete({ where: { id: teacherId } });
     await prisma.$disconnect();
   });
@@ -182,6 +201,87 @@ describe('class transitions (DB, timezone-aware)', () => {
 
     const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
     expect(updated.status).toBe('open');
+    await prisma.class.delete({ where: { id: cls.id } });
+  });
+
+  /**
+   * #112. The fixture's timing is the test, not scenery.
+   *
+   * A waitlist only forms at `maxStudents`, and `handleSpotFreed` refills the
+   * seat it just lost — so a class carrying a queue normally has its count
+   * PINNED at max, and the queue drains to empty before the count can fall far
+   * enough to auto-cancel. The one thing that suspends that drain is the
+   * freeze, and auto-cancel can only ever run inside it: `DEADLINE_HOURS`
+   * bottoms out at 6 (`waitlist.ts:96`) and `CANCEL_CHECK_HOURS` tops out at 4
+   * (`class-transitions.ts:21`), so across all 12 configurations the sweep runs
+   * strictly after the freeze, with two hours to spare.
+   *
+   * Constructing a below-minimum class with a waiting entry at some arbitrary
+   * `now` would therefore pin a state production cannot reach, and would pass
+   * without exercising the mechanism at all. Hence the explicit window
+   * assertion below — it fails loudly if a later edit moves the clock out of
+   * the frozen window and quietly turns this into that weaker test.
+   *
+   * What makes the count fall is the status asymmetry: `late_cancel` is in
+   * `CHARGED_STATUSES` (`class-lifecycle.ts:167`) but not in
+   * `ACTIVE_REGISTRATION_STATUSES` (`class-transitions.ts:34`), which is what
+   * the sweep counts by. The seat is released; the registration stays billable.
+   */
+  it('tells the waitlist when it auto-cancels, and closes the queue', async () => {
+    const cls = await makeClass({
+      minStudents: 2,
+      maxStudents: 2,
+      autoCancelCheck: 'HOURS_2',
+      cancelDeadline: 'HOURS_24',
+    });
+    // Full at 2/2 when the queue formed; one seat later released by a
+    // late-cancel, which nothing promoted into because the window is frozen.
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId, tierAtBooking: 3, status: 'registered' },
+    });
+    await prisma.registration.create({
+      data: {
+        classId: cls.id,
+        studentId: secondStudentId,
+        tierAtBooking: 3,
+        status: 'late_cancel',
+        cancelledAt: new Date('2026-07-20T10:00:00Z'),
+      },
+    });
+    const entry = await prisma.waitlistEntry.create({
+      data: { classId: cls.id, studentId: waiterStudentId, position: 1, status: 'waiting' },
+    });
+
+    // 15:00Z is inside the HOURS_2 check window (14:00Z–16:00Z) AND past the
+    // HOURS_24 deadline (2026-07-19T16:00Z). Assert the second half rather
+    // than trusting the arithmetic.
+    const at = new Date('2026-07-20T15:00:00Z');
+    expect(
+      getWaitlistWindow(cls.date, cls.startTime, cls.cancelDeadline, 'Europe/Amsterdam', at),
+    ).toBe('frozen');
+
+    await autoCancelClasses(prisma, at);
+
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(updated.status).toBe('cancelled');
+
+    const waiterNote = await prisma.notification.findFirst({
+      where: {
+        recipientType: 'student',
+        recipientId: waiterStudentId,
+        relatedClassId: cls.id,
+        type: 'class_cancelled',
+      },
+    });
+    expect(waiterNote).not.toBeNull();
+
+    // The entry must not be left pointing at a cancelled class.
+    const afterEntry = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
+    expect(afterEntry.status).toBe('removed');
+
+    await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+    await prisma.waitlistEntry.deleteMany({ where: { classId: cls.id } });
+    await prisma.registration.deleteMany({ where: { classId: cls.id } });
     await prisma.class.delete({ where: { id: cls.id } });
   });
 

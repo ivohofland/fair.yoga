@@ -289,11 +289,33 @@ export async function autoCancelClasses(
           select: { studentId: true },
         });
 
+        // #112. Read before the update below closes them — `updateMany`
+        // returns a count, not rows, so the recipient list has to be taken
+        // first. A student in this queue was told the class was full and has
+        // been waiting for a seat; the class not happening at all is the one
+        // outcome they most need to hear about, and until now this sweep was
+        // the only cancellation path that never told them. The manual-cancel
+        // route (`transition/route.ts:47-58`) is the shape being copied.
+        const waiting = await tx.waitlistEntry.findMany({
+          where: { classId: cls.id, status: 'waiting' },
+          select: { studentId: true },
+        });
+        if (waiting.length > 0) {
+          await tx.waitlistEntry.updateMany({
+            where: { classId: cls.id, status: 'waiting' },
+            data: { status: 'removed' },
+          });
+        }
+
         // Bodies built from `fresh`, not `cls`. A notice that names the
         // pre-lock `classType` or `minStudents` tells the student about a
         // class that no longer exists in that shape — the same defect as
         // deciding from the snapshot, one step later and harder to see.
-        const notifications: CreateNotificationInput[] = registrations.map((r) => ({
+        //
+        // One body for both audiences, like the manual-cancel route: a
+        // waitlisted student never held a spot, but "this class is cancelled"
+        // is true for both, and two bodies would be two things to keep in step.
+        const notifications: CreateNotificationInput[] = [...registrations, ...waiting].map((r) => ({
           recipientType: 'student' as const,
           recipientId: r.studentId,
           type: 'class_cancelled' as const,
