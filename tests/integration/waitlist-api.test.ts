@@ -314,13 +314,16 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
 
     // auto_promote window — same "far in the future" trick as
     // farFutureClassId above, so promoteNext's own window check never
-    // trips: nowhere near the cancel deadline.
+    // trips: nowhere near the cancel deadline. Distinct date from
+    // farFutureClassId: same teacher, and Class_teacher_slot_unique is
+    // (teacherId, date, startTime) — reusing farFutureClassId's slot would
+    // collide with that still-open class.
     const promoteClass = await prisma.class.create({
       data: {
         teacherId,
         teacherRoomId,
         classType: 'Waitlist API Roster Promote',
-        date: new Date('2099-06-01'),
+        date: new Date('2099-06-02'),
         startTime: '09:00',
         durationMinutes: 60,
         roomCost: 20,
@@ -336,11 +339,19 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
       data: { classId: promoteClassId, studentId: waitlistStudentId, position: 1, status: 'waiting' },
     });
 
-    // first_come_first_claimed window — same timing derivation as
-    // freedSpotClassId above (6h50m out with a HOURS_6 deadline: cutoff
-    // now-10m, deadline now+50m).
+    // first_come_first_claimed window — same style as freedSpotClassId above
+    // (HOURS_6 deadline), but a 6h20m offset rather than freedSpotClassId's
+    // 6h50m: cutoff now-40m, deadline now+20m, still comfortably inside the
+    // final-hour window. Both classes share `teacherId`, and both start
+    // times are derived from `new Date()` captured only moments apart (this
+    // beforeAll runs right after the describe-block-1 tests that consume
+    // freedSpotClassId) — same offset would floor to the same
+    // (date, startTime) minute and collide on Class_teacher_slot_unique.
+    // The 30-minute gap between 6h20m and 6h50m is far larger than any
+    // realistic delay between the two `now()` captures, so the two classes
+    // can never land on the same slot.
     const now = new Date();
-    const classStart = new Date(now.getTime() + (6 * 60 + 50) * 60 * 1000);
+    const classStart = new Date(now.getTime() + (6 * 60 + 20) * 60 * 1000);
     const claimDate = new Date(
       Date.UTC(classStart.getUTCFullYear(), classStart.getUTCMonth(), classStart.getUTCDate()),
     );
