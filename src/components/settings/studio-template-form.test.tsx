@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { StudioTemplateForm } from './studio-template-form';
+import { routerPush } from '../../../tests/setup/components';
 
 /**
  * #136. This form enumerated its six fields four times — the `initial` prop's
@@ -112,5 +113,36 @@ describe('StudioTemplateForm', () => {
       location: 'Studio A',
       hourlyRate: 0,
     });
+  });
+
+  /**
+   * #40, the studio twin of the class-template guard. POST
+   * /api/studio-class-templates is not idempotent: a second request creates a
+   * second template and a second generated window, double-counting studio
+   * income. Asserted on the fetch count, not on rendered text.
+   *
+   * `handleSubmit` only guards `location` before the request (not `classType`),
+   * but both are filled here to match the create-mode setup used by the tests
+   * above — an empty `classType` reaching the server is not this test's
+   * concern, and filling it keeps this test unaffected if that guard changes.
+   */
+  // G9
+  it('cannot submit twice when the create push commits nothing', async () => {
+    stubFetch();
+    render(<StudioTemplateForm mode="create" />);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+
+    const button = await screen.findByRole('button', { name: /create/i });
+    fireEvent.click(button);
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/settings/studio-classes'));
+
+    const callsAfterFirstSubmit = fetchMock.mock.calls.length;
+    expect(screen.queryByRole('button', { name: /^create$/i })).toBeNull();
+    expect(screen.getByText(/^Created/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /go to studio classes/i }));
+    expect(fetchMock.mock.calls.length).toBe(callsAfterFirstSubmit);
   });
 });

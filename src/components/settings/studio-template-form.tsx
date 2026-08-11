@@ -8,6 +8,7 @@ import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
+import { SettledNotice } from '@/components/ui/settled-notice';
 
 /**
  * #136. The one enumeration of this form's fields. It replaced three that
@@ -71,6 +72,7 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [created, setCreated] = useState(false);
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -79,6 +81,9 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // #40. A settled create must not be re-submittable, including via Enter in
+    // a still-mounted field.
+    if (created) return;
     if (!form.location.trim()) {
       setError('Location is required');
       return;
@@ -116,6 +121,9 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
       }
 
       if (mode === 'create') {
+        // #40. POST /api/studio-class-templates is not idempotent: a second
+        // request creates a second template and a second generated window.
+        setCreated(true);
         router.push('/settings/studio-classes');
       } else {
         setSuccess('Saved');
@@ -180,9 +188,18 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
       {error && <p className="text-sm text-danger">{error}</p>}
       {success && <p className="text-sm text-teal">{success}</p>}
 
-      <Button type="submit" disabled={submitting}>
-        {submitting ? 'Saving...' : mode === 'create' ? 'Create' : 'Save'}
-      </Button>
+      {created ? (
+        <SettledNotice
+          label="Created"
+          actionLabel="Go to studio classes"
+          size="sm"
+          onAction={() => router.push('/settings/studio-classes')}
+        />
+      ) : (
+        <Button type="submit" disabled={submitting}>
+          {submitting ? 'Saving...' : mode === 'create' ? 'Create' : 'Save'}
+        </Button>
+      )}
     </form>
   );
 }
