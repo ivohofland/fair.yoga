@@ -242,9 +242,11 @@ test.describe('Teacher journey', () => {
     await page.goto(`/class/${classId}`);
 
     // Wait for the transition POST, then reload and assert the
-    // server-rendered truth: on starved CPUs (CI runners) the router can
-    // drop the post-action refresh commit — the state change lands, the
-    // client repaint doesn't. Same pattern as the walk-in test below.
+    // server-rendered truth: the router can drop a post-action refresh
+    // commit, so the state change lands and the client repaint does not.
+    // CPU starvation on CI runners was the suspected cause (#40); that
+    // remains unverified and its trace artifacts have expired. The reload
+    // is correct regardless of which cause drops the commit.
     const transitioned = page.waitForResponse(
       (resp) => resp.url().includes('/transition') && resp.ok(),
     );

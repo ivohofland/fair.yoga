@@ -253,8 +253,11 @@ both its success and error sinks to parent props and deliberately wraps only its
 body-read in `finally`; `add-room-flow` is a three-step wizard with three flags and
 three error strings. A hook configurable enough for these is harder to review than
 the seven edits it would replace. **Even across just the seven in scope there are
-four shapes.** The artifact this design ships is therefore a stated invariant with a
-test per instance, not an abstraction.
+four shapes.** The artifact this
+design ships is therefore a stated invariant with a test per instance, plus one
+shared *presentational* component (`SettledNotice`) — the axis on which the five
+settled states genuinely are identical. It holds no state, performs no fetch and
+makes no routing decision, so none of the measurement above bears on it.
 
 **An ESLint rule against the regression.** Evaluated and not viable: the defect is
 "a control re-enables when its success path depended on a router action", which
