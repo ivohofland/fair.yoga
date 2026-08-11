@@ -582,8 +582,32 @@ export default function CreateClassPage() {
 
       {/* Navigation buttons */}
       <div className="flex justify-between mt-8">
-        {step > 1 ? (
-          <Button variant="secondary" onClick={handleBack} type="button">
+        {/*
+          #40, PR #198 review P2. The settled state replaced the submit control
+          and left the wizard's *other* exit alone, so Back stayed live in two
+          states it must not be.
+
+          Gated on `!createdId`: steps 1–3 remain mounted state — populated,
+          valid and editable — so after a create whose push was dropped, Back
+          led into the form for a class that already exists. Edit anything,
+          page forward, and step 4 shows the same "Created" notice pointing at
+          the original class. Every edit in that detour is discarded in
+          silence, and nothing on screen says so. (Not a duplicate-create path:
+          `createdId` has already replaced the submit button, so `handleSubmit`
+          stays unreachable. The harm is lost edits, which is quieter.)
+
+          Disabled while `submitting`, because the settled notice and
+          `submitError` both render inside `{step === 4 && …}` — stepping off
+          4 mid-flight throws the outcome away, success and failure alike, and
+          shows step 3 as though nothing had been submitted.
+
+          Gated here rather than inside `handleBack`: this button is that
+          function's only caller, so a guard in there could not be reached by
+          any test, and this branch does not ship guards that cannot fail —
+          same reasoning as `handleSubmit` above.
+        */}
+        {step > 1 && !createdId ? (
+          <Button variant="secondary" onClick={handleBack} type="button" disabled={submitting}>
             Back
           </Button>
         ) : (

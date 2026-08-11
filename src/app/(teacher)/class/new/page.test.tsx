@@ -174,4 +174,66 @@ describe('NewClassPage', () => {
     // module-level `classPath`, asserted on both pushes (review F8).
     expect(routerPush).toHaveBeenNthCalledWith(2, '/class/class-1');
   });
+
+  /**
+   * PR #198 review P2. The settled state replaced the *submit* control and
+   * left the wizard's other exit alone. Steps 1–3 are still mounted state —
+   * populated, valid and editable — so after a create whose push was dropped,
+   * Back walked the teacher into a form for a class that already exists. Edit
+   * the date, page forward, and step 4 shows the same "Created" notice, still
+   * pointing at the original class: every edit in that detour is discarded in
+   * silence, and the teacher has no way to tell.
+   *
+   * Not a duplicate-create risk — `createdId` replaces the submit button, so
+   * `handleSubmit` stays unreachable however many times the wizard is paged.
+   * The harm is lost edits, which is quieter.
+   *
+   * The assertion is that the control is gone, not that clicking it is inert:
+   * a disabled Back on a settled wizard would still say "there is more to do
+   * here" about a class that is finished.
+   */
+  it('offers no way back into the form once the create has settled', async () => {
+    stubFetchCreating('class-1');
+    await fillAndSubmit();
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/class/class-1'));
+    expect(screen.getByText(/^Created/)).toBeInTheDocument();
+
+    expect(screen.queryByRole('button', { name: /^back$/i })).toBeNull();
+    expect(screen.queryByLabelText('Date')).toBeNull();
+  });
+
+  /**
+   * PR #198 review P2, second half. Both the settled notice and `submitError`
+   * render inside `{step === 4 && …}`, so leaving step 4 while the POST is in
+   * flight discards the outcome — success and failure alike. The teacher saw
+   * step 3 exactly as though nothing had been submitted, over a request that
+   * was still on its way to creating a class.
+   *
+   * The create promise is held open across the Back click and released only
+   * after it, so the click lands squarely mid-flight rather than racing it.
+   */
+  it('keeps the outcome on screen when Back is clicked mid-flight', async () => {
+    type StubResponse = { ok: boolean; json: () => Promise<unknown> };
+    let release!: (value: StubResponse) => void;
+    fetchMock.mockImplementation(
+      (url: string): Promise<StubResponse> =>
+        url === '/api/classes'
+          ? new Promise<StubResponse>((resolve) => {
+              release = resolve;
+            })
+          : Promise.resolve({ ok: true, json: async () => ({ data: [ROOM] }) }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    await fillAndSubmit();
+
+    const back = screen.getByRole('button', { name: /^back$/i });
+    expect(back).toBeDisabled();
+    fireEvent.click(back);
+    expect(screen.getByText('Review your class')).toBeInTheDocument();
+
+    release({ ok: true, json: async () => ({ data: { id: 'class-1' } }) });
+
+    expect(await screen.findByText(/^Created/)).toBeInTheDocument();
+  });
 });
