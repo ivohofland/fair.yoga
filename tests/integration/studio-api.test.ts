@@ -622,4 +622,46 @@ describe('/api/studio-classes', () => {
       (await prisma.studioClass.findUniqueOrThrow({ where: { id: studioClassId } })).cancelledAt,
     ).toBeNull();
   });
+
+  describe('POST /api/studio-classes is retry-safe on the slot key (#196)', () => {
+    // '2027-04-12' is a date no fixture above touches, so ownerId's slot
+    // uniqueness ((teacherId, date, startTime) WHERE cancelledAt IS NULL) has
+    // nothing to collide with. The top-level afterAll clears every StudioClass
+    // row for ownerId regardless of classType, so these need no nested one.
+    const slotBody = () => ({
+      classType: 'Slot Studio', date: '2027-04-12', startTime: '11:00',
+      durationMinutes: 60, location: 'Some Studio', hourlyRate: 45,
+    });
+
+    it('answers a repeated identical create with 409 and leaves exactly one row', async () => {
+      const first = await send('POST', ownerToken, '/api/studio-classes', slotBody());
+      expect(first.status).toBe(201);
+
+      const second = await send('POST', ownerToken, '/api/studio-classes', slotBody());
+      expect(second.status).toBe(409);
+      expect((await second.json()).error.code).toBe('DUPLICATE_STUDIO_SLOT');
+
+      const rows = await prisma.studioClass.findMany({
+        where: { teacherId: ownerId, date: new Date('2027-04-12'), startTime: '11:00' },
+      });
+      expect(rows).toHaveLength(1);
+    });
+
+    it('leaves exactly one row when two identical creates are in flight at once', async () => {
+      const body = { ...slotBody(), startTime: '11:30' };
+      const [a, b] = await Promise.all([
+        send('POST', ownerToken, '/api/studio-classes', body),
+        send('POST', ownerToken, '/api/studio-classes', body),
+      ]);
+      expect([a.status, b.status].sort()).toEqual([201, 409]);
+
+      const loser = a.status === 409 ? a : b;
+      expect((await loser.json()).error.code).toBe('DUPLICATE_STUDIO_SLOT');
+
+      const rows = await prisma.studioClass.findMany({
+        where: { teacherId: ownerId, date: new Date('2027-04-12'), startTime: '11:30' },
+      });
+      expect(rows).toHaveLength(1);
+    });
+  });
 });
