@@ -29,7 +29,7 @@ import type { z } from 'zod';
 import type { updateClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { startOfLocalDay } from '@/lib/timezone';
-import { formatDateShort } from '@/lib/format';
+import { formatDayHeader } from '@/lib/format';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { syncTemplateInstances, type TemplateSyncResult } from './template-sync';
 import { generateInstancesForTemplate } from './class-generator';
@@ -682,43 +682,41 @@ export async function archiveOrUnarchiveTemplate(
       const now = new Date();
       const today = startOfLocalDay(now, timeZone);
 
-      // #112. Who is waiting on a class this archive is about to withdraw.
+      // #112. Who is waiting on a class this archive might withdraw.
       //
       // Read BEFORE the delete because `WaitlistEntry.class` is
-      // `onDelete: Cascade` (`schema.prisma:517`) — after the delete these
-      // rows do not exist to be read. Filtered AFTER it (below) because this
-      // read is not the delete's own evaluation: a registration can commit in
-      // between and spare a class, and locking the candidates would not close
-      // that window — `registrations/route.ts` never calls `lockClassRow`, and
-      // its only class-row write (`settingsLocked: true`, `:195`) is skipped
-      // when the row is already locked, which it always is here.
+      // `onDelete: Cascade` (`schema.prisma:517`) — after the delete these rows
+      // do not exist to be read. Decided AFTER it, from the survivor read
+      // below, because this read is not the delete's own evaluation.
       //
-      // The predicate mirrors the delete's, and the two reads disagree in only
-      // one direction safely.
+      // DELIBERATELY WIDER THAN THE DELETE: every waiting entry on a scheduled
+      // future class of this template, with no registration predicate. Mirror
+      // the delete's `registrations: { none: … }` here instead and the two
+      // reads disagree in a direction nothing downstream can repair — a class
+      // whose last charged registration is cancelled in the gap becomes
+      // deletable without ever having been a candidate, and its waiters are
+      // cascade-deleted unnotified. That is #112 itself, one window narrower.
+      // It is not exotic: a queue only forms at `maxStudents`, so a class
+      // carrying waiters normally DOES hold a charged registration, and any
+      // cancel that is not `late_cancel` writes plain `cancelled`
+      // (`registrations/[id]/route.ts` — a student's before-deadline cancel and
+      // a teacher's cancel at any hour both land there).
       //
-      // Pessimistic drift — naming a class the delete then spares — is caught
-      // by the survivor filter below, and the concurrency test pins that.
+      // Wide costs only rows: a class the delete spares is a survivor and is
+      // filtered out below, which is what the concurrency test pins. Wide plus
+      // that filter makes `withdrawn` exactly the set this `deleteMany` took.
       //
-      // Optimistic drift is NOT caught, and is accepted: if the last charged
-      // registration on a class is cancelled between this read and the delete,
-      // that class becomes deletable without ever having been a candidate, and
-      // its waiters are cascade-deleted unnotified. A teacher's cancel reaches
-      // this at any hour — `registrations/[id]/route.ts` puts the `late_cancel`
-      // branch behind `if (isStudent)`, so a teacher writes plain `cancelled`,
-      // which is not in `CHARGED_STATUSES`. The filter below can only remove
-      // candidates; it can never add a class that became deletable late.
-      //
-      // Closing it needs a lock on the candidate classes, which nothing in the
-      // booking path takes (see the paragraph above), so this is a residual of
-      // the same shape as #112 itself — strictly narrower than the silence
-      // that issue was opened about, and left recorded rather than closed.
+      // A lock is not the alternative, and an earlier draft of this comment was
+      // wrong to say one was unavailable: `POST /api/registrations` does take
+      // `SELECT … FOR UPDATE` on the class row inline rather than through
+      // `lockClassRow` (`db-locks.ts` lists it as one of five deliberate inline
+      // sites). Locking every candidate class would work and is simply worse —
+      // it blocks booking on every future class of the template for the
+      // duration of the archive, to buy what a second read buys for free.
       const candidates = await tx.waitlistEntry.findMany({
         where: {
           status: 'waiting',
-          class: {
-            ...scheduledWhere(templateId, { gt: today }),
-            registrations: { none: { status: { in: [...CHARGED_STATUSES] } } },
-          },
+          class: scheduledWhere(templateId, { gt: today }),
         },
         select: {
           studentId: true,
@@ -757,24 +755,32 @@ export async function archiveOrUnarchiveTemplate(
       // still `waiting` and the class is still open on the teacher's page — a
       // message the app itself contradicts.
       if (candidates.length > 0) {
+        // De-duplicated: `candidates` carries one row per waiter, so a class
+        // with three waiters would otherwise repeat its id three times in the
+        // `in` list. Same shape and same reason as
+        // `withdrawWaitingEntriesForTeacher` (`waitlist.ts`).
         const survivors = await tx.class.findMany({
-          where: { id: { in: candidates.map((c) => c.classId) } },
+          where: { id: { in: [...new Set(candidates.map((c) => c.classId))] } },
           select: { id: true },
         });
         const survived = new Set(survivors.map((s) => s.id));
+        // Per class, not all-or-nothing across the batch: a template generates
+        // on a rolling 4-week basis, so the ordinary archive faces several
+        // future classes at once and spares only the booked ones.
         const withdrawn = candidates.filter((c) => !survived.has(c.classId));
 
         if (withdrawn.length > 0) {
           // No `relatedClassId`: the row is gone and the FK is `SetNull`
           // (`schema.prisma:563`), so the notification outlives its class with
-          // a null link. The body has to name the class or the student is left
-          // with an inbox entry they cannot place.
+          // a null link. Passing the id would fail the insert's FK outright.
+          // The body has to name the class or the student is left with an inbox
+          // entry they cannot place.
           const notifications: CreateNotificationInput[] = withdrawn.map((c) => ({
             recipientType: 'student' as const,
             recipientId: c.studentId,
             type: 'class_cancelled' as const,
             title: 'Class cancelled',
-            body: `The ${c.class.classType} class on ${formatDateShort(c.class.date)} at ${c.class.startTime} has been withdrawn by your teacher. You were on its waiting list.`,
+            body: `The ${c.class.classType} class on ${formatDayHeader(c.class.date)} at ${c.class.startTime} has been withdrawn by your teacher. You were on its waiting list.`,
           }));
           await createBulkNotifications(tx, notifications);
         }

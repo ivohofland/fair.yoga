@@ -12,7 +12,7 @@
 import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
 import type { PrismaClient } from '@prisma/client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
-import { formatDateShort } from '@/lib/format';
+import { formatDayHeader } from '@/lib/format';
 import { completeClass } from './class-lifecycle';
 import { handleSpotFreed, reorderWaitingEntries } from './waitlist';
 import { lockClassRow, setLockTimeout } from '@/lib/db-locks';
@@ -722,6 +722,18 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
           // line rather than left invisible — an operator seeing a non-zero
           // `waitingEntriesLeft` knows there is a row to clean up, which is
           // the whole difference between a known residual and a silent one.
+          //
+          // Since #112 this line carries a second meaning: the happy path
+          // below now NOTIFIES the queue as well as closing it, so a non-zero
+          // count here is also "this many students heard nothing from this
+          // path". That is tolerable only because every route that can produce
+          // the three statuses `observedStatus` reports notifies the queue
+          // itself — `completed` owes no cancellation notice, a concurrent
+          // `cancelled` came from the manual route or `autoCancelClasses`
+          // (which tells them, since #112), and `row-deleted` can only be
+          // `archiveOrUnarchiveTemplate` (which tells them too). Add a fourth
+          // way for a class to leave `draft|open|in_progress` and that
+          // argument is what breaks.
           const waitingEntriesLeft = await tx.waitlistEntry.count({
             where: { classId: cls.id, status: 'waiting' },
           });
@@ -783,7 +795,7 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
             recipientId: r.studentId,
             type: 'class_cancelled' as const,
             title: 'Class cancelled',
-            body: `${cls.classType} class on ${formatDateShort(cls.date)} at ${cls.startTime} has been cancelled — the teacher closed their account.`,
+            body: `${cls.classType} class on ${formatDayHeader(cls.date)} at ${cls.startTime} has been cancelled — the teacher closed their account.`,
             relatedClassId: cls.id,
           }));
           await createBulkNotifications(tx, notifications);

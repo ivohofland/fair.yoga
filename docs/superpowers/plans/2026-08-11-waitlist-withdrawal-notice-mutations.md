@@ -14,8 +14,36 @@ solve-issue skill: a pin that compiles but cannot fail certifies nothing.
 | 7 | Archive candidate read | delete the read + notify block | archive notice | `PrismaClientKnownRequestError: Invalid \`prisma.notification.findFirstOrThrow()\` invocation` (P2025, row not found) |
 | 8 | Archive **survivor filter** | `withdrawn = candidates` | concurrency test | `AssertionError: expected 1 to be +0` |
 
-**Guard 8 is the one that matters.** Guards 2, 4 and 7 are all provable by a
-single non-concurrent test. Guard 8 is invisible to every such test — mutation
-8 was run against the two ordinary archive tests as well, and both stayed
-green. Record that here, because it is the argument for why the concurrency
-test earns its complexity.
+## Round 2 — added after PR review
+
+PR review measured three of the guards above as weaker than this table claimed,
+and found four mutations nothing caught. All re-measured after the fix wave.
+
+| # | Guard | Mutation | Tests that failed | Observed |
+|---|---|---|---|---|
+| 9 | Archive **per-class** survivor logic | `withdrawn = survived.size === 0 ? candidates : []` | mixed-batch | `expected +0 to be 1` — before the mixed-batch test existed this mutation passed the entire file |
+| 10 | Archive `status: 'waiting'` filter | drop it from the candidate read | already-left-the-queue | a student who left the queue is notified; `expected 1 to be +0` |
+| 11 | **Candidate read stays wider than the delete** | re-add `registrations: { none: … }` to it | became-deletable race | `NotFoundError: No Notification found` — the C1 regression guard |
+| 12 | Auto-cancel registered audience | `[...registrations, ...waiting]` → `[...waiting]` | auto-cancel notice | `expected null not to be null` |
+| 13 | Auto-cancel `status: 'waiting'` filter | drop it from the recipient read | auto-cancel notice | `expected 1 to be +0` |
+| 14 | Erasure body names the class | revert to the pre-#112 text | queue-only erasure | `expected '…has been cancelled — the te…' to contain 'Lock class class on…'` |
+
+**Guard 8 got stronger, and the reason is the point.** It used to fail exactly
+one test — the concurrency test — because the candidate read mirrored the
+delete, so a spared class was never a candidate and the ordinary "spared" test
+could not tell `withdrawn = candidates` from the real filter. Widening the
+candidate read (guard 11) made the survivor filter load-bearing in the ordinary
+case too. Mutation 8 now fails **three** tests, not one.
+
+**The concurrency test's canary was defeatable.** `expect(raced).toBe(true)`
+only proved the interposition fired *somewhere*. Review measured mutation 8
+**passing** when one extra `waitlistEntry.findMany` was added anywhere earlier
+in the archive branch: the race landed on the wrong read, the candidate read
+came back empty, and every assertion was satisfied. Now pinned with
+`expect(calls).toBe(1)` and `expect(candidateRows).toBe(1)` — the same shape
+`gdpr.test.ts:1046` already used.
+
+Guards 2, 4 and 7 remain provable by a single non-concurrent test. Guards 8 and
+11 are the two that need real concurrency, and they need it in opposite
+directions: 8 is "spared in the gap, so do not notify", 11 is "became deletable
+in the gap, so do notify".

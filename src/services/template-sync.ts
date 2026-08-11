@@ -65,6 +65,16 @@ export async function syncTemplateInstances(
     const sameDay = mutable.filter((c) => c.date.getUTCDay() === templateJsDay);
 
     if (wrongDay.length > 0) {
+      // `WaitlistEntry.class` cascades, so this delete destroys queues too —
+      // and unlike the three paths #112 fixed, it tells nobody. It is safe
+      // only because of the `!settingsLocked` filter above: joining a waitlist
+      // requires the class to be full (`addToWaitlist`), full requires at
+      // least one registration (`maxStudents` is `.positive()`), and the first
+      // registration latches `settingsLocked: true` one way and never back. So
+      // a class that ever carried a waiter is in `kept`, never here.
+      //
+      // Relax that filter and this becomes a fourth silent path. Tripwire, not
+      // decoration.
       await tx.class.deleteMany({ where: { id: { in: wrongDay.map((c) => c.id) } } });
     }
 

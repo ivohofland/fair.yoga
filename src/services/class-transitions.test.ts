@@ -7,7 +7,7 @@ import {
 } from './class-transitions';
 import { lockClassRow } from '@/lib/db-locks';
 import { getWaitlistWindow } from './waitlist';
-import { formatDateShort } from '@/lib/format';
+import { formatDayHeader } from '@/lib/format';
 
 // ===========================================================================
 // Automated class transitions (DB) — timezone-aware lifecycle sweeps.
@@ -257,13 +257,26 @@ describe('class transitions (DB, timezone-aware)', () => {
       const entry = await prisma.waitlistEntry.create({
         data: { classId: cls.id, studentId: waiterStudentId, position: 1, status: 'waiting' },
       });
+      // Someone who left this queue before the class was cancelled. Only the
+      // `status: 'waiting'` filter keeps them out of the recipient list.
+      const leftQueue = await prisma.waitlistEntry.create({
+        data: { classId: cls.id, studentId: secondStudentId, position: 2, status: 'removed' },
+      });
 
       // 15:00Z is inside the HOURS_2 check window (14:00Z–16:00Z) AND past the
       // HOURS_24 deadline (2026-07-19T16:00Z). Assert the second half rather
       // than trusting the arithmetic.
+      //
+      // The zone comes from the teacher row, not a literal: production derives
+      // the window from `teacher.defaultTimezone`, so a literal here would keep
+      // asserting about a zone the code had stopped using.
       const at = new Date('2026-07-20T15:00:00Z');
+      const { defaultTimezone } = await prisma.teacher.findUniqueOrThrow({
+        where: { id: teacherId },
+        select: { defaultTimezone: true },
+      });
       expect(
-        getWaitlistWindow(cls.date, cls.startTime, cls.cancelDeadline, 'Europe/Amsterdam', at),
+        getWaitlistWindow(cls.date, cls.startTime, cls.cancelDeadline, defaultTimezone, at),
       ).toBe('frozen');
 
       await autoCancelClasses(prisma, at);
@@ -271,7 +284,9 @@ describe('class transitions (DB, timezone-aware)', () => {
       const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
       expect(updated.status).toBe('cancelled');
 
-      const waiterNote = await prisma.notification.findFirst({
+      // `findFirstOrThrow`, not `findFirst` + `if` — the conditional silently
+      // skipped the body assertions on failure instead of reporting them.
+      const waiterNote = await prisma.notification.findFirstOrThrow({
         where: {
           recipientType: 'student',
           recipientId: waiterStudentId,
@@ -279,20 +294,47 @@ describe('class transitions (DB, timezone-aware)', () => {
           type: 'class_cancelled',
         },
       });
-      expect(waiterNote).not.toBeNull();
 
       // A waitlist-only student can place the class by nothing but this body:
       // the entry just closed to `removed` (dropped from /bookings) and a
-      // cancelled class links nowhere in the inbox. Type, date AND time.
-      if (waiterNote) {
-        expect(waiterNote.body).toContain('Hatha');
-        expect(waiterNote.body).toContain(formatDateShort(cls.date));
-        expect(waiterNote.body).toContain('18:00');
-      }
+      // cancelled class links nowhere in the inbox. Type, day AND time.
+      expect(waiterNote.body).toContain('Hatha');
+      expect(waiterNote.body).toContain(formatDayHeader(cls.date));
+      expect(waiterNote.body).toContain('18:00');
+
+      // The REGISTERED audience is still told. Asserted here because nothing
+      // else in this file does: the other two `class_cancelled` assertions
+      // both expect zero, which a dropped audience satisfies. So
+      // `[...registrations, ...waiting]` → `[...waiting]` passed the whole
+      // file before this line existed — a mutation that would stop telling
+      // every registered student their class was cancelled.
+      const registeredNote = await prisma.notification.findFirst({
+        where: {
+          recipientType: 'student',
+          recipientId: studentId,
+          relatedClassId: cls.id,
+          type: 'class_cancelled',
+        },
+      });
+      expect(registeredNote).not.toBeNull();
+
+      // And the student who had already left the queue is NOT told. The
+      // `status: 'waiting'` filter is otherwise unpinned — every other fixture
+      // row in this file is `waiting`, so dropping it changes nothing else —
+      // and `class_cancelled` is essential, so it would email someone about a
+      // queue they left months ago, bypassing their preference.
+      expect(
+        await prisma.notification.count({
+          where: { recipientId: secondStudentId, relatedClassId: cls.id, type: 'class_cancelled' },
+        }),
+      ).toBe(0);
 
       // The entry must not be left pointing at a cancelled class.
       const afterEntry = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
       expect(afterEntry.status).toBe('removed');
+      // …while the already-`removed` one is untouched, not re-closed.
+      const leftEntry = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: leftQueue.id } });
+      expect(leftEntry.status).toBe('removed');
     } finally {
       await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
       await prisma.waitlistEntry.deleteMany({ where: { classId: cls.id } });

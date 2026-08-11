@@ -11,7 +11,7 @@ import type { PrismaClient, RegistrationStatus } from '@prisma/client';
 import { transitionClass, completeClass } from './class-lifecycle';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { classStartInstant } from '@/lib/timezone';
-import { formatDateShort } from '@/lib/format';
+import { formatDayHeader } from '@/lib/format';
 import { log } from '@/lib/log';
 import { lockClassRow } from '@/lib/db-locks';
 
@@ -218,13 +218,26 @@ export async function autoCancelClasses(
         // `SET LOCAL lock_timeout = '2s'` bounds every statement left in
         // this transaction, not just the `FOR UPDATE` inside the helper. So
         // the 2s also governs the `registration.count`, the CAS, the
-        // recipient `findMany` and `createBulkNotifications` below it.
-        // Benign here, unlike at the erasure sites: none of those four waits
-        // on a lock in the normal case, and if one did time out, the
-        // per-class `catch` at the bottom of this loop logs it and the sweep
-        // moves to the next class — no partial write survives, because the
-        // whole transaction rolls back. Written down because it is
-        // non-obvious from this line, not because it is a hazard.
+        // recipient `findMany`, and — since #112 — the `waitlistEntry`
+        // `findMany`, the `waitlistEntry.updateMany` that closes the queue,
+        // and `createBulkNotifications`. Six statements, not four.
+        //
+        // Still benign, unlike at the erasure sites, but the argument is
+        // longer now because one of the six is a WRITE that takes row locks.
+        // It cannot be the first place this transaction blocks: every writer
+        // of `WaitlistEntry` — `addToWaitlist`, `removeFromWaitlist`,
+        // `promoteNext`, `claimSpot`, `withdrawWaitingEntriesForTeacher`,
+        // `deleteTeacherAccount` — takes a conflicting `Class` row lock
+        // first, and this transaction is already holding that lock from the
+        // line below. Any contention therefore materialises at
+        // `lockClassRow`, exactly as it did before #112.
+        //
+        // If one did time out, the per-class `catch` at the bottom of this
+        // loop logs it and the sweep moves to the next class — no partial
+        // write survives, because the whole transaction rolls back, INCLUDING
+        // the cancellation itself. That is deliberate and predates #112: a
+        // cancelled class nobody was told about is worse than one that stays
+        // open for one more 60-second tick.
         await lockClassRow(tx, cls.id);
 
         // Re-read HERE, under the lock, and decide from THIS row — not from
@@ -301,6 +314,13 @@ export async function autoCancelClasses(
           where: { classId: cls.id, status: 'waiting' },
           select: { studentId: true },
         });
+        // The read and the update are two statements but cannot interleave:
+        // every writer of `WaitlistEntry` takes this class's row lock first,
+        // and `lockClassRow` above is holding it. Without that, a `waiting`
+        // row committing between them would be closed without being notified —
+        // which is the bug this whole change is about, reintroduced two
+        // statements apart. The guard is only a statement-count saving on the
+        // common case of no queue; `gdpr.ts` issues the same update unguarded.
         if (waiting.length > 0) {
           await tx.waitlistEntry.updateMany({
             where: { classId: cls.id, status: 'waiting' },
@@ -329,7 +349,7 @@ export async function autoCancelClasses(
           recipientId: r.studentId,
           type: 'class_cancelled' as const,
           title: 'Class cancelled',
-          body: `${fresh.classType} class on ${formatDateShort(fresh.date)} at ${fresh.startTime} has been cancelled due to insufficient registrations.`,
+          body: `${fresh.classType} class on ${formatDayHeader(fresh.date)} at ${fresh.startTime} has been cancelled due to insufficient registrations.`,
           relatedClassId: cls.id,
         }));
         notifications.push({

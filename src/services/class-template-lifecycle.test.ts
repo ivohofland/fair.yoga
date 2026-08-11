@@ -7,7 +7,7 @@ import {
   pauseOrResumeTemplate,
 } from './class-template-lifecycle';
 import { startOfLocalDay } from '@/lib/timezone';
-import { formatDateShort } from '@/lib/format';
+import { formatDayHeader } from '@/lib/format';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -328,6 +328,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   let teacherRoomId: string;
   let studentId: string;
   let waiterId: string;
+  let secondWaiterId: string;
   let otherTeacherId: string;
   let otherAccountId: string;
   let otherRoomId: string;
@@ -430,16 +431,35 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       },
     });
     waiterId = waiter.id;
+
+    // A third, for the mixed-batch test: one archive, two classes, and the
+    // assertion is that the spared class's waiter hears nothing WHILE the
+    // withdrawn class's waiter hears. One student on both queues could not
+    // tell those two apart.
+    const secondWaiter = await prisma.student.create({
+      data: {
+        firstName: 'Archive',
+        lastName: 'Waiter Two',
+        email: `archive-waiter2-${uniqueSuffix}@test.local`,
+      },
+    });
+    secondWaiterId = secondWaiter.id;
   });
 
   afterAll(async () => {
     // Archive notifications outlive their class: `Notification.relatedClass`
     // is `onDelete: SetNull` (`schema.prisma:563`), so the class deletes below
     // do NOT reap them. Delete by recipient, before the students go.
-    await prisma.notification.deleteMany({ where: { recipientId: { in: [studentId, waiterId] } } });
-    await prisma.waitlistEntry.deleteMany({ where: { studentId: { in: [studentId, waiterId] } } });
-    await prisma.registration.deleteMany({ where: { studentId: { in: [studentId, waiterId] } } });
-    await prisma.student.deleteMany({ where: { id: { in: [studentId, waiterId] } } });
+    await prisma.notification.deleteMany({
+      where: { recipientId: { in: [studentId, waiterId, secondWaiterId] } },
+    });
+    await prisma.waitlistEntry.deleteMany({
+      where: { studentId: { in: [studentId, waiterId, secondWaiterId] } },
+    });
+    await prisma.registration.deleteMany({
+      where: { studentId: { in: [studentId, waiterId, secondWaiterId] } },
+    });
+    await prisma.student.deleteMany({ where: { id: { in: [studentId, waiterId, secondWaiterId] } } });
     for (const [t, r, a] of [
       [teacherId, roomId, accountId],
       [otherTeacherId, otherRoomId, otherAccountId],
@@ -543,10 +563,13 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   /**
    * #86 (`2026-07-25-template-archive-withdraws-window-design.md:231`) asked
    * for this and it was never written. The archive path's whole notification
-   * design (#112) rests on the cascade being real: it notifies BEFORE the
-   * delete precisely because these rows do not survive it. A migration that
-   * changed `onDelete` would silently turn that ordering from necessary into
-   * merely early, and nothing else in the suite would notice.
+   * design (#112) rests on the cascade being real: it READS its recipients
+   * before the delete precisely because these rows do not survive it, and
+   * decides who to notify after. (It does not notify before — notifying from
+   * the candidate read is the bug the race test below exists to catch.) A
+   * migration that changed `onDelete` would silently turn that read's ordering
+   * from necessary into merely early, and nothing else in the suite would
+   * notice.
    */
   it('cascade-deletes waitlist entries when the class row goes', async () => {
     const t = await makeTemplate('Cascade Pin');
@@ -564,10 +587,10 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
 
   /**
    * #112. The archive's recipients are destroyed by the same statement that
-   * makes them recipients, so the notification has to be built before the
-   * delete — and `Notification.relatedClass` being `SetNull` means it survives
-   * with a null link. The body therefore has to name the class itself; a
-   * student opening their inbox has nothing else left to identify it by.
+   * withdraws their class, so they have to be READ before the delete — and
+   * `Notification.relatedClass` being `SetNull` means the notice survives with
+   * a null link. The body therefore has to name the class itself; a student
+   * opening their inbox has nothing else left to identify it by.
    */
   it('tells a waiting student when archiving withdraws their class', async () => {
     const t = await makeTemplate('Withdraw Notice');
@@ -578,11 +601,10 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     });
 
     // `finally`, not a trailing statement — the convention `gdpr.test.ts:108`
-    // records after round 1's M5. This is the only test in the file that
-    // *creates* a notification for `waiterId`, and the two below both assert
-    // that count is zero. Cleaning up only on the happy path would turn one
-    // real failure here into three, two of them in the very tests a reader
-    // would open to understand the first.
+    // records after round 1's M5. Every test below asserting a zero count for
+    // `waiterId` depends on this running, and cleaning up only on the happy
+    // path would turn one real failure here into several, most of them in the
+    // very tests a reader would open to understand the first.
     try {
       const result = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'));
       expect(result.deleted).toBe(1);
@@ -594,21 +616,39 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       // The link is gone with the class; the body is the only durable record,
       // so it has to carry all three identifying fields. Derived from the
       // fixture rather than hard-coded — a literal '16 Aug' would rot in five
-      // days, since `future()` is relative to the run.
+      // days, since `future()` is relative to the run. `formatDayHeader`, the
+      // whole rendering including the weekday: asserting only `12 Jun` would
+      // pass against any formatter that contains it, which is how the earlier
+      // version of this test could not have caught a swap.
       expect(note.relatedClassId).toBeNull();
       expect(note.body).toContain('Withdraw Notice');
-      expect(note.body).toContain(formatDateShort(c.date));
+      expect(note.body).toContain(formatDayHeader(c.date));
       expect(note.body).toContain('09:00'); // makeClass's startTime
+
+      // Waiters, and ONLY waiters. `studentId` holds a `cancelled`
+      // registration on this class and is deliberately not told: they left the
+      // class themselves, or their teacher removed them, and either way the
+      // withdrawal is not news they are owed. Widening the archive recipient
+      // list to registrations would otherwise pass this whole file.
+      expect(
+        await prisma.notification.count({ where: { recipientId: studentId, type: 'class_cancelled' } }),
+      ).toBe(0);
     } finally {
-      await prisma.notification.deleteMany({ where: { recipientId: waiterId } });
+      await prisma.notification.deleteMany({ where: { recipientId: { in: [waiterId, studentId] } } });
     }
   });
 
   /**
-   * The complement, and the more important of the two: a class the delete
-   * SPARED must not generate a notice. Without this, notifying straight from
-   * the candidate read passes the test above and quietly lies to every student
-   * whose class survived.
+   * The complement: a class the delete SPARED must not generate a notice.
+   *
+   * This kills `withdrawn = candidates` — but only because the candidate read
+   * is deliberately WIDER than the delete (no registration predicate), so this
+   * spared class IS a candidate and the survivor filter is what removes it.
+   * Narrow the candidate read to mirror the delete and this test stops being
+   * able to fail, because `candidates` comes back empty and notifying from it
+   * produces the same zero. That is not hypothetical: it is what the first
+   * implementation did, and PR review measured this test passing against the
+   * mutation it was written to catch.
    */
   it('does not tell a waiting student when the class was spared', async () => {
     const t = await makeTemplate('Spared Notice');
@@ -618,16 +658,94 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       data: { classId: c.id, studentId: waiterId, position: 1, status: 'waiting' },
     });
 
-    const result = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'));
-    expect(result.deleted).toBe(0);
-    expect(await prisma.class.count({ where: { id: c.id } })).toBe(1);
+    try {
+      const result = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'));
+      expect(result.deleted).toBe(0);
+      expect(await prisma.class.count({ where: { id: c.id } })).toBe(1);
 
-    expect(
-      await prisma.notification.count({ where: { recipientId: waiterId, type: 'class_cancelled' } }),
-    ).toBe(0);
-    // And the entry is untouched — the class is still on, the queue with it.
-    const entry = await prisma.waitlistEntry.findFirstOrThrow({ where: { classId: c.id } });
-    expect(entry.status).toBe('waiting');
+      expect(
+        await prisma.notification.count({ where: { recipientId: waiterId, type: 'class_cancelled' } }),
+      ).toBe(0);
+      // And the entry is untouched — the class is still on, the queue with it.
+      const entry = await prisma.waitlistEntry.findFirstOrThrow({ where: { classId: c.id } });
+      expect(entry.status).toBe('waiting');
+    } finally {
+      await prisma.notification.deleteMany({ where: { recipientId: waiterId } });
+    }
+  });
+
+  /**
+   * One archive, several classes, mixed outcomes — the ordinary case, since a
+   * template generates instances on a rolling 4-week basis.
+   *
+   * The two tests above each archive a template carrying exactly one class, so
+   * "filter by class id" and "all-or-nothing across the batch" produce
+   * identical output and nothing distinguishes them. PR review measured
+   * `withdrawn = survived.size === 0 ? candidates : []` passing the entire
+   * file. Under that mutation this test notifies nobody: one spared class
+   * silences every withdrawn one, which is #112 reintroduced through its own
+   * fix.
+   */
+  it('notifies only the waiters of the classes it actually withdrew', async () => {
+    const t = await makeTemplate('Mixed Batch');
+    const kept = await makeClass(t.id, { date: futureOn(6), classType: 'Mixed Kept' });
+    const gone = await makeClass(t.id, { date: futureOn(13), classType: 'Mixed Gone' });
+    await register(kept.id, studentId, 'registered'); // charged — spares `kept`
+    await prisma.waitlistEntry.create({
+      data: { classId: kept.id, studentId: waiterId, position: 1, status: 'waiting' },
+    });
+    await prisma.waitlistEntry.create({
+      data: { classId: gone.id, studentId: secondWaiterId, position: 1, status: 'waiting' },
+    });
+
+    try {
+      const result = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'));
+      expect(result.deleted).toBe(1);
+      expect(await prisma.class.count({ where: { id: kept.id } })).toBe(1);
+      expect(await prisma.class.count({ where: { id: gone.id } })).toBe(0);
+
+      // The withdrawn class's waiter hears, and the body names THAT class.
+      const note = await prisma.notification.findFirstOrThrow({
+        where: { recipientId: secondWaiterId, type: 'class_cancelled' },
+      });
+      expect(note.body).toContain('Mixed Gone');
+      // The spared class's waiter hears nothing, in the same transaction.
+      expect(
+        await prisma.notification.count({ where: { recipientId: waiterId, type: 'class_cancelled' } }),
+      ).toBe(0);
+    } finally {
+      await prisma.notification.deleteMany({
+        where: { recipientId: { in: [waiterId, secondWaiterId] } },
+      });
+    }
+  });
+
+  /**
+   * The `status: 'waiting'` filter on the candidate read, which nothing else
+   * pins: every waitlist fixture in this file writes `waiting`, so dropping
+   * the filter changes no other test's outcome.
+   *
+   * It matters because `class_cancelled` is in `ESSENTIAL_NOTIFICATION_TYPES`
+   * and bypasses the student's email preference. Without the filter, someone
+   * who left the queue months ago is emailed about a class they are not
+   * waiting for and cannot act on.
+   */
+  it('does not notify a student who had already left the queue', async () => {
+    const t = await makeTemplate('Removed Entry');
+    const c = await makeClass(t.id, { date: future() });
+    await prisma.waitlistEntry.create({
+      data: { classId: c.id, studentId: waiterId, position: 1, status: 'removed' },
+    });
+
+    try {
+      const result = expectArchived(await archiveOrUnarchiveTemplate(prisma, t.id, teacherId, 'archived'));
+      expect(result.deleted).toBe(1); // the class still goes — nothing charged
+      expect(
+        await prisma.notification.count({ where: { recipientId: waiterId, type: 'class_cancelled' } }),
+      ).toBe(0);
+    } finally {
+      await prisma.notification.deleteMany({ where: { recipientId: waiterId } });
+    }
   });
 
   /**
@@ -652,16 +770,18 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       data: { classId: c.id, studentId: waiterId, position: 1, status: 'waiting' },
     });
 
-    let raced = false;
+    let calls = 0;
+    let candidateRows = -1;
     const interposing = prisma.$extends({
       query: {
         waitlistEntry: {
           async findMany({ args, query }) {
+            calls++;
             const rows = await query(args);
             // Once, and only after the candidate read has returned: commit a
             // charged registration from outside the archive transaction.
-            if (!raced) {
-              raced = true;
+            if (calls === 1) {
+              candidateRows = rows.length;
               await prisma.registration.create({
                 data: { classId: c.id, studentId, tierAtBooking: 3, status: 'registered' },
               });
@@ -676,8 +796,19 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       await archiveOrUnarchiveTemplate(interposing, t.id, teacherId, 'archived'),
     );
 
-    // The interposition fired, or this test proves nothing.
-    expect(raced).toBe(true);
+    // Exactly one — no more, no fewer, the same pin `gdpr.test.ts:1046` and
+    // the sibling interposition at `class-transitions.test.ts` carry.
+    //
+    // A bare "it fired at all" flag is not enough here, and PR review proved
+    // it: with the survivor filter deleted AND one extra `waitlistEntry`
+    // read added anywhere earlier in the archive branch, this test passed.
+    // The race landed on the wrong read, the candidate read then came back
+    // empty, and every assertion below was satisfied while students were
+    // being told live classes had been withdrawn. What the test actually
+    // needs is that the read it raced against WAS the candidate read — so
+    // pin the count, and pin that the read it interposed on saw the waiter.
+    expect(calls).toBe(1);
+    expect(candidateRows).toBe(1);
     // The delete re-evaluated and spared the class.
     expect(result.deleted).toBe(0);
     expect(await prisma.class.count({ where: { id: c.id } })).toBe(1);
@@ -685,6 +816,76 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     expect(
       await prisma.notification.count({ where: { recipientId: waiterId, type: 'class_cancelled' } }),
     ).toBe(0);
+  });
+
+  /**
+   * The mirror of the test above, and the regression guard for the candidate
+   * read being WIDER than the delete.
+   *
+   * There the class became un-deletable in the gap and its waiter must not be
+   * told. Here it becomes deletable in the gap — the last charged registration
+   * is cancelled between the candidate read and the `deleteMany` — and the
+   * waiter MUST be told.
+   *
+   * Narrow the candidate read to mirror the delete's predicate and this class
+   * is not a candidate when it is read, is deleted anyway when the predicate is
+   * re-evaluated, and its waiter is cascade-deleted in silence. PR review
+   * reproduced exactly that against the first implementation. Every other test
+   * in this file passes under that mutation; only this one fails.
+   *
+   * The trigger is ordinary: a queue only forms at `maxStudents`, so a class
+   * with waiters normally DOES hold a charged registration, and a student's own
+   * before-deadline cancel writes plain `cancelled` (`registrations/[id]`).
+   */
+  it('notifies a waiter whose class became deletable after the candidate read', async () => {
+    const t = await makeTemplate('Race Delete');
+    const c = await makeClass(t.id, { date: future(), classType: 'Race Delete' });
+    const reg = await register(c.id, studentId, 'registered'); // charged — spared, for now
+    await prisma.waitlistEntry.create({
+      data: { classId: c.id, studentId: waiterId, position: 1, status: 'waiting' },
+    });
+
+    let calls = 0;
+    const interposing = prisma.$extends({
+      query: {
+        waitlistEntry: {
+          async findMany({ args, query }) {
+            calls++;
+            const rows = await query(args);
+            if (calls === 1) {
+              // Commit the cancellation from OUTSIDE the archive transaction,
+              // after the candidate read has returned. `cancelled` is not in
+              // `CHARGED_STATUSES`, so the delete's predicate now matches.
+              await prisma.registration.update({
+                where: { id: reg.id },
+                data: { status: 'cancelled', cancelledAt: new Date() },
+              });
+            }
+            return rows;
+          },
+        },
+      },
+    }) as unknown as typeof prisma;
+
+    try {
+      const result = expectArchived(
+        await archiveOrUnarchiveTemplate(interposing, t.id, teacherId, 'archived'),
+      );
+
+      expect(calls).toBe(1);
+      // The delete re-evaluated and took the class.
+      expect(result.deleted).toBe(1);
+      expect(await prisma.class.count({ where: { id: c.id } })).toBe(0);
+      // So the waiter must have been told, even though the class did not match
+      // the delete's predicate at the moment they were read.
+      const note = await prisma.notification.findFirstOrThrow({
+        where: { recipientId: waiterId, type: 'class_cancelled' },
+      });
+      expect(note.body).toContain('Race Delete');
+      expect(note.relatedClassId).toBeNull();
+    } finally {
+      await prisma.notification.deleteMany({ where: { recipientId: waiterId } });
+    }
   });
 
   it('keeps a future class with a registered student', async () => {

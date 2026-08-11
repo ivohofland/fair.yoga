@@ -327,15 +327,22 @@ read-then-delete"*), because a two-step read-then-delete lets a registration
 commit in the gap and destroys a now-charged class. Notifying, however, needs
 to know who was waiting *before* the rows vanish.
 
-Locking the candidate classes would not close this. `registrations/route.ts`
-never calls `lockClassRow`, and its only class-row write — `settingsLocked:
-true` at `:195` — is skipped when the class is already locked, which is always
-true here. A `SELECT … FOR UPDATE` on candidates would therefore not block a
-concurrent booking.
+> **Correction, from PR review.** This section originally claimed: *"Locking the
+> candidate classes would not close this. `registrations/route.ts` never calls
+> `lockClassRow` … A `SELECT … FOR UPDATE` on candidates would therefore not
+> block a concurrent booking."* **That is false.** `POST /api/registrations`
+> takes `SELECT id FROM "Class" WHERE id = … FOR UPDATE` inline rather than
+> through the helper, and `db-locks.ts` lists it as one of five deliberate
+> inline sites. A lock would work. It was verified as written — "never calls
+> `lockClassRow`" is literally true — rather than as meant, which is how a false
+> premise reached a design document. Locking is rejected below on cost, which is
+> the real reason, and the step-1 predicate is widened, which removes the need.
 
 The sequence inside the existing transaction, after the CAS:
 
-1. Read `waiting` entries whose class matches the delete predicate → **candidates**
+1. Read `waiting` entries on **every** scheduled future class of the template →
+   **candidates**. Deliberately *wider* than the delete: no registration
+   predicate.
 2. `deleteMany` — **unchanged**, predicate still evaluated at execution time
 3. Read back which candidate class ids still exist → **survivors**
 4. `createBulkNotifications` for candidates whose class is *not* a survivor
@@ -344,9 +351,29 @@ Two extra queries in a transaction that already runs four. Step 2 is not
 touched, so #86's anti-race property is preserved intact; the exactness comes
 from step 3, not from constraining the delete.
 
-**Rejected:** notifying straight from step 1. Simpler, but a booking landing
+**Step 1 must not mirror the delete's predicate.** The first implementation
+copied `registrations: { none: { status: { in: CHARGED_STATUSES } } }` into it,
+on the reasoning that the two reads should agree. They should not — they should
+disagree in the one direction step 3 can repair. Mirroring makes them disagree
+in the direction it cannot: a class whose last charged registration is cancelled
+between steps 1 and 2 becomes deletable *without ever having been a candidate*,
+so its waiters cascade away unnotified. That is #112 itself, one window
+narrower, reintroduced by its own fix. PR review reproduced it
+(`deleted: 1, waitlistEntryStillExists: false, notificationsForWaiter: 0`).
+
+Wide costs only rows. A class the delete spares is a survivor and is filtered
+out at step 4 — and that filtering is the *only* thing step 3 exists for, so
+widening step 1 is also what makes an ordinary non-concurrent test able to
+exercise it.
+
+**Rejected: notifying straight from step 1.** Simpler, but a booking landing
 between steps 1 and 2 spares the class and the student is told it was withdrawn
 while their entry is still `waiting` — a message the app itself contradicts.
+
+**Rejected: locking the candidate classes.** It would work, contrary to the
+original claim above. It is worse: it blocks booking on every future class of
+the template for the duration of the archive, to buy what a second read buys for
+free.
 
 ## Notification content
 

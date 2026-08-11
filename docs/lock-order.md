@@ -156,10 +156,32 @@ full, with the class each one's notifications carry:
 | `POST /api/registrations` | one — the class being booked |
 | `POST /api/announcements` | one — the announcement's class, outside any transaction |
 | `POST /api/classes/[id]/transition` | one — the class being transitioned |
+| `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | **many** — every class the archive withdrew (#112) |
 
 Five stands — but a future sweep that notifies across classes in one
 transaction would be a sixth site, and none of the four checks above would
 surface it.
+
+**That sweep arrived, and it is the twelfth row above.** #112 made
+`archiveOrUnarchiveTemplate` notify the waiting students of every class its
+`deleteMany` took, in one `createMany`, inside the archive transaction — the
+first site in `src/` that notifies across more than one class at a time, and
+exactly the case this paragraph predicted would slip past the four checks. It
+did: nothing in that change touched this file until PR review caught it.
+
+The answer is still unchanged, for a reason worth stating rather than
+re-deriving: those notifications carry **no `relatedClassId`**. They cannot,
+because their classes are deleted earlier in the same transaction and the FK
+would reject the insert. `Notification.recipientId` has no foreign key at all,
+so that `createMany` takes `FOR KEY SHARE` on nothing and adds no edge to the
+order — the one child-insert in the codebase that notifies across many classes
+is also the one that references none of them.
+
+Read that as a coincidence this file is now watching, not as a rule. Give an
+archive notification a `relatedClassId` and it becomes a transaction taking
+`FOR KEY SHARE` on many `Class` rows at once, in `candidates` order, which is
+whatever the query planner returned — not the ascending order the rest of this
+document depends on.
 
 Three things about that table are easy to get wrong and are the reason it exists:
 

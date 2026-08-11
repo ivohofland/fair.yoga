@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { formatDayHeader } from '@/lib/format';
 import crypto from 'crypto';
 import {
   exportStudentData,
@@ -489,7 +490,7 @@ let studentAccountId: string;
     try {
       await deleteTeacherAccount(prisma, fixture.teacherId);
 
-      const note = await prisma.notification.findFirst({
+      const note = await prisma.notification.findFirstOrThrow({
         where: {
           recipientType: 'student',
           recipientId: fixture.studentId,
@@ -497,7 +498,20 @@ let studentAccountId: string;
           type: 'class_cancelled',
         },
       });
-      expect(note).not.toBeNull();
+
+      // The body names the class — type, day, time. Pinned here because it was
+      // otherwise unpinned on this path: reverting the body to its pre-#112
+      // text passed this whole file, and the widened `select` (`date`,
+      // `startTime`) went unpinned with it. The other two paths assert their
+      // own bodies; this one is the same rule and needs the same guard.
+      //
+      // `relatedClassId` survives here — the class stays as `cancelled` rather
+      // than being deleted — but a cancelled class returns null from
+      // `studentNotificationHref`, so the link is inert and the body is still
+      // all the student has.
+      expect(note.body).toContain('Lock class'); // the fixture's classType
+      expect(note.body).toContain(formatDayHeader(new Date('2099-06-01')));
+      expect(note.body).toContain('09:00');
 
       const entry = await prisma.waitlistEntry.findFirstOrThrow({
         where: { classId: fixture.classId, studentId: fixture.studentId },
