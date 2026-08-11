@@ -803,6 +803,63 @@ describe('generateClassInstances (DB)', () => {
         spy.mockRestore();
       }
     });
+
+    it('names a date lost to a concurrent insert as raced, not as filled', async () => {
+      const now = new Date();
+      const dates = candidates(now);
+      const collide = dates[1]!;
+
+      // The holder inserts the colliding row and holds it UNCOMMITTED, so the
+      // generator's occupancy read (a plain read under READ COMMITTED) still
+      // calls that date free, and the generator's own insert then parks on the
+      // holder's pending unique-index entry and loses the race when the holder
+      // commits — the same lever the #164 resume tests use.
+      const holder = new PrismaClient();
+      let release!: () => void;
+      let collided!: () => void;
+      const released = new Promise<void>((r) => { release = r; });
+      const parked = new Promise<void>((r) => { collided = r; });
+      const holding = holder.$transaction(
+        async (tx) => {
+          await tx.class.create({
+            data: {
+              teacherId,
+              teacherRoomId,
+              templateId,
+              classType: 'Vinyasa',
+              date: collide,
+              startTime: '09:00',
+              durationMinutes: 60,
+              roomCost: 40,
+              minRate: 15,
+              targetRate: 30,
+              minStudents: 4,
+              maxStudents: 12,
+              cancelDeadline: 'HOURS_24',
+              autoCancelCheck: 'HOURS_2',
+              status: 'open',
+            },
+          });
+          collided();
+          await released;
+        },
+        { timeout: 20_000 },
+      );
+
+      // The generator starts with the holder's row in flight, so its occupancy
+      // read cannot see the colliding date and its insert parks on the pending
+      // entry; the other three dates insert cleanly.
+      await parked;
+      const generating = generateInstancesForTemplate(prisma, await freshTemplate(), now);
+      await new Promise((r) => setTimeout(r, 400));
+      release();
+      await holding;
+      const result = await generating;
+      await holder.$disconnect();
+
+      expect(result.created).toBe(3);
+      expect(result.skipped).toEqual([{ date: collide, reason: 'raced' }]);
+    });
   });
 
   /** The template with the `teacher.defaultTimezone` join the generator requires. */
