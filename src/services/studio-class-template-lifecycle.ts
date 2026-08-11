@@ -358,12 +358,10 @@ export async function pauseOrResumeStudioTemplate(
       // `isActive`, a non-key column, so Postgres grants it `FOR NO KEY
       // UPDATE` — which does not conflict with the `FOR KEY SHARE` a
       // concurrent `StudioClass` insert takes on this template for FK
-      // integrity. Without this claim that race is live, and the
-      // generator's P2002 hedge cannot save us: a `catch` inside an
-      // interactive transaction leaves Postgres with an aborted
-      // transaction that fails the next statement with 25P02 rather than
-      // skipping cleanly. `FOR UPDATE` makes the collision impossible
-      // instead of trying to recover from it (#94).
+      // integrity. Without this claim that race is live; `FOR UPDATE` makes
+      // the collision impossible instead of leaving it to the generator's
+      // `ON CONFLICT DO NOTHING`, which would cost that date's class with no
+      // error (#94).
       const claimed = await claimStudioTemplateForGeneration(tx, templateId);
       if (!claimed) {
         // Genuinely unreachable now, not just believed to be. The CAS above

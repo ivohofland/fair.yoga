@@ -32,11 +32,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   //
   // No claim is taken, and that is reasoning rather than omission: this row's
   // uuid is brand-new inside this transaction, so nothing else can reference it
-  // yet and nothing can race the insert. The generator's P2002 hedge is
-  // therefore dead for this caller, not load-bearing — the same argument
-  // `claimStudioTemplateForGeneration` already makes for the class family's
-  // POST, and the reason it does not generalise to a caller that reuses this
-  // shape against an *existing* row.
+  // yet and nothing can race the insert. The same exemption
+  // `claimStudioTemplateForGeneration` gives the class family's POST, and the
+  // reason it does not generalise to a caller that reuses this shape against an
+  // *existing* row.
   const template = await prisma.$transaction(async (tx) => {
     const created = await tx.studioClassTemplate.create({
       data: {

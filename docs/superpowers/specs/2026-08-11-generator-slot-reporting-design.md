@@ -347,6 +347,17 @@ Per "correct a claim in every artifact, not just the one in front of you":
   documents the generator's return or its idempotency.
 - **#196's spec §5.1** — the correction in §1.5 above.
 
+Task 7's grep found three further studio-family sites the list above missed, all
+corrected on this branch — none are load-bearing code, so the correction is
+comment-only:
+- `studio-class-generator.ts:46-81` — the claim docblock's three-caller P2002-hedge
+  narrative ("what makes the P2002 branch below unreachable, full stop"). There is
+  no branch; the class twin's correction (second bullet) now has a studio mirror.
+- `api/studio-class-templates/route.ts:35` — "The generator's P2002 hedge is
+  therefore dead for this caller".
+- `studio-class-template-lifecycle.ts:362` — "the generator's P2002 hedge cannot
+  save us".
+
 ## 9. Testing
 
 ### 9.1 The two tests that must fail against today's code

@@ -43,42 +43,18 @@ type StudioTemplateWithTimezone = Prisma.StudioClassTemplateGetPayload<{
  * throw P2025 if the row is deleted out from under it before that second
  * statement runs.
  *
- * Do not weaken `FOR UPDATE` to `FOR NO KEY UPDATE` — see
- * `claimTemplateForGeneration` for why that is not a free optimisation: it is
- * what makes a concurrent insert for this template impossible while the claim
- * holds it, which is what makes the P2002 branch below unreachable, full
- * stop. `generateInstancesForTemplate` (`class-generator.ts`) has three
- * callers in production that never take that claim — its own tests call it
- * directly too — but the hedge is only genuinely load-bearing for one of
- * them:
- *   - `api/class-templates/route.ts` creates a brand-new template row inside
- *     its own transaction — nothing else can reference that id yet, so
- *     nothing can race the insert. Its hedge is dead, not load-bearing.
- *   - `pauseOrResumeTemplate` (`class-template-lifecycle.ts`) is reachable —
- *     its own `update` only flips `isActive`, a non-key column, so Postgres
- *     grants it `FOR NO KEY UPDATE`, which does not conflict with the `FOR
- *     KEY SHARE` a concurrent `Class` insert takes on the same template row
- *     for FK integrity — but the hedge is broken there by the very 25P02
- *     mechanism this docstring warns about above: its `catch` runs inside an
- *     interactive transaction, so a genuine P2002 still leaves Postgres with
- *     an aborted transaction that fails the next query with 25P02 instead of
- *     a clean skip.
- *   - `syncTemplateInstances`'s refill (`template-sync.ts`) calls through a
- *     bare `PrismaClient`, not a transaction client, so each insert
- *     autocommits on its own; a genuine collision there is a clean P2002 with
- *     nothing left to poison. This is the one caller the hedge actually
- *     protects.
- * The P2002 branch in the loop below — not the loop itself, which runs on
- * every claimed generation — is unreachable for any caller that takes this
- * claim first, whatever that caller is: the invariant lives in the lock, not
- * in a roster of who currently holds it. `generateStudioClassInstances`'s
- * sweep and `pauseOrResumeStudioTemplate`'s resume (`studio-class-template-
- * lifecycle.ts`, #94) both do. `api/studio-class-templates/route.ts`'s POST
- * (#120) does not, and does not reopen the branch either: it generates from a
- * row it created inside its own transaction, whose uuid nothing else can
- * reference yet, so there is no concurrent insert to collide with — the same
- * exemption the class family's POST has above. A caller that skips the claim
- * against an *existing* row would reopen it.
+ * Do not weaken `FOR UPDATE` to `FOR NO KEY UPDATE` to stop blocking
+ * `StudioClass` inserts — it looks like a free optimisation but isn't.
+ * `FOR UPDATE` is what makes a concurrent insert for this template
+ * impossible, because an insert's FK check takes `FOR KEY SHARE` on this row,
+ * which `FOR UPDATE` conflicts with and `FOR NO KEY UPDATE` does not. Measured
+ * on #164, both directions.
+ *
+ * That is a claim about races, not about correctness under one:
+ * `generateStudioClassInstances` no longer has a P2002 branch to be broken.
+ * Its `ON CONFLICT DO NOTHING` makes a lost race cost one date and abort
+ * nothing, with or without this lock. The lock still earns its place by
+ * keeping the values this claim returns authoritative (#102).
  *
  * Returns the locked row rather than a boolean, so a caller cannot generate
  * from the snapshot its outer `findMany` read minutes earlier (#102). The raw
