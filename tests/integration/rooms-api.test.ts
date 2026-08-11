@@ -460,3 +460,75 @@ describe('DELETE /api/rooms/[id]', () => {
     expect(await prisma.teacherRoom.count({ where: { roomId: deleteEmptyRoomId } })).toBe(0);
   });
 });
+
+/**
+ * `Room_public_identity_unique` on `(address, floor, roomName)` WHERE
+ * `isPublic = true`, and `Room_private_identity_unique` on `(createdById,
+ * address, floor, roomName)` WHERE `isPublic = false` (#196). Route change is
+ * `src/app/api/rooms/route.ts`: the public branch keeps its pre-existing
+ * `findFirst` pre-check (unchanged — right message, avoids the warn log on
+ * the common path); both branches now also fall behind a try/catch around
+ * `prisma.room.create` that maps a P2002 on either index to the same
+ * `DUPLICATE_ROOM` code the public pre-check already used.
+ *
+ * A distinct address/floor from every fixture above (`${suffix} Rooms St`,
+ * floor '1') so this block's rows never share an index tuple with them.
+ */
+describe('POST /api/rooms dedupes both branches (#196)', () => {
+  const slotAddress = `${suffix} Slot Street 1`;
+
+  const roomBody = (over: Record<string, unknown> = {}) => ({
+    venueName: 'Slot Venue',
+    address: slotAddress,
+    city: 'Amsterdam',
+    postcode: '1011 AB',
+    floor: '2',
+    roomName: 'Back',
+    maxCapacity: 12,
+    equipment: [],
+    isPublic: true,
+    ...over,
+  });
+  const post = (body: unknown, token: string) =>
+    fetch(`${BASE_URL}/api/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(token) },
+      body: JSON.stringify(body),
+    });
+
+  // Scoped to this block's own address, so it can run before the top-level
+  // afterAll without touching any fixture declared in the outer beforeAll.
+  afterAll(async () => {
+    await prisma.room.deleteMany({ where: { address: slotAddress } });
+  });
+
+  it('rejects a second identical PRIVATE room from the same teacher', async () => {
+    const body = roomBody({ isPublic: false, roomName: 'PrivateBack' });
+    expect((await post(body, creatorToken)).status).toBe(201);
+    const second = await post(body, creatorToken);
+    expect(second.status).toBe(409);
+    expect((await second.json()).error.code).toBe('DUPLICATE_ROOM');
+  });
+
+  it('still lets a DIFFERENT teacher keep their own private room at that address', async () => {
+    const body = roomBody({ isPublic: false, roomName: 'PrivateBack' });
+    expect((await post(body, otherToken)).status).toBe(201);
+  });
+
+  it('leaves one row when two identical PUBLIC creates are in flight at once', async () => {
+    const body = roomBody({ roomName: 'RaceRoom' });
+    const [a, b] = await Promise.all([post(body, creatorToken), post(body, creatorToken)]);
+    expect([a.status, b.status].sort()).toEqual([201, 409]);
+
+    // Either request can win the race, so the loser is identified rather
+    // than assumed — this is what makes the assertion below able to fail
+    // when a route branch is broken, unlike the status/row-count pair alone.
+    const loser = a.status === 409 ? a : b;
+    expect((await loser.json()).error.code).toBe('DUPLICATE_ROOM');
+
+    const rows = await prisma.room.findMany({
+      where: { isPublic: true, address: slotAddress, floor: '2', roomName: 'RaceRoom' },
+    });
+    expect(rows).toHaveLength(1);
+  });
+});

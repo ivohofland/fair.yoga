@@ -9,6 +9,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { createRoomSchema, roomSearchQuerySchema } from '@/lib/schemas';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -71,21 +72,38 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     }
   }
 
-  const room = await prisma.room.create({
-    data: {
-      venueName: body.venueName,
-      address: body.address,
-      city: body.city,
-      postcode: body.postcode.replace(/\s/g, ''),
-      floor: body.floor,
-      roomName: body.roomName,
-      maxCapacity: body.maxCapacity,
-      equipment: body.equipment,
-      notes: body.notes,
-      isPublic,
-      createdById: session.teacherId,
-    },
-  });
-
-  return respondOk(room, 201);
+  try {
+    const room = await prisma.room.create({
+      data: {
+        venueName: body.venueName,
+        address: body.address,
+        city: body.city,
+        postcode: body.postcode.replace(/\s/g, ''),
+        floor: body.floor,
+        roomName: body.roomName,
+        maxCapacity: body.maxCapacity,
+        equipment: body.equipment,
+        notes: body.notes,
+        isPublic,
+        createdById: session.teacherId,
+      },
+    });
+    return respondOk(room, 201);
+  } catch (err) {
+    // Two indexes, two shapes: public rooms are unique across the whole
+    // shared namespace, private rooms only within their creator.
+    if (
+      isUniqueConflictOn(err, ['address', 'floor', 'roomName']) ||
+      isUniqueConflictOn(err, ['createdById', 'address', 'floor', 'roomName'])
+    ) {
+      return respondError(
+        isPublic
+          ? 'A public room at this address already exists'
+          : 'You already have a room at this address',
+        409,
+        'DUPLICATE_ROOM',
+      );
+    }
+    throw err;
+  }
 });
