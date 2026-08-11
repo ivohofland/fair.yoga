@@ -520,6 +520,28 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
     expect(await prisma.class.count({ where: { id: c.id } })).toBe(1);
   });
 
+  /**
+   * #86 (`2026-07-25-template-archive-withdraws-window-design.md:231`) asked
+   * for this and it was never written. The archive path's whole notification
+   * design (#112) rests on the cascade being real: it notifies BEFORE the
+   * delete precisely because these rows do not survive it. A migration that
+   * changed `onDelete` would silently turn that ordering from necessary into
+   * merely early, and nothing else in the suite would notice.
+   */
+  it('cascade-deletes waitlist entries when the class row goes', async () => {
+    const t = await makeTemplate('Cascade Pin');
+    const c = await makeClass(t.id, { date: future() });
+    const entry = await prisma.waitlistEntry.create({
+      data: { classId: c.id, studentId, position: 1, status: 'waiting' },
+    });
+
+    // Delete the class directly rather than through archiving: this pins the
+    // schema property itself, not the one caller that happens to rely on it.
+    await prisma.class.delete({ where: { id: c.id } });
+
+    expect(await prisma.waitlistEntry.count({ where: { id: entry.id } })).toBe(0);
+  });
+
   it('keeps a future class with a registered student', async () => {
     const t = await makeTemplate('Keep Registered');
     const c = await makeClass(t.id, { date: future() });
