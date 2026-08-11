@@ -401,6 +401,10 @@ Each guard is broken, its exact failure text recorded, then restored and re-veri
 | G7 | Unlink reaches a terminal state; `Cancel` stays live in flight | Restore the documented F7 non-reset |
 | **G8** | **`template-form` in create mode does not re-enable Create after a push that does not commit** | **Three mutations, all run.** (a) Delete `setCreated(true)` from the create arm — the pre-fix behaviour, and the live duplicate-schedule defect; observed `expected <button …(2)></button> to be null`. (b) Keep `setCreated(true)` but restore the unconditional submit button, so only the label changes; observed as a failed `getByRole` lookup for "Go to recurring classes". (c) Rewire *only* the `SettledNotice`'s `onAction` to a `fetch`; observed `expected 3 to be 2` (mount room fetch + create POST, then the second request). **(c) is the only one of the three that reaches the fetch-count assertion** — (a) and (b) both trip a DOM-presence assertion first |
 | G9 | `studio-template-form` create mode, same | The same three, same order. (c) observed `expected 2 to be 1` — this form has no mount fetch, so its create POST is call one |
+| **G10** | **`class/new/page` does not re-enable after push that does not commit** | **Three mutations, all run.** (a) Delete `setCreatedId(json.data.id)` — the pre-fix behaviour where settled state never renders; observed `AssertionError: expected <button …(2)></button> to be null`. (b) Restore the unconditional submit button, so only the label changes to "Created"; observed as a failed `getByRole` lookup for "Go to the class". (c) Rewire *only* the `SettledNotice`'s `onAction` to a `fetch`; observed `expected 3 to be 2` at `class/new/page.test.tsx:172` (mount room fetch + create POST = 2; the mis-wired retry makes 3). **(c) is the only one that reaches the fetch-count assertion** — (a) and (b) trip a DOM-presence assertion first |
+| **G11** | **`studio-class/new/page` does not re-enable after push that does not commit, and re-submit is blocked** | **Settlement: the same three mutations as G10**, with (c) observed `expected 2 to be 1` at `studio-class/new/page.test.tsx:145` (create POST + the retry — no mount fetch). **Re-submit guard**: Delete `if (createdId) return;` (keeping `setCreatedId`); observed `expected 2 to be 1` at synthetic-submit test `:158` |
+
+The two new pages exercise the same settlement mutations (a/b/c) as the template forms, with observed fetch-count differences: `class/new` fetches `/api/teacher-rooms` on mount, so (c) observed `expected 3 to be 2`; `studio-class/new` has no mount fetch, so it observed `expected 2 to be 1`. The studio page also carries a re-submit guard, pinned by synthetic submit, which `class/new` deliberately omits — that page has no `<form>` element and `handleSubmit`'s only caller is the button settling replaces, so the guard would have no reachable entry point. Adding it would ship the exact defect these guards exist to prevent: a guard no mutation can reach.
 
 In-flight assertions (G2, G6, G7) use a deferred fetch mock — a promise the test
 resolves — so "while in flight" is a controlled state, not a race.
@@ -411,7 +415,7 @@ traps here:
 - **G5** must assert on the *error message being present*, driven through the
   `verifyRes.ok === false` branch. A test checking only the button label would pass
   against the clobbering mutation too.
-- **G8/G9** must assert that no second POST is possible, not merely that a label
+- **G8/G11** must assert that no second POST is possible, not merely that a label
   changed. The realistic regression is a second `fetch` reaching
   `/api/class-templates`, so the assertion is on the fetch mock's call count after a
   second click — not on rendered text, which a partial fix would satisfy. **And the
@@ -439,7 +443,7 @@ traps here:
    template form or either create page.
 4. Every escape control in the three confirm-style components is operable while its
    action is in flight.
-5. G1–G9 each observed failing against their mutation, failure text recorded in the
+5. G1–G11 each observed failing against their mutation, failure text recorded in the
    plan, then restored and re-verified.
 6. `npm run verify` green — typecheck, lint, all three vitest projects — with the new
    component-test count reconciled arithmetically against the previous total.
