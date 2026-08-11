@@ -21,14 +21,25 @@ const studentIds: string[] = [];
 let unlinkedStudentId: string;
 const classIds: string[] = [];
 
+// Every class this helper creates shares ownerId, the same 2099-06-01 date,
+// and `status: 'open'` — none of that is what any test here cares about,
+// it is just "a class far enough out that cancel-deadline logic never
+// triggers". Class_teacher_slot_unique is (teacherId, date, startTime)
+// WHERE status <> 'cancelled', though, and this file calls makeClass ~25
+// times, so a shared literal startTime would let only the first through.
+// A counter-derived minute keeps every call on its own slot without any
+// caller needing to know or care what time its class landed on.
+let makeClassCounter = 0;
+
 async function makeClass(maxStudents: number): Promise<string> {
+  const startTime = `09:${String(makeClassCounter++).padStart(2, '0')}`;
   const cls = await prisma.class.create({
     data: {
       teacherId: ownerId,
       teacherRoomId,
       classType: 'Reg API',
       date: new Date('2099-06-01'),
-      startTime: '09:00',
+      startTime,
       durationMinutes: 60,
       roomCost: 20,
       minRate: 15,
