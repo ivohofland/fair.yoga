@@ -452,7 +452,7 @@ PR #204 was written against an index that did not exist. Five comments say so, a
 - [ ] **Step 1: List every stale site before editing**
 
 Run: `grep -rn '#196' src/ | grep -iE 'will |yet|no such|today the only'`
-Expected: five hits across the two generator files. Fix **all** of them; a task that fixes four of five reports success either way.
+Expected: four hits across the two generator files. Fix **all** of them; a task that fixes three of four reports success either way. (This plan originally said five, counting `studio-class-generator.ts:107` as a site needing an edit; on execution that line turned out to already be present-tense and accurate, so it needed none — recorded here rather than silently corrected.)
 
 - [ ] **Step 2: Rewrite each to the present tense**
 
@@ -478,7 +478,7 @@ Expected: no output.
 ```bash
 npx tsc --noEmit
 git add src/services/class-generator.ts src/services/studio-class-generator.ts
-git commit -m "docs: five comments that described a backstop this branch just built"
+git commit -m "docs: four comments that described a backstop this branch just built"
 ```
 
 ---
