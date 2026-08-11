@@ -5,8 +5,10 @@ import {
   archiveStudioMessage,
   resolveTemplateConfirmation,
   resolveStudioConfirmation,
+  resumeMessage,
   resumeStudioMessage,
   type StudioTemplateToggleResponse,
+  type TemplateToggleResponse,
 } from './template-action-messages';
 
 describe('pauseMessage', () => {
@@ -127,13 +129,27 @@ describe('resolveTemplateConfirmation', () => {
     );
   });
 
+  it('returns the class resume message for an active payload', () => {
+    expect(
+      resolveTemplateConfirmation({
+        action: 'active',
+        templateKind: 'class',
+        scheduled: 4,
+        added: 0,
+        blockedByCancelled: 0,
+        slotTaken: 0,
+      }),
+    ).toBe('4 classes on your schedule. Nothing needed adding.');
+  });
+
   /**
    * Both would describe something that did not happen. `unchanged` in
    * particular is what a stale second tab and a retry-after-lost-response
    * reach, so captioning it with either message is the #98 bug wearing a
-   * different hat.
+   * different hat. `active` used to be listed here too; it speaks now — its
+   * own test above pins the message.
    */
-  it.each(['active', 'unarchived', 'unchanged'] as const)('says nothing for %s', (action) => {
+  it.each(['unarchived', 'unchanged'] as const)('says nothing for %s', (action) => {
     expect(resolveTemplateConfirmation({ action })).toBeNull();
   });
 });
@@ -166,9 +182,16 @@ describe('resolveStudioConfirmation', () => {
    * Keep the two numbers unequal.
    */
   it('returns the resume message, with the arguments in the order it passes them', () => {
-    expect(resolveStudioConfirmation({ action: 'active', scheduled: 4, added: 0 })).toBe(
-      '4 classes on your schedule. Nothing needed adding.',
-    );
+    expect(
+      resolveStudioConfirmation({
+        action: 'active',
+        templateKind: 'studio',
+        scheduled: 4,
+        added: 0,
+        blockedByCancelled: 0,
+        slotTaken: 0,
+      }),
+    ).toBe('4 classes on your schedule. Nothing needed adding.');
   });
 
   /**
@@ -202,28 +225,40 @@ describe('resolveStudioConfirmation', () => {
 
 describe('resumeStudioMessage', () => {
   it('reports the window when the resume filled it', () => {
-    expect(resumeStudioMessage(4, 4)).toBe('4 classes on your schedule.');
+    expect(resumeStudioMessage(4, 4, 0, 0)).toBe('4 classes on your schedule.');
   });
 
   it('says nothing needed adding when the window was already full', () => {
-    expect(resumeStudioMessage(0, 4)).toBe(
+    expect(resumeStudioMessage(0, 4, 0, 0)).toBe(
       '4 classes on your schedule. Nothing needed adding.',
     );
   });
 
   it('reports a short window without claiming why it is short', () => {
-    expect(resumeStudioMessage(2, 2)).toBe('2 classes on your schedule.');
+    expect(resumeStudioMessage(2, 2, 0, 0)).toBe('2 classes on your schedule.');
   });
 
   it('agrees in number at one class', () => {
-    expect(resumeStudioMessage(1, 1)).toBe('1 class on your schedule.');
-    expect(resumeStudioMessage(0, 1)).toBe(
+    expect(resumeStudioMessage(1, 1, 0, 0)).toBe('1 class on your schedule.');
+    expect(resumeStudioMessage(0, 1, 0, 0)).toBe(
       '1 class on your schedule. Nothing needed adding.',
     );
   });
 
-  it('reports an empty window without naming a cause', () => {
-    expect(resumeStudioMessage(0, 0)).toBe('Nothing is scheduled from this template.');
+  it('names a taken slot rather than leaving a smaller number unexplained', () => {
+    expect(resumeStudioMessage(3, 4, 0, 1)).toBe(
+      '4 classes on your schedule. 1 date already had a class.',
+    );
+  });
+
+  it('names the cancelled classes still holding an empty window', () => {
+    expect(resumeStudioMessage(0, 0, 4, 0)).toBe(
+      'Nothing is scheduled from this template. 4 cancelled classes still hold those dates.',
+    );
+  });
+
+  it('stays silent about cause when there is none to name', () => {
+    expect(resumeStudioMessage(0, 0, 0, 0)).toBe('Nothing is scheduled from this template.');
   });
 
   // The argument order is delta-first to match `archiveStudioMessage` even
@@ -236,6 +271,55 @@ describe('resumeStudioMessage', () => {
   // this test and every other one. The guard that does bite is the unequal
   // fixture in `resolveStudioConfirmation`'s own test above.
   it('distinguishes its two arguments', () => {
-    expect(resumeStudioMessage(0, 4)).not.toBe(resumeStudioMessage(4, 0));
+    expect(resumeStudioMessage(0, 4, 0, 0)).not.toBe(resumeStudioMessage(4, 0, 0, 0));
+  });
+});
+
+describe('resumeMessage (class)', () => {
+  it('says nothing extra when the window filled', () => {
+    expect(resumeMessage(4, 4, 0, 0)).toBe('4 classes on your schedule.');
+  });
+
+  it('names a taken slot rather than leaving a smaller number unexplained', () => {
+    expect(resumeMessage(3, 4, 0, 1)).toBe(
+      '4 classes on your schedule. 1 date already had a class.',
+    );
+  });
+
+  it('names the cancelled classes still holding an empty window', () => {
+    expect(resumeMessage(0, 0, 4, 0)).toBe(
+      'Nothing is scheduled from this template. 4 cancelled classes still hold those dates.',
+    );
+  });
+
+  it('stays silent about cause when there is none to name', () => {
+    expect(resumeMessage(0, 0, 0, 0)).toBe('Nothing is scheduled from this template.');
+  });
+});
+
+describe('the two toggle payloads are not interchangeable', () => {
+  it('rejects a studio payload at the class resolver', () => {
+    const studio: StudioTemplateToggleResponse = {
+      action: 'active',
+      templateKind: 'studio',
+      scheduled: 4,
+      added: 0,
+      blockedByCancelled: 0,
+      slotTaken: 0,
+    };
+    // @ts-expect-error studio payloads must never satisfy the class resolver
+    resolveTemplateConfirmation(studio);
+    // and the reverse
+    const cls: TemplateToggleResponse = {
+      action: 'active',
+      templateKind: 'class',
+      scheduled: 4,
+      added: 0,
+      blockedByCancelled: 0,
+      slotTaken: 0,
+    };
+    // @ts-expect-error class payloads must never satisfy the studio resolver
+    resolveStudioConfirmation(cls);
+    expect(true).toBe(true);
   });
 });

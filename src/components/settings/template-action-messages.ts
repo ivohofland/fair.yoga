@@ -98,11 +98,11 @@ export function archiveStudioMessage(deleted: number, remaining: number): string
  * generator's date *set* as a *range*, and two boundaries that can disagree at
  * the edges is the gt/gte defect this codebase has already paid for twice.
  *
- * The `scheduled === 0` branch names no cause. It is reachable exactly when
- * every candidate date holds a cancelled row — `pause → archive → un-archive →
- * resume` at its limit, the sequence #119 was filed about. That inference is
- * sound today and rests on generator internals, so it stays out of the copy:
- * occupancy is checkable by whoever reads the message, cause is not.
+ * The cause clauses are measurements, not inferences. `blockedByCancelled` and
+ * `slotTaken` are counted by `generateStudioInstancesForTemplate` and carried
+ * over the wire, so the sentence can say *why* a number is short instead of
+ * leaving it to the teacher to guess — see `resumeMessage` for the fuller
+ * account.
  *
  * Argument order is delta-first, matching `archiveStudioMessage(deleted,
  * remaining)`, even though the sentence leads with the second argument. The
@@ -123,14 +123,67 @@ export function archiveStudioMessage(deleted: number, remaining: number): string
  * No verb after the count, for the reason `archiveMessage` records above:
  * nothing left that can fall out of agreement with `classWord`.
  */
-export function resumeStudioMessage(added: number, scheduled: number): string {
-  if (scheduled === 0) return 'Nothing is scheduled from this template.';
+export function resumeStudioMessage(
+  added: number,
+  scheduled: number,
+  blockedByCancelled: number,
+  slotTaken: number,
+): string {
+  if (scheduled === 0) {
+    if (blockedByCancelled === 0) return 'Nothing is scheduled from this template.';
+    const cancelledWord = blockedByCancelled === 1 ? 'class' : 'classes';
+    return `Nothing is scheduled from this template. ${blockedByCancelled} cancelled ${cancelledWord} still hold those dates.`;
+  }
 
   const classWord = scheduled === 1 ? 'class' : 'classes';
+  const head = `${scheduled} ${classWord} on your schedule.`;
 
-  return added === 0
-    ? `${scheduled} ${classWord} on your schedule. Nothing needed adding.`
-    : `${scheduled} ${classWord} on your schedule.`;
+  if (slotTaken > 0) {
+    const dateWord = slotTaken === 1 ? 'date' : 'dates';
+    return `${head} ${slotTaken} ${dateWord} already had a class.`;
+  }
+  return added === 0 ? `${head} Nothing needed adding.` : head;
+}
+
+/**
+ * The class family's resume sentence. Parallel to `resumeStudioMessage` and
+ * separate from it for the reason `resolveTemplateConfirmation` records: the
+ * two families are kept parallel-but-separate rather than parameterised.
+ *
+ * The cause clauses are measurements, not inferences. Until #164/#192 the
+ * generator returned a bare count, so naming a cause here would have encoded a
+ * guess about generator internals — which is exactly why the studio sibling
+ * declined to. `blockedByCancelled` and `slotTaken` are now counted by the
+ * generator and carried over the wire, so the sentence can say what happened.
+ *
+ * One clause at a time, in a fixed order: a blocked window names the cancelled
+ * classes (its cause), a full window names the taken slots (its cause), and a
+ * window that simply matched nothing names nothing. `blockedByCancelled` is
+ * never named beside a non-zero `scheduled` — it cannot co-occur (a date
+ * blocked by a cancelled own row is not on the schedule), and `slotTaken` can
+ * co-occur with it only on a mixed window, which this function does not
+ * enumerate branch by branch.
+ */
+export function resumeMessage(
+  added: number,
+  scheduled: number,
+  blockedByCancelled: number,
+  slotTaken: number,
+): string {
+  if (scheduled === 0) {
+    if (blockedByCancelled === 0) return 'Nothing is scheduled from this template.';
+    const cancelledWord = blockedByCancelled === 1 ? 'class' : 'classes';
+    return `Nothing is scheduled from this template. ${blockedByCancelled} cancelled ${cancelledWord} still hold those dates.`;
+  }
+
+  const classWord = scheduled === 1 ? 'class' : 'classes';
+  const head = `${scheduled} ${classWord} on your schedule.`;
+
+  if (slotTaken > 0) {
+    const dateWord = slotTaken === 1 ? 'date' : 'dates';
+    return `${head} ${slotTaken} ${dateWord} already had a class.`;
+  }
+  return added === 0 ? `${head} Nothing needed adding.` : head;
 }
 
 /**
@@ -159,27 +212,30 @@ export const UNARCHIVE_STUDIO_MESSAGE =
 /**
  * The `data` payload of a successful PATCH on a class template.
  *
- * The `scheduled?: never; added?: never` brand on the collapsed arm is what
- * keeps this type and `StudioTemplateToggleResponse` from being
- * interchangeable. Without it the studio type is assignable *to* this one —
- * excess-property checking fires only on fresh object literals, never on a
- * value of a declared type, and the other arms match verbatim — so
- * `resolveTemplateConfirmation(studioPayload)` compiled clean. PR review
- * measured both slips that buys: swapping the resolver in
- * `toggle-studio-template-button.tsx` restores #119 exactly, and in
- * `archive-studio-template-button.tsx` it substitutes `archiveMessage` for
- * `archiveStudioMessage` — #93's wrong-shape bug, the very failure the studio
- * type's own docblock cites as its justification. Both were caught only by
- * string-equality component tests; neither by the compiler.
- *
- * Same brand idiom as `TransactionClientOnly` in `@/lib/db-locks` — see its
- * docblock for the reasoning. If #116 ever gives the class family's resume a
- * count, this brand is what it removes.
+ * The `scheduled?: never; added?: never` phantom on the old collapsed `active`
+ * arm did this job until the class family's resume gained counts of its own —
+ * the case this file's own text predicted (below). No phantom can separate two
+ * structurally identical arms, so `templateKind` is the discriminator instead:
+ * it is a literal on the `active` arm of each family's type, checkable at
+ * runtime (which the phantom was not), and both resolvers already distrust the
+ * wire. A union is assignable only if every arm is, so one non-assignable arm
+ * still protects the whole type in both directions — that is what the
+ * "not interchangeable" test pins, and swapping a resolver for its sibling
+ * fails on `templateKind`'s literal rather than compiling clean the way the
+ * phantom let it (#119, #93).
  */
 export type TemplateToggleResponse =
   | { action: 'paused'; lastScheduled: { date: string; startTime: string } | null }
   | { action: 'archived'; deleted: number; remaining: number }
-  | { action: 'active' | 'unarchived' | 'unchanged'; scheduled?: never; added?: never };
+  | {
+      action: 'active';
+      templateKind: 'class';
+      scheduled: number;
+      added: number;
+      blockedByCancelled: number;
+      slotTaken: number;
+    }
+  | { action: 'unarchived' | 'unchanged' };
 
 /**
  * The `data` payload of a successful PATCH on a *studio* class template (#119).
@@ -193,14 +249,23 @@ export type TemplateToggleResponse =
  * button silently discarded `remaining` — and the one #136's pins exist to
  * prevent.
  *
- * `scheduled` and `added` are required, not optional. The route sends both on
- * every `active` response; a type that allowed their absence would be
- * describing a payload the server cannot produce.
+ * `scheduled`/`added`/`blockedByCancelled`/`slotTaken` are required, not
+ * optional. The route sends all four on every `active` response; a type that
+ * allowed their absence would be describing a payload the server cannot
+ * produce. `templateKind: 'studio'` is the literal that keeps this type and
+ * `TemplateToggleResponse` non-interchangeable — see that type's docblock.
  */
 export type StudioTemplateToggleResponse =
   | { action: 'paused'; lastScheduled: { date: string; startTime: string } | null }
   | { action: 'archived'; deleted: number; remaining: number }
-  | { action: 'active'; scheduled: number; added: number }
+  | {
+      action: 'active';
+      templateKind: 'studio';
+      scheduled: number;
+      added: number;
+      blockedByCancelled: number;
+      slotTaken: number;
+    }
   | { action: 'unarchived' | 'unchanged' };
 
 /**
@@ -222,6 +287,21 @@ export function resolveTemplateConfirmation(data: TemplateToggleResponse): strin
     return pauseMessage(last ? { date: new Date(last.date), startTime: last.startTime } : null);
   }
   if (data.action === 'archived') return archiveMessage(data.deleted, data.remaining);
+  if (data.action === 'active') {
+    // Checked rather than trusted, for the reason `resolveStudioConfirmation`'s
+    // own `active` case records below — the type constrains the server and
+    // nothing constrains the wire, so a counts-less `{ action: 'active' }`
+    // must be answered with silence, not a sentence about undefined.
+    if (
+      !Number.isInteger(data.added) ||
+      !Number.isInteger(data.scheduled) ||
+      !Number.isInteger(data.blockedByCancelled) ||
+      !Number.isInteger(data.slotTaken)
+    ) {
+      return null;
+    }
+    return resumeMessage(data.added, data.scheduled, data.blockedByCancelled, data.slotTaken);
+  }
   return null;
 }
 
@@ -273,8 +353,20 @@ export function resolveStudioConfirmation(data: StudioTemplateToggleResponse): s
       // template literal then renders "undefined classes on your schedule."
       // Saying nothing is the honest fallback — this function's whole contract
       // is that `null` means "say nothing".
-      if (!Number.isInteger(data.added) || !Number.isInteger(data.scheduled)) return null;
-      return resumeStudioMessage(data.added, data.scheduled);
+      if (
+        !Number.isInteger(data.added) ||
+        !Number.isInteger(data.scheduled) ||
+        !Number.isInteger(data.blockedByCancelled) ||
+        !Number.isInteger(data.slotTaken)
+      ) {
+        return null;
+      }
+      return resumeStudioMessage(
+        data.added,
+        data.scheduled,
+        data.blockedByCancelled,
+        data.slotTaken,
+      );
     case 'unarchived':
       return UNARCHIVE_STUDIO_MESSAGE;
     case 'unchanged':

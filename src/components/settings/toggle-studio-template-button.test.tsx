@@ -48,7 +48,16 @@ describe('ToggleStudioTemplateButton', () => {
   // nothing here notices; PR review measured that it survived the whole suite.
   const activeOk = {
     ok: true,
-    json: async () => ({ data: { action: 'active', scheduled: 4, added: 0 } }),
+    json: async () => ({
+      data: {
+        action: 'active',
+        templateKind: 'studio',
+        scheduled: 4,
+        added: 0,
+        blockedByCancelled: 0,
+        slotTaken: 0,
+      },
+    }),
   };
 
   it('sends state=active when the template is not active', async () => {

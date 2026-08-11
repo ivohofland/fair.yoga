@@ -57,6 +57,36 @@ describe('ToggleTemplateButton', () => {
     );
   });
 
+  it('renders the class resume confirmation, which used to render nothing', async () => {
+    // #164/#192: the class family's resume says something now, where the class
+    // resolver used to answer null for `active`. The studio sibling's mirror
+    // test was added with #119; this one pins the same seam for the class
+    // family the branch just gave counts to.
+    stubFetch({
+      ok: true,
+      json: async () => ({
+        data: {
+          action: 'active',
+          templateKind: 'class',
+          scheduled: 4,
+          added: 0,
+          blockedByCancelled: 0,
+          slotTaken: 0,
+        },
+      }),
+    });
+    render(<ToggleTemplateButton templateId="tpl-1" isActive={false} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    // The whole string — a component that dropped either clause would fail
+    // this and pass a prefix-only regex.
+    expect(
+      await screen.findByText('4 classes on your schedule. Nothing needed adding.'),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+  });
+
   it('sends state=paused when the template is active', async () => {
     stubFetch(pausedOk);
     render(<ToggleTemplateButton templateId="tpl-1" isActive={true} />);

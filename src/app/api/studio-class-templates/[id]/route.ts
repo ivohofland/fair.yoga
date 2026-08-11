@@ -118,6 +118,7 @@ export const PATCH = withErrorHandler(async (
         return respondOk({
           ...result.template,
           action: result.action,
+          templateKind: 'studio' as const,
           scheduled: result.scheduled,
           added: result.added,
           blockedByCancelled: result.blockedByCancelled,
