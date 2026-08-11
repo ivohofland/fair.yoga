@@ -15,9 +15,17 @@ export function SignOutButton() {
     } catch {
       // The cookie clear is what matters; a network hiccup here should
       // not trap someone in a signed-in state — fall through to login.
+    } finally {
+      // #40. Neither the push nor the refresh is guaranteed to commit on a
+      // starved or offline device, and both return `void`, so this component
+      // cannot learn whether they did. Resetting here means a dropped commit
+      // leaves a tappable button rather than a stale authenticated shell with
+      // no way out. DELETE /api/auth/session is idempotent, so a second tap
+      // costs nothing.
+      router.push('/login');
+      router.refresh();
+      setBusy(false);
     }
-    router.push('/login');
-    router.refresh();
   }
 
   return (
