@@ -88,15 +88,22 @@ Expected: PASS. This one is a pin on existing behaviour, so passing first is cor
 Prisma cannot express this mutation without a migration, and applied migrations are never edited. Mutate the constraint directly on the **test** database instead (`DATABASE_URL_TEST`), which is the database the `unit` project talks to:
 
 ```bash
-# Confirm the current rule first, and the constraint's exact name.
-docker exec fairyoga-db-1 psql -U postgres -d fairyoga_test -c \
-  '\d "WaitlistEntry"' | grep -i "foreign key"
+# Confirm the current rule first. Measured before this plan was written:
+#   "WaitlistEntry_classId_fkey" FOREIGN KEY ("classId") REFERENCES "Class"(id)
+#     ON UPDATE CASCADE ON DELETE CASCADE
+docker exec fairyoga-db-1 psql -U yoga -d ethical_yoga_test -c \
+  '\d "WaitlistEntry"' | grep -i "classId_fkey"
 
-docker exec fairyoga-db-1 psql -U postgres -d fairyoga_test -c \
+docker exec fairyoga-db-1 psql -U yoga -d ethical_yoga_test -c \
   'ALTER TABLE "WaitlistEntry" DROP CONSTRAINT "WaitlistEntry_classId_fkey";
    ALTER TABLE "WaitlistEntry" ADD CONSTRAINT "WaitlistEntry_classId_fkey"
-     FOREIGN KEY ("classId") REFERENCES "Class"("id") ON DELETE RESTRICT;'
+     FOREIGN KEY ("classId") REFERENCES "Class"("id")
+     ON UPDATE CASCADE ON DELETE RESTRICT;'
 ```
+
+`ON UPDATE CASCADE` is carried through both the mutation and the restore. The
+constraint has it today; dropping it silently while "restoring" would leave the
+test database subtly different from every other environment.
 
 Re-run the test. Expected: FAIL. `RESTRICT` makes `prisma.class.delete` raise a foreign-key violation, so the failure surfaces at the delete rather than at the assertion:
 
@@ -111,13 +118,21 @@ Record the exact text you observe in the commit message.
 - [ ] **Step 4: Restore the constraint and re-verify**
 
 ```bash
-docker exec fairyoga-db-1 psql -U postgres -d fairyoga_test -c \
+docker exec fairyoga-db-1 psql -U yoga -d ethical_yoga_test -c \
   'ALTER TABLE "WaitlistEntry" DROP CONSTRAINT "WaitlistEntry_classId_fkey";
    ALTER TABLE "WaitlistEntry" ADD CONSTRAINT "WaitlistEntry_classId_fkey"
-     FOREIGN KEY ("classId") REFERENCES "Class"("id") ON DELETE CASCADE;'
+     FOREIGN KEY ("classId") REFERENCES "Class"("id")
+     ON UPDATE CASCADE ON DELETE CASCADE;'
 
-docker exec fairyoga-db-1 psql -U postgres -d fairyoga_test -c '\d "WaitlistEntry"' | grep -i "foreign key"
+docker exec fairyoga-db-1 psql -U yoga -d ethical_yoga_test -c \
+  '\d "WaitlistEntry"' | grep -i "classId_fkey"
 npx vitest run --project unit src/services/class-template-lifecycle.test.ts
+```
+
+Expected, character for character:
+
+```
+"WaitlistEntry_classId_fkey" FOREIGN KEY ("classId") REFERENCES "Class"(id) ON UPDATE CASCADE ON DELETE CASCADE
 ```
 
 Expected: the constraint reads `ON DELETE CASCADE` again, and the whole file passes. Do not proceed with a mutated test database.
@@ -854,10 +869,12 @@ git commit -m "test: a filter nobody could have watched fail"
 - [ ] **Step 1: Confirm the FK constraint was restored**
 
 ```bash
-docker exec fairyoga-db-1 psql -U postgres -d fairyoga_test -c '\d "WaitlistEntry"' | grep -i "foreign key"
+docker exec fairyoga-db-1 psql -U yoga -d ethical_yoga_test -c '\d "WaitlistEntry"' | grep -i "classId_fkey"
 ```
 
-Expected: `ON DELETE CASCADE`. A test database left on `RESTRICT` by Task 1 poisons every later run, and the failure would surface somewhere unrelated.
+Expected: `ON UPDATE CASCADE ON DELETE CASCADE`. A test database left on
+`RESTRICT` by Task 1 poisons every later run, and the failure would surface
+somewhere unrelated to the change that caused it.
 
 - [ ] **Step 2: Confirm the delete statement was never touched**
 
