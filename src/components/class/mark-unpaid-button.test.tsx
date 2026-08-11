@@ -88,6 +88,15 @@ describe('MarkUnpaidButton', () => {
     expect(screen.getByRole('button', { name: /mark unpaid/i })).toBeInTheDocument();
 
     release({ ok: true });
+
+    // Review F7. This test used to end at `release`, so the half that matters
+    // most went unasserted. The component states this contract in prose — "if
+    // that request later succeeds, the settled state renders, which is the
+    // honest outcome" — and it holds only because `done` is checked *above*
+    // the `confirming` branch. Tapped Keep or not, a POST that commits must
+    // not leave the row reading "Mark unpaid" over a payment now unpaid.
+    expect(await screen.findByText('Marked unpaid')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /mark unpaid/i })).toBeNull();
   });
 
   it('shows the server error and re-enables on a failed POST', async () => {

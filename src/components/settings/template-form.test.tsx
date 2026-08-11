@@ -245,5 +245,10 @@ describe('TemplateForm', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /go to recurring classes/i }));
     expect(fetchMock.mock.calls.length).toBe(callsAfterFirstSubmit);
+    // Review F8. The settled action must re-issue the *same* navigation the
+    // create did — the source held that path as two literals, and a drifted
+    // second one would send the teacher somewhere the create never went while
+    // every other assertion here still passed.
+    expect(routerPush).toHaveBeenNthCalledWith(2, '/settings/recurring');
   });
 });

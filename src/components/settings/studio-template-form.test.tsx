@@ -144,5 +144,8 @@ describe('StudioTemplateForm', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /go to studio classes/i }));
     expect(fetchMock.mock.calls.length).toBe(callsAfterFirstSubmit);
+    // Review F8, as in the class-template twin: one path, asserted on both the
+    // create push and the settled retry.
+    expect(routerPush).toHaveBeenNthCalledWith(2, '/settings/studio-classes');
   });
 });

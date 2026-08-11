@@ -104,6 +104,15 @@ function isAutoCancelCheck(v: string): v is AutoCancelCheck {
   return AUTO_CANCEL_OPTIONS.some((o) => o.value === v);
 }
 
+/**
+ * #40 (whole-branch review F8). Where a successful create navigates, written
+ * once. The push and the settled notice's retry are the *same* navigation —
+ * two literals is how a retry ends up somewhere the create did not go, and the
+ * notice's label ("Go to recurring classes") would then be a lie no test
+ * comparing one literal to itself could catch.
+ */
+const RECURRING_LIST_PATH = '/settings/recurring';
+
 const INITIAL_VALUES: TemplateFormValues = {
   teacherRoomId: '',
   classType: '',
@@ -248,7 +257,7 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         // commit, `created` is what stops a populated, re-enabled form inviting
         // the click that duplicates the teacher's whole schedule.
         setCreated(true);
-        router.push('/settings/recurring');
+        router.push(RECURRING_LIST_PATH);
       } else {
         // Say honestly what the edit reached: mutable upcoming instances
         // sync, booked ones keep their settings.
@@ -445,7 +454,7 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
           label="Created"
           actionLabel="Go to recurring classes"
           size="sm"
-          onAction={() => router.push('/settings/recurring')}
+          onAction={() => router.push(RECURRING_LIST_PATH)}
         />
       ) : (
         <Button type="submit" disabled={submitting}>

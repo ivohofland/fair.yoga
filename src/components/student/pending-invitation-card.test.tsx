@@ -103,7 +103,17 @@ describe('PendingInvitationCard', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /declining/i })).toBeDisabled());
     expect(cancel).toBeEnabled();
 
+    fireEvent.click(cancel);
     release({ ok: true });
+
+    // Review F7. This test used to end at `release`, asserting nothing about
+    // what the resolved request renders. Cancel cannot recall an in-flight
+    // POST, so a decline that lands after it must still settle — and that
+    // holds only because `done` is checked above the whole return, ahead of
+    // `confirmingDecline`. Otherwise the card reverts to Accept/Decline over
+    // an invitation that has already been declined.
+    expect(await screen.findByText(/^Declined/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^accept$/i })).toBeNull();
   });
 
   it('renders no decline confirmation, and fetches nothing, until the trigger is clicked', () => {

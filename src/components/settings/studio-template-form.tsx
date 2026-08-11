@@ -57,6 +57,13 @@ const DAY_OPTIONS = [
   { value: 6, label: 'Sunday' },
 ];
 
+/**
+ * #40 (whole-branch review F8). Written once, for the same reason as
+ * `template-form.tsx`'s twin: the create push and the settled notice's retry
+ * are one navigation, and a second literal is how they drift apart.
+ */
+const STUDIO_CLASSES_PATH = '/settings/studio-classes';
+
 const INITIAL_VALUES: StudioTemplateFormValues = {
   classType: '',
   dayOfWeek: 0,
@@ -124,7 +131,7 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         // #40. POST /api/studio-class-templates is not idempotent: a second
         // request creates a second template and a second generated window.
         setCreated(true);
-        router.push('/settings/studio-classes');
+        router.push(STUDIO_CLASSES_PATH);
       } else {
         setSuccess('Saved');
         router.refresh();
@@ -193,7 +200,7 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
           label="Created"
           actionLabel="Go to studio classes"
           size="sm"
-          onAction={() => router.push('/settings/studio-classes')}
+          onAction={() => router.push(STUDIO_CLASSES_PATH)}
         />
       ) : (
         <Button type="submit" disabled={submitting}>
