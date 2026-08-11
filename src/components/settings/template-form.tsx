@@ -9,6 +9,7 @@ import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
+import { SettledNotice } from '@/components/ui/settled-notice';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
 import { formatRoomLocation } from '@/lib/format';
 import { CANCEL_DEADLINE_OPTIONS, AUTO_CANCEL_OPTIONS } from '@/lib/class-options';
@@ -127,6 +128,7 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [created, setCreated] = useState(false);
 
   useEffect(() => {
     async function fetchRooms() {
@@ -169,6 +171,9 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // #40. A settled create must not be re-submittable, including by pressing
+    // Enter in a still-mounted field — the button is gone, the form is not.
+    if (created) return;
     if (!form.teacherRoomId) {
       setError('Select a room');
       return;
@@ -237,6 +242,12 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
       }
 
       if (mode === 'create') {
+        // #40. POST /api/class-templates is not idempotent: a second request
+        // creates a second template and regenerates a second set of bookable
+        // classes. The push below normally unmounts this form; when it does not
+        // commit, `created` is what stops a populated, re-enabled form inviting
+        // the click that duplicates the teacher's whole schedule.
+        setCreated(true);
         router.push('/settings/recurring');
       } else {
         // Say honestly what the edit reached: mutable upcoming instances
@@ -429,9 +440,18 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
       {error && <p className="text-sm text-danger">{error}</p>}
       {success && <p className="text-sm text-teal">{success}</p>}
 
-      <Button type="submit" disabled={submitting}>
-        {submitting ? 'Saving...' : mode === 'create' ? 'Create' : 'Save'}
-      </Button>
+      {created ? (
+        <SettledNotice
+          label="Created"
+          actionLabel="Go to recurring classes"
+          size="sm"
+          onAction={() => router.push('/settings/recurring')}
+        />
+      ) : (
+        <Button type="submit" disabled={submitting}>
+          {submitting ? 'Saving...' : mode === 'create' ? 'Create' : 'Save'}
+        </Button>
+      )}
     </form>
   );
 }

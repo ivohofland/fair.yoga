@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { TemplateForm } from './template-form';
+import { routerPush } from '../../../tests/setup/components';
 
 /**
  * #85. This form enumerated its thirteen fields three times — the `initial`
@@ -207,5 +208,42 @@ describe('TemplateForm', () => {
     fireEvent.click(button);
     expect(fetchMock.mock.calls.length).toBe(callsBeforeSubmit);
     expect(await screen.findByText(/min rate cannot exceed target rate/i)).toBeInTheDocument();
+  });
+
+  /**
+   * #40. POST /api/class-templates is not idempotent: a second request creates
+   * a second template AND regenerates a second set of bookable classes. On
+   * create this form pushed and reset `submitting` in a `finally`, so a push
+   * that never committed left a populated, re-enabled form — and the obvious
+   * second click duplicated the teacher's whole recurring schedule.
+   *
+   * The assertion is on the fetch count, not on rendered text: a partial fix
+   * that only changes a label would satisfy a text assertion while still
+   * allowing the second POST.
+   */
+  // G8
+  it('cannot submit twice when the create push commits nothing', async () => {
+    stubFetch();
+    render(<TemplateForm mode="create" />);
+
+    const roomSelect = await screen.findByLabelText('Room');
+    fireEvent.change(roomSelect, {
+      target: { value: '11111111-1111-4111-8111-111111111111' },
+    });
+    fireEvent.change(screen.getByLabelText('Class type'), {
+      target: { value: 'Vinyasa' },
+    });
+
+    const button = await screen.findByRole('button', { name: /create/i });
+    fireEvent.click(button);
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/settings/recurring'));
+
+    const callsAfterFirstSubmit = fetchMock.mock.calls.length;
+    expect(screen.queryByRole('button', { name: /^create$/i })).toBeNull();
+    expect(screen.getByText(/^Created/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /go to recurring classes/i }));
+    expect(fetchMock.mock.calls.length).toBe(callsAfterFirstSubmit);
   });
 });
