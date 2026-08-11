@@ -8,7 +8,7 @@ import {
   generateInstancesForTemplate,
   claimTemplateForGeneration,
 } from './class-generator';
-import { archiveOrUnarchiveTemplate } from './class-template-lifecycle';
+import { archiveOrUnarchiveTemplate, pauseOrResumeTemplate } from './class-template-lifecycle';
 
 // ===========================================================================
 // Pure logic tests — getNextOccurrences
@@ -812,6 +812,116 @@ describe('generateClassInstances (DB)', () => {
       include: { teacher: { select: { defaultTimezone: true } } },
     });
   }
+
+  describe('pauseOrResumeTemplate — a clash during generation (#164)', () => {
+    beforeEach(async () => {
+      await prisma.class.deleteMany({ where: { teacherId } });
+      await prisma.classTemplate.update({ where: { id: templateId }, data: { isActive: false } });
+    });
+
+    afterEach(async () => {
+      await prisma.class.deleteMany({ where: { teacherId } });
+      await prisma.classTemplate.update({ where: { id: templateId }, data: { isActive: true } });
+    });
+
+    function candidates(now: Date): Date[] {
+      return getNextOccurrences(1, now, 5)
+        .filter((d) => classStartInstant(d, '09:00', 'Europe/Amsterdam') > now)
+        .slice(0, 4);
+    }
+
+    const classRow = (date: Date) => ({
+      teacherId,
+      teacherRoomId,
+      templateId,
+      classType: 'Vinyasa',
+      date,
+      startTime: '09:00',
+      durationMinutes: 75,
+      roomCost: 40,
+      minRate: 15,
+      targetRate: 30,
+      minStudents: 4,
+      maxStudents: 12,
+      cancelDeadline: 'HOURS_24' as const,
+      autoCancelCheck: 'HOURS_2' as const,
+      status: 'open' as const,
+    });
+
+    /**
+     * Loses the race the old generator could not survive. The holder inserts
+     * the colliding row and holds it UNCOMMITTED, so the resume's pre-check
+     * (a plain read under READ COMMITTED — an uncommitted row is invisible)
+     * still calls that date free, and the resume's own insert then parks on
+     * the holder's *pending* unique-index entry for `(templateId, date)`.
+     *
+     * That pending-entry wait is the parking — no `FOR UPDATE` on the FK
+     * target is needed. Postgres performs an INSERT's unique-index check
+     * before its FK checks, so a same-key insert always sees the other
+     * transaction's pending entry and waits for it. The first design of this
+     * test instead held the `TeacherRoom` row `FOR UPDATE` and let the
+     * holder write its row afterwards, as the plan's lever described; that
+     * makes each inserter wait on the other — the resume's pending entry
+     * against the holder's `FOR UPDATE` — and deadlocks on *both* the old
+     * and the fixed generator (measured: 40P01, both tests, both versions).
+     * The row the resume parks on must be in flight when its insert runs,
+     * and the holder must not be waiting on anything the resume holds.
+     */
+    async function raceResumeAgainst(collide: Date): Promise<void> {
+      const holder = new PrismaClient();
+      let release!: () => void;
+      let collided!: () => void;
+      const released = new Promise<void>((r) => { release = r; });
+      const parked = new Promise<void>((r) => { collided = r; });
+
+      const holding = holder.$transaction(
+        async (tx) => {
+          await tx.class.create({ data: classRow(collide) });
+          collided();
+          await released;
+        },
+        { timeout: 20_000 },
+      );
+
+      // The holder's row is now in flight: invisible to the resume's
+      // pre-check, yet its pending unique entry already blocks the resume's
+      // insert. Start the resume and give it time to reach that insert.
+      await parked;
+      const resuming = pauseOrResumeTemplate(prisma, templateId, teacherId, 'active');
+      await new Promise((r) => setTimeout(r, 400));
+      release();
+      await holding;
+      await resuming;
+      await holder.$disconnect();
+    }
+
+    it('leaves isActive committed when the clash lands on the last free date', async () => {
+      const now = new Date();
+      const dates = candidates(now);
+      // Only the last date is free, so the resume issues exactly one insert.
+      for (const d of dates.slice(0, 3)) await prisma.class.create({ data: classRow(d) });
+
+      await raceResumeAgainst(dates[3]!);
+
+      const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: templateId } });
+      expect(after.isActive).toBe(true);
+      expect(await prisma.class.count({ where: { templateId } })).toBe(4);
+    });
+
+    it('still fills the other free date when the clash lands on the first', async () => {
+      const now = new Date();
+      const dates = candidates(now);
+      for (const d of dates.slice(0, 2)) await prisma.class.create({ data: classRow(d) });
+
+      await raceResumeAgainst(dates[2]!);
+
+      const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: templateId } });
+      expect(after.isActive).toBe(true);
+      // dates[3] is the one nothing collided with — it must exist.
+      expect(await prisma.class.count({ where: { templateId, date: dates[3]! } })).toBe(1);
+      expect(await prisma.class.count({ where: { templateId } })).toBe(4);
+    });
+  });
 });
 
 // ===========================================================================
