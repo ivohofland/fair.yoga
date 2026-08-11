@@ -357,7 +357,7 @@ export async function autoCancelClasses(
           recipientId: fresh.teacherId,
           type: 'class_cancelled',
           title: 'Class auto-cancelled',
-          body: `${fresh.classType} was cancelled — only ${activeCount} of ${fresh.minStudents} minimum students registered.`,
+          body: `${fresh.classType} class on ${formatDayHeader(fresh.date)} at ${fresh.startTime} was cancelled — only ${activeCount} of ${fresh.minStudents} minimum students registered.`,
           relatedClassId: cls.id,
         });
         await createBulkNotifications(tx, notifications);

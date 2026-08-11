@@ -186,10 +186,30 @@ describe('class transitions (DB, timezone-aware)', () => {
     const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
     expect(updated.status).toBe('cancelled');
 
-    const teacherNote = await prisma.notification.findFirst({
+    // `findFirstOrThrow`, not `findFirst` + a null check: the three body
+    // assertions below must be reported when they fail, not skipped past by a
+    // conditional that TypeScript needed for narrowing.
+    const teacherNote = await prisma.notification.findFirstOrThrow({
       where: { recipientType: 'teacher', recipientId: teacherId, relatedClassId: cls.id },
     });
-    expect(teacherNote).not.toBeNull();
+
+    // #200. The teacher's row is the one that can never link: the inbox page
+    // (`app/(teacher)/inbox/page.tsx`) selects no `relatedClass`, so
+    // `NotificationList`'s `hrefById` arrives undefined and every teacher row
+    // renders inert (filed as #201). The body is not the best channel here —
+    // it is the only one. A teacher running two weekly Hatha classes cannot
+    // otherwise tell which one was cancelled.
+    //
+    // Three separate `toContain`s rather than one whole-string equality: the
+    // realistic regression is a field being dropped in an edit, and a single
+    // equality assertion goes red on any rewording, which teaches the next
+    // person to loosen it.
+    expect(teacherNote.body).toContain('Hatha');
+    expect(teacherNote.body).toContain(formatDayHeader(cls.date));
+    expect(teacherNote.body).toContain('18:00');
+    // The clause that makes this body worth keeping distinct from the
+    // student's — it says WHY, and only this path knows.
+    expect(teacherNote.body).toContain('only 0 of 4 minimum students registered');
     await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
     await prisma.class.delete({ where: { id: cls.id } });
   });
