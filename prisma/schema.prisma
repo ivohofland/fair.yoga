@@ -259,6 +259,13 @@ model TeacherBlock {
 // SPACES
 // ============================================================================
 
+/// Carries two partial unique indexes Prisma cannot express and therefore
+/// cannot show: `Room_public_identity_unique` on (address, floor, roomName)
+/// WHERE isPublic = true, and `Room_private_identity_unique` on
+/// (createdById, address, floor, roomName) WHERE isPublic = false (#196).
+/// Both are invisible to `migrate diff`, so neither will appear as drift and
+/// neither will be dropped — and equally neither will appear in this file
+/// unless someone keeps this comment true.
 model Room {
   id          String   @id @default(uuid())
   venueName   String
@@ -304,6 +311,12 @@ model TeacherRoom {
 // CLASSES
 // ============================================================================
 
+/// Carries a partial unique index Prisma cannot express and therefore cannot
+/// show: `ClassTemplate_teacher_slot_unique` on (teacherId, dayOfWeek,
+/// startTime) WHERE isArchived = false (#196). It is invisible to `migrate
+/// diff`, so it will not appear as drift and will not be dropped — and
+/// equally will not appear in this file unless someone keeps this comment
+/// true.
 model ClassTemplate {
   id              String          @id @default(uuid())
   teacherId       String
@@ -363,6 +376,11 @@ model ClassTemplate {
   classes     Class[]
 }
 
+/// Carries a partial unique index Prisma cannot express and therefore cannot
+/// show: `Class_teacher_slot_unique` on (teacherId, date, startTime) WHERE
+/// status <> 'cancelled' (#196). It is invisible to `migrate diff`, so it
+/// will not appear as drift and will not be dropped — and equally will not
+/// appear in this file unless someone keeps this comment true.
 model Class {
   id                   String          @id @default(uuid())
   teacherId            String
@@ -400,6 +418,12 @@ model Class {
   @@unique([templateId, date])
 }
 
+/// Carries a partial unique index Prisma cannot express and therefore cannot
+/// show: `StudioClassTemplate_teacher_slot_unique` on (teacherId, dayOfWeek,
+/// startTime) WHERE isArchived = false (#196). It is invisible to `migrate
+/// diff`, so it will not appear as drift and will not be dropped — and
+/// equally will not appear in this file unless someone keeps this comment
+/// true.
 model StudioClassTemplate {
   id              String   @id @default(uuid())
   teacherId       String
@@ -456,6 +480,11 @@ model StudioClassTemplate {
   studioClasses StudioClass[]
 }
 
+/// Carries a partial unique index Prisma cannot express and therefore cannot
+/// show: `StudioClass_teacher_slot_unique` on (teacherId, date, startTime)
+/// WHERE cancelledAt IS NULL (#196). It is invisible to `migrate diff`, so it
+/// will not appear as drift and will not be dropped — and equally will not
+/// appear in this file unless someone keeps this comment true.
 model StudioClass {
   id              String    @id @default(uuid())
   teacherId       String
