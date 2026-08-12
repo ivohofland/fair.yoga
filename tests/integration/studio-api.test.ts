@@ -238,9 +238,12 @@ describe('POST /api/studio-class-templates', () => {
   // also generates the four-week window, so a duplicate template would have
   // meant a second full four-week set of bookable studio classes, not just a
   // second row. dayOfWeek 3 is 'Owner Template' and every PATCH fixture's
-  // slot ('18:00' through the '18:10' of 'Resume Reports', none archived by
-  // suite end) — '18:11'/'18:12' continue that sequence past its highest
-  // claimed minute.
+  // slot ('18:00' through the '18:10' of 'Resume Reports') — three of those
+  // ('Toggle Target' 18:01, 'Archive Window' 18:03, 'Twice Archived' 18:08)
+  // end archived, which frees their slot again, but '18:11'/'18:12' still
+  // continue the sequence past its highest claimed minute rather than reuse
+  // one of theirs, so this block does not depend on which earlier fixtures
+  // ended archived and which stayed live.
   describe('POST /api/studio-class-templates is retry-safe on the slot key (#196)', () => {
     const post = (body: unknown) => send('POST', ownerToken, '/api/studio-class-templates', body);
 
