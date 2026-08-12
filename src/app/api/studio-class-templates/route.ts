@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
@@ -11,6 +12,7 @@ import {
 import { createStudioClassTemplateSchema } from '@/lib/schemas';
 import { generateStudioInstancesForTemplate } from '@/services/studio-class-generator';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import type { GenerationResult } from '@/lib/generation';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -54,7 +56,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // before generation starts, so `generateStudioInstancesForTemplate`'s
   // `createManyAndReturn` (`skipDuplicates: true`) never gets a chance to
   // raise anything here even though it shares this transaction.
-  let template;
+  let template: {
+    created: Prisma.StudioClassTemplateGetPayload<{
+      include: { teacher: { select: { defaultTimezone: true } } };
+    }>;
+    generation: GenerationResult;
+  };
   try {
     template = await prisma.$transaction(async (tx) => {
       const created = await tx.studioClassTemplate.create({
