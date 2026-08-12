@@ -66,10 +66,10 @@ disagreement is live** — see "The two that do not" below before assuming this
 section describes a solved problem, and "The slot key is a wait edge" below
 before assuming `id` is the only thing that orders two `Class` rows: since #196
 a unique index on `(teacherId, date, startTime)` makes plain INSERTs take part
-too, which is a case the five-site enumeration is built not to find. An earlier version of this section said
-"three sites" and "all three take it that way"; both were false, and an
-enumeration asserted as complete is exactly what stops the next reader looking
-for the ones it missed.
+too, which is a case the five-site enumeration is built not to find. An
+earlier version of this section said "three sites" and "all three take it
+that way"; both were false, and an enumeration asserted as complete is
+exactly what stops the next reader looking for the ones it missed.
 
 | Site | How it locks | Order it takes |
 |---|---|---|
@@ -102,7 +102,13 @@ a call):
    still only inserts. Re-run at that time: this grep returned 14 on the branch
    and 14 on `main`, so the candidate set did not move. The occupancy
    `findMany` those generators gained, and the `class.count` on the class
-   family's resume, are reads — no locks under READ COMMITTED, no edges;
+   family's resume, are reads — no locks under READ COMMITTED, no edges.
+   **True of the row, false since #196 of its index entries** — see "The
+   slot key is a wait edge" below: a bare `create`/`createManyAndReturn`
+   still cannot conflict on the row it inserts, but it can now conflict on
+   `(teacherId, date, startTime)`, which is why this check alone no longer
+   bounds the candidate set for `Class`, and neither does the multiplicity
+   filter below;
 2. `'"Class"'` — the raw statements. All but one are single-id `FOR UPDATE`:
    four written inline, plus `lockClassRow`'s body (itself called from exactly
    four places, grep 3). The exception is `withdrawWaitingEntriesForTeacher`'s
@@ -121,8 +127,14 @@ a call):
 Each candidate was then classified by multiplicity — can this transaction end
 up holding more than one `Class` row lock? Single-`id` writes and single-`id`
 `FOR UPDATE`s cannot; a loop or a multi-row predicate can. That leaves the five
-above. Note `autoCancelClasses` is *not* one of them: it opens a separate
-`db.$transaction` per class, so it holds one row lock at a time.
+above for lock-ordering *within* `Class`, the concern this section derives.
+**It is not the right bound for `Class` as a whole any more.** Since #196 a
+single-row write can be half of a slot-key deadlock without ever holding a
+second `Class` row lock — see "The slot key is a wait edge" below, where
+`updateClass` joins the candidate set on exactly that basis despite locking
+only one row. Note `autoCancelClasses` is *not* one of the five multi-lock
+sites: it opens a separate `db.$transaction` per class, so it holds one row
+lock at a time.
 
 **The fourth path, which none of those checks would find: an FK lock taken
 from a CHILD table, by an `INSERT` that never mentions `Class` at all.**
@@ -381,16 +393,16 @@ is the same condition as the rest of this document. If
 predicate that lets two live templates share a weekday and time, the pairing
 above becomes live and it will not announce itself.
 
-**Task 6c made this legible, not impossible.** The premise it started from —
-that `classifyApiError` had no branch for `40P01` and let this reach a teacher
-as a bare 500 — did not hold: an unrelated, already-merged PR (#174) had
-already given `40P01` a branch, grouped with `55P03`/`40001`/the matching
-Prisma codes under "lost a contention race, not a bad request"
+**#196 (PR #208) made this legible, not impossible.** The premise it started
+from — that `classifyApiError` had no branch for `40P01` and let this reach
+a teacher as a bare 500 — did not hold: an unrelated, already-merged PR
+(#174) had already given `40P01` a branch, grouped with `55P03`/`40001`/the
+matching Prisma codes under "lost a contention race, not a bad request"
 (`isTransientDbError`, above `isTerminalStatusViolation`'s `23514` and
 `P2002`'s 409 in `src/lib/api-errors.ts`). Reproduced directly rather than
-trusted: two real
-`updateClass` writes racing over `Class_teacher_slot_unique` with no
-synchronisation, throwaway database, hit on attempt 5 of a 150-attempt budget.
+trusted: two real `updateClass` writes racing over
+`Class_teacher_slot_unique` with no synchronisation, throwaway database, hit
+on attempt 5 of a 150-attempt budget.
 The error was a `PrismaClientUnknownRequestError` with no `.code` property and
 `code: "40P01"` embedded in its message — already the exact shape
 `isTransientDbError` matches — and `classifyApiError` already answered 503,
