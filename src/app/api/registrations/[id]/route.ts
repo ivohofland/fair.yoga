@@ -95,7 +95,7 @@ export const PUT = withErrorHandler(async (
   if ('error' in parsed) return parsed.error;
 
   const updated = await prisma.registration.update({
-    where: { id, status: { notIn: ['cancelled', 'late_cancel'] } },
+    where: { id },
     data: { status: parsed.data.status },
   });
 
@@ -156,17 +156,24 @@ export const DELETE = withErrorHandler(async (
     const deadline = new Date(classStart.getTime() - hours * 60 * 60 * 1000);
 
     if (new Date() > deadline) {
-      // Past deadline — mark as late_cancel (still charged)
-      // Status in the WHERE, not just the pre-check at :143. That pre-check
-      // is a read-then-write and this handler opens no transaction, so two
-      // concurrent cancels both passed it and both reached `handleSpotFreed`
-      // — which, inside the final hour, broadcasts to every waiting student
-      // with no capacity check and no record that it already did. Scoping the
-      // source means exactly one racer gets there, so the broadcast needs no
-      // dedupe of its own (there is nothing on WaitlistEntry or Notification
-      // to key one on).
+      // Past deadline — mark as late_cancel (still charged).
+      //
+      // Status in the WHERE, not just the pre-check above: that pre-check is a
+      // read-then-write and this handler opens no transaction, so two
+      // concurrent cancels both pass it.
+      //
+      // NOT for the doubled broadcast the full-cancel branch below guards
+      // against — this branch is reached only when `now > deadline`, and
+      // `getWaitlistWindow` returns `frozen` for exactly that, so
+      // `handleSpotFreed` sends nothing here. It is for money. `late_cancel`
+      // is in `CHARGED_STATUSES` (`class-lifecycle.ts`) and `cancelled` is
+      // not, so an unscoped write here can land *after* a teacher's free
+      // cancel and silently rewrite `cancelled` → `late_cancel`, billing a
+      // student for a class the teacher had let them out of. The scope also
+      // gives the loser of two concurrent late cancels the 409 the sibling
+      // branch already gives, instead of a second 200.
       const updated = await prisma.registration.updateMany({
-        where: { id },
+        where: { id, status: { notIn: ['cancelled', 'late_cancel'] } },
         data: { status: 'late_cancel', cancelledAt: new Date() },
       });
       if (updated.count === 0) {

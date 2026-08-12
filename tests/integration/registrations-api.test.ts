@@ -84,8 +84,19 @@ async function makeClass(maxStudents: number): Promise<string> {
  * that zone: building them from UTC getters directly would skew the
  * resulting instant by the zone's UTC offset.
  */
-async function makeLateCancelClass(maxStudents: number): Promise<string> {
-  const target = new Date(Date.now() + 3 * 60 * 60 * 1000);
+/**
+ * A class close enough that its cancel deadline has already passed, so a
+ * student's DELETE takes the `late_cancel` branch.
+ *
+ * `minuteOffset` is required and must differ per caller:
+ * `Class_teacher_slot_unique` (#196 branch 1) forbids one teacher two live
+ * classes at one `(date, startTime)`, and `startTime` here is truncated to
+ * `HH:MM`, so two callers in the same minute collide on the index rather than
+ * on anything the test is about. Any offset is safe — the deadline is hours
+ * behind either way.
+ */
+async function makeLateCancelClass(maxStudents: number, minuteOffset: number): Promise<string> {
+  const target = new Date(Date.now() + 3 * 60 * 60 * 1000 + minuteOffset * 60 * 1000);
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Europe/Amsterdam',
     year: 'numeric',
@@ -885,7 +896,7 @@ describe('registration writes return no stored income tier', () => {
   });
 
   it('DELETE past the deadline (late cancel) returns the id and status, and nothing else', async () => {
-    const classId = await makeLateCancelClass(5);
+    const classId = await makeLateCancelClass(5, 0);
     const created = await post(studentTokens[0]!, { classId });
     const { data } = (await created.json()) as { data: { id: string } };
 
@@ -1044,11 +1055,19 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
     // a plain Promise.all cannot force.
     const holder = new PrismaClient();
     let release!: () => void;
+    let locked!: () => void;
     const released = new Promise<void>((r) => { release = r; });
+    // The handshake, without which the lever is decorative: `$transaction`
+    // returns before its callback has run, and a fresh PrismaClient has to
+    // connect and start its engine first, so the requests below can finish
+    // before the lock is ever taken.
+    const parked = new Promise<void>((r) => { locked = r; });
     const holding = holder.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Registration" WHERE id = ${registrationId} FOR UPDATE`;
+      locked();
       await released;
     }, { timeout: 20_000 });
+    await parked;
 
     const del = () => fetch(`${BASE_URL}/api/registrations/${registrationId}`, {
       method: 'DELETE', headers: cookie(cancellerToken),
@@ -1057,7 +1076,16 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
 
     // Long enough that both requests have read `registered` and parked on
     // the holder's lock, short enough not to approach any timeout.
+    let settled = false;
+    void both.then(() => { settled = true; });
     await new Promise((r) => setTimeout(r, 1000));
+
+    // The lever is asserted, not assumed. Without this, a slow route compile
+    // or a loaded machine lets both requests finish BEFORE the release, the
+    // second one 409s off its own pre-check instead of the guard under test,
+    // and the whole test goes green against the bug — which is exactly how
+    // this block's first draft passed before the fix existed.
+    expect(settled).toBe(false);
     release();
     await holding;
     const [a, b] = await both;
@@ -1075,6 +1103,54 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
 
     // Either request can win, so the loser is identified rather than assumed.
     expect([a.status, b.status].sort()).toEqual([200, 409]);
+  });
+
+  it('does not let a raced late cancel rewrite a free cancel into a charged one', async () => {
+    // The late-cancel branch, which the fixture above cannot reach — it places
+    // `now` BEFORE the deadline on purpose, so both its cases take the
+    // full-cancel path. This branch shipped without its scope for exactly that
+    // reason: the comment claimed a guard no test could observe.
+    //
+    // What is at stake here is money, not notifications. `late_cancel` is in
+    // CHARGED_STATUSES and `cancelled` is not, so an unscoped write landing
+    // second silently bills a student for a class someone had already let them
+    // out of for free.
+    const classId = await makeLateCancelClass(5, 20);
+    const created = await post(studentTokens[0]!, { classId });
+    const { data } = (await created.json()) as { data: { id: string } };
+
+    const holder = new PrismaClient();
+    let release!: () => void;
+    let locked!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const parked = new Promise<void>((r) => { locked = r; });
+    const holding = holder.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Registration" WHERE id = ${data.id} FOR UPDATE`;
+      locked();
+      await released;
+    }, { timeout: 20_000 });
+    await parked;   // see the case above for why this handshake is required
+
+    const del = () => fetch(`${BASE_URL}/api/registrations/${data.id}`, {
+      method: 'DELETE', headers: cookie(studentTokens[0]!),
+    });
+    const both = Promise.all([del(), del()]);
+
+    let settled = false;
+    void both.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(settled).toBe(false);
+    release();
+    await holding;
+    const [a, b] = await both;
+    await holder.$disconnect();
+
+    // One cancel, one refusal — the contract the full-cancel branch already
+    // honours, asserted here so the two branches cannot drift apart.
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: data.id } });
+    expect(after.status).toBe('late_cancel');
   });
 
   it('409s a second cancel of a registration already cancelled', async () => {
