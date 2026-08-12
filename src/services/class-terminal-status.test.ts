@@ -68,14 +68,24 @@ let teacherRoomId: string;
 let studentId: string;
 const classIds: string[] = [];
 
+// Counter-derived startTime: every test in this file calls makeClass once
+// for the same teacher/date, and several tests deliberately drive their
+// class to a non-cancelled terminal state ('completed') that keeps
+// occupying its slot under Class_teacher_slot_unique for the rest of the
+// run. No test here reads or asserts the created row's literal startTime,
+// so a distinct minute per call removes the collision without touching any
+// assertion.
+let makeClassCounter = 0;
+
 async function makeClass(opts: { status: ClassStatus }): Promise<{ classId: string }> {
+  makeClassCounter += 1;
   const cls = await prisma.class.create({
     data: {
       teacherId,
       teacherRoomId,
       classType: 'Terminal Status Test',
       date: new Date('2099-06-01'),
-      startTime: '09:00',
+      startTime: `09:${String(makeClassCounter).padStart(2, '0')}`,
       durationMinutes: 60,
       roomCost: 20,
       minRate: 15,
