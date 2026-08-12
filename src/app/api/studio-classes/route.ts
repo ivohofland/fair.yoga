@@ -49,9 +49,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     });
     return respondOk(studioClass, 201);
   } catch (err) {
-    // The slot key, not the template key. `@@unique([templateId, date])` also
-    // raises P2002 here and means something else entirely, so the column list
-    // is what tells them apart.
+    // The slot key, not the template key. `@@unique([templateId, date])`
+    // cannot raise P2002 here — this create never sets `templateId` (a
+    // manually logged class always has one), so it is NULL, and Postgres
+    // treats NULLs as distinct. The column-list match still matters: it is
+    // what would tell the two keys apart the day this route starts
+    // accepting a `templateId`, not what tells them apart today.
     if (isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])) {
       return respondError(
         'You already have a studio class at that date and time.',
