@@ -104,14 +104,14 @@ export async function claimStudioTemplateForGeneration(
  *     grep for it. It is a read-then-write and so is not race-safe on its own;
  *   - `createManyAndReturn({ skipDuplicates: true })` compiles to a BARE
  *     `ON CONFLICT DO NOTHING` — no conflict target, so it covers every unique
- *     constraint on the table, including the partial index #196 adds:
- *     `StudioClass_teacher_slot_unique` on (teacherId, date, startTime) WHERE
- *     "cancelledAt" IS NULL. That is what makes a clash cost only its own
- *     date. Measured the same way as the class family's twin claim: this
- *     file's "names a date lost to a concurrent insert as raced, not as
- *     filled" test parks a holder row on a date/time this key also covers,
- *     and the generator's own transaction still creates the other three
- *     dates and commits rather than aborting.
+ *     constraint on the table, including `StudioClass_teacher_slot_unique` on
+ *     (teacherId, date, startTime) WHERE "cancelledAt" IS NULL — the partial
+ *     index #196 added. That is what makes a clash cost only its own date.
+ *     Pinned by this file's "names a date lost to a concurrent insert as
+ *     raced, not as filled" test: a holder row with `templateId: null` parks
+ *     on a date/time this key covers, isolated from `@@unique([templateId,
+ *     date])`, and the generator's own transaction still creates the other
+ *     three dates and commits rather than aborting.
  *
  * This function's P2002 hedge used to document the same 25P02 trap the class
  * family's did (#164): a caught `P2002` inside an interactive transaction
@@ -171,6 +171,9 @@ export async function generateStudioInstancesForTemplate(
     // Mirrors the predicate `StudioClass_teacher_slot_unique` carries (`WHERE
     // "cancelledAt" IS NULL`); the index backs it since #196; this pre-check
     // is what names the reason, not what enforces it.
+    // Widen or narrow one without the other and this pre-check starts
+    // disagreeing with the constraint that backs it — see the class family's
+    // equivalent tripwire (`class-generator.ts`) and the spec's §4.1.
     if (onDate.some((c) => c.startTime === template.startTime && c.cancelledAt === null)) {
       skipped.push({ date, reason: 'slot_taken' });
       continue;

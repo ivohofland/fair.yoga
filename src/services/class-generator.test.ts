@@ -893,7 +893,15 @@ describe('generateClassInstances (DB)', () => {
             data: {
               teacherId,
               teacherRoomId,
-              templateId,
+              // `null`, deliberately, not this template's own id: with the
+              // template's `templateId` the holder also collides on the
+              // pre-existing `@@unique([templateId, date])`, so this test
+              // would pass byte-identically with `Class_teacher_slot_unique`
+              // dropped. `null` isolates the collision to the slot key —
+              // and is the production shape too: a standalone class racing
+              // the nightly `api/cron/generate-classes` sweep onto a
+              // template's slot.
+              templateId: null,
               classType: 'Vinyasa',
               date: collide,
               startTime: '09:00',

@@ -83,13 +83,14 @@ type TemplateWithTimezone = Prisma.ClassTemplateGetPayload<{
  *     it. It is a read-then-write and so is not race-safe on its own;
  *   - `createManyAndReturn({ skipDuplicates: true })` compiles to a BARE
  *     `ON CONFLICT DO NOTHING` — no conflict target, so it covers every unique
- *     constraint on the table, including the partial index #196 added.
- *     That is what makes a clash cost only its own date. Since #196 that
- *     backstop exists: `Class_teacher_slot_unique` on (teacherId, date,
- *     startTime) WHERE status <> 'cancelled'. The bare `ON CONFLICT DO
- *     NOTHING` was measured absorbing exactly that index — inside a
- *     transaction, which then went on to run another statement and commit —
- *     so a slot race now costs its own date and nothing else.
+ *     constraint on the table, including `Class_teacher_slot_unique` on
+ *     (teacherId, date, startTime) WHERE status <> 'cancelled' — the partial
+ *     index #196 added. That is what makes a clash cost only its own date,
+ *     inside a transaction that then goes on to run another statement and
+ *     commit. Pinned by `src/services/class-generator.test.ts`, "names a date
+ *     lost to a concurrent insert as raced, not as filled" — a holder row
+ *     with `templateId: null`, so the collision is isolated to the slot key
+ *     rather than riding along on `@@unique([templateId, date])` too.
  *
  * This function used to claim it was idempotent via "`@@unique([templateId,
  * date])` + P2002-skip". It was not, and the correction is the reason this
@@ -158,9 +159,9 @@ export async function generateInstancesForTemplate(
       continue;
     }
 
-    // Mirrors the predicate #196's index carries (`WHERE "status" <>
-    // 'cancelled'`); the index backs it since #196; this pre-check is what
-    // names the reason, not what enforces it.
+    // Mirrors the predicate `Class_teacher_slot_unique` carries (`WHERE
+    // "status" <> 'cancelled'`); the index backs it since #196; this
+    // pre-check is what names the reason, not what enforces it.
     // Widen or narrow one without the other and this pre-check starts
     // disagreeing with the constraint that backs it — see the spec's §4.1.
     if (onDate.some((c) => c.startTime === template.startTime && c.status !== 'cancelled')) {
