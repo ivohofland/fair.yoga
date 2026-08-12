@@ -685,6 +685,71 @@ describe('/api/studio-classes', () => {
     ).toBeNull();
   });
 
+  // `StudioClass_teacher_slot_unique` is (teacherId, date, startTime) WHERE
+  // cancelledAt IS NULL — the six indexes #196 added constrain every write,
+  // not just creates (Task 6b). This route's own `prisma.studioClass.update`
+  // has two independent ways back into that partial scope: changing
+  // `startTime` on an already-live row, or clearing `cancelledAt` back to
+  // null on a row that was cancelled. `updateStudioClassSchema` has no
+  // `date`, so both cases below share one fixed date and only vary
+  // `startTime`/`cancelledAt`.
+  describe('PUT /api/studio-classes/[id] collides on the slot key (#196)', () => {
+    const SLOT_DATE = new Date('2027-05-10');
+
+    const makeStudioClass = (startTime: string, over: Record<string, unknown> = {}) =>
+      prisma.studioClass.create({
+        data: {
+          teacherId: ownerId,
+          classType: 'PUT Slot',
+          date: SLOT_DATE,
+          startTime,
+          durationMinutes: 60,
+          location: 'Some Studio',
+          hourlyRate: 45,
+          ...over,
+        },
+      });
+
+    // Scoped to this block's own classType, so it can run before the
+    // top-level afterAll without touching studioClassId or any other fixture.
+    afterAll(async () => {
+      await prisma.studioClass.deleteMany({ where: { teacherId: ownerId, classType: 'PUT Slot' } });
+    });
+
+    it('refuses a startTime change onto a slot another live studio class already holds', async () => {
+      await makeStudioClass('12:00');
+      const mover = await makeStudioClass('12:15');
+
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${mover.id}`, {
+        startTime: '12:00',
+      });
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as { error: { code: string } };
+      expect(json.error.code).toBe('DUPLICATE_STUDIO_SLOT');
+
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: mover.id } });
+      expect(after.startTime).toBe('12:15');
+    });
+
+    // The two rows can coexist at creation: `cancelled` starts outside the
+    // partial index (`cancelledAt` is not null), so it never collided with
+    // `occupied`. Clearing `cancelledAt` is what re-enters the index.
+    it('refuses un-cancelling into a slot another live studio class already holds', async () => {
+      await makeStudioClass('12:30');
+      const cancelled = await makeStudioClass('12:30', { cancelledAt: new Date('2027-05-01') });
+
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${cancelled.id}`, {
+        cancelledAt: null,
+      });
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as { error: { code: string } };
+      expect(json.error.code).toBe('DUPLICATE_STUDIO_SLOT');
+
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: cancelled.id } });
+      expect(after.cancelledAt).not.toBeNull();
+    });
+  });
+
   describe('POST /api/studio-classes is retry-safe on the slot key (#196)', () => {
     // '2027-04-12' is a date no fixture above touches, so ownerId's slot
     // uniqueness ((teacherId, date, startTime) WHERE cancelledAt IS NULL) has
