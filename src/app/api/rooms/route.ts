@@ -57,8 +57,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const isPublic = body.isPublic ?? true;
 
-  // No pre-check here on purpose. `Room` has exactly two unique indexes —
-  // `Room_public_identity_unique` and `Room_private_identity_unique` — and
+  // No pre-check here on purpose. `Room` has exactly two identity indexes —
+  // `Room_public_identity_unique` and `Room_private_identity_unique` (plus
+  // `Room_pkey` on `id`, which this create cannot collide on) — and
   // the catch below matches both column shapes, so no `P2002` this create
   // can raise ever reaches the generic fallback in `withErrorHandler`
   // (`classifyApiError`'s `warn`, src/lib/api-errors.ts). A `findFirst`
@@ -92,7 +93,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       return respondError(
         isPublic
           ? 'A public room at this address already exists'
-          : 'You already have a room at this address',
+          // `floor`/`roomName` both default to `""` and are optional
+          // free-text, so two genuinely different private rooms at one
+          // address, both left blank, collide here too — names the way out,
+          // not just the collision.
+          : 'You already have a room at this address. Add a floor or room name to tell them apart.',
         409,
         'DUPLICATE_ROOM',
       );

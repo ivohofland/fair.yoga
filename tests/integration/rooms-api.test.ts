@@ -511,7 +511,15 @@ describe('POST /api/rooms dedupes both branches (#196)', () => {
     expect((await post(body, creatorToken)).status).toBe(201);
     const second = await post(body, creatorToken);
     expect(second.status).toBe(409);
-    expect((await second.json()).error.code).toBe('DUPLICATE_ROOM');
+    const json = (await second.json()) as { error: { code: string; message: string } };
+    expect(json.error.code).toBe('DUPLICATE_ROOM');
+    // The private and public 409s share a code — the message is the only
+    // thing that tells them apart, and it also names the way out (#196 PR
+    // review, D3): `floor`/`roomName` both default to `""`, so two genuinely
+    // different rooms at one address, both left blank, land here too.
+    expect(json.error.message).toBe(
+      'You already have a room at this address. Add a floor or room name to tell them apart.',
+    );
   });
 
   it('still lets a DIFFERENT teacher keep their own private room at that address', async () => {
@@ -597,8 +605,12 @@ describe('PUT /api/rooms/[id] collides on the slot key (#196)', () => {
 
     const res = await put(creatorToken, mover.id, { roomName: 'Occupied' });
     expect(res.status).toBe(409);
-    const json = (await res.json()) as { error: { code: string } };
+    const json = (await res.json()) as { error: { code: string; message: string } };
     expect(json.error.code).toBe('DUPLICATE_ROOM');
+    // Same message the POST arm above pins — the PUT catch shares its wording.
+    expect(json.error.message).toBe(
+      'You already have a room at this address. Add a floor or room name to tell them apart.',
+    );
 
     const after = await prisma.room.findUniqueOrThrow({ where: { id: mover.id } });
     expect(after.roomName).toBe('Mover');

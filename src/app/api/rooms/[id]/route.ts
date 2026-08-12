@@ -118,7 +118,11 @@ export const PUT = withErrorHandler(async (
       return respondError(
         parsed.data.isPublic === true
           ? 'A public room at this address already exists'
-          : 'You already have a room at this address',
+          // `floor`/`roomName` both default to `""` and are optional
+          // free-text, so two genuinely different private rooms at one
+          // address, both left blank, collide here too — names the way out,
+          // not just the collision.
+          : 'You already have a room at this address. Add a floor or room name to tell them apart.',
         409,
         'DUPLICATE_ROOM',
       );
