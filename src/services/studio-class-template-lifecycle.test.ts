@@ -61,36 +61,61 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
   let otherTeacherId: string;
   let otherAccountId: string;
 
-  const makeTemplate = (classType: string) =>
-    prisma.studioClassTemplate.create({
+  // Counter-derived startTime: this block calls makeTemplate ~16 times for
+  // one teacher/dayOfWeek, and most tests never archive their template (the
+  // 'forbidden' cases, and several 'keeps'/'records' cases where archiving
+  // matches nothing to withdraw but still runs against a template that
+  // stays unarchived until its own later un-archive, if any) — so, mirroring
+  // the class family's equivalent block, one unarchived leftover blocks
+  // every later makeTemplate call under StudioClassTemplate_teacher_slot_unique
+  // before it even creates a row. No test reads or asserts a created
+  // template's literal startTime, so a distinct minute per call removes the
+  // collision without touching any assertion.
+  let makeTemplateCounter = 0;
+  const makeTemplate = (classType: string) => {
+    makeTemplateCounter += 1;
+    return prisma.studioClassTemplate.create({
       data: {
         teacherId,
         classType,
         dayOfWeek: 3,
-        startTime: '09:30',
+        startTime: `09:${String(30 + makeTemplateCounter).padStart(2, '0')}`,
         durationMinutes: 60,
         location: 'Studio Loft',
         hourlyRate: 45,
       },
     });
+  };
 
   // Closes over the block's own teacherId, like the sibling block's
   // makeTemplate does. `cancelledAt` stands in for the class family's
   // `status`: `StudioClass` has no status column at all.
-  const makeClass = (templateId: string, opts: { date: Date; cancelledAt?: Date | null }) =>
-    prisma.studioClass.create({
+  //
+  // Counter-derived startTime, for the same reason as the class family's
+  // equivalent makeClass: several tests here leave their StudioClass
+  // uncancelled at a recurring `future()`/`futureOn(n)` date (an
+  // already-cancelled one, a kept survivor, or a forbidden request that
+  // touches nothing), so a later test's create at the same date can collide
+  // under StudioClass_teacher_slot_unique once the template-level collision
+  // above stops masking it. No test here reads or asserts the created
+  // class's literal startTime.
+  let makeClassCounter = 0;
+  const makeClass = (templateId: string, opts: { date: Date; cancelledAt?: Date | null }) => {
+    makeClassCounter += 1;
+    return prisma.studioClass.create({
       data: {
         teacherId,
         templateId,
         classType: 'Archive Rule',
         date: opts.date,
-        startTime: '09:00',
+        startTime: `09:${String(makeClassCounter).padStart(2, '0')}`,
         durationMinutes: 60,
         location: 'Studio Loft',
         hourlyRate: 45,
         cancelledAt: opts.cancelledAt ?? null,
       },
     });
+  };
 
   /** Narrows to the archiving arm — see the class family's test for why. */
   const expectArchived = (result: Awaited<ReturnType<typeof archiveOrUnarchiveStudioTemplate>>) => {
@@ -516,18 +541,26 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
   let otherTeacherId: string;
   let otherAccountId: string;
 
-  const makeTemplate = (classType: string) =>
-    prisma.studioClassTemplate.create({
+  // Counter-derived startTime: this block calls makeTemplate ~11 times for
+  // one teacher/dayOfWeek, and pausing (unlike archiving) never sets
+  // isArchived, so a merely-paused template keeps occupying its slot for
+  // the rest of the run — mirroring the class family's equivalent block. No
+  // test reads or asserts a created template's literal startTime.
+  let makeTemplateCounter = 0;
+  const makeTemplate = (classType: string) => {
+    makeTemplateCounter += 1;
+    return prisma.studioClassTemplate.create({
       data: {
         teacherId,
         classType,
         dayOfWeek: 3,
-        startTime: '09:30',
+        startTime: `09:${String(30 + makeTemplateCounter).padStart(2, '0')}`,
         durationMinutes: 60,
         location: 'Studio Loft',
         hourlyRate: 45,
       },
     });
+  };
 
   const makeClass = (templateId: string, date: Date, startTime: string) =>
     prisma.studioClass.create({
@@ -571,18 +604,32 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     return (schemaToday + 2) % 7;
   };
 
-  const makeTemplateOn = (classType: string, dayOfWeek: number) =>
-    prisma.studioClassTemplate.create({
+  // Counter-derived startTime, separate from makeTemplate's own counter
+  // above and in a different hour (10:xx, not 09:xx) so the two counters
+  // can never land on the same value even on a day where
+  // dayOfWeekNeverToday() happens to equal makeTemplate's fixed dayOfWeek
+  // 3: all 3 calls to this helper compute the same dayOfWeekNeverToday()
+  // for a given run, and none of their templates ends up archived at the
+  // end of its test ('Resume After Archive' un-archives at the finish), so
+  // all 3 would collide with each other at a shared '09:30' — a fixed
+  // startTime here would only ever surface as flaky, on the days
+  // dayOfWeekNeverToday() coincides with 3. dayOfWeek itself is left
+  // untouched: it is deliberately chosen to never fall on today.
+  let makeTemplateOnCounter = 0;
+  const makeTemplateOn = (classType: string, dayOfWeek: number) => {
+    makeTemplateOnCounter += 1;
+    return prisma.studioClassTemplate.create({
       data: {
         teacherId,
         classType,
         dayOfWeek,
-        startTime: '09:30',
+        startTime: `10:${String(makeTemplateOnCounter).padStart(2, '0')}`,
         durationMinutes: 60,
         location: 'Studio Loft',
         hourlyRate: 45,
       },
     });
+  };
 
   beforeAll(async () => {
     await prisma.$connect();
@@ -655,7 +702,13 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
    */
   it('resuming toggles isActive back on and does not delete an already-scheduled class', async () => {
     const t = await makeTemplate('Resume Simple');
-    const c = await makeClass(t.id, futureOn(3), '08:00');
+    // '08:01', not '08:00': the earlier "pausing deletes nothing..." test
+    // above leaves its own `soon` class at futureOn(3)/'08:00' standing
+    // (pausing never deletes), which would otherwise collide under
+    // StudioClass_teacher_slot_unique. The exact minute is arbitrary here —
+    // see the comment above — so this is a same-family repair, not a
+    // change to what the test proves.
+    const c = await makeClass(t.id, futureOn(3), '08:01');
 
     const paused = await pauseOrResumeStudioTemplate(prisma, t.id, teacherId, 'paused');
     expect(paused.ok).toBe(true);
