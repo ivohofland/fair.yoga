@@ -465,11 +465,15 @@ describe('DELETE /api/rooms/[id]', () => {
  * `Room_public_identity_unique` on `(address, floor, roomName)` WHERE
  * `isPublic = true`, and `Room_private_identity_unique` on `(createdById,
  * address, floor, roomName)` WHERE `isPublic = false` (#196). Route change is
- * `src/app/api/rooms/route.ts`: the public branch keeps its pre-existing
- * `findFirst` pre-check (unchanged — right message, avoids the warn log on
- * the common path); both branches now also fall behind a try/catch around
- * `prisma.room.create` that maps a P2002 on either index to the same
- * `DUPLICATE_ROOM` code the public pre-check already used.
+ * `src/app/api/rooms/route.ts`: a try/catch around `prisma.room.create` maps
+ * a P2002 on either index to `DUPLICATE_ROOM`, same code and same message on
+ * both branches as before. No `findFirst` pre-check in front of either — the
+ * route's own comment explains why one would only make the catch reachable
+ * under a race. That is also why this block carries its own sequential
+ * public-duplicate case rather than leaning on the concurrent one alone: the
+ * concurrent case can't tell "the catch fired" apart from "a guard resolved
+ * it before either create ran", but a plain sequential duplicate can only
+ * ever reach the catch.
  *
  * A distinct address/floor from every fixture above (`${suffix} Rooms St`,
  * floor '1') so this block's rows never share an index tuple with them.
@@ -513,6 +517,21 @@ describe('POST /api/rooms dedupes both branches (#196)', () => {
   it('still lets a DIFFERENT teacher keep their own private room at that address', async () => {
     const body = roomBody({ isPublic: false, roomName: 'PrivateBack' });
     expect((await post(body, otherToken)).status).toBe(201);
+  });
+
+  // With no pre-check in front of the public branch, this is the only case
+  // that pins the catch deterministically — the second create has nowhere
+  // else to be rejected from.
+  it('rejects a second identical PUBLIC room — sequential, no pre-check to catch it first', async () => {
+    const body = roomBody({ roomName: 'SequentialPublic' });
+    expect((await post(body, creatorToken)).status).toBe(201);
+    const second = await post(body, creatorToken);
+    expect(second.status).toBe(409);
+    const json = (await second.json()) as { error: { code: string; message: string } };
+    expect(json.error.code).toBe('DUPLICATE_ROOM');
+    // Same message the pre-check used to return — deleting it must not
+    // change a single byte a client sees.
+    expect(json.error.message).toBe('A public room at this address already exists');
   });
 
   it('leaves one row when two identical PUBLIC creates are in flight at once', async () => {

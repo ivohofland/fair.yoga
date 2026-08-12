@@ -57,21 +57,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const isPublic = body.isPublic ?? true;
 
-  // Only check duplicates against public rooms
-  if (isPublic) {
-    const existing = await prisma.room.findFirst({
-      where: {
-        isPublic: true,
-        address: body.address,
-        floor: body.floor,
-        roomName: body.roomName,
-      },
-    });
-    if (existing) {
-      return respondError('A public room at this address already exists', 409, 'DUPLICATE_ROOM');
-    }
-  }
-
+  // No pre-check here on purpose. `Room` has exactly two unique indexes —
+  // `Room_public_identity_unique` and `Room_private_identity_unique` — and
+  // the catch below matches both column shapes, so no `P2002` this create
+  // can raise ever reaches the generic fallback in `withErrorHandler`
+  // (`classifyApiError`'s `warn`, src/lib/api-errors.ts). A `findFirst`
+  // guard in front would only make the catch reachable under a race — and
+  // untestable except by one, since a sequential duplicate would never get
+  // that far.
   try {
     const room = await prisma.room.create({
       data: {
