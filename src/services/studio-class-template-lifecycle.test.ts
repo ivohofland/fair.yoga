@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import {
   archiveOrUnarchiveStudioTemplate,
@@ -7,6 +7,29 @@ import {
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
+
+/**
+ * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
+ * the next hour rather than ever emitting an invalid minute like `'09:60'`
+ * once a block's fixture counter crosses 30. `totalMinutes % 60` is always
+ * 0-59 by construction, so the assertion below is a cheap, self-checking
+ * proof of that invariant rather than a defence this formula can actually
+ * fail — mirrors `class-template-lifecycle.test.ts`'s `slotTime`, added by
+ * the same Task 6d review finding: a fixed-width literal
+ * (`` `09:${30 + counter}` ``) has no such guarantee, and both describes
+ * below were closer to that ceiling than a quick read suggests (14 and 17
+ * minutes of headroom, not the 20+ the review's spot check assumed for
+ * every counter it didn't individually verify).
+ */
+function slotTime(totalMinutesFrom9am: number): string {
+  const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
+  const minute = totalMinutesFrom9am % 60;
+  const startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  if (!/^\d{2}:[0-5]\d$/.test(startTime)) {
+    throw new Error(`slotTime produced an invalid startTime: ${startTime}`);
+  }
+  return startTime;
+}
 
 // Hoisted to module scope, mirroring class-template-lifecycle.test.ts: a pure
 // function of `label` (plus the module-scope `prisma`/`uniqueSuffix` above),
@@ -61,16 +84,19 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
   let otherTeacherId: string;
   let otherAccountId: string;
 
-  // Counter-derived startTime: this block calls makeTemplate ~16 times for
-  // one teacher/dayOfWeek, and most tests never archive their template (the
-  // 'forbidden' cases, and several 'keeps'/'records' cases where archiving
-  // matches nothing to withdraw but still runs against a template that
-  // stays unarchived until its own later un-archive, if any) — so, mirroring
-  // the class family's equivalent block, one unarchived leftover blocks
-  // every later makeTemplate call under StudioClassTemplate_teacher_slot_unique
-  // before it even creates a row. No test reads or asserts a created
-  // template's literal startTime, so a distinct minute per call removes the
-  // collision without touching any assertion.
+  // Counter-derived startTime: this block calls makeTemplate 15 times for
+  // one teacher/dayOfWeek (landing on `slotTime(45)` = `'09:45'`, 14 minutes
+  // of headroom before the old raw-literal formula would have silently
+  // produced an invalid `'09:60'` — hence `slotTime`, see its docblock), and
+  // most tests never archive their template (the 'forbidden' cases, and
+  // several 'keeps'/'records' cases where archiving matches nothing to
+  // withdraw but still runs against a template that stays unarchived until
+  // its own later un-archive, if any) — so, mirroring the class family's
+  // equivalent block, one unarchived leftover blocks every later
+  // makeTemplate call under StudioClassTemplate_teacher_slot_unique before
+  // it even creates a row. No test reads or asserts a created template's
+  // literal startTime, so a distinct minute per call removes the collision
+  // without touching any assertion.
   let makeTemplateCounter = 0;
   const makeTemplate = (classType: string) => {
     makeTemplateCounter += 1;
@@ -79,7 +105,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
         teacherId,
         classType,
         dayOfWeek: 3,
-        startTime: `09:${String(30 + makeTemplateCounter).padStart(2, '0')}`,
+        startTime: slotTime(30 + makeTemplateCounter),
         durationMinutes: 60,
         location: 'Studio Loft',
         hourlyRate: 45,
@@ -541,11 +567,14 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
   let otherTeacherId: string;
   let otherAccountId: string;
 
-  // Counter-derived startTime: this block calls makeTemplate ~11 times for
-  // one teacher/dayOfWeek, and pausing (unlike archiving) never sets
-  // isArchived, so a merely-paused template keeps occupying its slot for
-  // the rest of the run — mirroring the class family's equivalent block. No
-  // test reads or asserts a created template's literal startTime.
+  // Counter-derived startTime: this block calls makeTemplate 12 times for
+  // one teacher/dayOfWeek (landing on `slotTime(42)` = `'09:42'`, 17 minutes
+  // of headroom before the old raw-literal formula would have silently
+  // produced an invalid `'09:60'` — hence `slotTime`, see its docblock), and
+  // pausing (unlike archiving) never sets isArchived, so a merely-paused
+  // template keeps occupying its slot for the rest of the run — mirroring
+  // the class family's equivalent block. No test reads or asserts a created
+  // template's literal startTime.
   let makeTemplateCounter = 0;
   const makeTemplate = (classType: string) => {
     makeTemplateCounter += 1;
@@ -554,7 +583,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
         teacherId,
         classType,
         dayOfWeek: 3,
-        startTime: `09:${String(30 + makeTemplateCounter).padStart(2, '0')}`,
+        startTime: slotTime(30 + makeTemplateCounter),
         durationMinutes: 60,
         location: 'Studio Loft',
         hourlyRate: 45,
@@ -640,14 +669,6 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     const other = await seedTeacher('pause-other');
     otherTeacherId = other.teacherId;
     otherAccountId = other.accountId;
-  });
-
-  // The generator's occupancy check is scoped per teacher (#196), so one
-  // test's generated window would occupy the next test's slots: several tests
-  // here resume templates on the same `dayOfWeek`/`startTime`, and without
-  // this a resume that used to create four would create nothing.
-  beforeEach(async () => {
-    await prisma.studioClass.deleteMany({ where: { teacherId } });
   });
 
   afterAll(async () => {
