@@ -438,7 +438,8 @@ does, at the rates measured above (32/100, 1/120).
 
 `lockAnnouncementSlot` (`src/lib/db-locks.ts`) is the first and so far only
 advisory lock in this project. It takes
-`pg_advisory_xact_lock(196, hash32("<teacherId>|<classId>|<message>"))` — the
+`pg_advisory_xact_lock(196, hash32("<teacherId>|<classId ?? ''>|<message>"))`
+— note the empty middle segment for an all-students send — the
 two-int form, first argument a constant namespace — as the **first statement**
 of the transaction in `POST /api/announcements`, so that two identical sends
 cannot both read an empty duplicate check and both fan out one `Notification`
@@ -459,23 +460,40 @@ row from "outside any transaction" to inside one for the same reason.
 **It cannot be half of a cycle today, and the reason is a property of the call
 graph, not of the lock.** A cycle needs some other transaction to hold a `Class`
 row lock and then wait on this advisory lock. Nothing can: `lockAnnouncementSlot`
-has exactly one call site, and that call site takes it before it touches `Class`
-at all. Two announcement sends racing each other take the two locks in the same
-order, which is not a cycle either.
+has exactly one call site in `src/` (`api/announcements/route.ts` — a `grep` also
+returns `db-locks.test.ts`, none of whose holders takes a `Class` lock), and
+that call site takes it before it touches `Class` at all. Two announcement sends
+racing each other take the two locks in the same order, which is not a cycle
+either.
 
 **So the thing to check is a second call site, not a reordering.** Add one
 inside a transaction that already holds a `Class` row lock — a notification
 sweep, a cancellation path — and the inversion is immediate and will not
 announce itself, exactly like `ClassTemplate_teacher_slot_unique` quietly
-holding another pairing shut two sections above.
+holding another pairing shut in "The slot key is a wait edge" above.
 
-**Not bounded by `LOCK_TIMEOUT_SQL`, deliberately and not obviously.** This
-transaction issues no `SET LOCAL lock_timeout`, so its `FOR KEY SHARE` wait on
-`Class` is unbounded — and it now waits while holding the advisory lock, which
-queues other identical sends of the same message behind it. Adding the bound
-would convert a slow send into a failed one, and the wait itself is not new: the
-same insert blocked the same way as an autocommit statement before #196 wrapped
-it. Recorded, not changed.
+**Not bounded by `LOCK_TIMEOUT_SQL` — but not unbounded either, and the first
+version of this paragraph got that wrong.** The transaction issues no
+`SET LOCAL lock_timeout`, so there is no 2-second bound on its `FOR KEY SHARE`
+wait on `Class`, and it now waits while holding the advisory lock, which queues
+other identical sends of the same message behind it. What that paragraph then
+concluded — that adding the bound "would convert a slow send into a failed
+one" — does not follow, because a slow send already fails: **Prisma's default
+interactive-transaction timeout is 5000 ms**, and this transaction passes no
+override. Measured against this schema, with the advisory lock taken and a
+`Notification` insert blocked on a held `FOR UPDATE`:
+
+```
+threw after 13516 ms -> P2028 | Transaction API error: Transaction already
+closed … The timeout for this transaction was 5000 ms
+```
+
+So the real trade is 5 s with a generic `P2028` versus 2 s with a specific
+`lock_timeout` error — and `P2028` is already in `TRANSIENT_PRISMA_CODES`
+(`src/lib/api-errors.ts`), so it surfaces as a 503 "try again" rather than a
+500. Left unchanged because the difference is three seconds and an error
+string, not because failing is impossible. Recorded so the next reader does not
+inherit the wrong premise.
 
 ## The empty-`update` upsert quirk — read this before "tidying" one
 

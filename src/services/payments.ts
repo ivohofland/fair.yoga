@@ -175,9 +175,11 @@ export async function unmarkPaymentPaid(
  * distinction is deliberate — `send-reminder-button.tsx` documents the calm
  * "Reminded …" caption as the product's pressure against nagging, and a longer
  * window here would quietly replace a product stance with a mechanism. The
- * automatic sweep's own dedupe is a different quantity entirely
- * (`REMIND_EVERY_DAYS`, `services/payment-reminders.ts`), and this cooldown
- * does not change it.
+ * automatic sweep's own dedupe is a different quantity
+ * (`REMIND_EVERY_DAYS`, `services/payment-reminders.ts`) and this cooldown
+ * does not change its value — but they are not independent: both read and
+ * write the same `reminderSentAt` column, so a manual send still defers the
+ * sweep by a week, exactly as it did before this constant existed.
  */
 export const MANUAL_REMIND_COOLDOWN_MS = 2 * 60 * 1000;
 

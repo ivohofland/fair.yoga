@@ -133,7 +133,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // suppression would be a small lie told by a tool whose premise is being an
   // honest one.
   //
-  // `recipientCount` on the suppressed branch is the FIRST send's, which is
-  // the honest number — those students really did receive it.
+  // `recipientCount` on the suppressed branch belongs to the most recent
+  // matching send inside the window (`orderBy: sentAt desc` above) — which the
+  // dedupe makes the only one, but the ordering is what decides it. Either
+  // way it is the honest number: those students really did receive it.
   return respondOk({ ...announcement, duplicateSuppressed: deduped }, deduped ? 200 : 201);
 });

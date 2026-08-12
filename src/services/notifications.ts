@@ -210,7 +210,10 @@ export async function getUnreadForEmailFallback(
  * mark: two overlapping sweeps read the same candidate rows (the candidate
  * query above filters on `emailSent: false` but claims nothing), and the count
  * is how the loser learns it lost. Returns the count rather than `void` for
- * that reason — a caller that ignores it is back to the unguarded behaviour,
+ * that reason — a caller that sends AFTER calling this and ignores the count
+ * is back to the unguarded behaviour. Ignoring it is fine where no send
+ * follows: `email-fallback.ts` deliberately does so on its opted-out and
+ * dry-run branches, which mark a decision rather than claim a send,
  * where both sweeps went on to send the same email.
  */
 export async function markEmailSent(

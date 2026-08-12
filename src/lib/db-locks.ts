@@ -186,7 +186,11 @@ export const ANNOUNCEMENT_DEDUPE_WINDOW_MS = 2 * 60 * 1000;
  */
 const ADVISORY_NAMESPACE = { announcement: 196 } as const;
 
-/** The low 32 bits of a SHA-256, signed, so it fits Postgres's `int4`. */
+/**
+ * The LEADING 32 bits of a SHA-256, read big-endian and signed, so it fits
+ * Postgres's `int4`. Bytes 0-3, not the low end — which matters only to
+ * someone recomputing the key by hand to look a lock up in `pg_locks`.
+ */
 function hash32(value: string): number {
   return createHash('sha256').update(value).digest().readInt32BE(0);
 }
@@ -203,11 +207,14 @@ function hash32(value: string): number {
  * The hash is used ONLY for mutual exclusion — the caller compares the real
  * message text afterwards — so a collision inside the namespace costs a few
  * milliseconds of needless serialisation and nothing else. That is the whole
- * reason this is a lock and not a unique index on a hashed column:
- * `Announcement.message` is `@db.Text` and cannot be a btree key, so an
- * index-based design would have to key on the hash, where a collision silently
- * rejects a legitimate announcement instead. A time-bucketed index leaks
- * differently again — two sends straddling a bucket edge both pass.
+ * reason this is a lock and not a unique index on a hashed column.
+ * `Announcement.message` is `@db.Text` — indexable in principle, but a btree
+ * entry cannot exceed roughly 2704 bytes and `createAnnouncementSchema`
+ * (`lib/schemas.ts`) sets no maximum length, so a long announcement would fail
+ * to index at insert time. An index-based design would therefore have to key
+ * on a hash, where a collision silently rejects a legitimate announcement
+ * instead of merely serialising it. A time-bucketed index leaks differently
+ * again — two sends straddling a bucket edge both pass.
  *
  * Branded `TransactionClientOnly` per this module's rule: on a bare client the
  * lock would be taken and released by its own autocommit transaction before
@@ -218,9 +225,15 @@ function hash32(value: string): number {
  * `Notification` carrying `relatedClassId` and an `Announcement` carrying
  * `classId`, each of which takes `FOR KEY SHARE` on the parent `Class` row —
  * that document's "fourth path". So this lock sits ABOVE `Class` in the order,
- * and it is safe only because it has exactly one caller: nothing else can hold
- * a `Class` lock and then wait here. See "The announcement advisory lock"
- * there before adding a second call site.
+ * and it is safe only because it has exactly one PRODUCTION call site
+ * (`api/announcements/route.ts`; `db-locks.test.ts` holds the rest, and none
+ * of those takes a `Class` lock): nothing else can hold a `Class` lock and
+ * then wait here. See "The announcement advisory lock" there before adding a
+ * second one.
+ *
+ * The `FOR KEY SHARE` reasoning covers the worst case, which is the
+ * class-scoped send. An all-students announcement carries `classId === null`
+ * on both inserts and takes no `Class` lock at all.
  *
  * The lock call is wrapped in a subselect and the outer projection is a
  * literal, which is not styling: `pg_advisory_xact_lock` returns `void`, and

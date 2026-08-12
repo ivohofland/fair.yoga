@@ -900,10 +900,15 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // whole-function guard: the `completeClass` loop at the top of this
       // function runs BEFORE this transaction opens and commits per class.
       // A loser that reaches this throw has already been through that loop.
-      // Harmless as it stands — `completeClass` takes the class row lock and
-      // `validateTransition` refuses `completed → completed`, so the loser's
-      // pass is a sequence of no-ops — but it is guarded by that, not by
-      // this.
+      // It writes nothing, which is the part that matters: `completeClass`
+      // takes the class row lock and `validateTransition` refuses
+      // `completed → completed`. But "writes nothing" is not "does nothing" —
+      // each refusal is logged at `error` level by the loop above, so a
+      // routine concurrent duplicate emits an error line per in-progress
+      // class, now alongside a 200. And `completeClass`'s 2s `lock_timeout` is
+      // deliberately uncaught there, so a loser that waits too long throws
+      // something that is NOT this sentinel and takes `erasureFailure`
+      // instead. Either way the guarding is done by that loop, not by this.
       const erased = await tx.teacher.updateMany({
         where: { id: teacherId, deletedAt: null },
         data: {

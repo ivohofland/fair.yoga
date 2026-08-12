@@ -126,7 +126,7 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
       // to erase its teacher half below.
       //
       // Only reachable concurrently: a sequential retry never gets here,
-      // because `resolveSession` (`lib/auth/session.ts`) resolves only LIVE
+      // because `validateSession` (`lib/auth/session.ts`) resolves only LIVE
       // profiles, so `session.studentId` is already null by then.
       if (err instanceof AlreadyErasedError) {
         log.info(
@@ -158,7 +158,14 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
           'account erasure: half already erased',
         );
       } else {
-        // `partial` only when the student half actually ran and committed.
+        // `partial` is `Boolean(session.studentId)`, which reads as "the
+        // student half ran and committed" and no longer always means that:
+        // since #196 the student half can throw `AlreadyErasedError`, roll
+        // back whole, and still leave `session.studentId` truthy. The account
+        // state the message describes is still true — the winning request
+        // erased that half — but it is true about the other request, not this
+        // one. Left as is because the caller-facing sentence stays accurate;
+        // noted because the variable's name no longer explains itself.
         // Without a student profile this is a teacher-only erasure — which is
         // NOT the same as "nothing is half-applied": `deleteTeacherAccount`
         // commits a `completeClass` per in-progress class before its own

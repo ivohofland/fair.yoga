@@ -53,8 +53,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // Both pre-checks above are plain reads, so a concurrent signup for the
       // same fresh address passes both and one of them loses on
       // `Student.email`/`Account.email`. Losing means the account now exists
-      // — which is precisely the state the `else` path below already handles
-      // correctly, by just sending the link. Rethrowing would surface a 409
+      // — which is precisely the state the unconditional mint-and-send below
+      // already handles correctly (there is no `else`; every state that is not
+      // a fresh email simply falls through to it). Rethrowing would surface a 409
       // "Resource already exists", failing a legitimate signup AND telling an
       // anonymous caller the address is taken, which this route's identical
       // 200 exists to prevent.

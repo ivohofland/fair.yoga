@@ -658,7 +658,7 @@ describe('DELETE /api/account', () => {
    *
    * The lever is the one Tasks 1 and 2 established, for the reason they
    * recorded: two plain fetches serialise, and a serialised second request
-   * never reaches the guard at all — `resolveSession` resolves only live
+   * never reaches the guard at all — `validateSession` resolves only live
    * profiles, so it would 401 before the route ran. The holder takes the
    * `Student` row that ends the erasure transaction, so both requests
    * authenticate against a live profile, both run their whole transaction,

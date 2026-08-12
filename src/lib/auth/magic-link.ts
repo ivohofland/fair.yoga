@@ -17,8 +17,12 @@ function hashToken(token: string): string {
  * A second call for the same address deliberately mints a second live token
  * rather than reusing or invalidating the first: a resend must work, and the
  * first link must keep working, because the user clicks whichever mail they
- * see first. That duplication is legitimate (#196) and bounded — the rate
- * limiter caps it at three per address per 15 minutes, the TTL is 15 minutes,
+ * see first. That duplication is legitimate (#196) and bounded — though less
+ * tightly than a per-route reading suggests. Both minting routes rate-limit
+ * three per address per 15 minutes, but they use SEPARATE buckets
+ * (`magic-link:email:` and `student-signup:email:`), and `student-signup`
+ * mints for any address with no account required. So one address can hold six
+ * live tokens in a window, not three. The TTL is 15 minutes,
  * `cleanupExpiredAuth` sweeps the remains daily, and `verifyMagicLinkToken`
  * deletes every sibling the moment one of them is used.
  *
@@ -77,8 +81,9 @@ export async function verifyMagicLinkToken(
   // Every other live token for this address is now surplus: its owner is
   // signed in, so the only thing a link still sitting in their inbox can do
   // is be used by someone else — a forwarded mail, a shared mailbox, a
-  // link-prefetching scanner. Rate limiting allows three per address per 15
-  // minutes and the TTL is 15 minutes, so there can be two.
+  // link-prefetching scanner. The two minting routes rate-limit three per
+  // address per 15 minutes each, from separate buckets, and the TTL is 15
+  // minutes — so there can be up to five.
   //
   // Placement is load-bearing: this runs only AFTER the expiry check above.
   // Invalidating on every consumption would let anyone holding an old expired
@@ -86,8 +91,10 @@ export async function verifyMagicLinkToken(
   // service it exists to prevent.
   //
   // Unindexed by design. `MagicLinkToken` carries `@unique` on `tokenHash`
-  // only, and adding an index means a migration; `cleanupExpiredAuth` sweeps
-  // daily and the rate limit caps the table, so the scan is microseconds.
+  // only, and adding an index means a migration. What actually bounds the
+  // table is `cleanupExpiredAuth`'s daily sweep of `expiresAt < now` — roughly
+  // a day's accumulation — NOT the rate limiter, which caps rows per address
+  // and says nothing about how many addresses there are.
   await db.magicLinkToken.deleteMany({ where: { email: record.email } });
 
   return { email: record.email, redirectTo: record.redirectTo };

@@ -81,7 +81,15 @@ export async function processEmailFallback(
     }
   };
 
-  /** Hands a claim back after a failed send, so the next sweep retries it. */
+  /**
+   * Hands a claim back after a failed send so the next sweep can retry it —
+   * when the release itself succeeds. It swallows its own failure (there is
+   * nothing useful to do with it mid-sweep), and a swallowed one strands the
+   * notification as `emailSent: true` with no email ever sent, permanently:
+   * the candidate query filters on `emailSent: false`, so it is never a
+   * candidate again. Hence the log line's "(will not retry)", which is the
+   * accurate half of this pair.
+   */
   const releaseOne = async (id: string) => {
     try {
       await db.notification.updateMany({ where: { id }, data: { emailSent: false } });

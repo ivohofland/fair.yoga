@@ -370,8 +370,10 @@ describe('Payment Service (DB)', () => {
    * The manual reminder's cooldown (#196).
    *
    * Last in the file, deliberately. Every payment made here is outstanding
-   * while its test runs, and the two privacy tests above read
-   * `getOutstandingPayments(prisma, teacherId)[0]` — an unordered query — so a
+   * while its test runs, and the projection test above makes two unordered
+   * `[0]` reads — `getPaymentsForClass(prisma, classId, teacherId)[0]` and
+   * `getOutstandingPayments(prisma, teacherId)[0]`, the first the more exposed
+   * of the two because the fixtures share one class — so a
    * second outstanding row for this teacher earlier in the file would decide
    * those assertions by luck.
    */
