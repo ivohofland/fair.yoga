@@ -602,7 +602,13 @@ describe('PUT /api/rooms/[id] collides on the slot key (#196)', () => {
 
     const after = await prisma.room.findUniqueOrThrow({ where: { id: mover.id } });
     expect(after.roomName).toBe('Mover');
-    void occupied;
+
+    // The test's premise is that this row is the one occupying the slot the
+    // rename collided on, and that it is untouched by the failed move —
+    // assert that rather than discarding the reference, so a route that
+    // clobbered the wrong row would fail this test.
+    const stillOccupied = await prisma.room.findUniqueOrThrow({ where: { id: occupied.id } });
+    expect(stillOccupied.roomName).toBe('Occupied');
   });
 
   // The two rows coexist fine at creation: `Room_private_identity_unique`
@@ -645,6 +651,12 @@ describe('PUT /api/rooms/[id] collides on the slot key (#196)', () => {
 
     const after = await prisma.room.findUniqueOrThrow({ where: { id: privateRoom.id } });
     expect(after.isPublic).toBe(false);
-    void publicRoom;
+
+    // The test's premise is that this row is the public room occupying the
+    // slot the flip collided on, and that it is untouched by the failed
+    // flip — assert that rather than discarding the reference, so a route
+    // that clobbered the wrong row would fail this test.
+    const stillPublic = await prisma.room.findUniqueOrThrow({ where: { id: publicRoom.id } });
+    expect(stillPublic.isPublic).toBe(true);
   });
 });

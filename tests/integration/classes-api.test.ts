@@ -596,7 +596,13 @@ describe('PUT /api/classes/[id]', () => {
 
       const after = await prisma.class.findUniqueOrThrow({ where: { id: mover.id } });
       expect(after.startTime).toBe('08:15');
-      void occupied;
+
+      // The test's premise is that this row is the one occupying the slot
+      // the reschedule collided on, and that it is untouched by the failed
+      // move — assert that rather than discarding the reference, so a route
+      // that clobbered the wrong row would fail this test.
+      const stillOccupied = await prisma.class.findUniqueOrThrow({ where: { id: occupied.id } });
+      expect(stillOccupied.startTime).toBe('08:00');
     });
   });
 });
