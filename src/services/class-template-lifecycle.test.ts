@@ -13,6 +13,30 @@ import { formatDayHeader } from '@/lib/format';
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
 
+/**
+ * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
+ * the next hour rather than ever emitting an invalid minute like `'09:60'`
+ * once a block's fixture counter crosses 30. `totalMinutes % 60` is always
+ * 0-59 by construction, so the assertion below is a cheap, self-checking
+ * proof of that invariant rather than a defence this formula can actually
+ * fail — but a fixed-width literal (`` `09:${30 + counter}` ``) can't make
+ * the same guarantee: Task 6d's review found `archiveOrUnarchiveTemplate`'s
+ * `makeTemplate` counter reaching its old ceiling at exactly its own call
+ * count (29 calls, `'09:59'`), one call short of `'09:60'` — a value that a
+ * plain `String` column, a string-equality occupancy check, and a
+ * string-comparing partial index would all have accepted silently, with
+ * the test no longer exercising the constraint this branch exists for.
+ */
+function slotTime(totalMinutesFrom9am: number): string {
+  const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
+  const minute = totalMinutesFrom9am % 60;
+  const startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  if (!/^\d{2}:[0-5]\d$/.test(startTime)) {
+    throw new Error(`slotTime produced an invalid startTime: ${startTime}`);
+  }
+  return startTime;
+}
+
 // Hoisted to module scope: a pure function of `label` (plus the module-scope
 // `prisma`/`uniqueSuffix` above), so both describe blocks below can seed their
 // own, separate teacher/room/teacherRoom fixtures from it.
@@ -77,7 +101,7 @@ describe('updateClassTemplate (DB)', () => {
         teacherRoomId,
         classType,
         dayOfWeek: 3,
-        startTime: `09:${String(30 + makeTemplateCounter).padStart(2, '0')}`,
+        startTime: slotTime(30 + makeTemplateCounter),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -357,13 +381,18 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   let east: Seeded;
   let west: Seeded;
 
-  // Counter-derived startTime: this block calls makeTemplate ~28 times for
-  // one teacher/dayOfWeek. Most tests here do archive their own template by
-  // the end (which flips isArchived and would free the slot on its own),
-  // but several deliberately don't (the two 'forbidden' cases, and the
-  // "does not tell a waiting student when the class was spared" case, whose
-  // whole point is that the archive matches nothing) — and once any one
-  // template is left behind unarchived, every later makeTemplate call in
+  // Counter-derived startTime: this block calls makeTemplate 29 times at
+  // runtime (28 call sites, one of them an `it.each` over 2 statuses) for
+  // one teacher/dayOfWeek — the tightest counter in this repair, landing on
+  // `slotTime(59)` = `'09:59'` exactly, which is why this block's
+  // `makeTemplate` uses `slotTime` (see its docblock) rather than a raw
+  // template literal: a 30th call here would have silently produced
+  // `'09:60'` under the old formula. Most tests here do archive their own
+  // template by the end (which flips isArchived and would free the slot on
+  // its own), but several deliberately don't (the two 'forbidden' cases, and
+  // the "does not tell a waiting student when the class was spared" case,
+  // whose whole point is that the archive matches nothing) — and once any
+  // one template is left behind unarchived, every later makeTemplate call in
   // the block collides with it before it even gets a row created, which is
   // what turned into a near-total cascade here. No test reads or asserts a
   // created template's literal startTime, so a distinct minute per call
@@ -377,7 +406,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
         teacherRoomId,
         classType,
         dayOfWeek: 3,
-        startTime: `09:${String(30 + makeTemplateCounter).padStart(2, '0')}`,
+        startTime: slotTime(30 + makeTemplateCounter),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -1515,7 +1544,7 @@ describe('pauseOrResumeTemplate (DB)', () => {
         teacherRoomId,
         classType,
         dayOfWeek: 3,
-        startTime: startTime ?? `09:${String(30 + makeTemplateCounter).padStart(2, '0')}`,
+        startTime: startTime ?? slotTime(30 + makeTemplateCounter),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
