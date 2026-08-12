@@ -133,6 +133,16 @@ describe('Class_teacher_slot_unique', () => {
     await prisma.class.update({ where: { id: c.id }, data: { status: 'cancelled' } });
     await expect(prisma.class.create({ data: cls(teacherId, 5) })).resolves.toBeTruthy();
   });
+
+  // PR #208 review, E2. `StudioClass` and `Room_private` already had this
+  // shape pinned; `Class`, `ClassTemplate` and `StudioClassTemplate` did not.
+  // Seeds its own colliding row (day 6, distinct from the fixtures above)
+  // rather than relying on a preceding test's row — self-seeded, so it
+  // cannot pass vacuously if `teacherId` is ever dropped from the index.
+  it('does not block another teacher at the same date and time', async () => {
+    await prisma.class.create({ data: cls(teacherId, 6) });
+    await expect(prisma.class.create({ data: cls(otherTeacherId, 6) })).resolves.toBeTruthy();
+  });
 });
 
 describe('ClassTemplate_teacher_slot_unique', () => {
@@ -148,6 +158,13 @@ describe('ClassTemplate_teacher_slot_unique', () => {
     const t = await prisma.classTemplate.create({ data: tpl(teacherId, 2) });
     await prisma.classTemplate.update({ where: { id: t.id }, data: { isArchived: true } });
     await expect(prisma.classTemplate.create({ data: tpl(teacherId, 2) })).resolves.toBeTruthy();
+  });
+
+  // PR #208 review, E2. Self-seeded (see the class family's twin above), so
+  // dropping `teacherId` from the index cannot pass this vacuously.
+  it('does not block another teacher at the same dayOfWeek/startTime', async () => {
+    await prisma.classTemplate.create({ data: tpl(teacherId, 3) });
+    await expect(prisma.classTemplate.create({ data: tpl(otherTeacherId, 3) })).resolves.toBeTruthy();
   });
 });
 
@@ -165,6 +182,14 @@ describe('StudioClassTemplate_teacher_slot_unique', () => {
     const t = await prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 4) });
     await prisma.studioClassTemplate.update({ where: { id: t.id }, data: { isArchived: true } });
     await expect(prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 4) }))
+      .resolves.toBeTruthy();
+  });
+
+  // PR #208 review, E2. Self-seeded (see the two twins above), so dropping
+  // `teacherId` from the index cannot pass this vacuously.
+  it('does not block another teacher at the same dayOfWeek/startTime', async () => {
+    await prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 5) });
+    await expect(prisma.studioClassTemplate.create({ data: studioTpl(otherTeacherId, 5) }))
       .resolves.toBeTruthy();
   });
 });
@@ -201,6 +226,20 @@ describe('Room identity indexes', () => {
     // passing when run in isolation.
     await prisma.room.create({ data: room(teacherId, false, 'PrivB') });
     await expect(prisma.room.create({ data: room(otherTeacherId, false, 'PrivB') }))
+      .resolves.toBeTruthy();
+  });
+
+  // PR #208 review, E1. `Room_private_identity_unique`'s `WHERE isPublic =
+  // false` predicate was pinned by nothing: nothing proved a public and a
+  // private room could share an identity. One creator, both arms, same
+  // address/floor/roomName — each row enters only its own partial index
+  // (`Room_public_identity_unique` needs `isPublic = true`,
+  // `Room_private_identity_unique` needs `isPublic = false`), so neither
+  // collides with the other. Delete the predicate from either index and this
+  // goes red.
+  it('lets one creator hold a public and a private room at the same address/floor/roomName', async () => {
+    await prisma.room.create({ data: room(teacherId, true, 'DualScope') });
+    await expect(prisma.room.create({ data: room(teacherId, false, 'DualScope') }))
       .resolves.toBeTruthy();
   });
 });
