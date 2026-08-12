@@ -364,8 +364,17 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
     // freedSpotClassId's 6h50m is a fixed one-minute difference from a
     // shared clock read, so the two floored minutes are exactly one apart
     // regardless of any real delay — deadline baseNow+49m, cutoff
-    // baseNow−11m, a 49/11 split essentially matching freedSpotClassId's
-    // 50/10 rather than sacrificing budget for separation.
+    // baseNow−11m. That is NOT budget parity with freedSpotClassId's 50/10,
+    // though it reads that way at a glance: this describe block's own
+    // beforeAll runs only after describe-block-1's entire suite has already
+    // executed against the same `baseNow`, so part of these 49 minutes is
+    // already spent by the time this code runs — where freedSpotClassId's 50
+    // only had to survive describe-block-1's own runtime before that
+    // fixture's one test ran. The one-minute gap from baseNow is exact; the
+    // budget actually left for describe-block-2's tests is smaller than 49 by
+    // however long describe-block-1 took (~20s locally, ~3m in CI, per the
+    // comment above) — comfortably inside the window either way, just not the
+    // like-for-like split "essentially matching" implies.
     const classStart = new Date(baseNow.getTime() + (6 * 60 + 49) * 60 * 1000);
     const claimDate = new Date(
       Date.UTC(classStart.getUTCFullYear(), classStart.getUTCMonth(), classStart.getUTCDate()),
