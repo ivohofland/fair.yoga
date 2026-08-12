@@ -292,6 +292,20 @@ routes catch it first to say which slot is taken.
 
 ### 4.2 Branch 2 — nine endpoints, no schema change
 
+> **SUPERSEDED 2026-08-12 by
+> `docs/superpowers/specs/2026-08-12-retry-safe-endpoints-branch-2-design.md`.**
+> This table was written before branch 1 executed and before any of its nine
+> rows was read against the code. **Seven of the nine are wrong** and are
+> corrected there: two guard a write that the side effect has already escaped
+> (announcements' fan-out precedes its insert; the fallback's mark follows its
+> send), two cannot be built as written (the magic-link token is stored only as
+> a hash, and moving `student-signup`'s mint inside its guard would remove
+> sign-in for every returning student), two name a symptom whose source is a
+> single unguarded write, and one rests on two false claims plus a window §1
+> never chose. `POST /api/cron/email-fallback` also has a **second trigger** the
+> row does not name — `src/lib/scheduler.ts`, every 5 minutes. Only the two
+> invitation rows stand. Read the branch-2 spec, not this table.
+
 Recorded here so the decision lives in one place; not implemented on branch 1.
 
 **These nine are not #196's nine.** Both sets happen to have nine members and
