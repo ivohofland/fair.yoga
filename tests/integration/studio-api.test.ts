@@ -224,6 +224,68 @@ describe('POST /api/studio-class-templates', () => {
       await prisma.studioClass.count({ where: { location: 'Doomed Studio' } }),
     ).toBe(0);
   });
+
+  // #196. Same reasoning as the class family's sibling in
+  // class-templates-api.test.ts: the create sits inside a $transaction that
+  // also generates the four-week window, so a duplicate template would have
+  // meant a second full four-week set of bookable studio classes, not just a
+  // second row. dayOfWeek 3 is 'Owner Template' and every PATCH fixture's
+  // slot ('18:00' through the '18:10' of 'Resume Reports', none archived by
+  // suite end) — '18:11'/'18:12' continue that sequence past its highest
+  // claimed minute.
+  describe('POST /api/studio-class-templates is retry-safe on the slot key (#196)', () => {
+    const post = (body: unknown) => send('POST', ownerToken, '/api/studio-class-templates', body);
+
+    it('answers a repeated identical create with 409 and leaves one template and one window', async () => {
+      const body = {
+        classType: 'Slot Studio Recurring', dayOfWeek: 3, startTime: '18:11',
+        durationMinutes: 60, location: 'Some Studio', hourlyRate: 45,
+      };
+
+      const first = await post(body);
+      expect(first.status).toBe(201);
+
+      const second = await post(body);
+      expect(second.status).toBe(409);
+      expect((await second.json()).error.code).toBe('DUPLICATE_STUDIO_TEMPLATE_SLOT');
+
+      const templates = await prisma.studioClassTemplate.findMany({
+        where: { teacherId: ownerId, dayOfWeek: 3, startTime: '18:11', isArchived: false },
+      });
+      expect(templates).toHaveLength(1);
+
+      // The half the endpoint's severity actually lives in: a second
+      // template would have generated a second full four-week set of
+      // bookable studio classes.
+      const generated = await prisma.studioClass.findMany({
+        where: { templateId: templates[0]!.id },
+      });
+      expect(generated).toHaveLength(4);
+    });
+
+    it('leaves one template and one window when two identical creates are in flight at once', async () => {
+      const body = {
+        classType: 'Slot Studio Concurrent', dayOfWeek: 3, startTime: '18:12',
+        durationMinutes: 60, location: 'Some Studio', hourlyRate: 45,
+      };
+
+      const [a, b] = await Promise.all([post(body), post(body)]);
+      expect([a.status, b.status].sort()).toEqual([201, 409]);
+
+      const loser = a.status === 409 ? a : b;
+      expect((await loser.json()).error.code).toBe('DUPLICATE_STUDIO_TEMPLATE_SLOT');
+
+      const templates = await prisma.studioClassTemplate.findMany({
+        where: { teacherId: ownerId, dayOfWeek: 3, startTime: '18:12', isArchived: false },
+      });
+      expect(templates).toHaveLength(1);
+
+      const generated = await prisma.studioClass.findMany({
+        where: { templateId: templates[0]!.id },
+      });
+      expect(generated).toHaveLength(4);
+    });
+  });
 });
 
 describe('/api/studio-class-templates/[id] — ownership', () => {

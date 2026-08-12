@@ -1,8 +1,16 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
-import { respondOk, requireTeacher, parseBody, isErrorResponse, withErrorHandler } from '@/lib/api-utils';
+import {
+  respondOk,
+  respondError,
+  requireTeacher,
+  parseBody,
+  isErrorResponse,
+  withErrorHandler,
+} from '@/lib/api-utils';
 import { createStudioClassTemplateSchema } from '@/lib/schemas';
 import { generateStudioInstancesForTemplate } from '@/services/studio-class-generator';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -36,17 +44,41 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // `claimStudioTemplateForGeneration` gives the class family's POST, and the
   // reason it does not generalise to a caller that reuses this shape against an
   // *existing* row.
-  const template = await prisma.$transaction(async (tx) => {
-    const created = await tx.studioClassTemplate.create({
-      data: {
-        teacherId: session.teacherId,
-        ...parsed.data,
-      },
-      include: { teacher: { select: { defaultTimezone: true } } },
+  //
+  // The catch sits OUTSIDE this call rather than inside it — same reasoning
+  // as the class family's POST (`api/class-templates/route.ts`): a P2002
+  // raised inside a Postgres transaction aborts that transaction, so there
+  // is nothing to catch from within, and rolling the whole thing back is
+  // correct anyway. Only the template's own P2002 can reach this catch —
+  // `tx.studioClassTemplate.create` runs first and, on conflict, throws
+  // before generation starts, so `generateStudioInstancesForTemplate`'s
+  // `createManyAndReturn` (`skipDuplicates: true`) never gets a chance to
+  // raise anything here even though it shares this transaction.
+  let template;
+  try {
+    template = await prisma.$transaction(async (tx) => {
+      const created = await tx.studioClassTemplate.create({
+        data: {
+          teacherId: session.teacherId,
+          ...parsed.data,
+        },
+        include: { teacher: { select: { defaultTimezone: true } } },
+      });
+      const generation = await generateStudioInstancesForTemplate(tx, created);
+      return { created, generation };
     });
-    const generation = await generateStudioInstancesForTemplate(tx, created);
-    return { created, generation };
-  });
+  } catch (err) {
+    // The template's slot key, not `StudioClass`'s — see the class family's
+    // POST for why no modelName disambiguation is needed here.
+    if (isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime'])) {
+      return respondError(
+        'You already have a recurring studio class on that day at that time.',
+        409,
+        'DUPLICATE_STUDIO_TEMPLATE_SLOT',
+      );
+    }
+    throw err;
+  }
 
   const { teacher, ...created } = template.created;
   void teacher;

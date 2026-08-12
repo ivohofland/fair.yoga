@@ -10,6 +10,7 @@ import {
 } from '@/lib/api-utils';
 import { createClassTemplateSchema } from '@/lib/schemas';
 import { generateInstancesForTemplate } from '@/services/class-generator';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -40,29 +41,59 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // Atomic: a generation failure rolls the template create back rather than
   // leaving a template that produces no classes. Failure propagates (500).
-  const template = await prisma.$transaction(async (tx) => {
-    const created = await tx.classTemplate.create({
-      data: {
-        teacherId: session.teacherId,
-        teacherRoomId: body.teacherRoomId,
-        classType: body.classType,
-        description: body.description,
-        dayOfWeek: body.dayOfWeek,
-        startTime: body.startTime,
-        durationMinutes: body.durationMinutes,
-        roomCost: body.roomCost,
-        minRate: body.minRate,
-        targetRate: body.targetRate,
-        minStudents: body.minStudents,
-        maxStudents: body.maxStudents,
-        cancelDeadline: body.cancelDeadline,
-        autoCancelCheck: body.autoCancelCheck,
-      },
-      include: { teacher: { select: { defaultTimezone: true } } },
+  //
+  // The catch sits OUTSIDE this call rather than inside it: a P2002 raised
+  // inside a Postgres transaction aborts that transaction, so there is
+  // nothing to catch from within — and rolling the whole thing back is
+  // correct anyway, since a template that duplicates an existing one should
+  // not exist, and neither should the window it would have generated.
+  //
+  // Only the template's own P2002 can reach this catch. `tx.classTemplate
+  // .create` runs first and, on conflict, throws before generation ever
+  // starts — so `generateInstancesForTemplate`'s `createManyAndReturn`
+  // (`skipDuplicates: true`, a bare `ON CONFLICT DO NOTHING`) never gets a
+  // chance to raise anything here even though it shares this transaction.
+  let template;
+  try {
+    template = await prisma.$transaction(async (tx) => {
+      const created = await tx.classTemplate.create({
+        data: {
+          teacherId: session.teacherId,
+          teacherRoomId: body.teacherRoomId,
+          classType: body.classType,
+          description: body.description,
+          dayOfWeek: body.dayOfWeek,
+          startTime: body.startTime,
+          durationMinutes: body.durationMinutes,
+          roomCost: body.roomCost,
+          minRate: body.minRate,
+          targetRate: body.targetRate,
+          minStudents: body.minStudents,
+          maxStudents: body.maxStudents,
+          cancelDeadline: body.cancelDeadline,
+          autoCancelCheck: body.autoCancelCheck,
+        },
+        include: { teacher: { select: { defaultTimezone: true } } },
+      });
+      const generation = await generateInstancesForTemplate(tx, created);
+      return { created, generation };
     });
-    const generation = await generateInstancesForTemplate(tx, created);
-    return { created, generation };
-  });
+  } catch (err) {
+    // The template's slot key, not `Class`'s. Both models share this
+    // transaction, but only the template can raise P2002 here (see above),
+    // so there is no need to disambiguate by modelName even though
+    // (teacherId, dayOfWeek, startTime) and (teacherId, date, startTime) are
+    // different column sets by coincidence rather than guarantee — see
+    // isUniqueConflictOn's docblock.
+    if (isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime'])) {
+      return respondError(
+        'You already have a recurring class on that day at that time.',
+        409,
+        'DUPLICATE_TEMPLATE_SLOT',
+      );
+    }
+    throw err;
+  }
 
   const { teacher, ...created } = template.created;
   void teacher;

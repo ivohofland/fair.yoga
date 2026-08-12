@@ -221,6 +221,65 @@ describe('POST /api/class-templates', () => {
     const after = await prisma.classTemplate.count({ where: { teacherId } });
     expect(after).toBe(before);
   });
+
+  // #196. The create sits inside a $transaction that also generates the
+  // four-week window, so a duplicate here is worse than a duplicate row: a
+  // second identical template would have meant a second full four-week set
+  // of bookable classes. '09:40' and '11:00' are the two slots left over in
+  // this file's dense startTime sequence for DAY_OF_WEEK — see
+  // templateBody's docblock above.
+  describe('POST /api/class-templates is retry-safe on the slot key (#196)', () => {
+    const post = (body: unknown) =>
+      fetch(`${BASE_URL}/api/class-templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+        body: JSON.stringify(body),
+      });
+
+    it('answers a repeated identical create with 409 and leaves one template and one window', async () => {
+      const body = templateBody('Slot Recurring', '09:40');
+
+      const first = await post(body);
+      expect(first.status).toBe(201);
+
+      const second = await post(body);
+      expect(second.status).toBe(409);
+      expect((await second.json()).error.code).toBe('DUPLICATE_TEMPLATE_SLOT');
+
+      const templates = await prisma.classTemplate.findMany({
+        where: { teacherId, dayOfWeek: DAY_OF_WEEK, startTime: '09:40', isArchived: false },
+      });
+      expect(templates).toHaveLength(1);
+
+      // The half the endpoint's severity actually lives in: a second
+      // template would have generated a second full four-week set of
+      // bookable classes.
+      const generated = await prisma.class.findMany({
+        where: { templateId: templates[0]!.id },
+      });
+      expect(generated).toHaveLength(4);
+    });
+
+    it('leaves one template and one window when two identical creates are in flight at once', async () => {
+      const body = templateBody('Slot Recurring Concurrent', '11:00');
+
+      const [a, b] = await Promise.all([post(body), post(body)]);
+      expect([a.status, b.status].sort()).toEqual([201, 409]);
+
+      const loser = a.status === 409 ? a : b;
+      expect((await loser.json()).error.code).toBe('DUPLICATE_TEMPLATE_SLOT');
+
+      const templates = await prisma.classTemplate.findMany({
+        where: { teacherId, dayOfWeek: DAY_OF_WEEK, startTime: '11:00', isArchived: false },
+      });
+      expect(templates).toHaveLength(1);
+
+      const generated = await prisma.class.findMany({
+        where: { templateId: templates[0]!.id },
+      });
+      expect(generated).toHaveLength(4);
+    });
+  });
 });
 
 describe('PATCH /api/class-templates/[id]', () => {
