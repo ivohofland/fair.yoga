@@ -253,6 +253,63 @@ describe('TemplateForm', () => {
   });
 
   /**
+   * PR #208 review, C3. #196 made `slotTaken` reachable on create for the
+   * first time: a teacher creating a template onto a day/time they already
+   * occupy gets a live template whose window came back short. Before this,
+   * `handleSubmit` read nothing from the POST body and navigated
+   * unconditionally on 201 — a live template, an empty-ish window, a silent
+   * redirect and no sentence. `resumeMessage` (`template-action-messages.ts`)
+   * is the same formatter the PATCH `active` arm's button uses.
+   */
+  it('stays on the page and reports a short window instead of navigating away', async () => {
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url === '/api/teacher-rooms') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{
+              id: '11111111-1111-4111-8111-111111111111',
+              capacityOverride: 30,
+              rentalRate: 20,
+              room: { roomName: 'Studio A', venueName: 'Main Venue' },
+            }],
+          }),
+        };
+      }
+      if (url === '/api/class-templates' && init?.method === 'POST') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: { id: 'tpl-short', added: 3, blockedByCancelled: 0, slotTaken: 1 },
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TemplateForm mode="create" />);
+    const roomSelect = await screen.findByLabelText('Room');
+    fireEvent.change(roomSelect, {
+      target: { value: '11111111-1111-4111-8111-111111111111' },
+    });
+    fireEvent.change(screen.getByLabelText('Class type'), {
+      target: { value: 'Vinyasa' },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    expect(
+      await screen.findByText(/3 classes on your schedule\. 1 date already had a class\./i),
+    ).toBeInTheDocument();
+    // `created` still latches — the settled guard is not conditional on the
+    // window being full — but no navigation happened: the teacher stays here
+    // to read the sentence above instead of landing on the list with no
+    // explanation for what they see there.
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  /**
    * Review F4. `handleSubmit`'s `if (created) return;` cannot be reached
    * through the UI: settlement removes the only submit button, and HTML's
    * implicit submission needs one — or a single field that blocks it, where

@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { SettledNotice } from '@/components/ui/settled-notice';
+import { resumeStudioMessage } from '@/components/settings/template-action-messages';
 
 /**
  * #136. The one enumeration of this form's fields. It replaced three that
@@ -132,10 +133,46 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
       }
 
       if (mode === 'create') {
-        // #40. POST /api/studio-class-templates is not idempotent: a second
-        // request creates a second template and a second generated window.
+        // #40. A second identical POST to /api/studio-class-templates now
+        // collides with `StudioClassTemplate_teacher_slot_unique`
+        // ((teacherId, dayOfWeek, startTime) WHERE isArchived = false, #196)
+        // and comes back as a 409 DUPLICATE_STUDIO_TEMPLATE_SLOT
+        // (`api/studio-class-templates/route.ts`) rather than a second
+        // template and a second generated window. That backstop is
+        // server-side and after the round trip, though — it does not stop
+        // the second request from being sent, or turn its failure into
+        // anything gentler than an error banner. The push below normally
+        // unmounts this form; when it does not commit, `created` is what
+        // stops a populated, re-enabled form from inviting the click that
+        // resends the same create and now earns a 409 instead of a silent
+        // duplicate.
+        //
+        // The POST also returns `added`, `blockedByCancelled` and
+        // `slotTaken` — the same counts the PATCH `active` arm carries.
+        // #196 made `slotTaken` reachable here for the first time: a teacher
+        // creating a recurring studio class onto a day/time they already
+        // occupy gets a live template whose window came back short. A clean
+        // window navigates straight to the list as before; a short one stays
+        // on this page and says so, via the same `resumeStudioMessage` the
+        // resume button renders — `scheduled` is exactly `added` here, since
+        // nothing existed under this brand-new template before this create.
+        const json: {
+          data?: { added: number; blockedByCancelled: number; slotTaken: number };
+        } = await res.json();
+        const counts = json.data;
         setCreated(true);
-        router.push(STUDIO_CLASSES_PATH);
+        if (counts && (counts.blockedByCancelled > 0 || counts.slotTaken > 0)) {
+          setSuccess(
+            resumeStudioMessage(
+              counts.added,
+              counts.added,
+              counts.blockedByCancelled,
+              counts.slotTaken,
+            ),
+          );
+        } else {
+          router.push(STUDIO_CLASSES_PATH);
+        }
       } else {
         setSuccess('Saved');
         router.refresh();

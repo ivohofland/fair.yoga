@@ -150,6 +150,36 @@ describe('StudioTemplateForm', () => {
   });
 
   /**
+   * PR #208 review, C3. #196 made `slotTaken` reachable on create for the
+   * first time: a teacher creating a template onto a day/time they already
+   * occupy gets a live template whose window came back short. Before this,
+   * `handleSubmit` read nothing from the POST body and navigated
+   * unconditionally on 201. `resumeStudioMessage` is the same formatter the
+   * PATCH `active` arm's button uses.
+   */
+  it('stays on the page and reports a short window instead of navigating away', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: { id: 'tpl-short', added: 2, blockedByCancelled: 1, slotTaken: 0 },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<StudioTemplateForm mode="create" />);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    expect(
+      await screen.findByText(
+        /2 classes on your schedule\. 1 cancelled class still holds that date\./i,
+      ),
+    ).toBeInTheDocument();
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  /**
    * Review F4, the studio twin. The `if (created) return;` guard is
    * unreachable through the UI — no submit button survives settling, and
    * implicit submission needs one or a single blocking field, where this form

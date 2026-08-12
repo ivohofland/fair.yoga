@@ -19,6 +19,7 @@ import { SettledNotice } from '@/components/ui/settled-notice';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
 import { formatRoomLocation } from '@/lib/format';
 import { CANCEL_DEADLINE_OPTIONS, AUTO_CANCEL_OPTIONS } from '@/lib/class-options';
+import { resumeMessage } from '@/components/settings/template-action-messages';
 
 interface TeacherRoomOption {
   id: string;
@@ -266,22 +267,39 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
       }
 
       if (mode === 'create') {
-        // #40. POST /api/class-templates is not idempotent: a second request
-        // creates a second template and regenerates a second set of bookable
-        // classes. The push below normally unmounts this form; when it does not
-        // commit, `created` is what stops a populated, re-enabled form inviting
-        // the click that duplicates the teacher's whole schedule.
-        // Known gap, recorded here because this is where it is fixed. The POST
-        // now returns `added`, `blockedByCancelled` and `slotTaken`, and this
-        // branch reads none of them: a teacher creating a template onto a day
-        // and time they already occupy gets a live template, an empty window,
-        // and a silent redirect to the list. The operator learns of it from the
-        // generator's `log.warn`; the teacher learns of it by noticing no
-        // classes. Surfacing it means either not navigating on a short window
-        // or carrying the message to the list — a UX decision, not a wiring
-        // one, which is why the data is here and the sentence is not.
+        // #40. A second identical POST to /api/class-templates now collides
+        // with `ClassTemplate_teacher_slot_unique` ((teacherId, dayOfWeek,
+        // startTime) WHERE isArchived = false, #196) and comes back as a 409
+        // DUPLICATE_TEMPLATE_SLOT (`api/class-templates/route.ts`) rather
+        // than a second template. That backstop is server-side and after the
+        // round trip, though — it does not stop the second request from
+        // being sent, or turn its failure into anything gentler than an
+        // error banner. The push below normally unmounts this form; when it
+        // does not commit, `created` is what stops a populated, re-enabled
+        // form from inviting the click that resends the same create and now
+        // earns a 409 instead of duplicating the teacher's whole schedule.
+        //
+        // The POST also returns `added`, `blockedByCancelled` and `slotTaken`
+        // — the same counts the PATCH `active` arm carries. #196 made
+        // `slotTaken` reachable here for the first time: a teacher creating a
+        // recurring class onto a day/time they already occupy gets a live
+        // template whose window came back short. A clean window navigates
+        // straight to the list as before; a short one stays on this page and
+        // says so, via the same `resumeMessage` the resume button renders —
+        // `scheduled` is exactly `added` here, since nothing existed under
+        // this brand-new template before this create.
+        const json: {
+          data?: { added: number; blockedByCancelled: number; slotTaken: number };
+        } = await res.json();
+        const counts = json.data;
         setCreated(true);
-        router.push(RECURRING_LIST_PATH);
+        if (counts && (counts.blockedByCancelled > 0 || counts.slotTaken > 0)) {
+          setSuccess(
+            resumeMessage(counts.added, counts.added, counts.blockedByCancelled, counts.slotTaken),
+          );
+        } else {
+          router.push(RECURRING_LIST_PATH);
+        }
       } else {
         // Say honestly what the edit reached: mutable upcoming instances
         // sync, booked ones keep their settings.

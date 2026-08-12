@@ -348,15 +348,23 @@ export function resolveTemplateConfirmation(data: TemplateToggleResponse): strin
  * fifth arm added to the type left `tsc` at exit 0. The route grew this guard
  * in the same PR; this is the layer #119's bug actually lived at.
  *
- * Nothing is said on **create**, and that is a decision rather than an
- * oversight to be tidied up later. Creating a weekly template means "put this
- * on my schedule weekly", so four classes appearing is the definition of the
- * thing working, not a consequence needing disclosure — and both families'
- * create forms navigate to their own settings list, where the teacher sees the
- * template they just made. The class family settled the same question for its
- * own POST: see
- * `docs/superpowers/specs/2026-07-23-template-generate-on-create-design.md`
- * ("Response shapes are unchanged … The front-end needs no changes").
+ * This resolver is never called on **create** — create's POST response has no
+ * `action` field for a `switch` to dispatch on, so the create forms
+ * (`template-form.tsx`, `studio-template-form.tsx`) call `resumeMessage`/
+ * `resumeStudioMessage` directly instead when the window came back short.
+ * That is new: creating a weekly template used to say nothing at all —
+ * "put this on my schedule weekly", four classes appearing, was taken as the
+ * definition of the thing working, not a consequence needing disclosure, and
+ * both families' create forms navigated straight to their own settings list
+ * (see `docs/superpowers/specs/2026-07-23-template-generate-on-create-design.md`,
+ * "Response shapes are unchanged … The front-end needs no changes"). #196
+ * made that decision incomplete rather than wrong: `slotTaken` is now
+ * reachable on create, and a live template with an empty window and a silent
+ * redirect is not "the thing working". The happy path still navigates
+ * straight through and says nothing, matching the design note above; only a
+ * window that came back short now stays on the page and speaks — through the
+ * same two functions this file already uses for the resume PATCH, not
+ * through this resolver.
  */
 export function resolveStudioConfirmation(data: StudioTemplateToggleResponse): string | null {
   switch (data.action) {
