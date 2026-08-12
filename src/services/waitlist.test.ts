@@ -206,14 +206,20 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
     });
     teacherRoomId = teacherRoom.id;
 
+    // Counter-derived startTime: this beforeAll calls makeClass 3 times for
+    // one teacher/date, and none of this describe's tests read or assert the
+    // created rows' literal startTime — so a distinct minute per call is
+    // enough to keep every create legal under Class_teacher_slot_unique.
+    let makeClassCounter = 0;
     async function makeClass(status: 'open' | 'draft', maxStudents: number): Promise<string> {
+      makeClassCounter += 1;
       const cls = await prisma.class.create({
         data: {
           teacherId,
           teacherRoomId,
           classType: 'Hatha',
           date: new Date('2099-06-01'),
-          startTime: '09:00',
+          startTime: `09:${String(makeClassCounter).padStart(2, '0')}`,
           durationMinutes: 60,
           roomCost: 35,
           minRate: 15,
@@ -606,17 +612,53 @@ describe('claimSpot (DB)', () => {
   let waiterId: string;
   let outsiderId: string;
   const classIds: string[] = [];
+  // Extra teachers created below for calls after the first — see
+  // makeFullClass's comment.
+  const extraTeacherIds: string[] = [];
 
   /**
    * A full, open class with `waiter` on its waitlist — the state every claim
    * starts from. `maxStudents: 1` plus one registration is the cheapest way to
    * be full, which is what `addToWaitlist` requires before it will accept
    * anyone.
+   *
+   * date/startTime are load-bearing for the deadline-window comment above
+   * (BEFORE_CUTOFF/IN_CLAIM_WINDOW/AT_DEADLINE are all computed against this
+   * exact 2026-06-01 09:00 UTC start) — moving either to dodge
+   * Class_teacher_slot_unique across this describe's 6 calls would shift
+   * every boundary those constants were pinned against. So every call after
+   * the first gets its own teacher (defaultTimezone UTC, matching the
+   * fixture teacher below, since claimSpot reads the deadline off
+   * `cls.teacher.defaultTimezone`) instead — the index is scoped per
+   * teacher, so a different owner keeps the same slot legal.
+   * `teacherRoomId` is reused across those teachers deliberately: claimSpot
+   * never reads it, and slot-constraints.test.ts already establishes that
+   * Class.teacherRoomId need not belong to Class.teacherId.
    */
+  let makeFullClassCounter = 0;
   const makeFullClass = async (): Promise<string> => {
+    makeFullClassCounter += 1;
+    let classTeacherId = teacherId;
+    if (makeFullClassCounter > 1) {
+      const mail = `claim-teacher-${makeFullClassCounter}-${uniqueSuffix}@test.local`;
+      const extraTeacher = await prisma.teacher.create({
+        data: {
+          firstName: 'Claim',
+          lastName: `Teacher${makeFullClassCounter}`,
+          email: mail,
+          account: { create: { email: mail } },
+          bio: 'Test teacher for claimSpot tests',
+          pageSlug: `claim-teacher-${makeFullClassCounter}-${uniqueSuffix}`,
+          defaultTimezone: 'UTC',
+        },
+      });
+      extraTeacherIds.push(extraTeacher.id);
+      classTeacherId = extraTeacher.id;
+    }
+
     const cls = await prisma.class.create({
       data: {
-        teacherId,
+        teacherId: classTeacherId,
         teacherRoomId,
         classType: 'Claim Flow',
         date: new Date('2026-06-01'),
@@ -705,6 +747,7 @@ describe('claimSpot (DB)', () => {
     await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
     await prisma.room.delete({ where: { id: roomId } });
     await prisma.teacher.delete({ where: { id: teacherId } });
+    await prisma.teacher.deleteMany({ where: { id: { in: extraTeacherIds } } });
     await prisma.$disconnect();
   });
 
@@ -931,14 +974,20 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
 
     // 2099 keeps every class in the `auto_promote` window, so `promoteNext`'s
     // own window guard never trips — the same trick the describes above use.
+    // Counter-derived startTime: this beforeAll calls makeClass 3 times for
+    // one teacher/date, and none of this describe's tests read or assert the
+    // created rows' literal startTime — so a distinct minute per call is
+    // enough to keep every create legal under Class_teacher_slot_unique.
+    let makeClassCounter = 0;
     const makeClass = async (label: string, maxStudents: number): Promise<string> => {
+      makeClassCounter += 1;
       const cls = await prisma.class.create({
         data: {
           teacherId,
           teacherRoomId,
           classType: label,
           date: new Date('2099-08-01'),
-          startTime: '10:00',
+          startTime: `10:${String(makeClassCounter).padStart(2, '0')}`,
           durationMinutes: 60,
           roomCost: 25,
           minRate: 15,
