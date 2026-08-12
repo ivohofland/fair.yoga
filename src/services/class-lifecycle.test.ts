@@ -439,14 +439,22 @@ describe('completeClass (DB)', () => {
   // 'completed'. Mirrors `updateClass (DB)`'s `makeClass` closure — reuses
   // the shared teacher/room fixture from `beforeAll` instead of standing up
   // a fresh one per test.
-  const makeClass = ({ status }: { status: ClassStatus }) =>
-    prisma.class.create({
+  // Counter-derived startTime: the beforeAll below plants a class at
+  // 18:00 for this same teacher/date, and both call sites in this block
+  // (the lock test and the already-cancelled test) need their own slot too
+  // — under Class_teacher_slot_unique none of these tests read or assert
+  // the literal startTime, only the id, so a distinct minute per call is
+  // enough to keep every create legal without touching any assertion.
+  let makeClassCounter = 0;
+  const makeClass = ({ status }: { status: ClassStatus }) => {
+    makeClassCounter += 1;
+    return prisma.class.create({
       data: {
         teacherId,
         teacherRoomId,
         classType: 'Vinyasa',
         date: new Date('2026-06-01'),
-        startTime: '18:00',
+        startTime: `18:${String(makeClassCounter).padStart(2, '0')}`,
         durationMinutes: 75,
         roomCost: 35,
         minRate: 15,
@@ -457,6 +465,7 @@ describe('completeClass (DB)', () => {
         settingsLocked: true,
       },
     });
+  };
 
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
@@ -916,14 +925,22 @@ describe('updateClass (DB)', () => {
   // registrations-api's `locks settings atomically with the first
   // registration`. Do not copy this shortcut into a test that claims to cover
   // the flip itself.
-  const makeClass = (settingsLocked: boolean) =>
-    prisma.class.create({
+  // Counter-derived startTime: this block calls makeClass 7 times for one
+  // shared teacher/date, and no test here reads or asserts the created
+  // row's literal startTime (the one test that changes it does so via an
+  // updateClass() call, asserted against its new value, not this one) — so
+  // a distinct minute per call is enough to keep every create legal under
+  // Class_teacher_slot_unique without touching any assertion.
+  let makeClassCounter = 0;
+  const makeClass = (settingsLocked: boolean) => {
+    makeClassCounter += 1;
+    return prisma.class.create({
       data: {
         teacherId,
         teacherRoomId,
         classType: 'Hatha',
         date: new Date('2026-06-01'),
-        startTime: '09:00',
+        startTime: `09:${String(makeClassCounter).padStart(2, '0')}`,
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,
@@ -934,6 +951,7 @@ describe('updateClass (DB)', () => {
         settingsLocked,
       },
     });
+  };
 
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
