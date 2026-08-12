@@ -206,9 +206,14 @@ export type UpdateClassTemplateResult =
  *
  * The write and the propagation are deliberately NOT one transaction, matching
  * the behaviour this replaced: if `syncTemplateInstances` throws, the template
- * row is already updated. Every such error propagates except P2025 — the
- * `catch` below maps that one to `{ ok: false, reason: 'not_found' }` instead,
- * because the row is gone before the caller is answered (#100). Anything else
+ * row is already updated. Three shapes are mapped below rather than left to
+ * propagate: P2025 becomes `{ ok: false, reason: 'not_found' }`, because the
+ * row is gone before the caller is answered (#100); a P2002 on
+ * `ClassTemplate_teacher_slot_unique` — raised by the `update` call above
+ * writing this template's own `dayOfWeek`/`startTime` — becomes
+ * `slot_conflict` (#196); and a P2002 on `Class_teacher_slot_unique` — raised
+ * by `syncTemplateInstances`'s same-day rewrite colliding with an instance the
+ * propagation never touches — becomes `sync_conflict` (#196). Everything else
  * from the sync call still propagates, so the caller sees a failure for a
  * partially applied change. That window is real and predates this function;
  * closing it for those remaining failures changes behaviour (a sync failure
