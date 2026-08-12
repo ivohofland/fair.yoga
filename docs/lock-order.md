@@ -312,10 +312,17 @@ consequences the five-site table above is shaped to miss.
 **It falsifies a stated premise of "How that enumeration was derived".** Check 1
 excuses `create`/`createMany`/`createManyAndReturn` — "a freshly inserted row's
 lock conflicts with nothing, so it carries no ordering obligation". True of the
-row, false of its index entries since #196: the generator's
-`createManyAndReturn` was measured as one half of a reproduced `40P01`. For
-`Class` the candidate set is no longer "statements that can lock an existing
-row" but **"statements that write `(teacherId, date, startTime)`"** — every
+row, false of its index entries since #196: `updateClass`'s single-row
+`UPDATE` was measured as one half of a reproduced `40P01` (see "The slot key
+is a wait edge" below — `syncTemplateInstances` vs `updateClass`, 1 of 120
+runs, and `updateClass` vs `updateClass`, 32 of 100). The generator's own
+`createManyAndReturn` is not what was reproduced here: measured against
+`syncTemplateInstances` it came back clean, 6 of 6, in the shipped
+configuration (see "The pairing that looks worst is currently unreachable"
+below), and only deadlocks — 3 of 3 — once `ClassTemplate_teacher_slot_unique`
+is dropped. For `Class` the candidate set is no longer "statements that can
+lock an existing row" but **"statements that write `(teacherId, date,
+startTime)`"** — every
 `Class` insert, and every update of those three columns or of `status` across
 the `cancelled` boundary. `updateClass` (`class-lifecycle.ts`) joins on that
 basis: its `class.updateMany` accepts `date` and `startTime` from
@@ -347,8 +354,13 @@ production issues, raced as-is:
 
 Both are new to #196, proven by mutation rather than argued: with
 `Class_teacher_slot_unique` dropped and nothing else changed, the same races
-give 120/120 and 60/60 clean — and leave behind exactly the duplicate slots
-#196 exists to prevent. The trade was taken knowingly in that direction; it is
+run clean — 120 of 120 for `syncTemplateInstances` vs `updateClass`, 60 of 60
+for `updateClass` vs `updateClass`. The second figure is a smaller sample than
+the 100-run original measurement above; the point of this mutation check is
+the pattern disappearing entirely once the index is gone, not reproducing the
+original run count, and 60/60 clean already establishes that as firmly as
+100/100 would — and leaves behind exactly the duplicate slots #196 exists to
+prevent. The trade was taken knowingly in that direction; it is
 recorded here, not fixed. The cheap fix (retry on `40P01`) is a decision about
 `withErrorHandler`, not about lock order, and a deferrable unique index would
 give up the immediate `409` the create routes answer with.
@@ -398,8 +410,8 @@ from — that `classifyApiError` had no branch for `40P01` and let this reach
 a teacher as a bare 500 — did not hold: an unrelated, already-merged PR
 (#174) had already given `40P01` a branch, grouped with `55P03`/`40001`/the
 matching Prisma codes under "lost a contention race, not a bad request"
-(`isTransientDbError`, above `isTerminalStatusViolation`'s `23514` and
-`P2002`'s 409 in `src/lib/api-errors.ts`). Reproduced directly rather than
+(`isTransientDbError`, checked after `isTerminalStatusViolation`'s `23514` but
+before `P2002`'s 409 in `src/lib/api-errors.ts`). Reproduced directly rather than
 trusted: two real `updateClass` writes racing over
 `Class_teacher_slot_unique` with no synchronisation, throwaway database, hit
 on attempt 5 of a 150-attempt budget.
