@@ -903,9 +903,10 @@ describe('registration writes return no stored income tier', () => {
 describe('registration cancel is retry-safe against a concurrent duplicate (#196)', () => {
   // A dedicated UTC teacher so the window math is plain UTC arithmetic, the
   // same convention as the resolve describe in invitations-api.test.ts.
+  // No teacher token: every request in this block is the student cancelling
+  // their own registration, which is the path with the deadline branch.
   let raceTeacherId: string;
   let raceTeacherAccountId: string;
-  let raceTeacherToken: string;
   let raceRoomId: string;
   let raceTeacherRoomId: string;
 
@@ -930,7 +931,6 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
     });
     raceTeacherId = teacher.id;
     raceTeacherAccountId = teacher.accountId;
-    raceTeacherToken = await seedSession(prisma, raceTeacherAccountId);
 
     const room = await prisma.room.create({
       data: {
