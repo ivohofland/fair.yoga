@@ -381,6 +381,35 @@ is the same condition as the rest of this document. If
 predicate that lets two live templates share a weekday and time, the pairing
 above becomes live and it will not announce itself.
 
+**Task 6c made this legible, not impossible.** The premise it started from —
+that `classifyApiError` had no branch for `40P01` and let this reach a teacher
+as a bare 500 — did not hold: an unrelated, already-merged PR (#174) had
+already given `40P01` a branch, grouped with `55P03`/`40001`/the matching
+Prisma codes under "lost a contention race, not a bad request"
+(`isTransientDbError`, above `isTerminalStatusViolation`'s `23514` and
+`P2002`'s 409 in `src/lib/api-errors.ts`). Reproduced directly rather than
+trusted: two real
+`updateClass` writes racing over `Class_teacher_slot_unique` with no
+synchronisation, throwaway database, hit on attempt 5 of a 150-attempt budget.
+The error was a `PrismaClientUnknownRequestError` with no `.code` property and
+`code: "40P01"` embedded in its message — already the exact shape
+`isTransientDbError` matches — and `classifyApiError` already answered 503,
+"The system was busy … Please try again", at `warn`. Pinned at
+`src/lib/api-errors.test.ts` ("maps the real Class_teacher_slot_unique
+deadlock … to a 503, not a 500"), mutation-proven against the pre-existing
+branch (commented out: that test and 6 others in the file flip to 500;
+restored: 19/19 green).
+
+What stays true regardless of which status code answers it: the cycle itself
+is not fixable by reordering, only classifiable once it happens. A transaction
+that moves a class vacates one slot key and claims another in the same
+statement, so an ascending-by-`id` rule — or any other pre-lock ordering —
+has no resource to sort, because the resource being contested does not exist
+until the statement that claims it runs. Two of these crossing will deadlock
+under any ordering discipline this document could add. The branch above
+answers "what does the client see", not "does this still happen" — it still
+does, at the rates measured above (32/100, 1/120).
+
 ## The empty-`update` upsert quirk — read this before "tidying" one
 
 Prisma 6.19.3 does **not** compile `tx.someTable.upsert({ where, update: {},

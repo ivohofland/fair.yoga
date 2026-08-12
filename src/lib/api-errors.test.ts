@@ -122,6 +122,43 @@ describe('classifyApiError', () => {
     expect(failure.message).toMatch(/try again/i);
   });
 
+  /**
+   * Task 6c (#196) set out to add a 409 branch for the deadlock
+   * `Class_teacher_slot_unique` measures against real `updateClass` writes
+   * (`docs/lock-order.md`, "The slot key is a wait edge") — on the premise
+   * that `classifyApiError` had no branch for `40P01` at all. Reproduced
+   * directly rather than trusting that premise (two real concurrent
+   * `updateClass(prisma, ...)` calls swapping slots, throwaway database,
+   * hit on the 5th natural attempt out of a 150-attempt budget, no
+   * synchronisation): the branch above already existed, landed by an
+   * unrelated already-merged PR (#174), and this scenario already lands in
+   * it. The verbatim shape measured — same error class, same code-embedded
+   * message, same absence of a `.code` property — as the `it.each` fixture
+   * two blocks up, differing only in the call site
+   * (`db.class.updateMany()`, `updateClass`'s own alias for the client, vs.
+   * that fixture's `prisma.class.updateMany()`) and in incidental detail
+   * (file path, process ids) that the predicate never inspects. This pins
+   * that #196's specific deadlock does NOT fall through to the generic 500
+   * — the outcome Task 6c wanted — without re-deciding #174's already-shipped
+   * 503-not-409 choice, which this task's own measurement found no basis to
+   * revisit (see the Task 6c report for the reasoning).
+   */
+  it('maps the real Class_teacher_slot_unique deadlock (measured via a real updateClass race) to a 503, not a 500', () => {
+    const measured = new Prisma.PrismaClientUnknownRequestError(
+      `Invalid \`db.class.updateMany()\` invocation in\n/repo/src/services/class-lifecycle.ts:543:29\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "40P01", message: "deadlock detected", severity: "ERROR", detail: Some("Process 1 waits for ShareLock on transaction 2; blocked by process 3.\\nProcess 3 waits for ShareLock on transaction 1; blocked by process 1."), column: None, hint: Some("See server log for query details.") }), transient: false })`,
+      { clientVersion: 'test' },
+    );
+
+    expect(isTransientDbError(measured)).toBe(true);
+
+    const failure = classifyApiError(measured);
+
+    expect(failure.status).toBe(503);
+    expect(failure.status).not.toBe(500);
+    expect(failure.level).toBe('warn');
+    expect(failure.message).toMatch(/try again/i);
+  });
+
   it.each<[string, string]>([
     ['P2028 (interactive transaction budget expired)', 'P2028'],
     ['P2024 (connection pool timeout)', 'P2024'],
