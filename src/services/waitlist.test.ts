@@ -606,15 +606,17 @@ describe('claimSpot (DB)', () => {
   const AT_DEADLINE = new Date('2026-05-31T09:00:00Z');
 
   let teacherId: string;
+  let accountId: string;
   let roomId: string;
   let teacherRoomId: string;
   let fillerId: string;
   let waiterId: string;
   let outsiderId: string;
   const classIds: string[] = [];
-  // Extra teachers created below for calls after the first — see
-  // makeFullClass's comment.
+  // Extra teachers (and their accounts) created below for calls after the
+  // first — see makeFullClass's comment.
   const extraTeacherIds: string[] = [];
+  const extraAccountIds: string[] = [];
 
   /**
    * A full, open class with `waiter` on its waitlist — the state every claim
@@ -653,6 +655,7 @@ describe('claimSpot (DB)', () => {
         },
       });
       extraTeacherIds.push(extraTeacher.id);
+      extraAccountIds.push(extraTeacher.accountId);
       classTeacherId = extraTeacher.id;
     }
 
@@ -702,6 +705,7 @@ describe('claimSpot (DB)', () => {
       },
     });
     teacherId = teacher.id;
+    accountId = teacher.accountId;
 
     const room = await prisma.room.create({
       data: {
@@ -748,6 +752,11 @@ describe('claimSpot (DB)', () => {
     await prisma.room.delete({ where: { id: roomId } });
     await prisma.teacher.delete({ where: { id: teacherId } });
     await prisma.teacher.deleteMany({ where: { id: { in: extraTeacherIds } } });
+    // Teacher.accountId has no onDelete: Cascade (slot-constraints.test.ts's
+    // makeTeacher carries the same note), so these survive the teacher
+    // deletes above and must be removed separately, only after them —
+    // Account is what Teacher.accountId references.
+    await prisma.account.deleteMany({ where: { id: { in: [accountId, ...extraAccountIds] } } });
     await prisma.$disconnect();
   });
 
