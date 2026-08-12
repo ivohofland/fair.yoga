@@ -750,7 +750,13 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
   it('names a cancelled own instance as blocked_by_cancelled', async () => {
     const now = new Date();
-    const id = await makeTemplate(eastTeacherId, 3, '09:00');
+    // 09:01, not 09:00: the earlier "creates the four-week window..." test
+    // above leaves its own dayOfWeek-3/09:00 template behind (this describe's
+    // afterEach only clears StudioClass rows, not templates), which would
+    // otherwise collide under StudioClassTemplate_teacher_slot_unique. This
+    // test's meaning is indifferent to the exact minute — it only reads back
+    // the dates the generator itself creates.
+    const id = await makeTemplate(eastTeacherId, 3, '09:01');
     const tpl = await withZone(id);
 
     const first = await generateStudioInstancesForTemplate(prisma, tpl, now);
@@ -777,7 +783,10 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
   it('skips only the slot another studio class occupies', async () => {
     const now = new Date();
-    const id = await makeTemplate(eastTeacherId, 3, '09:00');
+    // 09:02: see the comment on the same slot in the "names a cancelled own
+    // instance" test above — this keeps it clear of both that template and
+    // the leftover 09:00 one.
+    const id = await makeTemplate(eastTeacherId, 3, '09:02');
     const tpl = await withZone(id);
 
     const first = await generateStudioInstancesForTemplate(prisma, tpl, now);
@@ -811,7 +820,9 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
 
   it('does not treat a cancelled neighbour as occupying the slot', async () => {
     const now = new Date();
-    const id = await makeTemplate(eastTeacherId, 3, '09:00');
+    // 09:03: see the comment on the same slot in the "names a cancelled own
+    // instance" test above.
+    const id = await makeTemplate(eastTeacherId, 3, '09:03');
     const tpl = await withZone(id);
 
     const first = await generateStudioInstancesForTemplate(prisma, tpl, now);
