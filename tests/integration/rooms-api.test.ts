@@ -551,3 +551,100 @@ describe('POST /api/rooms dedupes both branches (#196)', () => {
     expect(rows).toHaveLength(1);
   });
 });
+
+/**
+ * Task 6b (#196). The six indexes constrain every write, not just creates:
+ * `PUT /api/rooms/[id]` never touches a currently-public room (the guard
+ * above already refuses it), but `updateRoomSchema` still accepts `isPublic`,
+ * so a private room's own edit can collide on either identity index —
+ * `Room_private_identity_unique` if it stays private, or
+ * `Room_public_identity_unique` if the same edit flips it public.
+ */
+describe('PUT /api/rooms/[id] collides on the slot key (#196)', () => {
+  const slotAddress = `${suffix} PUT Slot Street`;
+
+  afterAll(async () => {
+    await prisma.room.deleteMany({ where: { address: slotAddress } });
+  });
+
+  it("refuses an address/floor/roomName change onto a slot another of the creator's private rooms already holds", async () => {
+    const occupied = await prisma.room.create({
+      data: {
+        venueName: 'PUT Slot Venue',
+        address: slotAddress,
+        city: 'Amsterdam',
+        postcode: '1011 AB',
+        floor: '3',
+        roomName: 'Occupied',
+        maxCapacity: 10,
+        createdById: creatorId,
+        isPublic: false,
+      },
+    });
+    const mover = await prisma.room.create({
+      data: {
+        venueName: 'PUT Slot Venue',
+        address: slotAddress,
+        city: 'Amsterdam',
+        postcode: '1011 AB',
+        floor: '3',
+        roomName: 'Mover',
+        maxCapacity: 10,
+        createdById: creatorId,
+        isPublic: false,
+      },
+    });
+
+    const res = await put(creatorToken, mover.id, { roomName: 'Occupied' });
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('DUPLICATE_ROOM');
+
+    const after = await prisma.room.findUniqueOrThrow({ where: { id: mover.id } });
+    expect(after.roomName).toBe('Mover');
+    void occupied;
+  });
+
+  // The two rows coexist fine at creation: `Room_private_identity_unique`
+  // scopes on `createdById`, so a different creator's private room and a
+  // public room can share an identity — it is only the flip to `isPublic:
+  // true` that puts the private room in the same index as the public one.
+  it('refuses flipping a private room public onto a slot a public room already holds', async () => {
+    const publicRoom = await prisma.room.create({
+      data: {
+        venueName: 'PUT Slot Venue',
+        address: slotAddress,
+        city: 'Amsterdam',
+        postcode: '1011 AB',
+        floor: '4',
+        roomName: 'PublicHolder',
+        maxCapacity: 10,
+        createdById: otherTeacherId,
+        isPublic: true,
+      },
+    });
+    const privateRoom = await prisma.room.create({
+      data: {
+        venueName: 'PUT Slot Venue',
+        address: slotAddress,
+        city: 'Amsterdam',
+        postcode: '1011 AB',
+        floor: '4',
+        roomName: 'PublicHolder',
+        maxCapacity: 10,
+        createdById: creatorId,
+        isPublic: false,
+      },
+    });
+
+    const res = await put(creatorToken, privateRoom.id, { isPublic: true });
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: { code: string; message: string } };
+    expect(json.error.code).toBe('DUPLICATE_ROOM');
+    expect(json.error.message).toBe('A public room at this address already exists');
+
+    const after = await prisma.room.findUniqueOrThrow({ where: { id: privateRoom.id } });
+    expect(after.isPublic).toBe(false);
+    void publicRoom;
+  });
+});

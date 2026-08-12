@@ -10,6 +10,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { updateRoomSchema } from '@/lib/schemas';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
 
 export const DELETE = withErrorHandler(async (
   request: NextRequest,
@@ -95,10 +96,33 @@ export const PUT = withErrorHandler(async (
     return respondError('No valid fields to update', 400);
   }
 
-  const updated = await prisma.room.update({
-    where: { id },
-    data: updateData,
-  });
-
-  return respondOk(updated);
+  // `room.isPublic` is `false` here unconditionally — the guard above already
+  // refused a currently-public room — but `updateRoomSchema` still accepts
+  // `isPublic`, so this PUT can flip a private room to public in the very
+  // write that also edits its address/floor/roomName. That means either
+  // identity index can be the one this write collides with (#196):
+  // `Room_private_identity_unique` if it stays private,
+  // `Room_public_identity_unique` if `isPublic: true` rides along — the same
+  // two-shape catch `POST /api/rooms` already carries, for the same reason.
+  try {
+    const updated = await prisma.room.update({
+      where: { id },
+      data: updateData,
+    });
+    return respondOk(updated);
+  } catch (err) {
+    if (
+      isUniqueConflictOn(err, ['address', 'floor', 'roomName']) ||
+      isUniqueConflictOn(err, ['createdById', 'address', 'floor', 'roomName'])
+    ) {
+      return respondError(
+        parsed.data.isPublic === true
+          ? 'A public room at this address already exists'
+          : 'You already have a room at this address',
+        409,
+        'DUPLICATE_ROOM',
+      );
+    }
+    throw err;
+  }
 });
