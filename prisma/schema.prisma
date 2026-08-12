@@ -485,6 +485,14 @@ model StudioClassTemplate {
 /// WHERE cancelledAt IS NULL (#196). It is invisible to `migrate diff`, so it
 /// will not appear as drift and will not be dropped — and equally will not
 /// appear in this file unless someone keeps this comment true.
+///
+/// "Live" is spelled differently than `Class_teacher_slot_unique` does, and
+/// that is the model, not a drift between two indexes meant to match:
+/// `StudioClass` has no `status` enum at all, only this nullable
+/// `cancelledAt` — the same field `withdrawnCount`'s comment above already
+/// treats as the uncancelled filter everywhere else on this model. `Class`
+/// spells the same idea as `status <> 'cancelled'` because that is the column
+/// it has.
 model StudioClass {
   id              String    @id @default(uuid())
   teacherId       String

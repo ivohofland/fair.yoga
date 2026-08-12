@@ -104,8 +104,14 @@ export async function claimStudioTemplateForGeneration(
  *     grep for it. It is a read-then-write and so is not race-safe on its own;
  *   - `createManyAndReturn({ skipDuplicates: true })` compiles to a BARE
  *     `ON CONFLICT DO NOTHING` — no conflict target, so it covers every unique
- *     constraint on the table, including the partial index #196 adds. That is
- *     what makes a clash cost only its own date.
+ *     constraint on the table, including the partial index #196 adds:
+ *     `StudioClass_teacher_slot_unique` on (teacherId, date, startTime) WHERE
+ *     "cancelledAt" IS NULL. That is what makes a clash cost only its own
+ *     date. Measured the same way as the class family's twin claim: this
+ *     file's "names a date lost to a concurrent insert as raced, not as
+ *     filled" test parks a holder row on a date/time this key also covers,
+ *     and the generator's own transaction still creates the other three
+ *     dates and commits rather than aborting.
  *
  * This function's P2002 hedge used to document the same 25P02 trap the class
  * family's did (#164): a caught `P2002` inside an interactive transaction
