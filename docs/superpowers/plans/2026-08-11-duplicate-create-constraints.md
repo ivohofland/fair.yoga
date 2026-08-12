@@ -986,6 +986,61 @@ git commit -m "fix: a duplicated template generated a second four-week window"
 
 ---
 
+## Task 6b: The update paths the indexes also constrain
+
+**Added mid-execution, after Task 7's probe. This is a defect this branch introduces, not a pre-existing one.**
+
+The plan scoped five **POST** routes. The six indexes constrain **every** write. So a teacher moving an existing row into a slot they already occupy now raises `P2002` on a path nothing handles:
+
+- `class-template-lifecycle.ts:543` enumerates what can throw under its transaction — *"P2003 only — never P2002, which the insert's bare `ON CONFLICT DO NOTHING` absorbs rather than raises."* True of the insert. **False of the `classTemplate.update` in the same transaction**, which can now collide on `ClassTemplate_teacher_slot_unique`. That comment must be corrected, not just the code.
+- `template-sync.ts:95`'s `class.updateMany` rewrites `startTime` on existing classes and can now collide on `Class_teacher_slot_unique`.
+
+**Files (verify each actually needs it before changing it — do not assume):**
+- `src/app/api/classes/[id]/route.ts` (PUT — reschedule)
+- `src/app/api/studio-classes/[id]/route.ts` (PUT)
+- `src/app/api/class-templates/[id]/route.ts` (PUT, and **PATCH `?state=unarchived`** — un-archiving into a slot another live template now holds)
+- `src/app/api/studio-class-templates/[id]/route.ts` (PUT, PATCH)
+- `src/app/api/rooms/[id]/route.ts` (PUT)
+- `src/services/class-template-lifecycle.ts`, `src/services/template-sync.ts` — the false comment and any catch that must widen
+
+**Interfaces:** consumes `isUniqueConflictOn` from `src/lib/unique-conflict.ts` unchanged.
+
+- [ ] **Step 1: Enumerate before fixing.** For each route above, determine from the code whether a `P2002` on one of the six indexes is reachable, and what the client sees today. Record the list with verdicts in the report **before** editing. A route that cannot collide gets no catch — adding one there is YAGNI and a finding.
+
+- [ ] **Step 2: Write a failing test per reachable path.** Each asserts the tailored 409 and its `error.code`, not merely a non-500.
+
+- [ ] **Step 3: Run them, watch them fail**, and record what each currently returns — a 500, or a generic 409 with `code` undefined. Both are wrong; which one it is matters for the report.
+
+- [ ] **Step 4: Map each to a 409 naming the clash**, reusing the existing codes (`DUPLICATE_CLASS_SLOT`, `DUPLICATE_STUDIO_SLOT`, `DUPLICATE_TEMPLATE_SLOT`, `DUPLICATE_STUDIO_TEMPLATE_SLOT`, `DUPLICATE_ROOM`) — a move into an occupied slot is the same condition as a create into one, and inventing parallel codes would make clients handle two names for one thing.
+
+- [ ] **Step 5: Correct `class-template-lifecycle.ts:543`'s enumeration** and any sibling comment this branch falsified. `grep -rn 'never P2002'` across `src/` and fix every instance.
+
+- [ ] **Step 6: Mutation per guard**, reporting run counts rather than pass/fail.
+
+- [ ] **Step 7: Whole project green**, then commit per route.
+
+---
+
+## Task 6c: `40P01` reaches the user as an unhandled error
+
+**Added mid-execution, after Task 7 measured it.** `Class_teacher_slot_unique` produced real deadlocks: **32 runs in 100** for two `updateClass` writes swapping slots, 1 in 120 for sync-vs-update — and **0/120 and 0/60 with the index dropped**, so the index is the cause, proven by control.
+
+`classifyApiError` (`src/lib/api-errors.ts`) has no branch for a deadlock, so it falls through to the generic 500.
+
+**A constraint that rules out the obvious fix.** Do **not** add a retry to `withErrorHandler`. It wraps the whole handler, and the handler has already consumed the request body via `parseBody` — a second invocation cannot re-read it. A retry, if one is wanted, belongs inside the specific service transaction, not the middleware.
+
+- [ ] **Step 1: Measure what a deadlock actually surfaces as.** Prisma may map Postgres `40P01` to `P2034`, or it may arrive as a raw `PostgresError` inside a `ConnectorError` — Task 7's report shows raw `40P01` text. **The handler must match what actually arrives, not what documentation says it should.** Reproduce one and print the error's constructor, `code`, and message. Record it verbatim.
+
+- [ ] **Step 2: Write the failing test** — a deadlock reproduction asserting the mapped response rather than a 500.
+
+- [ ] **Step 3: Add the branch to `classifyApiError`.** A deadlock is transient and the correct advice is to retry, so it is **not** a 500: map it to 409 with a message saying another change landed at the same moment and to try again, and a distinct code. Log at `warn` — it is worth knowing about and is not an outage.
+
+- [ ] **Step 4: Prove the guard bites.** Remove the branch, confirm the test fails with a 500, restore.
+
+- [ ] **Step 5: Record what is NOT fixed.** The underlying cycle stays. A slot move vacates one key and claims another in one statement, so it is not orderable and `docs/lock-order.md`'s ascending-by-id rule cannot express it. This task makes the deadlock legible to the user, not impossible. Say so in `docs/lock-order.md` beside Task 7's entry.
+
+---
+
 ## Task 7: Measure whether the new keys add a deadlock edge
 
 `docs/lock-order.md:315` records that *"two concurrent INSERTs of one unique key make the second wait on the first's uncommitted tuple, and that wait deadlocks like any other."* This branch adds six unique keys, and that document records two sites (`syncTemplateInstances`, `archiveOrUnarchiveTemplate`) already locking `Class` rows in heap order, with a reproduced `40P01`. The analysis in the spec's §5.2 says the risk is low. **That is reasoning, and this project's convention is to measure.**
