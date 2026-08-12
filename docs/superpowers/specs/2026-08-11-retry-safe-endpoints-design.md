@@ -314,17 +314,21 @@ they overlap in only four (`announcements`, `remind`, `magic-link/send`,
 "needs no migration". Same trap as the `47` in §2.1 — two different quantities
 that happen to be equal.
 
-| Endpoint | Mechanism |
-|---|---|
-| `POST /api/announcements` | `pg_advisory_xact_lock` on `hash(teacherId, classId, message)`, then compare-recent-then-insert, 2-minute window |
-| `POST /api/payments/[id]/remind` | CAS on the **existing** `Payment.reminderSentAt` (`schema.prisma:536`), copying `payment-reminders.ts:74-82`. The column is already written at `payments.ts:193` and never read |
-| `POST /api/auth/magic-link/send` | Reuse the live unconsumed token rather than minting a second |
-| `POST /api/auth/student-signup` | Same helper; additionally move the mint+send inside the existing guard |
-| `DELETE /api/invitations/[id]` | `deleteMany({ where: { id, status: { not: 'declined' } } })` + count check |
-| `PUT /api/invitations/[id]` | Same status scope on the update's `where` |
-| `DELETE /api/registrations/[id]` | Guard the final-hour broadcast against re-sending |
-| `DELETE /api/account` | Scope the erasure write by `deletedAt: null` |
-| `POST /api/cron/email-fallback` | `emailSent: false` in `markEmailSent`'s `where` + count check |
+The rows are kept as written — rewriting them would hide what was wrong — but
+each carries its verdict inline, because a banner at the top of a section does
+not reach someone who lands on one row of a table.
+
+| Endpoint | Mechanism as designed | Verdict |
+|---|---|---|
+| `POST /api/announcements` | `pg_advisory_xact_lock` on `hash(teacherId, classId, message)`, then compare-recent-then-insert, 2-minute window | ❌ **guards the wrong write** — the fan-out precedes the insert and nothing wraps them; also `sentAt` not `createdAt`, and `classId` needs an explicit `?? null` |
+| `POST /api/payments/[id]/remind` | CAS on the **existing** `Payment.reminderSentAt` (`schema.prisma:536`), copying `payment-reminders.ts:74-82`. The column is already written at `payments.ts:193` and never read | ❌ **two false claims** — `reminderSentAt` **is** read, in six places; and the column is `Payment.reminderSentAt`, not `schema.prisma:536` (line 536 is `payment Payment?` on `Registration`). The cooldown window was also never chosen; it is 2 minutes |
+| `POST /api/auth/magic-link/send` | Reuse the live unconsumed token rather than minting a second | ❌ **not expressible** — only `sha256(token)` is persisted. Today's behaviour already matches the decision; the hardening that landed instead retires sibling tokens on use |
+| `POST /api/auth/student-signup` | Same helper; additionally move the mint+send inside the existing guard | ❌ **would remove sign-in** for every returning student and unclaimed CRM contact. The real defect was a P2002 on the create leaking a 409 |
+| `DELETE /api/invitations/[id]` | `deleteMany({ where: { id, status: { not: 'declined' } } })` + count check | ✅ correct as written |
+| `PUT /api/invitations/[id]` | Same status scope on the update's `where` | ✅ correct as written — but `PATCH` is a third verb in that file and must be **excluded** |
+| `DELETE /api/registrations/[id]` | Guard the final-hour broadcast against re-sending | ❌ **names the symptom** — nothing exists to key such a guard on; the source is an unscoped cancel |
+| `DELETE /api/account` | Scope the erasure write by `deletedAt: null` | ❌ **incomplete** — the duplicate broadcast is post-commit, so the scope must also abort |
+| `POST /api/cron/email-fallback` | `emailSent: false` in `markEmailSent`'s `where` + count check | ❌ **wrong side of the send**, and names one of **two** triggers — the in-process scheduler runs the same sweep every 5 minutes |
 
 ---
 

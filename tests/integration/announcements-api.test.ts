@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { ANNOUNCEMENT_DEDUPE_WINDOW_MS } from '@/lib/db-locks';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -221,5 +222,105 @@ describe('POST /api/announcements', () => {
       message: 'Ghost class.',
     });
     expect(res.status).toBe(404);
+  });
+
+  describe('is retry-safe against a duplicate send (#196)', () => {
+    it('notifies each student once when the same announcement is sent twice at once', async () => {
+      const message = `Race announcement ${suffix}`;
+
+      // A plain `Promise.all` of two fetches serialises — the second request
+      // lands after the first has committed, so the *sequential* compare
+      // answers it and the lock is never the thing under test. The
+      // deterministic lever (as in `payments-api.test.ts` and
+      // `registrations-api.test.ts`): a second client holds the `Class` row
+      // locked `FOR UPDATE` before either request runs. Both requests get past
+      // the reads, into the transaction and past the compare — neither has
+      // committed anything the other can see — and then park, because
+      // inserting a `Notification` carrying `relatedClassId` takes `FOR KEY
+      // SHARE` on that parent row (`docs/lock-order.md`, "the fourth path").
+      const holder = new PrismaClient();
+      let release!: () => void;
+      const released = new Promise<void>((r) => {
+        release = r;
+      });
+      const holding = holder.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${class1Id} FOR UPDATE`;
+          await released;
+        },
+        { timeout: 20_000 },
+      );
+
+      const both = Promise.all([
+        sendAnnouncement({ classId: class1Id, message }),
+        sendAnnouncement({ classId: class1Id, message }),
+      ]);
+
+      // Long enough that both requests are in flight and parked, short enough
+      // to stay well inside every transaction timeout involved.
+      await new Promise((r) => setTimeout(r, 1000));
+      release();
+      await holding;
+      const [a, b] = await both;
+      await holder.$disconnect();
+
+      // Asserted first, deliberately: the fan-out is what a duplicate actually
+      // costs, and it is the write that runs BEFORE the `Announcement` row.
+      // With the announcement-row count first, moving the compare below the
+      // fan-out reads as green — one row, every student notified twice.
+      expect(await announcementNotifications({ body: message })).toHaveLength(1);
+
+      // 201 created it, 200 suppressed it. Either request can win, so the
+      // loser is identified rather than assumed.
+      expect([a.status, b.status].sort()).toEqual([200, 201]);
+      const suppressed = a.status === 200 ? a : b;
+      expect((await suppressed.json()).data.duplicateSuppressed).toBe(true);
+
+      expect(await prisma.announcement.findMany({ where: { teacherId, message } })).toHaveLength(1);
+    });
+
+    it('suppresses an identical announcement resent within the window, and says so', async () => {
+      const message = `Sequential dedupe ${suffix}`;
+      expect((await sendAnnouncement({ classId: class1Id, message })).status).toBe(201);
+
+      const second = await sendAnnouncement({ classId: class1Id, message });
+      expect(second.status).toBe(200);
+      const { data } = await second.json();
+      // The teacher is told, rather than shown a success for a send that did
+      // not happen. `recipientCount` is the FIRST send's, which is the honest
+      // number: those students did receive it.
+      expect(data.duplicateSuppressed).toBe(true);
+      expect(data.recipientCount).toBeGreaterThan(0);
+
+      // Notifications before rows, for the reason given in the case above.
+      expect(await announcementNotifications({ body: message })).toHaveLength(1);
+      expect(await prisma.announcement.findMany({ where: { teacherId, message } })).toHaveLength(1);
+    });
+
+    it('sends a genuinely later identical announcement', async () => {
+      const message = `Window lapse ${suffix}`;
+      expect((await sendAnnouncement({ classId: class1Id, message })).status).toBe(201);
+
+      // Backdate the first past the window rather than sleeping two minutes.
+      // `ANNOUNCEMENT_DEDUPE_WINDOW_MS` is imported rather than hard-coded, so
+      // this cannot drift silently the day the window changes.
+      await prisma.announcement.updateMany({
+        where: { teacherId, message },
+        data: { sentAt: new Date(Date.now() - ANNOUNCEMENT_DEDUPE_WINDOW_MS - 1000) },
+      });
+
+      expect((await sendAnnouncement({ classId: class1Id, message })).status).toBe(201);
+      expect(await announcementNotifications({ body: message })).toHaveLength(2);
+    });
+
+    it('does not let an all-students announcement match a class-scoped one', async () => {
+      const message = `Nullable classId ${suffix}`;
+      expect((await sendAnnouncement({ classId: class1Id, message })).status).toBe(201);
+      // No `classId` at all — a different announcement, and the case a Prisma
+      // `where` given `undefined` silently widens to "every announcement this
+      // teacher ever sent".
+      expect((await sendAnnouncement({ message })).status).toBe(201);
+      expect(await prisma.announcement.count({ where: { teacherId, message } })).toBe(2);
+    });
   });
 });

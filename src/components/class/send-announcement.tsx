@@ -18,6 +18,7 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [sentCount, setSentCount] = useState<number | null>(null);
+  const [suppressed, setSuppressed] = useState(false);
   const [error, setError] = useState('');
   const [showRecipients, setShowRecipients] = useState(false);
 
@@ -36,8 +37,17 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
         body: JSON.stringify({ message: message.trim(), ...(classId ? { classId } : {}) }),
       });
       if (res.ok) {
-        const json = (await res.json()) as { data: { recipientCount: number } };
+        // `res.ok` alone is not the whole answer, and reading it as though it
+        // were is the defect #196 fixed here: the route answers 201 when it
+        // created the announcement and 200 when it suppressed an identical one
+        // sent moments ago, and only `duplicateSuppressed` distinguishes them
+        // in a field a client has to read past rather than a status it can
+        // ignore.
+        const json = (await res.json()) as {
+          data: { recipientCount: number; duplicateSuppressed?: boolean };
+        };
         setSentCount(json.data.recipientCount);
+        setSuppressed(json.data.duplicateSuppressed === true);
         setMessage('');
         setOpen(false);
       } else {
@@ -53,14 +63,23 @@ export function SendAnnouncement({ classId, recipientHint }: SendAnnouncementPro
   }
 
   if (sentCount !== null && !open) {
+    const students = `${sentCount} ${sentCount === 1 ? 'student' : 'students'}`;
     return (
       <div className="flex items-center gap-3">
-        <span className="type-caption text-teal">
-          Sent to {sentCount} {sentCount === 1 ? 'student' : 'students'}
+        {/* Neutral for the suppressed outcome — not `text-teal`, because
+            nothing new succeeded, and not `text-danger`, because nothing
+            failed and danger is reserved for things that did. The caption
+            names what happened AND confirms the earlier send landed, so the
+            teacher learns their message went out without being told a second
+            one did. */}
+        <span className={suppressed ? 'type-caption' : 'type-caption text-teal'}>
+          {suppressed
+            ? `Not sent again — the same message reached ${students} moments ago.`
+            : `Sent to ${students}`}
         </span>
         <button
           type="button"
-          onClick={() => { setSentCount(null); setOpen(true); }}
+          onClick={() => { setSentCount(null); setSuppressed(false); setOpen(true); }}
           className="type-label text-teal"
         >
           Send another

@@ -13,6 +13,7 @@ import {
   type CreateNotificationInput,
 } from '@/services/notifications';
 import { createAnnouncementSchema } from '@/lib/schemas';
+import { ANNOUNCEMENT_DEDUPE_WINDOW_MS, lockAnnouncementSlot } from '@/lib/db-locks';
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -78,17 +79,61 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     relatedClassId: body.classId,
   }));
 
-  const count = await createBulkNotifications(prisma, notificationInputs);
+  const classId = body.classId ?? null;
 
-  // Create Announcement record
-  const announcement = await prisma.announcement.create({
-    data: {
-      teacherId: session.teacherId,
-      classId: body.classId ?? null,
-      message: body.message,
-      recipientCount: count,
-    },
+  // Everything above is reads; from here down are the two writes a duplicate
+  // costs, and until #196 nothing wrapped them in a transaction at all — the
+  // fan-out ran first and the `Announcement` row second, so deduplicating the
+  // insert would have suppressed the teacher's own sent-history record while
+  // still notifying every student twice.
+  const { announcement, deduped } = await prisma.$transaction(async (tx) => {
+    // First statement in the transaction, so the compare below and both writes
+    // after it are serialised against an identical concurrent send. Without
+    // it, two racers each read an empty `findFirst` — neither has committed
+    // anything the other can see — and both fan out.
+    await lockAnnouncementSlot(tx, `${session.teacherId}|${classId ?? ''}|${body.message}`);
+
+    const recent = await tx.announcement.findFirst({
+      where: {
+        teacherId: session.teacherId,
+        // `classId ?? null` explicitly, never `body.classId`: `classId` is
+        // nullable (the all-students case) and a Prisma `where` given
+        // `undefined` OMITS the clause, so a pass-through would make an
+        // all-students send match every announcement this teacher ever sent.
+        classId,
+        message: body.message,
+        // `sentAt`, not `createdAt` — this model has no `createdAt`.
+        sentAt: { gte: new Date(Date.now() - ANNOUNCEMENT_DEDUPE_WINDOW_MS) },
+      },
+      orderBy: { sentAt: 'desc' },
+    });
+    if (recent) return { announcement: recent, deduped: true };
+
+    // Below the compare, because this is the write that reaches people: one
+    // `Notification` per recipient. It emits on the SSE bus per input inside
+    // the call, so a rollback here leaves bus events already emitted — that is
+    // pre-existing shape, accepted in the spec, and the reason this
+    // transaction is kept to two statements.
+    const count = await createBulkNotifications(tx, notificationInputs);
+    const created = await tx.announcement.create({
+      data: {
+        teacherId: session.teacherId,
+        classId,
+        message: body.message,
+        recipientCount: count,
+      },
+    });
+    return { announcement: created, deduped: false };
   });
 
-  return respondOk(announcement, 201);
+  // 201 created, 200 suppressed — and `duplicateSuppressed` in the body,
+  // because the status alone is not enough: `send-announcement.tsx` checks
+  // only `res.ok`, so a client that ignored the flag would go on reporting a
+  // send that did not happen. Suppressing the duplicate is right; hiding the
+  // suppression would be a small lie told by a tool whose premise is being an
+  // honest one.
+  //
+  // `recipientCount` on the suppressed branch is the FIRST send's, which is
+  // the honest number — those students really did receive it.
+  return respondOk({ ...announcement, duplicateSuppressed: deduped }, deduped ? 200 : 201);
 });

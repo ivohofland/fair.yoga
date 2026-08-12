@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import type { Prisma } from '@prisma/client';
 
 /**
@@ -7,13 +8,13 @@ import type { Prisma } from '@prisma/client';
  * See `lockClassRow`'s docblock for what the brand is doing and why
  * `Prisma.TransactionClient` alone does not do it. The rule that follows from
  * it: a function needs this brand when it issues a statement whose effect is
- * scoped to the surrounding transaction — `SET LOCAL` or a row lock — since
- * that is the thing a bare client makes evaporate silently. Sufficient, not
- * necessary: a helper that only reads can still be wrong on a bare client, by
- * reading around its caller's uncommitted writes. Decided per site, not
- * uniformly:
+ * scoped to the surrounding transaction — `SET LOCAL`, a row lock or a
+ * transaction-scoped advisory lock — since that is the thing a bare client
+ * makes evaporate silently. Sufficient, not necessary: a helper that only
+ * reads can still be wrong on a bare client, by reading around its caller's
+ * uncommitted writes. Decided per site, not uniformly:
  *
- *   adopt  `lockClassRow` and `setLockTimeout` below.
+ *   adopt  `lockClassRow`, `setLockTimeout` and `lockAnnouncementSlot` below.
  *   adopt  `claimTemplateForGeneration` (`class-generator.ts`) and
  *          `claimStudioTemplateForGeneration` (`studio-class-generator.ts`) —
  *          each issues `LOCK_TIMEOUT_SQL` and then a `FOR UPDATE`.
@@ -153,4 +154,89 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
 export async function lockClassRow(tx: TransactionClientOnly, classId: string): Promise<void> {
   await setLockTimeout(tx);
   await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
+}
+
+/**
+ * How long an identical announcement suppresses a second send of itself.
+ *
+ * Two minutes: long enough to absorb a double-click and a retried request from
+ * a flaky connection, short enough that a teacher who genuinely wants to say
+ * the same thing again is not told no. The same quantity as
+ * `MANUAL_REMIND_COOLDOWN_MS` (`services/payments.ts`), deliberately — one
+ * concept, not two.
+ *
+ * It lives here, beside the lock that makes it enforceable, rather than in the
+ * route: `tests/integration/announcements-api.test.ts` backdates a first send
+ * by exactly this to prove a later identical one still goes out, and a test
+ * that hard-codes `120000` drifts silently the day the window changes. This
+ * module is safe to import from a test because it pulls in only `crypto` and a
+ * Prisma type — never `@/lib/log`, which is pino and server-only.
+ */
+export const ANNOUNCEMENT_DEDUPE_WINDOW_MS = 2 * 60 * 1000;
+
+/**
+ * Namespace for this project's advisory locks — the first argument of
+ * Postgres's two-int `pg_advisory_xact_lock(int4, int4)`, which exists for
+ * exactly this.
+ *
+ * Advisory locks share one global key space per database, so an unnamespaced
+ * key is a key every future advisory lock in this codebase can collide with by
+ * accident. Namespacing means a collision is only ever possible between two
+ * users of the SAME namespace, where the consequence is understood.
+ */
+const ADVISORY_NAMESPACE = { announcement: 196 } as const;
+
+/** The low 32 bits of a SHA-256, signed, so it fits Postgres's `int4`. */
+function hash32(value: string): number {
+  return createHash('sha256').update(value).digest().readInt32BE(0);
+}
+
+/**
+ * Serialises concurrent sends of one `(teacher, class, message)` for the rest
+ * of the calling transaction.
+ *
+ * `pg_advisory_xact_lock`, never `pg_advisory_lock`: the transaction-scoped
+ * variant releases on commit or rollback however the transaction ends, while
+ * the session-scoped one would leak a held lock onto a pooled connection and
+ * eventually wedge an unrelated request that never asked for it.
+ *
+ * The hash is used ONLY for mutual exclusion — the caller compares the real
+ * message text afterwards — so a collision inside the namespace costs a few
+ * milliseconds of needless serialisation and nothing else. That is the whole
+ * reason this is a lock and not a unique index on a hashed column:
+ * `Announcement.message` is `@db.Text` and cannot be a btree key, so an
+ * index-based design would have to key on the hash, where a collision silently
+ * rejects a legitimate announcement instead. A time-bucketed index leaks
+ * differently again — two sends straddling a bucket edge both pass.
+ *
+ * Branded `TransactionClientOnly` per this module's rule: on a bare client the
+ * lock would be taken and released by its own autocommit transaction before
+ * the caller's next statement ran, protecting nothing.
+ *
+ * It is NOT free of the ordering obligation in `docs/lock-order.md`, and the
+ * plan for #196 predicted it would be. Its transaction goes on to insert a
+ * `Notification` carrying `relatedClassId` and an `Announcement` carrying
+ * `classId`, each of which takes `FOR KEY SHARE` on the parent `Class` row —
+ * that document's "fourth path". So this lock sits ABOVE `Class` in the order,
+ * and it is safe only because it has exactly one caller: nothing else can hold
+ * a `Class` lock and then wait here. See "The announcement advisory lock"
+ * there before adding a second call site.
+ *
+ * The lock call is wrapped in a subselect and the outer projection is a
+ * literal, which is not styling: `pg_advisory_xact_lock` returns `void`, and
+ * selecting that column directly fails at the client with
+ * `P2010 … Failed to deserialize column of type 'void'` — measured, not
+ * guessed. A tagged `$queryRaw` is still the right tool (the two ints are
+ * bound parameters, so nothing here is interpolated); only the column it
+ * hands back had to change.
+ */
+export async function lockAnnouncementSlot(
+  tx: TransactionClientOnly,
+  key: string,
+): Promise<void> {
+  await tx.$queryRaw`
+    SELECT 1 AS locked
+    FROM (
+      SELECT pg_advisory_xact_lock(${ADVISORY_NAMESPACE.announcement}::int4, ${hash32(key)}::int4)
+    ) AS taken`;
 }

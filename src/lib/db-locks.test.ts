@@ -1,6 +1,12 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { LOCK_TIMEOUT_SQL, lockClassRow, setLockTimeout } from './db-locks';
+import {
+  ANNOUNCEMENT_DEDUPE_WINDOW_MS,
+  LOCK_TIMEOUT_SQL,
+  lockAnnouncementSlot,
+  lockClassRow,
+  setLockTimeout,
+} from './db-locks';
 import { claimTemplateForGeneration } from '@/services/class-generator';
 import { claimStudioTemplateForGeneration } from '@/services/studio-class-generator';
 import { withdrawWaitingEntriesForTeacher } from '@/services/waitlist';
@@ -50,6 +56,9 @@ async function _theBrandRejectsABareClient(client: PrismaClient): Promise<void> 
   await claimStudioTemplateForGeneration(client, 'never-called');
   // @ts-expect-error `FOR UPDATE OF c`, with the writes it protects after it.
   await withdrawWaitingEntriesForTeacher(client, { teacherId: 'x', studentId: 'y' });
+  // @ts-expect-error `pg_advisory_xact_lock` — taken and released by its own
+  // autocommit transaction on a bare client, protecting nothing.
+  await lockAnnouncementSlot(client, 'never-called');
 }
 
 describe('the shared lock timeout', () => {
@@ -115,5 +124,123 @@ describe('the shared lock timeout', () => {
 
   it('is the literal both template-claim sites share', () => {
     expect(LOCK_TIMEOUT_SQL).toBe("SET LOCAL lock_timeout = '2s'");
+  });
+});
+
+describe('the announcement advisory lock', () => {
+  /**
+   * The shape of the lock, not merely that the call returned. Postgres names
+   * the form it took in `pg_locks`: `objsubid = 2` is the two-int
+   * `pg_advisory_xact_lock(int4, int4)` and `objsubid = 1` the single-bigint
+   * one, and `classid` is the first of those two ints — the namespace. Both
+   * are the reason a future unrelated advisory lock cannot collide with this
+   * one by accident, and neither is observable from the call site.
+   */
+  it('takes one advisory lock, in the two-int form, under this project namespace', async () => {
+    const held = await prisma.$transaction(async (tx) => {
+      await lockAnnouncementSlot(tx, 'teacher|class|Bring a blanket.');
+      return tx.$queryRaw<Array<{ classid: number; objsubid: number }>>`
+        SELECT classid::int AS classid, objsubid::int AS objsubid
+        FROM pg_locks
+        WHERE locktype = 'advisory' AND pid = pg_backend_pid()`;
+    });
+
+    expect(held).toHaveLength(1);
+    expect(held[0]!.objsubid).toBe(2);
+    expect(held[0]!.classid).toBe(196);
+  });
+
+  /**
+   * The property the announcements route buys with it, and the property that
+   * separates `pg_advisory_xact_lock` from `pg_advisory_lock`: a second holder
+   * of the same key waits, and it stops waiting when the first transaction
+   * ENDS rather than when its connection is handed back to the pool. A
+   * session-scoped lock would pass the first half of this and hang the second.
+   *
+   * A second `PrismaClient`, deliberately: advisory locks are held per session,
+   * so two transactions that happened to share a pooled connection would not
+   * contend at all and this would prove nothing.
+   */
+  it('makes a second transaction wait for the same key, and lets go on commit', async () => {
+    const other = new PrismaClient();
+    const order: string[] = [];
+    let taken!: () => void;
+    let release!: () => void;
+    const acquired = new Promise<void>((r) => {
+      taken = r;
+    });
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+
+    const holding = prisma.$transaction(
+      async (tx) => {
+        await lockAnnouncementSlot(tx, 'contended-key');
+        taken();
+        await released;
+      },
+      { timeout: 20_000 },
+    );
+    await acquired;
+
+    const waiting = other.$transaction(
+      async (tx) => {
+        await lockAnnouncementSlot(tx, 'contended-key');
+        order.push('second acquired');
+      },
+      { timeout: 20_000 },
+    );
+
+    await new Promise((r) => setTimeout(r, 300));
+    // Still parked: the assertion that fails if the lock is not taken at all.
+    expect(order).toEqual([]);
+
+    order.push('first committed');
+    release();
+    await holding;
+    await waiting;
+    await other.$disconnect();
+
+    expect(order).toEqual(['first committed', 'second acquired']);
+  });
+
+  /**
+   * The other half: it serialises one `(teacher, class, message)`, not every
+   * announcement in the database. A lock keyed on a constant would pass the
+   * test above and make every teacher's send queue behind every other's.
+   */
+  it('does not make two different keys wait for each other', async () => {
+    const other = new PrismaClient();
+    let taken!: () => void;
+    let release!: () => void;
+    const acquired = new Promise<void>((r) => {
+      taken = r;
+    });
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+
+    const holding = prisma.$transaction(
+      async (tx) => {
+        await lockAnnouncementSlot(tx, 'key-one');
+        taken();
+        await released;
+      },
+      { timeout: 20_000 },
+    );
+    await acquired;
+
+    // Resolves while the first transaction is still open, which is the point.
+    await other.$transaction(async (tx) => {
+      await lockAnnouncementSlot(tx, 'key-two');
+    });
+
+    release();
+    await holding;
+    await other.$disconnect();
+  });
+
+  it('is a two-minute window, the same quantity the manual reminder cooldown uses', () => {
+    expect(ANNOUNCEMENT_DEDUPE_WINDOW_MS).toBe(2 * 60 * 1000);
   });
 });

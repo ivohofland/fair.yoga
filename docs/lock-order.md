@@ -175,7 +175,7 @@ full, with the class each one's notifications carry:
 | `sendPaymentReminder` (`payments.ts`) | one — the payment's registration's class |
 | `sendPaymentReminders` (`payment-reminders.ts`) | one — per-payment, one transaction each |
 | `POST /api/registrations` | one — the class being booked |
-| `POST /api/announcements` | one — the announcement's class, outside any transaction |
+| `POST /api/announcements` | one — the announcement's class, inside the dedupe transaction (#196; it ran outside any transaction until then) |
 | `POST /api/classes/[id]/transition` | one — the class being transitioned |
 | `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | **many** — every class the archive withdrew (#112) |
 
@@ -433,6 +433,49 @@ until the statement that claims it runs. Two of these crossing will deadlock
 under any ordering discipline this document could add. The branch above
 answers "what does the client see", not "does this still happen" — it still
 does, at the rates measured above (32/100, 1/120).
+
+## The advisory lock, which is not a row in the line above (#196)
+
+`lockAnnouncementSlot` (`src/lib/db-locks.ts`) is the first and so far only
+advisory lock in this project. It takes
+`pg_advisory_xact_lock(196, hash32("<teacherId>|<classId>|<message>"))` — the
+two-int form, first argument a constant namespace — as the **first statement**
+of the transaction in `POST /api/announcements`, so that two identical sends
+cannot both read an empty duplicate check and both fan out one `Notification`
+per recipient.
+
+It is not a row of any table, so nothing about the canonical line applies to it
+directly. What does apply:
+
+**It is ordered ABOVE `Class`, and the plan that introduced it predicted it
+would be ordered against nothing.** That prediction was wrong, and the reason is
+already in this document: the transaction holding this lock goes on to insert
+`Notification` rows carrying `relatedClassId` and an `Announcement` carrying
+`classId`, and each of those takes `FOR KEY SHARE` on the parent `Class` row —
+"the fourth path" above. So the real sequence is `advisory → Class`, and the
+`createBulkNotifications` table above had to change its `POST /api/announcements`
+row from "outside any transaction" to inside one for the same reason.
+
+**It cannot be half of a cycle today, and the reason is a property of the call
+graph, not of the lock.** A cycle needs some other transaction to hold a `Class`
+row lock and then wait on this advisory lock. Nothing can: `lockAnnouncementSlot`
+has exactly one call site, and that call site takes it before it touches `Class`
+at all. Two announcement sends racing each other take the two locks in the same
+order, which is not a cycle either.
+
+**So the thing to check is a second call site, not a reordering.** Add one
+inside a transaction that already holds a `Class` row lock — a notification
+sweep, a cancellation path — and the inversion is immediate and will not
+announce itself, exactly like `ClassTemplate_teacher_slot_unique` quietly
+holding another pairing shut two sections above.
+
+**Not bounded by `LOCK_TIMEOUT_SQL`, deliberately and not obviously.** This
+transaction issues no `SET LOCAL lock_timeout`, so its `FOR KEY SHARE` wait on
+`Class` is unbounded — and it now waits while holding the advisory lock, which
+queues other identical sends of the same message behind it. Adding the bound
+would convert a slow send into a failed one, and the wait itself is not new: the
+same insert blocked the same way as an autocommit statement before #196 wrapped
+it. Recorded, not changed.
 
 ## The empty-`update` upsert quirk — read this before "tidying" one
 
