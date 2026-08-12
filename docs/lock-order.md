@@ -63,7 +63,10 @@ any cross-table one.
 
 **The rule: ascending by `id`. Three of the five follow it; two do not, and the
 disagreement is live** — see "The two that do not" below before assuming this
-section describes a solved problem. An earlier version of this section said
+section describes a solved problem, and "The slot key is a wait edge" below
+before assuming `id` is the only thing that orders two `Class` rows: since #196
+a unique index on `(teacherId, date, startTime)` makes plain INSERTs take part
+too, which is a case the five-site enumeration is built not to find. An earlier version of this section said
 "three sites" and "all three take it that way"; both were false, and an
 enumeration asserted as complete is exactly what stops the next reader looking
 for the ones it missed.
@@ -283,6 +286,100 @@ weight:
 
 So this is a decision to be taken with the template family, not from inside a
 lock-discipline fix wave. Nothing here is claimed to be safe.
+
+### The slot key is a wait edge, and the table above cannot see it (#196)
+
+`Class_teacher_slot_unique` — `(teacherId, date, startTime) WHERE status <>
+'cancelled'` — is a lock in every sense that matters here. Two transactions
+writing the same key make the second wait on the first's uncommitted index
+entry, as a `ShareLock` on the first's transaction id, which the deadlock
+detector reads exactly like a row lock. The upsert-quirk section below already
+says this in one line about `TeacherStudent`. On `Class` it has two
+consequences the five-site table above is shaped to miss.
+
+**It falsifies a stated premise of "How that enumeration was derived".** Check 1
+excuses `create`/`createMany`/`createManyAndReturn` — "a freshly inserted row's
+lock conflicts with nothing, so it carries no ordering obligation". True of the
+row, false of its index entries since #196: the generator's
+`createManyAndReturn` was measured as one half of a reproduced `40P01`. For
+`Class` the candidate set is no longer "statements that can lock an existing
+row" but **"statements that write `(teacherId, date, startTime)`"** — every
+`Class` insert, and every update of those three columns or of `status` across
+the `cancelled` boundary. `updateClass` (`class-lifecycle.ts`) joins on that
+basis: its `class.updateMany` accepts `date` and `startTime` from
+`updateClassSchema`, and a single-row autocommit `UPDATE` turns out to be
+perfectly capable of being half a cycle.
+
+**And unlike the ascending-by-`id` rule, this one has no order to take.** A
+transaction that moves a class from one slot to another *vacates* one key and
+*claims* another in the same statement. Two of them crossing — each claiming
+what the other is vacating — deadlock whatever order anything is sorted in.
+There is no pre-lock that fixes it either: the resource is a key that does not
+exist yet.
+
+Reproduced against the real functions, on a throwaway database with the full
+migration history, **with no handshake at all** — these are the statements
+production issues, raced as-is:
+
+- **`syncTemplateInstances` vs `updateClass`**, crossing on one date (the sync
+  moves the template's instance 09:00 → 10:00 while the teacher moves a
+  one-off class on that date 10:00 → 09:00): `40P01` in **1 of 120** runs,
+  raised on the `updateClass` side. The other 119 ended with both sides taking
+  an ordinary `23505` — the window is one row's heap-update-to-index-insert
+  gap, so it is narrow, not absent. Postgres names the resource itself:
+  `CONTEXT: while inserting index tuple (1,31) in relation
+  "Class_teacher_slot_unique"`.
+- **`updateClass` vs `updateClass`**, two classes on one date swapping their
+  start times: `40P01` in **32 of 100** runs, either side the victim. Two
+  single-statement autocommit `UPDATE`s, no transaction on either side.
+
+Both are new to #196, proven by mutation rather than argued: with
+`Class_teacher_slot_unique` dropped and nothing else changed, the same races
+give 120/120 and 60/60 clean — and leave behind exactly the duplicate slots
+#196 exists to prevent. The trade was taken knowingly in that direction; it is
+recorded here, not fixed. The cheap fix (retry on `40P01`) is a decision about
+`withErrorHandler`, not about lock order, and a deferrable unique index would
+give up the immediate `409` the create routes answer with.
+
+**The pairing that looks worst is currently unreachable, and only because a
+SECOND new index blocks it.** A `POST /api/class-templates` transaction
+(`classTemplate.create`, then a four-week `createManyAndReturn`) against a
+`syncTemplateInstances` transaction is the case where both sides hold several
+`Class` slot keys across statements — the generator inserting in date order,
+the sync updating in heap order, an inversion of exactly the kind this section
+is about. Measured both orderings, three runs each, widened with a third
+connection holding one `Class` row so the sync sat parked mid-`updateMany`
+(confirmed by `FOR UPDATE NOWAIT` from a fourth connection answering `55P03`
+for a row it had already taken): **no `40P01`, 6 of 6**. Every run died earlier
+and elsewhere — `P2002` on `ClassTemplate_teacher_slot_unique`, at
+`classTemplate.create` or at the PUT's `classTemplate.update`.
+
+That is not the probe failing to bite. Drop `ClassTemplate_teacher_slot_unique`
+alone, leave everything else as it is, and the identical race deadlocks **3 of
+3**, on the generator's insert:
+
+```
+A (POST /api/class-templates): REJECTED 40P01 deadlock detected
+    at class-generator.ts:177  db.class.createManyAndReturn()
+B (syncTemplateInstances)    : ok {"synced":4,"regenerated":0,"kept":0}
+```
+
+The reason is structural, not luck. Two template-driven writers can only
+collide on `(teacherId, date, startTime)` if their templates agree on
+`(teacherId, dayOfWeek, startTime)` — a template generates on one weekday at
+one time, so same slot means same weekday and same time — and that is the key
+`ClassTemplate_teacher_slot_unique` forbids. The archived-template hole in that
+partial index does not open it: archiving deletes every future `draft`/`open`
+instance (`scheduledWhere`, `gt: today`), and what survives is either dated
+today or in a status `syncTemplateInstances`'s `mutable` filter drops, so an
+archived template's sync writes no slot key at all.
+
+So one of the six new indexes is what keeps another of the six from being a
+live deadlock. **Nothing in the code says so, and nothing enforces it** — which
+is the same condition as the rest of this document. If
+`ClassTemplate_teacher_slot_unique` is ever dropped, narrowed, or given a
+predicate that lets two live templates share a weekday and time, the pairing
+above becomes live and it will not announce itself.
 
 ## The empty-`update` upsert quirk — read this before "tidying" one
 
