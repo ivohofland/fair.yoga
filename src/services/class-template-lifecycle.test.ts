@@ -62,14 +62,22 @@ describe('updateClassTemplate (DB)', () => {
   let otherRoomId: string;
   let otherTeacherRoomId: string;
 
-  const makeTemplate = (classType: string) =>
-    prisma.classTemplate.create({
+  // Counter-derived startTime: this block calls makeTemplate 8 times for one
+  // teacher/dayOfWeek, and none of its tests read or assert the created
+  // template's literal startTime — so a distinct minute per call is enough
+  // to keep every create legal under ClassTemplate_teacher_slot_unique
+  // (none of these templates ever gets archived, which is the only thing
+  // that would otherwise free the slot).
+  let makeTemplateCounter = 0;
+  const makeTemplate = (classType: string) => {
+    makeTemplateCounter += 1;
+    return prisma.classTemplate.create({
       data: {
         teacherId,
         teacherRoomId,
         classType,
         dayOfWeek: 3,
-        startTime: '09:30',
+        startTime: `09:${String(30 + makeTemplateCounter).padStart(2, '0')}`,
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -78,6 +86,7 @@ describe('updateClassTemplate (DB)', () => {
         maxStudents: 8,
       },
     });
+  };
 
   beforeAll(async () => {
     await prisma.$connect();
@@ -348,14 +357,27 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   let east: Seeded;
   let west: Seeded;
 
-  const makeTemplate = (classType: string) =>
-    prisma.classTemplate.create({
+  // Counter-derived startTime: this block calls makeTemplate ~28 times for
+  // one teacher/dayOfWeek. Most tests here do archive their own template by
+  // the end (which flips isArchived and would free the slot on its own),
+  // but several deliberately don't (the two 'forbidden' cases, and the
+  // "does not tell a waiting student when the class was spared" case, whose
+  // whole point is that the archive matches nothing) — and once any one
+  // template is left behind unarchived, every later makeTemplate call in
+  // the block collides with it before it even gets a row created, which is
+  // what turned into a near-total cascade here. No test reads or asserts a
+  // created template's literal startTime, so a distinct minute per call
+  // removes the collision without touching any assertion.
+  let makeTemplateCounter = 0;
+  const makeTemplate = (classType: string) => {
+    makeTemplateCounter += 1;
+    return prisma.classTemplate.create({
       data: {
         teacherId,
         teacherRoomId,
         classType,
         dayOfWeek: 3,
-        startTime: '09:30',
+        startTime: `09:${String(30 + makeTemplateCounter).padStart(2, '0')}`,
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -364,21 +386,40 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
         maxStudents: 8,
       },
     });
+  };
 
   // Closes over the block's own teacherId/teacherRoomId, like the sibling
   // block's makeTemplate does.
+  //
+  // Counter-derived startTime: this block calls makeClass ~30 times across
+  // many tests, and several recurring `date` values (`future()` especially)
+  // are reused across tests whose class deliberately survives the archive
+  // (a kept/registered/late_cancel class, or a forbidden request that
+  // touches nothing) — so under Class_teacher_slot_unique a later test's
+  // create at the same date collided with an earlier test's still-open
+  // leftover. This was masked in the original baseline: those tests never
+  // even reached this call, because the template-level collision fixed
+  // above threw first. `startTime` can be overridden per call for the one
+  // test whose notification-body assertion pins the literal value.
+  let makeClassCounter = 0;
   const makeClass = async (
     templateId: string,
-    opts: { date: Date; status?: 'draft' | 'open' | 'cancelled'; classType?: string },
-  ) =>
-    prisma.class.create({
+    opts: {
+      date: Date;
+      status?: 'draft' | 'open' | 'cancelled';
+      classType?: string;
+      startTime?: string;
+    },
+  ) => {
+    makeClassCounter += 1;
+    return prisma.class.create({
       data: {
         teacherId,
         teacherRoomId,
         templateId,
         classType: opts.classType ?? 'Archive Rule',
         date: opts.date,
-        startTime: '09:00',
+        startTime: opts.startTime ?? `09:${String(makeClassCounter).padStart(2, '0')}`,
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -388,6 +429,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
         status: opts.status ?? 'open',
       },
     });
+  };
 
   const register = (classId: string, studentId: string, status: RegistrationStatus) =>
     prisma.registration.create({ data: { classId, studentId, tierAtBooking: 3, status } });
@@ -606,7 +648,13 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
    */
   it('tells a waiting student when archiving withdraws their class', async () => {
     const t = await makeTemplate('Withdraw Notice');
-    const c = await makeClass(t.id, { date: future(), classType: 'Withdraw Notice' });
+    // startTime pinned explicitly: the notification-body assertion below
+    // checks for this literal, so it can't take the counter-derived default.
+    const c = await makeClass(t.id, {
+      date: future(),
+      classType: 'Withdraw Notice',
+      startTime: '09:00',
+    });
     await register(c.id, studentId, 'cancelled'); // not charged — class is deletable
     await prisma.waitlistEntry.create({
       data: { classId: c.id, studentId: waiterId, position: 1, status: 'waiting' },
@@ -1448,14 +1496,26 @@ describe('pauseOrResumeTemplate (DB)', () => {
   let otherAccountId: string;
   let otherRoomId: string;
 
-  const makeTemplate = (classType: string) =>
-    prisma.classTemplate.create({
+  // Counter-derived startTime: this block calls makeTemplate 9 times for one
+  // teacher/dayOfWeek, and pausing (unlike archiving) never sets
+  // isArchived, so a merely-paused template keeps occupying its slot for
+  // the rest of the run — only the two tests that go on to archive their
+  // template free theirs. No test reads or asserts a created template's
+  // literal startTime *except* "reports what the window holds when a slot
+  // is already taken" below, which hardcodes '09:30' three times to match
+  // a manually-inserted "occupied" class against the template's own
+  // generated occurrences — that one call takes an explicit override
+  // instead of the counter-derived default.
+  let makeTemplateCounter = 0;
+  const makeTemplate = (classType: string, startTime?: string) => {
+    makeTemplateCounter += 1;
+    return prisma.classTemplate.create({
       data: {
         teacherId,
         teacherRoomId,
         classType,
         dayOfWeek: 3,
-        startTime: '09:30',
+        startTime: startTime ?? `09:${String(30 + makeTemplateCounter).padStart(2, '0')}`,
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
@@ -1464,6 +1524,7 @@ describe('pauseOrResumeTemplate (DB)', () => {
         maxStudents: 8,
       },
     });
+  };
 
   const makeClass = (templateId: string, date: Date, startTime: string) =>
     prisma.class.create({
@@ -1572,7 +1633,11 @@ describe('pauseOrResumeTemplate (DB)', () => {
    * the manual class belongs to no template, so it is not counted here.
    */
   it('reports what the window holds when a slot is already taken', async () => {
-    const t = await makeTemplate('Slot Taken Report');
+    // Explicit '09:30' override: the candidate/manual-class computation
+    // below hardcodes '09:30' to match what this template will generate, so
+    // it can't take the counter-derived default the other calls in this
+    // block use.
+    const t = await makeTemplate('Slot Taken Report', '09:30');
     await pauseOrResumeTemplate(prisma, t.id, teacherId, 'paused');
 
     const candidates = getNextOccurrences(3, new Date(), 5)
