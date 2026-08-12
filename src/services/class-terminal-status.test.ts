@@ -61,6 +61,26 @@ import { classifyApiError } from '@/lib/api-errors';
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
 
+/**
+ * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
+ * the next hour rather than ever emitting an invalid minute like `'09:60'`
+ * once the counter below crosses 60. `startTime` is a plain `String` with no
+ * CHECK constraint, occupancy is string equality, and
+ * `Class_teacher_slot_unique` compares strings too — so a raw `09:${counter}`
+ * literal would accept an out-of-range value silently instead of exercising
+ * the constraint this file's counter exists to dodge collisions with.
+ * Mirrors `class-template-lifecycle.test.ts`'s `slotTime`.
+ */
+function slotTime(totalMinutesFrom9am: number): string {
+  const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
+  const minute = totalMinutesFrom9am % 60;
+  const startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  if (!/^\d{2}:[0-5]\d$/.test(startTime)) {
+    throw new Error(`slotTime produced an invalid startTime: ${startTime}`);
+  }
+  return startTime;
+}
+
 let teacherId: string;
 let accountId: string;
 let roomId: string;
@@ -74,7 +94,8 @@ const classIds: string[] = [];
 // occupying its slot under Class_teacher_slot_unique for the rest of the
 // run. No test here reads or asserts the created row's literal startTime,
 // so a distinct minute per call removes the collision without touching any
-// assertion.
+// assertion. Routed through `slotTime` rather than a raw `09:${counter}`
+// literal.
 let makeClassCounter = 0;
 
 async function makeClass(opts: { status: ClassStatus }): Promise<{ classId: string }> {
@@ -85,7 +106,7 @@ async function makeClass(opts: { status: ClassStatus }): Promise<{ classId: stri
       teacherRoomId,
       classType: 'Terminal Status Test',
       date: new Date('2099-06-01'),
-      startTime: `09:${String(makeClassCounter).padStart(2, '0')}`,
+      startTime: slotTime(makeClassCounter),
       durationMinutes: 60,
       roomCost: 20,
       minRate: 15,

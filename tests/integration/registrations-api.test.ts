@@ -21,18 +21,38 @@ const studentIds: string[] = [];
 let unlinkedStudentId: string;
 const classIds: string[] = [];
 
+/**
+ * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
+ * the next hour rather than ever emitting an invalid minute like `'09:60'`
+ * once the counter below crosses 60. `startTime` is a plain `String` with no
+ * CHECK constraint, occupancy is string equality, and
+ * `Class_teacher_slot_unique` compares strings too — so a raw `09:${counter}`
+ * literal would accept an out-of-range value silently instead of exercising
+ * the constraint this file's counter exists to dodge collisions with.
+ * Mirrors `class-template-lifecycle.test.ts`'s `slotTime`.
+ */
+function slotTime(totalMinutesFrom9am: number): string {
+  const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
+  const minute = totalMinutesFrom9am % 60;
+  const startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  if (!/^\d{2}:[0-5]\d$/.test(startTime)) {
+    throw new Error(`slotTime produced an invalid startTime: ${startTime}`);
+  }
+  return startTime;
+}
+
 // Every class this helper creates shares ownerId, the same 2099-06-01 date,
 // and `status: 'open'` — none of that is what any test here cares about,
 // it is just "a class far enough out that cancel-deadline logic never
 // triggers". Class_teacher_slot_unique is (teacherId, date, startTime)
-// WHERE status <> 'cancelled', though, and this file calls makeClass ~25
+// WHERE status <> 'cancelled', though, and this file calls makeClass 23
 // times, so a shared literal startTime would let only the first through.
 // A counter-derived minute keeps every call on its own slot without any
 // caller needing to know or care what time its class landed on.
 let makeClassCounter = 0;
 
 async function makeClass(maxStudents: number): Promise<string> {
-  const startTime = `09:${String(makeClassCounter++).padStart(2, '0')}`;
+  const startTime = slotTime(makeClassCounter++);
   const cls = await prisma.class.create({
     data: {
       teacherId: ownerId,

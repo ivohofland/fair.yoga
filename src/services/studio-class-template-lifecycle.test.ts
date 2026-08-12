@@ -124,7 +124,9 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
   // touches nothing), so a later test's create at the same date can collide
   // under StudioClass_teacher_slot_unique once the template-level collision
   // above stops masking it. No test here reads or asserts the created
-  // class's literal startTime.
+  // class's literal startTime. Routed through `slotTime` (see its docblock)
+  // rather than a raw `09:${counter}` literal, matching `makeTemplate`'s own
+  // counter above.
   let makeClassCounter = 0;
   const makeClass = (templateId: string, opts: { date: Date; cancelledAt?: Date | null }) => {
     makeClassCounter += 1;
@@ -134,7 +136,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
         templateId,
         classType: 'Archive Rule',
         date: opts.date,
-        startTime: `09:${String(makeClassCounter).padStart(2, '0')}`,
+        startTime: slotTime(makeClassCounter),
         durationMinutes: 60,
         location: 'Studio Loft',
         hourlyRate: 45,
@@ -634,10 +636,11 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
   };
 
   // Counter-derived startTime, separate from makeTemplate's own counter
-  // above and in a different hour (10:xx, not 09:xx) so the two counters
-  // can never land on the same value even on a day where
-  // dayOfWeekNeverToday() happens to equal makeTemplate's fixed dayOfWeek
-  // 3: all 3 calls to this helper compute the same dayOfWeekNeverToday()
+  // above and in a different hour (10:xx, not 09:xx, via `slotTime(60 +
+  // counter)`) so the two counters can never land on the same value even on
+  // a day where dayOfWeekNeverToday() happens to equal makeTemplate's fixed
+  // dayOfWeek 3: all 3 calls to this helper compute the same
+  // dayOfWeekNeverToday()
   // for a given run, and none of their templates ends up archived at the
   // end of its test ('Resume After Archive' un-archives at the finish), so
   // all 3 would collide with each other at a shared '09:30' — a fixed
@@ -652,7 +655,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
         teacherId,
         classType,
         dayOfWeek,
-        startTime: `10:${String(makeTemplateOnCounter).padStart(2, '0')}`,
+        startTime: slotTime(60 + makeTemplateOnCounter),
         durationMinutes: 60,
         location: 'Studio Loft',
         hourlyRate: 45,

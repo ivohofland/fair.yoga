@@ -159,6 +159,28 @@ describe('getWaitlistWindow', () => {
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
 
+/**
+ * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
+ * the next hour rather than ever emitting an invalid minute like `'09:60'`
+ * once a block's fixture counter crosses 30. `startTime` is a plain `String`
+ * with no CHECK constraint, occupancy is string equality, and
+ * `Class_teacher_slot_unique` compares strings too — so a raw `HH:${counter}`
+ * literal would accept an out-of-range value silently instead of exercising
+ * the constraint a fixture counter exists to dodge collisions with. The two
+ * blocks below that use this each pick their own hour offset (`slotTime(60 +
+ * counter)` for a `10:xx` base) so neither counter's values can land in the
+ * other's hour. Mirrors `class-template-lifecycle.test.ts`'s `slotTime`.
+ */
+function slotTime(totalMinutesFrom9am: number): string {
+  const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
+  const minute = totalMinutesFrom9am % 60;
+  const startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  if (!/^\d{2}:[0-5]\d$/.test(startTime)) {
+    throw new Error(`slotTime produced an invalid startTime: ${startTime}`);
+  }
+  return startTime;
+}
+
 describe('addToWaitlist + removeFromWaitlist (DB)', () => {
   let teacherId: string;
   let roomId: string;
@@ -210,6 +232,8 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
     // one teacher/date, and none of this describe's tests read or assert the
     // created rows' literal startTime — so a distinct minute per call is
     // enough to keep every create legal under Class_teacher_slot_unique.
+    // Routed through the module-level `slotTime` rather than a raw
+    // `09:${counter}` literal.
     let makeClassCounter = 0;
     async function makeClass(status: 'open' | 'draft', maxStudents: number): Promise<string> {
       makeClassCounter += 1;
@@ -219,7 +243,7 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
           teacherRoomId,
           classType: 'Hatha',
           date: new Date('2099-06-01'),
-          startTime: `09:${String(makeClassCounter).padStart(2, '0')}`,
+          startTime: slotTime(makeClassCounter),
           durationMinutes: 60,
           roomCost: 35,
           minRate: 15,
@@ -987,6 +1011,8 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
     // one teacher/date, and none of this describe's tests read or assert the
     // created rows' literal startTime — so a distinct minute per call is
     // enough to keep every create legal under Class_teacher_slot_unique.
+    // Routed through the module-level `slotTime` at a `10:xx` offset
+    // (`slotTime(60 + counter)`) rather than a raw `10:${counter}` literal.
     let makeClassCounter = 0;
     const makeClass = async (label: string, maxStudents: number): Promise<string> => {
       makeClassCounter += 1;
@@ -996,7 +1022,7 @@ describe('addToWaitlist links the student and resolves their invitation (DB)', (
           teacherRoomId,
           classType: label,
           date: new Date('2099-08-01'),
-          startTime: `10:${String(makeClassCounter).padStart(2, '0')}`,
+          startTime: slotTime(60 + makeClassCounter),
           durationMinutes: 60,
           roomCost: 25,
           minRate: 15,

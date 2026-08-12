@@ -203,6 +203,29 @@ describe('ECONOMIC_FIELDS', () => {
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
 
+/**
+ * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
+ * the next hour rather than ever emitting an invalid minute like `'09:60'`
+ * once a block's fixture counter crosses 30. `startTime` is a plain `String`
+ * with no CHECK constraint, occupancy is string equality, and
+ * `Class_teacher_slot_unique` compares strings too — so a raw `HH:${counter}`
+ * literal would accept an out-of-range value silently instead of exercising
+ * the constraint a fixture counter exists to dodge collisions with. Both
+ * blocks below use it, one at a `9 + n` hour offset (`slotTime(counter)`
+ * itself), the other at an `18:xx` offset (`slotTime(540 + counter)`) so
+ * neither counter's values can ever land in the other's hour. Mirrors
+ * `class-template-lifecycle.test.ts`'s `slotTime`.
+ */
+function slotTime(totalMinutesFrom9am: number): string {
+  const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
+  const minute = totalMinutesFrom9am % 60;
+  const startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  if (!/^\d{2}:[0-5]\d$/.test(startTime)) {
+    throw new Error(`slotTime produced an invalid startTime: ${startTime}`);
+  }
+  return startTime;
+}
+
 describe('transitionClass (DB)', () => {
   let teacherId: string;
   let roomId: string;
@@ -445,6 +468,8 @@ describe('completeClass (DB)', () => {
   // — under Class_teacher_slot_unique none of these tests read or assert
   // the literal startTime, only the id, so a distinct minute per call is
   // enough to keep every create legal without touching any assertion.
+  // Routed through the module-level `slotTime` at an `18:xx` offset
+  // (`slotTime(540 + counter)`) rather than a raw `18:${counter}` literal.
   let makeClassCounter = 0;
   const makeClass = ({ status }: { status: ClassStatus }) => {
     makeClassCounter += 1;
@@ -454,7 +479,7 @@ describe('completeClass (DB)', () => {
         teacherRoomId,
         classType: 'Vinyasa',
         date: new Date('2026-06-01'),
-        startTime: `18:${String(makeClassCounter).padStart(2, '0')}`,
+        startTime: slotTime(540 + makeClassCounter),
         durationMinutes: 75,
         roomCost: 35,
         minRate: 15,
@@ -925,12 +950,13 @@ describe('updateClass (DB)', () => {
   // registrations-api's `locks settings atomically with the first
   // registration`. Do not copy this shortcut into a test that claims to cover
   // the flip itself.
-  // Counter-derived startTime: this block calls makeClass 7 times for one
+  // Counter-derived startTime: this block calls makeClass 8 times for one
   // shared teacher/date, and no test here reads or asserts the created
   // row's literal startTime (the one test that changes it does so via an
   // updateClass() call, asserted against its new value, not this one) — so
   // a distinct minute per call is enough to keep every create legal under
-  // Class_teacher_slot_unique without touching any assertion.
+  // Class_teacher_slot_unique without touching any assertion. Routed through
+  // the module-level `slotTime` rather than a raw `09:${counter}` literal.
   let makeClassCounter = 0;
   const makeClass = (settingsLocked: boolean) => {
     makeClassCounter += 1;
@@ -940,7 +966,7 @@ describe('updateClass (DB)', () => {
         teacherRoomId,
         classType: 'Hatha',
         date: new Date('2026-06-01'),
-        startTime: `09:${String(makeClassCounter).padStart(2, '0')}`,
+        startTime: slotTime(makeClassCounter),
         durationMinutes: 60,
         roomCost: 35,
         minRate: 15,

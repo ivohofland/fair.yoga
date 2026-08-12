@@ -420,16 +420,21 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   // Closes over the block's own teacherId/teacherRoomId, like the sibling
   // block's makeTemplate does.
   //
-  // Counter-derived startTime: this block calls makeClass ~30 times across
-  // many tests, and several recurring `date` values (`future()` especially)
-  // are reused across tests whose class deliberately survives the archive
-  // (a kept/registered/late_cancel class, or a forbidden request that
-  // touches nothing) — so under Class_teacher_slot_unique a later test's
-  // create at the same date collided with an earlier test's still-open
-  // leftover. This was masked in the original baseline: those tests never
-  // even reached this call, because the template-level collision fixed
-  // above threw first. `startTime` can be overridden per call for the one
-  // test whose notification-body assertion pins the literal value.
+  // Counter-derived startTime: this block calls makeClass 38 times at runtime
+  // (37 call sites, one of them an `it.each` over 2 statuses) across many
+  // tests, and several recurring `date` values (`future()` especially) are
+  // reused across tests whose class deliberately survives the archive (a
+  // kept/registered/late_cancel class, or a forbidden request that touches
+  // nothing) — so under Class_teacher_slot_unique a later test's create at
+  // the same date collided with an earlier test's still-open leftover. This
+  // was masked in the original baseline: those tests never even reached this
+  // call, because the template-level collision fixed above threw first.
+  // Routed through `slotTime` (see its docblock), like `makeTemplate`'s own
+  // counter above: the raw `09:${counter}` this replaced had only 21 minutes
+  // of headroom at this call count — the tightest margin of any counter on
+  // this branch, in the file that defines the helper. `startTime` can be
+  // overridden per call for the one test whose notification-body assertion
+  // pins the literal value.
   let makeClassCounter = 0;
   const makeClass = async (
     templateId: string,
@@ -448,7 +453,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
         templateId,
         classType: opts.classType ?? 'Archive Rule',
         date: opts.date,
-        startTime: opts.startTime ?? `09:${String(makeClassCounter).padStart(2, '0')}`,
+        startTime: opts.startTime ?? slotTime(makeClassCounter),
         durationMinutes: 60,
         roomCost: 15,
         minRate: 10,
