@@ -1671,11 +1671,58 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
 
   it('erases once when the same student erasure runs twice concurrently', async () => {
     const fixture = await makeStudentWithFreedSpot();
+    // A second client, so the lock below is held by a transaction neither
+    // erasure can be scheduled inside.
+    const holder = new PrismaClient();
     try {
-      const results = await Promise.allSettled([
+      // A bare `Promise.allSettled` of the two calls is not a race: they can
+      // serialise, and a serialised second call reads its `upcoming` AFTER the
+      // first cancelled those registrations, so it comes back empty — the
+      // erasure then commits nothing to broadcast about, `handleSpotFreed`
+      // never runs, and the notification assertion below passes EVEN WITH THE
+      // ABORT REMOVED. The whole test would be green against the bug it names.
+      //
+      // The lever (the pattern in `registrations-api.test.ts`'s cancel race):
+      // a third transaction takes the `Student` row `FOR UPDATE` before either
+      // call starts. Both erasures then read the same non-empty `upcoming`
+      // (uncommitted state is invisible under READ COMMITTED) and both park at
+      // a write — one on this lock at the closing CAS, the other behind it on
+      // the shared `Registration` row.
+      let release!: () => void;
+      let locked!: () => void;
+      const released = new Promise<void>((r) => { release = r; });
+      // The handshake: `$transaction` returns before its callback has run, and
+      // a fresh client has to connect and start its engine first, so without
+      // this the erasures can be finished before the lock is ever taken.
+      const parked = new Promise<void>((r) => { locked = r; });
+      const holding = holder.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Student" WHERE id = ${fixture.studentId} FOR UPDATE`;
+        locked();
+        await released;
+      }, { timeout: 20_000 });
+      await parked;
+
+      const running = Promise.allSettled([
         deleteStudentAccount(prisma, fixture.studentId),
         deleteStudentAccount(prisma, fixture.studentId),
       ]);
+
+      // 700ms: `deleteStudentAccount` opens with `setLockTimeout`, so a
+      // statement parked past 2s is cancelled with `55P03` and the loser
+      // rejects with a Postgres error instead of the sentinel. The loser waits
+      // this hold plus the winner's remaining statements, so the margin is
+      // smaller than the 2s suggests.
+      let settled = false;
+      void running.then(() => { settled = true; });
+      await new Promise((r) => setTimeout(r, 700));
+
+      // The lever is asserted, not assumed. If both calls finished inside this
+      // window they serialised, and everything below is measuring the
+      // scheduler rather than the guard.
+      expect(settled).toBe(false);
+      release();
+      await holding;
+      const results = await running;
 
       // Asserted before the outcomes, deliberately: the doubled broadcast is
       // the defect — every waiting student told twice about one freed seat —
@@ -1699,7 +1746,76 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
       const student = await prisma.student.findUniqueOrThrow({ where: { id: fixture.studentId } });
       expect(student.deletedAt).not.toBeNull();
     } finally {
+      await holder.$disconnect();
       await cleanup(fixture);
     }
   }, 30_000);
+});
+
+/**
+ * The teacher half of the same guard (#196 branch 2, Task 3), which had no
+ * test at all — `deleteStudentAccount`'s abort was pinned by the race above
+ * and `deleteTeacherAccount`'s identical `AlreadyErasedError` by nothing.
+ *
+ * Sequential, and that is not a weaker version of the race above: the two
+ * aborts protect different things. The student one exists to stop a
+ * post-commit `handleSpotFreed` loop running twice, which only a concurrent
+ * duplicate can cause. This one guards the write itself — an unscoped
+ * `teacher.update` re-runs the whole anonymisation over an already-erased
+ * profile and re-stamps `deletedAt`, moving the erasure's own timestamp
+ * forward. That is a GDPR record of when the Article 17 request was
+ * satisfied, and it does not need a race to be wrong.
+ *
+ * `DELETE /api/account` cannot reach this sequentially (`validateSession`
+ * resolves only live profiles, so a retry arrives with `teacherId` null) —
+ * which is exactly why the service is where it has to be tested.
+ */
+describe('teacher erasure refuses to erase an already-erased profile (#196)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-twice-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let teacherId: string;
+  let accountId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Twice',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'Second-erasure fixture',
+        pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+  });
+
+  afterAll(async () => {
+    await prisma.session.deleteMany({ where: { accountId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: accountId } });
+    await prisma.$disconnect();
+  });
+
+  it('throws AlreadyErasedError and leaves the first erasure untouched', async () => {
+    await deleteTeacherAccount(prisma, teacherId);
+    const first = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
+
+    const err = await deleteTeacherAccount(prisma, teacherId).catch((e: unknown) => e);
+
+    // The erasure timestamp is what a second, unguarded pass would rewrite,
+    // so it is asserted before the error's type: dropping the guard fails on
+    // "the record of when this account was erased moved", not on "something
+    // did not throw".
+    const after = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
+    expect(after.deletedAt).toEqual(first.deletedAt);
+
+    expect(err).toBeInstanceOf(AlreadyErasedError);
+    // The half, not just the class: `api/account/route.ts` logs it, and a
+    // teacher-half abort mislabelled `student` would send an operator reading
+    // that line to the wrong transaction.
+    expect((err as AlreadyErasedError).half).toBe('teacher');
+  }, 20_000);
 });

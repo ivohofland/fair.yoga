@@ -431,6 +431,42 @@ describe('processEmailFallback (DB)', () => {
       expect(after.emailSent).toBe(false);
     });
 
+    it('names the stranded claim in the thrown error when the release itself fails', async () => {
+      const notification = await makeEligible();
+      sendMock.mockResolvedValueOnce({ error: { message: 'boom' } });
+
+      const unreleasable = prisma.$extends({
+        query: {
+          notification: {
+            async updateMany({ args, query }) {
+              // The release is the only write in this flow that sets
+              // `emailSent` false; the claim sets it true. Keyed on that
+              // rather than on call order, like the claim hook below.
+              if ((args.data as { emailSent?: unknown }).emailSent !== false) return query(args);
+              throw new Error('release write failed');
+            },
+          },
+        },
+        // Same cast, same reason as the hooks above and below.
+      }) as unknown as PrismaClient;
+
+      // The failure count alone would say "1 of 1 sends failed", which an
+      // operator reads as "the next sweep will retry it". This one will not:
+      // the claim is stuck on, so the row leaves the candidate pool forever.
+      // The thrown message is the only place that fact reaches anyone who is
+      // not already reading logs.
+      await expect(processEmailFallback(unreleasable)).rejects.toThrow(
+        /1 of 1 sends failed; 1 claim\(s\) could not be released and will never be retried/,
+      );
+
+      // Stranded, and asserted so the message is not merely decorative: an
+      // email that never went out on a row that says it did.
+      const after = await prisma.notification.findUniqueOrThrow({
+        where: { id: notification.id },
+      });
+      expect(after.emailSent).toBe(true);
+    });
+
     it('does not send when the claim itself fails', async () => {
       const notification = await makeEligible();
 

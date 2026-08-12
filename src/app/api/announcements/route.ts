@@ -91,7 +91,16 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // after it are serialised against an identical concurrent send. Without
     // it, two racers each read an empty `findFirst` — neither has committed
     // anything the other can see — and both fan out.
-    await lockAnnouncementSlot(tx, `${session.teacherId}|${classId ?? ''}|${body.message}`);
+    //
+    // The three fields go in as a tuple and the key is composed inside
+    // `lockAnnouncementSlot`, deliberately: they are the same three the
+    // `findFirst` below compares, and a key composed here could drift from
+    // that predicate without anything failing.
+    await lockAnnouncementSlot(tx, {
+      teacherId: session.teacherId,
+      classId,
+      message: body.message,
+    });
 
     const recent = await tx.announcement.findFirst({
       where: {

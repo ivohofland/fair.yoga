@@ -2850,19 +2850,40 @@ describe('invitation writes are retry-safe against a concurrent decline (#196)',
       method: 'DELETE',
       headers: cookie(raceTeacherToken),
     });
-    await new Promise((r) => setTimeout(r, 400));
+
+    // The lever is asserted, not assumed. `await parked` proves the holder
+    // took the row; it does NOT prove the request ever met it. If the route
+    // answered before reaching its write — a 404 on a cold path, a pre-check
+    // that returned early — this test would go green having raced nothing,
+    // which is how two other race tests on this branch passed against the
+    // bug. A parked request cannot settle, so this pins that it parked.
+    //
+    // A second longer than the 400ms this waited before, deliberately: a
+    // shorter wait is the WEAKER check here (an unparked-but-slow request
+    // might not have finished inside it either). The route takes no bounded
+    // lock wait — `PUT`/`DELETE /api/invitations/[id]` issue their CAS
+    // outside any transaction, with no `SET LOCAL lock_timeout` — so a
+    // one-second hold cannot turn into a `55P03` instead of the 409.
+    let settled = false;
+    void deleting.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(settled).toBe(false);
+
     release();
     await holding;
     const res = await deleting;
     await holder.$disconnect();
 
-    expect(res.status).toBe(409);
-    expect((await res.json()).error.code).toBe('DECLINED_IS_PERMANENT');
-
-    // The tombstone survived, which is the whole point of the guard.
+    // The tombstone survived, which is the whole point of the guard — and so
+    // it is asserted before the status, so that removing the guard fails on
+    // the harm (a refusal erased, the address free to re-invite) rather than
+    // on a 200 that says only that a request succeeded.
     const still = await prisma.invitation.findUnique({ where: { id: inv.id } });
     expect(still).not.toBeNull();
     expect(still!.status).toBe('declined');
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('DECLINED_IS_PERMANENT');
   });
 
   it('refuses to edit a row that was declined while the request was in flight', async () => {
@@ -2893,19 +2914,28 @@ describe('invitation writes are retry-safe against a concurrent decline (#196)',
       headers: { 'Content-Type': 'application/json', ...cookie(raceTeacherToken) },
       body: JSON.stringify({ email: `race-put-moved-${suffix}@test.local` }),
     });
-    await new Promise((r) => setTimeout(r, 400));
+
+    // Same guard as the delete test above, for the same reason: without it,
+    // a request that answered before ever reaching the holder's lock leaves
+    // this test green against the bug.
+    let settled = false;
+    void editing.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(settled).toBe(false);
+
     release();
     await holding;
     const res = await editing;
     await holder.$disconnect();
 
-    expect(res.status).toBe(409);
-    expect((await res.json()).error.code).toBe('DECLINED_IS_PERMANENT');
-
     // The tombstone still keys on the original address — an edit that
-    // landed would have freed it for a fresh invite.
+    // landed would have freed it for a fresh invite. Asserted before the
+    // status, as in the delete test: that freeing is the harm.
     const still = await prisma.invitation.findUniqueOrThrow({ where: { id: inv.id } });
     expect(still.email).toBe(email);
     expect(still.status).toBe('declined');
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('DECLINED_IS_PERMANENT');
   });
 });

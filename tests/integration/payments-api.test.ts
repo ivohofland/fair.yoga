@@ -344,16 +344,27 @@ describe('POST /api/payments/[id]/remind', () => {
       // and both park on the lock at the `updateMany`.
       const holder = new PrismaClient();
       let release!: () => void;
+      let locked!: () => void;
       const released = new Promise<void>((r) => {
         release = r;
+      });
+      // The handshake, without which the lever is decorative: `$transaction`
+      // returns before its callback has run, and a fresh `PrismaClient` has
+      // to connect and start its engine first (50-200ms, measured), so both
+      // requests could finish before the row was ever locked — and the second
+      // would then 409 off its own pre-check rather than off the CAS.
+      const parked = new Promise<void>((r) => {
+        locked = r;
       });
       const holding = holder.$transaction(
         async (tx) => {
           await tx.$queryRaw`SELECT id FROM "Payment" WHERE id = ${racePaymentId} FOR UPDATE`;
+          locked();
           await released;
         },
         { timeout: 20_000 },
       );
+      await parked;
 
       const remind = () =>
         fetch(`${BASE_URL}/api/payments/${racePaymentId}/remind`, {
@@ -364,7 +375,16 @@ describe('POST /api/payments/[id]/remind', () => {
 
       // Long enough that both requests have read the payment and parked on the
       // holder's lock, short enough not to approach any transaction timeout.
+      let settled = false;
+      void both.then(() => {
+        settled = true;
+      });
       await new Promise((r) => setTimeout(r, 1000));
+
+      // The lever is asserted, not assumed: if either request answered before
+      // the release, it never met the other inside the CAS, and the pass below
+      // would be the scheduler's doing rather than the guard's.
+      expect(settled).toBe(false);
       release();
       await holding;
       const [a, b] = await both;

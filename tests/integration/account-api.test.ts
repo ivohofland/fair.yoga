@@ -670,21 +670,40 @@ describe('DELETE /api/account', () => {
     const acc = await seedStudentOnly('concurrent');
 
     let release!: () => void;
+    let locked!: () => void;
     const released = new Promise<void>((r) => { release = r; });
+    // A handshake rather than a fixed sleep: `$transaction` returns before its
+    // callback has run, so a timed guess is a race of its own — and one that
+    // fails silently, by letting both requests through before the lock exists.
+    const parked = new Promise<void>((r) => { locked = r; });
     const holding = prisma.$transaction(
       async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Student" WHERE id = ${acc.studentId} FOR UPDATE`;
+        locked();
         await released;
       },
       { timeout: 20_000 },
     );
-    await new Promise((r) => setTimeout(r, 200));
+    await parked;
 
     const del = () =>
       fetch(`${BASE_URL}/api/account`, { method: 'DELETE', headers: cookie(acc.token) });
     const both = Promise.all([del(), del()]);
 
+    // 700ms, not the second the other race tests hold: `deleteStudentAccount`
+    // opens with `setLockTimeout`, so a request parked longer than 2s is
+    // cancelled with `55P03` and takes the 503 ERASURE_BUSY path instead of
+    // the CAS. The loser waits this hold PLUS the winner's remaining
+    // statements, so the margin is smaller than it looks.
+    let settled = false;
+    void both.then(() => { settled = true; });
     await new Promise((r) => setTimeout(r, 700));
+
+    // The lever is asserted, not assumed: a request answered before the
+    // release never reached the CAS, and a serialised second request would
+    // have 401'd (`validateSession` resolves only live profiles) rather than
+    // exercising anything this test is about.
+    expect(settled).toBe(false);
     release();
     await holding;
     const [a, b] = await both;
@@ -698,6 +717,79 @@ describe('DELETE /api/account', () => {
     expect(student.deletedAt).not.toBeNull();
     // The winner's transaction is what cleared the session; the loser rolled
     // back whole and left it alone.
+    expect(await prisma.session.count({ where: { accountId: acc.accountId } })).toBe(0);
+  }, 40_000);
+
+  /**
+   * The DUAL-role shape of the same race, and the one the route's own comment
+   * asserts in prose ("Caught per half so a dual-role account whose student
+   * half is already erased still goes on to erase its teacher half below")
+   * with nothing holding it to it. The student-only case above cannot reach
+   * it: with no teacher profile there is no second half to go on to.
+   *
+   * It is also the one shape where the `partial` flag can produce a
+   * materially false message. The loser's student half throws
+   * `AlreadyErasedError` and rolls back whole, yet `session.studentId` stays
+   * truthy — so `partial = Boolean(session.studentId)` is true for it. If the
+   * teacher half's sentinel were not caught, that loser would be answered
+   * with a 500 reading "Your student data was removed … Removing the rest of
+   * your teaching data failed. Pressing Delete again will not fix it —
+   * please contact support," about an account both halves of which are gone.
+   * A teacher sent to support over a completed deletion.
+   *
+   * Same lever and the same 700ms hold as the case above, for the same
+   * reasons. What differs is only what happens after the release: the winner
+   * erases both halves, and the loser aborts both — its student half on the
+   * `Student` CAS, its teacher half on the `Teacher` one.
+   */
+  it('finishes the teacher half when a concurrent request already took the student half', async () => {
+    const acc = await seedDual('dualrace');
+
+    let release!: () => void;
+    let locked!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const parked = new Promise<void>((r) => { locked = r; });
+    const holding = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Student" WHERE id = ${acc.studentId} FOR UPDATE`;
+        locked();
+        await released;
+      },
+      { timeout: 20_000 },
+    );
+    await parked;
+
+    const del = () =>
+      fetch(`${BASE_URL}/api/account`, { method: 'DELETE', headers: cookie(acc.token) });
+    const both = Promise.all([del(), del()]);
+
+    let settled = false;
+    void both.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 700));
+    expect(settled).toBe(false);
+    release();
+    await holding;
+    const [a, b] = await both;
+
+    // The teacher half really did run for both — asserted before the statuses,
+    // because a teacher left standing is the harm and a 500 is only how it
+    // gets reported. A `return` on the student half's sentinel (rather than
+    // the fall-through the route has) fails here, on a live teacher profile,
+    // which names it.
+    const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: acc.teacherId } });
+    expect(teacher.deletedAt).not.toBeNull();
+    const student = await prisma.student.findUniqueOrThrow({ where: { id: acc.studentId } });
+    expect(student.deletedAt).not.toBeNull();
+
+    // Neither caller is told their deletion failed, and the loser above all:
+    // a PARTIAL_ERASURE 500 here would be false about an account that is
+    // wholly gone.
+    expect([a.status, b.status]).toEqual([200, 200]);
+
+    // Last live profile erased, so the account email is scrubbed and the
+    // session is gone — the state the false message would have denied.
+    const account = await prisma.account.findUniqueOrThrow({ where: { id: acc.accountId } });
+    expect(account.email).toBe(`deleted-${acc.accountId}@deleted.invalid`);
     expect(await prisma.session.count({ where: { accountId: acc.accountId } })).toBe(0);
   }, 40_000);
 });

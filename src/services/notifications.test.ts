@@ -5,7 +5,7 @@ import {
   createBulkNotifications,
   markAsRead,
   getUnreadForEmailFallback,
-  markEmailSent,
+  claimEmailFallback,
 } from './notifications';
 
 const prisma = new PrismaClient();
@@ -244,7 +244,7 @@ describe('markAsRead', () => {
 });
 
 // ===========================================================================
-// getUnreadForEmailFallback + markEmailSent
+// getUnreadForEmailFallback + claimEmailFallback
 // ===========================================================================
 
 describe('getUnreadForEmailFallback', () => {
@@ -326,12 +326,12 @@ describe('getUnreadForEmailFallback', () => {
   });
 
   it('does not return notifications with emailSent=true', async () => {
-    // markEmailSent is a compare-and-swap, not a blind mark: the first call
-    // claims the row and returns 1, a second finds it claimed and returns 0.
-    // That count is how one of two overlapping email-fallback sweeps learns it
-    // does not own the notification and must not send its email.
-    expect(await markEmailSent(prisma, [oldNotificationId])).toBe(1);
-    expect(await markEmailSent(prisma, [oldNotificationId])).toBe(0);
+    // claimEmailFallback is a compare-and-swap, not a blind mark: the first
+    // call claims the row, a second finds it already claimed. That outcome is
+    // how one of two overlapping email-fallback sweeps learns it does not own
+    // the notification and must not send its email.
+    expect(await claimEmailFallback(prisma, oldNotificationId)).toBe('claimed');
+    expect(await claimEmailFallback(prisma, oldNotificationId)).toBe('already-claimed');
 
     const unread = await getUnreadForEmailFallback(prisma);
     const ours = unread.filter((n) => n.recipientId === teacherId);

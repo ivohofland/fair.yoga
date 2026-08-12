@@ -222,6 +222,18 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Which profile an erasure is working on.
+ *
+ * Exported because `DELETE /api/account` decides what its failure message may
+ * claim from exactly this distinction and used to re-declare the union inline.
+ * Two independent copies of one closed set is a third profile kind compiling
+ * cleanly in one file while being silently omitted from the other — and the
+ * omitted one is the file that writes the sentence a user reads about their
+ * own erasure.
+ */
+export type ErasureHalf = 'student' | 'teacher';
+
+/**
  * Thrown when an erasure finds the profile already erased.
  *
  * Not a failure: the caller's goal is satisfied, by the request that won. It
@@ -237,7 +249,7 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
  * see that route for why it must not reach `erasureFailure`.
  */
 export class AlreadyErasedError extends Error {
-  constructor(readonly half: 'student' | 'teacher') {
+  constructor(readonly half: ErasureHalf) {
     super(`${half} profile is already erased`);
     this.name = 'AlreadyErasedError';
   }
@@ -673,8 +685,27 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // this file, and a bare `console.error` writes a line with no level, no
       // request context and no structured fields, so it is invisible to every
       // filtered view an operator actually reads.
-      log.error(
-        { teacherId, classId: cls.id, reason: result.error },
+      //
+      // `warn`, not `error`, and with the status this class was actually
+      // found in. The commonest way to land here is `completeClass` refusing
+      // `completed → completed` — which is precisely what the LOSER of two
+      // concurrent erasures of the same teacher hits, and that loser now ends
+      // in a 200 (`AlreadyErasedError`). Paging someone for the expected
+      // outcome of a race this design chooses to lose gracefully trains them
+      // to ignore the line. `observedStatus` is what separates that benign
+      // case from a genuine refusal, and it is the same field
+      // `deleteTeacherAccount`'s own class CAS reports below.
+      const observed = await db.class.findUnique({
+        where: { id: cls.id },
+        select: { status: true },
+      });
+      log.warn(
+        {
+          teacherId,
+          classId: cls.id,
+          reason: result.error,
+          observedStatus: observed?.status ?? 'row-deleted',
+        },
         'teacher erasure: could not complete an in-progress class first',
       );
     }

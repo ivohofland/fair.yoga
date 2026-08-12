@@ -58,7 +58,7 @@ async function _theBrandRejectsABareClient(client: PrismaClient): Promise<void> 
   await withdrawWaitingEntriesForTeacher(client, { teacherId: 'x', studentId: 'y' });
   // @ts-expect-error `pg_advisory_xact_lock` — taken and released by its own
   // autocommit transaction on a bare client, protecting nothing.
-  await lockAnnouncementSlot(client, 'never-called');
+  await lockAnnouncementSlot(client, { teacherId: 'x', classId: null, message: 'never-called' });
 }
 
 describe('the shared lock timeout', () => {
@@ -138,7 +138,11 @@ describe('the announcement advisory lock', () => {
    */
   it('takes one advisory lock, in the two-int form, under this project namespace', async () => {
     const held = await prisma.$transaction(async (tx) => {
-      await lockAnnouncementSlot(tx, 'teacher|class|Bring a blanket.');
+      await lockAnnouncementSlot(tx, {
+        teacherId: 'teacher',
+        classId: 'class',
+        message: 'Bring a blanket.',
+      });
       return tx.$queryRaw<Array<{ classid: number; objsubid: number }>>`
         SELECT classid::int AS classid, objsubid::int AS objsubid
         FROM pg_locks
@@ -163,6 +167,7 @@ describe('the announcement advisory lock', () => {
    */
   it('makes a second transaction wait for the same key, and lets go on commit', async () => {
     const other = new PrismaClient();
+    const slot = { teacherId: 'contended', classId: null, message: 'Same message.' };
     const order: string[] = [];
     let taken!: () => void;
     let release!: () => void;
@@ -175,7 +180,7 @@ describe('the announcement advisory lock', () => {
 
     const holding = prisma.$transaction(
       async (tx) => {
-        await lockAnnouncementSlot(tx, 'contended-key');
+        await lockAnnouncementSlot(tx, slot);
         taken();
         await released;
       },
@@ -185,7 +190,7 @@ describe('the announcement advisory lock', () => {
 
     const waiting = other.$transaction(
       async (tx) => {
-        await lockAnnouncementSlot(tx, 'contended-key');
+        await lockAnnouncementSlot(tx, slot);
         order.push('second acquired');
       },
       { timeout: 20_000 },
@@ -208,9 +213,20 @@ describe('the announcement advisory lock', () => {
    * The other half: it serialises one `(teacher, class, message)`, not every
    * announcement in the database. A lock keyed on a constant would pass the
    * test above and make every teacher's send queue behind every other's.
+   *
+   * All THREE fields, one at a time, because the helper now composes the key
+   * from the tuple itself: a composition that dropped `classId` would still
+   * pass a two-teacher version of this test while making a teacher's
+   * class-scoped send queue behind their identical all-students one.
    */
-  it('does not make two different keys wait for each other', async () => {
+  it('does not make two slots differing in any one field wait for each other', async () => {
     const other = new PrismaClient();
+    const held = { teacherId: 'teacher-one', classId: 'class-one', message: 'Bring a blanket.' };
+    const neighbours = [
+      { ...held, teacherId: 'teacher-two' },
+      { ...held, classId: 'class-two' },
+      { ...held, message: 'Bring two blankets.' },
+    ];
     let taken!: () => void;
     let release!: () => void;
     const acquired = new Promise<void>((r) => {
@@ -222,7 +238,7 @@ describe('the announcement advisory lock', () => {
 
     const holding = prisma.$transaction(
       async (tx) => {
-        await lockAnnouncementSlot(tx, 'key-one');
+        await lockAnnouncementSlot(tx, held);
         taken();
         await released;
       },
@@ -230,10 +246,12 @@ describe('the announcement advisory lock', () => {
     );
     await acquired;
 
-    // Resolves while the first transaction is still open, which is the point.
-    await other.$transaction(async (tx) => {
-      await lockAnnouncementSlot(tx, 'key-two');
-    });
+    // Each resolves while the first transaction is still open, which is the point.
+    for (const neighbour of neighbours) {
+      await other.$transaction(async (tx) => {
+        await lockAnnouncementSlot(tx, neighbour);
+      });
+    }
 
     release();
     await holding;

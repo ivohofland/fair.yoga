@@ -10,7 +10,12 @@ import {
 } from '@/lib/api-utils';
 import { clearSessionCookie } from '@/lib/auth';
 import { isTransientDbError } from '@/lib/api-errors';
-import { AlreadyErasedError, deleteStudentAccount, deleteTeacherAccount } from '@/services/gdpr';
+import {
+  AlreadyErasedError,
+  deleteStudentAccount,
+  deleteTeacherAccount,
+  type ErasureHalf,
+} from '@/services/gdpr';
 
 /**
  * Turns an erasure failure into the answer that is actually true of it.
@@ -55,7 +60,7 @@ import { AlreadyErasedError, deleteStudentAccount, deleteTeacherAccount } from '
  * NOTHING about state. Saying too much is the failure this wave introduced
  * and this split removes; saying nothing was the failure before it.
  */
-function erasureFailure(err: unknown, opts: { half: 'student' | 'teacher'; partial: boolean }) {
+function erasureFailure(err: unknown, opts: { half: ErasureHalf; partial: boolean }) {
   const transient = isTransientDbError(err);
   // The teacher erasure's committed-before-the-transaction exposure. Every
   // failure of that half carries it, `partial` included.
@@ -128,9 +133,14 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
       // Only reachable concurrently: a sequential retry never gets here,
       // because `validateSession` (`lib/auth/session.ts`) resolves only LIVE
       // profiles, so `session.studentId` is already null by then.
+      //
+      // `err` in the payload, not just `half`: this line is the ONLY record
+      // that the sentinel fired, and without the error object it carries no
+      // stack — so an `AlreadyErasedError` thrown from somewhere nobody
+      // expects looks identical here to the one this branch was written for.
       if (err instanceof AlreadyErasedError) {
         log.info(
-          { accountId: session.accountId, half: err.half },
+          { err, accountId: session.accountId, half: err.half },
           'account erasure: half already erased',
         );
       } else {
@@ -153,8 +163,10 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
       // and routing it through `erasureFailure` would tell a caller their
       // teaching data survived when the winning request had removed it.
       if (err instanceof AlreadyErasedError) {
+        // `err` for the same reason as the student half above: a sentinel
+        // logged without its stack cannot be told from a lookalike.
         log.info(
-          { accountId: session.accountId, half: err.half },
+          { err, accountId: session.accountId, half: err.half },
           'account erasure: half already erased',
         );
       } else {

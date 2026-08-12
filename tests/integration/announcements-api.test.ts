@@ -240,16 +240,29 @@ describe('POST /api/announcements', () => {
       // SHARE` on that parent row (`docs/lock-order.md`, "the fourth path").
       const holder = new PrismaClient();
       let release!: () => void;
+      let locked!: () => void;
       const released = new Promise<void>((r) => {
         release = r;
+      });
+      // The handshake, without which the lever is decorative: `$transaction`
+      // returns before its callback has run, and a fresh `PrismaClient` has
+      // to connect and start its engine first (50-200ms, measured), so both
+      // requests could finish before the lock was ever taken — and the second
+      // one would then be answered by the sequential compare rather than by
+      // the advisory lock this test exists to hold. Same pattern, and the
+      // same reason, as `registrations-api.test.ts`'s cancel race.
+      const parked = new Promise<void>((r) => {
+        locked = r;
       });
       const holding = holder.$transaction(
         async (tx) => {
           await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${class1Id} FOR UPDATE`;
+          locked();
           await released;
         },
         { timeout: 20_000 },
       );
+      await parked;
 
       const both = Promise.all([
         sendAnnouncement({ classId: class1Id, message }),
@@ -258,7 +271,18 @@ describe('POST /api/announcements', () => {
 
       // Long enough that both requests are in flight and parked, short enough
       // to stay well inside every transaction timeout involved.
+      let settled = false;
+      void both.then(() => {
+        settled = true;
+      });
       await new Promise((r) => setTimeout(r, 1000));
+
+      // The lever is asserted, not assumed: one request holds the advisory
+      // slot and parks on the `Class` row (its `Notification` insert wants
+      // `FOR KEY SHARE` on it), the other parks on the advisory slot. If
+      // either had answered inside the second above, the interleaving under
+      // test never happened and a green run would mean nothing.
+      expect(settled).toBe(false);
       release();
       await holding;
       const [a, b] = await both;
@@ -284,6 +308,14 @@ describe('POST /api/announcements', () => {
       expect((await sendAnnouncement({ classId: class1Id, message })).status).toBe(201);
 
       const second = await sendAnnouncement({ classId: class1Id, message });
+
+      // Notifications before rows AND before the status, for the reason given
+      // in the case above — the comment said so and the order did not.
+      // Dropping the dedupe fails here, on "every student notified twice",
+      // rather than on a 201 that reports only that a second send succeeded.
+      expect(await announcementNotifications({ body: message })).toHaveLength(1);
+      expect(await prisma.announcement.findMany({ where: { teacherId, message } })).toHaveLength(1);
+
       expect(second.status).toBe(200);
       const { data } = await second.json();
       // The teacher is told, rather than shown a success for a send that did
@@ -291,10 +323,6 @@ describe('POST /api/announcements', () => {
       // number: those students did receive it.
       expect(data.duplicateSuppressed).toBe(true);
       expect(data.recipientCount).toBeGreaterThan(0);
-
-      // Notifications before rows, for the reason given in the case above.
-      expect(await announcementNotifications({ body: message })).toHaveLength(1);
-      expect(await prisma.announcement.findMany({ where: { teacherId, message } })).toHaveLength(1);
     });
 
     it('sends a genuinely later identical announcement', async () => {
@@ -321,6 +349,34 @@ describe('POST /api/announcements', () => {
       // teacher ever sent".
       expect((await sendAnnouncement({ message })).status).toBe(201);
       expect(await prisma.announcement.count({ where: { teacherId, message } })).toBe(2);
+    });
+
+    /**
+     * The positive half of the nullable `classId`, and the half that was
+     * missing: two identical ALL-STUDENTS sends must dedupe each other.
+     *
+     * The negative above only proves the two shapes do not collide, which a
+     * dedupe that matches NOTHING when `classId` is null satisfies just as
+     * well — `classId: { equals: undefined }`, an `if (classId)` guard around
+     * the compare, a lock key that varies per request. Every other case in
+     * this block sends `classId`, so nothing else in the suite would notice:
+     * the all-students path would fan out twice, silently, for every teacher
+     * who double-clicked Send on the message that goes to everyone.
+     */
+    it('suppresses an identical all-students resend inside the window', async () => {
+      const message = `All-students dedupe ${suffix}`;
+      expect((await sendAnnouncement({ message })).status).toBe(201);
+
+      const second = await sendAnnouncement({ message });
+
+      // Notifications first, as everywhere in this block: the doubled fan-out
+      // is the cost, the status is only how it is reported.
+      expect(await announcementNotifications({ body: message })).toHaveLength(1);
+      expect(await prisma.announcement.count({ where: { teacherId, classId: null, message } }))
+        .toBe(1);
+
+      expect(second.status).toBe(200);
+      expect((await second.json()).data.duplicateSuppressed).toBe(true);
     });
   });
 });

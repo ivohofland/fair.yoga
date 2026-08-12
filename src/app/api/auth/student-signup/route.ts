@@ -6,6 +6,25 @@ import { studentSignupSchema } from '@/lib/schemas';
 import { generateMagicLinkToken } from '@/lib/auth';
 import { sendMagicLinkEmail } from '@/lib/email';
 import { checkRateLimit, clientIp } from '@/lib/rate-limit';
+import { log } from '@/lib/log';
+
+/**
+ * The name of the email unique constraint a `P2002` landed on, or `null` for
+ * anything else — including a `P2002` on some other key.
+ *
+ * Prisma reports `meta.target` as the field list (`['email']`) on Postgres,
+ * but a constraint it cannot map back to fields arrives as a raw string
+ * (`'Student_email_key'`), so both shapes are read. Anything that does not
+ * name `email` is a constraint whose meaning nobody here has established, and
+ * the caller rethrows it.
+ */
+function emailUniqueTarget(err: unknown): string | null {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') return null;
+  const target = err.meta?.target;
+  const names = Array.isArray(target) ? target : [target];
+  const named = names.filter((n): n is string => typeof n === 'string');
+  return named.some((n) => n.toLowerCase().includes('email')) ? named.join(',') : null;
+}
 
 /**
  * Student self-signup from the public booking flow.
@@ -59,7 +78,20 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // "Resource already exists", failing a legitimate signup AND telling an
       // anonymous caller the address is taken, which this route's identical
       // 200 exists to prevent.
-      if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) throw err;
+      //
+      // Narrowed to the EMAIL uniques and logged, rather than swallowing every
+      // P2002 in silence. `P2002` alone is "some unique constraint" — a future
+      // one on this create (a slug, an id) would be swallowed here with the
+      // same reasoning attached to it, and reasoning that only holds for the
+      // email keys must not be applied by accident to a constraint nobody has
+      // thought about. Anything else rethrows into `withErrorHandler`.
+      const target = emailUniqueTarget(err);
+      if (target === null) throw err;
+      // No address in the log line, on purpose: the uniform 200 above exists
+      // so an anonymous caller cannot learn whether an address has an account,
+      // and a log naming it hands that same fact to everyone with log access.
+      // The constraint name is enough to tell these races apart from any other.
+      log.warn({ constraint: target }, 'student signup lost a create race on an existing email; falling through to the magic link');
     }
   }
   const token = await generateMagicLinkToken(prisma, email, redirect);

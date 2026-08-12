@@ -204,25 +204,35 @@ export async function getUnreadForEmailFallback(
 }
 
 /**
- * Claims notifications for email fallback, returning how many this call won.
+ * Claims ONE notification for email fallback, and says whether this call won
+ * it.
  *
- * `emailSent: false` in the WHERE makes this a compare-and-swap, not a blind
- * mark: two overlapping sweeps read the same candidate rows (the candidate
- * query above filters on `emailSent: false` but claims nothing), and the count
- * is how the loser learns it lost. Returns the count rather than `void` for
- * that reason — a caller that sends AFTER calling this and ignores the count
- * is back to the unguarded behaviour. Ignoring it is fine where no send
- * follows: `email-fallback.ts` deliberately does so on its opted-out and
- * dry-run branches, which mark a decision rather than claim a send,
- * where both sweeps went on to send the same email.
+ * `emailSent: false` in the WHERE is the whole function: it makes this a
+ * compare-and-swap, not a blind mark. Two overlapping sweeps hold the same
+ * candidate rows (the candidate query above filters on `emailSent: false` but
+ * claims nothing), and the return value is how the loser learns it lost.
+ * Returning an outcome rather than `void` is what lets the caller send only on
+ * `'claimed'` — a caller that sends after calling this and ignores the answer
+ * is back to the unguarded behaviour, where both sweeps emailed the same
+ * recipient. Ignoring it is fine only where no send follows:
+ * `email-fallback.ts` deliberately does so on its opted-out and dry-run
+ * branches, which mark a decision rather than claim a send.
+ *
+ * One id, not an array, and that is a correctness constraint rather than a
+ * convenience. This used to take `string[]` and return a count, and the caller
+ * read that count as `=== 1` — correct ONLY because every caller happened to
+ * pass a single-element array. Batched, `=== 1` silently means "I won one of
+ * five" while the sweep goes on to send all five. The signature now makes that
+ * batch impossible to write by accident; a future batch claim needs a
+ * different function that returns WHICH ids it won, not a count.
  */
-export async function markEmailSent(
+export async function claimEmailFallback(
   db: PrismaClient,
-  notificationIds: string[],
-): Promise<number> {
+  notificationId: string,
+): Promise<'claimed' | 'already-claimed'> {
   const { count } = await db.notification.updateMany({
-    where: { id: { in: notificationIds }, emailSent: false },
+    where: { id: notificationId, emailSent: false },
     data: { emailSent: true },
   });
-  return count;
+  return count === 1 ? 'claimed' : 'already-claimed';
 }

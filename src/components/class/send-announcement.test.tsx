@@ -26,6 +26,21 @@ function stubSend(status: number, data: Record<string, unknown>) {
   return fetchMock;
 }
 
+/**
+ * The failure shape, which `stubSend` cannot express: `respondError` answers
+ * `{ error: { message, code } }`, with no `data` at all, and this component
+ * reads that message rather than showing a generic line.
+ */
+function stubFailure(status: number, message: string) {
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: false,
+    status,
+    json: async () => ({ error: { message } }),
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -97,5 +112,41 @@ describe('SendAnnouncement', () => {
 
     expect(await screen.findByText('Sent to 12 students')).toBeInTheDocument();
     expect(screen.queryByText(/Not sent again/)).toBeNull();
+  });
+
+  /**
+   * The third outcome, and the only one no test covered: a send that FAILS.
+   * Taken after a suppressed one on purpose — that is the state with
+   * something to leave standing. "Not sent again — the same message reached
+   * 12 students" is a claim about the message currently in the composer, and
+   * a failed send that left it on screen would tell a teacher their
+   * announcement was a harmless duplicate when in fact it never went out.
+   *
+   * The error branch is also the only reader of the route's `{ error:
+   * { message } }` body: everything else here stubs `{ data }`, so an error
+   * shape this component could not read would show as its generic fallback
+   * with nothing failing.
+   */
+  it('shows the failure, and no leftover caption, when a send after a suppressed one fails', async () => {
+    stubSend(200, { recipientCount: 12, duplicateSuppressed: true });
+    render(<SendAnnouncement classId="c1" recipientHint="everyone in this class" />);
+    send('Bring a blanket.');
+    await screen.findByText(/Not sent again/);
+
+    fireEvent.click(screen.getByText('Send another'));
+    stubFailure(400, 'No students to notify');
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Second try.' } });
+    fireEvent.click(screen.getByText('Send'));
+
+    // The route's own words, not a generic line — the teacher can act on
+    // "No students to notify" and cannot act on "Try again".
+    expect(await screen.findByText('No students to notify')).toBeInTheDocument();
+
+    // Neither "it went out" caption survives the failure.
+    expect(screen.queryByText(/Not sent again/)).toBeNull();
+    expect(screen.queryByText(/^Sent to/)).toBeNull();
+    // And the composer is still open with the text in it, so the teacher can
+    // retry without retyping.
+    expect(screen.getByRole('textbox')).toHaveValue('Second try.');
   });
 });

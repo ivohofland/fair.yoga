@@ -11,7 +11,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { Resend } from 'resend';
-import { getUnreadForEmailFallback, markEmailSent } from './notifications';
+import { getUnreadForEmailFallback, claimEmailFallback } from './notifications';
 import { shouldEmailStudent } from './notification-policy';
 import { renderNotificationEmail } from '@/lib/email-templates';
 import { emailDryRun } from '@/lib/email';
@@ -37,6 +37,10 @@ export async function processEmailFallback(
 
   let sent = 0;
   let failed = 0;
+  // Claims that could not be handed back — see `releaseOne` and the throw at
+  // the bottom, which names them separately because they are the one outcome
+  // here that no later sweep can put right.
+  let stranded = 0;
 
   // One notification at a time, never a batch at the end: one failed
   // batch-update used to re-email every recipient on every 5-minute sweep.
@@ -60,7 +64,7 @@ export async function processEmailFallback(
   // only costs one reconsidered row on the next sweep.
   const markOne = async (id: string) => {
     try {
-      await markEmailSent(db, [id]);
+      await claimEmailFallback(db, id);
     } catch (err) {
       log.error({ err, notificationId: id }, 'failed to mark email-sent (will reconsider next sweep)');
     }
@@ -71,10 +75,14 @@ export async function processEmailFallback(
    * record ownership, and "we could not record it" is not "we own it" — so the
    * caller must not send. `markOne` above logs and carries on, which was right
    * while a lost mark only risked a duplicate; as a claim it must fail closed.
+   *
+   * `'already-claimed'` rather than `'taken'`: the two words were near
+   * synonyms, and at the call site `claim === 'taken'` read as though it might
+   * be the success case.
    */
-  const claimOne = async (id: string): Promise<'claimed' | 'taken' | 'error'> => {
+  const claimOne = async (id: string): Promise<'claimed' | 'already-claimed' | 'error'> => {
     try {
-      return (await markEmailSent(db, [id])) === 1 ? 'claimed' : 'taken';
+      return await claimEmailFallback(db, id);
     } catch (err) {
       log.error({ err, notificationId: id }, 'failed to claim notification for email fallback');
       return 'error';
@@ -87,13 +95,24 @@ export async function processEmailFallback(
    * nothing useful to do with it mid-sweep), and a swallowed one strands the
    * notification as `emailSent: true` with no email ever sent, permanently:
    * the candidate query filters on `emailSent: false`, so it is never a
-   * candidate again. Hence the log line's "(will not retry)", which is the
-   * accurate half of this pair.
+   * candidate again. Hence the log line's "(will not retry)", and hence
+   * `stranded`, which carries that fact out to the operator in the throw
+   * below — a log line alone is only read by someone already looking.
+   *
+   * `emailSent: true` in the WHERE, so this says "hand back MY claim" rather
+   * than "set this false". The two differ on the row this sweep does not own:
+   * without it, a release racing the winner's claim would clear a claim
+   * belonging to another sweep that is about to send, putting the row back in
+   * the candidate pool and undoing the de-duplication the claim exists for.
    */
   const releaseOne = async (id: string) => {
     try {
-      await db.notification.updateMany({ where: { id }, data: { emailSent: false } });
+      await db.notification.updateMany({
+        where: { id, emailSent: true },
+        data: { emailSent: false },
+      });
     } catch (err) {
+      stranded++;
       log.error({ err, notificationId: id }, 'failed to release email-fallback claim (will not retry)');
     }
   };
@@ -197,8 +216,8 @@ export async function processEmailFallback(
     // Claim before sending, per the block comment above: the row is the only
     // thing standing between two overlapping sweeps and two identical emails.
     //
-    // Three outcomes, not two, and collapsing the last two would be a silent
-    // failure. A claim that was TAKEN is another sweep doing its job — skip it
+    // Three outcomes, not two, and collapsing any two would be a silent
+    // failure. An ALREADY-CLAIMED row is another sweep doing its job — skip it
     // and report nothing. A claim that ERRORED sent no email either, but for a
     // reason nobody chose, so it has to reach `failed`: without that, a
     // claim-write outage skips every notification in turn and the sweep still
@@ -206,12 +225,41 @@ export async function processEmailFallback(
     // `failed > 0` throw below exists to prevent. The old code could not have
     // this bug — its write came after the send, so a failing write still left
     // the email delivered.
+    //
+    // A `switch` closed by `const unhandled: never`, not the chain of `if`s
+    // this used to be, because what follows the chain is the SEND: a fourth
+    // outcome added to `claimOne` fell past both `if`s and emailed a
+    // notification nobody had decided this sweep owned. The `never` makes
+    // adding one a compile error here (the project's idiom — `lib/format.ts`,
+    // `api/classes/[id]/route.ts`), and `owned` makes the runtime default
+    // not-sending rather than sending, so the two failure modes are covered by
+    // different mechanisms.
     const claim = await claimOne(notification.id);
-    if (claim === 'error') {
-      failed++;
-      continue;
+    let owned = false;
+    switch (claim) {
+      case 'claimed':
+        owned = true;
+        break;
+      case 'already-claimed':
+        break;
+      case 'error':
+        failed++;
+        break;
+      default: {
+        // Unreachable while the union has exactly the three members above —
+        // the assignment below is what keeps it that way. Fail closed at
+        // runtime anyway: an outcome nobody wrote a branch for is not
+        // permission to send, and it is a defect, so it reaches `failed`.
+        const unhandled: never = claim;
+        log.error(
+          { notificationId: notification.id, claim: String(unhandled) },
+          'unhandled email-fallback claim outcome',
+        );
+        failed++;
+        break;
+      }
     }
-    if (claim === 'taken') continue;
+    if (!owned) continue;
 
     try {
       // Branded template; escapes teacher-authored bodies so markup or
@@ -242,8 +290,22 @@ export async function processEmailFallback(
 
   // Surface failures to the caller: the scheduler records this as
   // lastError, so /api/health cannot show green through a send outage.
+  //
+  // Stranded releases are named separately because they are a different kind
+  // of news. "N of M sends failed" reads as retryable, and for a released
+  // claim it is — the next sweep picks the row up again. A claim that could
+  // not be handed back is not: the row keeps `emailSent: true` with no email
+  // ever sent, the candidate query never returns it again, and no sweep will
+  // fix it without someone clearing the flag by hand. An operator who is not
+  // told that reads the same sentence for both and waits for a retry that
+  // cannot come. `stranded` can only be non-zero on a path that also counted a
+  // failure, so this condition covers it.
   if (failed > 0) {
-    throw new Error(`email fallback: ${failed} of ${failed + sent} sends failed`);
+    const strandedNote =
+      stranded > 0
+        ? `; ${stranded} claim(s) could not be released and will never be retried`
+        : '';
+    throw new Error(`email fallback: ${failed} of ${failed + sent} sends failed${strandedNote}`);
   }
 
   return sent;

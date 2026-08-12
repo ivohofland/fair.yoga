@@ -10,6 +10,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { updateInvitationSchema, archiveStateQuerySchema } from '@/lib/schemas';
+import { log } from '@/lib/log';
 
 /**
  * The ownership preamble shared by PUT/DELETE/PATCH below.
@@ -37,6 +38,54 @@ async function ownedInvitation(teacherId: string, id: string) {
  */
 const NOT_FOUND = () => respondError('Contact not found', 404);
 
+/**
+ * The refusal a declined row earns, in one place — PUT's pre-check, DELETE's
+ * pre-check and both of their post-CAS answers say exactly this, and three
+ * copies of one sentence is three chances for them to stop agreeing.
+ */
+const DECLINED = () =>
+  respondError(
+    'This person declined. You can archive this contact, but it cannot be removed.',
+    409,
+    'DECLINED_IS_PERMANENT',
+  );
+
+/**
+ * What a CAS that matched nothing actually means — asked, not assumed.
+ *
+ * `where: { id, status: { not: 'declined' } }` matches nothing for TWO
+ * reasons: the row went declined in the gap after the pre-check (the case the
+ * guard exists for), or the row is simply gone — a concurrent delete from the
+ * teacher's other tab, or their own retried delete. Answering
+ * `DECLINED_IS_PERMANENT` for both told a teacher who had just deleted a
+ * contact that the person had declined their invitation: a false statement
+ * about a third party's choice, made by a tool whose premise is not making
+ * those.
+ *
+ * So re-read and report what is actually there, the shape
+ * `deleteTeacherAccount`'s class CAS (`services/gdpr.ts`) uses. Scoped to the
+ * teacher again rather than by id alone: a row that is no longer theirs is not
+ * theirs to hear about, which is the same reason `NOT_FOUND` exists above.
+ *
+ * The third branch is unreachable today — nothing in this codebase moves an
+ * invitation out of `declined` — so it says so in the log rather than
+ * inventing a story for the teacher, and answers the same 409 the CAS was
+ * refusing on.
+ */
+async function casMatchedNothing(teacherId: string, id: string) {
+  const observed = await ownedInvitation(teacherId, id);
+  if (!observed) return NOT_FOUND();
+  if (observed.status === 'declined') return DECLINED();
+  log.warn(
+    { teacherId, invitationId: id, observedStatus: observed.status },
+    'invitation CAS matched nothing on a row that is neither gone nor declined',
+  );
+  return respondError(
+    'This contact changed while you were working on it. Reload and try again.',
+    409,
+  );
+}
+
 export const PUT = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -52,13 +101,7 @@ export const PUT = withErrorHandler(async (
   // on (teacherId, email) — editing the address off a declined row would
   // free that address for a fresh invite just as surely as deleting the row
   // would, so an edit is the same hole through a second door.
-  if (invitation.status === 'declined') {
-    return respondError(
-      'This person declined. You can archive this contact, but it cannot be removed.',
-      409,
-      'DECLINED_IS_PERMANENT',
-    );
-  }
+  if (invitation.status === 'declined') return DECLINED();
 
   const parsed = await parseBody(request, updateInvitationSchema);
   if ('error' in parsed) return parsed.error;
@@ -113,13 +156,9 @@ export const PUT = withErrorHandler(async (
     }
     throw err;
   }
-  if (changed.count === 0) {
-    return respondError(
-      'This person declined. You can archive this contact, but it cannot be removed.',
-      409,
-      'DECLINED_IS_PERMANENT',
-    );
-  }
+  // Not automatically the decline: the row may simply be gone. See
+  // `casMatchedNothing`.
+  if (changed.count === 0) return casMatchedNothing(session.teacherId, id);
   return respondOk({ id });
 });
 
@@ -139,30 +178,20 @@ export const DELETE = withErrorHandler(async (
   // harassment loop that declining exists to end. Archiving is the escape
   // hatch: it hides the row without disarming the uniqueness check that
   // `inviteContact` runs against it.
-  if (invitation.status === 'declined') {
-    return respondError(
-      'This person declined. You can archive this contact, but it cannot be removed.',
-      409,
-      'DECLINED_IS_PERMANENT',
-    );
-  }
+  if (invitation.status === 'declined') return DECLINED();
 
   // The pre-check above is a read-then-write, so a decline committing in the
   // gap would reach a plain `delete({ where: { id } })` and destroy the
-  // tombstone anyway. The status lives in the WHERE for that reason: a count
-  // of 0 means the row went declined underneath us, and the answer is the
-  // same 409 the pre-check gives. Same idiom as `revivePendingInvitation`
-  // (`services/invitations.ts`), which CASes on `status: 'accepted'`.
+  // tombstone anyway. The status lives in the WHERE for that reason. Same
+  // idiom as `revivePendingInvitation` (`services/invitations.ts`), which
+  // CASes on `status: 'accepted'`. What a count of 0 MEANS is
+  // `casMatchedNothing`'s question — a decline is only one of its answers, and
+  // "the row is already gone" is the other, which for a DELETE is the retry
+  // this route is meant to survive.
   const removed = await prisma.invitation.deleteMany({
     where: { id, status: { not: 'declined' } },
   });
-  if (removed.count === 0) {
-    return respondError(
-      'This person declined. You can archive this contact, but it cannot be removed.',
-      409,
-      'DECLINED_IS_PERMANENT',
-    );
-  }
+  if (removed.count === 0) return casMatchedNothing(session.teacherId, id);
   return respondOk({ id });
 });
 

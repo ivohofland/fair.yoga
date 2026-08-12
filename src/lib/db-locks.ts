@@ -26,6 +26,15 @@ import type { Prisma } from '@prisma/client';
  *          `resolveInvitationOnLink` (`link-consent.ts`) — none issues a
  *          `SET LOCAL` or a row lock, so none has anything that can
  *          evaporate. They still belong inside their callers' transactions.
+ *   skip   `createBulkNotifications` (`notifications.ts`) — one `createMany`
+ *          and a bus emit, no transaction-scoped statement, so the rule says
+ *          leave it unbranded. Named here rather than left out because this
+ *          register is read as complete: it takes `PrismaClient |
+ *          Prisma.TransactionClient` and is called BOTH ways — inside the
+ *          announcement transaction beside `lockAnnouncementSlot` (#196) and
+ *          on the bare client elsewhere — so its absence would read as an
+ *          oversight rather than a decision. Branding it would break every
+ *          bare-client caller for no protection gained.
  *
  * `waitlist.ts` reaches its own helpers through a module-local alias. The
  * parameter is changed at the one adopting site rather than re-pointing that
@@ -242,11 +251,24 @@ function hash32(value: string): number {
  * guessed. A tagged `$queryRaw` is still the right tool (the two ints are
  * bound parameters, so nothing here is interpolated); only the column it
  * hands back had to change.
+ *
+ * `slot` is the tuple, not a pre-composed key, and that is the point of the
+ * signature. The caller's dedupe compare is a `findFirst` on exactly these
+ * three columns, so the key and that predicate have to describe the same
+ * thing — and when the caller composed the key itself, nothing said so.
+ * Changing the composition without changing the predicate would have given
+ * two identical sends two DIFFERENT locks: neither waits, each reads an empty
+ * compare, and both fan out — the exact failure this lock exists to prevent,
+ * reintroduced by an edit that looks local. Composing it here puts the
+ * coupling in one place. The separator makes the key ambiguous for a message
+ * containing `|`, which costs nothing: the key is only ever a mutual-exclusion
+ * hash (see above), and the caller still compares the real column values.
  */
 export async function lockAnnouncementSlot(
   tx: TransactionClientOnly,
-  key: string,
+  slot: { teacherId: string; classId: string | null; message: string },
 ): Promise<void> {
+  const key = `${slot.teacherId}|${slot.classId ?? ''}|${slot.message}`;
   await tx.$queryRaw`
     SELECT 1 AS locked
     FROM (

@@ -208,7 +208,17 @@ describe('POST /api/auth/student-signup', () => {
 
     // Long enough that both requests have passed their pre-checks and parked
     // on the holder's pending index entry, short enough not to near a timeout.
+    let settled = false;
+    void both.then(() => { settled = true; });
     await new Promise((r) => setTimeout(r, 1000));
+
+    // The lever is asserted, not assumed. The `await` on the holder's insert
+    // above proves the index entry exists; it does not prove either request
+    // reached it. A request answered inside this second took the `else` path
+    // on a committed row or fell out on a rate limit, and the surviving-row
+    // check below would still read `['Holder']` — green, having raced
+    // nothing. A parked request cannot settle, so this pins that both did.
+    expect(settled).toBe(false);
     release();
     await holding;
     const [a, b] = await both;
