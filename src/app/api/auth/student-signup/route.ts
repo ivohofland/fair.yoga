@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { studentSignupSchema } from '@/lib/schemas';
@@ -38,15 +39,27 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // just gets the link — an unclaimed CRM row claims at verify, and a
   // profile never attaches to an existing account without its session.
   if (!existingAccount && !existingStudent) {
-    await prisma.student.create({
-      data: {
-        firstName,
-        lastName,
-        email,
-        claimedAt: new Date(),
-        account: { create: { email } },
-      },
-    });
+    try {
+      await prisma.student.create({
+        data: {
+          firstName,
+          lastName,
+          email,
+          claimedAt: new Date(),
+          account: { create: { email } },
+        },
+      });
+    } catch (err) {
+      // Both pre-checks above are plain reads, so a concurrent signup for the
+      // same fresh address passes both and one of them loses on
+      // `Student.email`/`Account.email`. Losing means the account now exists
+      // — which is precisely the state the `else` path below already handles
+      // correctly, by just sending the link. Rethrowing would surface a 409
+      // "Resource already exists", failing a legitimate signup AND telling an
+      // anonymous caller the address is taken, which this route's identical
+      // 200 exists to prevent.
+      if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) throw err;
+    }
   }
   const token = await generateMagicLinkToken(prisma, email, redirect);
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';

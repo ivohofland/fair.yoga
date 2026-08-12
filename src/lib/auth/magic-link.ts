@@ -10,6 +10,24 @@ function hashToken(token: string): string {
   return encodeHexLowerCase(bytes);
 }
 
+/**
+ * Mints a single-use sign-in link token, returning the RAW token for the
+ * email and storing only its SHA-256 hash.
+ *
+ * A second call for the same address deliberately mints a second live token
+ * rather than reusing or invalidating the first: a resend must work, and the
+ * first link must keep working, because the user clicks whichever mail they
+ * see first. That duplication is legitimate (#196) and bounded — the rate
+ * limiter caps it at three per address per 15 minutes, the TTL is 15 minutes,
+ * `cleanupExpiredAuth` sweeps the remains daily, and `verifyMagicLinkToken`
+ * deletes every sibling the moment one of them is used.
+ *
+ * Reusing a live token instead is NOT possible and must not be attempted: the
+ * raw value is returned here and persisted nowhere, so recovering it from a
+ * row would mean inverting SHA-256. Storing it raw, or reversibly, would make
+ * any database read a sign-in — which is the whole reason this column is a
+ * hash. #196's original design proposed reuse; that is why this note exists.
+ */
 export async function generateMagicLinkToken(
   db: PrismaClient,
   email: string,
@@ -55,6 +73,22 @@ export async function verifyMagicLinkToken(
   if (record.expiresAt <= new Date()) {
     return null;
   }
+
+  // Every other live token for this address is now surplus: its owner is
+  // signed in, so the only thing a link still sitting in their inbox can do
+  // is be used by someone else — a forwarded mail, a shared mailbox, a
+  // link-prefetching scanner. Rate limiting allows three per address per 15
+  // minutes and the TTL is 15 minutes, so there can be two.
+  //
+  // Placement is load-bearing: this runs only AFTER the expiry check above.
+  // Invalidating on every consumption would let anyone holding an old expired
+  // link destroy the user's fresh one — a guard that creates the denial of
+  // service it exists to prevent.
+  //
+  // Unindexed by design. `MagicLinkToken` carries `@unique` on `tokenHash`
+  // only, and adding an index means a migration; `cleanupExpiredAuth` sweeps
+  // daily and the rate limit caps the table, so the scan is microseconds.
+  await db.magicLinkToken.deleteMany({ where: { email: record.email } });
 
   return { email: record.email, redirectTo: record.redirectTo };
 }

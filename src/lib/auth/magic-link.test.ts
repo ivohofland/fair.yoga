@@ -91,6 +91,45 @@ describe('verifyMagicLinkToken', () => {
     const result = await verifyMagicLinkToken(db, 'invalid-random-token');
     expect(result).toBeNull();
   });
+
+  it('invalidates every other live token for that address on a successful sign-in', async () => {
+    const email = 'siblings@example.com';
+    const first = await generateMagicLinkToken(db, email);
+    const second = await generateMagicLinkToken(db, email);
+
+    expect(await verifyMagicLinkToken(db, second)).toEqual({ email, redirectTo: null });
+
+    // The older link is dead: it has no purpose once its owner is signed in,
+    // and a live one sitting in an inbox is exposure with no upside.
+    expect(await verifyMagicLinkToken(db, first)).toBeNull();
+    expect(await db.magicLinkToken.count({ where: { email } })).toBe(0);
+  });
+
+  /**
+   * The placement guard for the sibling invalidation above. The plan's version
+   * of this test reached for a `hashOf(stale)` helper that does not exist —
+   * `hashToken` is module-private here and exporting it would widen the API
+   * for a test's convenience. The stale row is captured by `id` before the
+   * live one is minted instead, which needs nothing new.
+   */
+  it('does not let an expired token kill a live one', async () => {
+    const email = 'expired-cannot-kill@example.com';
+    const stale = await generateMagicLinkToken(db, email);
+    const staleRow = await db.magicLinkToken.findFirstOrThrow({
+      where: { email },
+      orderBy: { createdAt: 'desc' },
+    });
+    await db.magicLinkToken.update({
+      where: { id: staleRow.id },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    const live = await generateMagicLinkToken(db, email);
+
+    expect(await verifyMagicLinkToken(db, stale)).toBeNull(); // expired, rejected
+    // If invalidation ran before the expiry check, this would be dead too —
+    // which would let anyone holding an old link deny the real user theirs.
+    expect(await verifyMagicLinkToken(db, live)).toEqual({ email, redirectTo: null });
+  });
 });
 
 describe('cleanupExpiredTokens', () => {

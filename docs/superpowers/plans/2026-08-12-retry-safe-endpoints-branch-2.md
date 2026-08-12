@@ -719,7 +719,7 @@ In `verifyMagicLinkToken`, after the `record.expiresAt <= new Date()` guard retu
   // service it exists to prevent.
   //
   // Unindexed by design. `MagicLinkToken` carries `@unique` on `tokenHash`
-  // only, and adding an index means a migration; `cleanupExpiredTokens` sweeps
+  // only, and adding an index means a migration; `cleanupExpiredAuth` sweeps
   // daily and the rate limit caps the table, so the scan is microseconds.
   await db.magicLinkToken.deleteMany({ where: { email: record.email } });
 ```
@@ -738,7 +738,7 @@ On `generateMagicLinkToken`:
  * first link must keep working, because the user clicks whichever mail they
  * see first. That duplication is legitimate (#196) and bounded — the rate
  * limiter caps it at three per address per 15 minutes, the TTL is 15 minutes,
- * `cleanupExpiredTokens` sweeps the remains, and `verifyMagicLinkToken`
+ * `cleanupExpiredAuth` sweeps the remains daily, and `verifyMagicLinkToken`
  * deletes every sibling the moment one of them is used.
  *
  * Reusing a live token instead is NOT possible and must not be attempted: the
@@ -1321,6 +1321,120 @@ git commit -m "fix: serialise identical announcements, dedupe above the fan-out,
 - [ ] **`npm run verify`.** Needs the app on :3000. Green `verify` runs all three vitest projects, so state the arithmetic (`N = unit + components + integration`) rather than asserting coverage. Baseline was 1255/2 todo/111 files.
 - [ ] **Check every commit message for an accidental closing keyword:** `git log main..HEAD --format=%B | grep -inE '(clos|fix|resolv)[a-z]*[[:space:]:]+#[0-9]+'` — **then read what it prints.** The last branch ran this grep, it printed the offending line, and the output was misread as clean.
 - [ ] **PR body** records: what was measured, that seven of §4.2's nine rows were corrected and why, the mutation output for all seventeen guards, the `verify` arithmetic, and what this branch does **not** do. `#197, #209 and #210 are unaffected` — never the phrase "does not close", which the parser reads as a close.
+
+---
+
+## Corrections found while executing (appended, not rewritten)
+
+Recorded rather than silently patched, because a plan defect that is fixed
+without being named teaches nobody and the same shape recurs in the next task.
+
+**From Task 2 (registrations).**
+
+- A plain `Promise.all([del(), del()])` **serialised**, and the test passed
+  green against the bug: the second request landed after the first committed,
+  so its *pre-check* — not the guard under test — returned the 409. Fixed with
+  the deterministic lever: a second `PrismaClient` holding
+  `SELECT … FOR UPDATE` on the registration row so both requests park at the
+  write. **Assume any `Promise.all` race test needs this lever until measured
+  otherwise.**
+- The fixture helper needs a **required, distinct `minuteOffset` per caller**.
+  `Class_teacher_slot_unique` forbids one teacher two live classes at one
+  `(date, startTime)`, and `startTime` is truncated to `HH:MM`, so two fixtures
+  built in the same minute collide on branch 1's own index.
+- Assertions were reordered so the **notification count comes before the status
+  pair**. With the statuses first, the mutation failed on `[200, 200]`, which
+  says two cancels succeeded without saying what it cost anyone; with the count
+  first it reads `to have a length of 1 but got 2` — the defect, named.
+- An unused `raceTeacherToken` shipped past `typecheck` and a scoped vitest run
+  and was caught only by `npm run lint`. **Run `npm run verify`, not a scoped
+  subset, before calling a task done.**
+
+**From Task 3 (account erasure).**
+
+- **Step 2's predicted red is wrong.** It says a missing `AlreadyErasedError`
+  export makes the test "a compile error first". It does not — vitest strips
+  types, so the missing named export is `undefined` at runtime and the test
+  fails on the real defect instead. Only `tsc --noEmit` sees it. **Treat every
+  "expected: compile error" prediction in this plan as unreliable for the same
+  reason.**
+- **Step 6's integration test could not fail against the bug as written.** Two
+  plain fetches asserting `[200, 200]` are green *before* the fix, and without
+  a lever the two requests serialise, in which case the second returns **401**
+  — `resolveSession` resolves only live profiles, so `session.studentId` is
+  already `null`. Fixed with the same row-lock lever, and its bite proven by an
+  extra mutation (replace the route's `instanceof AlreadyErasedError` with
+  `false` → `expected [500, 200] to deeply equal [200, 200]`).
+- **Step 1 calls `makeStudentWithFreedSpot()` as though it exists.** It does
+  not; it had to be written. It must place the class in the
+  `first_come_first_claimed` window with a UTC teacher — in `auto_promote` the
+  doubling is **invisible**, because the second `promoteNext` finds the head
+  already promoted and returns `none`. The plan states that requirement for
+  Task 2 and omits it here.
+
+**From Task 4 (reminder cooldown).**
+
+- **Step 3's diagnostic-branch ordering was wrong and was deliberately
+  reversed.** The plan checked `reminderSentAt` first, so a payment that was
+  reminded and *then* settled would be told *"A reminder for this payment was
+  just sent. Try again in a couple of minutes"* — promising a retry the status
+  guard refuses forever. Status is checked first now; the cooldown is the only
+  other term in the `where`, so once the payment is outstanding it is the only
+  explanation left. Pinned by its own test.
+- **The mutation has a direction trap.** "Freeze `cooldownStart`" must be
+  `new Date(0)`. A far-*future* value makes every stamp `lt` it, i.e. the
+  cooldown *always* lapses — the opposite mutation — and a max-JS-date value is
+  rejected outright by Prisma (`Could not convert argument value …
+  "+275760-09-13"`).
+- **Third occurrence of a fixture helper referenced as though it exists**
+  (`makeOutstandingPayment()`, after `makeStudentWithFreedSpot()` and
+  `makeBroadcastFixture`). **Assume every `make…()` in this plan must be
+  written**, and give it its own per-test rows: `payments.test.ts` shares one
+  student/registration/payment across order-dependent tests, and two of them
+  read `getOutstandingPayments(...)[0]` from an **unordered** query, so an extra
+  outstanding payment placed earlier in the file would decide their assertions
+  by luck.
+- The predicted-compile-error warning was confirmed a second time: the missing
+  `MANUAL_REMIND_COOLDOWN_MS` export surfaced at runtime as
+  `PrismaClientValidationError … Provided Date object is invalid`
+  (`new Date(NaN)`), not as a compile error.
+
+**From Task 5 (magic link and student signup).**
+
+- **Step 1's test calls `hashOf(stale)`, which does not exist anywhere.**
+  `hashToken` is module-private in `magic-link.ts`, and exporting it to serve a
+  test would widen the module's API for convenience — the raw token never
+  needing to be re-derivable is the property Step 4's docblock is about. The
+  stale row is captured by `id` before the live one is minted
+  (`findFirstOrThrow({ where: { email }, orderBy: { createdAt: 'desc' } })`)
+  and expired by that `id`, which needs no new export.
+- **The daily sweep is `cleanupExpiredAuth`, not `cleanupExpiredTokens`.**
+  Steps 3 and 4 both name the latter. `cleanupExpiredTokens`
+  (`magic-link.ts:96`) has **no production caller at all** — only tests. The
+  24-hour job is `cleanupExpiredAuth` (`services/auth-cleanup.ts`, registered
+  at `scheduler.ts:114-118`), which is also what spec §2.1 names. Both comments
+  were written with the correct name; a comment that cites a dead function as
+  the reason an unindexed scan is safe would rot on the day someone deletes it.
+- **The lever for this race is not the row lock Tasks 2-4 used**, because the
+  row does not exist yet. The shape that works is an **uncommitted holder**: a
+  second `PrismaClient` opens a transaction, creates the `Student` (with its
+  nested `account: { create: { email } }`) for the same address, signals, and
+  holds. Both requests pass their `findUnique` pre-checks — uncommitted rows
+  are invisible under READ COMMITTED — both park on the pending unique-index
+  entry, and the holder then commits, so **both** lose. Which also corrects
+  Step 6's predicted red: it says "FAIL with one 409", and the measured red is
+  `expected [ 409, 409 ] to deeply equal [ 200, 200 ]`.
+- The lever leaves a proof it bit, and the test asserts it: the one surviving
+  `Student` row is the **holder's** (`['Holder']`). Had the requests serialised
+  instead, one of them would have created a `Race` row. The status pair is
+  still asserted first, because it is the only assertion the missing catch
+  changes — the row count is 1 either way.
+- **Editing a route invalidates the dev server's compiled chunk, and the
+  recompile blows a 5-second test timeout.** Mutation 3 first failed with
+  `Test timed out in 5000ms` rather than the assertion; a throwaway `curl` at
+  the route measured the recompile at **19.7 s**. After any change under
+  `src/app/api/`, warm the route with one request before running a race test.
+  Relevant to Tasks 6 and 7, which both edit routes.
 
 ---
 

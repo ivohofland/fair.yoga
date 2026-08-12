@@ -157,6 +157,72 @@ describe('POST /api/auth/student-signup', () => {
     expect(await prisma.student.count({ where: { email: takenEmail } })).toBe(1);
     expect(await prisma.account.count({ where: { email: takenEmail } })).toBe(1);
   });
+
+  /**
+   * The route's two pre-checks are plain `findUnique`s, so under READ
+   * COMMITTED two concurrent signups for one fresh address both pass them and
+   * one loses on `Account.email`/`Student.email`. Unhandled, that P2002 comes
+   * back as a 409 "Resource already exists" — a legitimate signup failed, and
+   * an anonymous caller was just told the address is taken, which is exactly
+   * what this route's identical 200 exists to prevent.
+   *
+   * A plain `Promise.all` cannot force that interleaving — it serialised in
+   * Tasks 2-4 of this branch and would pass green against the bug, because the
+   * second request would find the committed account and take the `else` path.
+   * The row-lock lever those tasks used does not work either: the row does not
+   * exist yet. The lever that does is an UNCOMMITTED HOLDER — a second client
+   * inserts the same address inside an open transaction, both requests sail
+   * past their pre-checks (uncommitted rows are invisible), both park on the
+   * pending unique-index entry, and the holder then commits so both lose.
+   *
+   * That the surviving row is the HOLDER's is the proof the lever bit: if it
+   * had not, one of the two requests would have created a `Race` row.
+   */
+  it('answers both halves of a concurrent signup identically, with no enumeration', async () => {
+    const email = `signup-race-${suffix}@test.local`;
+    const ip = freshIp(); // one bucket, shared: two requests, limit is 5/hr
+
+    const holder = new PrismaClient();
+    let release!: () => void;
+    let holding!: Promise<unknown>;
+    const released = new Promise<void>((r) => { release = r; });
+    await new Promise<void>((parked, failed) => {
+      holding = holder.$transaction(async (tx) => {
+        await tx.student.create({
+          data: {
+            firstName: 'Holder', lastName: 'Signup', email,
+            claimedAt: new Date(), account: { create: { email } },
+          },
+        });
+        parked();
+        await released;
+      }, { timeout: 20_000 }).catch((err: unknown) => { failed(err); throw err; });
+    });
+
+    const post = () => fetch(`${BASE_URL}/api/auth/student-signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...ip },
+      body: JSON.stringify({ firstName: 'Race', lastName: 'Signup', email }),
+    });
+    const both = Promise.all([post(), post()]);
+
+    // Long enough that both requests have passed their pre-checks and parked
+    // on the holder's pending index entry, short enough not to near a timeout.
+    await new Promise((r) => setTimeout(r, 1000));
+    release();
+    await holding;
+    const [a, b] = await both;
+    await holder.$disconnect();
+
+    // The identical-response contract holds under a race too: a 409 here
+    // would both fail a legitimate signup and reveal the address is taken.
+    expect([a.status, b.status]).toEqual([200, 200]);
+
+    // One row for the address, and it is the holder's — so both requests did
+    // lose the insert race rather than serialising past it.
+    const students = await prisma.student.findMany({ where: { email } });
+    expect(students.map((s) => s.firstName)).toEqual(['Holder']);
+  });
 });
 
 
