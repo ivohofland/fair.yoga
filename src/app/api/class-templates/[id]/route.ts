@@ -88,12 +88,20 @@ export const PUT = withErrorHandler(async (
   // time this branch runs, `db.classTemplate.update` has already committed —
   // only the instance sync rolled back — so the message describes what
   // happened, not a hypothetical: the template moved, its generated classes
-  // did not, and the two are now desynced.
+  // did not, and the two are now desynced. Names the remedy, not just the
+  // state, because "you already have a class at that time" alone leaves the
+  // teacher with a template that no longer matches its own instances and
+  // nothing to do about it (#209).
+  //
+  // A distinct code from the create/reschedule paths' `DUPLICATE_CLASS_SLOT`
+  // — `slot_conflict` above means "your write was rejected, nothing
+  // changed"; this means the template committed and only the sync rolled
+  // back, a different failure a client needs to be able to tell apart.
   if (result.reason === 'sync_conflict') {
     return respondError(
-      'The recurring class was updated, but its scheduled classes could not be moved — you already have a class at that time.',
+      'The recurring class was updated, but its scheduled classes could not be moved — you already have a class at that time. Move or cancel that class, then edit this recurring class again.',
       409,
-      'DUPLICATE_CLASS_SLOT',
+      'TEMPLATE_SYNC_SLOT_CONFLICT',
     );
   }
 

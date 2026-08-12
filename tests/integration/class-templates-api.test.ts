@@ -161,12 +161,18 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  // Every case in this file POSTs (or resumes) templates that generate the
-  // same teacher's dayOfWeek/09:30 window, and the generator now treats a
-  // slot the teacher already holds as taken rather than over-writing it. A
-  // leftover window from a sibling test would starve the next one (0 created
-  // instead of 4), and the dev DB would accumulate windows across runs.
-  // beforeAll seeds no classes, so clearing both teachers' is sufficient.
+  // Every template in this file now holds its own dayOfWeek/startTime slot —
+  // `templateBody` takes `startTime` with no default, and every call site
+  // below passes a distinct value, so a sibling test's window cannot starve
+  // another's the way an earlier fixture shape did. What remains is cross-run
+  // leftovers: this suite runs against the persistent dev DB, not a fresh one
+  // per run, and a second run on the same day would regenerate the identical
+  // candidate dates for the identical (teacherId, dayOfWeek, startTime)
+  // combinations a previous run already filled — exactly the case #196's slot
+  // pre-check now recognises as occupied and reports 0 created for. Clearing
+  // both teachers' classes here keeps each run starting from the empty slate
+  // the templates below assume. beforeAll seeds no classes, so clearing both
+  // teachers' is sufficient.
   await prisma.class.deleteMany({ where: { teacherId: { in: [teacherId, otherTeacherId] } } });
 });
 
@@ -1023,13 +1029,18 @@ describe('PUT /api/class-templates/[id]', () => {
     });
     expect(res.status).toBe(409);
     const json = (await res.json()) as { error: { code: string; message: string } };
-    expect(json.error.code).toBe('DUPLICATE_CLASS_SLOT');
+    // A distinct code from the plain slot collision (#209): the template
+    // itself committed here, and only the instance sync rolled back.
+    expect(json.error.code).toBe('TEMPLATE_SYNC_SLOT_CONFLICT');
     // The message must describe what actually happened, not a hypothetical:
     // by this point the template write below has already committed, only
     // the instance sync rolled back, so "would move" (implying nothing
-    // happened) would be false.
+    // happened) would be false. It also has to name the remedy — a teacher
+    // reading only "you already have a class at that time" has no way to
+    // know the template and its instances are now desynced or what to do
+    // about it.
     expect(json.error.message).toBe(
-      'The recurring class was updated, but its scheduled classes could not be moved — you already have a class at that time.',
+      'The recurring class was updated, but its scheduled classes could not be moved — you already have a class at that time. Move or cancel that class, then edit this recurring class again.',
     );
 
     // The template row's own write already committed — it is not in the same
