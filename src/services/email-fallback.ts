@@ -38,14 +38,55 @@ export async function processEmailFallback(
   let sent = 0;
   let failed = 0;
 
-  // Mark each notification immediately after its send: batching the marks
-  // at the end meant one failed batch-update re-emailed every recipient on
-  // every 5-minute sweep. Worst case now is a single duplicate.
+  // One notification at a time, never a batch at the end: one failed
+  // batch-update used to re-email every recipient on every 5-minute sweep.
+  //
+  // Where that single write falls relative to the send is the whole guard.
+  // This service has two triggers — POST /api/cron/email-fallback and the
+  // in-process scheduler, every 5 minutes from boot — and the candidate query
+  // filters on `emailSent: false` without claiming anything, so overlapping
+  // sweeps hold the same rows. Marking after the send de-duplicated the mark
+  // and not the email. So the send branch below CLAIMS first and releases on
+  // failure, which inverts the residual risk this comment used to record
+  // ("worst case is a single duplicate"): a crash in the gap between claim and
+  // send now drops one fallback email instead of duplicating one. Accepted in
+  // the spec, because overlapping sweeps are routine while a crash inside that
+  // gap is rare, and a dropped *fallback* leaves the in-app notification and
+  // the inbox record intact — the message survives, only its second delivery
+  // channel does not.
+  //
+  // The two non-send branches (opted-out, dry-run) keep marking after their
+  // decision: there is no external effect to protect, so a lost mark there
+  // only costs one reconsidered row on the next sweep.
   const markOne = async (id: string) => {
     try {
       await markEmailSent(db, [id]);
     } catch (err) {
-      log.error({ err, notificationId: id }, 'failed to mark email-sent (may re-send once)');
+      log.error({ err, notificationId: id }, 'failed to mark email-sent (will reconsider next sweep)');
+    }
+  };
+
+  /**
+   * Claims one notification, fail-closed. A throw here means we could not
+   * record ownership, and "we could not record it" is not "we own it" — so the
+   * caller must not send. `markOne` above logs and carries on, which was right
+   * while a lost mark only risked a duplicate; as a claim it must fail closed.
+   */
+  const claimOne = async (id: string): Promise<'claimed' | 'taken' | 'error'> => {
+    try {
+      return (await markEmailSent(db, [id])) === 1 ? 'claimed' : 'taken';
+    } catch (err) {
+      log.error({ err, notificationId: id }, 'failed to claim notification for email fallback');
+      return 'error';
+    }
+  };
+
+  /** Hands a claim back after a failed send, so the next sweep retries it. */
+  const releaseOne = async (id: string) => {
+    try {
+      await db.notification.updateMany({ where: { id }, data: { emailSent: false } });
+    } catch (err) {
+      log.error({ err, notificationId: id }, 'failed to release email-fallback claim (will not retry)');
     }
   };
 
@@ -145,6 +186,25 @@ export async function processEmailFallback(
       continue;
     }
 
+    // Claim before sending, per the block comment above: the row is the only
+    // thing standing between two overlapping sweeps and two identical emails.
+    //
+    // Three outcomes, not two, and collapsing the last two would be a silent
+    // failure. A claim that was TAKEN is another sweep doing its job — skip it
+    // and report nothing. A claim that ERRORED sent no email either, but for a
+    // reason nobody chose, so it has to reach `failed`: without that, a
+    // claim-write outage skips every notification in turn and the sweep still
+    // returns clean, which is precisely the green-health-through-an-outage the
+    // `failed > 0` throw below exists to prevent. The old code could not have
+    // this bug — its write came after the send, so a failing write still left
+    // the email delivered.
+    const claim = await claimOne(notification.id);
+    if (claim === 'error') {
+      failed++;
+      continue;
+    }
+    if (claim === 'taken') continue;
+
     try {
       // Branded template; escapes teacher-authored bodies so markup or
       // phishing HTML never renders in a platform email.
@@ -156,16 +216,18 @@ export async function processEmailFallback(
         html,
       });
       // The Resend SDK reports API failures via { error }, it does not throw —
-      // an unchecked result would mark the notification sent when it wasn't.
+      // an unchecked result would leave the claim standing on a notification
+      // whose email never went out.
       if (error) {
         log.error({ notificationId: notification.id, reason: error.message }, 'email fallback send failed');
+        await releaseOne(notification.id);
         failed++;
         continue;
       }
-      await markOne(notification.id);
       sent++;
     } catch (err) {
       log.error({ err, notificationId: notification.id }, 'email fallback send failed');
+      await releaseOne(notification.id);
       failed++;
     }
   }

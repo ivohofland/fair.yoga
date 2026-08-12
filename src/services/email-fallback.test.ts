@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { processEmailFallback } from './email-fallback';
@@ -6,9 +6,25 @@ import { processEmailFallback } from './email-fallback';
 // RESEND_API_KEY is unset in the test environment, so the service takes the
 // dev path (logs instead of sending) — what we assert is the bookkeeping:
 // which notifications get picked up and marked emailSent.
+//
+// Except in the last describe, which forces the real-send path against this
+// mocked SDK. Claim-before-send is only observable where a send actually
+// happens: on the dry-run path the mark still follows the decision, so
+// every ordering looks identical from the database alone.
+const sendMock = vi.hoisted(() => vi.fn());
+vi.mock('resend', () => ({
+  Resend: class {
+    emails = { send: sendMock };
+  },
+}));
 
 const prisma = new PrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+const teacherEmail = `fallback-teacher-${uniqueSuffix}@test.local`;
+
+function sendsTo(email: string): number {
+  return sendMock.mock.calls.filter(([args]) => args.to === email).length;
+}
 
 describe('processEmailFallback (DB)', () => {
   let teacherId: string;
@@ -51,8 +67,8 @@ describe('processEmailFallback (DB)', () => {
       data: {
         firstName: 'Fallback',
         lastName: 'Teacher',
-        email: `fallback-teacher-${uniqueSuffix}@test.local`,
-        account: { create: { email: `fallback-teacher-${uniqueSuffix}@test.local` } },
+        email: teacherEmail,
+        account: { create: { email: teacherEmail } },
         bio: 'Email fallback tests',
         pageSlug: `fallback-teacher-${uniqueSuffix}`,
         // UTC so the urgency fixtures' wall-clock math equals the instant.
@@ -289,5 +305,169 @@ describe('processEmailFallback (DB)', () => {
 
     const after = await prisma.notification.findUniqueOrThrow({ where: { id: notYet.id } });
     expect(after.emailSent).toBe(false);
+  });
+
+  // The claim, which only the real-send path can show. `processEmailFallback`
+  // has two triggers — `POST /api/cron/email-fallback` and the in-process
+  // scheduler's 5-minute timer — and the candidate query filters on
+  // `emailSent: false` without claiming anything, so two sweeps can hold the
+  // same row at once. What decides whether the recipient gets one email or
+  // two is which side of the send the mark falls on.
+  describe('claiming a notification before sending it', () => {
+    const savedApiKey = process.env.RESEND_API_KEY;
+    const savedDryRun = process.env.EMAIL_DRY_RUN;
+    const perTestNotificationIds: string[] = [];
+
+    async function makeEligible() {
+      const n = await makeNotification({
+        recipientType: 'teacher',
+        recipientId: teacherId,
+        createdAt: new Date(Date.now() - 45 * 60 * 1000),
+      });
+      perTestNotificationIds.push(n.id);
+      return n;
+    }
+
+    beforeAll(() => {
+      // Force the real-send path: a key is configured and dry-run is off.
+      process.env.RESEND_API_KEY = 're_test_dummy';
+      delete process.env.EMAIL_DRY_RUN;
+    });
+
+    afterAll(() => {
+      if (savedApiKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = savedApiKey;
+      if (savedDryRun === undefined) delete process.env.EMAIL_DRY_RUN;
+      else process.env.EMAIL_DRY_RUN = savedDryRun;
+    });
+
+    beforeEach(() => {
+      sendMock.mockReset();
+      sendMock.mockResolvedValue({ error: null });
+    });
+
+    // Three of these tests deliberately leave their row unsent, which makes it
+    // a candidate again in the next test's sweep and would inflate that test's
+    // send count. Deleted rather than marked, so no test here depends on the
+    // residue of the one before it.
+    afterEach(async () => {
+      await prisma.notification.deleteMany({
+        where: { id: { in: perTestNotificationIds.splice(0) } },
+      });
+    });
+
+    it('sends one email when two sweeps overlap on the same notification', async () => {
+      const notification = await makeEligible();
+
+      let interposed = 0;
+      const overlapping = prisma.$extends({
+        query: {
+          notification: {
+            async findMany({ args, query }) {
+              const rows = await query(args);
+              // Keyed on the candidate read's shape, not on call order:
+              // `getUnreadForEmailFallback` is the only reader asking for
+              // unread AND unsent, so an unrelated `findMany` added later
+              // cannot silently steal this hook's one shot.
+              const where = args.where as { isRead?: unknown; emailSent?: unknown } | undefined;
+              if (where?.isRead !== false || where?.emailSent !== false) return rows;
+              if (interposed > 0) return rows;
+              interposed += 1;
+              // A whole second sweep — on the plain client, so it never
+              // re-enters this hook — landing between this sweep's candidate
+              // read and its first claim. That is exactly the interleaving the
+              // 5-minute scheduler and a cron request produce; two sweeps in a
+              // `Promise.all` only reach it by luck.
+              await processEmailFallback(prisma);
+              return rows;
+            },
+          },
+        },
+        // `$extends` returns a client missing `$on`, so it is not assignable
+        // to `processEmailFallback`'s `PrismaClient`-typed `db` parameter even
+        // though every method it calls here is the real one, running against
+        // the real database — same cast as the `class-transitions.test.ts`
+        // precedent.
+      }) as unknown as PrismaClient;
+
+      const outerSent = await processEmailFallback(overlapping);
+
+      // The inbox first, not the counter: two here is the recipient reading
+      // the same fallback email twice.
+      expect(sendsTo(teacherEmail)).toBe(1);
+      expect(interposed).toBe(1);
+      // The interposed sweep won the claim; this one found it taken and skipped.
+      expect(outerSent).toBe(0);
+      const after = await prisma.notification.findUniqueOrThrow({
+        where: { id: notification.id },
+      });
+      expect(after.emailSent).toBe(true);
+    });
+
+    it('releases the claim when Resend reports a failure, so the next sweep retries', async () => {
+      const notification = await makeEligible();
+      sendMock.mockResolvedValueOnce({ error: { message: 'boom' } });
+
+      await expect(processEmailFallback(prisma)).rejects.toThrow(/failed/);
+
+      expect(sendsTo(teacherEmail)).toBe(1);
+      // Claimed, then released — a claim left standing would silently retire a
+      // notification whose email never went out.
+      const after = await prisma.notification.findUniqueOrThrow({
+        where: { id: notification.id },
+      });
+      expect(after.emailSent).toBe(false);
+    });
+
+    it('releases the claim when the send throws', async () => {
+      const notification = await makeEligible();
+      sendMock.mockRejectedValueOnce(new Error('socket hang up'));
+
+      await expect(processEmailFallback(prisma)).rejects.toThrow(/failed/);
+
+      const after = await prisma.notification.findUniqueOrThrow({
+        where: { id: notification.id },
+      });
+      expect(after.emailSent).toBe(false);
+    });
+
+    it('does not send when the claim itself fails', async () => {
+      const notification = await makeEligible();
+
+      let claimAttempts = 0;
+      const unclaimable = prisma.$extends({
+        query: {
+          notification: {
+            async updateMany({ args, query }) {
+              // The claim is the only write in this flow that sets `emailSent`
+              // true; the release sets it false. Keyed on that rather than on
+              // call order.
+              if ((args.data as { emailSent?: unknown }).emailSent !== true) return query(args);
+              claimAttempts += 1;
+              throw new Error('claim write failed');
+            },
+          },
+        },
+        // Same cast, same reason as the hook above.
+      }) as unknown as PrismaClient;
+
+      // The sweep must REPORT this, not just survive it. A claim that failed
+      // sent nothing, and if that were skipped as quietly as a claim another
+      // sweep already holds, a claim-write outage would email nobody while
+      // `processEmailFallback` returned 0 and threw nothing — green health
+      // through a total outage. Asserted before the rest because it is the
+      // property whose failure names the defect.
+      await expect(processEmailFallback(unclaimable)).rejects.toThrow(
+        /email fallback: 1 of 1 sends failed/,
+      );
+
+      // Fail closed: "we could not record ownership" is not "we own it".
+      expect(sendsTo(teacherEmail)).toBe(0);
+      expect(claimAttempts).toBe(1);
+      const after = await prisma.notification.findUniqueOrThrow({
+        where: { id: notification.id },
+      });
+      expect(after.emailSent).toBe(false);
+    });
   });
 });

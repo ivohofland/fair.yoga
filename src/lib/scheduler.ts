@@ -6,8 +6,15 @@
  * - Jobs call the services directly (no HTTP round-trip, no CRON_SECRET
  *   needed for the in-process path). The /api/cron/* endpoints remain for
  *   manual runs and external schedulers.
- * - Every job is idempotent at the DB layer (conditional updates, unique
- *   constraints), so an overlapping external trigger is harmless.
+ * - The two jobs that send something a recipient can see twice guard their
+ *   own send against an overlapping trigger, at the DB layer:
+ *   `payment-reminders` stamps `reminderSentAt` with a conditional
+ *   `updateMany` and abandons the notification when the count is zero
+ *   (`payment-reminders.ts`, the `$transaction` around its stamp), and
+ *   `email-fallback` claims each notification — `emailSent: false -> true`,
+ *   count checked — BEFORE calling Resend, releasing the claim if the send
+ *   fails. Both were measured; nothing here claims it of the other three,
+ *   which have not been.
  * - A per-job `running` flag prevents a slow tick from stacking on itself.
  * - CRON_SCHEDULER=off disables it (CI runs the built app while tests
  *   drive the same services with explicit clocks).

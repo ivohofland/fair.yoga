@@ -204,17 +204,22 @@ export async function getUnreadForEmailFallback(
 }
 
 /**
- * Marks notifications as having had their email fallback sent.
+ * Claims notifications for email fallback, returning how many this call won.
  *
- * Called after the email dispatch job successfully sends emails for these
- * notification IDs.
+ * `emailSent: false` in the WHERE makes this a compare-and-swap, not a blind
+ * mark: two overlapping sweeps read the same candidate rows (the candidate
+ * query above filters on `emailSent: false` but claims nothing), and the count
+ * is how the loser learns it lost. Returns the count rather than `void` for
+ * that reason — a caller that ignores it is back to the unguarded behaviour,
+ * where both sweeps went on to send the same email.
  */
 export async function markEmailSent(
   db: PrismaClient,
   notificationIds: string[],
-): Promise<void> {
-  await db.notification.updateMany({
-    where: { id: { in: notificationIds } },
+): Promise<number> {
+  const { count } = await db.notification.updateMany({
+    where: { id: { in: notificationIds }, emailSent: false },
     data: { emailSent: true },
   });
+  return count;
 }
