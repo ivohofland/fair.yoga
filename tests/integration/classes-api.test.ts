@@ -557,6 +557,48 @@ describe('PUT /api/classes/[id]', () => {
     const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
     expect(Number(after.roomCost)).toBe(Number(before.roomCost));
   });
+
+  // Task 6b (#196). `Class_teacher_slot_unique` is (teacherId, date,
+  // startTime) WHERE status <> 'cancelled' — the six indexes constrain every
+  // write, not just creates, so a reschedule that moves `date`/`startTime`
+  // onto a slot another of the teacher's live classes already holds collides
+  // here exactly as a `POST` into that slot does.
+  describe('PUT /api/classes/[id] collides on the slot key (#196)', () => {
+    afterAll(async () => {
+      await prisma.class.deleteMany({ where: { teacherId: ownerId, classType: 'Reschedule Slot' } });
+    });
+
+    it('refuses a reschedule onto a slot another live class already holds', async () => {
+      const makeSlotClass = (startTime: string) =>
+        prisma.class.create({
+          data: {
+            teacherId: ownerId,
+            teacherRoomId,
+            classType: 'Reschedule Slot',
+            date: new Date('2099-08-01'),
+            startTime,
+            durationMinutes: 60,
+            roomCost: 15,
+            minRate: 10,
+            targetRate: 20,
+            minStudents: 1,
+            maxStudents: 8,
+            status: 'draft',
+          },
+        });
+      const occupied = await makeSlotClass('08:00');
+      const mover = await makeSlotClass('08:15');
+
+      const res = await put(ownerToken, mover.id, { startTime: '08:00' });
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as { error: { code: string } };
+      expect(json.error.code).toBe('DUPLICATE_CLASS_SLOT');
+
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: mover.id } });
+      expect(after.startTime).toBe('08:15');
+      void occupied;
+    });
+  });
 });
 
 describe('POST /api/classes', () => {

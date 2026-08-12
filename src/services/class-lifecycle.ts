@@ -14,6 +14,7 @@ import type { NoneOf } from '@/lib/type-pins';
 import { ECONOMIC_FIELDS, type EconomicField } from '@/lib/class-fields';
 import { toIncomeTierOrThrow } from '@/lib/tiers.server';
 import { lockClassRow } from '@/lib/db-locks';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 
@@ -485,7 +486,8 @@ export type UpdateClassResult =
   | { ok: true; cls: Class }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'locked'; fields: readonly [EconomicField, ...EconomicField[]] }
-  | { ok: false; reason: 'no_fields' };
+  | { ok: false; reason: 'no_fields' }
+  | { ok: false; reason: 'slot_conflict' };
 
 /**
  * Apply a partial update to a class, enforcing the economic-field lock.
@@ -529,10 +531,25 @@ export async function updateClass(
     return { ok: false, reason: 'no_fields' };
   }
 
-  const result = await db.class.updateMany({
-    where: sentEconomic !== null ? { id: classId, settingsLocked: false } : { id: classId },
-    data,
-  });
+  // `date`/`startTime` are both teacher-editable (`TeacherEditableClassField`
+  // above), and `status` is not writable through this path — so any class
+  // reaching this write that isn't already `cancelled` stays inside
+  // `Class_teacher_slot_unique`'s partial scope (`WHERE status <>
+  // 'cancelled'`, #196) across the edit. Moving `date`/`startTime` onto a
+  // slot this teacher already occupies collides here exactly as a `POST`
+  // into that slot does.
+  let result: Prisma.BatchPayload;
+  try {
+    result = await db.class.updateMany({
+      where: sentEconomic !== null ? { id: classId, settingsLocked: false } : { id: classId },
+      data,
+    });
+  } catch (err) {
+    if (isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])) {
+      return { ok: false, reason: 'slot_conflict' };
+    }
+    throw err;
+  }
 
   if (result.count === 0) {
     // Both filter shapes constrain `id`, so a deleted row explains a zero

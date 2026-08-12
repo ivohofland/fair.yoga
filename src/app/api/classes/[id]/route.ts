@@ -70,6 +70,16 @@ export const PUT = withErrorHandler(async (
       409,
     );
   }
+  // A reschedule (date/startTime) landed on a slot this teacher already
+  // occupies with another live class (#196) — the same clash a `POST` into
+  // that slot reports, reached here by a move instead of a create.
+  if (result.reason === 'slot_conflict') {
+    return respondError(
+      'You already have a class at that date and time.',
+      409,
+      'DUPLICATE_CLASS_SLOT',
+    );
+  }
   // Exhaustiveness: a new UpdateClassResult variant becomes a compile error
   // here rather than being silently answered as though it were `locked`.
   const unhandled: never = result;
