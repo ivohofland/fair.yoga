@@ -899,3 +899,195 @@ describe('registration writes return no stored income tier', () => {
     expect(body.data.status).toBe('late_cancel');
   });
 });
+
+describe('registration cancel is retry-safe against a concurrent duplicate (#196)', () => {
+  // A dedicated UTC teacher so the window math is plain UTC arithmetic, the
+  // same convention as the resolve describe in invitations-api.test.ts.
+  let raceTeacherId: string;
+  let raceTeacherAccountId: string;
+  let raceTeacherToken: string;
+  let raceRoomId: string;
+  let raceTeacherRoomId: string;
+
+  const cancellerEmail = `race-canceller-${suffix}@test.local`;
+  let cancellerId: string;
+  let cancellerAccountId: string;
+  let cancellerToken: string;
+
+  const waiterEmail = `race-waiter-${suffix}@test.local`;
+  let waiterId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Race', lastName: 'Cancel',
+        email: `race-cancel-teacher-${suffix}@test.local`,
+        account: { create: { email: `race-cancel-teacher-${suffix}@test.local` } },
+        bio: 'Teacher for concurrent-cancel tests',
+        pageSlug: `race-cancel-teacher-${suffix}`,
+        defaultTimezone: 'UTC',
+      },
+    });
+    raceTeacherId = teacher.id;
+    raceTeacherAccountId = teacher.accountId;
+    raceTeacherToken = await seedSession(prisma, raceTeacherAccountId);
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Race Cancel Studio', address: `${suffix} Race Cancel St`,
+        city: 'Testville', postcode: '1234RC', maxCapacity: 5, createdById: raceTeacherId,
+      },
+    });
+    raceRoomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: raceTeacherId, roomId: raceRoomId, capacityOverride: 5, rentalRate: 20 },
+    });
+    raceTeacherRoomId = teacherRoom.id;
+
+    const canceller = await prisma.student.create({
+      data: {
+        firstName: 'Race', lastName: 'Canceller', email: cancellerEmail,
+        claimedAt: new Date(), account: { create: { email: cancellerEmail } }, incomeTier: 3,
+      },
+      select: { id: true, accountId: true },
+    });
+    cancellerId = canceller.id;
+    cancellerAccountId = canceller.accountId as string;
+    cancellerToken = await seedSession(prisma, cancellerAccountId);
+
+    const waiter = await prisma.student.create({
+      data: { firstName: 'Race', lastName: 'Waiter', email: waiterEmail, incomeTier: 3 },
+      select: { id: true },
+    });
+    waiterId = waiter.id;
+  });
+
+  afterAll(async () => {
+    await prisma.waitlistEntry.deleteMany({ where: { classId: { in: raceClassIds } } });
+    await prisma.notification.deleteMany({
+      where: { recipientId: { in: [cancellerId, waiterId] } },
+    });
+    await prisma.registration.deleteMany({ where: { classId: { in: raceClassIds } } });
+    await prisma.class.deleteMany({ where: { id: { in: raceClassIds } } });
+    await prisma.teacherRoom.deleteMany({ where: { id: raceTeacherRoomId } });
+    await prisma.room.deleteMany({ where: { id: raceRoomId } });
+    await prisma.studentPrivacy.deleteMany({ where: { teacherId: raceTeacherId } });
+    await prisma.teacherStudent.deleteMany({ where: { teacherId: raceTeacherId } });
+    await prisma.invitation.deleteMany({ where: { teacherId: raceTeacherId } });
+    await prisma.teacherBlock.deleteMany({ where: { teacherId: raceTeacherId } });
+    await prisma.session.deleteMany({ where: { accountId: cancellerAccountId } });
+    await prisma.student.deleteMany({ where: { id: { in: [cancellerId, waiterId] } } });
+    await prisma.account.deleteMany({ where: { id: cancellerAccountId } });
+    await prisma.teacher.deleteMany({ where: { id: raceTeacherId } });
+    await prisma.account.deleteMany({ where: { id: raceTeacherAccountId } });
+  });
+
+  // The classes each test creates, swept in the afterAll above.
+  const raceClassIds: string[] = [];
+
+  /**
+   * A class with `now` half an hour inside the final-hour broadcast window,
+   * a registration for the canceller, and a waitlist entry for the waiter.
+   *
+   * `target` = now + 48h30m with a HOURS_48 deadline puts `deadline` at
+   * now + 30m and `cutoff` at now − 30m, so `now` sits inside
+   * `first_come_first_claimed`, where `handleSpotFreed` broadcasts instead
+   * of auto-promoting. Computed from the clock rather than hard-coded: the
+   * window is relative, so a fixed date would drift out of it.
+   *
+   * `minuteOffset` is required, with no default, because every caller needs a
+   * DIFFERENT one: `Class_teacher_slot_unique` (#196 branch 1) forbids one
+   * teacher two live classes at the same `(date, startTime)`, and `startTime`
+   * here is truncated to `HH:MM`, so two fixtures built in the same minute
+   * would collide on the index rather than on anything this block is testing.
+   * Same reasoning as the `startTime`-without-a-default rule the slot blocks
+   * in `classes-api.test.ts` adopted.
+   *
+   * Valid offsets are `(−30, +30]` minutes: the window holds while
+   * `cutoff ≤ now < deadline`, which works out to `offset ≤ 30` on one side
+   * and `offset > −30` on the other.
+   */
+  async function makeBroadcastFixture(minuteOffset: number) {
+    const target = new Date(Date.now() + 48 * 60 * 60 * 1000 + (30 + minuteOffset) * 60 * 1000);
+    const date = target.toISOString().slice(0, 10);
+    const startTime = target.toISOString().slice(11, 16);
+
+    const cls = await prisma.class.create({
+      data: {
+        teacherId: raceTeacherId, teacherRoomId: raceTeacherRoomId,
+        classType: 'Race Cancel', date: new Date(`${date}T00:00:00Z`), startTime,
+        durationMinutes: 60, roomCost: 20, minRate: 30, targetRate: 60,
+        minStudents: 1, maxStudents: 1, cancelDeadline: 'HOURS_48',
+        autoCancelCheck: 'HOURS_2', status: 'open',
+      },
+    });
+    raceClassIds.push(cls.id);
+    const reg = await prisma.registration.create({
+      data: { classId: cls.id, studentId: cancellerId, status: 'registered', tierAtBooking: 3 },
+    });
+    await prisma.waitlistEntry.create({
+      data: { classId: cls.id, studentId: waiterId, position: 1, status: 'waiting' },
+    });
+    return { classId: cls.id, registrationId: reg.id };
+  }
+
+  it('broadcasts one spot_available set when the same cancel arrives twice at once', async () => {
+    const { classId, registrationId } = await makeBroadcastFixture(0);
+
+    // The two plain fetches in Promise.all serialised on the first run —
+    // the second request landed after the first committed, so its PRE-CHECK
+    // (not the guard under test) returned the 409 and the test passed green
+    // against the bug. The deterministic lever from Task 1 fixes that: a
+    // holder takes the registration row lock BEFORE either request runs, so
+    // both pass the pre-check (uncommitted state is invisible under READ
+    // COMMITTED) and both park on the lock at the write — the interleaving
+    // a plain Promise.all cannot force.
+    const holder = new PrismaClient();
+    let release!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const holding = holder.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Registration" WHERE id = ${registrationId} FOR UPDATE`;
+      await released;
+    }, { timeout: 20_000 });
+
+    const del = () => fetch(`${BASE_URL}/api/registrations/${registrationId}`, {
+      method: 'DELETE', headers: cookie(cancellerToken),
+    });
+    const both = Promise.all([del(), del()]);
+
+    // Long enough that both requests have read `registered` and parked on
+    // the holder's lock, short enough not to approach any timeout.
+    await new Promise((r) => setTimeout(r, 1000));
+    release();
+    await holding;
+    const [a, b] = await both;
+    await holder.$disconnect();
+
+    // Asserted before the status pair, deliberately: the doubled broadcast is
+    // the defect — every waiting student notified twice for one freed seat —
+    // and this is the assertion whose failure message names it. With the
+    // statuses first, removing the guard fails on `[200, 200]`, which reports
+    // that two cancels succeeded without saying what that cost anyone.
+    const notifications = await prisma.notification.findMany({
+      where: { relatedClassId: classId, recipientId: waiterId, type: 'spot_available' },
+    });
+    expect(notifications).toHaveLength(1);
+
+    // Either request can win, so the loser is identified rather than assumed.
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+  });
+
+  it('409s a second cancel of a registration already cancelled', async () => {
+    const { registrationId } = await makeBroadcastFixture(10);
+
+    const first = await fetch(`${BASE_URL}/api/registrations/${registrationId}`, {
+      method: 'DELETE', headers: cookie(cancellerToken),
+    });
+    expect(first.status).toBe(200);
+
+    const second = await fetch(`${BASE_URL}/api/registrations/${registrationId}`, {
+      method: 'DELETE', headers: cookie(cancellerToken),
+    });
+    expect(second.status).toBe(409);
+  });
+});

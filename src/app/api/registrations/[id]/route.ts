@@ -95,7 +95,7 @@ export const PUT = withErrorHandler(async (
   if ('error' in parsed) return parsed.error;
 
   const updated = await prisma.registration.update({
-    where: { id },
+    where: { id, status: { notIn: ['cancelled', 'late_cancel'] } },
     data: { status: parsed.data.status },
   });
 
@@ -157,27 +157,43 @@ export const DELETE = withErrorHandler(async (
 
     if (new Date() > deadline) {
       // Past deadline — mark as late_cancel (still charged)
-      const updated = await prisma.registration.update({
+      // Status in the WHERE, not just the pre-check at :143. That pre-check
+      // is a read-then-write and this handler opens no transaction, so two
+      // concurrent cancels both passed it and both reached `handleSpotFreed`
+      // — which, inside the final hour, broadcasts to every waiting student
+      // with no capacity check and no record that it already did. Scoping the
+      // source means exactly one racer gets there, so the broadcast needs no
+      // dedupe of its own (there is nothing on WaitlistEntry or Notification
+      // to key one on).
+      const updated = await prisma.registration.updateMany({
         where: { id },
         data: { status: 'late_cancel', cancelledAt: new Date() },
       });
+      if (updated.count === 0) {
+        return respondError('Registration is already cancelled', 409);
+      }
       // The seat is free even though the canceller is still charged.
       await promoteAfterCancel(registration.classId);
-      return respondOk({ id: updated.id, status: updated.status });
+      return respondOk({ id, status: 'late_cancel' });
     }
   }
 
-  // Before deadline or teacher cancelling — full cancel (not charged)
-  const updated = await prisma.registration.update({
-    where: { id },
+  // Before deadline or teacher cancelling — full cancel (not charged).
+  // Status in the WHERE for the same reason as the late-cancel branch above:
+  // two concurrent cancels must not both reach the waitlist hook.
+  const updated = await prisma.registration.updateMany({
+    where: { id, status: { notIn: ['cancelled', 'late_cancel'] } },
     data: { status: 'cancelled', cancelledAt: new Date() },
   });
+  if (updated.count === 0) {
+    return respondError('Registration is already cancelled', 409);
+  }
 
   // Hybrid waitlist promotion: auto-promote, broadcast, or stay frozen
   // depending on how close to the deadline we are.
   await promoteAfterCancel(registration.classId);
 
-  return respondOk({ id: updated.id, status: updated.status });
+  return respondOk({ id, status: 'cancelled' });
 });
 
 /**
