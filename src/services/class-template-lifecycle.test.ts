@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import type { RegistrationStatus } from '@prisma/client';
 import {
@@ -536,8 +536,8 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
 
   afterAll(async () => {
     // Archive notifications outlive their class: `Notification.relatedClass`
-    // is `onDelete: SetNull` (`schema.prisma:563`), so the class deletes below
-    // do NOT reap them. Delete by recipient, before the students go.
+    // is `onDelete: SetNull` (`prisma/schema.prisma`), so the class deletes
+    // below do NOT reap them. Delete by recipient, before the students go.
     await prisma.notification.deleteMany({
       where: { recipientId: { in: [studentId, waiterId, secondWaiterId] } },
     });
@@ -1607,14 +1607,6 @@ describe('pauseOrResumeTemplate (DB)', () => {
       await prisma.account.delete({ where: { id: a } });
     }
     await prisma.$disconnect();
-  });
-
-  // The generator's occupancy check is per-teacher (#196), so one test's
-  // generated window occupies the next test's slots: several tests here resume
-  // templates on the same `dayOfWeek`/`startTime`, and without this a resume
-  // that used to create four would create nothing.
-  beforeEach(async () => {
-    await prisma.class.deleteMany({ where: { teacherId } });
   });
 
   it('pausing an active template deletes nothing and reports the furthest-out scheduled class', async () => {
