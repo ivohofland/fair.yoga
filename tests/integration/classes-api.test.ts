@@ -82,14 +82,17 @@ beforeAll(async () => {
   // here, so this closes over it directly rather than reading it back off a
   // module-level let.
   //
-  // startTime defaults to '09:00' but each call below passes a distinct
-  // value: all five land on the same ownerId + date, and
-  // `Class_teacher_slot_unique` (Task 1, #196) now rejects a second live
-  // (teacherId, date, startTime) row, where "live" excludes only `cancelled`
-  // — `draft` and `open` both count. Measured: five calls at the shared
-  // default collide on the second one, `prisma.class.create` throwing P2002
-  // before a single test in this file runs.
-  function makeClass(classType: string, status: 'draft' | 'open' = 'draft', startTime = '09:00') {
+  // startTime has no default: all five calls below land on the same ownerId
+  // + date, and `Class_teacher_slot_unique` (Task 1, #196) now rejects a
+  // second live (teacherId, date, startTime) row, where "live" excludes only
+  // `cancelled` — `draft` and `open` both count. Measured: five calls at a
+  // shared default collide on the second one, `prisma.class.create` throwing
+  // P2002 before a single test in this file runs. A required parameter is
+  // what stops a forgetful sixth caller reopening that collision — the
+  // sibling helpers in this directory (`templateBody` in
+  // class-templates-api.test.ts, `makeTemplate` in studio-api.test.ts)
+  // dropped their own defaults for the same reason.
+  function makeClass(classType: string, status: 'draft' | 'open', startTime: string) {
     return prisma.class.create({
       data: {
         teacherId: ownerId,
@@ -111,7 +114,7 @@ beforeAll(async () => {
   // Left in the default `draft` status deliberately: draft cannot transition
   // straight to `completed` or `in_progress`, so the state guard on both
   // routes is reachable here without any registrations/pricing fixtures.
-  const cls = await makeClass('Classes API');
+  const cls = await makeClass('Classes API', 'draft', '09:00');
   classId = cls.id;
 
   // Separate draft fixture for the /transition cancel-branch tests: cancelling
@@ -605,6 +608,83 @@ describe('PUT /api/classes/[id]', () => {
       expect(stillOccupied.startTime).toBe('08:00');
     });
   });
+
+  // PR #208 review, D1. `Class` carries two unique keys —
+  // `Class_templateId_date_key` (predates #196) and `Class_teacher_slot_unique`
+  // (#196) — and Postgres validates a multi-key violation in the indexes' OID
+  // order, the older key first. The slot-key coverage above always leaves
+  // `startTime` identical between the two rows, which also collides on the
+  // newer key and can never exercise this. This block deliberately gives its
+  // two instances DIFFERENT `startTime`s, so only the older
+  // `(templateId, date)` key fires.
+  describe("PUT /api/classes/[id] collides on the template's own (templateId, date) key (#196)", () => {
+    let templateDateTemplateId: string;
+
+    beforeAll(async () => {
+      const template = await prisma.classTemplate.create({
+        data: {
+          teacherId: ownerId,
+          teacherRoomId,
+          classType: 'Template Date Clash',
+          dayOfWeek: 2,
+          startTime: '07:00',
+          durationMinutes: 60,
+          roomCost: 15,
+          minRate: 10,
+          targetRate: 20,
+          minStudents: 1,
+          maxStudents: 8,
+        },
+      });
+      templateDateTemplateId = template.id;
+    });
+
+    afterAll(async () => {
+      await prisma.class.deleteMany({ where: { templateId: templateDateTemplateId } });
+      await prisma.classTemplate.delete({ where: { id: templateDateTemplateId } });
+    });
+
+    it("refuses moving one instance onto a sibling instance's date, naming the recurring class rather than a generic conflict", async () => {
+      const makeInstance = (date: string, startTime: string) =>
+        prisma.class.create({
+          data: {
+            teacherId: ownerId,
+            teacherRoomId,
+            templateId: templateDateTemplateId,
+            classType: 'Template Date Clash',
+            date: new Date(date),
+            startTime,
+            durationMinutes: 60,
+            roomCost: 15,
+            minRate: 10,
+            targetRate: 20,
+            minStudents: 1,
+            maxStudents: 8,
+            status: 'open',
+          },
+        });
+      const sibling = await makeInstance('2099-09-02', '07:00');
+      // Distinct startTime from `sibling`'s, deliberately: the slot key
+      // (teacherId, date, startTime) must NOT also fire here — this test
+      // exists to prove the older (templateId, date) key is reachable on
+      // its own, with no help from the newer one.
+      const mover = await makeInstance('2099-09-09', '07:15');
+
+      const res = await put(ownerToken, mover.id, { date: '2099-09-02' });
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as { error: { code: string; message: string } };
+      expect(json.error.code).toBe('TEMPLATE_INSTANCE_DATE_CONFLICT');
+      expect(json.error.message).toBe('That recurring class already has a class on that date.');
+
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: mover.id } });
+      expect(after.date.toISOString().slice(0, 10)).toBe('2099-09-09');
+
+      // The test's premise is that this row is the one occupying the date
+      // the move collided on, and that it is untouched by the failed move.
+      const stillThere = await prisma.class.findUniqueOrThrow({ where: { id: sibling.id } });
+      expect(stillThere.date.toISOString().slice(0, 10)).toBe('2099-09-02');
+    });
+  });
 });
 
 describe('POST /api/classes', () => {
@@ -829,6 +909,33 @@ describe('POST /api/classes', () => {
         where: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: '07:45' },
       });
       expect(rows).toHaveLength(1);
+    });
+
+    // PR #208 review, E4. `Class_teacher_slot_unique`'s partial predicate
+    // (`WHERE status <> 'cancelled'`) is what frees a cancelled class's slot
+    // — proven at the DB layer by `slot-constraints.test.ts` and at the route
+    // layer by the two tests above that a live slot is refused. Neither
+    // proves the two compose: that cancelling through the app and then
+    // POSTing again actually round-trips through this route to a 201.
+    it('lets a freed slot be re-used once the occupying class is cancelled', async () => {
+      const body = { ...slotBody(), startTime: '08:15' };
+      const first = await post(body);
+      expect(first.status).toBe(201);
+      const { data: created } = (await first.json()) as { data: { id: string } };
+
+      // Direct write, not `POST …/transition`: this test is about the slot
+      // index's predicate, not the transition route, and a draft class can
+      // reach `cancelled` in one step either way (`VALID_TRANSITIONS`).
+      await prisma.class.update({ where: { id: created.id }, data: { status: 'cancelled' } });
+
+      const second = await post(body);
+      expect(second.status).toBe(201);
+
+      const rows = await prisma.class.findMany({
+        where: { teacherId: ownerId, date: new Date('2027-04-05'), startTime: '08:15' },
+      });
+      expect(rows).toHaveLength(2);
+      expect(rows.find((r) => r.id === created.id)?.status).toBe('cancelled');
     });
   });
 });

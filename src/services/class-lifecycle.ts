@@ -487,7 +487,8 @@ export type UpdateClassResult =
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'locked'; fields: readonly [EconomicField, ...EconomicField[]] }
   | { ok: false; reason: 'no_fields' }
-  | { ok: false; reason: 'slot_conflict' };
+  | { ok: false; reason: 'slot_conflict' }
+  | { ok: false; reason: 'template_date_conflict' };
 
 /**
  * Apply a partial update to a class, enforcing the economic-field lock.
@@ -538,6 +539,18 @@ export async function updateClass(
   // 'cancelled'`, #196) across the edit. Moving `date`/`startTime` onto a
   // slot this teacher already occupies collides here exactly as a `POST`
   // into that slot does.
+  //
+  // A second, older key is reachable here too, and only here: `date` is
+  // teacher-editable but no create route ever sets `templateId` (it is
+  // server-assigned, only ever by the generator), so `@@unique([templateId,
+  // date])` (`Class_templateId_date_key`, predates #196) can never fire from
+  // a create. It fires from THIS write: a template-generated class carries a
+  // real `templateId`, and moving its `date` onto a date a sibling instance
+  // of the same template already holds collides on that older key — even
+  // when the two classes' `startTime` differs enough that the slot key above
+  // never would. Postgres validates a multi-key violation in the indexes'
+  // OID order, and `Class_templateId_date_key` is older than
+  // `Class_teacher_slot_unique`, so this is the one Postgres reports first.
   let result: Prisma.BatchPayload;
   try {
     result = await db.class.updateMany({
@@ -547,6 +560,14 @@ export async function updateClass(
   } catch (err) {
     if (isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])) {
       return { ok: false, reason: 'slot_conflict' };
+    }
+    // `Class_templateId_date_key` — see the comment above the write for why
+    // this is reachable here and nowhere else. Without this arm the error
+    // rethrows and `classifyApiError`'s generic P2002 fallback
+    // (`src/lib/api-errors.ts`) answers "Resource already exists" for the
+    // ordinary act of moving this week's class to next Monday.
+    if (isUniqueConflictOn(err, ['templateId', 'date'])) {
+      return { ok: false, reason: 'template_date_conflict' };
     }
     throw err;
   }

@@ -80,6 +80,19 @@ export const PUT = withErrorHandler(async (
       'DUPLICATE_CLASS_SLOT',
     );
   }
+  // The older `@@unique([templateId, date])` key, not the slot key above —
+  // reachable only from a reschedule, and only when the class carries a
+  // `templateId` (`updateClass`'s own comment names why). Distinct message
+  // and code: the slot 409 names a date AND time; this collision can fire
+  // with the two classes' times entirely different, so naming the time back
+  // to the teacher here would describe a clash that didn't happen.
+  if (result.reason === 'template_date_conflict') {
+    return respondError(
+      'That recurring class already has a class on that date.',
+      409,
+      'TEMPLATE_INSTANCE_DATE_CONFLICT',
+    );
+  }
   // Exhaustiveness: a new UpdateClassResult variant becomes a compile error
   // here rather than being silently answered as though it were `locked`.
   const unhandled: never = result;
