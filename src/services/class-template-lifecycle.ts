@@ -30,6 +30,7 @@ import type { updateClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { startOfLocalDay } from '@/lib/timezone';
 import { formatDayHeader } from '@/lib/format';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { syncTemplateInstances, type TemplateSyncResult } from './template-sync';
 import { generateInstancesForTemplate } from './class-generator';
@@ -192,7 +193,9 @@ export type UpdateClassTemplateResult =
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'no_fields' }
-  | { ok: false; reason: 'invalid_room' };
+  | { ok: false; reason: 'invalid_room' }
+  | { ok: false; reason: 'slot_conflict' }
+  | { ok: false; reason: 'sync_conflict' };
 
 /**
  * Apply a partial update to a class template, then propagate it to the
@@ -310,6 +313,26 @@ export async function updateClassTemplate(
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
       return { ok: false, reason: 'not_found' };
     }
+
+    // Two more sources under this one `try`, added by #196, and they raise
+    // two different column shapes because they are two different tables. The
+    // `update` above writes `dayOfWeek`/`startTime` straight from `data` (both
+    // on `TeacherEditableClassTemplateField`), so it can collide on this
+    // template's own `ClassTemplate_teacher_slot_unique`. `syncTemplateInstances`
+    // (`template-sync.ts`)'s `sameDay` block then rewrites `startTime` on every
+    // still-mutable generated `Class` sharing this template's day, and each of
+    // those can independently collide on `Class_teacher_slot_unique` with a
+    // class the propagation never touches — a manually created draft, say, or
+    // an instance of a different template — sitting at the slot the new
+    // `startTime` now lands on. `isUniqueConflictOn`'s column-set match is what
+    // tells the two apart without needing `modelName`: neither column set names
+    // the other table.
+    if (isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime'])) {
+      return { ok: false, reason: 'slot_conflict' };
+    }
+    if (isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])) {
+      return { ok: false, reason: 'sync_conflict' };
+    }
     throw err;
   }
 
@@ -407,7 +430,8 @@ export type ArchiveTemplateResult =
   | { ok: true; action: 'unarchived'; template: ClassTemplate }
   | { ok: true; action: 'unchanged'; template: ClassTemplate }
   | { ok: false; reason: 'not_found' }
-  | { ok: false; reason: 'forbidden' };
+  | { ok: false; reason: 'forbidden' }
+  | { ok: false; reason: 'slot_conflict' };
 
 /**
  * Statuses a generated instance can still be withdrawn or regenerated from.
@@ -540,9 +564,23 @@ export async function pauseOrResumeTemplate(
       // accident of what runs under it, which is now three statements, not
       // two: the `update` above, `generateInstancesForTemplate`'s
       // `class.findMany` + `class.createManyAndReturn` (`class-generator.ts`),
-      // and this transaction's own `class.count`. P2003 only — never P2002,
-      // which the insert's bare `ON CONFLICT DO NOTHING` absorbs rather than
-      // raises, and never P2025, which neither a `findMany` nor a `count` can
+      // and this transaction's own `class.count`. P2003 only — never P2002
+      // from the insert, which the insert's bare `ON CONFLICT DO NOTHING`
+      // absorbs rather than raises. Never P2002 from the `update` above
+      // either, and this one is worth proving rather than asserting, because
+      // #196 added a partial unique index this file's other CAS now collides
+      // on: `data` here is `{ isActive: desiredActive }` — nothing else — and
+      // `ClassTemplate_teacher_slot_unique` covers `(teacherId, dayOfWeek,
+      // startTime)` `WHERE isArchived = false`. None of those four columns is
+      // in this write's `data`, so a row that already satisfied the
+      // constraint cannot newly violate it by having `isActive` alone
+      // change — Postgres only re-validates a unique index against columns a
+      // statement actually writes. That exemption is local to this write, not
+      // to the file: `archiveOrUnarchiveTemplate`'s own CAS, a few hundred
+      // lines down, DOES write `isArchived`, and un-archiving into a slot
+      // another live template holds is exactly what makes that one raise
+      // P2002 — see its own `catch` for where that is handled. And never
+      // P2025, which neither a `findMany` nor a `count` can
       // produce. So the `update` above really is the only
       // P2025 source under here, and the guard says `not_found` about the only
       // thing that can go missing. Add an *unprotected* `findUniqueOrThrow`
@@ -661,253 +699,268 @@ export async function archiveOrUnarchiveTemplate(
 
   const timeZone = template.teacher.defaultTimezone;
 
-  return db.$transaction(
-    async (tx) => {
-      // Compare-and-swap, the pattern `updateClass` already uses for #72.
-      // Constraining the write to `isArchived: !archiving` makes the
-      // *transition* the thing that can happen only once: two archives that
-      // both cleared the guard above reach here, and exactly one of them
-      // matches a row. Without it the loser overwrote the winner's
-      // `archivedAt`/`withdrawnCount` with its own timestamp and a `0` its
-      // `deleteMany` produced only because the winner had already deleted
-      // those classes — a durable record (#97) of a withdrawal that says it
-      // withdrew nothing.
-      //
-      // Still the transaction's first statement, deliberately: this is what
-      // locks the row `claimTemplateForGeneration` (class-generator.ts) locks
-      // with its `FOR UPDATE`. Not the same lock mode — an `updateMany`
-      // touching no key column takes `FOR NO KEY UPDATE` — but the two
-      // *conflict*, and that conflict is what serialises an archive against a
-      // sweep in progress (#95). Moving the CAS after the `deleteMany` would
-      // withdraw classes before establishing the right to.
-      //
-      // The contended case resolves in Postgres, not here: the loser blocks
-      // inside this statement, and when the winner commits, READ COMMITTED
-      // re-evaluates this WHERE against the row version the winner left
-      // (EvalPlanQual). `isArchived` now equals `archiving`, the row is
-      // skipped, and `count` is 0. That re-evaluation applies to the CAS
-      // predicate itself only because Prisma emits this as a single `UPDATE
-      // … WHERE "id" = $1 AND "isArchived" = $2` — a filter it compiled to a
-      // subquery would be re-run under the same snapshot and match anyway.
-      //
-      // No P2025 guard here, unlike `updateClassTemplate` and
-      // `pauseOrResumeTemplate` (#100). Not an omission: `updateMany` returns
-      // `{ count: 0 }` rather than throwing when nothing matches, and the
-      // zero-count branch below already answers `not_found` by re-reading. The
-      // `findUniqueOrThrow`/`update` sites further down *can* raise P2025, but
-      // only run after this CAS matched, which holds `FOR NO KEY UPDATE` on
-      // this row until commit. That conflicts with the `FOR UPDATE`-strength
-      // lock a concurrent `DELETE` needs, so it blocks rather than wins.
-      //
-      // What a plain single-record `update` would change is not the lock — it
-      // takes the same mode — but the first limb: it raises P2025 where
-      // `updateMany` returns `{ count: 0 }`, so the write itself becomes a
-      // P2025 source needing its own guard.
-      const swapped = await tx.classTemplate.updateMany({
-        where: { id: templateId, isArchived: !archiving },
-        data: {
-          isArchived: archiving,
-          isActive: false,
-          // Folded in rather than issued as a second `update`: `null` depends
-          // on nothing this transaction has yet to do, unlike the archiving
-          // arm's `withdrawnCount`, which does not exist until the delete has
-          // run. See the record write at the bottom for that asymmetry.
-          ...(archiving ? {} : { archivedAt: null, withdrawnCount: null }),
-        },
-      });
-
-      if (swapped.count === 0) {
-        // Both clauses of the CAS constrain the row, so a zero count means
-        // either another request already applied the transition or the row is
-        // gone — read which rather than assuming, the same distinction #72
-        // had to make.
+  // Un-archiving (`archiving === false`) flips `isArchived` from `true` to
+  // `false` in the CAS below — the one write in this function that can newly
+  // enter `ClassTemplate_teacher_slot_unique`'s partial scope (`WHERE
+  // isArchived = false`, #196). Archiving only ever leaves that scope, which
+  // cannot collide. Wrapped around the whole `$transaction`, not just the CAS
+  // statement: a P2002 raised inside a Postgres transaction aborts it, and
+  // the driver surfaces that failure from `$transaction` itself rather than
+  // from the individual `await` that triggered it.
+  try {
+    return await db.$transaction(
+      async (tx) => {
+        // Compare-and-swap, the pattern `updateClass` already uses for #72.
+        // Constraining the write to `isArchived: !archiving` makes the
+        // *transition* the thing that can happen only once: two archives that
+        // both cleared the guard above reach here, and exactly one of them
+        // matches a row. Without it the loser overwrote the winner's
+        // `archivedAt`/`withdrawnCount` with its own timestamp and a `0` its
+        // `deleteMany` produced only because the winner had already deleted
+        // those classes — a durable record (#97) of a withdrawal that says it
+        // withdrew nothing.
         //
-        // This read takes a fresh READ COMMITTED snapshot and holds no lock:
-        // the CAS matched nothing, so it acquired none. With three concurrent
-        // requests a fourth state is possible — the winner archives, someone
-        // un-archives, and this read returns `isArchived: !archiving`. The
-        // answer is still `unchanged` for *this* request, which changed
-        // nothing, and the returned row is a real row; only the flag a caller
-        // reads off it may already be stale. Locking here to close that would
-        // serialise the no-op path against the sweep for no gain.
+        // Still the transaction's first statement, deliberately: this is what
+        // locks the row `claimTemplateForGeneration` (class-generator.ts) locks
+        // with its `FOR UPDATE`. Not the same lock mode — an `updateMany`
+        // touching no key column takes `FOR NO KEY UPDATE` — but the two
+        // *conflict*, and that conflict is what serialises an archive against a
+        // sweep in progress (#95). Moving the CAS after the `deleteMany` would
+        // withdraw classes before establishing the right to.
         //
-        // Re-read rather than reusing the snapshot from the top of this
-        // function: that one still says `isArchived: !archiving`, which is
-        // the exact value the winner just falsified.
-        const current = await tx.classTemplate.findUnique({ where: { id: templateId } });
-        if (!current) return { ok: false as const, reason: 'not_found' as const };
-        return { ok: true as const, action: 'unchanged' as const, template: current };
-      }
-
-      if (!archiving) {
-        // `updateMany` returns a count, not a row, and every arm of the
-        // contract carries a template. Reading it back is safe here
-        // specifically because the CAS above holds this row's lock until we
-        // commit, so nothing can change or delete it in between — the same
-        // lock-then-read pattern `claimTemplateForGeneration` uses, and
-        // `OrThrow` for the same reason: the update just matched this row.
+        // The contended case resolves in Postgres, not here: the loser blocks
+        // inside this statement, and when the winner commits, READ COMMITTED
+        // re-evaluates this WHERE against the row version the winner left
+        // (EvalPlanQual). `isArchived` now equals `archiving`, the row is
+        // skipped, and `count` is 0. That re-evaluation applies to the CAS
+        // predicate itself only because Prisma emits this as a single `UPDATE
+        // … WHERE "id" = $1 AND "isArchived" = $2` — a filter it compiled to a
+        // subquery would be re-run under the same snapshot and match anyway.
         //
-        // A template that is no longer archived has no withdrawal to report.
-        // Not a *live* one — the CAS above forced `isActive: false` in the
-        // same write, so what is standing here is paused. Leaving a stale
-        // count on it would be worse than having none (#97).
-        const cleared = await tx.classTemplate.findUniqueOrThrow({ where: { id: templateId } });
-        return { ok: true as const, action: 'unarchived' as const, template: cleared };
-      }
-
-      // One clock reading serves both the calendar boundary and the
-      // timestamp recorded below. `Class.date` is `@db.Date`, so both sides
-      // of every comparison below are calendar dates — the comparison the
-      // generator that created these rows already makes (`class-generator.ts`
-      // filters on `classStartInstant`). Comparing the column to a raw
-      // instant instead would, east of UTC, delete a class running that same
-      // evening, and west of UTC leave tomorrow's class bookable under an
-      // archived template — the exact leak #86 exists to close.
-      const now = new Date();
-      const today = startOfLocalDay(now, timeZone);
-
-      // #112. Who is waiting on a class this archive might withdraw.
-      //
-      // Read BEFORE the delete because `WaitlistEntry.class` is
-      // `onDelete: Cascade` (`schema.prisma:517`) — after the delete these rows
-      // do not exist to be read. Decided AFTER it, from the survivor read
-      // below, because this read is not the delete's own evaluation.
-      //
-      // DELIBERATELY WIDER THAN THE DELETE: every waiting entry on a scheduled
-      // future class of this template, with no registration predicate. Mirror
-      // the delete's `registrations: { none: … }` here instead and the two
-      // reads disagree in a direction nothing downstream can repair — a class
-      // whose last charged registration is cancelled in the gap becomes
-      // deletable without ever having been a candidate, and its waiters are
-      // cascade-deleted unnotified. That is #112 itself, one window narrower.
-      // It is not exotic: a queue only forms at `maxStudents`, so a class
-      // carrying waiters normally DOES hold a charged registration, and any
-      // cancel that is not `late_cancel` writes plain `cancelled`
-      // (`registrations/[id]/route.ts` — a student's before-deadline cancel and
-      // a teacher's cancel at any hour both land there).
-      //
-      // Wide costs only rows: a class the delete spares is a survivor and is
-      // filtered out below, which is what the concurrency test pins. Wide plus
-      // that filter makes `withdrawn` exactly the set this `deleteMany` took.
-      //
-      // A lock is not the alternative, and an earlier draft of this comment was
-      // wrong to say one was unavailable: `POST /api/registrations` does take
-      // `SELECT … FOR UPDATE` on the class row inline rather than through
-      // `lockClassRow` (`db-locks.ts` lists it as one of five deliberate inline
-      // sites). Locking every candidate class would work and is simply worse —
-      // it blocks booking on every future class of the template for the
-      // duration of the archive, to buy what a second read buys for free.
-      const candidates = await tx.waitlistEntry.findMany({
-        where: {
-          status: 'waiting',
-          class: scheduledWhere(templateId, { gt: today }),
-        },
-        select: {
-          studentId: true,
-          classId: true,
-          // Type, date AND time: the notification outlives the class row with
-          // a null link, so these three fields are the only identity it will
-          // ever have. A student with two weekly classes needs the time.
-          class: { select: { classType: true, date: true, startTime: true } },
-        },
-      });
-
-      // Deliberately one statement, not a `findMany` followed by a
-      // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
-      // registration commit in the gap between them under READ COMMITTED, and
-      // the delete — keyed only on the ids already read — does not re-check it,
-      // destroying a class (and cascading away a now-charged registration) that
-      // became booked after the read. Passing the predicate straight to
-      // `deleteMany` makes Postgres re-evaluate it at execution time, and its
-      // returned `count` is the number of rows that actually matched then — not
-      // a stale count from an earlier read. Do not "optimise" this back into a
-      // read-then-delete.
-      const { count: deleted } = await tx.class.deleteMany({
-        where: {
-          ...scheduledWhere(templateId, { gt: today }),
-          registrations: { none: { status: { in: [...CHARGED_STATUSES] } } },
-        },
-      });
-
-      // Which candidates' classes actually went. `deleteMany` returns a count,
-      // not ids, and its predicate was re-evaluated at execution time — so
-      // this read, not the candidate read, is what says who was withdrawn.
-      //
-      // Notifying from `candidates` alone would be simpler and wrong: a
-      // booking landing between the two statements spares that class, and its
-      // waiter would be told the class was withdrawn while their entry is
-      // still `waiting` and the class is still open on the teacher's page — a
-      // message the app itself contradicts.
-      if (candidates.length > 0) {
-        // De-duplicated: `candidates` carries one row per waiter, so a class
-        // with three waiters would otherwise repeat its id three times in the
-        // `in` list. Same shape and same reason as
-        // `withdrawWaitingEntriesForTeacher` (`waitlist.ts`).
-        const survivors = await tx.class.findMany({
-          where: { id: { in: [...new Set(candidates.map((c) => c.classId))] } },
-          select: { id: true },
+        // No P2025 guard here, unlike `updateClassTemplate` and
+        // `pauseOrResumeTemplate` (#100). Not an omission: `updateMany` returns
+        // `{ count: 0 }` rather than throwing when nothing matches, and the
+        // zero-count branch below already answers `not_found` by re-reading. The
+        // `findUniqueOrThrow`/`update` sites further down *can* raise P2025, but
+        // only run after this CAS matched, which holds `FOR NO KEY UPDATE` on
+        // this row until commit. That conflicts with the `FOR UPDATE`-strength
+        // lock a concurrent `DELETE` needs, so it blocks rather than wins.
+        //
+        // What a plain single-record `update` would change is not the lock — it
+        // takes the same mode — but the first limb: it raises P2025 where
+        // `updateMany` returns `{ count: 0 }`, so the write itself becomes a
+        // P2025 source needing its own guard.
+        const swapped = await tx.classTemplate.updateMany({
+          where: { id: templateId, isArchived: !archiving },
+          data: {
+            isArchived: archiving,
+            isActive: false,
+            // Folded in rather than issued as a second `update`: `null` depends
+            // on nothing this transaction has yet to do, unlike the archiving
+            // arm's `withdrawnCount`, which does not exist until the delete has
+            // run. See the record write at the bottom for that asymmetry.
+            ...(archiving ? {} : { archivedAt: null, withdrawnCount: null }),
+          },
         });
-        const survived = new Set(survivors.map((s) => s.id));
-        // Per class, not all-or-nothing across the batch: a template generates
-        // on a rolling 4-week basis, so the ordinary archive faces several
-        // future classes at once and spares only the booked ones.
-        const withdrawn = candidates.filter((c) => !survived.has(c.classId));
 
-        if (withdrawn.length > 0) {
-          // No `relatedClassId`: the row is gone and the FK is `SetNull`
-          // (`schema.prisma:563`), so the notification outlives its class with
-          // a null link. Passing the id would fail the insert's FK outright.
-          // The body has to name the class or the student is left with an inbox
-          // entry they cannot place.
-          const notifications: CreateNotificationInput[] = withdrawn.map((c) => ({
-            recipientType: 'student' as const,
-            recipientId: c.studentId,
-            type: 'class_cancelled' as const,
-            title: 'Class cancelled',
-            body: `The ${c.class.classType} class on ${formatDayHeader(c.class.date)} at ${c.class.startTime} has been withdrawn by your teacher. You were on its waiting list.`,
-          }));
-          await createBulkNotifications(tx, notifications);
+        if (swapped.count === 0) {
+          // Both clauses of the CAS constrain the row, so a zero count means
+          // either another request already applied the transition or the row is
+          // gone — read which rather than assuming, the same distinction #72
+          // had to make.
+          //
+          // This read takes a fresh READ COMMITTED snapshot and holds no lock:
+          // the CAS matched nothing, so it acquired none. With three concurrent
+          // requests a fourth state is possible — the winner archives, someone
+          // un-archives, and this read returns `isArchived: !archiving`. The
+          // answer is still `unchanged` for *this* request, which changed
+          // nothing, and the returned row is a real row; only the flag a caller
+          // reads off it may already be stale. Locking here to close that would
+          // serialise the no-op path against the sweep for no gain.
+          //
+          // Re-read rather than reusing the snapshot from the top of this
+          // function: that one still says `isArchived: !archiving`, which is
+          // the exact value the winner just falsified.
+          const current = await tx.classTemplate.findUnique({ where: { id: templateId } });
+          if (!current) return { ok: false as const, reason: 'not_found' as const };
+          return { ok: true as const, action: 'unchanged' as const, template: current };
         }
-      }
 
-      // `gte`, where the delete used `gt`. The delete deliberately spares a
-      // class dated today — "a class hours from starting should not shift under
-      // its students", the rule `syncTemplateInstances` already applies to
-      // edits — so counting with the delete's own boundary would exclude that
-      // same survivor and tell the teacher nothing is left while the class is
-      // still open on their public page.
-      const remaining = await tx.class.count({
-        where: scheduledWhere(templateId, { gte: today }),
-      });
+        if (!archiving) {
+          // `updateMany` returns a count, not a row, and every arm of the
+          // contract carries a template. Reading it back is safe here
+          // specifically because the CAS above holds this row's lock until we
+          // commit, so nothing can change or delete it in between — the same
+          // lock-then-read pattern `claimTemplateForGeneration` uses, and
+          // `OrThrow` for the same reason: the update just matched this row.
+          //
+          // A template that is no longer archived has no withdrawal to report.
+          // Not a *live* one — the CAS above forced `isActive: false` in the
+          // same write, so what is standing here is paused. Leaving a stale
+          // count on it would be worse than having none (#97).
+          const cleared = await tx.classTemplate.findUniqueOrThrow({ where: { id: templateId } });
+          return { ok: true as const, action: 'unarchived' as const, template: cleared };
+        }
 
-      // Written from the delete's own `count`, inside the same transaction, so
-      // the record cannot claim a number the delete did not produce and cannot
-      // survive a rollback that withdrew nothing (#97).
-      //
-      // A second statement rather than folded into the CAS above, on data
-      // dependency alone: `deleted` does not exist until the `deleteMany` has
-      // run, and the CAS runs before it. The lock ordering is a separate point
-      // and closes the other direction — the CAS has to stay the transaction's
-      // first statement to take the row lock the sweep serialises against
-      // (#95), so it cannot instead be moved down to where `deleted` exists.
-      //
-      // A plain single-record `update` is enough here: the CAS's lock is still
-      // held, so nothing can have moved this row since.
-      const recorded = await tx.classTemplate.update({
-        where: { id: templateId },
-        data: { archivedAt: now, withdrawnCount: deleted },
-      });
+        // One clock reading serves both the calendar boundary and the
+        // timestamp recorded below. `Class.date` is `@db.Date`, so both sides
+        // of every comparison below are calendar dates — the comparison the
+        // generator that created these rows already makes (`class-generator.ts`
+        // filters on `classStartInstant`). Comparing the column to a raw
+        // instant instead would, east of UTC, delete a class running that same
+        // evening, and west of UTC leave tomorrow's class bookable under an
+        // archived template — the exact leak #86 exists to close.
+        const now = new Date();
+        const today = startOfLocalDay(now, timeZone);
 
-      return { ok: true as const, action: 'archived' as const, template: recorded, deleted, remaining };
-    },
-    // The compare-and-swap above locks the same row the generator sweep's
-    // `claimTemplateForGeneration` (class-generator.ts) holds `FOR UPDATE` for
-    // the duration of its own per-template transaction. The CAS's own `FOR NO
-    // KEY UPDATE` conflicts with that, so an archive can now block on a sweep
-    // in progress. Matching the sweep's 10s transaction
-    // timeout means this waits at most as long as the sweep could possibly
-    // run, not Prisma's 5s default — which a loaded VPS can exceed and turn
-    // an ordinary archive click into an opaque P2028.
-    { timeout: 10_000 },
-  );
+        // #112. Who is waiting on a class this archive might withdraw.
+        //
+        // Read BEFORE the delete because `WaitlistEntry.class` is
+        // `onDelete: Cascade` (`schema.prisma:517`) — after the delete these rows
+        // do not exist to be read. Decided AFTER it, from the survivor read
+        // below, because this read is not the delete's own evaluation.
+        //
+        // DELIBERATELY WIDER THAN THE DELETE: every waiting entry on a scheduled
+        // future class of this template, with no registration predicate. Mirror
+        // the delete's `registrations: { none: … }` here instead and the two
+        // reads disagree in a direction nothing downstream can repair — a class
+        // whose last charged registration is cancelled in the gap becomes
+        // deletable without ever having been a candidate, and its waiters are
+        // cascade-deleted unnotified. That is #112 itself, one window narrower.
+        // It is not exotic: a queue only forms at `maxStudents`, so a class
+        // carrying waiters normally DOES hold a charged registration, and any
+        // cancel that is not `late_cancel` writes plain `cancelled`
+        // (`registrations/[id]/route.ts` — a student's before-deadline cancel and
+        // a teacher's cancel at any hour both land there).
+        //
+        // Wide costs only rows: a class the delete spares is a survivor and is
+        // filtered out below, which is what the concurrency test pins. Wide plus
+        // that filter makes `withdrawn` exactly the set this `deleteMany` took.
+        //
+        // A lock is not the alternative, and an earlier draft of this comment was
+        // wrong to say one was unavailable: `POST /api/registrations` does take
+        // `SELECT … FOR UPDATE` on the class row inline rather than through
+        // `lockClassRow` (`db-locks.ts` lists it as one of five deliberate inline
+        // sites). Locking every candidate class would work and is simply worse —
+        // it blocks booking on every future class of the template for the
+        // duration of the archive, to buy what a second read buys for free.
+        const candidates = await tx.waitlistEntry.findMany({
+          where: {
+            status: 'waiting',
+            class: scheduledWhere(templateId, { gt: today }),
+          },
+          select: {
+            studentId: true,
+            classId: true,
+            // Type, date AND time: the notification outlives the class row with
+            // a null link, so these three fields are the only identity it will
+            // ever have. A student with two weekly classes needs the time.
+            class: { select: { classType: true, date: true, startTime: true } },
+          },
+        });
+
+        // Deliberately one statement, not a `findMany` followed by a
+        // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
+        // registration commit in the gap between them under READ COMMITTED, and
+        // the delete — keyed only on the ids already read — does not re-check it,
+        // destroying a class (and cascading away a now-charged registration) that
+        // became booked after the read. Passing the predicate straight to
+        // `deleteMany` makes Postgres re-evaluate it at execution time, and its
+        // returned `count` is the number of rows that actually matched then — not
+        // a stale count from an earlier read. Do not "optimise" this back into a
+        // read-then-delete.
+        const { count: deleted } = await tx.class.deleteMany({
+          where: {
+            ...scheduledWhere(templateId, { gt: today }),
+            registrations: { none: { status: { in: [...CHARGED_STATUSES] } } },
+          },
+        });
+
+        // Which candidates' classes actually went. `deleteMany` returns a count,
+        // not ids, and its predicate was re-evaluated at execution time — so
+        // this read, not the candidate read, is what says who was withdrawn.
+        //
+        // Notifying from `candidates` alone would be simpler and wrong: a
+        // booking landing between the two statements spares that class, and its
+        // waiter would be told the class was withdrawn while their entry is
+        // still `waiting` and the class is still open on the teacher's page — a
+        // message the app itself contradicts.
+        if (candidates.length > 0) {
+          // De-duplicated: `candidates` carries one row per waiter, so a class
+          // with three waiters would otherwise repeat its id three times in the
+          // `in` list. Same shape and same reason as
+          // `withdrawWaitingEntriesForTeacher` (`waitlist.ts`).
+          const survivors = await tx.class.findMany({
+            where: { id: { in: [...new Set(candidates.map((c) => c.classId))] } },
+            select: { id: true },
+          });
+          const survived = new Set(survivors.map((s) => s.id));
+          // Per class, not all-or-nothing across the batch: a template generates
+          // on a rolling 4-week basis, so the ordinary archive faces several
+          // future classes at once and spares only the booked ones.
+          const withdrawn = candidates.filter((c) => !survived.has(c.classId));
+
+          if (withdrawn.length > 0) {
+            // No `relatedClassId`: the row is gone and the FK is `SetNull`
+            // (`schema.prisma:563`), so the notification outlives its class with
+            // a null link. Passing the id would fail the insert's FK outright.
+            // The body has to name the class or the student is left with an inbox
+            // entry they cannot place.
+            const notifications: CreateNotificationInput[] = withdrawn.map((c) => ({
+              recipientType: 'student' as const,
+              recipientId: c.studentId,
+              type: 'class_cancelled' as const,
+              title: 'Class cancelled',
+              body: `The ${c.class.classType} class on ${formatDayHeader(c.class.date)} at ${c.class.startTime} has been withdrawn by your teacher. You were on its waiting list.`,
+            }));
+            await createBulkNotifications(tx, notifications);
+          }
+        }
+
+        // `gte`, where the delete used `gt`. The delete deliberately spares a
+        // class dated today — "a class hours from starting should not shift under
+        // its students", the rule `syncTemplateInstances` already applies to
+        // edits — so counting with the delete's own boundary would exclude that
+        // same survivor and tell the teacher nothing is left while the class is
+        // still open on their public page.
+        const remaining = await tx.class.count({
+          where: scheduledWhere(templateId, { gte: today }),
+        });
+
+        // Written from the delete's own `count`, inside the same transaction, so
+        // the record cannot claim a number the delete did not produce and cannot
+        // survive a rollback that withdrew nothing (#97).
+        //
+        // A second statement rather than folded into the CAS above, on data
+        // dependency alone: `deleted` does not exist until the `deleteMany` has
+        // run, and the CAS runs before it. The lock ordering is a separate point
+        // and closes the other direction — the CAS has to stay the transaction's
+        // first statement to take the row lock the sweep serialises against
+        // (#95), so it cannot instead be moved down to where `deleted` exists.
+        //
+        // A plain single-record `update` is enough here: the CAS's lock is still
+        // held, so nothing can have moved this row since.
+        const recorded = await tx.classTemplate.update({
+          where: { id: templateId },
+          data: { archivedAt: now, withdrawnCount: deleted },
+        });
+
+        return { ok: true as const, action: 'archived' as const, template: recorded, deleted, remaining };
+      },
+      // The compare-and-swap above locks the same row the generator sweep's
+      // `claimTemplateForGeneration` (class-generator.ts) holds `FOR UPDATE` for
+      // the duration of its own per-template transaction. The CAS's own `FOR NO
+      // KEY UPDATE` conflicts with that, so an archive can now block on a sweep
+      // in progress. Matching the sweep's 10s transaction
+      // timeout means this waits at most as long as the sweep could possibly
+      // run, not Prisma's 5s default — which a loaded VPS can exceed and turn
+      // an ordinary archive click into an opaque P2028.
+      { timeout: 10_000 },
+    );
+  } catch (err) {
+    if (isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime'])) {
+      return { ok: false, reason: 'slot_conflict' };
+    }
+    throw err;
+  }
 }

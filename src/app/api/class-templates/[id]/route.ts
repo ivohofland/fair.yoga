@@ -74,6 +74,24 @@ export const PUT = withErrorHandler(async (
   if (result.reason === 'forbidden') return respondError('Access denied', 403);
   if (result.reason === 'no_fields') return respondError('No valid fields to update', 400);
   if (result.reason === 'invalid_room') return respondError('Invalid teacher room', 400);
+  // The template's own dayOfWeek/startTime moved into a slot another of this
+  // teacher's live templates already holds (#196).
+  if (result.reason === 'slot_conflict') {
+    return respondError(
+      'You already have a recurring class on that day at that time.',
+      409,
+      'DUPLICATE_TEMPLATE_SLOT',
+    );
+  }
+  // The startTime change propagated to a still-mutable generated instance and
+  // landed it on a slot a different class already occupies (#196).
+  if (result.reason === 'sync_conflict') {
+    return respondError(
+      'That change would move one of your classes onto a time you already have booked.',
+      409,
+      'DUPLICATE_CLASS_SLOT',
+    );
+  }
 
   // Exhaustiveness: a new UpdateClassTemplateResult variant becomes a compile
   // error here rather than being silently answered as "Invalid teacher room".
@@ -117,6 +135,16 @@ export const PATCH = withErrorHandler(async (
 
     if (result.reason === 'not_found') return respondError('Class template not found', 404);
     if (result.reason === 'forbidden') return respondError('Access denied', 403);
+    // Only reachable un-archiving: `isArchived` flips false in the same CAS
+    // that re-enters `ClassTemplate_teacher_slot_unique`'s partial scope
+    // (#196), and another live template can already hold that slot.
+    if (result.reason === 'slot_conflict') {
+      return respondError(
+        'You already have a recurring class on that day at that time.',
+        409,
+        'DUPLICATE_TEMPLATE_SLOT',
+      );
+    }
 
     // Exhaustiveness: a new ArchiveTemplateResult reason becomes a compile
     // error here rather than being silently answered with the wrong status.

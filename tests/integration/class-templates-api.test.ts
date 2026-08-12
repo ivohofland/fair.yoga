@@ -691,6 +691,48 @@ describe('PATCH /api/class-templates/[id]', () => {
     const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
     expect(after.isArchived).toBe(false);
   });
+
+  // Task 6b (#196). `ClassTemplate_teacher_slot_unique` is (teacherId,
+  // dayOfWeek, startTime) WHERE isArchived = false — un-archiving is the one
+  // transition that re-enters that partial scope, so a shelved template can
+  // now collide with a live one holding the same slot.
+  it('refuses to un-archive into a slot another live template already holds', async () => {
+    const live = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify(templateBody('Unarchive Slot Live', '09:52')),
+    });
+    expect(live.status).toBe(201);
+
+    const shelved = await prisma.classTemplate.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Unarchive Slot Shelved',
+        dayOfWeek: DAY_OF_WEEK,
+        startTime: '09:52',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+        isArchived: true,
+        isActive: false,
+      },
+    });
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${shelved.id}?state=unarchived`, {
+      method: 'PATCH',
+      headers: cookie(sessionToken),
+    });
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('DUPLICATE_TEMPLATE_SLOT');
+
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: shelved.id } });
+    expect(after.isArchived).toBe(true);
+  });
 });
 
 describe('PUT /api/class-templates/[id]', () => {
@@ -912,5 +954,85 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(data.sync.regenerated).toBe(0);
 
     expect(await prisma.class.count({ where: { templateId: id } })).toBe(0);
+  });
+
+  // Task 6b (#196). `ClassTemplate_teacher_slot_unique` is (teacherId,
+  // dayOfWeek, startTime) WHERE isArchived = false — the six indexes
+  // constrain every write, not just creates, so moving a template's own
+  // dayOfWeek/startTime onto a slot another of the teacher's live templates
+  // already holds collides here exactly as a create into that slot does.
+  it('refuses a dayOfWeek/startTime change onto a slot another live template already holds', async () => {
+    await createTemplate('PUT Slot Occupant', '09:51');
+    const moverId = await createTemplate('PUT Slot Mover', '11:16');
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${moverId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ startTime: '09:51' }),
+    });
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('DUPLICATE_TEMPLATE_SLOT');
+
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: moverId } });
+    expect(after.startTime).toBe('11:16');
+  });
+
+  // A second, independent way the same PUT can raise P2002: not the
+  // template's own slot key, but `syncTemplateInstances`'s propagation of the
+  // new `startTime` onto its still-mutable generated `Class` rows
+  // (`template-sync.ts`), which can land one of those instances on a slot an
+  // unrelated class already occupies (`Class_teacher_slot_unique`). The
+  // template row and the sync are not one transaction (by design — see
+  // `updateClassTemplate`'s docblock), so the template's own `startTime`
+  // commits before the sync's `updateMany` fails — asserted below rather than
+  // assumed.
+  it('refuses a startTime change whose propagation to a generated instance would collide', async () => {
+    const id = await createTemplate('Sync Slot Template', '11:17');
+    const instances = await prisma.class.findMany({
+      where: { templateId: id },
+      orderBy: { date: 'asc' },
+    });
+    expect(instances.length).toBeGreaterThan(0);
+    const targetDate = instances[0]!.date;
+
+    // Unrelated to the template: a standalone class already sitting at the
+    // (date, startTime) the template's startTime change will try to move its
+    // own same-day instance onto.
+    await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Sync Slot Blocker',
+        date: targetDate,
+        startTime: '11:18',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+        status: 'draft',
+      },
+    });
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ startTime: '11:18' }),
+    });
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('DUPLICATE_CLASS_SLOT');
+
+    // The template row's own write already committed — it is not in the same
+    // transaction as the sync that failed.
+    const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
+    expect(template.startTime).toBe('11:18');
+
+    // The colliding instance's write rolled back with the rest of the
+    // `sameDay` batch: it is still at the template's old startTime.
+    const instance = await prisma.class.findUniqueOrThrow({ where: { id: instances[0]!.id } });
+    expect(instance.startTime).toBe('11:17');
   });
 });
