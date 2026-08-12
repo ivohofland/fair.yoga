@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { formatDayHeader } from '@/lib/format';
 import crypto from 'crypto';
 import {
+  AlreadyErasedError,
   exportStudentData,
   deleteStudentAccount,
   deleteTeacherAccount,
@@ -1531,4 +1532,174 @@ describe('deleteTeacherAccount notifies whoever is registered when it cancels (#
       }),
     ).toBe(1);
   }, 20_000);
+});
+
+/**
+ * #196 branch 2, Task 3. `deleteStudentAccount` ended its transaction with an
+ * unscoped `student.update`, so two concurrent erasures of one student both
+ * committed — and each then ran its own post-commit `handleSpotFreed` loop,
+ * broadcasting a second `spot_available` set to every student waiting on
+ * every class the erasure freed a seat in.
+ *
+ * The class sits in the final-hour `first_come_first_claimed` window on
+ * purpose: that is the only window where `handleSpotFreed` broadcasts rather
+ * than auto-promoting, and a doubled auto-promotion is invisible (the second
+ * call finds the head already `promoted` and returns `none`). The doubled
+ * broadcast is the observable cost, so it is what this asserts on.
+ */
+describe('student erasure is retry-safe against a concurrent duplicate (#196)', () => {
+  const prisma = new PrismaClient();
+
+  /**
+   * A student holding the only seat in an open class, with one other student
+   * waiting on it, and `now` half an hour inside the broadcast window.
+   *
+   * `target` = now + 48h30m against a HOURS_48 deadline puts `deadline` at
+   * now + 30m and `cutoff` at now − 30m, so `now` falls inside
+   * `first_come_first_claimed`. Computed from the clock rather than
+   * hard-coded, because the window is relative to it. The teacher is `UTC` so
+   * `date` + `startTime` map to the instant this arithmetic assumes — the
+   * suite itself runs under `TZ=America/New_York` (vitest.config.ts).
+   *
+   * Its own teacher, room, class and students, per the file's convention: the
+   * shared `describe('GDPR (DB)')` fixtures get erased by other tests there.
+   */
+  async function makeStudentWithFreedSpot() {
+    const suffix = `gdpr-race-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Race',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'Concurrent-erasure fixture',
+        pageSlug: suffix,
+        defaultTimezone: 'UTC',
+      },
+      select: { id: true, accountId: true },
+    });
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Race Studio',
+        address: `${suffix} St`,
+        city: 'Amsterdam',
+        postcode: '1234RC',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacher.id,
+      },
+      select: { id: true },
+    });
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: teacher.id, roomId: room.id, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+
+    const target = new Date(Date.now() + 48 * 60 * 60 * 1000 + 30 * 60 * 1000);
+    const cls = await prisma.class.create({
+      data: {
+        teacherId: teacher.id,
+        teacherRoomId: teacherRoom.id,
+        classType: 'Race class',
+        date: new Date(`${target.toISOString().slice(0, 10)}T00:00:00Z`),
+        startTime: target.toISOString().slice(11, 16),
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 1,
+        maxStudents: 1,
+        cancelDeadline: 'HOURS_48',
+        autoCancelCheck: 'HOURS_2',
+        status: 'open',
+      },
+      select: { id: true },
+    });
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Race',
+        lastName: 'Student',
+        email: `${suffix}-student@test.local`,
+        incomeTier: 2,
+      },
+      select: { id: true },
+    });
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId: student.id, status: 'registered', tierAtBooking: 2 },
+    });
+    const waiter = await prisma.student.create({
+      data: {
+        firstName: 'Race',
+        lastName: 'Waiter',
+        email: `${suffix}-waiter@test.local`,
+        incomeTier: 2,
+      },
+      select: { id: true },
+    });
+    await prisma.waitlistEntry.create({
+      data: { classId: cls.id, studentId: waiter.id, position: 1, status: 'waiting' },
+    });
+
+    return {
+      studentId: student.id,
+      waiterId: waiter.id,
+      classId: cls.id,
+      teacherId: teacher.id,
+      roomId: room.id,
+      accountId: teacher.accountId,
+    };
+  }
+
+  /** Reaps a fixture whether or not the erasures under test got that far. */
+  async function cleanup(fixture: Awaited<ReturnType<typeof makeStudentWithFreedSpot>>) {
+    await prisma.notification.deleteMany({
+      where: { recipientId: { in: [fixture.studentId, fixture.waiterId, fixture.teacherId] } },
+    });
+    await prisma.registration.deleteMany({ where: { classId: fixture.classId } });
+    await prisma.class.deleteMany({ where: { id: fixture.classId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: fixture.teacherId } });
+    await prisma.room.deleteMany({ where: { id: fixture.roomId } });
+    await prisma.student.deleteMany({ where: { id: { in: [fixture.studentId, fixture.waiterId] } } });
+    await prisma.teacher.deleteMany({ where: { id: fixture.teacherId } });
+    await prisma.account.deleteMany({ where: { id: fixture.accountId } });
+  }
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('erases once when the same student erasure runs twice concurrently', async () => {
+    const fixture = await makeStudentWithFreedSpot();
+    try {
+      const results = await Promise.allSettled([
+        deleteStudentAccount(prisma, fixture.studentId),
+        deleteStudentAccount(prisma, fixture.studentId),
+      ]);
+
+      // Asserted before the outcomes, deliberately: the doubled broadcast is
+      // the defect — every waiting student told twice about one freed seat —
+      // and this is the assertion whose failure message names it. With the
+      // rejection count first, dropping the abort fails on "expected 1,
+      // received 0", which says nothing about what it cost anyone.
+      const notifications = await prisma.notification.findMany({
+        where: {
+          relatedClassId: fixture.classId,
+          recipientId: fixture.waiterId,
+          type: 'spot_available',
+        },
+      });
+      expect(notifications).toHaveLength(1);
+
+      // One erases; the other finds the row already erased and aborts whole.
+      const rejected = results.filter((r) => r.status === 'rejected');
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(AlreadyErasedError);
+
+      const student = await prisma.student.findUniqueOrThrow({ where: { id: fixture.studentId } });
+      expect(student.deletedAt).not.toBeNull();
+    } finally {
+      await cleanup(fixture);
+    }
+  }, 30_000);
 });

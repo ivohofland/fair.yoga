@@ -647,4 +647,57 @@ describe('DELETE /api/account', () => {
     });
     expect(second.status).toBe(200);
   }, 40_000);
+
+  /**
+   * #196 branch 2, Task 3, route half. The service now aborts a redundant
+   * erasure with `AlreadyErasedError` so its post-commit `handleSpotFreed`
+   * loop cannot broadcast twice (`gdpr.test.ts` owns that assertion). This
+   * pins the other half of that decision: the loser's abort is a SUCCESS, and
+   * must not fall into `erasureFailure` — which would answer a 500 and tell a
+   * user their account could not be removed, about an account that is gone.
+   *
+   * The lever is the one Tasks 1 and 2 established, for the reason they
+   * recorded: two plain fetches serialise, and a serialised second request
+   * never reaches the guard at all — `resolveSession` resolves only live
+   * profiles, so it would 401 before the route ran. The holder takes the
+   * `Student` row that ends the erasure transaction, so both requests
+   * authenticate against a live profile, both run their whole transaction,
+   * and both park at the write — the interleaving `Promise.all` alone cannot
+   * force. Held well inside the erasure's own 2s `lock_timeout`, so what the
+   * loser meets is the CAS and not `55P03`.
+   */
+  it('answers both halves of a concurrent erasure with success', async () => {
+    const acc = await seedStudentOnly('concurrent');
+
+    let release!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const holding = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Student" WHERE id = ${acc.studentId} FOR UPDATE`;
+        await released;
+      },
+      { timeout: 20_000 },
+    );
+    await new Promise((r) => setTimeout(r, 200));
+
+    const del = () =>
+      fetch(`${BASE_URL}/api/account`, { method: 'DELETE', headers: cookie(acc.token) });
+    const both = Promise.all([del(), del()]);
+
+    await new Promise((r) => setTimeout(r, 700));
+    release();
+    await holding;
+    const [a, b] = await both;
+
+    // Both are honest: the account is gone either way, so neither caller is
+    // told it failed. A 500 here is the defect — a successful outcome
+    // reported as an error — and this is the assertion that names it.
+    expect([a.status, b.status]).toEqual([200, 200]);
+
+    const student = await prisma.student.findUniqueOrThrow({ where: { id: acc.studentId } });
+    expect(student.deletedAt).not.toBeNull();
+    // The winner's transaction is what cleared the session; the loser rolled
+    // back whole and left it alone.
+    expect(await prisma.session.count({ where: { accountId: acc.accountId } })).toBe(0);
+  }, 40_000);
 });

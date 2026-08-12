@@ -222,6 +222,28 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Thrown when an erasure finds the profile already erased.
+ *
+ * Not a failure: the caller's goal is satisfied, by the request that won. It
+ * exists so the transaction ABORTS rather than committing a second, redundant
+ * erasure — `deleteStudentAccount` runs `handleSpotFreed` per freed class
+ * AFTER its transaction commits, so a second commit would broadcast a second
+ * `spot_available` set to every waiting student. Scoping the write alone does
+ * not prevent that; only refusing to commit does. `gdpr.test.ts` ("erases
+ * once when the same student erasure runs twice concurrently") fails on the
+ * doubled broadcast if the scope stays and this throw goes.
+ *
+ * `DELETE /api/account` maps this to the same 200 a first erasure returns —
+ * see that route for why it must not reach `erasureFailure`.
+ */
+export class AlreadyErasedError extends Error {
+  constructor(readonly half: 'student' | 'teacher') {
+    super(`${half} profile is already erased`);
+    this.name = 'AlreadyErasedError';
+  }
+}
+
+/**
  * Deletes a student account: personal data wiped, financial history kept.
  * - profile fields anonymized, email replaced with an unroutable unique one
  * - privacy rows, roster links, waitlist entries, notifications, sessions,
@@ -483,8 +505,21 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
       await reorderWaitingEntries(tx, classId);
     }
 
-    await tx.student.update({
-      where: { id: studentId },
+    // `deletedAt: null` in the WHERE, and a throw on a count of 0. Two
+    // concurrent erasures of one student both reach here — the reads above
+    // ran before either wrote, so both carry the same `upcoming` — and an
+    // unscoped `update({ where: { id } })` let both commit. The scope alone
+    // would not help: the damage is done AFTER this transaction, by the
+    // `handleSpotFreed` loop below, which a committed-but-no-op second
+    // transaction still runs, telling every waiting student a second time
+    // that one seat opened. Aborting is what stops it — the loop is
+    // unreachable from a rolled-back transaction.
+    //
+    // Not an error condition, which is why the sentinel is typed rather than
+    // generic: the caller wanted this profile erased and it is,
+    // `api/account/route.ts` maps it to the same 200 a first erasure gets.
+    const erased = await tx.student.updateMany({
+      where: { id: studentId, deletedAt: null },
       data: {
         firstName: 'Deleted',
         lastName: 'Student',
@@ -497,6 +532,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
         deletedAt: new Date(),
       },
     });
+    if (erased.count === 0) throw new AlreadyErasedError('student');
 
     return upcoming.filter((r) => r.class.status === 'open').map((r) => r.classId);
   }, {
@@ -852,8 +888,24 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       }
       await tx.magicLinkToken.deleteMany({ where: { email: teacher.email } });
 
-      await tx.teacher.update({
-        where: { id: teacherId },
+      // Scoped and aborting, for the same reason the student erasure above
+      // is — see that write for the argument. It matters less here (this
+      // function has no post-commit work of its own) and is done anyway so
+      // the two halves answer a repeated request the same way: the route
+      // catches this sentinel per half, and a teacher half that silently
+      // re-erased while the student half refused would make that catch look
+      // arbitrary to the next reader.
+      //
+      // What this abort does NOT undo, stated so it is not mistaken for a
+      // whole-function guard: the `completeClass` loop at the top of this
+      // function runs BEFORE this transaction opens and commits per class.
+      // A loser that reaches this throw has already been through that loop.
+      // Harmless as it stands — `completeClass` takes the class row lock and
+      // `validateTransition` refuses `completed → completed`, so the loser's
+      // pass is a sequence of no-ops — but it is guarded by that, not by
+      // this.
+      const erased = await tx.teacher.updateMany({
+        where: { id: teacherId, deletedAt: null },
         data: {
           firstName: 'Deleted',
           lastName: 'Teacher',
@@ -869,6 +921,7 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
           deletedAt: new Date(),
         },
       });
+      if (erased.count === 0) throw new AlreadyErasedError('teacher');
     },
     // The `classTemplate.updateMany`/`studioClassTemplate.updateMany` below
     // take the same row locks `claimTemplateForGeneration` /

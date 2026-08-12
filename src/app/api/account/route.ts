@@ -10,7 +10,7 @@ import {
 } from '@/lib/api-utils';
 import { clearSessionCookie } from '@/lib/auth';
 import { isTransientDbError } from '@/lib/api-errors';
-import { deleteStudentAccount, deleteTeacherAccount } from '@/services/gdpr';
+import { AlreadyErasedError, deleteStudentAccount, deleteTeacherAccount } from '@/services/gdpr';
 
 /**
  * Turns an erasure failure into the answer that is actually true of it.
@@ -116,37 +116,68 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
     try {
       await deleteStudentAccount(prisma, session.studentId);
     } catch (err) {
-      const transient = isTransientDbError(err);
-      log[transient ? 'warn' : 'error'](
-        { err, accountId: session.accountId, transient },
-        'account erasure: student half failed',
-      );
-      return erasureFailure(err, { half: 'student', partial: false });
+      // The erasure this request wanted has already happened — a concurrent
+      // duplicate, whose transaction aborted whole rather than committing a
+      // second time and re-running its post-commit `handleSpotFreed` loop.
+      // The caller's question is "is this account gone?" and the honest
+      // answer is yes, so this must NOT reach `erasureFailure`, which would
+      // report a 500 for an outcome that succeeded. Caught per half so a
+      // dual-role account whose student half is already erased still goes on
+      // to erase its teacher half below.
+      //
+      // Only reachable concurrently: a sequential retry never gets here,
+      // because `resolveSession` (`lib/auth/session.ts`) resolves only LIVE
+      // profiles, so `session.studentId` is already null by then.
+      if (err instanceof AlreadyErasedError) {
+        log.info(
+          { accountId: session.accountId, half: err.half },
+          'account erasure: half already erased',
+        );
+      } else {
+        const transient = isTransientDbError(err);
+        log[transient ? 'warn' : 'error'](
+          { err, accountId: session.accountId, transient },
+          'account erasure: student half failed',
+        );
+        return erasureFailure(err, { half: 'student', partial: false });
+      }
     }
   }
   if (session.teacherId) {
     try {
       await deleteTeacherAccount(prisma, session.teacherId);
     } catch (err) {
-      // `partial` only when the student half actually ran and committed.
-      // Without a student profile this is a teacher-only erasure — which is
-      // NOT the same as "nothing is half-applied": `deleteTeacherAccount`
-      // commits a `completeClass` per in-progress class before its own
-      // transaction opens, so a failure here can leave real billing behind.
-      // `erasureFailure`'s `half` is what keeps the message honest about
-      // that. This path used to bare-`throw` into `withErrorHandler`'s
-      // generic 500 with no code at all, and it is the path #174 made MORE
-      // likely to fail: `deleteTeacherAccount` now calls a `completeClass`
-      // that opens with `lockClassRow`'s 2s bound.
-      const partial = Boolean(session.studentId);
-      const transient = isTransientDbError(err);
-      log[transient ? 'warn' : 'error'](
-        { err, accountId: session.accountId, partial, transient },
-        partial
-          ? 'partial account erasure: student half committed, teacher half failed'
-          : 'account erasure: teacher half failed',
-      );
-      return erasureFailure(err, { half: 'teacher', partial });
+      // Already erased by a concurrent duplicate — see the student half
+      // above for why that is a success. Emphatically NOT `partial`: this
+      // half's transaction rolled back whole, so nothing is half-applied,
+      // and routing it through `erasureFailure` would tell a caller their
+      // teaching data survived when the winning request had removed it.
+      if (err instanceof AlreadyErasedError) {
+        log.info(
+          { accountId: session.accountId, half: err.half },
+          'account erasure: half already erased',
+        );
+      } else {
+        // `partial` only when the student half actually ran and committed.
+        // Without a student profile this is a teacher-only erasure — which is
+        // NOT the same as "nothing is half-applied": `deleteTeacherAccount`
+        // commits a `completeClass` per in-progress class before its own
+        // transaction opens, so a failure here can leave real billing behind.
+        // `erasureFailure`'s `half` is what keeps the message honest about
+        // that. This path used to bare-`throw` into `withErrorHandler`'s
+        // generic 500 with no code at all, and it is the path #174 made MORE
+        // likely to fail: `deleteTeacherAccount` now calls a `completeClass`
+        // that opens with `lockClassRow`'s 2s bound.
+        const partial = Boolean(session.studentId);
+        const transient = isTransientDbError(err);
+        log[transient ? 'warn' : 'error'](
+          { err, accountId: session.accountId, partial, transient },
+          partial
+            ? 'partial account erasure: student half committed, teacher half failed'
+            : 'account erasure: teacher half failed',
+        );
+        return erasureFailure(err, { half: 'teacher', partial });
+      }
     }
   }
 
