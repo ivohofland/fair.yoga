@@ -19,7 +19,11 @@
 - **`P2002.meta.target` is the column-name array, not the index name.** Measured: an index Prisma cannot see still yields `{"modelName":"StudioClass","target":["teacherId","date","startTime"]}`, the same shape as a known `@unique` (`["email"]`). All route branching and all test assertions use the column list.
 - **Error body shape is `{ error: { message, code } }`** (`api-utils.ts:18`); tests assert `body.error.code`.
 - **#196 is not closed by this branch.** Branch 2 closes it. Never write "does not close #196" in a commit or PR body — GitHub's auto-close parser ignores the negation (this is how #191 closed #113).
-- **A task that changes the database schema runs the whole `integration` project before it reports DONE** — `npx vitest run --project integration`, not only its own new test file. **Added mid-execution, and the reason is worth carrying:** Task 1 applied a global migration, verified it against its own unit file, and passed two clean reviews while 53 integration tests were red. A per-task review sees one diff; a migration's blast radius is the whole suite. This is the same failure `docs/backlog-roadmap.md` records for #170, where a dark test file and a red lint reached a pushed branch past nine reviews.
+- **A task that changes the database schema runs `npm run verify` before it reports DONE** — all three vitest projects, plus typecheck and lint. Not its own test file, and not one project.
+
+  **This constraint has been wrong once already, and how it was wrong is the point.** Its first version said "the whole `integration` project", written after Task 1 passed two clean reviews while 53 integration tests were red. That fixed the failure I had just seen rather than its cause. The cause is that **a migration's blast radius is the whole suite and a task runs a subset** — so replacing one subset with a bigger subset left the `unit` project (`src/services/*.test.ts`, against `DATABASE_URL_TEST`, which Task 1 correctly migrated too) unrun by every task on the branch. It was red the entire time: 90 tests across 6 files, same constraint shape as the 53. Found only when the controller ran the real gate.
+
+  The lesson generalises past this plan: **when a check misses something, widen it to the thing that would have caught the cause, not to the thing that would have caught the instance.** This is the failure `docs/backlog-roadmap.md` records for #170, where a dark test file and a red lint reached a pushed branch past nine reviews.
 
 ---
 
@@ -1038,6 +1042,38 @@ The plan scoped five **POST** routes. The six indexes constrain **every** write.
 - [ ] **Step 4: Prove the guard bites.** Remove the branch, confirm the test fails with a 500, restore.
 
 - [ ] **Step 5: Record what is NOT fixed.** The underlying cycle stays. A slot move vacates one key and claims another in one statement, so it is not orderable and `docs/lock-order.md`'s ascending-by-id rule cannot express it. This task makes the deadlock legible to the user, not impossible. Say so in `docs/lock-order.md` beside Task 7's entry.
+
+---
+
+## Task 6d: The same repair, in the project the constraint did not name
+
+**Task 3b's twin.** Identical cause, identical rule, different vitest project — found when the controller finally ran `npm run verify` rather than `--project integration`.
+
+Measured baseline: `6 failed | 104 passed (110)` files, `90 failed | 1132 passed | 13 skipped | 2 todo (1237)` tests. All constraint-shaped: **19** on `(teacherId, date, startTime)`, **72** on `(teacherId, dayOfWeek, startTime)`.
+
+Failing files, all in the `unit` project:
+- `src/services/class-lifecycle.test.ts`
+- `src/services/class-template-lifecycle.test.ts`
+- `src/services/class-terminal-status.test.ts`
+- `src/services/studio-class-generator.test.ts`
+- `src/services/studio-class-template-lifecycle.test.ts`
+- `src/services/waitlist.test.ts`
+
+**The rule is Task 3b's, unchanged, and it is the whole task:**
+
+> **A fixture may be moved. It may never be made legal by weakening what its test proves.**
+
+The shortcut that would turn everything green and be wrong: setting a colliding fixture's `status` to `'cancelled'`, giving it a `cancelledAt`, or flipping `isArchived: true` — the partial predicates then stop matching and the constraint stops caring. That makes the suite green precisely by making the data stop exercising the constraint, on a branch whose purpose is that constraint. If a fixture genuinely needs to be cancelled or archived for its test's own meaning, fine; doing it to dodge the index is not.
+
+Repairs in order of preference: **give the colliding fixture its own teacher** (all six indexes are per-teacher, so this removes the collision without touching a single time-dependent assertion); then a different `startTime`/`dayOfWeek`; then a different `date`, only where the test's meaning does not depend on it.
+
+Note the skew: 72 of 90 are template-slot collisions, so `dayOfWeek` reuse across templates for one teacher is the dominant pattern here — different from Task 3b, where the class-slot key dominated.
+
+- [ ] **Step 1: Record the failing baseline** into the report before changing anything.
+- [ ] **Step 2: Repair each file's fixtures**, reading every downstream assertion that references a fixture before moving it. A test that genuinely depends on two rows sharing one teacher's slot is asserting a state the product rule behind #196 forbids — **stop and report it rather than rewriting it.**
+- [ ] **Step 3: Each file green individually** — `npx vitest run --project unit <file>`.
+- [ ] **Step 4: `npm run verify` green**, all three projects, with before/after totals side by side in the report.
+- [ ] **Step 5: Commit per file**, each message naming what that file's fixture was asserting that the domain forbids.
 
 ---
 
