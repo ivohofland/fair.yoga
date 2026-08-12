@@ -84,10 +84,14 @@ export const PUT = withErrorHandler(async (
     );
   }
   // The startTime change propagated to a still-mutable generated instance and
-  // landed it on a slot a different class already occupies (#196).
+  // landed it on a slot a different class already occupies (#196). By the
+  // time this branch runs, `db.classTemplate.update` has already committed —
+  // only the instance sync rolled back — so the message describes what
+  // happened, not a hypothetical: the template moved, its generated classes
+  // did not, and the two are now desynced.
   if (result.reason === 'sync_conflict') {
     return respondError(
-      'That change would move one of your classes onto a time you already have booked.',
+      'The recurring class was updated, but its scheduled classes could not be moved — you already have a class at that time.',
       409,
       'DUPLICATE_CLASS_SLOT',
     );

@@ -1022,8 +1022,15 @@ describe('PUT /api/class-templates/[id]', () => {
       body: JSON.stringify({ startTime: '11:18' }),
     });
     expect(res.status).toBe(409);
-    const json = (await res.json()) as { error: { code: string } };
+    const json = (await res.json()) as { error: { code: string; message: string } };
     expect(json.error.code).toBe('DUPLICATE_CLASS_SLOT');
+    // The message must describe what actually happened, not a hypothetical:
+    // by this point the template write below has already committed, only
+    // the instance sync rolled back, so "would move" (implying nothing
+    // happened) would be false.
+    expect(json.error.message).toBe(
+      'The recurring class was updated, but its scheduled classes could not be moved — you already have a class at that time.',
+    );
 
     // The template row's own write already committed — it is not in the same
     // transaction as the sync that failed.
