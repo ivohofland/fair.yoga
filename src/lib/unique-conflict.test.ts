@@ -43,8 +43,24 @@ describe('isUniqueConflictOn', () => {
     expect(isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])).toBe(false);
   });
 
-  it('is false when meta.target is a different length than the given columns', () => {
+  it('is false when meta.target has one extra column beyond the given columns', () => {
+    // A legitimate different-shape input, but NOT what pins the length
+    // guard: sorted, ['date','roomId','startTime','teacherId'] already
+    // disagrees with ['date','startTime','teacherId'] at index 1
+    // ('roomId' !== 'startTime'), so the element-wise compare below fails
+    // on its own even with `target.length !== columns.length` deleted.
     const err = prismaError('P2002', { target: ['teacherId', 'date', 'startTime', 'roomId'] });
+    expect(isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])).toBe(false);
+  });
+
+  it('is false when meta.target is a sorted prefix of the given columns', () => {
+    // This is the case that actually pins the length guard. `.every()`
+    // walks `got` (the sorted `target`), so it never reaches `want`'s extra
+    // elements — a `target` that is a sorted PREFIX of `columns` passes
+    // every check `.every()` performs and returns `true` unless the length
+    // guard rejects it first. Sorted, ['date','startTime'] is a prefix of
+    // ['date','startTime','teacherId'].
+    const err = prismaError('P2002', { target: ['date', 'startTime'] });
     expect(isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])).toBe(false);
   });
 
@@ -68,7 +84,24 @@ describe('isUniqueConflictOn', () => {
   });
 
   it('is false for a non-Prisma error', () => {
+    // A legitimate different input, but not what pins the `instanceof`
+    // check: a bare Error has no `.code` at all, so `err.code !== 'P2002'`
+    // alone already returns false — this passes even with `instanceof`
+    // deleted.
     expect(isUniqueConflictOn(new Error('boom'), ['teacherId', 'date', 'startTime'])).toBe(false);
+  });
+
+  it('is false for an object shaped like a P2002 but not a real Prisma error', () => {
+    // This is the case that actually pins `instanceof
+    // Prisma.PrismaClientKnownRequestError`. Give an impostor the exact
+    // `.code`/`.meta.target` shape a real P2002 has and nothing here can
+    // tell it apart on those fields alone — only the `instanceof` check
+    // can.
+    const impostor = Object.assign(new Error('impostor'), {
+      code: 'P2002',
+      meta: { target: ['teacherId', 'date', 'startTime'] },
+    });
+    expect(isUniqueConflictOn(impostor, ['teacherId', 'date', 'startTime'])).toBe(false);
   });
 
   it('is false for a thrown non-error value', () => {
