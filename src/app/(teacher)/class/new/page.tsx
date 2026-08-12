@@ -290,15 +290,17 @@ export default function CreateClassPage() {
       }
 
       const json: { data: { id: string } } = await res.json();
-      // #40. POST /api/classes is not idempotent, and nothing on the server
-      // side would catch the second request: the route is a bare
-      // `prisma.class.create` with no dedupe (`api/classes/route.ts`), and
-      // `Class`'s only unique constraint is `@@unique([templateId, date])`,
-      // which a manually created row cannot trip — its `templateId` is null
-      // since #146, and Postgres treats NULLs as distinct. The push below
-      // normally unmounts this wizard; when it does not commit, `createdId` is
-      // what stops a populated review step with "Create class" re-enabled from
-      // inviting the click that creates the same class a second time.
+      // #40. A second identical POST to /api/classes now collides with
+      // `Class_teacher_slot_unique` ((teacherId, date, startTime) WHERE
+      // status <> 'cancelled', #196) and comes back as a 409
+      // DUPLICATE_CLASS_SLOT (`api/classes/route.ts`) rather than a second
+      // row. That backstop is server-side and after the round trip, though —
+      // it does not stop the second request from being sent, or turn its
+      // failure into anything gentler than an error banner. The push below
+      // normally unmounts this wizard; when it does not commit, `createdId`
+      // is what stops a populated review step with "Create class" re-enabled
+      // from inviting the click that resends the same create and now earns a
+      // 409 instead of a silent duplicate.
       setCreatedId(json.data.id);
       router.push(classPath(json.data.id));
     } catch {

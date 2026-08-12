@@ -124,15 +124,18 @@ export default function NewStudioClassPage() {
       }
 
       const json: { data: { id: string } } = await res.json();
-      // #40. POST /api/studio-classes is not idempotent, and nothing server-
-      // side catches the second request: the route is a bare
-      // `prisma.studioClass.create` with no dedupe, and `StudioClass`'s only
-      // unique constraint is `@@unique([templateId, date])`, which a manually
-      // logged class cannot trip — its `templateId` is null since #148, and
-      // Postgres treats NULLs as distinct. The push below normally unmounts
-      // this page; when it does not commit, `createdId` is what stops a
-      // populated form with "Log class" re-enabled from inviting the click
-      // that logs the class twice and double-counts the teacher's income.
+      // #40. A second identical POST to /api/studio-classes now collides
+      // with `StudioClass_teacher_slot_unique` ((teacherId, date, startTime)
+      // WHERE "cancelledAt" IS NULL, #196) and comes back as a 409
+      // DUPLICATE_STUDIO_SLOT (`api/studio-classes/route.ts`) rather than a
+      // second row. That backstop is server-side and after the round trip,
+      // though — it does not stop the second request from being sent, or
+      // turn its failure into anything gentler than an error banner. The
+      // push below normally unmounts this page; when it does not commit,
+      // `createdId` is what stops a populated form with "Log class"
+      // re-enabled from inviting the click that resends the same log and now
+      // earns a 409 instead of silently double-counting the teacher's
+      // income.
       setCreatedId(json.data.id);
       router.push(studioClassPath(json.data.id));
     } catch {
