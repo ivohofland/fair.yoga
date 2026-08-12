@@ -297,6 +297,93 @@ describe('POST /api/payments/[id]/remind', () => {
     // Leave the fixture pending for cleanup symmetry.
     await prisma.payment.update({ where: { id: paymentId }, data: { status: 'pending' } });
   });
+
+  describe('is retry-safe against a concurrent duplicate (#196)', () => {
+    // Its own student and payment: the assertion is a notification count, and
+    // the shared fixture student has already been reminded by the cases above.
+    // The registration hangs off the shared class, so the file's `afterAll`
+    // sweeps the notifications this block produces.
+    let raceStudentId: string;
+    let racePaymentId: string;
+
+    beforeAll(async () => {
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'Race',
+          lastName: 'Remind',
+          email: `pay-race-student-${suffix}@test.local`,
+          incomeTier: 3,
+        },
+        select: { id: true },
+      });
+      raceStudentId = student.id;
+      const registration = await prisma.registration.create({
+        data: { classId, studentId: raceStudentId, tierAtBooking: 3, status: 'attended' },
+      });
+      racePaymentId = (
+        await prisma.payment.create({
+          data: { registrationId: registration.id, amount: 9.5, status: 'pending' },
+        })
+      ).id;
+    });
+
+    afterAll(async () => {
+      // Nested `afterAll`s run before their parent's. Registration and Payment
+      // both cascade off Student; the notifications do not, and the parent's
+      // `relatedClassId` sweep is what collects them.
+      await prisma.student.delete({ where: { id: raceStudentId } });
+    });
+
+    it('duns the student once when the same reminder arrives twice at once', async () => {
+      // A plain `Promise.all` of two fetches serialises — the second request
+      // lands after the first has committed, so the CAS is never the thing
+      // that answers it. The deterministic lever (same as the registration
+      // cancel race in `registrations-api.test.ts`): a second client holds the
+      // payment row locked BEFORE either request runs, so both read `pending`
+      // with no stamp (uncommitted state is invisible under READ COMMITTED)
+      // and both park on the lock at the `updateMany`.
+      const holder = new PrismaClient();
+      let release!: () => void;
+      const released = new Promise<void>((r) => {
+        release = r;
+      });
+      const holding = holder.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Payment" WHERE id = ${racePaymentId} FOR UPDATE`;
+          await released;
+        },
+        { timeout: 20_000 },
+      );
+
+      const remind = () =>
+        fetch(`${BASE_URL}/api/payments/${racePaymentId}/remind`, {
+          method: 'POST',
+          headers: cookie(teacherToken),
+        });
+      const both = Promise.all([remind(), remind()]);
+
+      // Long enough that both requests have read the payment and parked on the
+      // holder's lock, short enough not to approach any transaction timeout.
+      await new Promise((r) => setTimeout(r, 1000));
+      release();
+      await holding;
+      const [a, b] = await both;
+      await holder.$disconnect();
+
+      // Asserted before the status pair, deliberately: the defect is a student
+      // dunned twice for one debt, and this is the assertion whose failure
+      // message names it. With the statuses first, removing the guard fails on
+      // `[200, 200]`, which reports two successful requests without saying
+      // what that cost anyone.
+      const notifications = await prisma.notification.findMany({
+        where: { recipientType: 'student', recipientId: raceStudentId, type: 'reminder' },
+      });
+      expect(notifications).toHaveLength(1);
+
+      // Either request can win, so the loser is identified rather than assumed.
+      expect([a.status, b.status].sort()).toEqual([200, 409]);
+    });
+  });
 });
 
 const UNKNOWN_PAYMENT_ID = '00000000-0000-4000-8000-000000000000';

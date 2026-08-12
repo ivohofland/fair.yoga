@@ -168,6 +168,20 @@ export async function unmarkPaymentPaid(
 // ---------------------------------------------------------------------------
 
 /**
+ * How long a manual reminder suppresses an identical second one.
+ *
+ * Two minutes: long enough to absorb a double-click and a retried request from
+ * a flaky connection, short enough that it is not an anti-nagging policy. That
+ * distinction is deliberate — `send-reminder-button.tsx` documents the calm
+ * "Reminded …" caption as the product's pressure against nagging, and a longer
+ * window here would quietly replace a product stance with a mechanism. The
+ * automatic sweep's own dedupe is a different quantity entirely
+ * (`REMIND_EVERY_DAYS`, `services/payment-reminders.ts`), and this cooldown
+ * does not change it.
+ */
+export const MANUAL_REMIND_COOLDOWN_MS = 2 * 60 * 1000;
+
+/**
  * Send a payment reminder: stamps reminderSentAt and creates the student's
  * reminder notification in one transaction.
  *
@@ -179,25 +193,49 @@ export async function unmarkPaymentPaid(
  * commits between a plain read and the write genuinely can't be raced past.
  * The notification and the stamp share the transaction, so a failed send rolls
  * the stamp back rather than silencing the next scheduled reminder.
+ *
+ * The status is not the whole CAS, though, and on its own it could not stop a
+ * double-click: a reminder does not change status, so two concurrent clicks
+ * both read 'pending', both passed, both stamped and both dunned the student.
+ * `reminderSentAt` is the value that actually moves, so it is in the WHERE too
+ * — bounded by MANUAL_REMIND_COOLDOWN_MS, which is a retry guard and not a
+ * nagging policy (#196).
  */
 export async function sendPaymentReminder(
   db: PrismaClient,
   paymentId: string,
 ): Promise<PaymentResult> {
   return db.$transaction(async (tx): Promise<PaymentResult> => {
-    // Compare-and-swap: the status guard lives in the WHERE clause, so a count
-    // of 0 means the payment is no longer outstanding (paid, or gone) and
-    // nothing is sent.
+    // Compare-and-swap on both things a reminder depends on: the payment is
+    // still outstanding, and it was not just reminded. A count of 0 means one
+    // of those two stopped holding and nothing is sent.
+    const cooldownStart = new Date(Date.now() - MANUAL_REMIND_COOLDOWN_MS);
     const stamped = await tx.payment.updateMany({
-      where: { id: paymentId, status: { in: ['pending', 'overdue'] } },
+      where: {
+        id: paymentId,
+        status: { in: ['pending', 'overdue'] },
+        OR: [{ reminderSentAt: null }, { reminderSentAt: { lt: cooldownStart } }],
+      },
       data: { reminderSentAt: new Date() },
     });
     if (stamped.count === 0) {
       const payment = await tx.payment.findUnique({ where: { id: paymentId } });
       if (!payment) return { ok: false, error: `Payment not found: ${paymentId}` };
+      // Status before cooldown, and not the other way round: a settled payment
+      // is settled whether or not it was reminded a minute ago, and telling
+      // that teacher to try again shortly would promise a retry the status
+      // guard refuses forever. Once the payment IS outstanding, the cooldown is
+      // the only remaining term in the WHERE, so it is the only explanation
+      // left.
+      if (payment.status !== 'pending' && payment.status !== 'overdue') {
+        return {
+          ok: false,
+          error: `Cannot send a reminder: current status is "${payment.status}". Must be "pending" or "overdue".`,
+        };
+      }
       return {
         ok: false,
-        error: `Cannot send a reminder: current status is "${payment.status}". Must be "pending" or "overdue".`,
+        error: 'A reminder for this payment was just sent. Try again in a couple of minutes.',
       };
     }
 

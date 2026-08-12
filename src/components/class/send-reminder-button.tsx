@@ -28,13 +28,18 @@ interface SendReminderButtonProps {
 /**
  * The manual nudge for an outstanding payment (teacher-screens 7.2, IA
  * Flow 4). A send stamps `Payment.reminderSentAt`, which the parent renders
- * as the calm "Reminded …" caption — the only pressure against nagging,
- * since no cooldown is enforced. The stamp also defers the automatic dunning
- * sweep by `REMIND_EVERY_DAYS` (`services/payment-reminders.ts`): a send on a
- * `pending` payment stamps it too, and because `markOverduePayments` never
- * clears the stamp, that deferral carries through when the payment later flips
- * to overdue — so a manual send resets the weekly clock rather than adding to
- * it.
+ * as the calm "Reminded …" caption — that caption is the product's pressure
+ * against nagging, and it still is: the stamp is also CASed against a
+ * two-minute `MANUAL_REMIND_COOLDOWN_MS` (`services/payments.ts`), but that
+ * window is a retry guard, not a policy. It exists so a double-click or a
+ * retried request duns the student once (#196); a second deliberate nudge two
+ * minutes later goes through, and the server answers a suppressed one with a
+ * 409 the button surfaces through `onError`. The stamp also defers the
+ * automatic dunning sweep by `REMIND_EVERY_DAYS`
+ * (`services/payment-reminders.ts`): a send on a `pending` payment stamps it
+ * too, and because `markOverduePayments` never clears the stamp, that deferral
+ * carries through when the payment later flips to overdue — so a manual send
+ * resets the weekly clock rather than adding to it.
  *
  * A controlled trigger: the parent owns the reminded state (so it survives a
  * mark-paid → undo remount) and both the caption and any error render in the

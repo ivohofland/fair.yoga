@@ -7,6 +7,7 @@ import {
   sendPaymentReminder,
   getOutstandingPayments,
   getPaymentsForClass,
+  MANUAL_REMIND_COOLDOWN_MS,
 } from './payments';
 
 const prisma = new PrismaClient();
@@ -363,5 +364,99 @@ describe('Payment Service (DB)', () => {
     expect(forClass.registration.student.email).toBe(
       `payment-student-${uniqueSuffix}@test.local`,
     );
+  });
+
+  /**
+   * The manual reminder's cooldown (#196).
+   *
+   * Last in the file, deliberately. Every payment made here is outstanding
+   * while its test runs, and the two privacy tests above read
+   * `getOutstandingPayments(prisma, teacherId)[0]` — an unordered query — so a
+   * second outstanding row for this teacher earlier in the file would decide
+   * those assertions by luck.
+   */
+  describe('manual reminder cooldown', () => {
+    // Each test gets its own student so it can count that student's reminder
+    // notifications without seeing the shared fixture's. The registrations
+    // hang off the shared class, so the parent `afterAll`'s
+    // `relatedClassId` notification sweep already covers what they produce.
+    const cooldownStudentIds: string[] = [];
+
+    async function makeOutstandingPayment(tag: string): Promise<{
+      paymentId: string;
+      studentId: string;
+    }> {
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'Cooldown',
+          lastName: tag,
+          email: `payment-cooldown-${tag}-${uniqueSuffix}@test.local`,
+          incomeTier: 3,
+        },
+        select: { id: true },
+      });
+      cooldownStudentIds.push(student.id);
+      const registration = await prisma.registration.create({
+        data: { classId, studentId: student.id, status: 'attended', tierAtBooking: 3, price: 12.5 },
+      });
+      const payment = await prisma.payment.create({
+        data: { registrationId: registration.id, amount: 12.5, status: 'pending' },
+      });
+      return { paymentId: payment.id, studentId: student.id };
+    }
+
+    afterAll(async () => {
+      // Nested `afterAll`s run before their parent's, and Registration and
+      // Payment both cascade off Student, so this is the whole cleanup.
+      await prisma.student.deleteMany({ where: { id: { in: cooldownStudentIds } } });
+    });
+
+    it('refuses a second manual reminder inside the cooldown, sending nothing', async () => {
+      const { paymentId: id, studentId: sid } = await makeOutstandingPayment('inside');
+      expect((await sendPaymentReminder(prisma, id)).ok).toBe(true);
+
+      const second = await sendPaymentReminder(prisma, id);
+
+      // The notification count comes before the `ok` assertion, deliberately:
+      // the defect is a student dunned twice for one debt, and this is the
+      // assertion whose failure message names it.
+      expect(
+        await prisma.notification.count({
+          where: { recipientType: 'student', recipientId: sid, type: 'reminder' },
+        }),
+      ).toBe(1);
+      expect(second.ok).toBe(false);
+    });
+
+    it('allows a manual reminder once the cooldown has lapsed', async () => {
+      const { paymentId: id, studentId: sid } = await makeOutstandingPayment('lapsed');
+      expect((await sendPaymentReminder(prisma, id)).ok).toBe(true);
+
+      // Backdate the stamp past the window rather than sleeping two minutes.
+      await prisma.payment.update({
+        where: { id },
+        data: { reminderSentAt: new Date(Date.now() - MANUAL_REMIND_COOLDOWN_MS - 1000) },
+      });
+
+      expect((await sendPaymentReminder(prisma, id)).ok).toBe(true);
+      expect(
+        await prisma.notification.count({
+          where: { recipientType: 'student', recipientId: sid, type: 'reminder' },
+        }),
+      ).toBe(2);
+    });
+
+    it('blames the status, not the cooldown, when a just-reminded payment was settled', async () => {
+      const { paymentId: id } = await makeOutstandingPayment('settled');
+      expect((await sendPaymentReminder(prisma, id)).ok).toBe(true);
+      await prisma.payment.update({ where: { id }, data: { status: 'paid' } });
+
+      // Both terms of the WHERE now fail at once. The status is the one worth
+      // reporting: "try again in a couple of minutes" would promise a retry
+      // that the status guard refuses forever.
+      const refused = await sendPaymentReminder(prisma, id);
+      if (refused.ok) throw new Error('expected the reminder to be refused');
+      expect(refused.error).toContain('"paid"');
+    });
   });
 });
