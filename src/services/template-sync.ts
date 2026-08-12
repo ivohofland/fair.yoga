@@ -14,6 +14,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { generateInstancesForTemplate } from './class-generator';
+import { countSkipReasons } from '@/lib/generation';
 
 export interface TemplateSyncResult {
   /** Instances updated in place. */
@@ -140,10 +141,13 @@ export async function syncTemplateInstances(
       ? await generateInstancesForTemplate(db, template)
       : { created: 0, skipped: [] };
 
+  // `countSkipReasons` (`@/lib/generation`) is the one place
+  // `blockedByCancelled`/`slotTaken` are reduced from `refill.skipped` — see
+  // its docblock for why a fifth `SkipReason` fails the build here instead
+  // of vanishing.
   return {
     ...result,
     refilled: refill.created,
-    blockedByCancelled: refill.skipped.filter((s) => s.reason === 'blocked_by_cancelled').length,
-    slotTaken: refill.skipped.filter((s) => s.reason === 'slot_taken').length,
+    ...countSkipReasons(refill.skipped),
   };
 }

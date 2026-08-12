@@ -31,10 +31,16 @@ import type { NoneOf } from '@/lib/type-pins';
 import { startOfLocalDay } from '@/lib/timezone';
 import { formatDayHeader } from '@/lib/format';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+// Server-only (pino). Safe here: this module's sole importer is
+// `api/class-templates/[id]/route.ts`, and it already pulls `@/lib/log`
+// transitively through `class-generator`. No `'use client'` component
+// value-imports anything in this chain.
+import { log } from '@/lib/log';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { syncTemplateInstances, type TemplateSyncResult } from './template-sync';
 import { generateInstancesForTemplate } from './class-generator';
 import { CHARGED_STATUSES } from './class-lifecycle';
+import { countSkipReasons } from '@/lib/generation';
 
 /**
  * The fields a teacher may change on an existing template.
@@ -336,6 +342,17 @@ export async function updateClassTemplate(
       return { ok: false, reason: 'slot_conflict' };
     }
     if (isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])) {
+      // The one outcome here that leaves the database knowingly inconsistent
+      // — by this point `db.classTemplate.update` above has committed, and
+      // `syncTemplateInstances`'s inner transaction has rolled back — and the
+      // only one that logged nothing before this line: `respondError`
+      // (`api/class-templates/[id]/route.ts`) does not log, and
+      // `withErrorHandler` logs only on `throw`, which this path does not do.
+      // #209.
+      log.warn(
+        { templateId, teacherId },
+        'template updated but its generated-instance sync rolled back — template and instances are now desynced',
+      );
       return { ok: false, reason: 'sync_conflict' };
     }
     throw err;
@@ -577,10 +594,11 @@ export async function pauseOrResumeTemplate(
       // on: `data` here is `{ isActive: desiredActive }` — nothing else — and
       // `ClassTemplate_teacher_slot_unique` covers `(teacherId, dayOfWeek,
       // startTime)` `WHERE isArchived = false`. None of those four columns is
-      // in this write's `data`, so a row that already satisfied the
-      // constraint cannot newly violate it by having `isActive` alone
-      // change — Postgres only re-validates a unique index against columns a
-      // statement actually writes. That exemption is local to this write, not
+      // in this write's `data`, so the indexed values themselves are
+      // unchanged: a row that already satisfied the constraint still does,
+      // regardless of which mechanism Postgres uses to re-check it — the
+      // conclusion holds without needing to claim anything about that
+      // mechanism. That exemption is local to this write, not
       // to the file: `archiveOrUnarchiveTemplate`'s own CAS, a few hundred
       // lines down, DOES write `isArchived`, and un-archiving into a slot
       // another live template holds is exactly what makes that one raise
@@ -632,16 +650,17 @@ export async function pauseOrResumeTemplate(
   }
 
   // `scheduled` was counted inside the transaction above — see the comment
-  // there for why it is not recomputed here.
+  // there for why it is not recomputed here. `countSkipReasons`
+  // (`@/lib/generation`) is the one place `blockedByCancelled`/`slotTaken`
+  // are reduced from `generation.skipped` — see its docblock for why a fifth
+  // `SkipReason` fails the build here instead of vanishing.
   return {
     ok: true,
     action: 'active',
     template: template_,
     scheduled,
     added: generation.created,
-    blockedByCancelled: generation.skipped.filter((s) => s.reason === 'blocked_by_cancelled')
-      .length,
-    slotTaken: generation.skipped.filter((s) => s.reason === 'slot_taken').length,
+    ...countSkipReasons(generation.skipped),
   };
 }
 
@@ -821,7 +840,8 @@ export async function archiveOrUnarchiveTemplate(
         // #112. Who is waiting on a class this archive might withdraw.
         //
         // Read BEFORE the delete because `WaitlistEntry.class` is
-        // `onDelete: Cascade` (`schema.prisma:517`) — after the delete these rows
+        // `onDelete: Cascade` (the `WaitlistEntry` model's `class` relation
+        // in `prisma/schema.prisma`) — after the delete these rows
         // do not exist to be read. Decided AFTER it, from the survivor read
         // below, because this read is not the delete's own evaluation.
         //
@@ -907,7 +927,8 @@ export async function archiveOrUnarchiveTemplate(
 
           if (withdrawn.length > 0) {
             // No `relatedClassId`: the row is gone and the FK is `SetNull`
-            // (`schema.prisma:563`), so the notification outlives its class with
+            // (the `Notification` model's `relatedClass` relation in
+            // `prisma/schema.prisma`), so the notification outlives its class with
             // a null link. Passing the id would fail the insert's FK outright.
             // The body has to name the class or the student is left with an inbox
             // entry they cannot place.

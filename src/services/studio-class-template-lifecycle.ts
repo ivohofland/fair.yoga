@@ -35,6 +35,7 @@
 import type { PrismaClient, StudioClassTemplate } from '@prisma/client';
 import { startOfLocalDay } from '@/lib/timezone';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { countSkipReasons } from '@/lib/generation';
 // Server-only (pino). Safe here: this module's sole importer is
 // `api/studio-class-templates/[id]/route.ts`, and it already pulls `@/lib/log`
 // transitively through `studio-class-generator`. No `'use client'` component
@@ -298,6 +299,22 @@ export async function pauseOrResumeStudioTemplate(
       // it takes the same mode — but the first limb: it raises P2025 where
       // `updateMany` returns `{ count: 0 }`, so the write itself becomes a
       // P2025 source needing its own guard.
+      //
+      // No P2002 guard here either, and this one is worth proving rather
+      // than asserting — the class family's `pauseOrResumeTemplate`
+      // (`class-template-lifecycle.ts`) carries the identical proof for its
+      // own CAS, and it never got ported here. `data` below is
+      // `{ isActive: desiredActive }` — nothing else — and
+      // `StudioClassTemplate_teacher_slot_unique` covers `(teacherId,
+      // dayOfWeek, startTime)` `WHERE isArchived = false`. None of those four
+      // columns is in this write's `data`, so the indexed values themselves
+      // are unchanged: a row that already satisfied the constraint still
+      // does, regardless of which mechanism Postgres uses to re-check it.
+      // That exemption is local to this write, not to the file:
+      // `archiveOrUnarchiveStudioTemplate`'s own CAS, further down, DOES
+      // write `isArchived`, and un-archiving into a slot another live
+      // template holds is exactly what makes that one raise P2002 — see its
+      // own `catch` for where that is handled.
       const swapped = await tx.studioClassTemplate.updateMany({
         where: { id: templateId, isArchived: false, isActive: !desiredActive },
         data: { isActive: desiredActive },
@@ -412,10 +429,11 @@ export async function pauseOrResumeStudioTemplate(
       // budget, and do not "correct" the 10s above to match it.
       const generation = await generateStudioInstancesForTemplate(tx, claimed);
       const added = generation.created;
-      const blockedByCancelled = generation.skipped.filter(
-        (s) => s.reason === 'blocked_by_cancelled',
-      ).length;
-      const slotTaken = generation.skipped.filter((s) => s.reason === 'slot_taken').length;
+      // `countSkipReasons` (`@/lib/generation`) is the one place
+      // `blockedByCancelled`/`slotTaken` are reduced from
+      // `generation.skipped` — see its docblock for why a fifth
+      // `SkipReason` fails the build here instead of vanishing.
+      const { blockedByCancelled, slotTaken } = countSkipReasons(generation.skipped);
 
       // Same helper and same boundary as `archiveOrUnarchiveStudioTemplate`'s
       // `remaining`, so archiving and resuming report on one basis. `gte`, not

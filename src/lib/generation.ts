@@ -1,17 +1,24 @@
 /**
  * The result shape both instance generators return.
  *
- * Import-free on purpose, but note what that claim rests on: today the only
- * importers are the two server-side generators, both via `import type`. It is
- * not, at present, load-bearing for any client bundle — unlike `src/lib/tiers.ts`
- * and `src/lib/class-fields.ts`, which each name real `'use client'` files that
- * *value*-import them.
+ * This module is import-free on purpose — it declares no dependency of its
+ * own — but note what that claim rests on: it is not, at present, load-bearing
+ * for any client bundle, unlike `src/lib/tiers.ts` and `src/lib/class-fields.ts`,
+ * which each name real `'use client'` files that *value*-import them. Today's
+ * importers are two server-side generators (`import type` only) and, since
+ * `countSkipReasons` below, five more server-only services and routes that
+ * *value*-import it: `api/class-templates/route.ts`,
+ * `api/studio-class-templates/route.ts`, `class-template-lifecycle.ts`,
+ * `studio-class-template-lifecycle.ts`, `template-sync.ts`. None of those is a
+ * `'use client'` file, so the client-bundle conclusion still holds — but the
+ * "only importers" half of this sentence should be re-checked before being
+ * trusted, the same way this paragraph corrects it now.
  *
- * The rule is kept anyway because these names are meant to reach the copy layer
- * — `template-action-messages.ts` takes the counts as bare numbers now, and a
- * later change that hands it a `SkipReason` should not have to relocate this
- * module first. Being import-free is what keeps that option open; it is a
- * precaution, not a fix for an existing bundle problem.
+ * The import-free rule is kept anyway because these names are meant to reach
+ * the copy layer — `template-action-messages.ts` takes the counts as bare
+ * numbers now, and a later change that hands it a `SkipReason` should not have
+ * to relocate this module first. Being import-free is what keeps that option
+ * open; it is a precaution, not a fix for an existing bundle problem.
  */
 
 /**
@@ -37,4 +44,56 @@ export interface SkippedSlot {
 export interface GenerationResult {
   created: number;
   skipped: SkippedSlot[];
+}
+
+/**
+ * The two `SkipReason` counts every caller surfaces to a teacher —
+ * `blockedByCancelled` and `slotTaken`. `already_generated` and `raced` are
+ * both deliberately excluded, for different reasons: `already_generated` is
+ * the expected, steady-state outcome of an idempotent re-run and saying so
+ * would be noise (`logSkippedSlots` in `class-generator.ts` already treats it
+ * the same way); `raced` is "a free date that did not come back" — a lost
+ * contention race whose date will simply be picked up on the next run, and
+ * today reaches no user anywhere.
+ */
+export interface SkipCounts {
+  blockedByCancelled: number;
+  slotTaken: number;
+}
+
+/**
+ * The one place `GenerationResult['skipped']` is reduced to the counts a
+ * caller surfaces. Five call sites used to each filter two of four
+ * `SkipReason` members by hand — `api/class-templates/route.ts`,
+ * `api/studio-class-templates/route.ts`, `class-template-lifecycle.ts`,
+ * `studio-class-template-lifecycle.ts`, `template-sync.ts` — so a fifth
+ * `SkipReason` member would have compiled clean and vanished at every one of
+ * them. The exhaustive `switch` below is what turns that into a single
+ * compile error instead: this project already uses the `const unhandled:
+ * never` idiom for exactly this shape (see the API routes' own `never`
+ * exhaustiveness checks), and reducing once is what lets one instance of it
+ * cover all five call sites rather than needing five.
+ */
+export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
+  let blockedByCancelled = 0;
+  let slotTaken = 0;
+  for (const { reason } of skipped) {
+    switch (reason) {
+      case 'blocked_by_cancelled':
+        blockedByCancelled += 1;
+        break;
+      case 'slot_taken':
+        slotTaken += 1;
+        break;
+      case 'already_generated':
+      case 'raced':
+        // Deliberately excluded — see `SkipCounts`'s own docblock.
+        break;
+      default: {
+        const unhandled: never = reason;
+        throw new Error(`countSkipReasons: unhandled SkipReason ${String(unhandled)}`);
+      }
+    }
+  }
+  return { blockedByCancelled, slotTaken };
 }

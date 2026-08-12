@@ -12,7 +12,7 @@ import {
 import { createStudioClassTemplateSchema } from '@/lib/schemas';
 import { generateStudioInstancesForTemplate } from '@/services/studio-class-generator';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
-import type { GenerationResult } from '@/lib/generation';
+import { countSkipReasons, type GenerationResult } from '@/lib/generation';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -92,16 +92,15 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // The same counts the PATCH `active` arm carries — see the class family's
   // POST for why 201 with no counts stopped being a complete answer once the
-  // slot pre-check could decline every candidate date, and for the note that no
-  // create form renders them yet.
+  // slot pre-check could decline every candidate date, and for
+  // `countSkipReasons` (`@/lib/generation`), the one place both reductions
+  // live. The create form reads these and stays on the page to say so when
+  // the window isn't full (`studio-template-form.tsx`).
   return respondOk(
     {
       ...created,
       added: template.generation.created,
-      blockedByCancelled: template.generation.skipped.filter(
-        (s) => s.reason === 'blocked_by_cancelled',
-      ).length,
-      slotTaken: template.generation.skipped.filter((s) => s.reason === 'slot_taken').length,
+      ...countSkipReasons(template.generation.skipped),
     },
     201,
   );
