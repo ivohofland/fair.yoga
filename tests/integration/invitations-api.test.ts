@@ -2793,3 +2793,119 @@ describe('the unlink withdrawal takes the class lock (#166 whole-branch I4)', ()
     })).not.toBeNull();
   });
 });
+
+describe('invitation writes are retry-safe against a concurrent decline (#196)', () => {
+  let raceTeacherId: string;
+  let raceTeacherAccountId: string;
+  let raceTeacherToken: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Race', lastName: 'Invitation',
+        email: `inv-race-teacher-${suffix}@test.local`,
+        account: { create: { email: `inv-race-teacher-${suffix}@test.local` } },
+        bio: 'Teacher for concurrent-decline invitation tests',
+        pageSlug: `inv-race-teacher-${suffix}`,
+      },
+    });
+    raceTeacherId = teacher.id;
+    raceTeacherAccountId = teacher.accountId;
+    raceTeacherToken = await seedSession(prisma, raceTeacherAccountId);
+  });
+
+  afterAll(async () => {
+    await prisma.invitation.deleteMany({ where: { teacherId: raceTeacherId } });
+    await prisma.teacherBlock.deleteMany({ where: { teacherId: raceTeacherId } });
+    await prisma.session.deleteMany({ where: { accountId: raceTeacherAccountId } });
+    await prisma.teacher.deleteMany({ where: { id: raceTeacherId } });
+    await prisma.account.deleteMany({ where: { id: raceTeacherAccountId } });
+  });
+
+  it('refuses to delete a row that was declined while the request was in flight', async () => {
+    const email = `race-delete-${suffix}@test.local`;
+    const inv = await prisma.invitation.create({
+      data: { teacherId: raceTeacherId, email, firstName: 'Race', lastName: 'Delete', status: 'pending' },
+    });
+
+    // The holder declines and holds it UNCOMMITTED, so the route's own
+    // pre-check still reads `pending` and its write then parks on the
+    // holder's row lock — the same lever the generator race tests use.
+    const holder = new PrismaClient();
+    let release!: () => void;
+    let declined!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const parked = new Promise<void>((r) => { declined = r; });
+    const holding = holder.$transaction(async (tx) => {
+      await tx.invitation.updateMany({
+        where: { id: inv.id, status: 'pending' },
+        data: { status: 'declined', respondedAt: new Date() },
+      });
+      declined();
+      await released;
+    }, { timeout: 20_000 });
+
+    await parked;
+    const deleting = fetch(`${BASE_URL}/api/invitations/${inv.id}`, {
+      method: 'DELETE',
+      headers: cookie(raceTeacherToken),
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    release();
+    await holding;
+    const res = await deleting;
+    await holder.$disconnect();
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('DECLINED_IS_PERMANENT');
+
+    // The tombstone survived, which is the whole point of the guard.
+    const still = await prisma.invitation.findUnique({ where: { id: inv.id } });
+    expect(still).not.toBeNull();
+    expect(still!.status).toBe('declined');
+  });
+
+  it('refuses to edit a row that was declined while the request was in flight', async () => {
+    const email = `race-put-${suffix}@test.local`;
+    const inv = await prisma.invitation.create({
+      data: { teacherId: raceTeacherId, email, firstName: 'Race', lastName: 'Put', status: 'pending' },
+    });
+
+    // Same lever as the delete test: the edit's own pre-check reads
+    // `pending`, and the write parks on the holder's uncommitted decline.
+    const holder = new PrismaClient();
+    let release!: () => void;
+    let declined!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const parked = new Promise<void>((r) => { declined = r; });
+    const holding = holder.$transaction(async (tx) => {
+      await tx.invitation.updateMany({
+        where: { id: inv.id, status: 'pending' },
+        data: { status: 'declined', respondedAt: new Date() },
+      });
+      declined();
+      await released;
+    }, { timeout: 20_000 });
+
+    await parked;
+    const editing = fetch(`${BASE_URL}/api/invitations/${inv.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(raceTeacherToken) },
+      body: JSON.stringify({ email: `race-put-moved-${suffix}@test.local` }),
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    release();
+    await holding;
+    const res = await editing;
+    await holder.$disconnect();
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('DECLINED_IS_PERMANENT');
+
+    // The tombstone still keys on the original address — an edit that
+    // landed would have freed it for a fresh invite.
+    const still = await prisma.invitation.findUniqueOrThrow({ where: { id: inv.id } });
+    expect(still.email).toBe(email);
+    expect(still.status).toBe('declined');
+  });
+});

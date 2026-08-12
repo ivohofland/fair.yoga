@@ -89,10 +89,12 @@ export const PUT = withErrorHandler(async (
   // `POST /api/students` answers with, since it is the same constraint —
   // but the message is the edit form's, because "another contact holds this
   // address" is what the teacher standing on this page can act on.
-  let updated: { id: string };
+  let changed: { count: number };
   try {
-    updated = await prisma.invitation.update({
-      where: { id },
+    changed = await prisma.invitation.updateMany({
+      // Status in the WHERE for the same reason DELETE has it: the pre-check
+      // above cannot see a decline that commits in its gap.
+      where: { id, status: { not: 'declined' } },
       // Nothing here lowercases `email` — it arrives already normalised
       // by `emailField` (`updateInvitationSchema`, src/lib/schemas.ts) at
       // HTTP ingress, and `Invitation_email_lowercase_check` rejects
@@ -100,7 +102,6 @@ export const PUT = withErrorHandler(async (
       // the uniqueness check and later account-matching both depend on that
       // holding for every row, not just the ones created through POST.
       data: { ...rest, ...(email !== undefined ? { email } : {}) },
-      select: { id: true },
     });
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -112,8 +113,14 @@ export const PUT = withErrorHandler(async (
     }
     throw err;
   }
-
-  return respondOk({ id: updated.id });
+  if (changed.count === 0) {
+    return respondError(
+      'This person declined. You can archive this contact, but it cannot be removed.',
+      409,
+      'DECLINED_IS_PERMANENT',
+    );
+  }
+  return respondOk({ id });
 });
 
 export const DELETE = withErrorHandler(async (
@@ -140,7 +147,22 @@ export const DELETE = withErrorHandler(async (
     );
   }
 
-  await prisma.invitation.delete({ where: { id } });
+  // The pre-check above is a read-then-write, so a decline committing in the
+  // gap would reach a plain `delete({ where: { id } })` and destroy the
+  // tombstone anyway. The status lives in the WHERE for that reason: a count
+  // of 0 means the row went declined underneath us, and the answer is the
+  // same 409 the pre-check gives. Same idiom as `revivePendingInvitation`
+  // (`services/invitations.ts`), which CASes on `status: 'accepted'`.
+  const removed = await prisma.invitation.deleteMany({
+    where: { id, status: { not: 'declined' } },
+  });
+  if (removed.count === 0) {
+    return respondError(
+      'This person declined. You can archive this contact, but it cannot be removed.',
+      409,
+      'DECLINED_IS_PERMANENT',
+    );
+  }
   return respondOk({ id });
 });
 
@@ -171,6 +193,13 @@ export const PATCH = withErrorHandler(async (
     return respondOk({ isArchived: invitation.isArchived, action: 'unchanged' });
   }
 
+  // Deliberately NOT status-scoped, unlike DELETE and PUT above. Archiving a
+  // declined row is the escape hatch those two refusals point at, so a CAS on
+  // `status: { not: 'declined' }` here would remove the only thing a teacher
+  // can still do with a tombstone. `invitations-api.test.ts` ('archives a
+  // declined row') fails if this is ever scoped. The read-then-write gap that
+  // matters there is benign: two concurrent PATCHes converge on one
+  // `isArchived`.
   const updated = await prisma.invitation.update({
     where: { id },
     data: { isArchived: archiving },
