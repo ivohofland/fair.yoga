@@ -329,6 +329,27 @@ describe('/api/studio-class-templates/[id] — ownership', () => {
   });
 });
 
+// Task 6b (#196). `StudioClassTemplate_teacher_slot_unique` is (teacherId,
+// dayOfWeek, startTime) WHERE isArchived = false — a plain edit can move a
+// live template onto a slot another of the teacher's live templates already
+// holds, the same clash `POST` guards against on create.
+describe('PUT /api/studio-class-templates/[id] collides on the slot key (#196)', () => {
+  it('refuses a dayOfWeek/startTime change onto a slot another live template already holds', async () => {
+    await makeTemplate(ownerId, 'PUT Slot Occupant', { startTime: '18:20' });
+    const mover = await makeTemplate(ownerId, 'PUT Slot Mover', { startTime: '18:21' });
+
+    const res = await send('PUT', ownerToken, `/api/studio-class-templates/${mover.id}`, {
+      startTime: '18:20',
+    });
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('DUPLICATE_STUDIO_TEMPLATE_SLOT');
+
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: mover.id } });
+    expect(after.startTime).toBe('18:21');
+  });
+});
+
 describe('PATCH /api/studio-class-templates/[id]', () => {
   it('reaches paused then active as named, and archiving forces inactive', async () => {
     const id = (await makeTemplate(ownerId, 'Toggle Target', { startTime: '18:01' })).id;
@@ -395,6 +416,34 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
     expect(after.isArchived).toBe(false);
     // Explicit activation is the separate, deliberate step.
     expect(after.isActive).toBe(false);
+  });
+
+  // Task 6b (#196). `StudioClassTemplate_teacher_slot_unique` is (teacherId,
+  // dayOfWeek, startTime) WHERE isArchived = false — un-archiving is the one
+  // transition that re-enters that partial scope, so a shelved template can
+  // now collide with a live one holding the same slot.
+  it('refuses to un-archive into a slot another live template already holds', async () => {
+    const live = (await makeTemplate(ownerId, 'Unarchive Slot Live', { startTime: '18:22' })).id;
+    const shelved = (
+      await makeTemplate(ownerId, 'Unarchive Slot Shelved', {
+        startTime: '18:22',
+        isArchived: true,
+        isActive: false,
+      })
+    ).id;
+    void live;
+
+    const res = await send(
+      'PATCH',
+      ownerToken,
+      `/api/studio-class-templates/${shelved}?state=unarchived`,
+    );
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('DUPLICATE_STUDIO_TEMPLATE_SLOT');
+
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: shelved } });
+    expect(after.isArchived).toBe(true);
   });
 
   // #86, mirroring class-templates-api.test.ts's equivalent case: archiving

@@ -34,6 +34,7 @@
 
 import type { PrismaClient, StudioClassTemplate } from '@prisma/client';
 import { startOfLocalDay } from '@/lib/timezone';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
 // Server-only (pino). Safe here: this module's sole importer is
 // `api/studio-class-templates/[id]/route.ts`, and it already pulls `@/lib/log`
 // transitively through `studio-class-generator`. No `'use client'` component
@@ -140,7 +141,8 @@ export type ArchiveStudioTemplateResult =
   | { ok: true; action: 'unarchived'; template: StudioClassTemplate }
   | { ok: true; action: 'unchanged'; template: StudioClassTemplate }
   | { ok: false; reason: 'not_found' }
-  | { ok: false; reason: 'forbidden' };
+  | { ok: false; reason: 'forbidden' }
+  | { ok: false; reason: 'slot_conflict' };
 
 /**
  * Studio classes still on the schedule for a template, from the given
@@ -576,141 +578,156 @@ export async function archiveOrUnarchiveStudioTemplate(
 
   const timeZone = template.teacher.defaultTimezone;
 
-  return db.$transaction(
-    async (tx) => {
-      // Compare-and-swap, mirroring `archiveOrUnarchiveTemplate` — see there
-      // for what a plain `update` cost: the loser of a race overwrote the
-      // winner's `archivedAt`/`withdrawnCount` with a `0` its own
-      // `deleteMany` produced only because the winner had already deleted
-      // those classes. Constraining the write to `isArchived: !archiving`
-      // makes the transition itself the thing that can happen only once.
-      //
-      // Still the transaction's first statement, deliberately: this is what
-      // locks the row `claimStudioTemplateForGeneration`
-      // (studio-class-generator.ts) locks with its `FOR UPDATE`. Not the same
-      // lock mode — an `updateMany` touching no key column takes `FOR NO KEY
-      // UPDATE` — but the two *conflict*, and the timeout below exists for
-      // the wait that conflict can impose.
-      //
-      // No P2025 guard here, unlike `updateClassTemplate` and
-      // `pauseOrResumeTemplate` in the class family (#100). Not an omission:
-      // `updateMany` returns `{ count: 0 }` rather than throwing when nothing
-      // matches, and the zero-count branch below already answers `not_found`
-      // by re-reading. The `findUniqueOrThrow`/`update` sites further down
-      // *can* raise P2025, but only run after this CAS matched, which holds
-      // `FOR NO KEY UPDATE` on this row until commit — `pauseOrResumeStudioTemplate`'s
-      // own docstring above already names this CAS's mode in passing ("a
-      // concurrent archive's own CAS"). That conflicts with the `FOR
-      // UPDATE`-strength lock a concurrent `DELETE` needs, so it blocks
-      // rather than wins. What a plain single-record `update` would change is
-      // not the lock — it takes the same mode — but the first limb: it raises
-      // P2025 where `updateMany` returns `{ count: 0 }`, so the write itself
-      // becomes a P2025 source needing its own guard.
-      const swapped = await tx.studioClassTemplate.updateMany({
-        where: { id: templateId, isArchived: !archiving },
-        data: {
-          isArchived: archiving,
-          isActive: false,
-          // Folded in rather than issued as a second `update`: `null` depends
-          // on nothing this transaction has yet to do, unlike the archiving
-          // arm's `withdrawnCount` below.
-          ...(archiving ? {} : { archivedAt: null, withdrawnCount: null }),
-        },
-      });
-
-      if (swapped.count === 0) {
-        // Another request already applied the transition, or the row is gone.
-        // Read which rather than assuming. Re-read rather than reusing the
-        // snapshot from the top of this function — that one still carries the
-        // value the winner just falsified. See the class family's twin for why
-        // the flag on the returned row can still be stale under three
-        // concurrent requests, and why locking here would not be worth it.
-        const current = await tx.studioClassTemplate.findUnique({ where: { id: templateId } });
-        if (!current) return { ok: false as const, reason: 'not_found' as const };
-        return { ok: true as const, action: 'unchanged' as const, template: current };
-      }
-
-      if (!archiving) {
-        // `updateMany` returns a count, not a row, and every arm of the
-        // contract carries a template. Safe to read back here specifically
-        // because the CAS above holds this row's lock until we commit — the
-        // same lock-then-read pattern the generator's claim uses.
+  // Un-archiving (`archiving === false`) flips `isArchived` from `true` to
+  // `false` in the CAS below, which is the one write in this function that
+  // can newly enter `StudioClassTemplate_teacher_slot_unique`'s partial scope
+  // (`WHERE isArchived = false`, #196) — archiving only ever leaves it, which
+  // cannot collide. Wrapped around the whole `$transaction`, not just the
+  // CAS statement, because a P2002 raised inside a Postgres transaction
+  // aborts it and the driver surfaces that failure from `$transaction`
+  // itself, not from the individual `await` that triggered it.
+  try {
+    return await db.$transaction(
+      async (tx) => {
+        // Compare-and-swap, mirroring `archiveOrUnarchiveTemplate` — see there
+        // for what a plain `update` cost: the loser of a race overwrote the
+        // winner's `archivedAt`/`withdrawnCount` with a `0` its own
+        // `deleteMany` produced only because the winner had already deleted
+        // those classes. Constraining the write to `isArchived: !archiving`
+        // makes the transition itself the thing that can happen only once.
         //
-        // A template that is no longer archived has no withdrawal to report.
-        // Not a *live* one — the CAS above forced `isActive: false` in the
-        // same write, so what is standing here is paused. Leaving a stale
-        // count on it would be worse than having none (#97).
-        const cleared = await tx.studioClassTemplate.findUniqueOrThrow({
-          where: { id: templateId },
+        // Still the transaction's first statement, deliberately: this is what
+        // locks the row `claimStudioTemplateForGeneration`
+        // (studio-class-generator.ts) locks with its `FOR UPDATE`. Not the same
+        // lock mode — an `updateMany` touching no key column takes `FOR NO KEY
+        // UPDATE` — but the two *conflict*, and the timeout below exists for
+        // the wait that conflict can impose.
+        //
+        // No P2025 guard here, unlike `updateClassTemplate` and
+        // `pauseOrResumeTemplate` in the class family (#100). Not an omission:
+        // `updateMany` returns `{ count: 0 }` rather than throwing when nothing
+        // matches, and the zero-count branch below already answers `not_found`
+        // by re-reading. The `findUniqueOrThrow`/`update` sites further down
+        // *can* raise P2025, but only run after this CAS matched, which holds
+        // `FOR NO KEY UPDATE` on this row until commit — `pauseOrResumeStudioTemplate`'s
+        // own docstring above already names this CAS's mode in passing ("a
+        // concurrent archive's own CAS"). That conflicts with the `FOR
+        // UPDATE`-strength lock a concurrent `DELETE` needs, so it blocks
+        // rather than wins. What a plain single-record `update` would change is
+        // not the lock — it takes the same mode — but the first limb: it raises
+        // P2025 where `updateMany` returns `{ count: 0 }`, so the write itself
+        // becomes a P2025 source needing its own guard.
+        const swapped = await tx.studioClassTemplate.updateMany({
+          where: { id: templateId, isArchived: !archiving },
+          data: {
+            isArchived: archiving,
+            isActive: false,
+            // Folded in rather than issued as a second `update`: `null` depends
+            // on nothing this transaction has yet to do, unlike the archiving
+            // arm's `withdrawnCount` below.
+            ...(archiving ? {} : { archivedAt: null, withdrawnCount: null }),
+          },
         });
-        return { ok: true as const, action: 'unarchived' as const, template: cleared };
-      }
 
-      // One clock reading serves both the calendar boundary and the
-      // timestamp recorded below. `StudioClass.date` is `@db.Date`, so both
-      // sides of every comparison below are calendar dates. See
-      // `archiveOrUnarchiveTemplate` for what comparing the column to a raw
-      // instant costs in each direction.
-      const now = new Date();
-      const today = startOfLocalDay(now, timeZone);
+        if (swapped.count === 0) {
+          // Another request already applied the transition, or the row is gone.
+          // Read which rather than assuming. Re-read rather than reusing the
+          // snapshot from the top of this function — that one still carries the
+          // value the winner just falsified. See the class family's twin for why
+          // the flag on the returned row can still be stale under three
+          // concurrent requests, and why locking here would not be worth it.
+          const current = await tx.studioClassTemplate.findUnique({ where: { id: templateId } });
+          if (!current) return { ok: false as const, reason: 'not_found' as const };
+          return { ok: true as const, action: 'unchanged' as const, template: current };
+        }
 
-      // Deliberately one statement, not a `findMany` followed by a
-      // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
-      // class get cancelled in the gap between them under READ COMMITTED, and
-      // the delete — keyed only on the ids already read — would not re-check
-      // it, destroying a class that became an income record after the read.
-      // Passing the predicate straight to `deleteMany` makes Postgres
-      // re-evaluate it at execution time, and its returned `count` is the
-      // number of rows that actually matched then — not a stale count from an
-      // earlier read. Do not "optimise" this back into a read-then-delete.
-      const { count: deleted } = await tx.studioClass.deleteMany({
-        where: scheduledWhere(templateId, { gt: today }),
-      });
+        if (!archiving) {
+          // `updateMany` returns a count, not a row, and every arm of the
+          // contract carries a template. Safe to read back here specifically
+          // because the CAS above holds this row's lock until we commit — the
+          // same lock-then-read pattern the generator's claim uses.
+          //
+          // A template that is no longer archived has no withdrawal to report.
+          // Not a *live* one — the CAS above forced `isActive: false` in the
+          // same write, so what is standing here is paused. Leaving a stale
+          // count on it would be worse than having none (#97).
+          const cleared = await tx.studioClassTemplate.findUniqueOrThrow({
+            where: { id: templateId },
+          });
+          return { ok: true as const, action: 'unarchived' as const, template: cleared };
+        }
 
-      // `gte`, where the delete used `gt`: the delete spares a class dated
-      // today, and counting with its boundary would undercount that same
-      // survivor. No charged-status filter is needed here, unlike the class
-      // sibling — `StudioClass` has no registrations to consult, so every
-      // uncancelled row in scope counts.
-      const remaining = await tx.studioClass.count({
-        where: scheduledWhere(templateId, { gte: today }),
-      });
+        // One clock reading serves both the calendar boundary and the
+        // timestamp recorded below. `StudioClass.date` is `@db.Date`, so both
+        // sides of every comparison below are calendar dates. See
+        // `archiveOrUnarchiveTemplate` for what comparing the column to a raw
+        // instant costs in each direction.
+        const now = new Date();
+        const today = startOfLocalDay(now, timeZone);
 
-      // Written from the delete's own `count`, inside the same transaction
-      // (#97). A second statement rather than folded into the CAS above, on
-      // data dependency alone: `deleted` does not exist until the `deleteMany`
-      // has run, and the CAS runs before it — see `archiveOrUnarchiveTemplate`
-      // for the separate lock-ordering point that keeps the CAS first. A plain
-      // single-record `update` is enough: the CAS's lock is still held, so
-      // nothing can have moved this row since.
-      const recorded = await tx.studioClassTemplate.update({
-        where: { id: templateId },
-        data: { archivedAt: now, withdrawnCount: deleted },
-      });
+        // Deliberately one statement, not a `findMany` followed by a
+        // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
+        // class get cancelled in the gap between them under READ COMMITTED, and
+        // the delete — keyed only on the ids already read — would not re-check
+        // it, destroying a class that became an income record after the read.
+        // Passing the predicate straight to `deleteMany` makes Postgres
+        // re-evaluate it at execution time, and its returned `count` is the
+        // number of rows that actually matched then — not a stale count from an
+        // earlier read. Do not "optimise" this back into a read-then-delete.
+        const { count: deleted } = await tx.studioClass.deleteMany({
+          where: scheduledWhere(templateId, { gt: today }),
+        });
 
-      return { ok: true as const, action: 'archived' as const, template: recorded, deleted, remaining };
-    },
-    // The compare-and-swap above locks the same row
-    // `claimStudioTemplateForGeneration` (studio-class-generator.ts) holds
-    // `FOR UPDATE` for the duration of its own per-template transaction, and
-    // the CAS's own `FOR NO KEY UPDATE` conflicts with that — the conflict is
-    // what gives this the claim-and-lock treatment, not the
-    // timeout below; this archive can block on a sweep in progress today, or
-    // now on a resume: `pauseOrResumeStudioTemplate`'s own CAS holds this same
-    // row from its `updateMany` through generation to commit, on the same 10s
-    // budget, so a user-facing PATCH can make an archive wait exactly as a
-    // background sweep can (#94). The 10s figure matches both of those peers'
-    // transaction timeouts so Prisma's 5s default does not abort this update
-    // while it waits — a VPS can exceed 5s, which would otherwise turn an
-    // ordinary archive click into an opaque P2028. Three 10s budgets do not
-    // compose, though: if a sweep is holding the row when a resume queues
-    // behind it, and this archive then queues behind that resume, this
-    // archive's own 10s clock is already running while it waits its turn —
-    // so the last link in that chain — this archive, waiting behind a
-    // waiter — is the one most likely to exhaust its own budget and surface
-    // P2028 without ever reaching its own work (#113 owns that error
-    // surface). The sweep at the head holds rather than waits, so it is a
-    // chain of three participants but only two waiters.
-    { timeout: 10_000 },
-  );
+        // `gte`, where the delete used `gt`: the delete spares a class dated
+        // today, and counting with its boundary would undercount that same
+        // survivor. No charged-status filter is needed here, unlike the class
+        // sibling — `StudioClass` has no registrations to consult, so every
+        // uncancelled row in scope counts.
+        const remaining = await tx.studioClass.count({
+          where: scheduledWhere(templateId, { gte: today }),
+        });
+
+        // Written from the delete's own `count`, inside the same transaction
+        // (#97). A second statement rather than folded into the CAS above, on
+        // data dependency alone: `deleted` does not exist until the `deleteMany`
+        // has run, and the CAS runs before it — see `archiveOrUnarchiveTemplate`
+        // for the separate lock-ordering point that keeps the CAS first. A plain
+        // single-record `update` is enough: the CAS's lock is still held, so
+        // nothing can have moved this row since.
+        const recorded = await tx.studioClassTemplate.update({
+          where: { id: templateId },
+          data: { archivedAt: now, withdrawnCount: deleted },
+        });
+
+        return { ok: true as const, action: 'archived' as const, template: recorded, deleted, remaining };
+      },
+      // The compare-and-swap above locks the same row
+      // `claimStudioTemplateForGeneration` (studio-class-generator.ts) holds
+      // `FOR UPDATE` for the duration of its own per-template transaction, and
+      // the CAS's own `FOR NO KEY UPDATE` conflicts with that — the conflict is
+      // what gives this the claim-and-lock treatment, not the
+      // timeout below; this archive can block on a sweep in progress today, or
+      // now on a resume: `pauseOrResumeStudioTemplate`'s own CAS holds this same
+      // row from its `updateMany` through generation to commit, on the same 10s
+      // budget, so a user-facing PATCH can make an archive wait exactly as a
+      // background sweep can (#94). The 10s figure matches both of those peers'
+      // transaction timeouts so Prisma's 5s default does not abort this update
+      // while it waits — a VPS can exceed 5s, which would otherwise turn an
+      // ordinary archive click into an opaque P2028. Three 10s budgets do not
+      // compose, though: if a sweep is holding the row when a resume queues
+      // behind it, and this archive then queues behind that resume, this
+      // archive's own 10s clock is already running while it waits its turn —
+      // so the last link in that chain — this archive, waiting behind a
+      // waiter — is the one most likely to exhaust its own budget and surface
+      // P2028 without ever reaching its own work (#113 owns that error
+      // surface). The sweep at the head holds rather than waits, so it is a
+      // chain of three participants but only two waiters.
+      { timeout: 10_000 },
+    );
+  } catch (err) {
+    if (isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime'])) {
+      return { ok: false, reason: 'slot_conflict' };
+    }
+    throw err;
+  }
 }

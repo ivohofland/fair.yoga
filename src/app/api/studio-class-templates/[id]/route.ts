@@ -13,6 +13,7 @@ import {
   pauseOrResumeStudioTemplate,
   archiveOrUnarchiveStudioTemplate,
 } from '@/services/studio-class-template-lifecycle';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -48,12 +49,27 @@ export const PUT = withErrorHandler(async (
     return respondError('No valid fields to update', 400);
   }
 
-  const updated = await prisma.studioClassTemplate.update({
-    where: { id },
-    data: parsed.data,
-  });
-
-  return respondOk(updated);
+  // `StudioClassTemplate_teacher_slot_unique` is (teacherId, dayOfWeek,
+  // startTime) WHERE isArchived = false (#196). This route never touches
+  // `isArchived` (PATCH owns that), but `dayOfWeek`/`startTime` are both on
+  // `updateStudioClassTemplateSchema`, so a plain edit into a slot another of
+  // this teacher's live templates already holds collides here.
+  try {
+    const updated = await prisma.studioClassTemplate.update({
+      where: { id },
+      data: parsed.data,
+    });
+    return respondOk(updated);
+  } catch (err) {
+    if (isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime'])) {
+      return respondError(
+        'You already have a recurring studio class on that day at that time.',
+        409,
+        'DUPLICATE_STUDIO_TEMPLATE_SLOT',
+      );
+    }
+    throw err;
+  }
 });
 
 export const PATCH = withErrorHandler(async (
@@ -90,6 +106,16 @@ export const PATCH = withErrorHandler(async (
 
     if (result.reason === 'not_found') return respondError('Studio class template not found', 404);
     if (result.reason === 'forbidden') return respondError('Access denied', 403);
+    // Only reachable un-archiving: `isArchived` flips false in the same CAS
+    // that re-enters `StudioClassTemplate_teacher_slot_unique`'s partial
+    // scope (#196), and another live template can already hold that slot.
+    if (result.reason === 'slot_conflict') {
+      return respondError(
+        'You already have a recurring studio class on that day at that time.',
+        409,
+        'DUPLICATE_STUDIO_TEMPLATE_SLOT',
+      );
+    }
 
     // Exhaustiveness: a new ArchiveStudioTemplateResult reason becomes a
     // compile error here rather than being silently answered with the wrong
