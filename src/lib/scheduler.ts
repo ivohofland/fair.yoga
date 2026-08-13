@@ -29,11 +29,24 @@
 import type { PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
 
-interface Job {
+export interface Job {
   name: string;
   intervalMs: number;
   run: (db: PrismaClient) => Promise<unknown>;
   running?: boolean;
+}
+
+/** The sweeps `buildJobs` arranges, injected so the arrangement is testable. */
+export interface SchedulerSweeps {
+  autoTransitionToInProgress: (db: PrismaClient) => Promise<unknown>;
+  autoCancelClasses: (db: PrismaClient) => Promise<unknown>;
+  autoCompleteClasses: (db: PrismaClient) => Promise<unknown>;
+  generateClassInstances: (db: PrismaClient) => Promise<unknown>;
+  generateStudioClassInstances: (db: PrismaClient) => Promise<unknown>;
+  processEmailFallback: (db: PrismaClient) => Promise<unknown>;
+  processPaymentReminders: (db: PrismaClient) => Promise<unknown>;
+  cleanupExpiredAuth: (db: PrismaClient) => Promise<unknown>;
+  reconcileWaitlists: (db: PrismaClient) => Promise<unknown>;
 }
 
 const MINUTE = 60 * 1000;
@@ -100,7 +113,69 @@ export async function startScheduler(): Promise<void> {
   const { cleanupExpiredAuth } = await import('@/services/auth-cleanup');
   const { reconcileWaitlists } = await import('@/services/waitlist-reconciliation');
 
-  const jobs: Job[] = [
+  const jobs = buildJobs({
+    autoTransitionToInProgress,
+    autoCancelClasses,
+    autoCompleteClasses,
+    generateClassInstances,
+    generateStudioClassInstances,
+    processEmailFallback,
+    processPaymentReminders,
+    cleanupExpiredAuth,
+    reconcileWaitlists,
+  });
+
+  const health = (globalThis.__fairYogaJobHealth ??= {});
+  for (const job of jobs) {
+    health[job.name] = { lastRunAt: null, lastSuccessAt: null, lastError: null };
+    const tick = async () => {
+      if (job.running) return;
+      job.running = true;
+      const jobHealth = health[job.name]!;
+      jobHealth.lastRunAt = new Date().toISOString();
+      try {
+        await job.run(prisma);
+        jobHealth.lastSuccessAt = new Date().toISOString();
+        jobHealth.lastError = null;
+      } catch (err) {
+        log.error({ err, job: job.name }, 'scheduler job failed');
+        jobHealth.lastError = err instanceof Error ? err.message : String(err);
+      } finally {
+        job.running = false;
+      }
+    };
+
+    // First run shortly after boot, then on the interval. unref() so the
+    // timers never keep a shutting-down process alive.
+    setTimeout(tick, 15 * 1000).unref();
+    setInterval(tick, job.intervalMs).unref();
+  }
+
+  log.info({ jobs: jobs.length }, 'scheduler started');
+}
+
+/**
+ * The job table, separated from `startScheduler` so it can be asserted without
+ * starting timers.
+ *
+ * Worth separating because the intervals are not all conventional: at least one
+ * is argued to be correctness-relevant, and nothing else in the suite would
+ * notice it changing.
+ */
+export function buildJobs(sweeps: SchedulerSweeps): Job[] {
+  const {
+    autoTransitionToInProgress,
+    autoCancelClasses,
+    autoCompleteClasses,
+    generateClassInstances,
+    generateStudioClassInstances,
+    processEmailFallback,
+    processPaymentReminders,
+    cleanupExpiredAuth,
+    reconcileWaitlists,
+  } = sweeps;
+
+  return [
     {
       name: 'class-transitions',
       intervalMs: 1 * MINUTE,
@@ -131,45 +206,27 @@ export async function startScheduler(): Promise<void> {
       run: (db) => cleanupExpiredAuth(db),
     },
     {
-      // 1 minute, and the cadence is load-bearing: the claim window is only 60
-      // minutes wide, so this bounds a dropped broadcast's cost to roughly 1 of
-      // the student's 60 claim minutes. At email-fallback's 5 minutes it would
-      // be 8% of the window.
+      // 1 minute, and the cadence is load-bearing rather than conventional: the
+      // claim window is only 60 minutes wide, so this bounds a dropped
+      // broadcast's cost to roughly 1 of the student's 60 claim minutes. At
+      // email-fallback's 5 minutes it would be 8% of the window. That is why
+      // `scheduler.test.ts` pins this number rather than trusting it.
+      //
+      // A typical-case bound, not a guarantee: `promoteNext`'s inline
+      // `FOR UPDATE` is unbounded (#104), so a contended tick can outlast its
+      // own interval, and the `job.running` guard then drops the ticks it
+      // overruns.
       //
       // Its own job name rather than a fourth sweep inside `class-transitions`,
-      // so `getJobHealth()` and `/api/health` can tell a failing reconciliation
-      // apart from a failing class transition.
+      // so its `lastRunAt` / `lastSuccessAt` describe this sweep alone. Note
+      // what that does NOT buy: `reconcileWaitlists` handles its per-class
+      // failures internally and does not throw, so `lastError` stays null even
+      // when every class fails. A reconciliation that is broken rather than
+      // merely contended surfaces as the `error`-level line the sweep logs
+      // itself — not as a degraded `/api/health`.
       name: 'waitlist-reconciliation',
       intervalMs: 1 * MINUTE,
       run: (db) => reconcileWaitlists(db),
     },
   ];
-
-  const health = (globalThis.__fairYogaJobHealth ??= {});
-  for (const job of jobs) {
-    health[job.name] = { lastRunAt: null, lastSuccessAt: null, lastError: null };
-    const tick = async () => {
-      if (job.running) return;
-      job.running = true;
-      const jobHealth = health[job.name]!;
-      jobHealth.lastRunAt = new Date().toISOString();
-      try {
-        await job.run(prisma);
-        jobHealth.lastSuccessAt = new Date().toISOString();
-        jobHealth.lastError = null;
-      } catch (err) {
-        log.error({ err, job: job.name }, 'scheduler job failed');
-        jobHealth.lastError = err instanceof Error ? err.message : String(err);
-      } finally {
-        job.running = false;
-      }
-    };
-
-    // First run shortly after boot, then on the interval. unref() so the
-    // timers never keep a shutting-down process alive.
-    setTimeout(tick, 15 * 1000).unref();
-    setInterval(tick, job.intervalMs).unref();
-  }
-
-  log.info({ jobs: jobs.length }, 'scheduler started');
 }
