@@ -166,17 +166,36 @@ Record the exact assertion text from both.
 
 ### 6.2 Teacher — class detail
 
-Fixture: one class, **1 `waiting` and 2 `removed`** entries. Assert the page reads
-`1 on waitlist`.
+Fixture: one class carrying one entry in each of **`waiting`, `promoted`,
+`removed`**. Assert the page reads `1 on waitlist`, and that it reads neither
+`3 on waitlist` nor `2 on waitlist`.
 
-**Mutation:** delete the `where` from the `_count`. Must fail reading
-`3 on waitlist`.
+**Mutations, both required:**
 
-The 2/1 split is load-bearing. A fixture with one entry of each status renders `1`
-before the fix and `2` after — but so would several wrong predicates, and a
-symmetric fixture is exactly the shape that let #39 ship three guards that could
-not fail. Two `removed` against one `waiting` makes the filtered and unfiltered
-numbers differ by more than one, so no off-by-one predicate reproduces it.
+1. Delete the `where` from the `_count`. Must fail reading `3 on waitlist`.
+2. Weaken it to `status: { not: 'removed' }`. Must fail reading
+   `2 on waitlist`.
+
+**This paragraph originally specified `1 waiting + 2 removed`, and that fixture
+could not detect mutation 2** — the branch's own review caught it. Both
+`status: 'waiting'` and `not: 'removed'` render `1` against it, so the test
+pinned "exclude removed" and nothing more. The reasoning given here was that
+three-against-one makes the filtered and unfiltered numbers differ by more than
+one, so *no off-by-one predicate reproduces it* — true, and insufficient:
+`not: 'removed'` is a different shape, not an off-by-one, and it is the natural
+mistake ("removed means gone") that keeps double-counting precisely the students
+§3.2 exists to stop counting.
+
+Three entries with one in `promoted` keeps the three-versus-one gap and makes the
+wrong predicate render 2. `removed` stays represented because it is the state
+every queue #195 closed now sits in. The `promoted` row deliberately carries no
+`registrationId` — production writes one (`waitlist.ts:480`), but the count query
+never reads it, and a fixture `Registration` would add an entity to assert
+nothing.
+
+Worth keeping as a record: a symmetric fixture is the shape that let #39 ship
+three guards that could not fail, and the first fix for it here was itself
+asymmetric in the wrong dimension.
 
 Neither test needs a new file if an existing integration file already owns the
 surface; the plan decides placement. `npm run verify` runs all three vitest

@@ -330,21 +330,30 @@ EOF
 Add to the end of `beforeAll` in `tests/integration/waitlist-display.test.ts`, after the four-class loop:
 
 ```ts
-  // Task 2's fixture: one class carrying 1 `waiting` and 2 `removed` entries.
-  // The 2/1 split is load-bearing. One entry of each status renders `1`
-  // before the fix and `2` after, so several wrong predicates reproduce it —
-  // the shape that let #39 ship three guards that could not fail. Two
-  // `removed` against one `waiting` makes filtered and unfiltered differ by
-  // two, which no off-by-one predicate produces.
+  // Task 2's fixture: one class carrying one entry in each of `waiting`,
+  // `promoted`, `removed`. Three against one `waiting` makes the filtered and
+  // unfiltered counts differ by two, so no off-by-one predicate reproduces the
+  // right answer. The `promoted` row is what makes the test DISCRIMINATE:
+  // `1 waiting + 2 removed` renders `1` under both `status: 'waiting'` and
+  // `status: { not: 'removed' }`, and the latter is a natural mistake that
+  // still double-counts the students §3.2 exists to stop counting. See spec
+  // §6.2 — this plan originally specified `1 waiting + 2 removed` and the
+  // review caught that it could not fail against that mutation.
   countClassId = await makeClass(`w199-count-${suffix}`, 'open', 4);
   const waiting = await makeStudent('count-waiting');
-  const goneA = await makeStudent('count-gone-a');
-  const goneB = await makeStudent('count-gone-b');
+  const seated = await makeStudent('count-promoted');
+  const gone = await makeStudent('count-gone');
   await prisma.waitlistEntry.createMany({
     data: [
       { classId: countClassId, studentId: waiting.id, position: 1, status: 'waiting' },
-      { classId: countClassId, studentId: goneA.id, position: 2, status: 'removed' },
-      { classId: countClassId, studentId: goneB.id, position: 3, status: 'removed' },
+      {
+        classId: countClassId,
+        studentId: seated.id,
+        position: 2,
+        status: 'promoted',
+        promotedAt: new Date(),
+      },
+      { classId: countClassId, studentId: gone.id, position: 3, status: 'removed' },
     ],
   });
 ```
@@ -375,7 +384,14 @@ describe('GET /class/[id] (page) — the waitlist count', () => {
     const html = (await res.text()).replaceAll('<!-- -->', '');
 
     expect(html).toContain('1 on waitlist');
+
+    // 3 is what an unfiltered count renders. 2 is what `not: 'removed'`
+    // renders — the plausible wrong predicate, which keeps counting the
+    // `promoted` student who already appears in this page's registrations
+    // list. Naming both numbers puts the discrimination in the test rather
+    // than only in the fixture's comment.
     expect(html).not.toContain('3 on waitlist');
+    expect(html).not.toContain('2 on waitlist');
   });
 });
 ```
@@ -416,11 +432,21 @@ npx vitest run --project integration tests/integration/waitlist-display.test.ts
 
 Expected: PASS, 2 tests.
 
-- [ ] **Step 5: Prove the guard bites**
+- [ ] **Step 5: Prove the guard bites — two mutations, both required**
 
-Remove the `where` clause, leaving the comment: `_count: { select: { waitlistEntries: true } }`. Re-run.
+**Mutation 1, the `where` deleted.** Leave the comment: `_count: { select: { waitlistEntries: true } }`. Re-run.
 
-Expected: FAIL on `toContain('1 on waitlist')`, and the `not.toContain('3 on waitlist')` assertion fails too — the page renders `3`. Record both. Restore and re-run to confirm PASS.
+Expected: FAIL on `toContain('1 on waitlist')` — the page renders `3 on waitlist`, so the `not.toContain('3 on waitlist')` assertion fails on the same render. Restore and re-run to confirm PASS.
+
+**Mutation 2, weakened to `status: { not: 'removed' }`.** This is the one the fixture exists for:
+
+```ts
+      _count: { select: { waitlistEntries: { where: { status: { not: 'removed' } } } } },
+```
+
+Expected: FAIL on `toContain('1 on waitlist')` — the page renders `0 registered · needs 1 to go ahead · 2 on waitlist`, because the `promoted` row is still counted. Restore and re-run.
+
+Record both failures. A fixture of `1 waiting + 2 removed` renders `1` under this mutation and would pass it — which is why the fixture carries a `promoted` row instead of a second `removed` one (spec §6.2).
 
 - [ ] **Step 6: Commit**
 

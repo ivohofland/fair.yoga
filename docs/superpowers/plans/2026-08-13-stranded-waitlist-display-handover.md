@@ -182,7 +182,8 @@ adjust the assertion until it goes red. Do not decide it is close enough.**
 
 ### The mutations are the deliverable, not busywork
 
-Three mutations across the branch. The second one in Task 1 is the point of the
+Four mutations across the branch — three specified up front, plus a fourth the
+branch's own review added to Task 2 (see spec §6.2). The second one in Task 1 is the point of the
 whole test design:
 
 | Task | Mutation | Must fail on |
@@ -190,6 +191,7 @@ whole test design:
 | 1 | Delete `class: { status: 'open' }` | all three dead class types appearing |
 | 1 | **Weaken to `class: { status: { not: 'cancelled' } }`** | `in_progress` and `completed` appearing, while `cancelled` still passes |
 | 2 | Delete the `_count` `where` | `1 on waitlist` absent; `3 on waitlist` present |
+| 2 | **Weaken the `_count` to `status: { not: 'removed' }`** | `2 on waitlist` rendered — added in review, because the original `1 waiting + 2 removed` fixture rendered `1` under this mutation and passed it |
 
 That middle one is not hypothetical — it is what the issue asked for. A test
 whose only dead fixture were a `cancelled` class would pass against it, which is
@@ -339,7 +341,7 @@ build-only defect passes `verify` and fails CI.
 1. Two source lines changed, in exactly the two files named in §1. Nothing else
    in `src/` touched.
 2. `tests/integration/waitlist-display.test.ts` created, 2 tests, both passing.
-3. All three mutations run, restored, and each failure's exact text recorded in
+3. All four mutations run, restored, and each failure's exact text recorded in
    the relevant commit message.
 4. `npm run verify` green, with the arithmetic stated
    (`113 files = 48 unit + 37 components + 28 integration`; `1294 tests = 702 +
@@ -359,7 +361,7 @@ build-only defect passes `verify` and fails CI.
 ### The PR body must record
 
 - The `verify` arithmetic, before and after.
-- The three mutations and their failure text.
+- The four mutations and their failure text.
 - `tests/integration/waitlist-display.test.ts` named by path as the integration
   file this branch touches.
 - What the PR does **not** do: it does not close the queue when a class starts,
@@ -372,7 +374,7 @@ build-only defect passes `verify` and fails CI.
 ### What to report when you hand back
 
 - Which tasks completed, which blocked, and why.
-- The three mutations with their recorded failure text.
+- The four mutations with their recorded failure text.
 - The `verify` arithmetic, before and after.
 - **Anything in the plan that turned out to be wrong.** Four task briefs on an
   earlier branch were wrong about the state of the code, and every one was caught
@@ -389,7 +391,7 @@ build-only defect passes `verify` and fails CI.
 - [ ] `CLAUDE.md` read; the spec read; §2's four checks run
 - [ ] The predicate shipped is `class: { status: 'open' }`, **not** `not: 'cancelled'`
 - [ ] Neither test was accepted while it passed before its fix
-- [ ] Three mutations run, restored, and recorded
+- [ ] Four mutations run, restored, and recorded
 - [ ] Fixture classes still dated 2099; no fixture built via `addToWaitlist`
 - [ ] `src/app/(public)/[slug]/page.tsx` untouched
 - [ ] No migration; `prisma/schema.prisma` untouched
