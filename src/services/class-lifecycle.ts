@@ -162,8 +162,12 @@ export async function transitionClass(
  * silently widen what archiving is allowed to destroy. Prisma's `in` filter
  * does want a mutable `RegistrationStatus[]` and will not accept a readonly
  * one — that is a constraint on the call site, not on the source of truth, so
- * callers spread (`in: [...CHARGED_STATUSES]`) exactly as `waitlist.ts` does
- * with `ACTIVE_REGISTRATION_STATUSES`.
+ * callers spread (`in: [...CHARGED_STATUSES]`) exactly as the callers of
+ * `ACTIVE_REGISTRATION_STATUSES` (`@/lib/registration-status`) do. That set
+ * is this one minus `late_cancel`: it asks who occupies a seat, this one asks
+ * who gets billed. This constant stays here rather than joining it in `lib/`
+ * because only server-side services use it, and four comments across three
+ * test files name this file as its home — one of them by line number.
  */
 export const CHARGED_STATUSES: readonly RegistrationStatus[] = Object.freeze([
   'registered',

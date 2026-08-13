@@ -14,6 +14,7 @@ import { createBulkNotifications } from '@/services/notifications';
 import { activateRegistration, reorderWaitingEntries } from '@/services/waitlist';
 import { resolveInvitationOnLink } from '@/services/link-consent';
 import { classStartInstant } from '@/lib/timezone';
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 
 /** Thrown inside the registration transaction when the class is at capacity. */
 class ClassFullError extends Error {}
@@ -140,7 +141,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
       // Count active registrations (cancelled and late_cancel freed their spot)
       const registrationCount = await tx.registration.count({
-        where: { classId: body.classId, status: { in: ['registered', 'attended', 'no_show'] } },
+        where: { classId: body.classId, status: { in: [...ACTIVE_REGISTRATION_STATUSES] } },
       });
 
       if (registrationCount >= cls.maxStudents && !isWalkIn) {
@@ -153,7 +154,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         where: { classId_studentId: { classId: body.classId, studentId } },
         select: { status: true },
       });
-      if (existing && ['registered', 'attended', 'no_show'].includes(existing.status)) {
+      if (existing && (ACTIVE_REGISTRATION_STATUSES as readonly string[]).includes(existing.status)) {
         throw new AlreadyRegisteredError();
       }
 

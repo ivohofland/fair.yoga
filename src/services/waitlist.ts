@@ -13,6 +13,7 @@ import { createBulkNotifications } from './notifications';
 import { resolveInvitationOnLink } from './link-consent';
 import { lockClassRow, type TransactionClientOnly } from '@/lib/db-locks';
 import { isRecordNotFound } from '@/lib/api-errors';
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 
 /** Raised when a promotion/claim is not allowed in the current class state. */
 export class WaitlistPromotionError extends Error {
@@ -40,9 +41,6 @@ export class WaitlistJoinError extends Error {
     this.name = 'WaitlistJoinError';
   }
 }
-
-/** Registration statuses that occupy a spot. */
-const ACTIVE_REGISTRATION_STATUSES = ['registered', 'attended', 'no_show'] as const;
 
 /**
  * Creates or reactivates a registration row. Both Registration and

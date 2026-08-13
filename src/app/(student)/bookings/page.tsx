@@ -11,6 +11,7 @@ import { PaymentQr } from '@/components/student/payment-qr';
 import { formatRoomLocation, paymentStateText, formatDayHeader } from '@/lib/format';
 import { getWaitlistWindow } from '@/services/waitlist';
 import { studentNotificationHref } from '@/lib/notification-links';
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,7 +69,7 @@ export default async function StudentBookingsPage() {
             _count: {
               select: {
                 registrations: {
-                  where: { status: { in: ['registered', 'attended', 'no_show'] } },
+                  where: { status: { in: [...ACTIVE_REGISTRATION_STATUSES] } },
                 },
               },
             },

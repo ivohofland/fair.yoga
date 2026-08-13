@@ -7,13 +7,14 @@
  * 3. Auto-complete: in_progress → completed when class duration has elapsed
  */
 
-import type { PrismaClient, RegistrationStatus } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 import { transitionClass, completeClass } from './class-lifecycle';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { classStartInstant } from '@/lib/timezone';
 import { formatDayHeader } from '@/lib/format';
 import { log } from '@/lib/log';
 import { lockClassRow } from '@/lib/db-locks';
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -24,15 +25,6 @@ const CANCEL_CHECK_HOURS: Record<string, number> = {
   HOURS_2: 2,
   HOURS_1: 1,
 };
-
-/**
- * The registration statuses that count toward a class's minimum. Named once
- * because `autoCancelClasses` now asks the same question twice — a cheap
- * filtered `_count` on the sweep's own read, and the authoritative `count`
- * under the row lock — and the two answering different questions would make
- * the pre-filter skip classes the locked check would have cancelled.
- */
-const ACTIVE_REGISTRATION_STATUSES: RegistrationStatus[] = ['registered', 'attended', 'no_show'];
 
 /** Whether `at` falls inside a class's auto-cancel window: past the check
  * time, before the start. Shared by the sweep's pre-filter and the decision
@@ -128,13 +120,17 @@ export async function autoCancelClasses(
   // wrong rather than merely coarse: a class whose registrations are all
   // cancelled would count above its minimum and never be swept again. This is
   // the same filtered shape, with the same status set, that
-  // `(student)/bookings/page.tsx` already uses.
+  // `(student)/bookings/page.tsx` already uses — now literally the same
+  // constant (`@/lib/registration-status`), not just the same spelling. The
+  // pre-filter and the authoritative count under the lock must answer the
+  // same question, or the pre-filter skips classes the locked check would
+  // have cancelled.
   const openClasses = await db.class.findMany({
     where: { status: 'open' },
     include: {
       teacher: { select: { defaultTimezone: true } },
       _count: {
-        select: { registrations: { where: { status: { in: ACTIVE_REGISTRATION_STATUSES } } } },
+        select: { registrations: { where: { status: { in: [...ACTIVE_REGISTRATION_STATUSES] } } } },
       },
     },
   });
@@ -284,7 +280,7 @@ export async function autoCancelClasses(
         // invisible to it — and cancelling a class that has just reached
         // its minimum tells every student it is off when it is not.
         const activeCount = await tx.registration.count({
-          where: { classId: cls.id, status: { in: ACTIVE_REGISTRATION_STATUSES } },
+          where: { classId: cls.id, status: { in: [...ACTIVE_REGISTRATION_STATUSES] } },
         });
         if (activeCount >= fresh.minStudents) return false;
 
@@ -299,7 +295,7 @@ export async function autoCancelClasses(
         if (updated.count === 0) return false;
 
         const registrations = await tx.registration.findMany({
-          where: { classId: cls.id, status: { in: ACTIVE_REGISTRATION_STATUSES } },
+          where: { classId: cls.id, status: { in: [...ACTIVE_REGISTRATION_STATUSES] } },
           select: { studentId: true },
         });
 

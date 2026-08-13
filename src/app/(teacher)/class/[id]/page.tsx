@@ -19,6 +19,7 @@ import { ShareBookingLink } from '@/components/class/share-booking-link';
 import { AddWalkIn } from '@/components/class/add-walk-in';
 import { SendAnnouncement } from '@/components/class/send-announcement';
 import { toIncomeTier } from '@/lib/tiers.server';
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 
 export default async function ClassDetailPage({
   params,
@@ -70,7 +71,7 @@ export default async function ClassDetailPage({
   // (they stay in activeRegistrations for attendance/payments) but their
   // seat is free — the booking page sells it, so the count here must agree.
   const seatCount = cls.registrations.filter((r) =>
-    ['registered', 'attended', 'no_show'].includes(r.status),
+    (ACTIVE_REGISTRATION_STATUSES as readonly string[]).includes(r.status),
   ).length;
 
   // Serialize registrations for client components (Prisma Dates/Decimals are not serializable)
