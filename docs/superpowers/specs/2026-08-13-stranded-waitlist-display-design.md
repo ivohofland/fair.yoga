@@ -213,6 +213,27 @@ covers both. The third cannot use it: `completeClass` runs inside its own
 `$transaction` and `transitionClass` takes a `PrismaClient`, not a transaction
 client — the same reason it does its bump inline in the first place.
 
+**Searched before filing, and it is not already filed** — the habit the roadmap
+records as the cheap one, after #164 and #192 were each re-found as new. `gh issue
+list --search` over `waitlist`, `in_progress`, `queue` and `expired`, plus the
+roadmap's own waitlist mentions: no issue covers closing the queue when a class
+starts. Three are adjacent and none is a host:
+
+- **#182** rewrites `autoTransitionToInProgress` to decide under `lockClassRow`
+  inside a transaction, as #179 did for `autoCancelClasses`. That transaction is
+  where this write belongs, in the lock → CAS → read `waiting` → `updateMany`
+  shape #195 established, so **#182 should land first or together** — closing the
+  queue beforehand means writing a transaction #182 then rewrites. Not the host:
+  its subject is `docs/lock-order.md` discipline, it already carries three parts,
+  and its PUT half waits on a decision of its own.
+- **#183** answers a question this would otherwise have to ask.
+  `reorderWaitingEntries` renumbers only `waiting` rows, so closed rows keep stale
+  positions by design — which is why closing the whole queue at once needs no
+  renumber, and why both cancel paths call `updateMany` with no reorder
+  (`transition/route.ts:53`, `class-transitions.ts:325`).
+- **#212** is the final-hour broadcast announcing taken spots: adjacent, but a
+  capacity check rather than a status one.
+
 #112's spec ruled `completeClass` out explicitly — *"which does not remove a class
 from the schedule"* (`2026-08-11-waitlist-withdrawal-notice-design.md:427`). That
 was correct for the question #112 asked, which was **whose notice is owed**:
