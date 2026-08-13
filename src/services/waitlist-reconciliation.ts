@@ -22,9 +22,10 @@
  * makes the auto-promote half covered without a line addressing it, and it is
  * why re-running the hook is the whole action.
  */
-import type { PrismaClient } from '@prisma/client';
+import type { CancelDeadline, PrismaClient } from '@prisma/client';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
-import { getWaitlistWindow, handleSpotFreed } from './waitlist';
+import { classStartInstant } from '@/lib/timezone';
+import { DEADLINE_HOURS, getWaitlistWindow, handleSpotFreed } from './waitlist';
 
 export interface ReconcileSummary {
   /** Classes holding at least one `waiting` entry that were examined. */
@@ -110,9 +111,62 @@ export async function reconcileWaitlists(
     // about its own `waiting.length === 0` line.
     if (activeCount >= cls.maxStudents) continue;
 
+    // Only the broadcast needs a gate. A promotion fills the seat, so the
+    // auto-promote branch erases its own trigger and cannot re-fire; a broadcast
+    // leaves the seat free and would go out again every tick.
+    if (window === 'first_come_first_claimed' && (await alreadyBroadcastInWindow(db, cls))) {
+      continue;
+    }
+
     await handleSpotFreed(db, cls.id, opts.now);
     reconciled += 1;
   }
 
   return { candidates: classes.length, reconciled, failed: 0 };
+}
+
+/**
+ * True when this class's current claim window already carries a broadcast.
+ *
+ * Exact rather than approximate: the broadcast is one `createMany` with no
+ * `skipDuplicates` (`waitlist.ts:732`), so a class's waiting students either all
+ * received a `spot_available` notification or none did. There is no partial
+ * state for a class-level check to be wrong about, and so no per-recipient query
+ * and no new column.
+ *
+ * `claimWindowStart` is derived from the class rather than stored: it is
+ * `classStart - (deadlineHours + 1) h`, the same boundary `getWaitlistWindow`
+ * computes to decide the window in the first place.
+ *
+ * **The one race this does not close.** The read is outside the Class row lock,
+ * so: this reads the gate → the live hook broadcasts → this invokes the hook →
+ * a second broadcast. The sweep cannot race ITSELF (`scheduler.ts:138` refuses a
+ * tick while one is running), only the live path. The cost is one duplicate
+ * notification against a current cost of no notification at all, and that trade
+ * was made deliberately.
+ */
+async function alreadyBroadcastInWindow(
+  db: PrismaClient,
+  cls: {
+    id: string;
+    date: Date;
+    startTime: string;
+    cancelDeadline: CancelDeadline;
+    teacher: { defaultTimezone: string };
+  },
+): Promise<boolean> {
+  const classStart = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
+  const claimWindowStart = new Date(
+    classStart.getTime() - (DEADLINE_HOURS[cls.cancelDeadline] + 1) * 60 * 60 * 1000,
+  );
+
+  const existing = await db.notification.findFirst({
+    where: {
+      relatedClassId: cls.id,
+      type: 'spot_available',
+      createdAt: { gte: claimWindowStart },
+    },
+    select: { id: true },
+  });
+  return existing !== null;
 }

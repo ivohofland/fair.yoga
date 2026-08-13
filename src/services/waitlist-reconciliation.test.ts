@@ -268,6 +268,86 @@ describe('reconcileWaitlists (DB)', () => {
   }, 60_000);
 
   /**
+   * The gate is EXACT, not approximate, and that follows from atomicity:
+   * `createBulkNotifications` is one `createMany` with no `skipDuplicates` —
+   * all-or-throw, per `waitlist.ts:732`. So "did any student get told?" and "did
+   * every student get told?" are the same question, and a class-level check
+   * answers it without a per-recipient query or a new column.
+   *
+   * `createdAt` is set explicitly — see derailer 1. The injected clock is in
+   * 2099 and `@default(now())` would stamp 2026, which the gate's
+   * `createdAt >= claimWindowStart` would correctly not see.
+   */
+  it('does not re-broadcast into a claim window that already has one', async () => {
+    const cls = await makeClass(1);
+    const filler = await makeStudent('GateFiller');
+    const waiter = await makeStudent('GateWaiter');
+    const clocks = windowClocks(cls.startTime);
+
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId: filler, status: 'registered', tierAtBooking: 3 },
+    });
+    await addToWaitlist(prisma, cls.id, waiter);
+    await prisma.registration.update({
+      where: { classId_studentId: { classId: cls.id, studentId: filler } },
+      data: { status: 'cancelled', cancelledAt: new Date() },
+    });
+
+    // A broadcast that already went out, stamped inside the claim window.
+    await prisma.notification.create({
+      data: {
+        recipientType: 'student',
+        recipientId: waiter,
+        type: 'spot_available',
+        title: 'A spot opened up',
+        body: 'already sent',
+        relatedClassId: cls.id,
+        createdAt: clocks.inClaimWindow,
+      },
+    });
+
+    const summary = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow });
+
+    expect(summary.reconciled).toBe(0);
+    expect(
+      await prisma.notification.count({
+        where: { relatedClassId: cls.id, type: 'spot_available' },
+      }),
+    ).toBe(1);
+  });
+
+  /**
+   * The other half of the gate: with no prior broadcast in the window, the sweep
+   * must still fire. Without this, a gate stuck permanently closed passes the
+   * test above and delivers nothing — which is the bug this whole branch exists
+   * to fix, reintroduced one level up.
+   */
+  it('broadcasts when the claim window has no notification yet', async () => {
+    const cls = await makeClass(1);
+    const filler = await makeStudent('OpenGateFiller');
+    const waiter = await makeStudent('OpenGateWaiter');
+    const clocks = windowClocks(cls.startTime);
+
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId: filler, status: 'registered', tierAtBooking: 3 },
+    });
+    await addToWaitlist(prisma, cls.id, waiter);
+    await prisma.registration.update({
+      where: { classId_studentId: { classId: cls.id, studentId: filler } },
+      data: { status: 'cancelled', cancelledAt: new Date() },
+    });
+
+    const summary = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow });
+
+    expect(summary.reconciled).toBe(1);
+    expect(
+      await prisma.notification.count({
+        where: { relatedClassId: cls.id, type: 'spot_available', recipientId: waiter },
+      }),
+    ).toBe(1);
+  });
+
+  /**
    * Past the cancel deadline the queue is frozen and no promotion may happen —
    * the sweep must not become a way around that. `handleSpotFreed` would return
    * `{ action: 'frozen' }` anyway, so this pins the sweep's OWN filter: without
