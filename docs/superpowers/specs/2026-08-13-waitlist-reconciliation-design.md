@@ -136,8 +136,31 @@ student (`gdpr.ts:534`) rather than deleting the row, so the `onDelete: Cascade`
 `Student` never fires during erasure. The design below does not end up needing this
 marker, but it was checked before that was known, and it bounds the alternative.
 
-**The one unmarked way a seat can free** is a teacher raising `maxStudents`. Out of
-scope (§7).
+**The one unmarked way a seat could free — a teacher raising `maxStudents` — cannot
+happen to a class this sweep looks at.** The chain closes:
+
+| Step | Evidence |
+|---|---|
+| `maxStudents ≥ 1` on every write path | `schemas.ts:318, 347, 381, 409` — `.int().positive()` |
+| A waitlist join requires the class to be **full** | `addToWaitlist` guard, `waitlist.ts:157` |
+| So at least one active registration has existed | full means `activeCount ≥ maxStudents ≥ 1` |
+| The first registration latches `settingsLocked`, one way | `api/registrations/route.ts:193-196`; `template-sync.ts:87` records that it never resets |
+| Locked ⇒ `maxStudents` immutable, enforced at the database | `lib/class-fields.ts` `ECONOMIC_FIELDS`; CAS `where: { id, settingsLocked: false }` at `class-lifecycle.ts:564` |
+
+The sweep's candidate set is *defined* as classes holding a `waiting` entry, so every
+class it examines has `settingsLocked = true`. Cancelling back down to zero active
+registrations does not reopen the window — the latch is one-way.
+
+**And the design would not depend on this even if it broke.** §4.2's predicate is
+state-based and never reads `cancelledAt`: it asks whether a seat is free *now*, not
+what freed it. A seat opened by any means, `maxStudents` included, satisfies it. The
+`cancelledAt` census above therefore bounds an alternative design rather than
+supporting this one — it is recorded because it was checked, and because a future
+detector keyed on events would need it.
+
+**The one assumption worth naming:** `maxStudents ≥ 1` is a Zod invariant at four call
+sites, not a database `CHECK`. A row written by raw SQL or a seed script bypasses it.
+That weakens the first argument only, not the second.
 
 **A seat is occupied by** `registered`, `attended`, `no_show`
 (`lib/registration-status.ts:58`). `readSeatCount` (`capacity.ts:93`) is the single
@@ -372,8 +395,11 @@ record, restore, re-verify.
 - `handleSpotFreed` is **not modified**. No signature change, no recipient filtering,
   no new parameter.
 - No migration and no new column.
-- A seat freed by raising `maxStudents` is not treated as a reconcilable event — it is
-  the one seat-freeing path with no marker (§3), and no issue reports it.
+- ~~A seat freed by raising `maxStudents`~~ — **withdrawn.** An earlier draft excluded
+  this as "the one seat-freeing path with no marker". It was wrong twice: the scenario
+  is unreachable for any class this sweep examines (§3), and the detection predicate is
+  state-based rather than event-based, so it would reconcile such a seat regardless.
+  The exclusion was a leftover from a `cancelledAt`-keyed draft that §4.3 replaced.
 - The double-failure-in-one-claim-window case stays quiet (§4.3).
 - The `warn` lines both callers already emit are left alone; they remain the record of
   the live path failing, and the sweep's `info` is the record of it being repaired.
