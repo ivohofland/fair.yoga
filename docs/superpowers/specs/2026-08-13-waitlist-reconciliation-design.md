@@ -16,13 +16,13 @@ has not been true of any issue worked so far.
 
 | Claim | Verdict |
 |---|---|
-| `Notification.relatedClassId` makes the insert take `FOR KEY SHARE` on `Class` | **True, and already measured.** `schema.prisma:600` has the FK; `docs/lock-order.md:139-148` records an uncommitted `notification.create` making a third connection's `SELECT … FOR UPDATE NOWAIT` fail with `55P03` |
+| `Notification.relatedClassId` makes the insert take `FOR KEY SHARE` on `Class` | **True, and already measured.** `schema.prisma:600` has the FK; `docs/lock-order.md`'s "The fourth path" section records an uncommitted `notification.create` making a third connection's `SELECT … FOR UPDATE NOWAIT` fail with `55P03` |
 | Post-#212 the broadcast runs under a 2s bound | **True.** `waitlist.ts:703-704` → `db-locks.ts:76` |
 | Both callers log and swallow | **True**, and there are exactly two: `promoteAfterCancel` (`api/registrations/[id]/route.ts:228`) and the erasure loop (`gdpr.ts:654`) |
 | `deleteStudentAccount` holds class rows for up to 20s | **True.** `gdpr.ts:403` locks in a loop inside one transaction; `gdpr.ts:641` sizes the budget `Math.min(5_000 + waitingCount * 2_000, 20_000)` |
 | `completeClass` cannot collide | **True.** `DEADLINE_HOURS` bottoms out at 6 (`waitlist.ts:103`) and the claim window is `[start − deadline − 1h, start − deadline)`, so the broadcast branch runs at least 6 h before start |
 | The existing test asserts only the abort | **True.** `waitlist.test.ts:1640-1688` holds the row 3.5s against the 2s bound and asserts `55P03` plus "wrote nothing" |
-| The 2026-07-18 audit line exists | **True**, verbatim, at `docs/audits/2026-07-18-review-round-2.md:75` |
+| The 2026-07-18 audit line exists | **True**, verbatim — but in `docs/audits/`, which `.git/info/exclude` keeps out of the repository, so no other clone can check this row. Treat it as attested rather than verifiable, and see §6 |
 
 ### 1.1 The repricing claim, with the arithmetic
 
@@ -71,10 +71,20 @@ Identical outcome to the broadcast case: the student is silently not promoted,
 reachable by the same `deleteStudentAccount` hold (up to 20s, comfortably past 5s).
 
 **This half is pre-existing, not a #212 regression.**
-`git diff 638c25c HEAD -- src/services/waitlist.ts` shows `promoteNext` byte-identical
-across that branch; the only `$transaction` #212 added is `handleSpotFreed`'s own. It
-is in scope anyway, because it is a live loss a user hits and the
-"did this change make it worse" test does not apply to those.
+`git diff 638c25c HEAD -- src/services/waitlist.ts` shows `promoteNext`'s capacity
+check refactored into `readSeatCount` — behaviour-preserving, since `isFull` is the
+same `activeCount >= maxStudents` comparison — while both things this failure mode
+depends on are untouched: the bare `db.$transaction(...)` carrying Prisma's default
+5s budget, and the unbounded inline `FOR UPDATE` that is its first statement
+(`waitlist.ts:385`), which is what blocks. The only `$transaction` #212 added is
+`handleSpotFreed`'s own. It is in scope anyway, because it is a live loss a user hits
+and the "did this change make it worse" test does not apply to those.
+
+*(An earlier draft of this section said "byte-identical" and cited that same command
+as proof. It is not — the command shows the `readSeatCount` refactor, and a reviewer
+who ran it would have found the evidence contradicting the sentence it was offered
+for. The conclusion was right and the evidence was wrong, which is the more dangerous
+combination of the two.)*
 
 The elapsed time carries a second finding: the hook waited out the **entire** hold and
 failed afterwards. That independently confirms the note at `gdpr.ts:602` — Prisma's
@@ -89,8 +99,8 @@ refuse the next one.
    `isTransientDbError`, so both failure modes already reach the same split.
 2. **A sweep is not new infrastructure.** `src/lib/scheduler.ts` already runs five jobs
    (1 / 5 / 60 / 60 / 1440 min) through `isolatedSweeps`, with per-job health surfaced
-   by `/api/health`, an overlap guard (`scheduler.ts:138`) and a 15s post-boot first
-   run (`scheduler.ts:156`). This is a sixth array entry plus one service function.
+   by `/api/health`, an overlap guard (the `job.running` check in `scheduler.ts`) and a
+   15s post-boot first run. This is a sixth array entry plus one service function.
 
 ---
 
@@ -109,8 +119,8 @@ So A helps the half the issue does not describe and barely helps the half it doe
 
 It also leaves every other cause of a lost notification untouched — a student who was
 simply offline is in the same position, which is the never-filed observation at
-`docs/audits/2026-07-18-review-round-2.md:75` ("no sweep re-checks waitlists vs free
-seats") seen from the other side.
+the July 2026 audit's never-filed observation that no sweep re-checks waitlists
+against free seats, seen from the other side.
 
 A sweep subsumes the retry: a class that loses its lock race is simply picked up on
 the next tick. **Option A comes free as a consequence of this design rather than as
@@ -187,9 +197,10 @@ single call and cannot hold the trigger condition open.
 
 ```ts
 export interface ReconcileSummary {
-  candidates: number;   // classes with a waiting queue, examined
-  reconciled: number;   // classes where handleSpotFreed was invoked
-  failed: number;       // classes whose invocation threw
+  readonly candidates: number;                     // OPEN classes with a queue, examined
+  readonly reconciledClassIds: readonly string[];  // invocations that returned
+  readonly repairedClassIds: readonly string[];    // …of those, promoted or broadcast
+  readonly failedClassIds: readonly string[];      // invocations that threw
 }
 
 export async function reconcileWaitlists(
@@ -215,7 +226,19 @@ specifically, and it is why this file stays small.
 The return value exists to be read — by the job wrapper for its log line and by the
 tests. `handleSpotFreed`'s own return value is read by neither of its callers
 (`waitlist.ts:743` says so), and that is what made a fired guard indistinguishable
-from an unreached one.
+from an unreached one. **So this sweep reads it**, and that is what `repaired`
+records: `reconciled` counts invocations, `repaired` counts the ones that promoted or
+broadcast. Both are needed. `repaired` is the only figure the log line may honestly
+claim, while `reconciled` counting invocations is what lets T5 prove the frozen filter
+bites — a frozen class would be invoked and counted, and `handleSpotFreed` returns
+`{ action: 'frozen' }` either way.
+
+The two id lists exist because **this sweep is database-wide**, so every count in the
+summary is a statement about the whole database. A test asserting `reconciled === 1` is
+therefore only correct while nothing else in the test database qualifies, which
+couples every test to every other one and to whatever a killed run left behind. The
+ids let a test assert the outcome for the class it built — stricter than a count, and
+immune to rows it did not create.
 
 ### 4.2 Detection
 
@@ -223,14 +246,34 @@ Start from the narrow set. Most classes have no queue, so the waiting entries ar
 far cheaper starting point than the class table:
 
 ```
-waitlistEntry where status = 'waiting'    → distinct classId
-  → load those classes + teacher.defaultTimezone
-  → keep status === 'open'
+waitlistEntry where status = 'waiting' AND class.status = 'open'  → distinct classId
+  → load those classes + teacher.defaultTimezone, still keeping status === 'open'
   → getWaitlistWindow(...) !== 'frozen'
   → unlocked activeCount < maxStudents                 (pre-filter, §4.5)
   → if window === 'first_come_first_claimed': apply the §4.3 gate
   → handleSpotFreed(db, classId)
 ```
+
+**`class.status = 'open'` on the FIRST query is what bounds the candidate set, and it
+is not a duplicate of the filter below it.** Added after review, which found the
+original unbounded. A `waiting` entry is not terminal and nothing closes one when a
+class ends: `class-lifecycle.ts` never touches `WaitlistEntry`, and only
+`autoCancelClasses` and the manual-cancel route mark entries `removed`. So every class
+that simply runs full with an unfulfilled queue leaves its `waiting` rows `waiting`
+forever, and completed classes are never deleted. Without the join, `distinct classId`
+returns every such class for the life of the deployment — a set that grows
+monotonically, is rebuilt every sixty seconds, and is passed inline as an `IN` list to
+the two queries below. At a hundred teachers that is tens of thousands of UUIDs of SQL
+text per statement within a year, twice a minute, on the single 2 GB VPS this project
+is pinned to. It degrades forever and never recovers, and no test can observe it.
+
+The second `status: 'open'` stays because it is the *correctness* filter: a class can
+complete between the two queries, and this is the same check `handleSpotFreed` applies
+before acting. The join bounds; the filter decides.
+
+For the same reason the batched `groupBy` below is keyed on the classes actually
+loaded, not on the raw candidate id list — counting registrations for classes already
+filtered out is the largest query in the tick doing the most discardable work.
 
 **Query shape, because N+1 on a 2GB VPS is the obvious way to get this wrong.** The
 seat pre-filter is **batched** — one `registration.groupBy({ by: ['classId'], where: {
@@ -263,7 +306,7 @@ authoritative count remains the one `handleSpotFreed` takes under the lock.
 | `auto_promote`, live head | promotes | the seat fills |
 | `auto_promote`, all-stale queue | marks each `removed` (§3) | no `waiting` rows left |
 | `first_come_first_claimed`, not yet broadcast | broadcasts | the §4.3 gate closes |
-| `first_come_first_claimed`, already broadcast | not invoked | gated; costs one indexed read per tick, for at most the 60-minute window |
+| `first_come_first_claimed`, already broadcast | not invoked | gated; costs one indexed read per tick, for at most the 60-minute window — indexed because this branch adds `Notification_relatedClassId_type_createdAt_idx`, without which it is a sequential scan (§6) |
 
 ### 4.3 The broadcast gate
 
@@ -287,7 +330,8 @@ correct. No new column and no migration.
 
 **The one race it does not close.** The gate is read outside the class row lock, so:
 sweep reads the gate → the live hook broadcasts → sweep invokes the hook → a second
-broadcast. The sweep cannot race *itself* (`scheduler.ts:138`), only the live path.
+broadcast. The sweep cannot race *itself* (the `job.running` guard in `scheduler.ts`),
+only the live path.
 The cost is one duplicate notification, against a current cost of no notification at
 all. Accepted deliberately, and stated in the PR body rather than closed by
 restructuring the hook.
@@ -382,9 +426,26 @@ record, restore, re-verify.
   ("four via their own inline `SELECT … FOR UPDATE`, the waitlist broadcast via
   `lockClassRow`"). The sweep reaches it through the broadcast, so that sentence stays
   true — checked, not assumed.
-- `docs/audits/2026-07-18-review-round-2.md:75` — the "no sweep re-checks waitlists vs
-  free seats" line is answered by this work and should say so.
+- The July 2026 audit's "no sweep re-checks waitlists vs free seats" line is answered
+  by this work and should say so — **but that file lives under `docs/audits/`, which
+  `.git/info/exclude` keeps untracked, so the edit is local-only and reaches no PR and
+  no other clone.** It is therefore not a deliverable this branch can meet. The
+  observation is instead stated inline in `waitlist-reconciliation.ts`'s header, and
+  no source comment cites the path: a reference nobody else can open is not a
+  reference. Whoever wants the audit notes verifiable should track the directory,
+  which is a decision beyond this branch.
 - A comment at the unlocked pre-filter carrying §4.5's reasoning.
+- **A migration adding `Notification_relatedClassId_type_createdAt_idx`.** Added after
+  review, reversing this spec's original "no migration" constraint. That constraint
+  was protecting the DESIGN from needing a new column, and the §4.3 gate was built
+  precisely so none was needed — that still holds. What review found is different:
+  `Notification` carries a single index on the recipient, so the gate's
+  `relatedClassId + type + createdAt` filter was a sequential scan of the app's
+  highest-volume table — one with no retention sweep, so it only grows — once per
+  gated class, every sixty seconds. An additive `CREATE INDEX` introduces no column,
+  no data semantics and no backfill. Accepting the scan instead would have been the
+  same mistake as the unbounded candidate set in §4.2: a cost that compounds forever
+  in exchange for holding a rule past the point it was protecting anything.
 
 ---
 

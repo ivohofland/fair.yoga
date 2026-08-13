@@ -702,7 +702,7 @@ Add this helper below `reconcileWaitlists`:
  *
  * **The one race this does not close.** The read is outside the Class row lock,
  * so: this reads the gate → the live hook broadcasts → this invokes the hook →
- * a second broadcast. The sweep cannot race ITSELF (`scheduler.ts:138` refuses a
+ * a second broadcast. The sweep cannot race ITSELF (the `job.running` guard refuses a
  * tick while one is running), only the live path. The cost is one duplicate
  * notification against a current cost of no notification at all, and that trade
  * was made deliberately.
@@ -960,7 +960,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ## Task 4: Register the job, and correct the docs it makes stale
 
 **Files:**
-- Modify: `src/lib/scheduler.ts:94-132`
+- Modify: `src/lib/scheduler.ts` (the job table)
 - Modify: `src/services/waitlist-reconciliation.ts` (the summary log line)
 - Modify: `docs/lock-order.md`
 - Modify: `docs/audits/2026-07-18-review-round-2.md:75`
