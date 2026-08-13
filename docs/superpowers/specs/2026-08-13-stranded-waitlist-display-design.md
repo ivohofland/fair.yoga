@@ -14,8 +14,8 @@ is one the service layer already enforces four times over.
 |---|---|
 | `/bookings` filters on entry status and not class status (`bookings/page.tsx:41`) | **True.** `where: { studentId, status: 'waiting' }`, no class predicate. |
 | Every class auto-cancelled before #195 still carries `waiting` entries | **True as stated, and empty in practice.** Measured 0 — see §4. |
-| "#195 fixes forward only … the population is bounded and no longer grows" | **False.** `completeClass` never closes the queue, so an ordinary full class that *runs* strands its waiters. See §7. |
-| The fix is `class: { status: { not: 'cancelled' } }` | **Wrong shape.** It leaves the completed-class population rendering, which is the larger one. The predicate is positive: `status: 'open'`. |
+| "#195 fixes forward only … the population is bounded and no longer grows" | **False.** #195 closed the three exits to `cancelled`. The three exits to `in_progress` close nothing, so an ordinary full class strands its waiters the moment it *starts*. See §7. |
+| The fix is `class: { status: { not: 'cancelled' } }` | **Wrong shape.** It leaves the `in_progress` and `completed` population rendering, which is the larger one and the one still growing. The predicate is positive: `status: 'open'`. |
 | Option 1 is the display half; options 2 and 3 are backfill and retroactive notice | **2 and 3 do not apply.** There is no production; dev measures 0 stranded rows, so a backfill updates nothing and a retroactive email reaches nobody. |
 
 The issue also names one surface. There are two: the teacher's class detail
@@ -82,7 +82,7 @@ has five values and the count filters none of them:
 | `promoted` | `promoteNext:480`, `claimSpot:588` | **double-counts a seated student**: both create the `Registration` in the same transaction (`activateRegistration`) and store its id, so this student is already in the registrations list on this same page |
 | `claimed` | `POST /api/registrations:185` | same double-count, by the route rather than the service |
 | `removed` | `removeFromWaitlist`, and the three cancel paths #195 added | counts a student who left |
-| `expired` | **nothing** — no code path writes it | dead enum value |
+| `expired` | **nothing** — no code path writes it | dead enum value; §7 proposes it as the state the missing transition should write |
 
 So after #195 a cancelled class whose queue was closed to `removed` still reports
 its old queue length to its teacher, and any class that ever promoted a waiter
@@ -123,7 +123,9 @@ sample — `grep -rn "waitlistEntry\.\|waitlistEntries" src` over non-test files
 - **Including `in_progress`.** Walk-ins may exceed `maxStudents`, so a teacher
   *could* still take someone — but the claim button already requires
   `cls.status === 'open'` (`bookings/page.tsx:117`), so the row would render as
-  dead text with no action: the same defect, one status over.
+  dead text with no action: the same defect, one status over. `in_progress` is
+  also where the surviving rows actually come from (§7), which makes including it
+  the exact opposite of the fix.
 - **Backfill (issue option 2).** Nothing to update (§4), and a data migration
   written now would ship a permanent empty `UPDATE` against a future database that
   never carried a pre-#195 row.
@@ -141,12 +143,26 @@ against another run's fixture.
 
 ### 6.1 Student — `/bookings`
 
-Fixture: one student, two `waiting` entries — one on an `open` class, one on a
-`completed` class. Assert the open class's type appears and the completed class's
-type does not.
+Fixture: one student with a `waiting` entry on an `open` class and one on each
+non-`open` status a queue can survive into — `in_progress`, `completed`,
+`cancelled`. Assert the open class's type appears and the other three do not.
 
-**Mutation:** delete `class: { status: 'open' }` from the query. Must fail on the
-completed class's type appearing in the HTML. Record the exact assertion text.
+**The `cancelled` case alone would certify nothing, and this is the trap.** The
+issue's own proposal, `not: 'cancelled'`, passes a test whose only dead fixture is
+a cancelled class — so a fixture chosen to match the issue's wording cannot tell
+the shipped predicate from the rejected one. `in_progress` and `completed` are what
+make the test discriminate, and they are also where the rows actually come from
+(§7). This is #39's shape: a pin that holds for the case it was written from and is
+blind to the case that occurs.
+
+**Mutations, each proved separately:**
+
+1. Delete `class: { status: 'open' }` — must fail on all three dead types appearing.
+2. Weaken it to `class: { status: { not: 'cancelled' } }` — must fail on the
+   `in_progress` and `completed` types appearing. This is the mutation that matters:
+   it is not a hypothetical, it is what the issue asked for.
+
+Record the exact assertion text from both.
 
 ### 6.2 Teacher — class detail
 
@@ -168,19 +184,42 @@ projects, so the whole integration suite is the evidence — not a named subset.
 
 ## 7. Out of scope, filed separately
 
-**`completeClass` does not close its queue.** `src/services/class-lifecycle.ts`
-writes `status: 'completed'` and never touches `WaitlistEntry`; the string
-`waitlist` appears once in that file, in an unrelated docblock. A queue only forms
-at `maxStudents`, so a full class that runs to completion is the ordinary case, and
-every `waiting` row on it survives at `waiting` indefinitely. This is why §1
-falsifies the issue's "bounded" claim.
+**Nothing closes the queue when a class stops being `open` by *starting*.** The
+class-started state is `in_progress`, and that — not completion — is where the
+stranding begins. §2's invariant says a waitlist belongs to an `open` class; the
+moment a class leaves `open`, every surviving `waiting` row contradicts it.
+
+Every exit from `open`, and what it does with the queue:
+
+| → | Path | Closes the queue? |
+|---|---|---|
+| `cancelled` | manual route, `transition/route.ts:36` | **yes** — #195 |
+| `cancelled` | `autoCancelClasses`, `class-transitions.ts:297` | **yes** — #195 |
+| `cancelled` | teacher erasure, `gdpr.ts:783` | **yes** — #195 |
+| `in_progress` | `autoTransitionToInProgress:81` → `transitionClass` | **no** |
+| `in_progress` | `POST …/transition` with `in_progress` → `transitionClass:109` | **no** |
+| `in_progress` | `completeClass:204`, the inline bump when a teacher completes an `open` class directly | **no** |
+| row deleted | template archive, `class-template-lifecycle.ts:872` | **yes** — notifies, then cascades |
+
+A queue only forms at `maxStudents`, so a full class that starts is the ordinary
+case, and its `waiting` rows survive indefinitely. That is what falsifies the
+issue's "bounded" claim in §1 — and note the earliest draft of this spec blamed
+`completeClass` alone, which put the gap one state too late and undercounted the
+sites by two.
+
+Two of the three sites funnel through `transitionClass`
+(`class-lifecycle.ts:123`), so a guard there on `targetStatus === 'in_progress'`
+covers both. The third cannot use it: `completeClass` runs inside its own
+`$transaction` and `transitionClass` takes a `PrismaClient`, not a transaction
+client — the same reason it does its bump inline in the first place.
 
 #112's spec ruled `completeClass` out explicitly — *"which does not remove a class
 from the schedule"* (`2026-08-11-waitlist-withdrawal-notice-design.md:427`). That
 was correct for the question #112 asked, which was **whose notice is owed**:
 nothing was withdrawn, so nothing is owed. It is silent on the question #199 asks,
 which is **what still renders**. Worth naming, because the sentence is true and the
-exclusion was right — the gap is in the scope boundary, not in the reasoning.
+exclusion was right — the gap is in the scope boundary, not in the reasoning. The
+`in_progress` transitions were not in #112's frame at all, in either sense.
 
 How far the stale state reaches, so the filed issue does not have to re-derive it:
 
@@ -192,14 +231,26 @@ How far the stale state reaches, so the filed issue does not have to re-derive i
 - The Article 15 export (`gdpr.ts:50`) reports `waiting` for a class that already
   ran. This is the only remaining user-visible consequence once §3.1 lands.
 
-Filed as work rather than as a decision: the option set is one `updateMany` in one
-function, and the notification question is already answered — a "the class ran
-without you" notice is noise, and #112's promise was about a class *stopping being
-offered*, which this is not.
+**Filed as a decision, not as work**, because the status to write is a genuine
+choice and it is the kind that is cheap now and expensive after it ships:
 
-Also unchanged: the deletion rule, the notification layer, `StudioClass` (no
-waitlist), and the `expired` enum value, which is dead but harmless and not this
-branch's business.
+- **`removed`** — what all three cancel paths write. One vocabulary, no new
+  behaviour, and it is what `withdrawWaitingEntriesForTeacher` and
+  `removeFromWaitlist` already mean.
+- **`expired`** — which exists in `WaitlistStatus` (`prisma/schema.prisma:70`) and
+  appears **nowhere else in the codebase**: nothing writes it, nothing reads it, no
+  test names it. "The class started while you were still waiting" is exactly what
+  the word means, and it is the only distinction a reader of the data can use to
+  tell a student who *left* from one who never got in. The Article 15 export
+  (`gdpr.ts:50`) reports status verbatim, so this is a difference a student can see.
+
+The notification question, by contrast, **is** answered and the filed issue should
+say so rather than reopen it: no notice. #112's promise was about a class *stopping
+being offered*; a class that ran is not that, and "it happened without you" is
+noise.
+
+Also unchanged: the deletion rule, the notification layer, and `StudioClass` (no
+waitlist).
 
 ## 8. Acceptance
 
@@ -210,4 +261,6 @@ branch's business.
 - Each of the two guards has been broken, the failure text recorded, and restored.
 - The production-count criterion in #199 is answered in the issue itself with §4's
   measurement and the fact that no production exists.
-- The `completeClass` gap is filed with §7's content before this branch merges.
+- The open→`in_progress` queue-closing gap is filed with §7's content — the exit
+  table, the `removed`/`expired` choice, and the settled notification question —
+  before this branch merges.
