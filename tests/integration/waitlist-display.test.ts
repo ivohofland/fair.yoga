@@ -18,14 +18,18 @@ const suffix = uniqueSuffix();
  * runs the scheduler (`src/instrumentation.ts`), and every one of them would
  * otherwise reach these rows:
  *
- * - `autoTransitionToInProgress` — `open` classes with `date <= now + 24h`
- *   (`class-transitions.ts:70`).
- * - `autoCancelClasses` — `open` classes inside their auto-cancel check window
- *   that sit below `minStudents` (`class-transitions.ts:115`). Every fixture
- *   class here has `minStudents: 1` and ZERO registrations, so this is the one
- *   most likely to bite.
- * - `autoCompleteClasses` — EVERY `in_progress` class, with no date filter at
- *   all; only the computed end instant holds it off (`class-transitions.ts:392`).
+ * - `autoTransitionToInProgress` — its query filters `date: { lte: now + 24h }`,
+ *   so a 2099 row is never even fetched.
+ * - `autoCancelClasses` — **its query has no date filter either**
+ *   (`where: { status: 'open' }`), so these five open rows ARE fetched every 60
+ *   seconds and skipped per-class. The `minStudents` pre-filter does not save
+ *   them: every fixture class has `minStudents: 1` and ZERO registrations. Only
+ *   `inCancelWindow` does. This is the one most likely to bite.
+ * - `autoCompleteClasses` — EVERY `in_progress` class, no date filter; only the
+ *   computed end instant holds it off.
+ *
+ * (All three live in `src/services/class-transitions.ts`; grep the predicate
+ * rather than trusting a line number, which is what rotted last time.)
  *
  * Any of the three rewrites a status underneath an assertion, and the absence
  * assertions below would still pass — from a status the fixture never set.
@@ -33,8 +37,9 @@ const suffix = uniqueSuffix();
  */
 
 // Distinct `startTime` per class: `Class_teacher_slot_unique` is
-// (teacherId, date, startTime) WHERE status <> 'cancelled', so three of the
-// four classes below would collide on a shared literal time.
+// (teacherId, date, startTime) WHERE status <> 'cancelled', so four of the five
+// classes below would collide on a shared literal time — the four non-cancelled
+// ones. Add a class here and give it its own index.
 function slot(n: number): string {
   const minute = String(n).padStart(2, '0');
   return `09:${minute}`;
@@ -42,18 +47,32 @@ function slot(n: number): string {
 
 const CLASS_DATE = new Date('2099-06-01');
 
+// Deliberately initialised to `''`, never left `undefined`: Prisma treats an
+// `undefined` filter value as NO FILTER, so a `beforeAll` that threw before the
+// teacher create would turn `teacherRoom.deleteMany({ where: { teacherId } })`
+// in the teardown into a delete-everything against the shared dev database.
 let teacherId = '';
 let teacherRoomId = '';
 let teacherToken = '';
 let studentToken = '';
+let onlyDeadToken = '';
 let countClassId = '';
+let openClassId = '';
+let completedClassId = '';
 const classIds: string[] = [];
 const accountIds: string[] = [];
 const studentIds: string[] = [];
 
-// The four statuses a `waiting` row can be stranded on, plus the one it is
-// legitimately on. `draft` is excluded: a draft class cannot hold a
-// registration, so it cannot reach `maxStudents` and cannot form a queue.
+// The three statuses a `waiting` row can be stranded on, plus the one it is
+// legitimately on. `draft`, the remaining `ClassStatus` value, is excluded for a
+// stronger reason than "a draft class holds no registrations": no transition
+// targets it. `VALID_TRANSITIONS` (`class-lifecycle.ts`) lists `draft` as a
+// source only, so `sourceStatesFor('draft')` is empty and the CAS matches
+// nothing — a class cannot re-enter `draft`, and `addToWaitlist` only ever
+// writes against an `open` one. `cancelled` is reachable in principle but not
+// in practice since #195 closed all three cancel paths' queues to `removed`;
+// its fixture below is a defensive pin against a fourth cancel path that
+// forgets to, not a reproduction of live data.
 const openType = `w199-open-${suffix}`;
 const inProgressType = `w199-inprogress-${suffix}`;
 const completedType = `w199-completed-${suffix}`;
@@ -101,10 +120,12 @@ async function makeStudent(tag: string): Promise<{ id: string; accountId: string
     select: { id: true, accountId: true },
   });
   studentIds.push(student.id);
-  // `Student.accountId` is nullable in the schema (CRM-created students stay
-  // unclaimed); this fixture always creates the account inline, so the cast
-  // is the established idiom (`accountId as string` — see the other files in
-  // this suite).
+  // `Student.accountId` is nullable in the schema; this fixture always creates
+  // the account inline, so the cast is the established idiom in this suite
+  // (`accountId as string` — `invitations-api.test.ts`, `account-api.test.ts`,
+  // `privacy-page.test.ts`, `registrations-api.test.ts`). Deliberately not
+  // restating WHY the column is nullable: the reason next to it in the schema
+  // has already rotted once, and a second copy here would rot with it.
   const accountId = student.accountId as string;
   accountIds.push(accountId);
   return { id: student.id, accountId };
@@ -146,11 +167,29 @@ beforeAll(async () => {
   });
   teacherRoomId = teacherRoom.id;
 
-  // A student-only account: `getSession` resolves `teacherId` first when an
-  // account carries both profiles (`lib/auth/session.ts:100-106`), so a hybrid
-  // fixture would still reach `/bookings` but would muddy what is being tested.
+  // Student-only accounts: `validateSession` resolves `teacherId` first when an
+  // account carries both profiles (`lib/auth/session.ts:100-106`, reached
+  // through the `getSession` wrapper in `lib/session.ts`), so a hybrid fixture
+  // would still reach `/bookings` but would muddy what is being tested.
   const strip = await makeStudent('strip');
   studentToken = await seedSession(prisma, strip.accountId);
+
+  // A second student who holds ONLY dead entries, which pins two things the
+  // first student cannot.
+  //
+  // 1. That the filter lives in the QUERY, not the render. Move it into the
+  //    map — leave `where` unfiltered and wrap the row in
+  //    `cls.status === 'open' &&` — and every assertion about `strip` still
+  //    passes, while this student gets a "Waitlist" heading above zero rows AND
+  //    loses the empty state, because line 102's condition reads
+  //    `waitlistEntries.length`. That phantom section is the outcome spec §3.1
+  //    exists to prevent, so it must not be able to ship green.
+  // 2. That the ENTRY-status half of the predicate still bites. Delete
+  //    `status: 'waiting'` and this student's `removed` entry on the OPEN class
+  //    starts rendering, so the empty state disappears. Otherwise that half is
+  //    pinned only by Playwright, which `npm run verify` does not run.
+  const onlyDead = await makeStudent('only-dead');
+  onlyDeadToken = await seedSession(prisma, onlyDead.accountId);
 
   const statuses: Array<[string, 'open' | 'in_progress' | 'completed' | 'cancelled']> = [
     [openType, 'open'],
@@ -161,40 +200,71 @@ beforeAll(async () => {
 
   for (const [i, [classType, status]] of statuses.entries()) {
     const classId = await makeClass(classType, status, i);
+    if (status === 'open') openClassId = classId;
+    if (status === 'completed') completedClassId = classId;
     // Written directly, not via `addToWaitlist`: that service throws on a
-    // non-`open` class, which is the invariant under test one layer down.
+    // non-`open` class — the invariant under test one layer down — and on this
+    // fixture's `open` class too, since `class_not_full` rejects a join while
+    // the class has seats and these classes carry zero registrations.
     await prisma.waitlistEntry.create({
       data: { classId, studentId: strip.id, position: 1, status: 'waiting' },
     });
   }
 
-  // Task 2's fixture: one class carrying one entry in each of three states —
-  // `waiting`, `promoted`, `removed`. Three properties, each load-bearing:
+  // The `only-dead` student's two entries. `removed` on the OPEN class and
+  // `waiting` on the COMPLETED one, so each of the predicate's two halves is
+  // the sole thing excluding one of them.
+  await prisma.waitlistEntry.createMany({
+    data: [
+      { classId: openClassId, studentId: onlyDead.id, position: 2, status: 'removed' },
+      { classId: completedClassId, studentId: onlyDead.id, position: 2, status: 'waiting' },
+    ],
+  });
+
+  // The count fixture: one class carrying one entry in each of four states —
+  // `waiting`, `promoted`, `claimed`, `removed`. Every property is load-bearing,
+  // and each was added because a wrong predicate survived without it:
   //
-  // - THREE entries against ONE `waiting` makes the filtered and unfiltered
-  //   counts differ by two, so no off-by-one predicate reproduces the right
+  // - FOUR entries against ONE `waiting` makes the filtered and unfiltered
+  //   counts differ by three, so no off-by-one predicate reproduces the right
   //   answer. A symmetric fixture is the shape that let #39 ship three guards
   //   that could not fail.
-  // - The `promoted` row is what makes this test discriminate. `1 waiting +
-  //   2 removed` renders `1` under BOTH `status: 'waiting'` and
-  //   `status: { not: 'removed' }` — and the latter is a natural mistake
-  //   ("removed means gone") that still double-counts precisely the students
-  //   `(teacher)/class/[id]/page.tsx:45` names as the reason for the fix.
-  //   With a `promoted` row present, `not: 'removed'` renders 2 and fails.
-  // - `removed` stays represented, because it is the state every queue #195
-  //   closed on a cancelled class now sits in.
+  // - `promoted` kills `status: { not: 'removed' }` — a natural mistake
+  //   ("removed means gone") that renders 1 against `1 waiting + 2 removed`,
+  //   which is what this fixture was before review.
+  // - `claimed` kills `status: { notIn: ['removed', 'promoted'] }`, the same
+  //   negative enumeration one step further out. It is not hypothetical:
+  //   `api/registrations/route.ts` writes `claimed` when a queued student books
+  //   directly, so it is the second of the two double-counts the production
+  //   comment names.
+  // - `removed` stays represented: it is the state every queue #195 closed now
+  //   sits in.
   //
-  // The `promoted` row deliberately carries no `registrationId`: in production
-  // `promoteNext` writes one (`waitlist.ts:480`), but the count query never
-  // reads it, and a fixture Registration would add an entity to this graph to
-  // assert nothing. `promotedAt` is set so the row is not obviously synthetic.
+  // `expired` is absent because nothing in `src` writes it. If #216 chooses
+  // `expired` as the state that closes a queue when a class starts, add a row
+  // here the same day — otherwise `notIn: ['removed','promoted','claimed']`
+  // becomes a live leak this fixture cannot see.
+  //
+  // The closed rows deliberately carry no `registrationId`: in production
+  // `promoteNext` and `claimSpot` write one (`activateRegistration`, linked on
+  // the entry update), but the count query never reads it, and fixture
+  // `Registration`s would add entities to this graph to assert nothing.
+  // `promotedAt` is set so the rows are not obviously synthetic.
   countClassId = await makeClass(`w199-count-${suffix}`, 'open', 4);
   const waiting = await makeStudent('count-waiting');
   const seated = await makeStudent('count-promoted');
+  const booked = await makeStudent('count-claimed');
   const gone = await makeStudent('count-gone');
   await prisma.waitlistEntry.createMany({
     data: [
       { classId: countClassId, studentId: waiting.id, position: 1, status: 'waiting' },
+      {
+        classId: countClassId,
+        studentId: booked.id,
+        position: 4,
+        status: 'claimed',
+        promotedAt: new Date(),
+      },
       {
         classId: countClassId,
         studentId: seated.id,
@@ -237,6 +307,25 @@ describe('GET /bookings (page) — the waitlist strip', () => {
     expect(html).not.toContain(completedType);
     expect(html).not.toContain(cancelledType);
   });
+
+  it('shows the empty state to a student holding only dead entries, so the filter cannot live in the render', async () => {
+    const res = await fetch(`${BASE_URL}/bookings`, { headers: cookie(onlyDeadToken) });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+
+    // The whole point of asserting the empty state rather than an absence: a
+    // render-time filter also hides the rows, but leaves `waitlistEntries`
+    // non-empty, so the "Waitlist" heading renders above nothing AND this
+    // condition (`upcoming/past/waitlistEntries` all empty) stops holding.
+    expect(html).toContain('No bookings yet');
+    expect(html).not.toContain('Waitlist');
+
+    // This student's other entry is `removed` on the OPEN class, so the
+    // entry-status half of the predicate is the only thing hiding it. Without
+    // that half the row renders and the empty state disappears — otherwise
+    // that half is pinned only by Playwright, which `npm run verify` never runs.
+    expect(html).not.toContain(openType);
+  });
 });
 
 describe('GET /class/[id] (page) — the waitlist count', () => {
@@ -247,8 +336,8 @@ describe('GET /class/[id] (page) — the waitlist count', () => {
     expect(res.status).toBe(200);
 
     // React's SSR splices `<!-- -->` around a dynamic text node that sits
-    // beside a static one, and `class-info.tsx:35` is exactly that shape:
-    // `{waitlistCount} on waitlist`. The raw HTML therefore reads
+    // beside a static one, and `class-info.tsx`'s `{waitlistCount} on waitlist`
+    // is exactly that shape. The raw HTML therefore reads
     // `1<!-- --> on waitlist`, and a plain `toContain('1 on waitlist')` fails
     // against correct output. Stripping the markers asserts on what a reader
     // sees. (`privacy-page.test.ts` needs no such step because the page it
@@ -257,12 +346,33 @@ describe('GET /class/[id] (page) — the waitlist count', () => {
 
     expect(html).toContain('1 on waitlist');
 
-    // 3 is what an unfiltered count renders. 2 is what `not: 'removed'`
-    // renders — the plausible wrong predicate, which keeps counting the
-    // `promoted` student who already appears in this page's registrations
-    // list. Naming both numbers puts the discrimination in the test rather
-    // than only in the fixture's comment.
+    // Each number names a predicate that would produce it: 4 unfiltered, 3
+    // under `not: 'removed'`, 2 under `notIn: ['removed','promoted']`. All
+    // three keep counting students who hold a live registration on this same
+    // page — in production, not in this fixture, whose closed rows carry no
+    // `registrationId` deliberately. The discrimination lives in the fixture;
+    // these assertions document it.
+    expect(html).not.toContain('4 on waitlist');
     expect(html).not.toContain('3 on waitlist');
     expect(html).not.toContain('2 on waitlist');
+  });
+
+  it('drops the count once the class can no longer consume its queue', async () => {
+    // The completed class carries two `waiting` entries (one per student), so
+    // an ungated render reads "2 on waitlist" on a class that has finished —
+    // the teacher-side twin of the defect #199 was filed about, and the reason
+    // filtering the entry status alone was only half the fix. Nothing can
+    // promote or walk in a waiter here: `promoteNext`, `claimSpot` and
+    // `handleSpotFreed` all require `open`, and so does a non-teacher booking.
+    const res = await fetch(`${BASE_URL}/class/${completedClassId}`, {
+      headers: cookie(teacherToken),
+    });
+    expect(res.status).toBe(200);
+    const html = (await res.text()).replaceAll('<!-- -->', '');
+
+    // Proves the page rendered rather than redirecting — `class-info.tsx`
+    // always emits this clause, and only for a class this teacher owns.
+    expect(html).toContain('registered · needs');
+    expect(html).not.toContain('on waitlist');
   });
 });

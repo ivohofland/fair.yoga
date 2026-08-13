@@ -45,6 +45,19 @@ export default async function StudentBookingsPage() {
       // is the predicate `addToWaitlist`, `promoteNext`, `claimSpot` and
       // `handleSpotFreed` all already require, and a negative predicate would
       // need extending for every terminal state added later.
+      //
+      // `open` covers a full class: CLAUDE.md describes the lifecycle as
+      // `open → full → in_progress`, but `ClassStatus` has no `full` — a class
+      // at `maxStudents` is still `open`, and fullness is derived from counts
+      // (`status-badge.tsx`). This predicate therefore hides no legitimate
+      // queue, which is the one thing it would be fatal to get wrong: a queue
+      // only forms once a class fills.
+      //
+      // One guard deliberately does NOT require `open`, and this change
+      // disables the only way to reach it: `removeFromWaitlist` has no status
+      // check, so a student could leave a dead queue from the row this now
+      // hides (`waitlist-entry-actions.tsx` is its sole call site). Nothing
+      // else can close those entries — #216 is now the only drain.
       where: { studentId: session.studentId, status: 'waiting', class: { status: 'open' } },
       include: {
         class: {

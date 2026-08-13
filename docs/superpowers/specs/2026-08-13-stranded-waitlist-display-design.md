@@ -88,6 +88,37 @@ So after #195 a cancelled class whose queue was closed to `removed` still report
 its old queue length to its teacher, and any class that ever promoted a waiter
 counts that person twice. `waiting` alone is the predicate.
 
+### 3.3 Teacher class detail, the class side — `src/components/class/class-info.tsx`
+
+**Added after the PR review, which found §3.2 was half the fix.** Two reviewers
+converged on it independently: §3.2 qualifies the *entry* and never the *class*,
+so the population §7 documents as growing on every open→`in_progress` transition
+still rendered — "3 on waitlist", present tense, on a class that had finished.
+That is the sentence this spec opens with, on the teacher's side rather than the
+student's.
+
+```tsx
+const queueIsLive = cls.status === 'open' || cls.status === 'in_progress';
+…
+{queueIsLive && waitlistCount > 0 && <> &middot; {waitlistCount} on waitlist</>}
+```
+
+It belongs in the component, not the query: a relation `_count` filters the
+related rows, not the parent's status, and this component already owns
+`showProgress` on the same lifecycle window.
+
+**`in_progress` is included deliberately, and the reasoning is not symmetric with
+§3.1's.** `api/registrations/route.ts` sets `allowedStatuses = isTeacher ?
+['open', 'in_progress'] : ['open']`, and the walk-in path closes a queued
+student's entry to `claimed`. So during check-in a teacher may still walk a waiter
+in, which makes the number actionable rather than stale. After `completed` nothing
+can consume the queue. `cancelled` already reads 0, since every cancel path closes
+its entries to `removed` — so `completed` is the live case this fixes.
+
+The student side has no equivalent window: `canClaim` already requires `open`
+(§5), so a row on an `in_progress` class would render as dead text with no action.
+The two surfaces differ by one status for a stated reason, not by oversight.
+
 ## 4. What was measured
 
 Dev is the only database; there is no production. Every `WaitlistEntry` row,
@@ -269,10 +300,19 @@ How far the stale state reaches, so the filed issue does not have to re-derive i
   sizes the transaction timeout, and adds their classes to its lock loop: wasted
   row locks and an over-generous timeout, no wrong outcome.
 - The Article 15 export (`gdpr.ts:50`) reports `waiting` for a class that already
-  ran. This is the only remaining user-visible consequence once §3.1 lands.
+  ran. **This sentence originally said "the only remaining user-visible
+  consequence once §3.1 lands", and the PR review falsified it** — there were two,
+  and the second was on a page this branch already edits: the teacher's class
+  detail kept rendering "N on waitlist" for a class that had finished, because
+  §3.2 qualified the entry's status and not the class's. That is now fixed in
+  `class-info.tsx` (§3.3), which leaves the export as the last one. The export
+  also selects `classType/date/startTime` and **not** the class's `status`, so
+  nothing in the exported record lets a subject work out that the queue is dead —
+  an argument for `expired` in #216's decision, recorded there.
 - **§3.1 closes the drain as well as the leak, which raises the stakes on #216.**
   The row it hides carried `WaitlistEntryActions`, whose `handleLeave` issues
-  `DELETE /api/waitlist/[entryId]` (`waitlist-entry-actions.tsx:44-48`) — so
+  `DELETE /api/waitlist/[id]` (`waitlist-entry-actions.tsx:49`, inside
+  `handleLeave` at `:45-60`) — so
   until §3.1, a student looking at a dead-class row could at least remove
   themselves, closing that entry to `removed`. Afterwards the row is invisible
   and inert, and **no user action can ever close it**: #216 becomes the only
