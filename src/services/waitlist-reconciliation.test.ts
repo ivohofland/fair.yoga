@@ -345,7 +345,86 @@ describe('reconcileWaitlists (DB)', () => {
         where: { relatedClassId: cls.id, type: 'spot_available', recipientId: waiter },
       }),
     ).toBe(1);
+
+    // The sweep's own broadcast is stamped `2026` by `@default(now())` — the DB
+    // clock, not the injected 2099 clock (derailer 1). Re-stamp it inside the
+    // claim window so LATER tests' sweeps, whose gates query
+    // `createdAt >= claimWindowStart` in 2099, see it and suppress this class
+    // instead of re-broadcasting into it and inflating their own `reconciled`.
+    await prisma.notification.updateMany({
+      where: { relatedClassId: cls.id, type: 'spot_available' },
+      data: { createdAt: clocks.inClaimWindow },
+    });
   });
+
+  /**
+   * Two candidates, the first held past `lockClassRow`'s 2 s bound so its
+   * invocation throws `55P03`. The second must still be reconciled.
+   *
+   * `isolatedSweeps` (`lib/scheduler.ts:46`) wraps whole sweeps, not the items
+   * inside one, so nothing outside this function protects the second class.
+   *
+   * The two classes are created in one call so both are candidates of the same
+   * sweep; the loop order follows `class.findMany`, so this asserts on the
+   * OUTCOME of both rather than on which ran first.
+   *
+   * One clock serves both, and that is safe rather than sloppy: `nextSlot()`
+   * separates their start times by a minute or two, while the claim window is
+   * 60 minutes wide and `inClaimWindow` sits 30 minutes from either edge. The
+   * whole file creates fewer than a dozen classes, so the drift cannot approach
+   * that margin. If you ever add enough classes for `nextSlot()` to roll an
+   * hour, derive a clock per class instead.
+   */
+  it('reconciles the remaining classes when one loses its lock race', async () => {
+    const blocked = await makeClass(1);
+    const healthy = await makeClass(1);
+    const clocks = windowClocks(blocked.startTime);
+
+    for (const cls of [blocked, healthy]) {
+      const filler = await makeStudent('IsoFiller');
+      const waiter = await makeStudent('IsoWaiter');
+      await prisma.registration.create({
+        data: { classId: cls.id, studentId: filler, status: 'registered', tierAtBooking: 3 },
+      });
+      await addToWaitlist(prisma, cls.id, waiter);
+      await prisma.registration.update({
+        where: { classId_studentId: { classId: cls.id, studentId: filler } },
+        data: { status: 'cancelled', cancelledAt: new Date() },
+      });
+    }
+
+    const holderClient = new PrismaClient();
+    let signalHeld!: () => void;
+    const lockHeld = new Promise<void>((r) => {
+      signalHeld = r;
+    });
+    const holder = holderClient.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${blocked.id} FOR UPDATE`;
+        signalHeld();
+        // Past lockClassRow's 2s bound, under Prisma's 5s default budget, so the
+        // failure is 55P03 from Postgres rather than P2028 from the client.
+        await new Promise((r) => setTimeout(r, 3_500));
+      },
+      { timeout: 30_000 },
+    );
+    await lockHeld;
+
+    // In the claim window, so the blocked class fails inside lockClassRow's
+    // bounded wait rather than waiting the holder out.
+    const summary = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow });
+
+    await holder;
+    await holderClient.$disconnect();
+
+    expect(summary.failed).toBe(1);
+    expect(summary.reconciled).toBe(1);
+    expect(
+      await prisma.notification.count({
+        where: { relatedClassId: healthy.id, type: 'spot_available' },
+      }),
+    ).toBe(1);
+  }, 60_000);
 
   /**
    * Past the cancel deadline the queue is frozen and no promotion may happen —

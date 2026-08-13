@@ -24,6 +24,7 @@
  */
 import type { CancelDeadline, PrismaClient } from '@prisma/client';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
+import { log } from '@/lib/log';
 import { classStartInstant } from '@/lib/timezone';
 import { DEADLINE_HOURS, getWaitlistWindow, handleSpotFreed } from './waitlist';
 
@@ -75,6 +76,7 @@ export async function reconcileWaitlists(
   const activeByClass = new Map(counts.map((c) => [c.classId, c._count._all]));
 
   let reconciled = 0;
+  let failed = 0;
 
   for (const cls of classes) {
     const window = getWaitlistWindow(
@@ -118,11 +120,25 @@ export async function reconcileWaitlists(
       continue;
     }
 
-    await handleSpotFreed(db, cls.id, opts.now);
-    reconciled += 1;
+    try {
+      await handleSpotFreed(db, cls.id, opts.now);
+      reconciled += 1;
+    } catch (err) {
+      // Per class, mirroring `deleteStudentAccount`'s post-commit loop
+      // (`gdpr.ts:654`). `isolatedSweeps` isolates sweeps from each other, NOT
+      // items within one sweep — without this, one contended class abandons
+      // every class behind it in this loop.
+      //
+      // `warn`, not `error`: `api-errors.ts:223` reserves `error` for what
+      // should page someone, and losing a lock race is the system doing what it
+      // was configured to do. This class is simply retried on the next tick,
+      // which is what makes a separate retry unnecessary.
+      failed += 1;
+      log.warn({ err, classId: cls.id }, 'waitlist reconciliation failed for one class');
+    }
   }
 
-  return { candidates: classes.length, reconciled, failed: 0 };
+  return { candidates: classes.length, reconciled, failed };
 }
 
 /**
