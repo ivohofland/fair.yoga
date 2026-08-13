@@ -16,6 +16,7 @@ import { formatDayHeader } from '@/lib/format';
 import { completeClass } from './class-lifecycle';
 import { handleSpotFreed, reorderWaitingEntries } from './waitlist';
 import { lockClassRow, setLockTimeout } from '@/lib/db-locks';
+import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 
 // ---------------------------------------------------------------------------
@@ -642,11 +643,28 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
 
   // The seats are freed and the erasure is committed — a promotion failure
   // must not undo either, so errors are logged and swallowed.
+  //
+  // Split by transience for the reason `promoteAfterCancel`
+  // (`api/registrations/[id]/route.ts`) carries in full: #212 put the
+  // broadcast branch behind `lockClassRow`, so `55P03` is reachable here, and
+  // `api-errors.ts` reserves `error` for things that should page someone. This
+  // loop is the likelier of the two to hit it — an erasure holds every class
+  // row it locks until its own transaction commits, so a concurrent cancel on
+  // a shared class is exactly the contention that times out.
   for (const classId of freedClassIds) {
     try {
       await handleSpotFreed(db, classId);
     } catch (err) {
-      log.error({ err, classId }, 'gdpr: spot-freed hook failed after erasure');
+      const waiting = await db.waitlistEntry
+        .count({ where: { classId, status: 'waiting' } })
+        .catch(() => -1);
+      const transient = isTransientDbError(err);
+      log[transient ? 'warn' : 'error'](
+        { err, classId, waiting, transient },
+        transient
+          ? 'gdpr: spot-freed hook lost a lock race after erasure — waiting students were not notified'
+          : 'gdpr: spot-freed hook failed after erasure',
+      );
     }
   }
 }

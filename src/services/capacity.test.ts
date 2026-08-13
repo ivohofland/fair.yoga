@@ -11,6 +11,7 @@ describe('readSeatCount (DB)', () => {
   let roomId: string;
   let teacherRoomId: string;
   let classId: string;
+  let overClassId: string;
   const studentIds: string[] = [];
 
   beforeAll(async () => {
@@ -67,6 +68,29 @@ describe('readSeatCount (DB)', () => {
     });
     classId = cls.id;
 
+    // A SECOND class for the overbooked case, so that test needs nothing from
+    // the one above and can be read (and run) alone. Same teacher and date is
+    // legal because `Class_teacher_slot_unique` is on (teacherId, date,
+    // startTime) — a different `startTime` is all it takes.
+    const over = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Capacity Overbooked',
+        date: new Date('2026-06-02'),
+        startTime: '10:00',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 2,
+        cancelDeadline: 'HOURS_24',
+        status: 'open',
+      },
+    });
+    overClassId = over.id;
+
     for (const label of ['a', 'b', 'c', 'd']) {
       const student = await prisma.student.create({
         data: {
@@ -81,8 +105,8 @@ describe('readSeatCount (DB)', () => {
   });
 
   afterAll(async () => {
-    await prisma.registration.deleteMany({ where: { classId } });
-    await prisma.class.delete({ where: { id: classId } });
+    await prisma.registration.deleteMany({ where: { classId: { in: [classId, overClassId] } } });
+    await prisma.class.deleteMany({ where: { id: { in: [classId, overClassId] } } });
     await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
     await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
     await prisma.room.delete({ where: { id: roomId } });
@@ -91,18 +115,18 @@ describe('readSeatCount (DB)', () => {
     await prisma.$disconnect();
   });
 
-  /** The four phases run in order against one class, each adding to the last. */
-  it('counts only seat-occupying registrations, and reports overbooking honestly', async () => {
+  /** Three phases against one class, each adding to the last. */
+  it('counts only seat-occupying registrations', async () => {
     // Phase 1 — empty class: every seat free.
     const empty = await prisma.$transaction((tx) => readSeatCount(tx, classId));
-    expect(empty).toEqual({ maxStudents: 2, activeCount: 0, freeSeats: 2 });
+    expect(empty).toEqual({ maxStudents: 2, activeCount: 0, freeSeats: 2, isFull: false });
 
     // Phase 2 — one registered: one seat left.
     await prisma.registration.create({
       data: { classId, studentId: studentIds[0]!, tierAtBooking: 3 },
     });
     const partial = await prisma.$transaction((tx) => readSeatCount(tx, classId));
-    expect(partial).toEqual({ maxStudents: 2, activeCount: 1, freeSeats: 1 });
+    expect(partial).toEqual({ maxStudents: 2, activeCount: 1, freeSeats: 1, isFull: false });
 
     // Phase 3 — the two statuses that freed their seat must not count. A
     // `late_cancel` is still BILLED (it is in `CHARGED_STATUSES`) but its seat
@@ -115,20 +139,32 @@ describe('readSeatCount (DB)', () => {
       data: { classId, studentId: studentIds[2]!, tierAtBooking: 3, status: 'late_cancel' },
     });
     const withFreed = await prisma.$transaction((tx) => readSeatCount(tx, classId));
-    expect(withFreed).toEqual({ maxStudents: 2, activeCount: 1, freeSeats: 1 });
+    expect(withFreed).toEqual({ maxStudents: 2, activeCount: 1, freeSeats: 1, isFull: false });
+  });
 
-    // Phase 4 — overbooked. Walk-ins may exceed maxStudents by design
-    // (`registrations/route.ts`), so `freeSeats` goes NEGATIVE rather than
-    // clamping at zero: how overbooked a class is, is real information, and
-    // all four callers test `<= 0`.
-    await prisma.registration.create({
-      data: { classId, studentId: studentIds[3]!, tierAtBooking: 3 },
-    });
-    await prisma.registration.update({
-      where: { classId_studentId: { classId, studentId: studentIds[1]! } },
-      data: { status: 'registered' },
-    });
-    const over = await prisma.$transaction((tx) => readSeatCount(tx, classId));
-    expect(over).toEqual({ maxStudents: 2, activeCount: 3, freeSeats: -1 });
+  /**
+   * Its own `it()` and its own class, deliberately — this is the ONLY test in
+   * the repository defending the "`freeSeats` is not clamped" contract, and it
+   * was a fourth phase of the test above until PR #218's review. Two problems
+   * with that. Applying `Math.max(0, …)` to `readSeatCount` fails this
+   * assertion and nothing else in the suite, so it is load-bearing and alone;
+   * and while it shared an `it()` with the phases above, a second defect
+   * short-circuited the test before it ran, blending two mutations into one
+   * reported diff that matched neither's log entry.
+   *
+   * The separate class means it also needs no state from its neighbour.
+   */
+  it('reports overbooking honestly rather than clamping at zero', async () => {
+    // Walk-ins may exceed maxStudents by design (`registrations/route.ts`), so
+    // `freeSeats` goes NEGATIVE. No caller reads the magnitude — every one of
+    // the five reads `isFull` — so a clamp would change no behaviour at all
+    // and destroy the only record of HOW overbooked a class is.
+    for (const studentId of [studentIds[0]!, studentIds[1]!, studentIds[3]!]) {
+      await prisma.registration.create({
+        data: { classId: overClassId, studentId, tierAtBooking: 3 },
+      });
+    }
+    const over = await prisma.$transaction((tx) => readSeatCount(tx, overClassId));
+    expect(over).toEqual({ maxStudents: 2, activeCount: 3, freeSeats: -1, isFull: true });
   });
 });

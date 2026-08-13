@@ -390,7 +390,7 @@ the whole integration suite, not a sample.
 
 ## 7. Out of scope
 
-- **Re-deriving `status` and `window` under the lock.** `handleSpotFreed:631` still
+- **Re-deriving `status` and `window` under the lock.** `handleSpotFreed` still
   decides both from a pre-lock read. Same family of race, but #174's rule is enforced by
   **#182**, which stays open; the harm is far smaller (a spot notice for a class whose
   own cancellation notice is already going out); and that read is shared with the

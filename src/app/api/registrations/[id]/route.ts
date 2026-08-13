@@ -9,6 +9,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { updateRegistrationSchema } from '@/lib/schemas';
+import { isTransientDbError } from '@/lib/api-errors';
 import { DEADLINE_HOURS, handleSpotFreed } from '@/services/waitlist';
 import { classStartInstant } from '@/lib/timezone';
 import { log } from '@/lib/log';
@@ -207,11 +208,39 @@ export const DELETE = withErrorHandler(async (
  * Runs the waitlist spot-freed hook after a cancel has committed. The cancel
  * already succeeded — a promotion failure must not turn it into a 500, so
  * errors are logged and swallowed here.
+ *
+ * **Split by transience since #212 made a lock timeout reachable here.** The
+ * broadcast branch now opens a transaction on `lockClassRow`, whose `SET LOCAL
+ * lock_timeout = '2s'` raises `55P03` on a contended `Class` row — where the
+ * old bare-client body could barely fail at all. `api-errors.ts` states the
+ * rule this obeys, with this exact scenario as its example: "`error` is the
+ * level that pages someone, while a `lock_timeout` on a contended row is the
+ * system doing what it was configured to do." Logging routine contention at
+ * `error` gets the line tuned out, and then the genuine defect hides in the
+ * noise it created.
+ *
+ * `waiting` is what makes either line actionable. The failure means every
+ * student queued on this class was silently not told a seat opened, and
+ * nothing retries — 0 is a non-event, 12 is a seat that now goes unsold and
+ * reprices the class for everyone left. It cannot be recovered afterwards
+ * because nobody will know to look.
  */
 async function promoteAfterCancel(classId: string): Promise<void> {
   try {
     await handleSpotFreed(prisma, classId);
   } catch (err) {
-    log.error({ err, classId }, 'waitlist spot-freed hook failed after cancel');
+    // `-1`, not `0`, and not a second silent failure: this runs inside a
+    // handler that must not throw, and a count no real queue can take keeps
+    // the line honest about not knowing rather than claiming nobody waited.
+    const waiting = await prisma.waitlistEntry
+      .count({ where: { classId, status: 'waiting' } })
+      .catch(() => -1);
+    const transient = isTransientDbError(err);
+    log[transient ? 'warn' : 'error'](
+      { err, classId, waiting, transient },
+      transient
+        ? 'waitlist spot-freed hook lost a lock race after cancel — waiting students were not notified'
+        : 'waitlist spot-freed hook failed after cancel',
+    );
   }
 }

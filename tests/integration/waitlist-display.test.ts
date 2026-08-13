@@ -10,8 +10,10 @@ const suffix = uniqueSuffix();
  * relationship and forgot the other: `/bookings` filtered the entry's status
  * and not its class's, and the teacher's class detail counted every entry
  * status. `src/services/waitlist.ts` already refuses a non-`open` class in
- * `addToWaitlist:178`, `promoteNext:391`, `claimSpot:523` and
- * `handleSpotFreed:635` — these tests pin the same rule on the reads.
+ * `addToWaitlist`, `promoteNext`, `claimSpot` and `handleSpotFreed` — these
+ * tests pin the same rule on the reads. (Named, not cited by line: #212 moved
+ * every one of them and the four line numbers that used to be here all landed
+ * mid-expression.)
  *
  * Every fixture class is dated 2099 deliberately, and the date is load-bearing
  * for all three class-transition sweeps. The dev server serving these requests

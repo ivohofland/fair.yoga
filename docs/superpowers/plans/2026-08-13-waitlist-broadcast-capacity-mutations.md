@@ -3,6 +3,13 @@
 Every guard touched by this branch is broken once, its exact failure recorded
 here, and restored. A guard that compiles but cannot fail certifies nothing.
 
+**M5-M8 describe code that no longer exists, and are kept as run rather than
+rewritten.** They each mutated a `freeSeats <= 0` comparison at one of the four
+migrated sites. PR review then moved that predicate into `readSeatCount` as
+`isFull`, so those four comparisons are now one — see M10. The entries stay
+because they are the record of what was actually executed, and because the
+reason the consolidation happened is visible only in how repetitive they are.
+
 ## M1 — the status-list membership pin
 
 **Task 1.** Changed `'no_show'` to `'no_shows'` in
@@ -210,45 +217,141 @@ instead of 409. Restored; suite green.
 
 ---
 
-## M9 — the lock itself
+## M9 — the lock itself (REWRITTEN after the multi-agent review)
 
-**Added at PR review, and the gap it closes is the branch's own argument.** M1-M8
-all prove the *count*. Nothing proved the **lock**, which is what makes the count
-mean anything: spec §2 argues an unlocked count only moves the race from
-"cancel-commit → findMany" to "count → createMany" rather than closing it. So
-"count without lock" is precisely the fix that does not work — and it was the one
-variant the branch could not distinguish from the fix that does.
+**The gap it closes is the branch's own argument.** M1-M8 all prove the *count*.
+Nothing proved the **lock**, which is what makes the count mean anything: spec §2
+argues an unlocked count only moves the race from "cancel-commit → findMany" to
+"count → createMany". So "count without lock" is precisely the fix that does not
+work, and it was the one variant the branch could not distinguish from the fix
+that does.
 
 **Measured before writing the test.** Deleting `await lockClassRow(tx, classId)`
-from `handleSpotFreed` and running the three unit suites that own this path:
+and running the three unit suites that own this path — `waitlist.test.ts`,
+`capacity.test.ts`, `gdpr.test.ts` — left every one of them green.
+
+**The first version of this test was wrong, and only under load.** It held the
+row for 900 ms and raced `handleSpotFreed` against a 400 ms timer, asserting "did
+not finish". PR review measured it with the lock deleted and 12 busy loops on 10
+cores: **4 of 5 runs reported PASS.** Instrumented, the hook had not yet reached
+its `FOR UPDATE` when the verdict fired at 552 ms — slowness manufactured the
+evidence. CI runs 2-4 cores, so it was likelier there than on the machine that
+found it. A wall-clock verdict is not a proposition about locks.
+
+**What replaced it asserts an outcome slowness cannot produce.** The holder keeps
+the row for 3.5 s — longer than `lockClassRow`'s own 2 s `SET LOCAL
+lock_timeout` — so the hook must abort with **55P03**. A busy machine does not
+invent a SQLSTATE; only asking for a held lock produces one. The handshake
+(`lockHeld` promise) replaces the 150 ms sleep, whose assumption was measured
+failing at 486 ms under load and 428 ms even idle.
+
+The class is still re-filled first, which is the original version's one correct
+insight and is retained: a broadcast that reaches its `createMany` takes
+`FOR KEY SHARE` on the same row via `relatedClassId` and would block on the
+holder regardless, so a test on a class with a free seat passes with the lock
+deleted.
+
+Mutation applied (`await lockClassRow(tx, classId)` deleted):
 
 ```
-Test Files  3 passed (3)
-Tests  57 passed | 2 todo (59)
-```
-
-`waitlist.test.ts`, `capacity.test.ts` and `gdpr.test.ts` all green with the lock
-gone.
-
-**The obvious test would not have closed it.** Holding the row and calling the
-hook on a class *with a free seat* passes with the lock deleted: a broadcast that
-reaches its `createMany` takes `FOR KEY SHARE` on the same `Class` row via
-`relatedClassId` (`docs/lock-order.md`, "the fourth path"), which conflicts with
-the holder's `FOR UPDATE`. It blocks either way, and the wait proves only that
-Postgres works. That is the same trap `removeFromWaitlist takes the class lock
-(DB)` documents about its own final assertion.
-
-**What discriminates** is filling the class first, so the hook counts, returns
-`[]`, and writes nothing — leaving the lock as the only thing that can make it
-wait. `takes the class row lock before it counts`
-(`waitlist.test.ts`) does that.
-
-With `lockClassRow` commented out:
-
-```
-AssertionError: expected 'returned' to be 'waiting' // Object.is equality
+AssertionError: expected true to be false // Object.is equality
  Test Files  1 failed (1)
       Tests  1 failed | 38 skipped (39)
 ```
 
-Restored; `waitlist.test.ts` green at 39 passed.
+`outcome.ok` was `true` — without the lock the hook never asks for the row,
+counts a full class, and returns `{ action: 'none' }` instead of aborting.
+
+**Detection rate, both states:**
+
+| | shipped (timer) | replacement (55P03) |
+|---|---|---|
+| lock deleted, idle | detected | **5/5 detected** |
+| lock deleted, load avg 8.8 | **4/5 FALSE PASS** | **5/5 detected** |
+| lock present, load avg 245 | — | **passes** (61 s run, no flake) |
+
+The last row matters as much as the others: the replacement does not merely fail
+the mutant, it survives extreme load against correct code, so it is not trading a
+false pass for a false failure.
+
+---
+
+## M10 — the capacity boundary, now in one place
+
+**Found missing by the review.** M5-M8 recorded a boundary mutation at each of the
+four migrated sites, but the new site had only a *deletion* (M9's baseline), so
+the log claimed a completeness it did not have.
+
+Raised as "run the missing fifth"; answered by removing the need for five. `isFull`
+is now computed once in `readSeatCount`, so there is one boundary to move rather
+than five, and one mutation that reaches every site through it.
+
+Mutation applied — `isFull: freeSeats <= 0` → `isFull: freeSeats < 0`
+(`src/services/capacity.ts`):
+
+```
+ FAIL  |unit| src/services/waitlist.test.ts > addToWaitlist + removeFromWaitlist (DB) > adds students with sequential positions
+ FAIL  |unit| src/services/waitlist.test.ts > addToWaitlist + removeFromWaitlist (DB) > rejects joining when already actively registered
+ FAIL  |unit| src/services/waitlist.test.ts > promoteNext (DB)
+ FAIL  |unit| src/services/waitlist.test.ts > claimSpot (DB)
+ FAIL  |unit| src/services/waitlist.test.ts > handleSpotFreed (DB)
+ FAIL  |unit| src/services/waitlist.test.ts > removeFromWaitlist takes the class lock (DB)
+⎯⎯⎯⎯⎯⎯ Failed Tests 15 ⎯⎯⎯⎯⎯⎯⎯
+AssertionError: expected WaitlistJoinError: The class still has op… { reason: '…' } to match object { reason: 'already_registered' }
+```
+
+**Fifteen failures, not the two this entry originally predicted, and the gap is
+the point.** The prediction was "one unit assertion and one behavioural one". What
+actually happens is that a class at exactly `maxStudents` stops reading as full,
+so `addToWaitlist`'s `!isFull` rejects every join in the file's fixtures and six
+describe blocks fall over. That is the consolidation working: a single character
+now has blast radius across every seat decision on the platform, which is exactly
+why it should exist in exactly one place and be pinned there.
+
+Restored; suite green.
+
+---
+
+## M11 — the status list's shape, not just its contents
+
+**Added by the review.** M1 pins that every entry is a real `RegistrationStatus`.
+Nothing pinned the *encoding*, and the encoding was doing harm: `as const
+satisfies` infers a literal tuple, which narrows `includes`' parameter to those
+three literals, which is why all three membership sites carried
+`as readonly string[]` — a cast that accepts any string at all. Under it,
+`ACTIVE_REGISTRATION_STATUSES.includes(waitlistEntry.status)` compiled clean and
+answered `false` forever.
+
+Reverting to `as const satisfies readonly RegistrationStatus[]`:
+
+```
+src/app/(teacher)/class/[id]/page.tsx(74,43): error TS2345: Argument of type 'RegistrationStatus' is not assignable to parameter of type '"registered" | "attended" | "no_show"'.
+src/app/api/registrations/route.ts(155,61): error TS2345: Argument of type 'RegistrationStatus' is not assignable to parameter of type '"registered" | "attended" | "no_show"'.
+src/services/waitlist.ts(736,43): error TS2345: Argument of type 'RegistrationStatus' is not assignable to parameter of type '"registered" | "attended" | "no_show"'.
+src/lib/registration-status.test.ts(32,19): error TS2352: Conversion of type 'readonly [...]' to type 'string[]' may be a mistake ...
+```
+
+**The observed failure is not the predicted one, and that is recorded rather than
+tidied away.** The `@ts-expect-error` pin in `registration-status.test.ts` was
+expected to report as *unused*. It does not — under `as const` that line still
+errors, differently — so the build breaks at four other places instead. Louder
+than intended, and it names the three sites that would need re-widening. A guard
+whose observed failure differs from its documented one is how a later reader
+concludes it does not work.
+
+---
+
+## M12 — the freeze
+
+`Object.freeze` on the status list, mutated by removing it:
+
+```
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+AssertionError: expected false to be true // Object.is equality
+      Tests  1 failed (1)
+```
+
+(`Object.isFrozen` is the assertion that fails first, before the `push` one.)
+
+One cast (`as string[]`) is all that stands between a global that gates every
+capacity decision on the platform and a stray `push`.

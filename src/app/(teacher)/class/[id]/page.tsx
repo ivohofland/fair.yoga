@@ -71,7 +71,7 @@ export default async function ClassDetailPage({
   // (they stay in activeRegistrations for attendance/payments) but their
   // seat is free — the booking page sells it, so the count here must agree.
   const seatCount = cls.registrations.filter((r) =>
-    (ACTIVE_REGISTRATION_STATUSES as readonly string[]).includes(r.status),
+    ACTIVE_REGISTRATION_STATUSES.includes(r.status),
   ).length;
 
   // Serialize registrations for client components (Prisma Dates/Decimals are not serializable)

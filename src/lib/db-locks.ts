@@ -41,6 +41,15 @@ import type { Prisma } from '@prisma/client';
  *          on the bare client elsewhere — so its absence would read as an
  *          oversight rather than a decision. Branding it would break every
  *          bare-client caller for no protection gained.
+ *   skip   `generateInstancesForTemplate` (`class-generator.ts`) and
+ *          `generateStudioInstancesForTemplate` (`studio-class-generator.ts`)
+ *          — same signature shape as the entry above and called both ways, so
+ *          they belong here for the same "read as complete" reason. Neither
+ *          issues a `SET LOCAL` or a row lock ITSELF; each delegates that to
+ *          the claim helper above it, which is branded. Added when #212's
+ *          review found the register naming one of the three
+ *          `PrismaClient | Prisma.TransactionClient` helpers and not the other
+ *          two — the completeness failure this entry's own wording warns about.
  *
  * `waitlist.ts` reaches its own helpers through a module-local alias. The
  * parameter is changed at the one adopting site rather than re-pointing that

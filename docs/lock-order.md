@@ -180,11 +180,13 @@ full, with the class each one's notifications carry:
 | `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | **many** — every class the archive withdrew (#112) |
 
 > **#212 moved the broadcast inside a transaction, and the order is unchanged.**
-> It was one of three `createBulkNotifications` sites taking no `Class` row
-> lock. The other two — `sendPaymentReminder` (`payments.ts`) and
-> `sendPaymentReminders` (`payment-reminders.ts`) — still take none: both are
-> payment-scoped, reaching a class only through the `relatedClassId` on the
-> notification they write. It now takes `lockClassRow` and then inserts
+> It was one of **four** `createBulkNotifications` sites taking no `Class` row
+> lock. The other three still take none: `sendPaymentReminder`
+> (`payments.ts`) and `sendPaymentReminders` (`payment-reminders.ts`), both
+> payment-scoped and reaching a class only through the `relatedClassId` on the
+> notification they write; and `POST /api/announcements`, whose
+> `lockAnnouncementSlot` is an **advisory** lock, not a `Class` row lock — as
+> the #196 section of this document already says 300 lines below. It now takes `lockClassRow` and then inserts
 > notifications carrying `relatedClassId` — a `FOR KEY SHARE` on the row it
 > already holds `FOR UPDATE`, exactly as `deleteTeacherAccount`'s named
 > exception above. One class per transaction, so it adds no edge.

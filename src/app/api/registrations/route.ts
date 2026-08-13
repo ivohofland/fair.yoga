@@ -105,8 +105,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // #107: this read used to happen before the transaction, so `status`,
       // `maxStudents` and the walk-in window were decided from a snapshot the
       // lock did not protect — a class cancelled or re-capped in the gap was
-      // booked anyway. `waitlist.ts` takes this same lock in three places and
-      // reads under it in all three; this is the fourth.
+      // booked anyway. `waitlist.ts` takes this same lock in four places and
+      // reads under it in all four — `addToWaitlist`, `promoteNext` and
+      // `claimSpot` inline, and the #212 broadcast via `lockClassRow`, which
+      // issues the identical statement. This is the fifth.
       //
       // `findUnique`, not `findUniqueOrThrow`: unlike the generator claims in
       // #102, the id here comes from the request body, so a missing class is
@@ -140,9 +142,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         isTeacher &&
         (cls.status === 'in_progress' || Date.now() >= classStart.getTime() - WALK_IN_WINDOW_MS);
 
-      const { freeSeats } = await readSeatCount(tx, body.classId);
+      const { isFull } = await readSeatCount(tx, body.classId);
 
-      if (freeSeats <= 0 && !isWalkIn) {
+      if (isFull && !isWalkIn) {
         throw new ClassFullError();
       }
 
@@ -152,7 +154,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         where: { classId_studentId: { classId: body.classId, studentId } },
         select: { status: true },
       });
-      if (existing && (ACTIVE_REGISTRATION_STATUSES as readonly string[]).includes(existing.status)) {
+      if (existing && ACTIVE_REGISTRATION_STATUSES.includes(existing.status)) {
         throw new AlreadyRegisteredError();
       }
 

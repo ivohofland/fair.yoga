@@ -58,8 +58,9 @@ const suffix = uniqueSuffix();
  * relationship and forgot the other: `/bookings` filtered the entry's status
  * and not its class's, and the teacher's class detail counted every entry
  * status. `src/services/waitlist.ts` already refuses a non-`open` class in
- * `addToWaitlist:178`, `promoteNext:391`, `claimSpot:523` and
- * `handleSpotFreed:635` — these tests pin the same rule on the reads.
+ * `addToWaitlist`, `promoteNext`, `claimSpot` and `handleSpotFreed` — these
+ * tests pin the same rule on the reads. (Line numbers removed: #212 shifted
+ * every one of them.)
  *
  * Every fixture class is dated 2099 deliberately. The dev server serving these
  * requests runs the scheduler (`src/instrumentation.ts`), and
@@ -298,8 +299,8 @@ fix: hide a waitlist row whose class has left open, not just a cancelled one
 `completed` rows rendering — the larger half, and the half still growing,
 because nothing closes the queue when a class starts (#216).
 
-`status: 'open'` is not a defensive invention: `addToWaitlist:178`,
-`promoteNext:391`, `claimSpot:523` and `handleSpotFreed:635` all already
+`status: 'open'` is not a defensive invention: `addToWaitlist`,
+`promoteNext`, `claimSpot` and `handleSpotFreed` all already
 refuse a non-`open` class, while `removeFromWaitlist` deliberately does not.
 The reads were the only paths bypassing it.
 

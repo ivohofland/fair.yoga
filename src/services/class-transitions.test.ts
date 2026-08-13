@@ -254,8 +254,8 @@ describe('class transitions (DB, timezone-aware)', () => {
    * the frozen window and quietly turns this into that weaker test.
    *
    * What makes the count fall is the status asymmetry: `late_cancel` is in
-   * `CHARGED_STATUSES` (`class-lifecycle.ts:167`) but not in
-   * `ACTIVE_REGISTRATION_STATUSES` (`class-transitions.ts:34`), which is what
+   * `CHARGED_STATUSES` (`class-lifecycle.ts`) but not in
+   * `ACTIVE_REGISTRATION_STATUSES` (`@/lib/registration-status`), which is what
    * the sweep counts by. The seat is released; the registration stays billable.
    */
   it('tells the waitlist when it auto-cancels, and closes the queue', async () => {

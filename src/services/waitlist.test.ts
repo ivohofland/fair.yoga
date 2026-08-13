@@ -1602,65 +1602,88 @@ describe('handleSpotFreed (DB)', () => {
   });
 
   /**
-   * #212, added at PR review. The capacity guard above is proved by M4; the
-   * lock that makes it MEAN anything was not proved by anything — deleting
-   * `lockClassRow` left all 57 tests in `waitlist`/`capacity`/`gdpr` green.
-   * That is the branch's whole argument (spec §2: an unlocked count moves the
-   * race rather than closing it) sitting untested.
+   * #212. The capacity guard above is proved by M4; the lock that makes it
+   * MEAN anything was proved by nothing — deleting `lockClassRow` left every
+   * test in `waitlist`/`capacity`/`gdpr` green. That is the branch's whole
+   * argument (spec §2: an unlocked count moves the race rather than closing
+   * it) sitting untested.
    *
-   * **Why this test re-fills the class first, and why that is the load-bearing
-   * detail.** The obvious version of this test — hold the row, call the hook
-   * on a class with a free seat, assert it waits — passes with `lockClassRow`
-   * DELETED, and would have certified nothing. A broadcast that gets as far as
-   * writing notifications takes `FOR KEY SHARE` on the same `Class` row via
-   * `relatedClassId` (`docs/lock-order.md`, "the fourth path"), which conflicts
-   * with the holder's `FOR UPDATE` — so it blocks either way, and the wait
-   * proves only that Postgres works.
+   * **Two traps, and the second one caught the first version of this test.**
    *
-   * Filling the class removes that second blocker: with no free seat the hook
-   * counts, returns `[]`, and writes nothing at all. So the ONLY thing that can
-   * make it wait is the lock taken before the count. Confirmed both ways —
-   * green as written, and failing with `lockClassRow` commented out
-   * (`outcome` is `'returned'`, `holderReleased` still false).
+   * 1. *The notification write blocks anyway.* Holding the row and calling the
+   *    hook on a class with a FREE seat passes with `lockClassRow` deleted: a
+   *    broadcast that reaches its `createMany` takes `FOR KEY SHARE` on the
+   *    same `Class` row via `relatedClassId` (`docs/lock-order.md`, "the
+   *    fourth path"), which conflicts with the holder's `FOR UPDATE`. It
+   *    blocks either way and the wait proves only that Postgres works. So the
+   *    class is re-filled first: the hook counts, returns, and writes nothing,
+   *    leaving the lock as the only thing that can block it.
    *
-   * The 900ms hold sits under `lockClassRow`'s own 2s `lock_timeout`, so the
-   * wait resolves rather than aborting with 55P03.
+   * 2. *A wall-clock verdict is not a proposition about locks.* The first
+   *    version raced the hook against a 400 ms timer and asserted "did not
+   *    finish". Under CPU load, with `lockClassRow` deleted, it reported a
+   *    PASS in 4 of 5 runs — instrumented, the hook had not yet reached its
+   *    `FOR UPDATE` when the verdict fired at 552 ms. Slowness manufactured
+   *    the evidence. CI is 2-4 cores against the 10-core machine that measured
+   *    that, so it is likelier there, not less.
+   *
+   * The fix for trap 2 is to assert an outcome slowness cannot produce. The
+   * holder keeps the row for longer than `lockClassRow`'s own 2 s
+   * `SET LOCAL lock_timeout`, so the hook must abort with **55P03** — a
+   * SQLSTATE a busy machine does not invent, and that only asking for a held
+   * lock can produce. Measured 5/5 detection under the same load that broke
+   * the timer version.
+   *
+   * `released` guards the converse: had the holder finished early, the hook
+   * would have taken the lock cleanly and this would be testing nothing.
    */
   it('takes the class row lock before it counts', async () => {
     // Re-fill the class the previous test emptied, so the hook short-circuits
-    // on capacity and writes nothing. See the docblock: this is what makes the
-    // assertion discriminate.
+    // on capacity and writes nothing — trap 1 above. This also restores the
+    // fixture's own starting state, so the test passes run alone or in order.
     await prisma.registration.update({
       where: { classId_studentId: { classId, studentId: fillerId } },
       data: { status: 'registered', cancelledAt: null },
     });
     const broadcastsBefore = await countBroadcasts();
 
-    let holderReleased = false;
+    let released = false;
+    // A handshake, not a sleep: the previous version waited 150 ms and hoped
+    // the holder had the row by then. Measured holder-acquisition latency
+    // reached 486 ms under load and 428 ms even idle, so that assumption
+    // failed loudly and at random.
+    let signalHeld!: () => void;
+    const lockHeld = new Promise<void>((resolve) => {
+      signalHeld = resolve;
+    });
     const holder = prisma.$transaction(
       async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
-        await new Promise((r) => setTimeout(r, 900));
-        holderReleased = true;
+        signalHeld();
+        // Longer than the 2 s `lock_timeout` inside `lockClassRow`, so the
+        // hook is guaranteed to hit the bound rather than eventually succeed.
+        await new Promise((r) => setTimeout(r, 3_500));
+        released = true;
       },
-      { timeout: 10_000 },
+      { timeout: 20_000 },
     );
-    await new Promise((r) => setTimeout(r, 150));
+    await lockHeld;
 
-    const hook = handleSpotFreed(prisma, classId, IN_CLAIM_WINDOW).then(() => 'returned' as const);
-    const outcome = await Promise.race([
-      hook,
-      new Promise<'waiting'>((r) => setTimeout(() => r('waiting'), 400)),
-    ]);
+    const outcome = await handleSpotFreed(prisma, classId, IN_CLAIM_WINDOW).then(
+      (result) => ({ ok: true as const, result }),
+      (err: unknown) => ({ ok: false as const, err: String(err) }),
+    );
 
-    expect(outcome).toBe('waiting');
-    expect(holderReleased).toBe(false);
+    // Without `lockClassRow` the hook never asks for the row, counts a full
+    // class, and returns `{ action: 'none' }` — `ok: true`, and this fails.
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.err).toMatch(/55P03|lock timeout/i);
+    expect(released).toBe(false);
 
     await holder;
-    expect(await hook).toBe('returned');
 
-    // And it still did the right thing once it got the row: the class is full,
-    // so nobody was told a spot opened.
+    // It wrote nothing on the way out, so the aborted broadcast cost the
+    // waiting students nothing except the notice they never got.
     expect(await countBroadcasts()).toBe(broadcastsBefore);
   });
 });

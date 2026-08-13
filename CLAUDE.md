@@ -54,7 +54,7 @@ Classes move through states: `draft → open → full → in_progress → comple
 ### Waitlist (Hybrid Promotion)
 
 - Before cancel deadline: auto-promote next in queue
-- Final hour before class: switch to first-come-first-claimed broadcast
+- Final hour before the *cancel deadline* (not before the class): switch to first-come-first-claimed broadcast
 - Frozen after deadline — no more promotions
 
 ### Payment Model

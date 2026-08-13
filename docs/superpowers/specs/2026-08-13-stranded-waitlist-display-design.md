@@ -33,7 +33,7 @@ class has. Every path that gives, moves, or offers a spot refuses anything else.
 | `addToWaitlist` | :178 | throws `WaitlistJoinError` |
 | `promoteNext` | :391 | throws `WaitlistPromotionError` |
 | `claimSpot` | :523 | throws `WaitlistPromotionError` |
-| `handleSpotFreed` | :635 | returns `{ action: 'none' }` |
+| `handleSpotFreed` | (status guard) | returns `{ action: 'none' }` |
 
 One path deliberately does *not* guard, and that asymmetry is correct:
 `removeFromWaitlist` (:319) has no status check, because a student must be able to
@@ -294,7 +294,7 @@ exclusion was right — the gap is in the scope boundary, not in the reasoning. 
 
 How far the stale state reaches, so the filed issue does not have to re-derive it:
 
-- `handleSpotFreed` guards `cls.status !== 'open'` (`waitlist.ts:635`), so no
+- `handleSpotFreed` guards `cls.status !== 'open'` (`waitlist.ts`), so no
   spurious "a spot opened up" can ever fire on a completed class.
 - The GDPR erasure counts stale rows into `waitingCount` (`gdpr.ts:297`), which
   sizes the transaction timeout, and adds their classes to its lock loop: wasted

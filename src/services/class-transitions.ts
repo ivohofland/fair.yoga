@@ -28,8 +28,9 @@ const CANCEL_CHECK_HOURS: Record<string, number> = {
 
 /** Whether `at` falls inside a class's auto-cancel window: past the check
  * time, before the start. Shared by the sweep's pre-filter and the decision
- * under the lock, for the same reason `ACTIVE_REGISTRATION_STATUSES` is —
- * two spellings of one window is how a stale-snapshot bug comes back. */
+ * under the lock, for the same reason the status set they filter on is named
+ * once (`@/lib/registration-status`) — two spellings of one window is how a
+ * stale-snapshot bug comes back. */
 function inCancelWindow(
   cls: { date: Date; startTime: string; autoCancelCheck: string },
   timezone: string,

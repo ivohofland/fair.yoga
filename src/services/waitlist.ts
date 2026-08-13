@@ -15,6 +15,10 @@ import { lockClassRow, type TransactionClientOnly } from '@/lib/db-locks';
 import { isRecordNotFound } from '@/lib/api-errors';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { readSeatCount } from './capacity';
+// pino, and server-only. Safe here and checked rather than assumed: no
+// `'use client'` component imports this module — the eleven importers are
+// route handlers, services, tests and two server components.
+import { log } from '@/lib/log';
 
 /** Raised when a promotion/claim is not allowed in the current class state. */
 export class WaitlistPromotionError extends Error {
@@ -181,8 +185,8 @@ export async function addToWaitlist(
       );
     }
 
-    const { freeSeats } = await readSeatCount(tx, classId);
-    if (freeSeats > 0) {
+    const { isFull } = await readSeatCount(tx, classId);
+    if (!isFull) {
       throw new WaitlistJoinError(
         'The class still has open spots — book directly instead',
         'class_not_full',
@@ -406,8 +410,8 @@ export async function promoteNext(
       );
     }
 
-    const { freeSeats } = await readSeatCount(tx, classId);
-    if (freeSeats <= 0) {
+    const { isFull } = await readSeatCount(tx, classId);
+    if (isFull) {
       throw new WaitlistPromotionError('Class is full', 'class_full');
     }
 
@@ -542,8 +546,8 @@ export async function claimSpot(
       );
     }
 
-    const { freeSeats } = await readSeatCount(tx, classId);
-    if (freeSeats <= 0) {
+    const { isFull } = await readSeatCount(tx, classId);
+    if (isFull) {
       throw new WaitlistPromotionError('The spot has already been claimed', 'class_full');
     }
 
@@ -612,9 +616,16 @@ export type SpotFreedResult =
  * Called when a registration cancellation frees a spot in an open class.
  * Implements the documented hybrid promotion:
  * - before the final hour: auto-promote the queue head
- * - final hour before the deadline: broadcast to all waiting students
- *   (first to claim gets the spot)
+ * - final hour before the deadline: **check capacity under the class row
+ *   lock**, then broadcast to all waiting students (first to claim gets the
+ *   spot). A class refilled between the cancel and this call is announced to
+ *   nobody — `{ action: 'none' }` — which is #212; see the comment at that
+ *   branch for why the lock is what makes the check mean anything.
  * - after the deadline: frozen — nothing happens
+ *
+ * Both callers (`DELETE /api/registrations/[id]`, `deleteStudentAccount`)
+ * invoke this OUTSIDE any transaction and discard the result, logging and
+ * swallowing anything it throws.
  */
 export async function handleSpotFreed(
   db: PrismaClient,
@@ -664,15 +675,23 @@ export async function handleSpotFreed(
   // registration takes this same row lock, so they serialise against this
   // transaction: one arriving after the count blocks until this commits.
   //
-  // Two writers sit outside that, and `class-transitions.ts` names them
-  // beside its own count-under-lock for the same reason: `PUT
-  // /api/registrations/[id]` (attendance) and `DELETE /api/registrations/[id]`
-  // (cancel) write `Registration.status` with no `Class` lock. Only the
-  // attendance one can move a row INTO the counted set (`late_cancel →
-  // attended`), and it cannot reach this window: attendance is written at or
-  // after class time, while this branch runs at least 6 h before the start
-  // (the claim window ends at `start − deadlineHours`, minimum 6). #182 owns
-  // that gap; it does not touch this one.
+  // Three writers sit outside that. `class-transitions.ts:189` names two
+  // beside its own count-under-lock — `PUT /api/registrations/[id]`
+  // (attendance) and `DELETE /api/registrations/[id]` (cancel) — and its
+  // enumeration is short by one: `deleteStudentAccount` (`gdpr.ts`) cancels
+  // registrations in every draft/open class of the erased student while
+  // locking only the classes they were WAITING in, so a class they were
+  // registered in but not queued in is written unlocked too.
+  //
+  // Only attendance can move a row INTO the counted set (`late_cancel →
+  // attended`); the other two only move rows out, which makes the count too
+  // high and this branch too quiet — the safe direction. Attendance is
+  // written at or after class time and this branch runs at least 6 h before
+  // the start (the claim window ends at `start − deadlineHours`, minimum 6),
+  // so in practice the two do not meet. "In practice" is the honest strength:
+  // `PUT /api/registrations/[id]` has no guard on class time, class status or
+  // current registration status — `class-transitions.ts:199` says so in as
+  // many words — so nothing enforces the separation. #182 owns that gap.
   //
   // `lockClassRow`, not the inline `FOR UPDATE` the three functions above
   // use: those are pre-existing unbounded waits that `db-locks.ts` reserves
@@ -681,18 +700,25 @@ export async function handleSpotFreed(
   // broadcast entirely — both callers log and swallow. That is the
   // conservative outcome: a writer holding this row that long is probably
   // filling the seat.
-  const entries = await db.$transaction(async (tx) => {
+  const outcome = await db.$transaction(async (tx) => {
     await lockClassRow(tx, classId);
 
-    const { freeSeats } = await readSeatCount(tx, classId);
-    if (freeSeats <= 0) return [];
+    const seats = await readSeatCount(tx, classId);
+    if (seats.isFull) {
+      const waiting = await tx.waitlistEntry.count({ where: { classId, status: 'waiting' } });
+      return { kind: 'suppressed' as const, seats, waiting };
+    }
 
     const waiting = await tx.waitlistEntry.findMany({
       where: { classId, status: 'waiting' },
     });
-    if (waiting.length === 0) return [];
+    // Not a guard — an equivalent mutant, and worth saying so rather than
+    // letting a later reader mutation-test it and find nothing. `createMany`
+    // on an empty array is a no-op that emits nothing, so removing this line
+    // changes no behaviour and no test. It is a saved round-trip.
+    if (waiting.length === 0) return { kind: 'empty' as const };
 
-    await createBulkNotifications(
+    const notified = await createBulkNotifications(
       tx,
       waiting.map((w) => ({
         recipientType: 'student' as const,
@@ -703,18 +729,38 @@ export async function handleSpotFreed(
         relatedClassId: classId,
       })),
     );
-    return waiting;
+    // `notified` is `createMany`'s own count, not `waiting.length`. The two
+    // cannot differ today (no `skipDuplicates`, so the insert is all-or-throw)
+    // — but the return value exists to be checked, and reporting the size of
+    // the input would start lying silently the day anyone adds it.
+    return { kind: 'sent' as const, notified };
   });
 
-  // No log line on the full-class path, deliberately. The auto-promote branch
-  // above already handles this exact event silently — it catches
-  // `promoteNext`'s `class_full` and returns the same `{ action: 'none' }`
-  // under "A concurrent registration may have refilled the spot — that's
-  // fine." One event, one story; a `warn` would ask an operator to act on an
-  // outcome where the cancel and the refill both did the right thing.
-  return entries.length === 0
-    ? { action: 'none' }
-    : { action: 'broadcast', notified: entries.length };
+  if (outcome.kind === 'suppressed') {
+    // `debug`, not `warn` and not nothing. A `warn` would ask an operator to
+    // act on an outcome where the cancel and the refill both did the right
+    // thing — the auto-promote branch above swallows the identical event
+    // silently for that reason. But silence has a cost this branch cannot
+    // pay: neither caller reads the return value, so with no line here the
+    // guard FIRING is indistinguishable from its never having been reached,
+    // including for a guard broken to reject every class. `debug` is off by
+    // default (`LOG_LEVEL`, `lib/log.ts`), so it costs nothing in production
+    // and is the difference between answering "did this fire last Tuesday?"
+    // and not being able to.
+    log.debug(
+      {
+        classId,
+        activeCount: outcome.seats.activeCount,
+        maxStudents: outcome.seats.maxStudents,
+        waiting: outcome.waiting,
+      },
+      'waitlist broadcast suppressed — class refilled before the spot-freed hook ran',
+    );
+  }
+
+  return outcome.kind === 'sent'
+    ? { action: 'broadcast', notified: outcome.notified }
+    : { action: 'none' };
 }
 
 // ---------------------------------------------------------------------------
@@ -733,7 +779,7 @@ async function hasActiveRegistration(
   });
   return (
     registration !== null &&
-    (ACTIVE_REGISTRATION_STATUSES as readonly string[]).includes(registration.status)
+    ACTIVE_REGISTRATION_STATUSES.includes(registration.status)
   );
 }
 

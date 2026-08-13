@@ -167,8 +167,10 @@ export async function transitionClass(
  * `ACTIVE_REGISTRATION_STATUSES` (`@/lib/registration-status`) do. That set
  * is this one minus `late_cancel`: it asks who occupies a seat, this one asks
  * who gets billed. This constant stays here rather than joining it in `lib/`
- * because only server-side services use it, and four comments across three
- * test files name this file as its home — one of them by line number.
+ * because only server-side services use it, and two comments in two test
+ * files name this file as its home — `class-transitions.test.ts` and
+ * `tests/integration/registrations-api.test.ts` — one of them by line number,
+ * which this docblock's own growth has already invalidated once.
  */
 export const CHARGED_STATUSES: readonly RegistrationStatus[] = Object.freeze([
   'registered',

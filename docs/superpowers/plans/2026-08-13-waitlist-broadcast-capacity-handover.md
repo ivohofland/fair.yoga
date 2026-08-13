@@ -36,7 +36,7 @@ forever and is not yours to edit.
 them hand out a seat and both check capacity first, under the class row lock:
 
 - `promoteNext:415` — `if (activeCount >= cls.maxStudents) throw … 'class_full'`
-- `claimSpot:553` — `if (activeCount >= cls.maxStudents) throw … 'class_full'`
+- `claimSpot` — `if (activeCount >= cls.maxStudents) throw … 'class_full'`
 
 The third — the final-hour `first_come_first_claimed` broadcast at `:658-675` —
 reads the waiting list and notifies. It contains no `registration.count` and no
@@ -325,7 +325,7 @@ Restore after every mutation and re-run to confirm green before moving on.
   - **#104** — the five inline unbounded `FOR UPDATE` waits, four of them in
     `waitlist.ts`. `db-locks.ts:139-152` names them as deliberately excluded.
     Your new lock uses `lockClassRow`; the four beside it do not change.
-  - **#182** — `handleSpotFreed:631` still decides `status` and `window` from a
+  - **#182** — `handleSpotFreed` still decides `status` and `window` from a
     pre-lock read. Same family, different owner. Spec §7 records it as a
     deliberate exclusion.
 
