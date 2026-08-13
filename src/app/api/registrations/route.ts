@@ -15,6 +15,7 @@ import { activateRegistration, reorderWaitingEntries } from '@/services/waitlist
 import { resolveInvitationOnLink } from '@/services/link-consent';
 import { classStartInstant } from '@/lib/timezone';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
+import { readSeatCount } from '@/services/capacity';
 
 /** Thrown inside the registration transaction when the class is at capacity. */
 class ClassFullError extends Error {}
@@ -139,12 +140,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         isTeacher &&
         (cls.status === 'in_progress' || Date.now() >= classStart.getTime() - WALK_IN_WINDOW_MS);
 
-      // Count active registrations (cancelled and late_cancel freed their spot)
-      const registrationCount = await tx.registration.count({
-        where: { classId: body.classId, status: { in: [...ACTIVE_REGISTRATION_STATUSES] } },
-      });
+      const { freeSeats } = await readSeatCount(tx, body.classId);
 
-      if (registrationCount >= cls.maxStudents && !isWalkIn) {
+      if (freeSeats <= 0 && !isWalkIn) {
         throw new ClassFullError();
       }
 

@@ -101,13 +101,22 @@ message, same diff. The mutation and the original defect are the same edit.
 **Task 4.** Boundary moved by one, so the guard must fail to reject a join on a
 class with a free seat.
 
-`npx vitest run --project unit src/services/waitlist.test.ts`:
+`npx vitest run --project unit src/services/waitlist.test.ts` — 15 tests failed, each on the same boundary:
 
 ```
-_PENDING_
+WaitlistJoinError: The class still has open spots — book directly instead
+ ❯ src/services/waitlist.ts:186:13
+    184|     const { freeSeats } = await readSeatCount(tx, classId);
+    185|     if (freeSeats >= 0) {
+    186|       throw new WaitlistJoinError(
+       |             ^
+    187|         'The class still has open spots — book directly instead',
+    188|         'class_not_full',
 ```
 
-Restored; suite green.
+`freeSeats === 0` (a class at exactly `maxStudents`) now throws `class_not_full`
+where the join must succeed — the off-by-one at the boundary, in the inverted
+comparison's direction. Restored; suite green.
 
 ---
 
@@ -116,13 +125,33 @@ Restored; suite green.
 **Task 4.** Boundary moved by one, so a promotion succeeds into a class at
 exactly `maxStudents`.
 
-`npx vitest run --project unit src/services/waitlist.test.ts`:
+**Coverage gap found by the mutation:** the first run PASSED — no existing
+test drove `promoteNext` on a class at exactly `maxStudents`. Added the test
+`refuses to promote into a class that is exactly at maxStudents` to the
+`promoteNext (DB)` block (it re-queues a student with no registration against
+the already-full shared fixture, then asserts the `class_full` rejection and
+that nothing was written). It passed against the correct guard, then failed
+against the mutation — the boundary is now pinned, not assumed.
+
+With the mutation, `npx vitest run --project unit src/services/waitlist.test.ts`:
 
 ```
-_PENDING_
+AssertionError: promise resolved "{ …(9) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "classId": "...",
++   "status": "promoted",
++   "studentId": "...",
+  }
 ```
 
-Restored; suite green.
+The promotion proceeded into a class at exactly `maxStudents`, creating a
+`promoted` entry and a registration. Restored; suite green.
 
 ---
 
@@ -133,10 +162,23 @@ Restored; suite green.
 `npx vitest run --project unit src/services/waitlist.test.ts`:
 
 ```
-_PENDING_
+AssertionError: promise resolved "{ …(9) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "classId": "...",
++   "status": "promoted",
++   "studentId": "...",
+  }
 ```
 
-Restored; suite green.
+Caught by the existing `refuses a claim when the spot has already been taken`
+test — the claim proceeded into a class at exactly `maxStudents`. Restored;
+suite green.
 
 ---
 
@@ -145,10 +187,23 @@ Restored; suite green.
 **Task 4.** Boundary moved by one, so a booking is accepted at exactly
 `maxStudents`.
 
-`npx vitest run --project integration tests/integration/registrations-api.test.ts`:
+`npx vitest run --project integration tests/integration/registrations-api.test.ts`
+— 3 tests failed; the concurrent one is representative:
 
 ```
-_PENDING_
+AssertionError: expected [ 201, 201 ] to deeply equal [ 201, 409 ]
+
+- Expected
++ Received
+
+  [
+    201,
+-   409,
++   201,
+  ]
 ```
 
-Restored; suite green.
+Also caught by `teacher adds before class respect capacity — not walk-ins`
+(`expected 201 to be 409`) and `refuses a booking that exceeds a cap lowered
+while the request waited`. A booking at exactly `maxStudents` was accepted
+instead of 409. Restored; suite green.

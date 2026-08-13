@@ -605,6 +605,40 @@ describe('promoteNext (DB)', () => {
     expect(reactivated.status).toBe('registered');
     expect(reactivated.cancelledAt).toBeNull();
   });
+
+  it('refuses to promote into a class that is exactly at maxStudents', async () => {
+    // The class is at capacity (s1 and s2 promoted above) and the queue is
+    // empty — re-queue a student who holds no registration, so the capacity
+    // guard is the only thing between this call and a promotion. The class
+    // is dated 2099 and the instant is two months before it, so the window
+    // is auto_promote; freeSeats === 0 must still throw class_full. This is
+    // the test mutation M6 found missing.
+    const extra = await prisma.student.create({
+      data: {
+        firstName: 'PromoteExtra',
+        lastName: 'Test',
+        email: `promote-extra-${uniqueSuffix}@test.local`,
+        incomeTier: 3,
+      },
+    });
+    try {
+      await addToWaitlist(prisma, classId, extra.id);
+
+      const promise = promoteNext(prisma, classId, { now: new Date('2099-06-01T12:00:00Z') });
+      await expect(promise).rejects.toBeInstanceOf(WaitlistPromotionError);
+      await promise.catch((err: unknown) => {
+        expect((err as WaitlistPromotionError).reason).toBe('class_full');
+      });
+
+      // Nothing changed: no promotion, no registration.
+      expect(
+        await prisma.registration.count({ where: { classId, studentId: extra.id } }),
+      ).toBe(0);
+    } finally {
+      await prisma.waitlistEntry.deleteMany({ where: { classId, studentId: extra.id } });
+      await prisma.student.delete({ where: { id: extra.id } });
+    }
+  });
 });
 
 // ===========================================================================

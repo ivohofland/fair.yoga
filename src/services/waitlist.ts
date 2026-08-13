@@ -172,7 +172,7 @@ export async function addToWaitlist(
 
     const cls = await tx.class.findUniqueOrThrow({
       where: { id: classId },
-      select: { status: true, maxStudents: true, teacherId: true },
+      select: { status: true, teacherId: true },
     });
     if (cls.status !== 'open') {
       throw new WaitlistJoinError(
@@ -181,10 +181,8 @@ export async function addToWaitlist(
       );
     }
 
-    const activeCount = await tx.registration.count({
-      where: { classId, status: { in: [...ACTIVE_REGISTRATION_STATUSES] } },
-    });
-    if (activeCount < cls.maxStudents) {
+    const { freeSeats } = await readSeatCount(tx, classId);
+    if (freeSeats > 0) {
       throw new WaitlistJoinError(
         'The class still has open spots — book directly instead',
         'class_not_full',
@@ -408,10 +406,8 @@ export async function promoteNext(
       );
     }
 
-    const activeCount = await tx.registration.count({
-      where: { classId, status: { in: [...ACTIVE_REGISTRATION_STATUSES] } },
-    });
-    if (activeCount >= cls.maxStudents) {
+    const { freeSeats } = await readSeatCount(tx, classId);
+    if (freeSeats <= 0) {
       throw new WaitlistPromotionError('Class is full', 'class_full');
     }
 
@@ -546,10 +542,8 @@ export async function claimSpot(
       );
     }
 
-    const activeCount = await tx.registration.count({
-      where: { classId, status: { in: [...ACTIVE_REGISTRATION_STATUSES] } },
-    });
-    if (activeCount >= cls.maxStudents) {
+    const { freeSeats } = await readSeatCount(tx, classId);
+    if (freeSeats <= 0) {
       throw new WaitlistPromotionError('The spot has already been claimed', 'class_full');
     }
 
