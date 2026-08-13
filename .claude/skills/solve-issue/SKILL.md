@@ -1,6 +1,6 @@
 ---
 name: solve-issue
-description: End-to-end process for taking a fair.yoga GitHub issue from cold start to merged PR — verify premise, brainstorm, spec, plan, subagent build, multi-agent PR review, rebase-merge, roadmap. Invoke as /solve-issue <issue-number>. Designed to run from an empty context.
+description: End-to-end process for taking a fair.yoga GitHub issue from cold start to merged PR — verify premise, brainstorm, spec, plan, handover-or-subagent build, multi-agent PR review, rebase-merge, roadmap. Invoke as /solve-issue <issue-number>. Designed to run from an empty context.
 ---
 
 # Solving a fair.yoga issue
@@ -39,6 +39,7 @@ verify the issue's premise
   → [GATE] user reviews the written spec
   → superpowers:writing-plans → docs/superpowers/plans/YYYY-MM-DD-<topic>.md
   → [GATE] user reviews the plan
+  → [GATE] handover document, or build here? (§5)
   → superpowers:subagent-driven-development (task → review → fix loop)
   → whole-branch review → one fix wave → one scoped re-review
   → push + PR → [GATE] /pr-review-toolkit:review-pr <N>
@@ -164,7 +165,63 @@ The corollary is worth stating because it is counter-intuitive: **a fix wave's o
 not evidence.** It said it had corrected "the spec, the plan, and the commit message." It had
 not. Reconcile against the diff.
 
-## 5. Build with subagents; review at both levels
+## 5. Build — handover or subagents; review at both levels
+
+### Ask before you build
+
+Once the plan is approved, **ask which way the build goes** — do not assume subagents:
+
+> "Plan approved. Do you want a handover document so another agent (opencode) can
+> execute this, or shall I build it here with subagents?"
+
+Both are normal. The handover route exists because the plan alone is not enough for an
+agent arriving cold in a different harness: the plan says *what to do*, and a handover says
+*what will mislead you on the way*. #212 and #220 both went that route.
+
+If the answer is "build here", carry on to the rest of this section. If it is "handover",
+write `docs/superpowers/plans/YYYY-MM-DD-<topic>-handover.md`, commit it, and stop there.
+
+### What a handover has to contain
+
+Not a summary of the plan — the reader has the plan. It carries what the plan cannot:
+
+1. **Read-in-this-order list**, four items: `CLAUDE.md`, the spec, the plan, this file. Say
+   which section of each actually matters. If their harness auto-loads `AGENTS.md`, note that
+   it only *links* to `CLAUDE.md`.
+2. **The derailers, before anything actionable.** This is the section that justifies the
+   document. A derailer is something the reader will get wrong *from reading the correct
+   documents* — not a hazard, a wrong turn the material invites. They are unrecoverable
+   mid-implementation, so they go ahead of the first instruction.
+3. **A verify-don't-assume block** of runnable commands with expected output — every line
+   number the plan leans on, the DB container, the dev server on :3000. Tell them to fix a
+   drifted reference and report it.
+4. **Harness differences.** No skills system, no enforced TDD ordering, mutations are
+   deliverables, commit per task because the PR is rebase-merged.
+5. **Task order, and which constraints are load-bearing** versus preference — with the
+   reason, not just the order.
+6. **The stop conditions**, naming the two or three mutations that matter most and why.
+7. **The hazard list** from this skill, trimmed to what this branch can actually hit.
+8. **A measured test baseline** (below), what "done" looks like, what the PR body must
+   record, and what to report back.
+9. **A final checklist**, one line per irreversible mistake.
+
+### The three things that make a handover true rather than plausible
+
+- **Measure the baseline; never inherit it.** Run the suite and record files and tests per
+  project, with totals that reconcile — `50 + 37 + 28 = 115`, `710 + 202 + 392 = 1304`.
+  Arithmetic a reader can re-derive is checkable; a bare number is decoration. Predict the
+  after-figure, then **tell them to measure it anyway**: #212's handover predicted 1294 and
+  the real figure was 1296, because that branch's own review added tests the prediction could
+  not have known about.
+- **Run your own verify-don't-assume block before committing.** You are telling a stranger
+  those references are correct. #212's handover caught an inherited reference drifting by one
+  (`schema.prisma:378-382 → 379-383`) exactly this way, and left the correction visible as the
+  worked example.
+- **Distinguish "runs" from "changes".** A branch that touches no integration file still
+  *runs* all of them under `npm run verify`. Say which, because the PR body must not claim
+  otherwise — and do not hand-list integration files (see the hazard list).
+
+### Then: build with subagents
 
 Use `superpowers:subagent-driven-development`. Per task: brief → implementer → review (spec
 compliance **and** quality) → fix loop. Then one whole-branch review on the most capable
