@@ -220,10 +220,19 @@ export const DELETE = withErrorHandler(async (
  * noise it created.
  *
  * `waiting` is what makes either line actionable. The failure means every
- * student queued on this class was silently not told a seat opened, and
- * nothing retries — 0 is a non-event, 12 is a seat that now goes unsold and
- * reprices the class for everyone left. It cannot be recovered afterwards
- * because nobody will know to look.
+ * student queued on this class was silently not told a seat opened — 0 is a
+ * non-event, 12 is a seat that now goes unsold and reprices the class for
+ * everyone left.
+ *
+ * It used to say the loss could never be recovered, because nobody would know
+ * to look. That is no longer true: the `waitlist-reconciliation` sweep
+ * (`services/waitlist-reconciliation.ts`, #220) re-runs this same hook every
+ * minute on any open class holding a free seat and a waiting queue, so a drop
+ * here is normally repaired within a tick. Two things follow. This line is now
+ * a record of the live path failing rather than an obituary — and adding a
+ * retry HERE is still the wrong fix, for the reason the sweep exists: a
+ * `55P03` means the contending writer is still holding the row, so an
+ * immediate retry loses the same race again.
  */
 async function promoteAfterCancel(classId: string): Promise<void> {
   try {

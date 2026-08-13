@@ -623,9 +623,17 @@ export type SpotFreedResult =
  *   branch for why the lock is what makes the check mean anything.
  * - after the deadline: frozen — nothing happens
  *
- * Both callers (`DELETE /api/registrations/[id]`, `deleteStudentAccount`)
- * invoke this OUTSIDE any transaction and discard the result, logging and
- * swallowing anything it throws.
+ * Three callers. The two LIVE ones (`DELETE /api/registrations/[id]`,
+ * `deleteStudentAccount`) invoke this OUTSIDE any transaction and discard the
+ * result, logging and swallowing anything it throws — which is what made a
+ * dropped notification unrecoverable and is why the third exists.
+ *
+ * The third is `reconcileWaitlists` (`services/waitlist-reconciliation.ts`,
+ * #220), the sweep that re-invokes this every minute for any open class holding
+ * a free seat and a waiting queue. It is the one caller that READS the returned
+ * `SpotFreedResult`, using it to tell an invocation that repaired something
+ * from one that did not. Nothing about this function's signature or behaviour
+ * changed for it; it is a caller, not a coupling.
  */
 export async function handleSpotFreed(
   db: PrismaClient,
