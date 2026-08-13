@@ -4,7 +4,8 @@
  * Manages class status transitions with guards.
  * Classes move through: draft → open → in_progress → completed
  * with cancellation possible from most non-terminal states.
- * "Full" is derived (registrations >= maxStudents), not a stored state.
+ * "Full" is derived (registrations >= maxStudents), not a stored state —
+ * `services/capacity.ts` is where that derivation lives.
  */
 
 import type { PrismaClient, Prisma, ClassStatus, RegistrationStatus, Class } from '@prisma/client';

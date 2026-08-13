@@ -21,6 +21,12 @@ import type { Prisma } from '@prisma/client';
  *   adopt  `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) — `FOR UPDATE
  *          OF c` inside the statement that selects the rows, with the
  *          `updateMany` and reorder that lock exists to protect after it.
+ *   adopt  `readSeatCount` (`services/capacity.ts`) — the exception to the
+ *          rule above and the reason the rule says "decided per site": it
+ *          issues no transaction-scoped statement, only reads. It is branded
+ *          because its whole purpose is counting UNDER the caller's lock, and
+ *          on a bare client it would count outside it — the "reading around
+ *          its caller's uncommitted writes" case this register names.
  *   skip   `activateRegistration`, `hasActiveRegistration` and
  *          `reorderWaitingEntries` (`waitlist.ts`), and
  *          `resolveInvitationOnLink` (`link-consent.ts`) — none issues a

@@ -10,6 +10,7 @@ import {
 import { claimTemplateForGeneration } from '@/services/class-generator';
 import { claimStudioTemplateForGeneration } from '@/services/studio-class-generator';
 import { withdrawWaitingEntriesForTeacher } from '@/services/waitlist';
+import { readSeatCount } from '@/services/capacity';
 
 const prisma = new PrismaClient();
 
@@ -56,6 +57,9 @@ async function _theBrandRejectsABareClient(client: PrismaClient): Promise<void> 
   await claimStudioTemplateForGeneration(client, 'never-called');
   // @ts-expect-error `FOR UPDATE OF c`, with the writes it protects after it.
   await withdrawWaitingEntriesForTeacher(client, { teacherId: 'x', studentId: 'y' });
+  // @ts-expect-error Read-only, but meaningless off a bare client: it would
+  // count outside the caller's lock, which is the defect it exists to prevent.
+  await readSeatCount(client, 'never-called');
   // @ts-expect-error `pg_advisory_xact_lock` — taken and released by its own
   // autocommit transaction on a bare client, protecting nothing.
   await lockAnnouncementSlot(client, { teacherId: 'x', classId: null, message: 'never-called' });

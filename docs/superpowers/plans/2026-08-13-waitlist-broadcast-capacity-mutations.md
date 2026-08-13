@@ -26,10 +26,22 @@ of everything (`where: { classId }`).
 `npx vitest run --project unit src/services/capacity.test.ts` failed at phase 3:
 
 ```
-_PENDING_
+AssertionError: expected { Object (maxStudents, activeCount, ...) } to deeply equal { Object (maxStudents, activeCount, ...) }
+
+- Expected
++ Received
+
+  {
+-   "activeCount": 1,
+-   "freeSeats": 1,
++   "activeCount": 3,
++   "freeSeats": -1,
+    "maxStudents": 2,
+  }
 ```
 
-Restored; suite green.
+`activeCount` 3 instead of 1, `freeSeats` −1 instead of 1 — the cancelled and
+late_cancel rows counted. Restored; suite green.
 
 ---
 
@@ -41,10 +53,11 @@ Restored; suite green.
 `npx tsc --noEmit`:
 
 ```
-_PENDING_
+src/lib/db-locks.test.ts(60,3): error TS2578: Unused '@ts-expect-error' directive.
 ```
 
-Restored; clean.
+A bare `PrismaClient` is structurally assignable to `Prisma.TransactionClient`,
+so the new pin line stopped erroring. Restored; clean.
 
 ---
 
