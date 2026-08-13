@@ -138,6 +138,17 @@ export async function reconcileWaitlists(
     }
   }
 
+  if (reconciled > 0 || failed > 0) {
+    // `info`, not `warn`: a reconciliation firing means the LIVE path failed and
+    // this repaired it. That belongs in the record without paging anyone — the
+    // `warn` lines at both `handleSpotFreed` call sites already record the
+    // failure itself, and this records the repair.
+    log.info(
+      { candidates: classes.length, reconciled, failed },
+      'waitlist reconciliation repaired at least one class',
+    );
+  }
+
   return { candidates: classes.length, reconciled, failed };
 }
 

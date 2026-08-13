@@ -98,6 +98,7 @@ export async function startScheduler(): Promise<void> {
   const { processEmailFallback } = await import('@/services/email-fallback');
   const { processPaymentReminders } = await import('@/services/payment-reminders');
   const { cleanupExpiredAuth } = await import('@/services/auth-cleanup');
+  const { reconcileWaitlists } = await import('@/services/waitlist-reconciliation');
 
   const jobs: Job[] = [
     {
@@ -128,6 +129,19 @@ export async function startScheduler(): Promise<void> {
       name: 'auth-cleanup',
       intervalMs: 24 * 60 * MINUTE,
       run: (db) => cleanupExpiredAuth(db),
+    },
+    {
+      // 1 minute, and the cadence is load-bearing: the claim window is only 60
+      // minutes wide, so this bounds a dropped broadcast's cost to roughly 1 of
+      // the student's 60 claim minutes. At email-fallback's 5 minutes it would
+      // be 8% of the window.
+      //
+      // Its own job name rather than a fourth sweep inside `class-transitions`,
+      // so `getJobHealth()` and `/api/health` can tell a failing reconciliation
+      // apart from a failing class transition.
+      name: 'waitlist-reconciliation',
+      intervalMs: 1 * MINUTE,
+      run: (db) => reconcileWaitlists(db),
     },
   ];
 

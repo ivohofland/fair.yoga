@@ -109,10 +109,14 @@ a call):
    `(teacherId, date, startTime)`, which is why this check alone no longer
    bounds the candidate set for `Class`, and neither does the multiplicity
    filter below;
-2. `'"Class"'` — the raw statements. All but one are single-id `FOR UPDATE`:
-   four written inline, plus `lockClassRow`'s body (itself called from exactly
-   four places, grep 3). The exception is `withdrawWaitingEntriesForTeacher`'s
-   join;
+ 2. `'"Class"'` — the raw statements. All but one are single-id `FOR UPDATE`:
+    four written inline, plus `lockClassRow`'s body (itself called from exactly
+    five places, grep 3 — re-derived on the waitlist-reconciliation branch).
+    The reconciliation sweep (`services/waitlist-reconciliation.ts`) is a sixth
+    PATH to it but no sixth call site: it invokes `handleSpotFreed`, whose
+    broadcast branch already holds the lock at `waitlist.ts:704`. The exception
+    is `withdrawWaitingEntriesForTeacher`'s
+    join;
 3. `lockClassRow(` — the helper's callers;
 4. **parent deletes that cascade onto `Class` without naming it** — the
    category a grep for `class.` misses. `Class` holds three FKs pointing *out*
