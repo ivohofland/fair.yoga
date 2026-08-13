@@ -182,8 +182,11 @@ adjust the assertion until it goes red. Do not decide it is close enough.**
 
 ### The mutations are the deliverable, not busywork
 
-Four mutations across the branch — three specified up front, plus a fourth the
-branch's own review added to Task 2 (see spec §6.2). The second one in Task 1 is the point of the
+Seven distinct mutations across the branch as merged — three specified up front,
+one added by the branch's own review (spec §6.2), and three more by the
+multi-agent PR review, which also found the planned count fix was half a fix
+(spec §3.3). The plan below specifies the first four; the PR body records all
+seven with their failure text. The second one in Task 1 is the point of the
 whole test design:
 
 | Task | Mutation | Must fail on |
@@ -341,7 +344,7 @@ build-only defect passes `verify` and fails CI.
 1. Two source lines changed, in exactly the two files named in §1. Nothing else
    in `src/` touched.
 2. `tests/integration/waitlist-display.test.ts` created, 2 tests, both passing.
-3. All four mutations run, restored, and each failure's exact text recorded in
+3. All mutations run, restored, and each failure's exact text recorded in
    the relevant commit message.
 4. `npm run verify` green, with the arithmetic stated
    (`113 files = 48 unit + 37 components + 28 integration`; `1294 tests = 702 +
@@ -361,7 +364,7 @@ build-only defect passes `verify` and fails CI.
 ### The PR body must record
 
 - The `verify` arithmetic, before and after.
-- The four mutations and their failure text.
+- Every mutation and its failure text.
 - `tests/integration/waitlist-display.test.ts` named by path as the integration
   file this branch touches.
 - What the PR does **not** do: it does not close the queue when a class starts,
@@ -374,7 +377,7 @@ build-only defect passes `verify` and fails CI.
 ### What to report when you hand back
 
 - Which tasks completed, which blocked, and why.
-- The four mutations with their recorded failure text.
+- Every mutation with its recorded failure text.
 - The `verify` arithmetic, before and after.
 - **Anything in the plan that turned out to be wrong.** Four task briefs on an
   earlier branch were wrong about the state of the code, and every one was caught
@@ -391,7 +394,7 @@ build-only defect passes `verify` and fails CI.
 - [ ] `CLAUDE.md` read; the spec read; §2's four checks run
 - [ ] The predicate shipped is `class: { status: 'open' }`, **not** `not: 'cancelled'`
 - [ ] Neither test was accepted while it passed before its fix
-- [ ] Four mutations run, restored, and recorded
+- [ ] Every mutation run, restored, and recorded
 - [ ] Fixture classes still dated 2099; no fixture built via `addToWaitlist`
 - [ ] `src/app/(public)/[slug]/page.tsx` untouched
 - [ ] No migration; `prisma/schema.prisma` untouched

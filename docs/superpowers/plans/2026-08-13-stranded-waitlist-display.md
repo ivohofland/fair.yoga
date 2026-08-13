@@ -27,6 +27,7 @@
 | `tests/integration/waitlist-display.test.ts` | **Create.** Both surfaces' pins. One file because both share the same fixture graph (teacher → room → teacherRoom → classes → waitlist entries) and the same defect; splitting them would duplicate ~60 lines of setup to no end. |
 | `src/app/(student)/bookings/page.tsx` | **Modify line 41.** Add the class-status predicate to the waitlist query. |
 | `src/app/(teacher)/class/[id]/page.tsx` | **Modify line 45.** Filter the `waitlistEntries` relation count. |
+| `src/components/class/class-info.tsx` | **Added by the PR review, not planned.** Gate the rendered count on the class still being able to consume its queue (`open`/`in_progress`). Filtering the `_count` handles the entry side only — a relation count cannot filter on its parent's status — so the planned change was half the fix. See spec §3.3. |
 
 ---
 
