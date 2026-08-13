@@ -18,6 +18,19 @@
  * does — this list is a subset by design. (#39 shipped the opposite mistake: a
  * `satisfies` read as a completeness pin when it only ever pinned membership.)
  *
+ * **If you are here because you are ADDING a `RegistrationStatus`, nothing will
+ * stop you forgetting this file.** Verified during #218's review: there is no
+ * `Record<RegistrationStatus, …>`, no indexed type and no exhaustive `switch`
+ * anywhere in `src/`, so a new member compiles clean and is silently absent
+ * from both subsets — it would occupy no seat (here) and bill nothing
+ * (`CHARGED_STATUSES`, `services/class-lifecycle.ts`). Deliberately a comment
+ * and not a tracker entry: the failure needs to be read at the moment someone
+ * edits the enum, which is this docblock and that one, and an issue nobody
+ * opens is worse than a note everybody hits. The mechanical fix, if it ever
+ * earns its keep, is one `Record<RegistrationStatus, 'occupies' | 'frees'>`
+ * that both lists derive from — `Record` over an enum is exhaustive, so a new
+ * member becomes a compile error exactly where the decision belongs.
+ *
  * **Annotated and frozen, NOT `as const satisfies`** — the same shape as
  * `CHARGED_STATUSES`, and the difference is not cosmetic. `as const` infers the
  * literal tuple `readonly ["registered","attended","no_show"]`, which narrows
