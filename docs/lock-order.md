@@ -171,13 +171,20 @@ full, with the class each one's notifications carry:
 | `completeClass` (`class-lifecycle.ts`) | one — `cls.id` |
 | `promoteNext` (`waitlist.ts`) | one — `classId` |
 | `claimSpot` (`waitlist.ts`) | one — `classId` |
-| `handleSpotFreed` broadcast (`waitlist.ts`) | one — `classId`, and outside any transaction |
+| `handleSpotFreed` broadcast (`waitlist.ts`) | one — `classId`, inside its own transaction under `lockClassRow` (#212) |
 | `sendPaymentReminder` (`payments.ts`) | one — the payment's registration's class |
 | `sendPaymentReminders` (`payment-reminders.ts`) | one — per-payment, one transaction each |
 | `POST /api/registrations` | one — the class being booked |
 | `POST /api/announcements` | one — the announcement's class, inside the dedupe transaction (#196; it ran outside any transaction until then) |
 | `POST /api/classes/[id]/transition` | one — the class being transitioned |
 | `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | **many** — every class the archive withdrew (#112) |
+
+> **#212 moved the broadcast inside a transaction, and the order is unchanged.**
+> It was the one `createBulkNotifications` site that took no `Class` lock at
+> all. It now takes `lockClassRow` and then inserts notifications carrying
+> `relatedClassId` — a `FOR KEY SHARE` on the row it already holds `FOR
+> UPDATE`, in the same ascending sequence, exactly as `deleteTeacherAccount`'s
+> named exception above. One class per transaction, so it adds no edge.
 
 Five stands — but a future sweep that notifies across classes in one
 transaction would be a sixth site, and none of the four checks above would

@@ -193,20 +193,25 @@ interface ClassTransition {
 Implements the hybrid promotion model:
 
 ```typescript
-// Before cancel_deadline: auto-promote in queue order
-// After cancel_deadline (final hour): first-come-first-claimed
-async function processWaitlist(classId: string): Promise<void> {
-  const classData = await getClass(classId);
-  const now = new Date();
-  const deadline = subHours(classData.startTime, deadlineHours(classData.cancelDeadline));
+// More than 1h before cancel_deadline: auto-promote the queue head
+// Final hour BEFORE the deadline: first-come-first-claimed broadcast
+// At or after the deadline: frozen — nothing happens
+async function handleSpotFreed(db, classId, now?): Promise<SpotFreedResult> {
+  const cls = await db.class.findUnique({ where: { id: classId }, ... });
+  if (!cls || cls.status !== 'open') return { action: 'none' };
 
-  if (now < deadline) {
-    // Auto-promote: next person in queue gets the spot
-    await autoPromoteNext(classId);
-  } else {
-    // First-come: notify all waitlisted, first to claim gets it
-    await openSpotToAll(classId);
+  const window = getWaitlistWindow(cls.date, cls.startTime, cls.cancelDeadline, tz, now);
+  if (window === 'frozen') return { action: 'frozen' };
+
+  if (window === 'auto_promote') {
+    // promoteNext: under the Class row lock, checks capacity, promotes the head
+    return ...;
   }
+
+  // first_come_first_claimed: under the Class row lock, counts free seats
+  // (#212 — it used to notify without checking), then notifies everyone
+  // waiting. The first claim wins; claimSpot re-checks capacity.
+  return ...;
 }
 ```
 

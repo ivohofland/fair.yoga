@@ -70,10 +70,29 @@ baseline; re-deleting the guard after the fix must reproduce it exactly.
 `npx vitest run --project unit src/services/waitlist.test.ts -t 'stays silent'`:
 
 ```
-_PENDING_
+AssertionError: expected { action: 'broadcast', notified: 2 } to deeply equal { action: 'none' }
+
+- Expected
++ Received
+
+  {
+-   "action": "none",
++   "action": "broadcast",
++   "notified": 2,
+  }
 ```
 
-Restored (i.e. the fix shipped with the branch); suite green.
+`handleSpotFreed` returned `{ action: 'broadcast', notified: 2 }` where
+`{ action: 'none' }` is expected, and `countBroadcasts()` was 2 where 0 is
+expected — the broadcast branch read the queue and notified both waiters
+without ever counting. The guard is missing, not wrong, so this baseline IS
+the mutation; re-deleting the guard after the fix must reproduce it exactly.
+
+Restored (the fix shipped with the branch); suite green.
+
+Re-deleting the two guard lines (`readSeatCount` + `if (freeSeats <= 0) return
+[]`) after the fix reproduces the exact failure above — same assertion, same
+message, same diff. The mutation and the original defect are the same edit.
 
 ---
 

@@ -14,6 +14,7 @@ import { resolveInvitationOnLink } from './link-consent';
 import { lockClassRow, type TransactionClientOnly } from '@/lib/db-locks';
 import { isRecordNotFound } from '@/lib/api-errors';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
+import { readSeatCount } from './capacity';
 
 /** Raised when a promotion/claim is not allowed in the current class state. */
 export class WaitlistPromotionError extends Error {
@@ -654,23 +655,62 @@ export async function handleSpotFreed(
   }
 
   // first_come_first_claimed: notify everyone waiting; first claim wins.
-  const waiting = await db.waitlistEntry.findMany({
-    where: { classId, status: 'waiting' },
-  });
-  if (waiting.length === 0) return { action: 'none' };
+  //
+  // Under the class row lock, and counting before it speaks (#212). Both
+  // siblings that hand out a seat check capacity — `promoteNext` and
+  // `claimSpot` above — and this branch did not, so a class refilled between
+  // the cancel and this hook still told every waiting student a spot had
+  // opened. `claimSpot`'s own check then rejected them: the notification was
+  // wrong when it was written, not merely stale by the time it was read.
+  //
+  // The lock is what makes the count mean anything. Read outside it, this
+  // would only move the race from "cancel-commit → findMany" to "count →
+  // createMany" — and a race is the ONLY way to reach this state, since a
+  // cancel frees the seat it announces. Every writer that creates a
+  // registration takes this same row lock, so they serialise against this
+  // transaction: one arriving after the count blocks until this commits.
+  //
+  // `lockClassRow`, not the inline `FOR UPDATE` the three functions above
+  // use: those are pre-existing unbounded waits that `db-locks.ts` reserves
+  // for #104. This site is new, so it takes the bounded 2s wait from the
+  // start. The cost is that a class row held longer than that drops the
+  // broadcast entirely — both callers log and swallow. That is the
+  // conservative outcome: a writer holding this row that long is probably
+  // filling the seat.
+  const entries = await db.$transaction(async (tx) => {
+    await lockClassRow(tx, classId);
 
-  await createBulkNotifications(
-    db,
-    waiting.map((w) => ({
-      recipientType: 'student' as const,
-      recipientId: w.studentId,
-      type: 'spot_available' as const,
-      title: 'A spot opened up',
-      body: `A spot opened in ${cls.classType}. The first to claim it gets it.`,
-      relatedClassId: classId,
-    })),
-  );
-  return { action: 'broadcast', notified: waiting.length };
+    const { freeSeats } = await readSeatCount(tx, classId);
+    if (freeSeats <= 0) return [];
+
+    const waiting = await tx.waitlistEntry.findMany({
+      where: { classId, status: 'waiting' },
+    });
+    if (waiting.length === 0) return [];
+
+    await createBulkNotifications(
+      tx,
+      waiting.map((w) => ({
+        recipientType: 'student' as const,
+        recipientId: w.studentId,
+        type: 'spot_available' as const,
+        title: 'A spot opened up',
+        body: `A spot opened in ${cls.classType}. The first to claim it gets it.`,
+        relatedClassId: classId,
+      })),
+    );
+    return waiting;
+  });
+
+  // No log line on the full-class path, deliberately. The auto-promote branch
+  // above already handles this exact event silently — it catches
+  // `promoteNext`'s `class_full` and returns the same `{ action: 'none' }`
+  // under "A concurrent registration may have refilled the spot — that's
+  // fine." One event, one story; a `warn` would ask an operator to act on an
+  // outcome where the cancel and the refill both did the right thing.
+  return entries.length === 0
+    ? { action: 'none' }
+    : { action: 'broadcast', notified: entries.length };
 }
 
 // ---------------------------------------------------------------------------

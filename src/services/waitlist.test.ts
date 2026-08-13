@@ -6,6 +6,7 @@ import {
   removeFromWaitlist,
   promoteNext,
   claimSpot,
+  handleSpotFreed,
   WaitlistJoinError,
   WaitlistPromotionError,
 } from './waitlist';
@@ -1427,5 +1428,142 @@ describe('removeFromWaitlist takes the class lock (DB)', () => {
 
     expect(hookCalls).toBe(1);
     expect(result).toEqual({ ok: false, reason: 'NOT_FOUND' });
+  });
+});
+
+describe('handleSpotFreed (DB)', () => {
+  // One fixed class drives every instant, so nothing here reads the wall
+  // clock. Same derivation as the `claimSpot (DB)` block above:
+  //   class starts       2026-06-03 09:00 UTC  (teacher default timezone UTC)
+  //   HOURS_24        →  deadline 2026-06-02 09:00 UTC
+  //   cutoff = deadline − 1h        2026-06-02 08:00 UTC
+  const IN_CLAIM_WINDOW = new Date('2026-06-02T08:30:00Z');
+
+  let teacherId: string;
+  let accountId: string;
+  let roomId: string;
+  let teacherRoomId: string;
+  let classId: string;
+  let fillerId: string;
+  const waiterIds: string[] = [];
+
+  beforeAll(async () => {
+    const mail = `spotfreed-teacher-${uniqueSuffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'SpotFreed',
+        lastName: 'Teacher',
+        email: mail,
+        account: { create: { email: mail } },
+        bio: 'Test teacher for handleSpotFreed tests',
+        pageSlug: `spotfreed-teacher-${uniqueSuffix}`,
+        defaultTimezone: 'UTC',
+      },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'SpotFreed Studio',
+        address: `${uniqueSuffix} SpotFreed St`,
+        city: 'Amsterdam',
+        postcode: '9012SF',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+    });
+    roomId = room.id;
+
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 20, rentalRate: 15 },
+    });
+    teacherRoomId = teacherRoom.id;
+
+    const mk = async (label: string) =>
+      (
+        await prisma.student.create({
+          data: {
+            firstName: 'SpotFreed',
+            lastName: label,
+            email: `spotfreed-${label}-${uniqueSuffix}@test.local`,
+            incomeTier: 3,
+          },
+        })
+      ).id;
+    fillerId = await mk('filler');
+    waiterIds.push(await mk('waiter1'), await mk('waiter2'));
+
+    // maxStudents: 1 plus one registration is the cheapest way to be full,
+    // which is what `addToWaitlist` requires before it will accept anyone.
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'SpotFreed Flow',
+        date: new Date('2026-06-03'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 1,
+        cancelDeadline: 'HOURS_24',
+        status: 'open',
+      },
+    });
+    classId = cls.id;
+
+    await prisma.registration.create({
+      data: { classId, studentId: fillerId, tierAtBooking: 3 },
+    });
+    for (const waiterId of waiterIds) {
+      await addToWaitlist(prisma, classId, waiterId);
+    }
+  });
+
+  afterAll(async () => {
+    await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    await prisma.waitlistEntry.deleteMany({ where: { classId } });
+    await prisma.registration.deleteMany({ where: { classId } });
+    await prisma.class.delete({ where: { id: classId } });
+    await prisma.student.deleteMany({ where: { id: { in: [fillerId, ...waiterIds] } } });
+    await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
+    await prisma.room.delete({ where: { id: roomId } });
+    await prisma.teacher.delete({ where: { id: teacherId } });
+    await prisma.account.delete({ where: { id: accountId } });
+  });
+
+  const countBroadcasts = () =>
+    prisma.notification.count({ where: { relatedClassId: classId, type: 'spot_available' } });
+
+  /**
+   * #212. Both halves are one test on purpose: the second is the control that
+   * makes the first mean something. Asserting only "no notifications on a full
+   * class" would pass against a `handleSpotFreed` that had been broken to do
+   * nothing at all, which is not the property under test.
+   */
+  it('stays silent when the class is already full, and broadcasts when it is not', async () => {
+    // The class is full (maxStudents 1, filler still registered) and the clock
+    // is inside the final-hour window — the exact state a refill leaves behind
+    // when it commits between a cancel and this hook. Before the fix, this
+    // branch read the queue and notified both waiters without ever counting.
+    const whenFull = await handleSpotFreed(prisma, classId, IN_CLAIM_WINDOW);
+    expect(whenFull).toEqual({ action: 'none' });
+    expect(await countBroadcasts()).toBe(0);
+
+    // Now free the seat. Same class, same queue, same instant — the only thing
+    // that changed is that a seat exists.
+    await prisma.registration.update({
+      where: { classId_studentId: { classId, studentId: fillerId } },
+      data: { status: 'cancelled', cancelledAt: new Date() },
+    });
+
+    const whenFree = await handleSpotFreed(prisma, classId, IN_CLAIM_WINDOW);
+    expect(whenFree).toEqual({ action: 'broadcast', notified: 2 });
+    expect(await countBroadcasts()).toBe(2);
   });
 });
