@@ -160,7 +160,10 @@ detector keyed on events would need it.
 
 **The one assumption worth naming:** `maxStudents ≥ 1` is a Zod invariant at four call
 sites, not a database `CHECK`. A row written by raw SQL or a seed script bypasses it.
-That weakens the first argument only, not the second.
+That weakens the first argument only, not the second — which is why this spec does not
+depend on it. Filed as **#221**, together with the six other `Class` invariants in the
+same position; **#221 is unaffected by this branch** and this branch does not wait on
+it.
 
 **A seat is occupied by** `registered`, `attended`, `no_show`
 (`lib/registration-status.ts:58`). `readSeatCount` (`capacity.ts:93`) is the single
