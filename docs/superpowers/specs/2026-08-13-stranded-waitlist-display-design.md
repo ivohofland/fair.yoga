@@ -251,6 +251,16 @@ How far the stale state reaches, so the filed issue does not have to re-derive i
   row locks and an over-generous timeout, no wrong outcome.
 - The Article 15 export (`gdpr.ts:50`) reports `waiting` for a class that already
   ran. This is the only remaining user-visible consequence once §3.1 lands.
+- **§3.1 closes the drain as well as the leak, which raises the stakes on #216.**
+  The row it hides carried `WaitlistEntryActions`, whose `handleLeave` issues
+  `DELETE /api/waitlist/[entryId]` (`waitlist-entry-actions.tsx:44-48`) — so
+  until §3.1, a student looking at a dead-class row could at least remove
+  themselves, closing that entry to `removed`. Afterwards the row is invisible
+  and inert, and **no user action can ever close it**: #216 becomes the only
+  mechanism that will. Nobody is worse off — the row was misinformation and
+  hiding it is right — but the population can no longer partially self-empty,
+  which is worth knowing before choosing #216's status. Found in this branch's
+  own review, not before it.
 
 **Filed as #216, as a decision rather than as work**, because the status to write
 is a genuine choice and it is the kind that is cheap now and expensive after it

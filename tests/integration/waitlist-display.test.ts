@@ -13,11 +13,23 @@ const suffix = uniqueSuffix();
  * `addToWaitlist:178`, `promoteNext:391`, `claimSpot:523` and
  * `handleSpotFreed:635` — these tests pin the same rule on the reads.
  *
- * Every fixture class is dated 2099 deliberately. The dev server serving these
- * requests runs the scheduler (`src/instrumentation.ts`), and
- * `autoCompleteClasses` sweeps EVERY `in_progress` class with no date filter —
- * a present-dated `in_progress` fixture would be completed underneath the
- * assertion, turning a real failure into a passing one for the wrong reason.
+ * Every fixture class is dated 2099 deliberately, and the date is load-bearing
+ * for all three class-transition sweeps. The dev server serving these requests
+ * runs the scheduler (`src/instrumentation.ts`), and every one of them would
+ * otherwise reach these rows:
+ *
+ * - `autoTransitionToInProgress` — `open` classes with `date <= now + 24h`
+ *   (`class-transitions.ts:70`).
+ * - `autoCancelClasses` — `open` classes inside their auto-cancel check window
+ *   that sit below `minStudents` (`class-transitions.ts:115`). Every fixture
+ *   class here has `minStudents: 1` and ZERO registrations, so this is the one
+ *   most likely to bite.
+ * - `autoCompleteClasses` — EVERY `in_progress` class, with no date filter at
+ *   all; only the computed end instant holds it off (`class-transitions.ts:392`).
+ *
+ * Any of the three rewrites a status underneath an assertion, and the absence
+ * assertions below would still pass — from a status the fixture never set.
+ * That is #138's failure mode: a check that runs when both paths agree.
  */
 
 // Distinct `startTime` per class: `Class_teacher_slot_unique` is
@@ -156,21 +168,41 @@ beforeAll(async () => {
     });
   }
 
-  // Task 2's fixture: one class carrying 1 `waiting` and 2 `removed` entries.
-  // The 2/1 split is load-bearing. One entry of each status renders `1`
-  // before the fix and `2` after, so several wrong predicates reproduce it —
-  // the shape that let #39 ship three guards that could not fail. Two
-  // `removed` against one `waiting` makes filtered and unfiltered differ by
-  // two, which no off-by-one predicate produces.
+  // Task 2's fixture: one class carrying one entry in each of three states —
+  // `waiting`, `promoted`, `removed`. Three properties, each load-bearing:
+  //
+  // - THREE entries against ONE `waiting` makes the filtered and unfiltered
+  //   counts differ by two, so no off-by-one predicate reproduces the right
+  //   answer. A symmetric fixture is the shape that let #39 ship three guards
+  //   that could not fail.
+  // - The `promoted` row is what makes this test discriminate. `1 waiting +
+  //   2 removed` renders `1` under BOTH `status: 'waiting'` and
+  //   `status: { not: 'removed' }` — and the latter is a natural mistake
+  //   ("removed means gone") that still double-counts precisely the students
+  //   `(teacher)/class/[id]/page.tsx:45` names as the reason for the fix.
+  //   With a `promoted` row present, `not: 'removed'` renders 2 and fails.
+  // - `removed` stays represented, because it is the state every queue #195
+  //   closed on a cancelled class now sits in.
+  //
+  // The `promoted` row deliberately carries no `registrationId`: in production
+  // `promoteNext` writes one (`waitlist.ts:480`), but the count query never
+  // reads it, and a fixture Registration would add an entity to this graph to
+  // assert nothing. `promotedAt` is set so the row is not obviously synthetic.
   countClassId = await makeClass(`w199-count-${suffix}`, 'open', 4);
   const waiting = await makeStudent('count-waiting');
-  const goneA = await makeStudent('count-gone-a');
-  const goneB = await makeStudent('count-gone-b');
+  const seated = await makeStudent('count-promoted');
+  const gone = await makeStudent('count-gone');
   await prisma.waitlistEntry.createMany({
     data: [
       { classId: countClassId, studentId: waiting.id, position: 1, status: 'waiting' },
-      { classId: countClassId, studentId: goneA.id, position: 2, status: 'removed' },
-      { classId: countClassId, studentId: goneB.id, position: 3, status: 'removed' },
+      {
+        classId: countClassId,
+        studentId: seated.id,
+        position: 2,
+        status: 'promoted',
+        promotedAt: new Date(),
+      },
+      { classId: countClassId, studentId: gone.id, position: 3, status: 'removed' },
     ],
   });
 });
@@ -208,7 +240,7 @@ describe('GET /bookings (page) — the waitlist strip', () => {
 });
 
 describe('GET /class/[id] (page) — the waitlist count', () => {
-  it('counts waiting entries only, so a closed queue does not inflate it', async () => {
+  it('counts waiting entries only — neither a closed queue nor a seated student inflates it', async () => {
     const res = await fetch(`${BASE_URL}/class/${countClassId}`, {
       headers: cookie(teacherToken),
     });
@@ -224,6 +256,13 @@ describe('GET /class/[id] (page) — the waitlist count', () => {
     const html = (await res.text()).replaceAll('<!-- -->', '');
 
     expect(html).toContain('1 on waitlist');
+
+    // 3 is what an unfiltered count renders. 2 is what `not: 'removed'`
+    // renders — the plausible wrong predicate, which keeps counting the
+    // `promoted` student who already appears in this page's registrations
+    // list. Naming both numbers puts the discrimination in the test rather
+    // than only in the fixture's comment.
     expect(html).not.toContain('3 on waitlist');
+    expect(html).not.toContain('2 on waitlist');
   });
 });
