@@ -182,7 +182,7 @@ Neither test needs a new file if an existing integration file already owns the
 surface; the plan decides placement. `npm run verify` runs all three vitest
 projects, so the whole integration suite is the evidence — not a named subset.
 
-## 7. Out of scope, filed separately
+## 7. Out of scope — filed as #216
 
 **Nothing closes the queue when a class stops being `open` by *starting*.** The
 class-started state is `in_progress`, and that — not completion — is where the
@@ -196,7 +196,7 @@ Every exit from `open`, and what it does with the queue:
 | `cancelled` | manual route, `transition/route.ts:36` | **yes** — #195 |
 | `cancelled` | `autoCancelClasses`, `class-transitions.ts:297` | **yes** — #195 |
 | `cancelled` | teacher erasure, `gdpr.ts:783` | **yes** — #195 |
-| `in_progress` | `autoTransitionToInProgress:81` → `transitionClass` | **no** |
+| `in_progress` | `autoTransitionToInProgress:82` → `transitionClass` | **no** |
 | `in_progress` | `POST …/transition` with `in_progress` → `transitionClass:109` | **no** |
 | `in_progress` | `completeClass:204`, the inline bump when a teacher completes an `open` class directly | **no** |
 | row deleted | template archive, `class-template-lifecycle.ts:872` | **yes** — notifies, then cascades |
@@ -252,8 +252,9 @@ How far the stale state reaches, so the filed issue does not have to re-derive i
 - The Article 15 export (`gdpr.ts:50`) reports `waiting` for a class that already
   ran. This is the only remaining user-visible consequence once §3.1 lands.
 
-**Filed as a decision, not as work**, because the status to write is a genuine
-choice and it is the kind that is cheap now and expensive after it ships:
+**Filed as #216, as a decision rather than as work**, because the status to write
+is a genuine choice and it is the kind that is cheap now and expensive after it
+ships. The decision was deliberately left open in #216 rather than settled here:
 
 - **`removed`** — what all three cancel paths write. One vocabulary, no new
   behaviour, and it is what `withdrawWaitingEntriesForTeacher` and
@@ -279,9 +280,13 @@ waitlist).
   on a `completed` class is absent from the HTML.
 - The teacher's class detail counts `waiting` entries only; `removed` entries do
   not inflate it.
-- Each of the two guards has been broken, the failure text recorded, and restored.
-- The production-count criterion in #199 is answered in the issue itself with §4's
-  measurement and the fact that no production exists.
-- The open→`in_progress` queue-closing gap is filed with §7's content — the exit
-  table, the `removed`/`expired` choice, and the settled notification question —
-  before this branch merges.
+- Each of the two guards has been broken, the failure text recorded, and restored —
+  including the `not: 'cancelled'` weakening in §6.1, not only outright deletion.
+- **Done.** The production-count criterion in #199 is answered in the issue itself
+  (comment of 2026-08-13) with §4's measurement and the fact that no production
+  exists, alongside both falsified claims and the second surface.
+- **Done.** The open→`in_progress` gap is **#216**, carrying §7's exit table, the
+  `handleSpotFreed` rule-out proof, the open `removed`/`expired` decision, and the
+  settled notification question. Its dependency on #182 is recorded in both
+  directions: in #216's body, and as a comment on #182 pointing at the transaction
+  its own acceptance creates.
