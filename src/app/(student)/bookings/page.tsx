@@ -38,7 +38,14 @@ export default async function StudentBookingsPage() {
       },
     }),
     prisma.waitlistEntry.findMany({
-      where: { studentId: session.studentId, status: 'waiting' },
+      // #199. The entry's own status is not enough: nothing closes the queue
+      // when a class leaves `open` by starting (#216), so a `waiting` row
+      // outlives its class and renders as "position 2" on a class that will
+      // never take another student. Positive, not `not: 'cancelled'` — `open`
+      // is the predicate `addToWaitlist`, `promoteNext`, `claimSpot` and
+      // `handleSpotFreed` all already require, and a negative predicate would
+      // need extending for every terminal state added later.
+      where: { studentId: session.studentId, status: 'waiting', class: { status: 'open' } },
       include: {
         class: {
           include: {
