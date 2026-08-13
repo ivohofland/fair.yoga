@@ -2938,4 +2938,55 @@ describe('invitation writes are retry-safe against a concurrent decline (#196)',
     expect(res.status).toBe(409);
     expect((await res.json()).error.code).toBe('DECLINED_IS_PERMANENT');
   });
+
+  it('404s a delete whose row vanished mid-request, rather than blaming a decline', async () => {
+    // The branch `casMatchedNothing` exists for, and the only one a race can
+    // reach: sequentially the pre-check 404s first, so nothing but this
+    // interleaving gets a zero count on a row that is simply gone.
+    //
+    // Before #196 both causes answered DECLINED_IS_PERMANENT — so a teacher
+    // who deleted a contact in one tab and retried in another was told that
+    // person had declined their invitation. A false statement about a third
+    // party's choice, produced by the teacher's own duplicate action, and the
+    // reason the CAS re-reads instead of assuming.
+    const email = `race-gone-${suffix}@test.local`;
+    const inv = await prisma.invitation.create({
+      data: { teacherId: raceTeacherId, email, firstName: 'Race', lastName: 'Gone', status: 'pending' },
+    });
+
+    const holder = new PrismaClient();
+    let release!: () => void;
+    let locked!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const parked = new Promise<void>((r) => { locked = r; });
+    const holding = holder.$transaction(async (tx) => {
+      // The other tab's delete, held uncommitted: this request's pre-check
+      // still sees the row and its `deleteMany` parks on the row lock.
+      await tx.invitation.delete({ where: { id: inv.id } });
+      locked();
+      await released;
+    }, { timeout: 20_000 });
+    await parked;
+
+    const deleting = fetch(`${BASE_URL}/api/invitations/${inv.id}`, {
+      method: 'DELETE',
+      headers: cookie(raceTeacherToken),
+    });
+
+    let settled = false;
+    void deleting.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(settled).toBe(false);
+
+    release();
+    await holding;
+    const res = await deleting;
+    await holder.$disconnect();
+
+    // The code first: answering DECLINED_IS_PERMANENT here is the defect, and
+    // a bare 404-vs-409 check would not say which wrong thing was said.
+    const body = (await res.json()) as { error: { code?: string } };
+    expect(body.error.code).toBeUndefined();
+    expect(res.status).toBe(404);
+  }, 20_000);
 });

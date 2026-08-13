@@ -100,6 +100,18 @@ export async function verifyMagicLinkToken(
   return { email: record.email, redirectTo: record.redirectTo };
 }
 
+/**
+ * Deletes expired tokens and returns the count.
+ *
+ * **Nothing in production calls this.** The daily sweep is
+ * `cleanupExpiredAuth` (`services/auth-cleanup.ts`), wired to both the cron
+ * route and the scheduler's 24-hour job; this function's only callers are its
+ * own tests. Said out loud because the name is the more obvious of the two and
+ * has already been cited, in a comment on this very file, as the reason an
+ * unindexed `deleteMany` stays cheap — a justification resting on a function
+ * that never runs. If you are reaching for a token sweep, you want the other
+ * one.
+ */
 export async function cleanupExpiredTokens(
   db: PrismaClient
 ): Promise<number> {

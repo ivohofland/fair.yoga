@@ -82,7 +82,9 @@ and nothing the user experiences.
 **Email fallback.** `src/services/email-fallback.ts:152-157` calls
 `resend().emails.send`; `markOne` runs at `:165`, *after* it returns. Adding
 `emailSent: false` to `markEmailSent`'s `where` makes the mark idempotent and
-does not prevent one real email being sent twice.
+does not prevent one real email being sent twice. (`markEmailSent` is what the
+function was called when this was measured. It shipped as `claimEmailFallback`,
+and why is in §3.8.)
 
 ### 1.3 Two mechanisms cannot be built, and one would ship a regression
 
@@ -123,6 +125,12 @@ uses `createMany` without `skipDuplicates`. The duplicate's actual source is
 that the handler runs **no transaction at all** and cancels with
 `prisma.registration.update({ where: { id } })` at `:160` and `:171` — unscoped,
 so both racers pass the `:143` pre-check and both reach `handleSpotFreed`.
+
+**Correction found in implementation: that last sentence is true of `:171`
+only.** `:160` is the late-cancel branch, reached only when `now > deadline`,
+and `getWaitlistWindow` returns `frozen` for exactly that — so `handleSpotFreed`
+broadcasts nothing there and there is no duplicate to observe. That branch still
+needs its scope, for money rather than notifications; §3.6 carries the reason.
 
 **`DELETE /api/account`.** The duplicate `spot_available` set §3 of the branch-1
 spec attributes to this endpoint is produced at `gdpr.ts:597-603`, a loop that
@@ -172,7 +180,7 @@ raised four more that it could not have anticipated. Answered by Ivo,
 |---|---|---|
 | Reuse is unbuildable and today already matches the decided behaviour — how far should magic-link security go? | **Invalidate sibling tokens on a successful sign-in**, keep hash-only storage, never build reuse | a `deleteMany` in `verifyMagicLinkToken`, after the expiry check |
 | §1 said "a reminder is legitimate after a cooldown" but chose no window | **2 minutes** | a new constant; the same window as announcements |
-| The fallback's CAS is on the wrong side of the send; fixing it flips a documented trade | **Claim before send**, release the claim on failure | `markEmailSent` gains a CAS and a return count |
+| The fallback's CAS is on the wrong side of the send; fixing it flips a documented trade | **Claim before send**, release the claim on failure | `markEmailSent` gains a CAS and a return count — **shipped as `claimEmailFallback(db, id)` answering `'claimed'` or `'already-claimed'`; the count was itself a defect, §3.8** |
 | Should the broadcast be deduplicated, or the sources scoped? | **Scope the sources** (engineering call, recorded for the record) | status-scoped cancel; `deletedAt: null`-scoped erasure |
 
 ### 2.1 Why sibling invalidation is the right magic-link answer
@@ -181,11 +189,18 @@ The obstacle to §4.2's mechanism is itself a security control, so the correct
 response is to keep it and harden elsewhere rather than route around it.
 
 Today `verifyMagicLinkToken` deletes only the row it consumed
-(`magic-link.ts:50`). Rate limiting permits 3 tokens per address per 15 minutes
-and the TTL is 15 minutes, so up to two other live sign-in credentials for that
-address can survive in the user's inbox **after they have already signed in** —
-zero remaining utility, and real exposure to a forwarded mail, a shared mailbox
-or a link-prefetching mail scanner.
+(`magic-link.ts:50`). Live sign-in credentials for that address survive in the
+user's inbox **after they have already signed in** — zero remaining utility, and
+real exposure to a forwarded mail, a shared mailbox or a link-prefetching mail
+scanner.
+
+**How many, corrected.** This paragraph read "3 tokens per address per 15
+minutes … so up to two other live credentials". The budget is twice that, and
+the error was found while implementing. Both minting routes cap three per
+address per 15 minutes, but from **separate buckets** (`magic-link:email:` and
+`student-signup:email:`), and `student-signup` mints for any address with no
+account required. So one address can hold **six** live tokens, and a consumption
+can find **up to five** siblings.
 
 **Placement is load-bearing.** The `deleteMany` must fire only after the expiry
 check at `:55-57` passes. If it fired on every consumption, anyone holding an
@@ -196,10 +211,13 @@ Two costs, both accepted: a user who requested two links and clicks the *older*
 first will find the newer one dead, where today it would have re-authenticated
 and honoured its own `redirect` (they are signed in at that point, so they
 navigate); and `deleteMany({ where: { email } })` is unindexed, since
-`MagicLinkToken` carries `@unique` on `tokenHash` only. `cleanupExpiredAuth`
-sweeps daily and the rate limit caps the table at 3 rows per address per 15
-minutes, so the scan is microseconds. **Adding the index would mean a migration,
-which is the one thing branch 2 is scoped to avoid.**
+`MagicLinkToken` carries `@unique` on `tokenHash` only. What bounds the table is
+`cleanupExpiredAuth`'s daily sweep of `expiresAt < now` — roughly a day's
+accumulation — so the scan is microseconds. This sentence originally credited
+the rate limiter, which is the second arithmetic error implementation found: the
+limiter caps rows **per address** and says nothing about how many addresses
+there are. **Adding the index would mean a migration, which is the one thing
+branch 2 is scoped to avoid.**
 
 **Rejected: binding the link to the requesting device** (an httpOnly cookie set
 at send, required at verify). It is the strongest hardening against link
@@ -275,6 +293,13 @@ Four details, each of which was wrong or absent in §4.2:
   costs needless serialisation and nothing else, because the duplicate test
   compares the real message text — which is the whole reason §1 of the branch-1
   spec chose a lock over a hashed index.
+
+**Shipped differently: the helper takes the tuple, not a pre-composed key.**
+`lockAnnouncementSlot(tx, { teacherId, classId, message })` builds the key
+inside `db-locks.ts`. In the sketch above the caller composes the key while the
+`findFirst` below compares the same three columns, with nothing holding the two
+together — change one without the other and two identical sends take two
+*different* locks, both read an empty compare, and both fan out.
 
 **There is no advisory-lock precedent in this repo** — the only `advisory` hit
 anywhere is unrelated prose in `src/middleware.ts:21`. So this is a new idiom and
@@ -382,7 +407,20 @@ same 200.
 
 Fix: catch P2002 on that `create` and continue to the mint and send. A row
 losing that race means the account now exists, which is precisely the state the
-`else` path already handles correctly.
+unconditional mint-and-send below already handles correctly. **There is no
+`else` in this route** — every state that is not a fresh email simply falls
+through — and this sentence said "the `else` path" until the comment review
+falsified it.
+
+**Shipped differently: the catch is narrowed, not blanket.** `P2002` alone is
+"some unique constraint", and the reasoning above holds only for the email keys;
+a future unique on this `create` would inherit it by accident. The catch matches
+`isUniqueConflictOn(err, ['email'])` — one predicate covering both halves of the
+race, since `Student.email` and `Account.email` both key on `['email']` — logs
+which model lost, and rethrows anything else as an **ordinary** error rather
+than as a P2002. Rethrowing it as a P2002 would land on `classifyApiError`'s 409
+"Resource already exists", which is the same enumeration signal this route's
+uniform 200 exists to prevent, arriving through the other door.
 
 ### 3.5 `DELETE` and `PUT /api/invitations/[id]` — as §4.2 wrote them
 
@@ -392,6 +430,24 @@ The two rows that stand.
   `count === 0` → the same 409 the `:135-141` pre-check already returns.
 - `PUT` (`route.ts:94-104`): `updateMany` with the same status scope,
   `count === 0` → the same 409 as `:55-61`.
+
+**Shipped differently: `count === 0` does not mean "declined".** Both verbs call
+a shared `casMatchedNothing`, which re-reads the row and reports what is
+actually there — **404** when it is gone, `DECLINED_IS_PERMANENT` only when it
+is genuinely declined, and a neutral 409 ("this contact changed while you were
+working on it") otherwise. The design above answers `DECLINED_IS_PERMANENT`
+unconditionally, and the harm is specific: a teacher whose own concurrent delete
+removed the row would be told that the person had declined their invitation — a
+false statement about a third party's choice, made by a tool whose premise is
+not making those. The re-read is scoped to the teacher (a row that is no longer
+theirs is not theirs to hear about) and bounded by a `catch`, so it cannot turn
+a deterministic 409 into a 500 on the retry path #196 exists to make safe; an
+unreadable row falls to the neutral 409, never to the decline.
+
+The third branch — present, not gone, not declined — is reachable by the
+mechanism this domain is built around: `resolveInvitationOnLink`
+(`link-consent.ts`) flips a declined row to `accepted` when the student books.
+It logs at `info` for that reason. Found by the type-design review.
 
 `declined` is the only tombstone: `enum InvitationStatus { pending accepted
 declined }`. `accepted` is deliberately deletable — what blocks a re-invite for a
@@ -418,6 +474,17 @@ Then two concurrent cancels resolve to one winner, one `promoteAfterCancel`, one
 notion of "already broadcast" — which is fortunate, because no such marker
 exists (§1.4).
 
+**The two branches are scoped for different reasons, which this section
+originally ran together.** The broadcast argument is the *full-cancel* branch's
+(`:171`), reached before the deadline. The *late-cancel* branch (`:160`) runs
+only when `now > deadline`, where `getWaitlistWindow` returns `frozen` and
+nothing broadcasts at all. Its scope is about money: `late_cancel` is in
+`CHARGED_STATUSES` (`class-lifecycle.ts`) and `cancelled` is not, so an unscoped
+write landing *after* a teacher's free cancel silently rewrites `cancelled` →
+`late_cancel` and bills a student for a class they had been let out of. Both
+branches also give the loser of two concurrent cancels the same 409 instead of a
+second 200.
+
 `POST /api/waitlist/claim` is unaffected: `claimSpot` (`waitlist.ts:509-606`)
 resolves entirely against class state — `FOR UPDATE`, status, window, and a
 capacity count against `maxStudents` — and never reads a notification.
@@ -437,15 +504,17 @@ attributes to this endpoint.
 The route maps that abort to the **same 200** a successful erasure returns. The
 end state is identical (the account is erased, by the first request), the second
 transaction rolled back whole, and the caller's question — "is this account
-gone?" — is honestly answered yes. `resolveSession`
+gone?" — is honestly answered yes. `validateSession`
 (`src/lib/auth/session.ts:83-88`) already makes the *sequential* retry a no-op;
-this closes the concurrent one.
+this closes the concurrent one. (This paragraph named `resolveSession`, which
+does not exist in this codebase. Corrected in source and in one test during the
+branch, and missed here until now.)
 
 ### 3.8 `POST /api/cron/email-fallback` — claim, then send
 
-`markEmailSent` (`notifications.ts:212-220`) gains `emailSent: false` in its
-`where` and returns the updated count instead of `void`. In the send branch of
-`email-fallback.ts`, it moves to **before** `resend().emails.send`:
+`markEmailSent` gains `emailSent: false` in its `where` and returns the updated
+count instead of `void`. In the send branch of `email-fallback.ts`, it moves to
+**before** `resend().emails.send`:
 
 ```
 claimed = markEmailSent(db, [id])       // CAS: emailSent false -> true
@@ -454,13 +523,35 @@ send(...)
 if error -> releaseEmailClaim(db, [id]) // back to false, next sweep retries
 ```
 
+**Shipped differently, and the array-plus-count above was itself the defect.**
+The function is `claimEmailFallback(db, notificationId)` in
+`src/services/notifications.ts`, answering `'claimed'` or `'already-claimed'` —
+one id, a named outcome, no count. The release is a local `releaseOne` inside
+`email-fallback.ts`; there is no `releaseEmailClaim`. `claimed === 0` reads
+correctly only because every caller happened to pass a one-element array:
+batched, it silently means *"I won one of five"* while the sweep goes on to send
+all five. The single-id signature makes that batch impossible to write by
+accident, and a future batch claim needs a different function returning **which**
+ids it won, not how many. Found by the type-design review.
+
 - A **throw** from the claim must also skip the send. The existing `markOne`
   swallows mark errors and logs (`:44-50`); as a claim it must fail closed,
   because "we could not record ownership" and "we own it" are not the same
   state.
 - The two non-send call sites (`:136` opted-out, `:143` dry-run) keep marking
   after their decision — there is no external effect to protect, and the CAS is
-  harmless there.
+  harmless there. (Shipped with one change the re-review forced: `markOne` there
+  no longer swallows a write failure, because a clean return **clears** the
+  scheduler's `lastError` and would drive health green through a claim-write
+  outage.)
+- **Shipped addition: the three outcomes are a `switch` closed by `const
+  unhandled: never`.** What follows the branch is the send, so a fourth outcome
+  falling past a chain of `if`s would email a notification nobody had decided
+  this sweep owned. The `never` makes adding one a compile error; a separate
+  `owned` flag makes the runtime default not-sending, so the two failure modes
+  are covered by different mechanisms. A claim that *errors* counts as `failed`
+  rather than being skipped like one another sweep already holds — collapsing
+  the two would return a clean sweep through an outage that emailed nobody.
 - `scheduler.ts:9-10`'s idempotency claim is corrected in the same commit
   (§1.5). It is true of `payment-reminders` and was never true of this job.
 
@@ -491,7 +582,7 @@ produce**, so it cannot poison state that a later unrelated run trips over.
 | Invitation DELETE status scope | Remove `status: { not: 'declined' }` → the interleaved decline-then-delete test must fail |
 | Invitation PUT status scope | Same | Same, on the edit path |
 | PATCH exclusion | *Add* the status scope to PATCH → `invitations-api.test.ts:503` must fail. **This mutation proves an absence, and is the only way to prove one** |
-| Registration cancel scope | Revert to `update({ where: { id } })` → the concurrent-cancel test must observe two `spot_available` notification sets |
+| Registration **full**-cancel scope (`:171`) | Revert to `update({ where: { id } })` → the concurrent-cancel test must observe two `spot_available` notification sets. This row holds for the pre-deadline branch only; the late-cancel branch's mutation produces a mis-billing, not a second broadcast — §4.1 |
 | Erasure `deletedAt: null` scope | Remove the scope → the concurrent-erasure test must observe a doubled broadcast |
 | Its `count === 0` abort | Keep the scope, drop the throw → the same test must still fail, proving the **abort** is what works and not the scope alone |
 | Fallback claim-before-send | Move the claim back after the send → the overlapping-sweep test must observe two sends |
@@ -500,6 +591,35 @@ produce**, so it cannot poison state that a later unrelated run trips over.
 **Fixtures must not be able to poison shared state.** Every test creates its own
 teacher, student and class, and uses addresses and dates outside the seed
 window.
+
+### 4.1 Five guards that arrived after this table
+
+The eighteen rows above were written before implementation and all eighteen were
+run. Five further guards shipped — from the fix wave and the scoped re-review —
+and the table did not grow with them. They were **not** proved by the §4
+procedure. What did hold each up, stated exactly, because "a guard that compiles
+but cannot fail certifies nothing" applies to these too:
+
+| Guard | What proves it |
+|---|---|
+| **Late-cancel status scope** (`registrations/[id]/route.ts:175`) | A mutation, run and recorded. Narrowing to `notIn: ['late_cancel']` leaves the `cancelled` → `late_cancel` overwrite live and still answers `[200, 409]`, because both racers start from `registered` — so the first test written here was a duplicate-cancel test wearing the money test's name and could not fail against it. The real money test fails with `expected 'late_cancel' to be 'cancelled'` |
+| **Invitation CAS 404-vs-409 split** (`casMatchedNothing`) | A mutation, run and recorded, once this gap was noticed. `invitations-api.test.ts` ("404s a delete whose row vanished mid-request, rather than blaming a decline") holds a delete uncommitted so the request's `deleteMany` parks and finds the row gone; collapsing the helper back to an unconditional `DECLINED()` fails it with `expected 'DECLINED_IS_PERMANENT' to be undefined` — the false statement about a third party, reproduced. The neutral-409 arm remains argument alone |
+| **Signup P2002 narrowing** (`isUniqueConflictOn(err, ['email'])`) | Argument alone, and §4's own row for this endpoint hides it: "remove the catch" still passes against the narrowed code, so no mutation in this document can reach the narrowing. The unrecognised-P2002 rethrow has no coverage at all |
+| **`releaseOne`'s `emailSent: true` scope** | Nothing, deliberately. Its docblock records it as defensive rather than load-bearing — only the owner releases, and no sweep can claim a row while `emailSent` is true, so the race a looser predicate would lose to cannot occur today. The `count === 0` arm that would report otherwise is uncovered; the release-throws arm is pinned (`email-fallback.test.ts`, "names the stranded claim in the thrown error") |
+| **The claim `switch` closed by `const unhandled: never`** | Split. The `'error'` arm has a test ("does not send when the claim itself fails") and a recorded mutation — collapsing it into the skip resolves 0 instead of rejecting. The `never` default is unreachable and enforced by the compiler, not by any test |
+
+**Two of these five are held by neither a mutation nor a test** — the signup
+narrowing and `releaseOne`'s scope. Recorded that way rather than backfilled
+with mutations that were never run: §5 item 5 is a claim about the eighteen
+rows above, and it stays true of them.
+
+Writing this table is what closed the third. The invitation split sat here as
+"argument alone, and three reviewers agreeing" — which is the shape of every
+guard this project has shipped and later found could not fail. Enumerating them
+honestly made that one impossible to leave, and it took one test. The other two
+are genuinely lower stakes (one rethrows on a constraint that does not arrive
+today; one is documented as defensive rather than load-bearing), and they stay
+listed until someone decides otherwise.
 
 ---
 
@@ -532,7 +652,8 @@ window.
 
 ## 6. Scope
 
-**In:** the nine rows of §3, `markEmailSent`'s signature, the new advisory-lock
+**In:** the nine rows of §3, `markEmailSent`'s signature (shipped as
+`claimEmailFallback` — §3.8), the new advisory-lock
 helper in `db-locks.ts` and its docblock's adopter list, `docs/lock-order.md`,
 `scheduler.ts`'s idempotency claim, the two reminder docblocks, the supersession
 note on §4.2, and — the branch's only component change —

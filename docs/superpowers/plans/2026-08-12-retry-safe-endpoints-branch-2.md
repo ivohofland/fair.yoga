@@ -38,7 +38,7 @@
 | `src/components/class/send-reminder-button.tsx` | 4 | Docblock corrected — a cooldown now exists |
 | `src/lib/auth/magic-link.ts` | 5 | Documents why reuse is impossible; consumption invalidates siblings |
 | `src/app/api/auth/student-signup/route.ts` | 5 | P2002 on the create falls through to the link send |
-| `src/services/notifications.ts` | 6 | `markEmailSent` is a CAS returning a count |
+| `src/services/notifications.ts` | 6 | A CAS. **Shipped as `claimEmailFallback(db, id)` answering `'claimed'` or `'already-claimed'`** — planned here as `markEmailSent(db, ids)` returning a count, which was itself the defect (Task 6's header note) |
 | `src/services/email-fallback.ts` | 6 | Claims before sending; releases the claim on failure |
 | `src/lib/scheduler.ts` | 6 | Docblock no longer claims every job is idempotent |
 | `src/lib/db-locks.ts` | 7 | Gains the advisory-lock helper, the dedupe window, and lists the helper as an adopter |
@@ -52,6 +52,18 @@
 ## Task 1: Invitation DELETE and PUT — CAS on status
 
 Establishes the idiom the next two tasks reuse: a status-scoped write plus a `count === 0` branch returning the pre-check's own 409.
+
+> **Shipped differently: `count === 0` does not return the pre-check's 409.**
+> Both verbs call a shared `casMatchedNothing`, which re-reads the row and
+> reports what is there — **404** when it is gone, `DECLINED_IS_PERMANENT` only
+> when it is genuinely declined, and a neutral 409 otherwise. Answering
+> `DECLINED_IS_PERMANENT` unconditionally, as every code block below does, told
+> a teacher whose own concurrent delete had removed the row that the person had
+> declined their invitation — a false statement about a third party. The re-read
+> is teacher-scoped and wrapped in a `catch` so it cannot turn a deterministic
+> 409 into a 500, and an unreadable row falls to the neutral 409, never to the
+> decline. Found by the type-design review; no test distinguishes the three
+> answers, so it rests on the argument (spec §4.1).
 
 **Files:**
 - Modify: `src/app/api/invitations/[id]/route.ts:94-104` (PUT), `:143` (DELETE), `:174` (PATCH — comment only)
@@ -156,7 +168,9 @@ Expected: both FAIL. Record the text.
 
 - [ ] **Step 5: Implement DELETE's CAS**
 
-Replace `src/app/api/invitations/[id]/route.ts:143`:
+Replace `src/app/api/invitations/[id]/route.ts:143` — **the `count === 0` arm
+shipped as `casMatchedNothing(session.teacherId, id)`, not this refusal; header
+note**:
 
 ```ts
   // The pre-check above is a read-then-write, so a decline committing in the
@@ -180,7 +194,7 @@ Replace `src/app/api/invitations/[id]/route.ts:143`:
 
 - [ ] **Step 6: Implement PUT's CAS**
 
-Replace the `prisma.invitation.update` at `:94-104` with an `updateMany` carrying the same scope. Keep the existing P2002 catch exactly as it is — `updateMany` raises P2002 the same way, and that catch is the `ALREADY_INVITED` path for a teacher retyping one contact's address as another's:
+Replace the `prisma.invitation.update` at `:94-104` with an `updateMany` carrying the same scope. Its `count === 0` arm shipped as `casMatchedNothing` too. Keep the existing P2002 catch exactly as it is — `updateMany` raises P2002 the same way, and that catch is the `ALREADY_INVITED` path for a teacher retyping one contact's address as another's:
 
 ```ts
   let changed: { count: number };
@@ -258,6 +272,21 @@ git commit -m "fix: CAS invitation delete and edit on status so a concurrent dec
 
 **Background.** The handler runs **no transaction**. Its "already cancelled" pre-check (`:143-145`) is a read-then-write, and both cancel branches write `prisma.registration.update({ where: { id } })` — unscoped. Two concurrent cancels therefore both succeed and both call `promoteAfterCancel` → `handleSpotFreed`. In the final-hour window that function broadcasts to every waiting student with no capacity check, so every waiting student gets **two** `spot_available` notifications and two emails.
 
+> **Shipped differently: that reason belongs to the full-cancel branch only.**
+> The late-cancel branch (`:160`) is reached only when `now > deadline`, and
+> `getWaitlistWindow` returns `frozen` for exactly that — so `handleSpotFreed`
+> broadcasts nothing there and the doubled-notification rationale this task
+> prescribes for both branches is false for one of them. That branch is scoped
+> for **money**: `late_cancel` is in `CHARGED_STATUSES` (`class-lifecycle.ts`)
+> and `cancelled` is not, so an unscoped write landing after a teacher's free
+> cancel silently rewrites `cancelled` → `late_cancel` and bills a student for a
+> class they had been let out of. Its comment says so in the shipped code.
+>
+> The branch also shipped its comment without its code once (a `replace_all`
+> whose anchor was four spaces of indentation missed the deeper nesting), so
+> `where: { id }` stood under a comment describing a scope and the
+> `count === 0` arm was dead. Three reviewers found it. See the appendix.
+
 There is nothing to key a broadcast guard on: `WaitlistEntry` has no `notifiedAt`, `Notification` has no unique index, and `createBulkNotifications` uses `createMany` without `skipDuplicates`. So the fix is the source.
 
 - [ ] **Step 1: Write the failing concurrent-cancel test**
@@ -328,7 +357,8 @@ Mandatory, per `rooms-api.test.ts:465-480`: the concurrent case cannot tell "the
 
 - [ ] **Step 4: Implement the CAS on both branches**
 
-The late-cancel branch at `:160-163`:
+The late-cancel branch at `:160-163` — **the comment below is the one the header
+note corrects; the shipped comment names the mis-billing instead**:
 
 ```ts
       // Status in the WHERE, not just the pre-check at :143. That pre-check
@@ -381,7 +411,7 @@ git commit -m "fix: scope the registration cancel by status so one freed spot br
 
 **Interfaces:**
 - Consumes: Task 1's CAS idiom.
-- Produces: `export class AlreadyErasedError extends Error { readonly half: 'student' | 'teacher' }` from `src/services/gdpr.ts`.
+- Produces: `export class AlreadyErasedError extends Error { readonly half: ErasureHalf }` from `src/services/gdpr.ts`. (The inline `'student' | 'teacher'` union was written twice; it shipped as one exported `ErasureHalf`, which `api/account/route.ts` also uses.)
 
 **Background, and why a bare scope is not enough.** Both erasures end by setting `deletedAt` with an unscoped `update({ where: { id } })`. `deleteStudentAccount` then returns `freedClassIds` and runs `handleSpotFreed` per class **after the transaction commits**. Adding `deletedAt: null` to the `where` without aborting still lets the second transaction commit and still runs that post-commit loop a second time — so the scope alone fixes nothing user-visible. **The abort is the operative half.**
 
@@ -437,7 +467,7 @@ In `src/services/gdpr.ts`:
  * see that route for why it must not reach `erasureFailure`.
  */
 export class AlreadyErasedError extends Error {
-  constructor(readonly half: 'student' | 'teacher') {
+  constructor(readonly half: ErasureHalf) {   // shipped: one exported type, not two inline unions
     super(`${half} profile is already erased`);
     this.name = 'AlreadyErasedError';
   }
@@ -475,7 +505,11 @@ In `src/app/api/account/route.ts`, inside each half's `catch`, ahead of the exis
       // dual-role account whose student half is already erased still goes on
       // to erase its teacher half below.
       if (err instanceof AlreadyErasedError) {
-        log.info({ accountId: session.accountId, half: err.half }, 'account erasure: half already erased');
+        // Shipped with `err` in the payload too: this line is the ONLY record
+        // that the sentinel fired, and without the error object it carries no
+        // stack, so a lookalike thrown from somewhere nobody expects reads
+        // identically here.
+        log.info({ err, accountId: session.accountId, half: err.half }, 'account erasure: half already erased');
       } else {
         // ...the existing transient/log/erasureFailure block, unchanged...
       }
@@ -503,7 +537,7 @@ In `tests/integration/account-api.test.ts`:
 
 Run: `npx vitest run --project unit src/services/gdpr.test.ts` and
 `npx vitest run --project integration tests/integration/account-api.test.ts`
-Expected: PASS. The existing `:351` sequential-retry case must still pass — `resolveSession` already made that a no-op and this must not change it.
+Expected: PASS. The existing `:351` sequential-retry case must still pass — `validateSession` already made that a no-op and this must not change it. (This step said `resolveSession`, which does not exist.)
 
 - [ ] **Step 8: Run both mutations and record them**
 
@@ -581,6 +615,12 @@ Expected: the first FAILS (a second reminder currently succeeds and notifies). T
  * nagging, and a longer window would replace a product stance with a
  * mechanism. The automatic sweep's own dedupe is a different quantity
  * entirely (`REMIND_EVERY_DAYS`, `payment-reminders.ts`).
+ *
+ * Shipped with two edits. "the ONLY pressure against nagging" became "the
+ * product's pressure", since Step 4 below is what makes that sentence false.
+ * And "a different quantity ENTIRELY" was too strong: the two are not
+ * independent, because both read and write the same `reminderSentAt` column,
+ * so a manual send still defers the sweep by a week exactly as before.
  */
 export const MANUAL_REMIND_COOLDOWN_MS = 2 * 60 * 1000;
 ```
@@ -713,6 +753,11 @@ In `verifyMagicLinkToken`, after the `record.expiresAt <= new Date()` guard retu
   // link-prefetching scanner. Rate limiting allows three per address per 15
   // minutes and the TTL is 15 minutes, so there can be two.
   //
+  // ^ Shipped with the corrected arithmetic: the two minting routes cap three
+  // per address EACH, from separate buckets (`magic-link:email:` and
+  // `student-signup:email:`), so an address can hold six live tokens and a
+  // consumption can find up to FIVE siblings, not two.
+  //
   // Placement is load-bearing: this runs only AFTER the expiry check above.
   // Invalidating on every consumption would let anyone holding an old expired
   // link destroy the user's fresh one — a guard that creates the denial of
@@ -721,6 +766,11 @@ In `verifyMagicLinkToken`, after the `record.expiresAt <= new Date()` guard retu
   // Unindexed by design. `MagicLinkToken` carries `@unique` on `tokenHash`
   // only, and adding an index means a migration; `cleanupExpiredAuth` sweeps
   // daily and the rate limit caps the table, so the scan is microseconds.
+  //
+  // ^ Shipped without the second half of that claim: what bounds the table is
+  // `cleanupExpiredAuth`'s daily sweep of `expiresAt < now`, NOT the rate
+  // limiter, which caps rows per address and says nothing about how many
+  // addresses there are.
   await db.magicLinkToken.deleteMany({ where: { email: record.email } });
 ```
 
@@ -740,6 +790,11 @@ On `generateMagicLinkToken`:
  * limiter caps it at three per address per 15 minutes, the TTL is 15 minutes,
  * `cleanupExpiredAuth` sweeps the remains daily, and `verifyMagicLinkToken`
  * deletes every sibling the moment one of them is used.
+ *
+ * ^ "three per address" is the same understatement as Step 3's: both minting
+ * routes cap three EACH from separate buckets, and `student-signup` mints for
+ * any address with no account required, so one address can hold SIX. The
+ * shipped docblock says so.
  *
  * Reusing a live token instead is NOT possible and must not be attempted: the
  * raw value is returned here and persisted nowhere, so recovering it from a
@@ -787,17 +842,33 @@ Expected: FAIL with one 409. If both return 200 the race did not interleave — 
       // Both pre-checks above are plain reads, so a concurrent signup for the
       // same fresh address passes both and one of them loses on
       // `Student.email`/`Account.email`. Losing means the account now exists
-      // — which is precisely the state the `else` path below already handles
-      // correctly, by just sending the link. Rethrowing would surface a 409
-      // "Resource already exists", failing a legitimate signup AND telling an
-      // anonymous caller the address is taken, which this route's identical
-      // 200 exists to prevent.
+      // — which is precisely the state the unconditional mint-and-send below
+      // already handles correctly. THERE IS NO `else` IN THIS ROUTE: every
+      // state that is not a fresh email simply falls through. (This comment
+      // said "the `else` path below"; it named a branch that does not exist,
+      // and the phrase was written fresh into the test file after being
+      // corrected here.) Rethrowing would surface a 409 "Resource already
+      // exists", failing a legitimate signup AND telling an anonymous caller
+      // the address is taken, which this route's identical 200 exists to
+      // prevent.
       if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) throw err;
     }
   }
 ```
 
 Add `import { Prisma } from '@prisma/client';` if absent.
+
+> **Shipped differently: the swallow is narrowed, not blanket.** `P2002` alone
+> is "some unique constraint", and the reasoning above holds only for the email
+> keys — a future unique on this `create` would inherit it silently. The shipped
+> catch matches `isUniqueConflictOn(err, ['email'])` (one predicate covers both
+> halves of the race, since `Student.email` and `Account.email` both key on
+> `['email']`), logs a `warn` carrying `meta.modelName` and **no address**, and
+> rethrows an unrecognised P2002 as an **ordinary** error. Rethrowing it as a
+> P2002 would land on `classifyApiError`'s 409 "Resource already exists" — the
+> enumeration signal this route's uniform 200 exists to prevent, arriving
+> through the other door. No test reaches the narrowing: Step 9's mutation
+> ("remove the catch") still passes against it (spec §4.1).
 
 - [ ] **Step 8: Run everything touched**
 
@@ -824,15 +895,42 @@ git commit -m "fix: retire sibling sign-in links on use, and let a raced signup 
 
 ## Task 6: Email fallback — claim before sending
 
+> **Shipped differently, and the shape this task prescribes was itself the
+> defect.** `markEmailSent(db, ids): Promise<number>` is
+> `claimEmailFallback(db, notificationId): Promise<'claimed' | 'already-claimed'>`
+> — one id, a named outcome, no count. The `=== 1` below reads correctly only
+> because every caller happened to pass a one-element array; batched, it
+> silently means *"I won one of five"* while the sweep goes on to send all five.
+> The single-id signature makes that batch impossible to write by accident, and
+> a future batch claim needs a different function returning **which** ids it won.
+>
+> Three further departures, all from the reviews:
+> - **`claimOne` returns three outcomes, not a `boolean`** — `'claimed'`,
+>   `'already-claimed'` and `'error'` — and its call site is an exhaustive
+>   `switch` closed by `const unhandled: never`, with a separate `owned` flag so
+>   the runtime default is not-sending. Step 4's `boolean` collapses "another
+>   sweep owns it" into "the claim write failed", which is the silent failure the
+>   shipped code documents as forbidden: a claim-write outage would email nobody
+>   while the sweep returned clean, and a clean return **clears** the scheduler's
+>   `lastError`, so the outage would drive `/api/health` green.
+> - **`releaseOne` counts.** A release matching nothing, or throwing, strands the
+>   row as `emailSent: true` with no email ever sent — invisible to the candidate
+>   query for ever. Both shapes increment `stranded`, which is named separately
+>   in the throw, because "N of M sends failed" on its own reads as retryable.
+>   It also scopes to `emailSent: true`, so it hands back *its own* claim;
+>   defensive rather than load-bearing, and its docblock says which.
+> - **`markOne` on the two non-send branches no longer swallows its write
+>   failure** either, for the same `lastError` reason.
+
 **Files:**
-- Modify: `src/services/notifications.ts` (`markEmailSent`)
+- Modify: `src/services/notifications.ts` (`markEmailSent` → `claimEmailFallback`)
 - Modify: `src/services/email-fallback.ts` (the send branch, `markOne`, and a new release helper)
 - Modify: `src/lib/scheduler.ts:9-10` (docblock only)
 - Test: `src/services/email-fallback.test.ts`, `src/services/notifications.test.ts`
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `markEmailSent(db, ids): Promise<number>` — **signature change, was `Promise<void>`**.
+- Produces: `markEmailSent(db, ids): Promise<number>` — **signature change, was `Promise<void>`**. Shipped as `claimEmailFallback(db, id): Promise<'claimed' | 'already-claimed'>`; see the header note.
 
 **Background.** `processEmailFallback` has **two triggers**: `POST /api/cron/email-fallback` and `src/lib/scheduler.ts`, every 5 minutes in-process. Overlapping sweeps both read the same rows (`getUnreadForEmailFallback` filters on `emailSent: false` but claims nothing) and both reach `resend().emails.send`. The mark happens *after* the send, so a CAS there de-duplicates the mark and not the email.
 
@@ -875,7 +973,8 @@ In `src/services/email-fallback.test.ts`, following that file's existing send-st
 Run: `npx vitest run --project unit src/services/email-fallback.test.ts -t 'overlap'`
 Expected: FAIL — two sends. Record the text.
 
-- [ ] **Step 3: Turn `markEmailSent` into a CAS**
+- [ ] **Step 3: Turn `markEmailSent` into a CAS** *(shipped as
+`claimEmailFallback`, one id and a named outcome — header note)*
 
 ```ts
 /**
@@ -910,6 +1009,10 @@ In `email-fallback.ts`, replace `markOne` with a claiming pair and rework the se
    * the caller must not send. Contrast the old `markOne`, which logged and
    * carried on because a lost mark then only risked a duplicate.
    */
+  // SHIPPED WITH THREE OUTCOMES, NOT A BOOLEAN. `false` here means both
+  // "another sweep owns it" and "the claim write failed" — and the second must
+  // reach `failed`, because a clean return clears the scheduler's `lastError`
+  // and would show health green through an outage that emailed nobody.
   const claimOne = async (id: string): Promise<boolean> => {
     try {
       return (await markEmailSent(db, [id])) === 1;
@@ -919,6 +1022,9 @@ In `email-fallback.ts`, replace `markOne` with a claiming pair and rework the se
     }
   };
 
+  // Shipped scoped to `emailSent: true` and COUNTING: a release that matches
+  // nothing strands the row exactly as a throw does, and both feed `stranded`,
+  // which is named separately in the throw below.
   const releaseOne = async (id: string) => {
     try {
       await db.notification.updateMany({ where: { id }, data: { emailSent: false } });
@@ -937,7 +1043,7 @@ In the send branch, claim before `resend().emails.send` and release on the `erro
     // read and both sent. The trade this inverts is recorded in the spec: a
     // crash between claim and send now drops a fallback email rather than
     // duplicating one, and the in-app notification survives either way.
-    if (!(await claimOne(notification.id))) continue;
+    if (!(await claimOne(notification.id))) continue;   // shipped: a `switch` on the three outcomes, closed by `const unhandled: never`
 
     try {
       const { subject, html } = renderNotificationEmail(notification);
@@ -965,7 +1071,7 @@ The two non-send branches (the opted-out skip and the dry-run) keep marking afte
 - [ ] **Step 6: Run everything touched**
 
 Run: `npx vitest run --project unit src/services/email-fallback.test.ts src/services/email-fallback.consent.test.ts src/services/notifications.test.ts`
-Expected: PASS. `notifications.test.ts:329` calls `markEmailSent` and may need its expectation updated for the new return type — that is a legitimate change, not a workaround.
+Expected: PASS. `notifications.test.ts:329` calls the claim function and may need its expectation updated for the new return type — that is a legitimate change, not a workaround. (It now asserts `'claimed'` then `'already-claimed'`.)
 
 - [ ] **Step 7: Run both mutations**
 
@@ -997,7 +1103,7 @@ The largest task and the only new idiom. Do it last.
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: from `src/lib/db-locks.ts` — `lockAnnouncementSlot(tx: TransactionClientOnly, key: string): Promise<void>` and `export const ANNOUNCEMENT_DEDUPE_WINDOW_MS = 2 * 60 * 1000`. The window lives beside the lock rather than in the route so the integration test can import it and backdate by exactly it; a test that hard-codes `120000` drifts silently the day the window changes. `db-locks.ts` is import-safe for tests — it pulls in only `crypto` and a Prisma type, never `@/lib/log`.
+- Produces: from `src/lib/db-locks.ts` — `lockAnnouncementSlot(tx: TransactionClientOnly, slot: { teacherId: string; classId: string | null; message: string }): Promise<void>` (**shipped as the tuple, not the `key: string` this plan prescribed** — the route was composing a key while the `findFirst` below compared the same three columns, with nothing holding the two together; edit one without the other and two identical sends take two *different* locks, both read an empty compare, and both fan out) and `export const ANNOUNCEMENT_DEDUPE_WINDOW_MS = 2 * 60 * 1000`. The window lives beside the lock rather than in the route so the integration test can import it and backdate by exactly it; a test that hard-codes `120000` drifts silently the day the window changes. `db-locks.ts` is import-safe for tests — it pulls in only `crypto` and a Prisma type, never `@/lib/log`.
 - Produces: the API response field `duplicateSuppressed: boolean` on `POST /api/announcements`, consumed by `send-announcement.tsx` in the same task.
 
 **Background.** `route.ts:81` fans out one `Notification` per recipient (and emits SSE inside that call), and only then, at `:84`, inserts the `Announcement`. **Nothing wraps them in a transaction.** Deduplicating the insert would suppress the teacher's sent-history record and leave every student holding a second notification.
@@ -1054,6 +1160,11 @@ Mandatory — the concurrent case cannot tell "the lock fired" from "a guard res
     // The teacher is told, rather than shown a success for a send that did
     // not happen. `recipientCount` is the FIRST send's, which is the honest
     // number: those students did receive it.
+    //
+    // ^ Corrected in the shipped comment: it belongs to the MOST RECENT match
+    // inside the window, per the `orderBy: { sentAt: 'desc' }` on the compare
+    // — which the dedupe makes the only one, but the ordering is what decides
+    // it. Honest either way; "first" was simply not what the query returns.
     expect(json.data.duplicateSuppressed).toBe(true);
     expect(json.data.recipientCount).toBeGreaterThan(0);
 
@@ -1131,6 +1242,19 @@ export async function lockAnnouncementSlot(
 }
 ```
 
+**Two errors of fact in that block, both measured.**
+
+1. **The statement cannot run as written.** `pg_advisory_xact_lock` returns
+   `void`, and projecting that column directly fails at the client with
+   `P2010 … Failed to deserialize column of type 'void'`. The shipped version
+   wraps the call in a subselect and projects a literal (`SELECT 1 AS locked
+   FROM (SELECT pg_advisory_xact_lock(…)) AS taken`). A tagged `$queryRaw` is
+   still right — the two ints stay bound parameters — only the column it hands
+   back had to change.
+2. **The signature takes the tuple, not a pre-composed key** (see Interfaces
+   above). `lockAnnouncementSlot` builds
+   `` `${teacherId}|${classId ?? ''}|${message}` `` itself.
+
 Add `import { createHash } from 'crypto';`. **Add `lockAnnouncementSlot` to the `adopt` list in `TransactionClientOnly`'s docblock** — that list is normative and is wrong the moment this lands without it.
 
 - [ ] **Step 5: Restructure the route**
@@ -1144,6 +1268,9 @@ Leave `:17-69` (auth, parse, recipient set, opt-out filter) untouched — those 
   const { announcement, deduped } = await prisma.$transaction(async (tx) => {
     // First statement in the transaction, so the compare below and the two
     // writes after it are serialised against an identical concurrent send.
+    // Shipped as the tuple — `lockAnnouncementSlot(tx, { teacherId:
+    // session.teacherId, classId, message: body.message })` — so the key and
+    // the `findFirst` predicate below cannot drift apart.
     await lockAnnouncementSlot(tx, `${session.teacherId}|${classId ?? ''}|${body.message}`);
 
     // `classId ?? null` explicitly: a Prisma `where` given `undefined` OMITS
@@ -1181,6 +1308,9 @@ Leave `:17-69` (auth, parse, recipient set, opt-out filter) untouched — those 
   //
   // `recipientCount` on the suppressed branch is the FIRST send's, which is
   // the honest number — those students really did receive it.
+  //
+  // ^ Same correction as the test comment above: it is the MOST RECENT match
+  // in the window (`orderBy: sentAt desc`), not the first send.
   return respondOk({ ...announcement, duplicateSuppressed: deduped }, deduped ? 200 : 201);
 ```
 
@@ -1295,6 +1425,17 @@ Expected: both PASS.
 
 Add the advisory lock to the enumeration, following that file's existing entry shape: what it locks, what it is ordered against (nothing — it is taken first and no other lock is taken inside this transaction), and that it cannot participate in a deadlock cycle for that reason. If that last claim turns out not to hold once you read the file's conventions, say so rather than writing it.
 
+> **The hedge worked, and the claim did not hold.** "Ordered against nothing" is
+> false: this transaction's inserts carry `relatedClassId` and `classId`, each
+> taking `FOR KEY SHARE` on the parent `Class` row — `lock-order.md`'s "fourth
+> path" — so the advisory lock sits **above** `Class`, and the
+> `createBulkNotifications` row in that document had to move from "outside any
+> transaction" to inside one. It cannot be half of a cycle for a different
+> reason than the one prescribed here: it has exactly one production call site,
+> which takes it before touching `Class` at all. So the thing to check when
+> adding a second call site is that, not a reordering. Recorded in
+> `db-locks.ts` and in `docs/lock-order.md`.
+
 - [ ] **Step 10: Run the five mutations**
 
 1. Remove the `pg_advisory_xact_lock` call → the **concurrent** test must fail, and the **sequential** test must still pass. That pairing proves the two tests measure different things.
@@ -1320,7 +1461,7 @@ git commit -m "fix: serialise identical announcements, dedupe above the fan-out,
 - [ ] **Sweep the corrected claims.** §1.5 of the spec lists three false claims. Grep each phrase across source, tests, docblocks, both specs and the plan — a claim corrected in one artifact and left standing in its twin is this project's most repeated failure.
 - [ ] **`npm run verify`.** Needs the app on :3000. Green `verify` runs all three vitest projects, so state the arithmetic (`N = unit + components + integration`) rather than asserting coverage. Baseline was 1255/2 todo/111 files.
 - [ ] **Check every commit message for an accidental closing keyword:** `git log main..HEAD --format=%B | grep -inE '(clos|fix|resolv)[a-z]*[[:space:]:]+#[0-9]+'` — **then read what it prints.** The last branch ran this grep, it printed the offending line, and the output was misread as clean.
-- [ ] **PR body** records: what was measured, that seven of §4.2's nine rows were corrected and why, the mutation output for all seventeen guards, the `verify` arithmetic, and what this branch does **not** do. `#197, #209 and #210 are unaffected` — never the phrase "does not close", which the parser reads as a close.
+- [ ] **PR body** records: what was measured, that seven of §4.2's nine rows were corrected and why, the mutation output for all **eighteen** guards (this line said seventeen; spec §4 has eighteen rows and the Self-Review below does the arithmetic), the `verify` arithmetic, and what this branch does **not** do. `#197, #209 and #210 are unaffected` — never the phrase "does not close", which the parser reads as a close.
 
 ---
 
@@ -1361,7 +1502,7 @@ without being named teaches nobody and the same shape recurs in the next task.
 - **Step 6's integration test could not fail against the bug as written.** Two
   plain fetches asserting `[200, 200]` are green *before* the fix, and without
   a lever the two requests serialise, in which case the second returns **401**
-  — `resolveSession` resolves only live profiles, so `session.studentId` is
+  — `validateSession` resolves only live profiles, so `session.studentId` is
   already `null`. Fixed with the same row-lock lever, and its bite proven by an
   extra mutation (replace the route's `instanceof AlreadyErasedError` with
   `false` → `expected [500, 200] to deeply equal [200, 200]`).
@@ -1436,14 +1577,128 @@ without being named teaches nobody and the same shape recurs in the next task.
   `src/app/api/`, warm the route with one request before running a race test.
   Relevant to Tasks 6 and 7, which both edit routes.
 
+**From Task 6 (email fallback).**
+
+- **Step 4's `claimOne: Promise<boolean>` is the silent failure this task
+  exists to remove.** `false` means both "another sweep owns it" and "the claim
+  write failed", and only the second is a fault. Collapsed, a claim-write outage
+  emails nobody while the sweep returns clean — and a clean return **clears**
+  the scheduler's `lastError`, so the outage drives `/api/health` green rather
+  than merely failing to raise it. Shipped as three outcomes behind an
+  exhaustive `switch`. The *old* post-send ordering could not have this bug: its
+  write came after a delivered email.
+- **`markEmailSent(db, ids): Promise<number>` is the wrong signature for a
+  claim.** `=== 1` is correct only by accident of every caller passing a
+  one-element array. Shipped as `claimEmailFallback(db, id)` answering
+  `'claimed'` or `'already-claimed'`; a batch claim would need a function
+  returning *which* ids it won.
+- **Step 5's replacement claim was itself mis-scoped** and had to be corrected a
+  second time: `class-transitions` also sends recipient-visible notifications,
+  from both its sweeps. The docblock now states what was measured and disclaims
+  the survey rather than implying one.
+
+**From Task 7 (announcements).**
+
+- **Step 4's SQL cannot run.** `pg_advisory_xact_lock` returns `void`;
+  projecting it fails at the client with `P2010 … Failed to deserialize column
+  of type 'void'`. Wrapped in a subselect projecting a literal.
+- **Step 9's predicted "ordered against nothing" was wrong**, and the step's own
+  hedge is what caught it. The transaction's inserts take `FOR KEY SHARE` on the
+  parent `Class`, so the advisory lock sits **above** `Class`. It is safe
+  because it has one production call site, not because it is unordered — which
+  changes what to check when a second one is added. `lock-order.md`'s
+  `createBulkNotifications` row moved from "outside any transaction" to inside
+  one for the same reason.
+- **`recipientCount` on the suppressed branch is the most recent match in the
+  window**, per `orderBy: { sentAt: 'desc' }` — not "the first send", as both
+  the test comment and the route comment said.
+- **`lockAnnouncementSlot(tx, key: string)` puts the coupling in the wrong
+  place.** The route composed the key while the `findFirst` compared the same
+  three columns and nothing tied them together. Shipped taking the tuple.
+
+**From the restore commit between Tasks 7 and the review.**
+
+- **Never restore a mutation with `replace_all`.** One anchored on four spaces
+  of indentation missed the late-cancel branch, which nests deeper, and silently
+  **added** the scope to `PUT /api/registrations/[id]`, which this branch had no
+  business touching. The late-cancel branch shipped its comment without its
+  code — `where: { id }` under a comment describing a scope, `count === 0` dead
+  — and the PUT's scope sat on an `update()`, so a miss threw P2025 into a bare
+  500: a teacher tapping attendance for a student who late-cancelled and came
+  anyway got "Please try again", forever. Three reviewers found both.
+- **An interactive `$transaction` returns before its callback runs**, so the
+  race tests were finishing before the lever's lock was ever taken — green for
+  the wrong reason. Fixed with a handshake plus a `settled` guard asserting the
+  lever parked the requests.
+
+**From the PR review.**
+
+- **Two race tests were vacuous.** Release the lever early and `gdpr.test.ts`'s
+  concurrent erasure still passed whole (serialised, the second call reads an
+  empty `upcoming`, never runs `handleSpotFreed`, and the one-notification
+  assertion holds either way); the announcements concurrent send was the same
+  shape, 11 of 11 green through plain serialisation. Neither could fail against
+  the bug it was named for. All seven race tests now fail when the lever is
+  released early, which is the measurement that says they test what they claim.
+- The invitation CAS answered `DECLINED_IS_PERMANENT` for a row that was merely
+  gone — a teacher's own delete reported as a third party's refusal.
+- `ErasureHalf` is one exported type instead of two inline unions.
+
+**From the comment review.**
+
+- **`resolveSession` does not exist; it is `validateSession`.** Same class of
+  error as the `cleanupExpiredTokens` one this branch had already fixed, in a
+  comment the branch itself wrote — which is why it survived in three doc copies
+  after being corrected in source.
+- The magic-link budget was understated by half: separate rate-limit buckets,
+  six live tokens, up to five siblings; and what bounds the table is
+  `cleanupExpiredAuth`'s daily sweep, not the limiter.
+- `hash32` reads the **leading** 32 bits, not the low ones.
+- `Announcement.message` is indexable in principle; what rules an index out is
+  the ~2704-byte btree entry limit against a schema with no maximum length.
+- The `else` path that does not exist in `student-signup/route.ts`.
+
+**From the scoped re-review — the fix wave reproduced the failure it was
+correcting, twice.**
+
+- **A correction claimed and not made.** The comment-review commit's message
+  listed the announcements route's present-tense `res.ok` sentence as fixed; the
+  edit landed on the `recipientCount` paragraph instead. The false claim stood
+  with a commit message certifying it corrected, which is **worse** than leaving
+  it alone: the next reader trusts the log and skips the line.
+- **A correction that replaced one false claim with another.** `lock-order.md`
+  said the `FOR KEY SHARE` wait was unbounded; the "correction" said Prisma's
+  5000 ms transaction timeout bounds it — and pasted, as evidence, a probe that
+  had run **13516 ms**. The evidence disproved the claim it was quoted for.
+  Re-measured independently at 12013 ms: Prisma's timeout does not cancel a
+  statement already blocked inside Postgres, it only refuses to begin the next
+  one. The wait is unbounded and the paragraph says so again.
+- The `else`-path phrase, corrected in the route by one commit and written fresh
+  into a test by the next.
+- An unrecognised P2002 on signup rethrew **as** a P2002, landing on the 409
+  that is itself the enumeration signal the uniform 200 exists to prevent.
+- `markOne` swallowed the exact write failure `claimOne` had just been taught to
+  surface, fifteen lines away, on a line the wave had edited.
+- `releaseOne` discarded its count, so a release matching nothing was silent.
+- A diagnostic read added for a log line could abort a GDPR erasure and tell the
+  user their teaching data might have survived.
+- **Two more tests that could not fail against the mutation their own titles
+  named.** The late-cancel race was a duplicate-cancel test wearing the money
+  test's name — narrowing the guard to `notIn: ['late_cancel']` still yields
+  `[200, 409]`, because both racers start from `registered`. And the dual-role
+  erasure asserted `teacher.deletedAt`, which the **winner** sets, so a return
+  on the loser's sentinel changed nothing observable.
+
+**Final `verify`:** 1291 passed, 2 todo, 112 files (baseline 1255 / 2 / 111).
+
 ---
 
 ## Self-Review
 
-**Spec coverage.** §3.1 → Task 7, including its "the suppressed send says so" subsection → Task 7 steps 7-8. §3.2 → Task 4. §3.3 → Task 5 (steps 1-4). §3.4 → Task 5 (steps 5-7). §3.5 → Task 1. §3.6 → Task 2. §3.7 → Task 3. §3.8 → Task 6. §1.5's three false claims → Tasks 4 and 6 plus the closing sweep. §4's eighteen mutations → distributed across the seven tasks' mutation steps; all eighteen appear (Task 1 has 3, Task 2 has 1, Task 3 has 2, Task 4 has 2, Task 5 has 3, Task 6 has 2, Task 7 has 5). §5's acceptance items 1-7 → the closing procedure. §6's out-of-scope items are not implemented anywhere, as intended.
+**Spec coverage.** §3.1 → Task 7, including its "the suppressed send says so" subsection → Task 7 steps 7-8. §3.2 → Task 4. §3.3 → Task 5 (steps 1-4). §3.4 → Task 5 (steps 5-7). §3.5 → Task 1. §3.6 → Task 2. §3.7 → Task 3. §3.8 → Task 6. §1.5's three false claims → Tasks 4 and 6 plus the closing sweep. §4's eighteen mutations → distributed across the seven tasks' mutation steps; all eighteen appear (Task 1 has 3, Task 2 has 1, Task 3 has 2, Task 4 has 2, Task 5 has 3, Task 6 has 2, Task 7 has 5). Five further guards shipped that this plan does not prescribe and §4 does not cover; spec §4.1 lists them and says what proves each. §5's acceptance items 1-7 → the closing procedure. §6's out-of-scope items are not implemented anywhere, as intended.
 
 **Arithmetic check on the mutations:** `3 + 1 + 2 + 2 + 3 + 2 + 5 = 18` ✓ — matching the spec's §4 table after the honesty guard was added to it.
 
 **Filed, not folded** (spec §6): `handleSpotFreed`'s missing capacity check, and device-bound magic links. Neither appears in any task. File both after the PR merges.
 
-**Type consistency.** `markEmailSent` returns `Promise<number>` in Task 6 and is consumed as a number in the same task only. `AlreadyErasedError` is produced in Task 3's gdpr.ts change and consumed in Task 3's route change. `lockAnnouncementSlot` and `ANNOUNCEMENT_DEDUPE_WINDOW_MS` are produced and consumed inside Task 7. No task consumes a symbol another task produces, so tasks 1-7 could in principle run in any order; the order given puts the simplest idiom first and the only new one last.
+**Type consistency.** `markEmailSent` returns `Promise<number>` in Task 6 and is consumed as a number in the same task only — shipped as `claimEmailFallback(db, id)` answering `'claimed'` or `'already-claimed'`, consumed by a `switch` in the same task. `AlreadyErasedError` is produced in Task 3's gdpr.ts change and consumed in Task 3's route change. `lockAnnouncementSlot` and `ANNOUNCEMENT_DEDUPE_WINDOW_MS` are produced and consumed inside Task 7. No task consumes a symbol another task produces, so tasks 1-7 could in principle run in any order; the order given puts the simplest idiom first and the only new one last.
