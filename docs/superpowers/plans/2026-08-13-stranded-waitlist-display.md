@@ -448,12 +448,18 @@ EOF
 
 ### Task 3: Whole-branch verification
 
-**Files:**
-- Modify: `docs/backlog-roadmap.md` (**never commit this file — it is deliberately untracked**)
+**Files:** none — this task only runs commands and reports.
 
 **Interfaces:**
 - Consumes: a green working tree from Tasks 1 and 2.
 - Produces: the arithmetic the PR body must quote.
+
+**Do not touch `docs/backlog-roadmap.md`.** It is untracked, local to the
+owner's checkout, and the owner updates it themselves in the closing stage of
+`solve-issue`. Its stale claim at `:2176-2179` — #199's *"the population is now
+bounded and no longer growing"* — is still on the branch's acceptance list
+(spec §8); it is simply not yours to fix. Do not `git add` it, do not edit it,
+and do not treat its wording as a source of truth about this branch.
 
 - [ ] **Step 1: Run the full gate**
 
@@ -473,15 +479,27 @@ grep -rn "waitlistEntry\.\|waitlistEntries" src --include="*.ts" --include="*.ts
 
 Expected: the two fixed reads, plus `src/app/(public)/[slug]/page.tsx:71` (safe by containment — its outer `class.findMany` is already scoped to `status: 'open', date: { gte: today }`), `src/services/gdpr.ts:50` (the Article 15 export, #216's business), and service write paths. If anything else appears, stop and report it — the spec's §4 census claimed this list is complete.
 
-- [ ] **Step 3: Correct the stale claim in the roadmap**
+- [ ] **Step 3: Push and open the PR**
 
-`docs/backlog-roadmap.md:2176-2179` repeats #199's falsified sentence — *"the population is now bounded and no longer growing, and measured 0 on dev."* The measurement holds; the bound does not. Rewrite that entry to say the three `cancelled` exits are closed and the three `in_progress` exits are not, and point at #216.
+```bash
+git push -u origin fix/199-stranded-waitlist-display
+```
 
-Do **not** `git add` this file.
+Write the PR body to a file and pass it with `--body-file`, **never** `--body "…"` — backticks inside a double-quoted shell string reach zsh as command substitution even when escaped, and it fails *silently*: a previous round published a sentence with two file paths eaten and returned a success URL.
 
-- [ ] **Step 4: Report, do not push**
+The body must record, per spec §8 and the handover's §8:
 
-Report to the user: the `verify` arithmetic, the two mutation transcripts, and the roadmap edit. Pushing and opening the PR happens after the whole-branch review, which is the next stage of `solve-issue` and not part of this plan.
+- The `verify` arithmetic, before and after (`113 = 48 + 37 + 28` files).
+- All three mutations with their exact recorded failure text.
+- `tests/integration/waitlist-display.test.ts` named by path as the integration file this branch touches, and the fact that a green `verify` runs the whole integration project rather than a named subset.
+- Which inherited claims were checked: two of #199's were false (the proposed predicate, and "the population is bounded"), one held (`/bookings` filters entry status and not class status).
+- What the PR does not do: no queue closing when a class starts, no notification-layer change, no migration. Write "**#216 is unaffected**" — **never** "does not close #216", because GitHub's parser matches `close #N` and ignores the negation in front of it. A previous PR's scope section closed #113 exactly this way.
+
+`Closes #199` is correct and deliberate in this body — that is the one closing keyword that belongs here.
+
+- [ ] **Step 4: Report and stop**
+
+Report the `verify` arithmetic, the three mutation transcripts, the PR URL, and anything in this plan that turned out to be wrong. Then **stop**: the whole-branch review, the roadmap update, and the rebase-merge are the owner's, in the closing stage of `solve-issue`. Do not run a review yourself and do not merge.
 
 ---
 
@@ -497,7 +515,7 @@ Report to the user: the `verify` arithmetic, the two mutation transcripts, and t
 | §6.2 teacher test, 1 waiting / 2 removed, mutation | Task 2 Steps 1, 5 |
 | §4 read-surface census still complete | Task 3 Step 2 |
 | §8 acceptance: guards broken and restored | Task 1 Steps 5-6, Task 2 Step 5 |
-| §8 acceptance: #199's inherited claim corrected everywhere | Comment posted on #199 (done); roadmap in Task 3 Step 3 |
+| §8 acceptance: #199's inherited claim corrected everywhere | Comment posted on #199 (done); the PR body in Task 3 Step 3; `docs/backlog-roadmap.md` is the owner's, in the closing stage |
 | §7 / #216 | Filed before this plan; no task |
 
 **Not covered by design:** §5's ruled-out alternatives are decisions, not work. §7 is #216.

@@ -153,7 +153,7 @@ first without inventing that setup twice.
 |---|---|---|
 | 1 | `/bookings` predicate + its test | Creates `tests/integration/waitlist-display.test.ts`. Two mutations. |
 | 2 | Teacher count predicate + its test | Extends Task 1's `beforeAll` and appends a `describe`. One mutation. |
-| 3 | Whole-branch verification | `npm run verify`, the read-surface sweep, the roadmap correction. |
+| 3 | Whole-branch verification, push, PR | `npm run verify`, the read-surface sweep, then push and open the PR. |
 
 The two *source* edits are genuinely independent of each other — if Task 2's
 test proves impossible for a reason you can articulate, Task 1 still ships on
@@ -347,9 +347,10 @@ build-only defect passes `verify` and fails CI.
 5. `git diff main...HEAD --name-only` reconciled against the plan's File
    Structure table — three files, plus the `docs/` files already committed. A
    fourth source file in that list needs explaining.
-6. `docs/backlog-roadmap.md:2176-2179` corrected — it repeats #199's falsified
-   *"the population is now bounded and no longer growing"* — and **still
-   untracked**.
+6. `docs/backlog-roadmap.md` **untouched and still untracked.** It carries a
+   stale claim about this issue at `:2176-2179`, and correcting it is the
+   owner's job in the closing stage — not yours. Do not edit it, do not
+   `git add` it, and do not read its wording as authority on this branch.
 7. `git log main..HEAD --format=%B | grep -inE '(clos|fix|resolv)[a-z]*[[:space:]:]+#[0-9]+'`
    — **then read what it prints.** A previous branch ran this exact grep, it
    printed the offending line, and the output was misread as clean.
@@ -393,6 +394,6 @@ build-only defect passes `verify` and fails CI.
 - [ ] `src/app/(public)/[slug]/page.tsx` untouched
 - [ ] No migration; `prisma/schema.prisma` untouched
 - [ ] No commit message puts a closing keyword before a `#N`
-- [ ] `docs/backlog-roadmap.md` corrected and still untracked
+- [ ] `docs/backlog-roadmap.md` untouched and still untracked
 - [ ] `npm run verify` green at 113 files / 1294 passed / 2 todo, up from 112 / 1292 / 2
 - [ ] PR opened; handed back without running the review
