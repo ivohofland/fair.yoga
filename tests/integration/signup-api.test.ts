@@ -168,7 +168,9 @@ describe('POST /api/auth/student-signup', () => {
    *
    * A plain `Promise.all` cannot force that interleaving — it serialised in
    * Tasks 2-4 of this branch and would pass green against the bug, because the
-   * second request would find the committed account and take the `else` path.
+   * second request would find the committed account, skip the create, and fall
+   * straight through to the mint-and-send. (There is no `else` in that route —
+   * every state that is not a fresh email simply falls past the guard.)
    * The row-lock lever those tasks used does not work either: the row does not
    * exist yet. The lever that does is an UNCOMMITTED HOLDER — a second client
    * inserts the same address inside an open transaction, both requests sail
@@ -214,10 +216,14 @@ describe('POST /api/auth/student-signup', () => {
 
     // The lever is asserted, not assumed. The `await` on the holder's insert
     // above proves the index entry exists; it does not prove either request
-    // reached it. A request answered inside this second took the `else` path
-    // on a committed row or fell out on a rate limit, and the surviving-row
-    // check below would still read `['Holder']` — green, having raced
-    // nothing. A parked request cannot settle, so this pins that both did.
+    // reached it. A request answered inside this second skipped the create on
+    // a committed row and fell through to the send, and the surviving-row
+    // check below would still read `['Holder']` — green, having raced nothing.
+    //
+    // One flag over a `Promise.all` of two proves at least one is still
+    // parked, not both; the status pair below is what covers the other. The
+    // rate limit cannot be the escape here — two requests against buckets of
+    // 5/hr per IP and 3/15min per address.
     expect(settled).toBe(false);
     release();
     await holding;

@@ -59,14 +59,25 @@ export async function processEmailFallback(
   // the inbox record intact — the message survives, only its second delivery
   // channel does not.
   //
-  // The two non-send branches (opted-out, dry-run) keep marking after their
-  // decision: there is no external effect to protect, so a lost mark there
-  // only costs one reconsidered row on the next sweep.
-  const markOne = async (id: string) => {
+  // The two non-send branches (opted-out, dry-run) mark AFTER their decision
+  // rather than claiming before it: there is no external effect to protect, so
+  // ordering buys nothing and a lost mark costs one reconsidered row.
+  //
+  // But it still reports a write failure, for the same reason `claimOne` does
+  // below. It used to swallow one, and the argument for that ("a lost mark
+  // only costs a duplicate") is about duplicates and silent about health:
+  // `processEmailFallback` returning cleanly does not merely fail to raise the
+  // outage, it makes `scheduler.ts` CLEAR `lastError`. So a sweep whose
+  // candidates are all opted-out — the ordinary shape under EMAIL_DRY_RUN —
+  // could turn a database that cannot accept writes into a green
+  // `/api/health`, one row at a time, every five minutes.
+  const markOne = async (id: string): Promise<'marked' | 'error'> => {
     try {
       await claimEmailFallback(db, id);
+      return 'marked';
     } catch (err) {
       log.error({ err, notificationId: id }, 'failed to mark email-sent (will reconsider next sweep)');
+      return 'error';
     }
   };
 
@@ -100,17 +111,30 @@ export async function processEmailFallback(
    * below — a log line alone is only read by someone already looking.
    *
    * `emailSent: true` in the WHERE, so this says "hand back MY claim" rather
-   * than "set this false". The two differ on the row this sweep does not own:
-   * without it, a release racing the winner's claim would clear a claim
-   * belonging to another sweep that is about to send, putting the row back in
-   * the candidate pool and undoing the de-duplication the claim exists for.
+   * than "set this false". Defensive rather than load-bearing, and worth being
+   * exact about which: only the owner ever releases, and no other sweep can
+   * claim a row while `emailSent` is true, so the race a looser predicate
+   * would lose to cannot occur today. The count check below is what would tell
+   * us if that ever stopped being true.
+   *
+   * Both failure shapes strand the row identically — `emailSent: true` with no
+   * email sent, invisible to the candidate query for ever — so both count. A
+   * throw is the DB refusing; a zero count is the row not being ours to
+   * release, which today means it was deleted underneath us.
    */
   const releaseOne = async (id: string) => {
     try {
-      await db.notification.updateMany({
+      const { count } = await db.notification.updateMany({
         where: { id, emailSent: true },
         data: { emailSent: false },
       });
+      if (count === 0) {
+        stranded++;
+        log.error(
+          { notificationId: id },
+          'email-fallback claim was not ours to release (will not retry)',
+        );
+      }
     } catch (err) {
       stranded++;
       log.error({ err, notificationId: id }, 'failed to release email-fallback claim (will not retry)');
@@ -201,15 +225,15 @@ export async function processEmailFallback(
         'email fallback skipped',
       );
       // Mark as sent to avoid retrying
-      await markOne(notification.id);
-      sent++;
+      if ((await markOne(notification.id)) === 'error') failed++;
+      else sent++;
       continue;
     }
 
     if (emailDryRun()) {
       log.info({ to: email, title: notification.title }, 'email fallback dry-run');
-      await markOne(notification.id);
-      sent++;
+      if ((await markOne(notification.id)) === 'error') failed++;
+      else sent++;
       continue;
     }
 
@@ -298,9 +322,14 @@ export async function processEmailFallback(
   // ever sent, the candidate query never returns it again, and no sweep will
   // fix it without someone clearing the flag by hand. An operator who is not
   // told that reads the same sentence for both and waits for a retry that
-  // cannot come. `stranded` can only be non-zero on a path that also counted a
-  // failure, so this condition covers it.
-  if (failed > 0) {
+  // cannot come.
+  //
+  // `stranded > 0` is in the condition rather than trusted to imply
+  // `failed > 0`. Both release call sites happen to sit beside a `failed++`
+  // today, so the implication holds — but it holds by arrangement, not by
+  // construction, and a third call site added without one would make the
+  // permanent loss the unreportable case. Enforced, not asserted.
+  if (failed > 0 || stranded > 0) {
     const strandedNote =
       stranded > 0
         ? `; ${stranded} claim(s) could not be released and will never be retried`

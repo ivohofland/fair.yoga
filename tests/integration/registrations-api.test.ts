@@ -1105,16 +1105,19 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
     expect([a.status, b.status].sort()).toEqual([200, 409]);
   });
 
-  it('does not let a raced late cancel rewrite a free cancel into a charged one', async () => {
+  it('409s the loser when two late cancels race', async () => {
     // The late-cancel branch, which the fixture above cannot reach — it places
     // `now` BEFORE the deadline on purpose, so both its cases take the
     // full-cancel path. This branch shipped without its scope for exactly that
     // reason: the comment claimed a guard no test could observe.
     //
-    // What is at stake here is money, not notifications. `late_cancel` is in
-    // CHARGED_STATUSES and `cancelled` is not, so an unscoped write landing
-    // second silently bills a student for a class someone had already let them
-    // out of for free.
+    // Scoped deliberately to the duplicate-cancel contract, and named for it.
+    // An earlier version of this test was called "does not let a raced late
+    // cancel rewrite a free cancel into a charged one" and could not fail
+    // against that: narrowing the guard to `notIn: ['late_cancel']` leaves the
+    // money bug live and still produces [200, 409] here, because both racers
+    // start from `registered`. The money case needs a different starting
+    // state, and it is the test below.
     const classId = await makeLateCancelClass(5, 20);
     const created = await post(studentTokens[0]!, { classId });
     const { data } = (await created.json()) as { data: { id: string } };
@@ -1152,6 +1155,64 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
     const after = await prisma.registration.findUniqueOrThrow({ where: { id: data.id } });
     expect(after.status).toBe('late_cancel');
   });
+
+  it('does not let a raced late cancel rewrite a free cancel into a charged one', async () => {
+    // The money case, and the reason the late-cancel scope lists BOTH
+    // terminal statuses rather than just its own. `late_cancel` is in
+    // CHARGED_STATUSES (`class-lifecycle.ts`) and `cancelled` is not, so a
+    // late cancel landing on top of a free one bills a student for a class
+    // someone had already let them out of.
+    //
+    // Two racing late cancels cannot show this — they both start from
+    // `registered`, so a guard that only excludes `late_cancel` still answers
+    // [200, 409]. The starting state has to be `cancelled`, and it has to
+    // arrive while the student's write is already parked, or the pre-check
+    // catches it and the CAS is never reached. So the holder takes the row,
+    // lets the student's request park on it, and only then commits the free
+    // cancel.
+    const classId = await makeLateCancelClass(5, 40);
+    const created = await post(studentTokens[0]!, { classId });
+    const { data } = (await created.json()) as { data: { id: string } };
+
+    const holder = new PrismaClient();
+    let release!: () => void;
+    let locked!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const parked = new Promise<void>((r) => { locked = r; });
+    const holding = holder.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Registration" WHERE id = ${data.id} FOR UPDATE`;
+      locked();
+      await released;
+      // The free cancel — a teacher letting this student out — committing
+      // underneath a late cancel that has already passed its pre-check.
+      await tx.registration.update({
+        where: { id: data.id },
+        data: { status: 'cancelled', cancelledAt: new Date() },
+      });
+    }, { timeout: 20_000 });
+    await parked;
+
+    const lateCancel = fetch(`${BASE_URL}/api/registrations/${data.id}`, {
+      method: 'DELETE', headers: cookie(studentTokens[0]!),
+    });
+
+    let settled = false;
+    void lateCancel.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(settled).toBe(false);
+    release();
+    await holding;
+    const res = await lateCancel;
+    await holder.$disconnect();
+
+    // The money assertion first: this is the one whose failure names the harm.
+    // Postgres re-checks a blocked UPDATE's WHERE against the newly committed
+    // row, so the scope is what turns this into a no-op instead of a charge.
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: data.id } });
+    expect(after.status).toBe('cancelled');
+
+    expect(res.status).toBe(409);
+  }, 20_000);
 
   it('409s a second cancel of a registration already cancelled', async () => {
     const { registrationId } = await makeBroadcastFixture(10);

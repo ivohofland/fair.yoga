@@ -737,12 +737,22 @@ describe('DELETE /api/account', () => {
    * please contact support," about an account both halves of which are gone.
    * A teacher sent to support over a completed deletion.
    *
-   * Same lever and the same 700ms hold as the case above, for the same
-   * reasons. What differs is only what happens after the release: the winner
-   * erases both halves, and the loser aborts both — its student half on the
-   * `Student` CAS, its teacher half on the `Teacher` one.
+   * ONE request, not two, and that is the whole design of this test. An
+   * earlier version raced two deletes and asserted the teacher was erased —
+   * which the WINNER does, so a `return` on the loser's student-half sentinel
+   * changed nothing observable and the test could not fail against the
+   * mutation its own comment named. Here the holder erases the student half
+   * itself and never touches the `Teacher`, so the single request under test
+   * is the only thing in the world that can set `teacher.deletedAt`. If its
+   * student half stops falling through, the teacher stays live and the first
+   * assertion says so.
+   *
+   * The session is resolved before the holder commits, so `session.studentId`
+   * is truthy for a profile that is erased by the time the CAS re-evaluates —
+   * which is exactly the state the concurrent case produces, without needing
+   * two racers to land in the right order.
    */
-  it('finishes the teacher half when a concurrent request already took the student half', async () => {
+  it('finishes the teacher half when the student half was erased underneath it', async () => {
     const acc = await seedDual('dualrace');
 
     let release!: () => void;
@@ -754,37 +764,47 @@ describe('DELETE /api/account', () => {
         await tx.$queryRaw`SELECT id FROM "Student" WHERE id = ${acc.studentId} FOR UPDATE`;
         locked();
         await released;
+        // The other request's erasure of the student half, committing while
+        // this one is parked on the row. Only the Student — the Teacher is
+        // left for the request under test, so it alone can erase it.
+        await tx.student.update({
+          where: { id: acc.studentId },
+          data: { deletedAt: new Date(), email: `deleted-${acc.studentId}@deleted.invalid` },
+        });
       },
       { timeout: 20_000 },
     );
     await parked;
 
-    const del = () =>
-      fetch(`${BASE_URL}/api/account`, { method: 'DELETE', headers: cookie(acc.token) });
-    const both = Promise.all([del(), del()]);
+    const deleting = fetch(`${BASE_URL}/api/account`, {
+      method: 'DELETE',
+      headers: cookie(acc.token),
+    });
 
     let settled = false;
-    void both.then(() => { settled = true; });
+    void deleting.then(() => { settled = true; });
     await new Promise((r) => setTimeout(r, 700));
     expect(settled).toBe(false);
     release();
     await holding;
-    const [a, b] = await both;
+    const res = await deleting;
 
-    // The teacher half really did run for both — asserted before the statuses,
-    // because a teacher left standing is the harm and a 500 is only how it
-    // gets reported. A `return` on the student half's sentinel (rather than
-    // the fall-through the route has) fails here, on a live teacher profile,
-    // which names it.
+    // Asserted first, and it is the assertion the fall-through owns: nothing
+    // but this request has written `Teacher`, so a `return` on the student
+    // half's sentinel leaves a live teacher profile on an account whose owner
+    // was told it was deleted.
     const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: acc.teacherId } });
     expect(teacher.deletedAt).not.toBeNull();
     const student = await prisma.student.findUniqueOrThrow({ where: { id: acc.studentId } });
     expect(student.deletedAt).not.toBeNull();
 
-    // Neither caller is told their deletion failed, and the loser above all:
-    // a PARTIAL_ERASURE 500 here would be false about an account that is
-    // wholly gone.
-    expect([a.status, b.status]).toEqual([200, 200]);
+    // And it is not told its deletion failed. Without the student half's
+    // catch this is a 500 PARTIAL_ERASURE — "Your student data was removed …
+    // Removing the rest of your teaching data failed … please contact
+    // support" — about an account both halves of which are gone. `partial` is
+    // `Boolean(session.studentId)`, which stays truthy for a half that rolled
+    // back, so that message is reachable precisely here.
+    expect(res.status).toBe(200);
 
     // Last live profile erased, so the account email is scrubbed and the
     // session is gone — the state the false message would have denied.

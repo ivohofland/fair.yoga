@@ -67,18 +67,38 @@ const DECLINED = () =>
  * teacher again rather than by id alone: a row that is no longer theirs is not
  * theirs to hear about, which is the same reason `NOT_FOUND` exists above.
  *
- * The third branch is unreachable today — nothing in this codebase moves an
- * invitation out of `declined` — so it says so in the log rather than
- * inventing a story for the teacher, and answers the same 409 the CAS was
- * refusing on.
+ * The third branch — present, not gone, not declined — IS reachable, and by
+ * the one mechanism this domain is built around. `resolveInvitationOnLink`
+ * (`services/link-consent.ts`) flips `status: { not: 'accepted' }` to
+ * `accepted`, declined rows included: booking a class or joining a waitlist is
+ * how a student takes their own decline back, and CLAUDE.md calls it the route
+ * back. So the sequence is ordinary, not anomalous — the teacher's edit passes
+ * its pre-check on a `pending` row, the invitee declines, the CAS matches
+ * nothing, and the invitee then books. `info`, not `warn`, for that reason:
+ * nothing is wrong when this fires, and the honest answer to the teacher is
+ * that the row moved, not a story about a refusal.
  */
 async function casMatchedNothing(teacherId: string, id: string) {
-  const observed = await ownedInvitation(teacherId, id);
-  if (!observed) return NOT_FOUND();
-  if (observed.status === 'declined') return DECLINED();
-  log.warn(
-    { teacherId, invitationId: id, observedStatus: observed.status },
-    'invitation CAS matched nothing on a row that is neither gone nor declined',
+  // Bounded: a throw here would turn a deterministic 409 into a 500, on the
+  // retry path #196 exists to make safe. `'unread'` is its own outcome rather
+  // than folding into `null`, which already means "gone" — and it falls to the
+  // neutral 409 below, never to `DECLINED()`. Reporting a decline we could not
+  // read is the precise failure this whole function was written to remove.
+  const observed = await ownedInvitation(teacherId, id).catch((err: unknown) => {
+    log.warn({ err, teacherId, invitationId: id }, 'invitation CAS re-read failed');
+    return 'unread' as const;
+  });
+  if (observed !== 'unread') {
+    if (!observed) return NOT_FOUND();
+    if (observed.status === 'declined') return DECLINED();
+  }
+  log.info(
+    {
+      teacherId,
+      invitationId: id,
+      observedStatus: observed === 'unread' ? 'unread' : observed.status,
+    },
+    'invitation CAS matched nothing; the row moved under the request',
   );
   return respondError(
     'This contact changed while you were working on it. Reload and try again.',

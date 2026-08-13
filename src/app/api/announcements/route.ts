@@ -136,8 +136,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   });
 
   // 201 created, 200 suppressed — and `duplicateSuppressed` in the body,
-  // because the status alone is not enough: `send-announcement.tsx` checks
-  // only `res.ok`, so a client that ignored the flag would go on reporting a
+  // because the status alone is not enough: a client that checked only
+  // `res.ok` — which is what `send-announcement.tsx` did before #196, and what
+  // any other caller may still do — would go on reporting a
   // send that did not happen. Suppressing the duplicate is right; hiding the
   // suppression would be a small lie told by a tool whose premise is being an
   // honest one.

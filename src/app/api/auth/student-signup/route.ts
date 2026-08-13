@@ -6,25 +6,9 @@ import { studentSignupSchema } from '@/lib/schemas';
 import { generateMagicLinkToken } from '@/lib/auth';
 import { sendMagicLinkEmail } from '@/lib/email';
 import { checkRateLimit, clientIp } from '@/lib/rate-limit';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { log } from '@/lib/log';
 
-/**
- * The name of the email unique constraint a `P2002` landed on, or `null` for
- * anything else — including a `P2002` on some other key.
- *
- * Prisma reports `meta.target` as the field list (`['email']`) on Postgres,
- * but a constraint it cannot map back to fields arrives as a raw string
- * (`'Student_email_key'`), so both shapes are read. Anything that does not
- * name `email` is a constraint whose meaning nobody here has established, and
- * the caller rethrows it.
- */
-function emailUniqueTarget(err: unknown): string | null {
-  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') return null;
-  const target = err.meta?.target;
-  const names = Array.isArray(target) ? target : [target];
-  const named = names.filter((n): n is string => typeof n === 'string');
-  return named.some((n) => n.toLowerCase().includes('email')) ? named.join(',') : null;
-}
 
 /**
  * Student self-signup from the public booking flow.
@@ -84,14 +68,42 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // one on this create (a slug, an id) would be swallowed here with the
       // same reasoning attached to it, and reasoning that only holds for the
       // email keys must not be applied by accident to a constraint nobody has
-      // thought about. Anything else rethrows into `withErrorHandler`.
-      const target = emailUniqueTarget(err);
-      if (target === null) throw err;
+      // thought about.
+      //
+      // `isUniqueConflictOn` rather than a local matcher: it is the measured
+      // one. Its docblock records that Prisma reports `meta.target` as the
+      // column-name ARRAY even for indexes it cannot see, so the raw-string
+      // shape a hand-rolled version defends against does not arrive; and it
+      // compares the column set exactly, where a `includes('email')` substring
+      // would quietly swallow a future `billingEmail` key under this same
+      // reasoning. `Student.email` and `Account.email` both key on `['email']`,
+      // so one predicate covers both halves of the race.
+      //
+      // An unrecognised P2002 must not rethrow AS a P2002 either.
+      // `classifyApiError` answers P2002 with 409 "Resource already exists" —
+      // which is the disclosure the paragraph above is about, arriving through
+      // the other door. So it is rethrown as an ordinary error instead: a 500
+      // tells an anonymous caller nothing, and `error` is the right level for
+      // a constraint on this create that nobody has accounted for.
+      if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) throw err;
+      if (!isUniqueConflictOn(err, ['email'])) {
+        log.error(
+          { err, rawTarget: err.meta?.target },
+          'student signup hit a unique constraint that is not one of the email keys',
+        );
+        throw new Error('student signup: unrecognised unique constraint on create');
+      }
       // No address in the log line, on purpose: the uniform 200 above exists
       // so an anonymous caller cannot learn whether an address has an account,
       // and a log naming it hands that same fact to everyone with log access.
-      // The constraint name is enough to tell these races apart from any other.
-      log.warn({ constraint: target }, 'student signup lost a create race on an existing email; falling through to the magic link');
+      // `modelName` rather than the target columns: both halves of this race
+      // key on `['email']`, so the column set cannot tell `Student` from
+      // `Account` — and which of the two lost is the only detail worth having
+      // here.
+      log.warn(
+        { model: err.meta?.modelName },
+        'student signup lost a create race on an existing email; falling through to the magic link',
+      );
     }
   }
   const token = await generateMagicLinkToken(prisma, email, redirect);

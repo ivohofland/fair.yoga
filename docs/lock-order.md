@@ -472,28 +472,42 @@ sweep, a cancellation path — and the inversion is immediate and will not
 announce itself, exactly like `ClassTemplate_teacher_slot_unique` quietly
 holding another pairing shut in "The slot key is a wait edge" above.
 
-**Not bounded by `LOCK_TIMEOUT_SQL` — but not unbounded either, and the first
-version of this paragraph got that wrong.** The transaction issues no
-`SET LOCAL lock_timeout`, so there is no 2-second bound on its `FOR KEY SHARE`
-wait on `Class`, and it now waits while holding the advisory lock, which queues
-other identical sends of the same message behind it. What that paragraph then
-concluded — that adding the bound "would convert a slow send into a failed
-one" — does not follow, because a slow send already fails: **Prisma's default
-interactive-transaction timeout is 5000 ms**, and this transaction passes no
-override. Measured against this schema, with the advisory lock taken and a
-`Notification` insert blocked on a held `FOR UPDATE`:
+**Not bounded by `LOCK_TIMEOUT_SQL`, and the wait really is unbounded in wall
+clock. This paragraph has now been wrong twice, in opposite directions, and the
+second time is the instructive one.**
+
+The transaction issues no `SET LOCAL lock_timeout`, so nothing bounds its
+`FOR KEY SHARE` wait on `Class` — and it waits while holding the advisory lock,
+queueing other identical sends of the same message behind it for the whole
+duration.
+
+The first version said that and concluded, without checking, that adding the
+bound "would convert a slow send into a failed one". The second version tried to
+correct it by claiming Prisma's 5000 ms interactive-transaction timeout already
+bounds the wait, and pasted this as evidence:
 
 ```
-threw after 13516 ms -> P2028 | Transaction API error: Transaction already
-closed … The timeout for this transaction was 5000 ms
+threw after 13516 ms -> P2028 … The timeout for this transaction was 5000 ms
 ```
 
-So the real trade is 5 s with a generic `P2028` versus 2 s with a specific
-`lock_timeout` error — and `P2028` is already in `TRANSIENT_PRISMA_CODES`
-(`src/lib/api-errors.ts`), so it surfaces as a 503 "try again" rather than a
-500. Left unchanged because the difference is three seconds and an error
-string, not because failing is impossible. Recorded so the next reader does not
-inherit the wrong premise.
+**Read that again: the wait ran 13.5 seconds under a "5000 ms" timeout.** The
+evidence disproved the claim it was quoted to support. Re-measured
+independently — blocker holding a row 12 s, waiter taking the advisory lock and
+then blocking on it — the waiter returned after **12013 ms**, again with
+`P2028`.
+
+Prisma's transaction timeout does not cancel a statement already blocked inside
+Postgres; it only refuses to begin the *next* one once the blocked statement
+returns. **This project already had that written down** — `services/gdpr.ts`,
+where the erasure's own lock bound was added: *"That timeout cannot roll back a
+statement already blocked inside Postgres, only decline to begin another one."*
+
+So: the wait is unbounded, the advisory lock is held for all of it, and the
+`P2028` that eventually surfaces is a 503 via `TRANSIENT_PRISMA_CODES`
+(`src/lib/api-errors.ts`) rather than a bound. Still left unchanged — a bound
+here turns a slow send into a failed one, which is the original reasoning and
+survives — but the cost is now stated honestly instead of being talked down to
+"three seconds and an error string".
 
 ## The empty-`update` upsert quirk — read this before "tidying" one
 

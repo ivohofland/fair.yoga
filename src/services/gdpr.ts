@@ -695,17 +695,28 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // to ignore the line. `observedStatus` is what separates that benign
       // case from a genuine refusal, and it is the same field
       // `deleteTeacherAccount`'s own class CAS reports below.
-      const observed = await db.class.findUnique({
-        where: { id: cls.id },
-        select: { status: true },
-      });
-      log.warn(
-        {
-          teacherId,
-          classId: cls.id,
-          reason: result.error,
-          observedStatus: observed?.status ?? 'row-deleted',
-        },
+      // `.catch` because this read exists only to enrich a log line, and a
+      // diagnostic must never be able to fail the operation it describes:
+      // unguarded, a pool timeout here would throw out of a GDPR erasure that
+      // was on track to succeed, and the route would tell the user their
+      // teaching data may have survived. `'unknown'` is kept distinct from
+      // `'row-deleted'` — conflating "we could not look" with "it was gone"
+      // is how a read failure gets filed as a finding.
+      const observed = await db.class
+        .findUnique({ where: { id: cls.id }, select: { status: true } })
+        .catch(() => 'unread' as const);
+      const observedStatus =
+        observed === 'unread' ? 'unknown' : (observed?.status ?? 'row-deleted');
+
+      // `warn` for the one refusal that is routine — the loser of two
+      // concurrent erasures, whose class is already `completed`. Everything
+      // else here is `error` and means it: a class that vanished, or one that
+      // went `cancelled` and so will never be completed, never priced, and
+      // never billed — the students' payment history quietly short by a
+      // class. That is not a level nobody watches.
+      const benignDuplicate = observedStatus === 'completed';
+      log[benignDuplicate ? 'warn' : 'error'](
+        { teacherId, classId: cls.id, reason: result.error, observedStatus },
         'teacher erasure: could not complete an in-progress class first',
       );
     }
@@ -934,9 +945,13 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // It writes nothing, which is the part that matters: `completeClass`
       // takes the class row lock and `validateTransition` refuses
       // `completed → completed`. But "writes nothing" is not "does nothing" —
-      // each refusal is logged at `error` level by the loop above, so a
-      // routine concurrent duplicate emits an error line per in-progress
-      // class, now alongside a 200. And `completeClass`'s 2s `lock_timeout` is
+      // each refusal is logged by the loop above. It levels on
+      // `observedStatus`: `warn` when the class is already `completed`, which
+      // is exactly this case and pages nobody, and `error` for every other
+      // reason, which are real. So a routine concurrent duplicate is visible
+      // without being alarming, and a class that silently went unbilled still
+      // reaches whoever watches `error`.
+      // And `completeClass`'s 2s `lock_timeout` is
       // deliberately uncaught there, so a loser that waits too long throws
       // something that is NOT this sentinel and takes `erasureFailure`
       // instead. Either way the guarding is done by that loop, not by this.
