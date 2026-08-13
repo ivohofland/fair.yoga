@@ -42,7 +42,13 @@ export default async function ClassDetailPage({
         },
         orderBy: { registeredAt: 'asc' },
       },
-      _count: { select: { waitlistEntries: true } },
+      // #199. Unfiltered, this counted all five `WaitlistStatus` values.
+      // `promoted` and `claimed` rows have a `Registration` created in the
+      // same transaction (`promoteNext:480`, `claimSpot:588`,
+      // `registrations/route.ts:185`), so those students are already in the
+      // registrations list on this page — counted twice — and `removed` keeps
+      // counting everyone who left, including every queue #195 closed.
+      _count: { select: { waitlistEntries: { where: { status: 'waiting' } } } },
     },
   });
 

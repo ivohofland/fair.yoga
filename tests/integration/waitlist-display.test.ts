@@ -34,6 +34,7 @@ let teacherId = '';
 let teacherRoomId = '';
 let teacherToken = '';
 let studentToken = '';
+let countClassId = '';
 const classIds: string[] = [];
 const accountIds: string[] = [];
 const studentIds: string[] = [];
@@ -154,6 +155,24 @@ beforeAll(async () => {
       data: { classId, studentId: strip.id, position: 1, status: 'waiting' },
     });
   }
+
+  // Task 2's fixture: one class carrying 1 `waiting` and 2 `removed` entries.
+  // The 2/1 split is load-bearing. One entry of each status renders `1`
+  // before the fix and `2` after, so several wrong predicates reproduce it —
+  // the shape that let #39 ship three guards that could not fail. Two
+  // `removed` against one `waiting` makes filtered and unfiltered differ by
+  // two, which no off-by-one predicate produces.
+  countClassId = await makeClass(`w199-count-${suffix}`, 'open', 4);
+  const waiting = await makeStudent('count-waiting');
+  const goneA = await makeStudent('count-gone-a');
+  const goneB = await makeStudent('count-gone-b');
+  await prisma.waitlistEntry.createMany({
+    data: [
+      { classId: countClassId, studentId: waiting.id, position: 1, status: 'waiting' },
+      { classId: countClassId, studentId: goneA.id, position: 2, status: 'removed' },
+      { classId: countClassId, studentId: goneB.id, position: 3, status: 'removed' },
+    ],
+  });
 });
 
 afterAll(async () => {
@@ -185,5 +204,26 @@ describe('GET /bookings (page) — the waitlist strip', () => {
     expect(html).not.toContain(inProgressType);
     expect(html).not.toContain(completedType);
     expect(html).not.toContain(cancelledType);
+  });
+});
+
+describe('GET /class/[id] (page) — the waitlist count', () => {
+  it('counts waiting entries only, so a closed queue does not inflate it', async () => {
+    const res = await fetch(`${BASE_URL}/class/${countClassId}`, {
+      headers: cookie(teacherToken),
+    });
+    expect(res.status).toBe(200);
+
+    // React's SSR splices `<!-- -->` around a dynamic text node that sits
+    // beside a static one, and `class-info.tsx:35` is exactly that shape:
+    // `{waitlistCount} on waitlist`. The raw HTML therefore reads
+    // `1<!-- --> on waitlist`, and a plain `toContain('1 on waitlist')` fails
+    // against correct output. Stripping the markers asserts on what a reader
+    // sees. (`privacy-page.test.ts` needs no such step because the page it
+    // checks builds its name as one template string.)
+    const html = (await res.text()).replaceAll('<!-- -->', '');
+
+    expect(html).toContain('1 on waitlist');
+    expect(html).not.toContain('3 on waitlist');
   });
 });
