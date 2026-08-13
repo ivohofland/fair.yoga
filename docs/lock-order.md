@@ -180,11 +180,23 @@ full, with the class each one's notifications carry:
 | `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | **many** — every class the archive withdrew (#112) |
 
 > **#212 moved the broadcast inside a transaction, and the order is unchanged.**
-> It was the one `createBulkNotifications` site that took no `Class` lock at
-> all. It now takes `lockClassRow` and then inserts notifications carrying
-> `relatedClassId` — a `FOR KEY SHARE` on the row it already holds `FOR
-> UPDATE`, in the same ascending sequence, exactly as `deleteTeacherAccount`'s
-> named exception above. One class per transaction, so it adds no edge.
+> It was one of three `createBulkNotifications` sites taking no `Class` row
+> lock. The other two — `sendPaymentReminder` (`payments.ts`) and
+> `sendPaymentReminders` (`payment-reminders.ts`) — still take none: both are
+> payment-scoped, reaching a class only through the `relatedClassId` on the
+> notification they write. It now takes `lockClassRow` and then inserts
+> notifications carrying `relatedClassId` — a `FOR KEY SHARE` on the row it
+> already holds `FOR UPDATE`, exactly as `deleteTeacherAccount`'s named
+> exception above. One class per transaction, so it adds no edge.
+>
+> The first sentence originally read "the **one** site that took no `Class`
+> lock at all", which was false, and it is left recorded rather than quietly
+> corrected: it was written into #212's spec, carried into the plan, and
+> implemented faithfully — a completeness claim asserted twenty lines below
+> the paragraph explaining that an earlier completeness claim here undercounted
+> seven against eleven. Neither `payments.ts` nor `payment-reminders.ts`
+> contains `lockClassRow` or `FOR UPDATE`; that is one grep, and it was not run
+> until PR review.
 
 Five stands — but a future sweep that notifies across classes in one
 transaction would be a sixth site, and none of the four checks above would

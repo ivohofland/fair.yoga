@@ -1600,4 +1600,67 @@ describe('handleSpotFreed (DB)', () => {
     expect(whenFree).toEqual({ action: 'broadcast', notified: 2 });
     expect(await countBroadcasts()).toBe(2);
   });
+
+  /**
+   * #212, added at PR review. The capacity guard above is proved by M4; the
+   * lock that makes it MEAN anything was not proved by anything — deleting
+   * `lockClassRow` left all 57 tests in `waitlist`/`capacity`/`gdpr` green.
+   * That is the branch's whole argument (spec §2: an unlocked count moves the
+   * race rather than closing it) sitting untested.
+   *
+   * **Why this test re-fills the class first, and why that is the load-bearing
+   * detail.** The obvious version of this test — hold the row, call the hook
+   * on a class with a free seat, assert it waits — passes with `lockClassRow`
+   * DELETED, and would have certified nothing. A broadcast that gets as far as
+   * writing notifications takes `FOR KEY SHARE` on the same `Class` row via
+   * `relatedClassId` (`docs/lock-order.md`, "the fourth path"), which conflicts
+   * with the holder's `FOR UPDATE` — so it blocks either way, and the wait
+   * proves only that Postgres works.
+   *
+   * Filling the class removes that second blocker: with no free seat the hook
+   * counts, returns `[]`, and writes nothing at all. So the ONLY thing that can
+   * make it wait is the lock taken before the count. Confirmed both ways —
+   * green as written, and failing with `lockClassRow` commented out
+   * (`outcome` is `'returned'`, `holderReleased` still false).
+   *
+   * The 900ms hold sits under `lockClassRow`'s own 2s `lock_timeout`, so the
+   * wait resolves rather than aborting with 55P03.
+   */
+  it('takes the class row lock before it counts', async () => {
+    // Re-fill the class the previous test emptied, so the hook short-circuits
+    // on capacity and writes nothing. See the docblock: this is what makes the
+    // assertion discriminate.
+    await prisma.registration.update({
+      where: { classId_studentId: { classId, studentId: fillerId } },
+      data: { status: 'registered', cancelledAt: null },
+    });
+    const broadcastsBefore = await countBroadcasts();
+
+    let holderReleased = false;
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
+        await new Promise((r) => setTimeout(r, 900));
+        holderReleased = true;
+      },
+      { timeout: 10_000 },
+    );
+    await new Promise((r) => setTimeout(r, 150));
+
+    const hook = handleSpotFreed(prisma, classId, IN_CLAIM_WINDOW).then(() => 'returned' as const);
+    const outcome = await Promise.race([
+      hook,
+      new Promise<'waiting'>((r) => setTimeout(() => r('waiting'), 400)),
+    ]);
+
+    expect(outcome).toBe('waiting');
+    expect(holderReleased).toBe(false);
+
+    await holder;
+    expect(await hook).toBe('returned');
+
+    // And it still did the right thing once it got the row: the class is full,
+    // so nobody was told a spot opened.
+    expect(await countBroadcasts()).toBe(broadcastsBefore);
+  });
 });

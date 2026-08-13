@@ -913,11 +913,22 @@ with:
 Add below the table:
 
 > **#212 moved the broadcast inside a transaction, and the order is unchanged.**
-> It was the one `createBulkNotifications` site that took no `Class` lock at
-> all. It now takes `lockClassRow` and then inserts notifications carrying
-> `relatedClassId` — a `FOR KEY SHARE` on the row it already holds `FOR
-> UPDATE`, in the same ascending sequence, exactly as `deleteTeacherAccount`'s
-> named exception above. One class per transaction, so it adds no edge.
+> It was one of three `createBulkNotifications` sites taking no `Class` row
+> lock. The other two — `sendPaymentReminder` (`payments.ts`) and
+> `sendPaymentReminders` (`payment-reminders.ts`) — still take none: both are
+> payment-scoped, reaching a class only through the `relatedClassId` on the
+> notification they write. It now takes `lockClassRow` and then inserts
+> notifications carrying `relatedClassId` — a `FOR KEY SHARE` on the row it
+> already holds `FOR UPDATE`, exactly as `deleteTeacherAccount`'s named
+> exception above. One class per transaction, so it adds no edge.
+
+**This step originally told the implementer to write "the one site that took no
+`Class` lock at all", which is false** — `payments.ts` and
+`payment-reminders.ts` contain neither `lockClassRow` nor `FOR UPDATE`, so there
+were three such sites. It was written into the spec, copied here, and
+implemented faithfully; PR review caught it. Corrected in place rather than
+silently, because the failure was a completeness claim asserted without the one
+grep that would have checked it.
 
 - [ ] **Step 8: Correct `docs/technical-architecture.md:191-207`**
 

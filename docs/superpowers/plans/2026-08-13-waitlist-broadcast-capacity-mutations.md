@@ -207,3 +207,48 @@ Also caught by `teacher adds before class respect capacity — not walk-ins`
 (`expected 201 to be 409`) and `refuses a booking that exceeds a cap lowered
 while the request waited`. A booking at exactly `maxStudents` was accepted
 instead of 409. Restored; suite green.
+
+---
+
+## M9 — the lock itself
+
+**Added at PR review, and the gap it closes is the branch's own argument.** M1-M8
+all prove the *count*. Nothing proved the **lock**, which is what makes the count
+mean anything: spec §2 argues an unlocked count only moves the race from
+"cancel-commit → findMany" to "count → createMany" rather than closing it. So
+"count without lock" is precisely the fix that does not work — and it was the one
+variant the branch could not distinguish from the fix that does.
+
+**Measured before writing the test.** Deleting `await lockClassRow(tx, classId)`
+from `handleSpotFreed` and running the three unit suites that own this path:
+
+```
+Test Files  3 passed (3)
+Tests  57 passed | 2 todo (59)
+```
+
+`waitlist.test.ts`, `capacity.test.ts` and `gdpr.test.ts` all green with the lock
+gone.
+
+**The obvious test would not have closed it.** Holding the row and calling the
+hook on a class *with a free seat* passes with the lock deleted: a broadcast that
+reaches its `createMany` takes `FOR KEY SHARE` on the same `Class` row via
+`relatedClassId` (`docs/lock-order.md`, "the fourth path"), which conflicts with
+the holder's `FOR UPDATE`. It blocks either way, and the wait proves only that
+Postgres works. That is the same trap `removeFromWaitlist takes the class lock
+(DB)` documents about its own final assertion.
+
+**What discriminates** is filling the class first, so the hook counts, returns
+`[]`, and writes nothing — leaving the lock as the only thing that can make it
+wait. `takes the class row lock before it counts`
+(`waitlist.test.ts`) does that.
+
+With `lockClassRow` commented out:
+
+```
+AssertionError: expected 'returned' to be 'waiting' // Object.is equality
+ Test Files  1 failed (1)
+      Tests  1 failed | 38 skipped (39)
+```
+
+Restored; `waitlist.test.ts` green at 39 passed.

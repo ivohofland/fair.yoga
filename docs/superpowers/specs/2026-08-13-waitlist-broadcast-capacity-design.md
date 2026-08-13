@@ -342,6 +342,19 @@ silently change what four callers mean by `<= 0`.
 `lockClassRow` rejects a bare `PrismaClient`; `readSeatCount` gets the same treatment, so
 weakening its signature is a failing `tsc --noEmit` rather than a silently-passing suite.
 
+**The lock — added at PR review, because this section originally omitted it.** Every
+mutation above targets the *count*. §2 of this spec argues that the count without the lock
+is exactly the fix that does not work, so leaving the lock unpinned left the branch unable
+to tell its own fix apart from the variant it rejected — measured, not supposed: deleting
+`lockClassRow` left all 57 tests in `waitlist`/`capacity`/`gdpr` green.
+
+The test must be designed against one trap. Holding the row and calling the hook on a class
+with a **free seat** passes with the lock deleted, because the broadcast's own `createMany`
+takes `FOR KEY SHARE` on that row via `relatedClassId` and blocks on the holder anyway. The
+class has to be **full**, so the hook counts, returns `[]`, and writes nothing — leaving the
+lock as the only thing that can make it wait. `removeFromWaitlist takes the class lock (DB)`
+is the shape to copy, and its own comment documents the same trap about its final assertion.
+
 `npm run verify` before pushing — it runs all three vitest projects, so a green run is
 the whole integration suite, not a sample.
 

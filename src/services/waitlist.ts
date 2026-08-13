@@ -660,9 +660,19 @@ export async function handleSpotFreed(
   // The lock is what makes the count mean anything. Read outside it, this
   // would only move the race from "cancel-commit → findMany" to "count →
   // createMany" — and a race is the ONLY way to reach this state, since a
-  // cancel frees the seat it announces. Every writer that creates a
+  // cancel frees the seat it announces. Every writer that CREATES a
   // registration takes this same row lock, so they serialise against this
   // transaction: one arriving after the count blocks until this commits.
+  //
+  // Two writers sit outside that, and `class-transitions.ts` names them
+  // beside its own count-under-lock for the same reason: `PUT
+  // /api/registrations/[id]` (attendance) and `DELETE /api/registrations/[id]`
+  // (cancel) write `Registration.status` with no `Class` lock. Only the
+  // attendance one can move a row INTO the counted set (`late_cancel →
+  // attended`), and it cannot reach this window: attendance is written at or
+  // after class time, while this branch runs at least 6 h before the start
+  // (the claim window ends at `start − deadlineHours`, minimum 6). #182 owns
+  // that gap; it does not touch this one.
   //
   // `lockClassRow`, not the inline `FOR UPDATE` the three functions above
   // use: those are pre-existing unbounded waits that `db-locks.ts` reserves
