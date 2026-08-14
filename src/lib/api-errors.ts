@@ -188,13 +188,14 @@ export function isRecordNotFound(error: unknown): boolean {
  * Classify anything thrown out of a route handler. Total: every input,
  * including non-Error throwables, yields an ApiFailure.
  *
- * The lock-race-to-503 mapping this docblock used to describe as unqueued has
- * landed (the transient branch below). It does NOT close #113, and reading it
- * that way would be the mistake: #113 wants a `busy` variant on the archive
- * services' result unions, so a route that forgets to handle contention is a
- * COMPILE error. A catch-all classifier cannot offer that — it only makes the
- * failure legible once it has already escaped. The two are complementary, not
- * substitutes.
+ * The lock-race-to-503 mapping this docblock once described as unqueued has
+ * landed (the transient branch below), and the `busy` variants on the four
+ * template lifecycle result unions have landed alongside it. They remain
+ * complementary rather than redundant, and it is worth saying which does
+ * what: the unions make contention a COMPILE error at four specific routes,
+ * which a catch-all cannot; this branch makes it legible everywhere else,
+ * which the unions cannot. A service that catches contention never reaches
+ * here — by design, since it can say something more specific than this can.
  */
 export function classifyApiError(error: unknown): ApiFailure {
   // The terminality trigger (migration 20260805120000) raises with SQLSTATE

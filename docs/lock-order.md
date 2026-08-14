@@ -77,7 +77,7 @@ exactly what stops the next reader looking for the ones it missed.
 | `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) | one `SELECT … FOR UPDATE OF c` | ascending — `ORDER BY c.id` in SQL |
 | `deleteTeacherAccount` (`gdpr.ts`) | the per-class cancel CAS `UPDATE`, one per iteration | ascending — `orderBy: { id: 'asc' }` on the read the loop walks |
 | `syncTemplateInstances` (`template-sync.ts`) | `class.deleteMany` (wrong-day) then `class.updateMany` (same-day), each multi-row | **none** — statement order first, then heap order within each statement |
-| `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | one multi-row `class.deleteMany` | **none** — heap order |
+| `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | one multi-row `class.deleteMany` | **none** — heap order; statements now bounded at 2s by its `SET LOCAL lock_timeout` |
 
 ### How that enumeration was derived
 
@@ -319,9 +319,24 @@ weight:
    request paths: `syncTemplateInstances` runs under Prisma's 5s default and
    `archiveOrUnarchiveTemplate` under an explicit `{ timeout: 10_000 }`, and
    adding N × 2s `lockClassRow` waits to either needs the same timeout
-   arithmetic `deleteStudentAccount` carries — get it wrong and a rare deadlock
-   becomes a routine `P2028` on an everyday action (editing a recurring
-   template), which is a worse failure more often.
+    arithmetic `deleteStudentAccount` carries — get it wrong and a rare deadlock
+    becomes a routine `P2028` on an everyday action (editing a recurring
+    template), which is a worse failure more often.
+
+    Since the template lock-race work, `archiveOrUnarchiveTemplate` also issues
+    `SET LOCAL lock_timeout = '2s'`. That does not close this cycle and must not
+    be read as closing it: a bounded wait still deadlocks, it merely also has a
+    second way to end. What it changes is which SQLSTATE a caught race reports —
+    `40P01` when the detector fires first (it runs on a 1s `deadlock_timeout`, so
+    usually), `55P03` when the bound does. Both are in `TRANSIENT_SQLSTATES` and
+    both now answer `busy`, so the user-visible outcome is the same either way.
+
+    It also removes one of reason 2's obstacles rather than adding to it: the
+    arithmetic that paragraph worries about is now partly done. The archive's
+    transaction holds at most three statements that can wait on a lock — the CAS,
+    the `deleteMany`, and the notification inserts — so 3 × 2s sits inside the 10s
+    budget with headroom. An ordered pre-lock would add to that count, and its
+    author still owes this document the new sum.
 3. The template family is already filed here as an open decision — see "Known
    violation, not fixed here" below, which parks `{Class, ClassTemplate}` for
    the same reason: choosing an order there touches the whole family.
