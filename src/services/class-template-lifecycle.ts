@@ -346,16 +346,21 @@ export async function updateClassTemplate(
       return { ok: false, reason: 'slot_conflict' };
     }
     if (isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])) {
-      // The one outcome here that leaves the database knowingly inconsistent
-      // — by this point `db.classTemplate.update` above has committed, and
-      // `syncTemplateInstances`'s inner transaction has rolled back — and the
-      // only one that logged nothing before this line: `respondError`
+      // Logged because this `return` would otherwise be silent: `respondError`
       // (`api/class-templates/[id]/route.ts`) does not log, and
-      // `withErrorHandler` logs only on `throw`, which this path does not do.
-      // #209.
+      // `withErrorHandler` logs only on `throw`, which this path does not do
+      // — without this line a `sync_conflict` 409 is invisible to an
+      // operator. #209.
+      //
+      // What it means now (task 6, atomic-template-update): the whole
+      // transaction above rolled back, `classTemplate.update` included —
+      // propagating the new `startTime` to a still-mutable generated
+      // instance would have collided with an existing class, so nothing
+      // committed. This is NOT evidence of a template/instance desync to go
+      // reconcile; there is nothing left inconsistent to fix.
       log.warn(
         { templateId, teacherId },
-        'template updated but its generated-instance sync rolled back — template and instances are now desynced',
+        'recurring class edit refused (sync_conflict): propagating startTime to a generated instance would collide with an existing class — nothing changed',
       );
       return { ok: false, reason: 'sync_conflict' };
     }
