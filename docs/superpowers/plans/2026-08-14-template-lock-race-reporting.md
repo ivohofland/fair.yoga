@@ -65,7 +65,7 @@ Its docblock warns *"do not delete it under the assumption the studio side still
 - Produces: `ArchiveTemplateResult` gains `| { ok: false; reason: 'busy' }`. Tasks 2–4 mirror this shape on their own unions.
 - Consumes: `setLockTimeout(tx: TransactionClientOnly): Promise<void>` from `@/lib/db-locks`; `isTransientDbError(error: unknown): boolean` from `@/lib/api-errors`.
 
-- [ ] **Step 1: Re-point the failing test**
+- [x] **Step 1: Re-point the failing test**
 
 In `src/services/class-generator.test.ts`, replace the test titled `lets a concurrent archive outlive its own transaction default once the claim holds past it` (and its docblock) with the following. Keep it in the same `describe` block — it needs those fixtures.
 
@@ -125,13 +125,13 @@ In `src/services/class-generator.test.ts`, replace the test titled `lets a concu
     );
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `npx vitest run --project unit src/services/class-generator.test.ts -t "answers busy"`
 
 Expected: FAIL. The archive currently waits the claim out and resolves `{ ok: true, action: 'archived', ... }`, so the `toEqual` fails — and `waited` is far above 5 000 because the release only happens after the archive settles.
 
-- [ ] **Step 3: Widen the union**
+- [x] **Step 3: Widen the union**
 
 In `src/services/class-template-lifecycle.ts`, add the arm to `ArchiveTemplateResult`:
 
@@ -152,7 +152,7 @@ export type ArchiveTemplateResult =
   | { ok: false; reason: 'busy' };
 ```
 
-- [ ] **Step 4: Confirm the union widening is a compile error at the route**
+- [x] **Step 4: Confirm the union widening is a compile error at the route**
 
 Run: `npx tsc --noEmit`
 
@@ -160,7 +160,7 @@ Expected: FAIL at `src/app/api/class-templates/[id]/route.ts` on `const unhandle
 
 This is the forcing function working. Record the exact message; it is the proof that the compile-time half of this design does what the spec claims.
 
-- [ ] **Step 5: Add the imports**
+- [x] **Step 5: Add the imports**
 
 In `src/services/class-template-lifecycle.ts`, beside the existing `isUniqueConflictOn` import:
 
@@ -172,7 +172,7 @@ import { setLockTimeout } from '@/lib/db-locks';
 
 `@/lib/api-errors` imports only `@prisma/client`, and `@/lib/db-locks` is import-free besides Prisma types, so neither adds a server-only dependency to this chain.
 
-- [ ] **Step 6: Bound the wait**
+- [x] **Step 6: Bound the wait**
 
 In `archiveOrUnarchiveTemplate`, make `setLockTimeout(tx)` the first statement of the transaction callback, immediately before the CAS:
 
@@ -196,7 +196,7 @@ Then correct the comment a few lines below, which says the CAS is *"Still the tr
         // `setLockTimeout` above takes none. This is what locks the row
 ```
 
-- [ ] **Step 7: Return `busy` from the catch**
+- [x] **Step 7: Return `busy` from the catch**
 
 Replace the catch at the end of `archiveOrUnarchiveTemplate`:
 
@@ -225,7 +225,7 @@ Replace the catch at the end of `archiveOrUnarchiveTemplate`:
   }
 ```
 
-- [ ] **Step 8: Answer it at the route**
+- [x] **Step 8: Answer it at the route**
 
 In `src/app/api/class-templates/[id]/route.ts`, inside the `state === 'archived' || state === 'unarchived'` block, add above the `never` guard:
 
@@ -241,7 +241,7 @@ In `src/app/api/class-templates/[id]/route.ts`, inside the `state === 'archived'
 
 "Nothing was changed" is load-bearing and true: every failure reaching here aborted the whole interactive transaction. It is also what makes the retry safe to invite.
 
-- [ ] **Step 9: Run the test and the typecheck**
+- [x] **Step 9: Run the test and the typecheck**
 
 Run: `npx vitest run --project unit src/services/class-generator.test.ts`
 Expected: PASS, including the three neighbouring tests listed in "Tests that survive untouched".
@@ -249,7 +249,7 @@ Expected: PASS, including the three neighbouring tests listed in "Tests that sur
 Run: `npx tsc --noEmit`
 Expected: clean.
 
-- [ ] **Step 10: Mutation — prove the bound is what produced the outcome**
+- [x] **Step 10: Mutation — prove the bound is what produced the outcome**
 
 Comment out `await setLockTimeout(tx);` from Step 6.
 
@@ -258,7 +258,7 @@ Expected: FAIL — the archive waits the full claim out and resolves `ok: true`.
 
 Record the exact failure text in `docs/superpowers/plans/2026-08-14-template-lock-race-reporting-mutations.md` under a `## Task 1` heading, then restore the line and re-run to confirm PASS.
 
-- [ ] **Step 11: Mutation — prove the catch branch is what classifies it**
+- [x] **Step 11: Mutation — prove the catch branch is what classifies it**
 
 Restore Step 6, then comment out the `isTransientDbError` branch from Step 7.
 
@@ -267,7 +267,7 @@ Expected: FAIL — the `55P03` is rethrown, so the `await` rejects instead of re
 
 Record the exact text, restore, re-run to confirm PASS.
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git add src/services/class-template-lifecycle.ts \
@@ -290,7 +290,7 @@ git commit -m "fix: an archive that loses the race says so in two seconds, not t
 - Consumes: `setLockTimeout`, `isTransientDbError` — same signatures as Task 1.
 - Produces: `ArchiveStudioTemplateResult` gains `| { ok: false; reason: 'busy' }`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `src/services/studio-class-generator.test.ts`, in the same `describe` block as the existing mutual-exclusion test:
 
@@ -345,12 +345,12 @@ Add to `src/services/studio-class-generator.test.ts`, in the same `describe` blo
     );
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `npx vitest run --project unit src/services/studio-class-generator.test.ts -t "answers busy"`
 Expected: FAIL — the archive waits the claim out and resolves `ok: true`.
 
-- [ ] **Step 3: Widen the union**
+- [x] **Step 3: Widen the union**
 
 In `src/services/studio-class-template-lifecycle.ts`:
 
@@ -372,19 +372,19 @@ export type ArchiveStudioTemplateResult =
   | { ok: false; reason: 'busy' };
 ```
 
-- [ ] **Step 4: Confirm the compile error**
+- [x] **Step 4: Confirm the compile error**
 
 Run: `npx tsc --noEmit`
 Expected: FAIL at `src/app/api/studio-class-templates/[id]/route.ts` on `const unhandled: never = result;`.
 
-- [ ] **Step 5: Add the imports**
+- [x] **Step 5: Add the imports**
 
 ```ts
 import { isTransientDbError } from '@/lib/api-errors';
 import { setLockTimeout } from '@/lib/db-locks';
 ```
 
-- [ ] **Step 6: Bound the wait**
+- [x] **Step 6: Bound the wait**
 
 First statement of `archiveOrUnarchiveStudioTemplate`'s transaction callback:
 
@@ -406,7 +406,7 @@ Then correct the *"Still the transaction's first statement, deliberately"* sente
         // `setLockTimeout` above takes none. This is what locks the row
 ```
 
-- [ ] **Step 7: Return `busy` from the catch**
+- [x] **Step 7: Return `busy` from the catch**
 
 ```ts
   } catch (err) {
@@ -428,7 +428,7 @@ Then correct the *"Still the transaction's first statement, deliberately"* sente
   }
 ```
 
-- [ ] **Step 8: Answer it at the route**
+- [x] **Step 8: Answer it at the route**
 
 In `src/app/api/studio-class-templates/[id]/route.ts`, above the archive block's `never` guard:
 
@@ -442,7 +442,7 @@ In `src/app/api/studio-class-templates/[id]/route.ts`, above the archive block's
     }
 ```
 
-- [ ] **Step 9: Run the tests and the typecheck**
+- [x] **Step 9: Run the tests and the typecheck**
 
 Run: `npx vitest run --project unit src/services/studio-class-generator.test.ts`
 Expected: PASS, including the two neighbouring tests that must survive untouched.
@@ -450,11 +450,11 @@ Expected: PASS, including the two neighbouring tests that must survive untouched
 Run: `npx tsc --noEmit`
 Expected: clean.
 
-- [ ] **Step 10: Mutations**
+- [x] **Step 10: Mutations**
 
 Both mutations from Task 1, against this function: remove `setLockTimeout(tx)` (expect the archive to succeed instead), then restore and remove the `isTransientDbError` branch (expect a rejection instead of `busy`). Record both exact texts under `## Task 2` in the mutations file, restore, re-verify.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add src/services/studio-class-template-lifecycle.ts \
@@ -477,7 +477,7 @@ git commit -m "fix: the studio archive gets the same two-second answer"
 - Produces: `PauseTemplateResult` gains `| { ok: false; reason: 'busy' }`.
 - Structural note: this function does not use `try`/`catch`. It uses a promise `.catch()` that returns `null` to mean "P2025 — the row went away", which the caller maps to `not_found`. `null` is therefore already spoken for. This task adds a **second** sentinel, `'busy'`, and a second narrowing beside `if (updated === null)`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `src/services/class-generator.test.ts`, in the same `describe` block as Task 1's test:
 
@@ -550,14 +550,14 @@ Add to `src/services/class-generator.test.ts`, in the same `describe` block as T
     );
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `npx vitest run --project unit src/services/class-generator.test.ts -t "answers busy when a pause"`
 Expected: FAIL — the pause waits the claim out and resolves `{ ok: true, action: 'paused', ... }`.
 
 If instead it fails at the *setup* assertion (`claimTemplateForGeneration` returning `null`), the template was not active when the claim ran. That is the failure mode this test was originally written into and is the reason it now forces `isActive: true` first.
 
-- [ ] **Step 3: Widen the union**
+- [x] **Step 3: Widen the union**
 
 ```ts
   | { ok: true; action: 'unchanged'; template: ClassTemplate }
@@ -568,7 +568,7 @@ If instead it fails at the *setup* assertion (`claimTemplateForGeneration` retur
   | { ok: false; reason: 'busy' };
 ```
 
-- [ ] **Step 4: Confirm the compile error**
+- [x] **Step 4: Confirm the compile error**
 
 Run: `npx tsc --noEmit`
 Expected: FAIL at `src/app/api/class-templates/[id]/route.ts` on the **last** `const unhandled: never = result;` in the file — the one closing the pause/resume *reason* chain.
@@ -582,7 +582,7 @@ Identify it by what it closes, not by counting. That file has **four** such guar
 | `switch (result.action)` on the **`ok: true`** arm | nobody — `busy` is `ok: false` and never reaches it |
 | `PauseTemplateResult` reasons | **this task** |
 
-- [ ] **Step 5: Bound the wait and add the second sentinel**
+- [x] **Step 5: Bound the wait and add the second sentinel**
 
 In `pauseOrResumeTemplate`, add `setLockTimeout` as the first statement and widen the `.catch`:
 
@@ -623,7 +623,7 @@ and:
 
 (keep the entire existing P2025 docblock and its `if` intact below this addition)
 
-- [ ] **Step 6: Narrow the second sentinel at the call site**
+- [x] **Step 6: Narrow the second sentinel at the call site**
 
 Immediately after the `.catch` block, ahead of the existing `null` check:
 
@@ -634,7 +634,7 @@ Immediately after the `.catch` block, ahead of the existing `null` check:
 
 Order matters only for readability here — the two sentinels are disjoint — but `busy` goes first to match the catch.
 
-- [ ] **Step 7: Answer it at the route**
+- [x] **Step 7: Answer it at the route**
 
 In `src/app/api/class-templates/[id]/route.ts`, above the second `never` guard:
 
@@ -650,7 +650,7 @@ In `src/app/api/class-templates/[id]/route.ts`, above the second `never` guard:
 
 "update" rather than "pause"/"resume": this arm serves both directions, and the CAS makes the transition itself the thing that did not happen.
 
-- [ ] **Step 8: Run the tests and the typecheck**
+- [x] **Step 8: Run the tests and the typecheck**
 
 Run: `npx vitest run --project unit src/services/class-generator.test.ts src/services/class-template-lifecycle.test.ts`
 Expected: PASS.
@@ -658,7 +658,7 @@ Expected: PASS.
 Run: `npx tsc --noEmit`
 Expected: clean.
 
-- [ ] **Step 9: Mutations**
+- [x] **Step 9: Mutations**
 
 Three here, not two — the second sentinel needs its own:
 
@@ -668,7 +668,7 @@ Three here, not two — the second sentinel needs its own:
 
 Record all three exact texts under `## Task 3`, restore, re-verify.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add src/services/class-template-lifecycle.ts \
@@ -691,7 +691,7 @@ git commit -m "fix: a pause that loses the race stops calling itself not_found"
 - Produces: `PauseStudioTemplateResult` gains `| { ok: false; reason: 'busy' }`.
 - Structural note: this function has **no error handling at all** — the transaction result feeds a `switch` on `result.outcome`. A thrown error produces no `result` to switch on, so the catch must wrap the `$transaction` call rather than join the switch. This is the site neither the issue nor its two update comments identify.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `src/services/studio-class-generator.test.ts`:
 
@@ -762,12 +762,12 @@ Add to `src/services/studio-class-generator.test.ts`:
 
 Add `pauseOrResumeStudioTemplate` to the existing import from `./studio-class-template-lifecycle` at the top of the file.
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `npx vitest run --project unit src/services/studio-class-generator.test.ts -t "answers busy when a studio pause"`
 Expected: FAIL — the pause waits the claim out and succeeds, because nothing bounds it yet. Same shape as Tasks 1–3 at this point; what makes this function different shows up at the mutation in Step 9, where removing the branch restores a function with no `catch` at all.
 
-- [ ] **Step 3: Widen the union**
+- [x] **Step 3: Widen the union**
 
 ```ts
   | { ok: true; action: 'unchanged'; template: StudioClassTemplate }
@@ -778,14 +778,14 @@ Expected: FAIL — the pause waits the claim out and succeeds, because nothing b
   | { ok: false; reason: 'busy' };
 ```
 
-- [ ] **Step 4: Confirm the compile error**
+- [x] **Step 4: Confirm the compile error**
 
 Run: `npx tsc --noEmit`
 Expected: FAIL at `src/app/api/studio-class-templates/[id]/route.ts` on the **last** `const unhandled: never = result;` in the file — the one closing the pause/resume *reason* chain.
 
 That file has **three** such guards: the archive's (Task 2), one inside the `switch (result.action)` over the `ok: true` arm (untouched — `busy` is `ok: false`), and this one.
 
-- [ ] **Step 5: Bound the wait and add the catch that does not exist**
+- [x] **Step 5: Bound the wait and add the catch that does not exist**
 
 Change `const result = await db.$transaction(` to a `let` with a `try`/`catch` around it, and open the callback with the bound:
 
@@ -832,7 +832,7 @@ import { isTransientDbError } from '@/lib/api-errors';
 import { setLockTimeout } from '@/lib/db-locks';
 ```
 
-- [ ] **Step 6: Correct the docstring this falsifies**
+- [x] **Step 6: Correct the docstring this falsifies**
 
 `pauseOrResumeStudioTemplate`'s own docstring states the wait is unbounded. Replace that sentence:
 
@@ -843,7 +843,7 @@ import { setLockTimeout } from '@/lib/db-locks';
  * rather than consuming the 10s budget. Once the CAS succeeds this
 ```
 
-- [ ] **Step 7: Answer it at the route**
+- [x] **Step 7: Answer it at the route**
 
 Above the second `never` guard in `src/app/api/studio-class-templates/[id]/route.ts`:
 
@@ -857,7 +857,7 @@ Above the second `never` guard in `src/app/api/studio-class-templates/[id]/route
   }
 ```
 
-- [ ] **Step 8: Run the tests and the typecheck**
+- [x] **Step 8: Run the tests and the typecheck**
 
 Run: `npx vitest run --project unit src/services/studio-class-generator.test.ts src/services/studio-class-template-lifecycle.test.ts`
 Expected: PASS.
@@ -865,14 +865,14 @@ Expected: PASS.
 Run: `npx tsc --noEmit`
 Expected: clean.
 
-- [ ] **Step 9: Mutations**
+- [x] **Step 9: Mutations**
 
 1. Remove `setLockTimeout(tx)` → the resume succeeds. Expect FAIL.
 2. Remove the `isTransientDbError` branch → the error rejects, restoring this function's pre-branch behaviour exactly. Expect FAIL.
 
 Record both exact texts under `## Task 4`, restore, re-verify.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add src/services/studio-class-template-lifecycle.ts \
@@ -895,7 +895,7 @@ git commit -m "fix: the one lifecycle function with no catch at all"
 
 **Why no test.** The existing pin for this pattern is `studio-class-generator.test.ts`'s `opens its transaction with { timeout: 10_000 }`, which proxies `$transaction` to record its options. That technique needs a seam to inject the proxy through, and these two transactions are opened directly on the imported `prisma` singleton inside a route handler — there is no parameter to pass a spy through. Adding one to make the option testable would be a production change made solely for a test, on a route whose behaviour is otherwise unchanged. Recorded here as a deliberate gap rather than an oversight; the `{ timeout: 10_000 }` literal is visible in review and in `git log`.
 
-- [ ] **Step 1: Give the class create route the budget**
+- [x] **Step 1: Give the class create route the budget**
 
 In `src/app/api/class-templates/route.ts`, add the options argument to the `$transaction` call:
 
@@ -916,7 +916,7 @@ In `src/app/api/class-templates/route.ts`, add the options argument to the `$tra
   );
 ```
 
-- [ ] **Step 2: Give the studio create route the same**
+- [x] **Step 2: Give the studio create route the same**
 
 In `src/app/api/studio-class-templates/route.ts`:
 
@@ -931,7 +931,7 @@ In `src/app/api/studio-class-templates/route.ts`:
   );
 ```
 
-- [ ] **Step 3: Verify both still pass**
+- [x] **Step 3: Verify both still pass**
 
 Run: `npx vitest run --project unit src/services/class-generator.test.ts src/services/studio-class-generator.test.ts`
 Expected: PASS.
@@ -939,7 +939,7 @@ Expected: PASS.
 Run: `npx tsc --noEmit`
 Expected: clean.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/app/api/class-templates/route.ts src/app/api/studio-class-templates/route.ts
@@ -960,7 +960,7 @@ git commit -m "fix: both create routes stop running on Prisma's five-second defa
 
 **Why this is a task and not a step.** On issue 41 this exact instruction was followed and the defect shipped anyway, because a fix wave corrected two of a finding's three locations and reported success. Each location below gets its own checkbox and its own verdict.
 
-- [ ] **Step 1: `src/lib/api-errors.ts` — the docblock describing this work as unqueued**
+- [x] **Step 1: `src/lib/api-errors.ts` — the docblock describing this work as unqueued**
 
 `classifyApiError`'s docblock says the lock-race-to-503 mapping has landed but does not close this issue, and describes the `busy` variant as wanted. That is now history. Replace the paragraph with:
 
@@ -977,7 +977,7 @@ git commit -m "fix: both create routes stop running on Prisma's five-second defa
 
 **Hazard, and it has fired twice on this issue.** The text being replaced contains an auto-close keyword immediately followed by an issue number. That is inert in a source file — GitHub parses commit messages and PR bodies, not file contents — but quoting the old line into this task's commit message would close the issue for a third time. Do not quote it. Describe it.
 
-- [ ] **Step 2: `docs/lock-order.md` — the archive's `lock_timeout` status**
+- [x] **Step 2: `docs/lock-order.md` — the archive's `lock_timeout` status**
 
 Two places, and both must change:
 
@@ -1003,7 +1003,7 @@ budget with headroom. An ordered pre-lock would add to that count, and its
 author still owes this document the new sum.
 ```
 
-- [ ] **Step 3: `src/services/class-template-lifecycle.ts` — the archive's budget comment**
+- [x] **Step 3: `src/services/class-template-lifecycle.ts` — the archive's budget comment**
 
 The comment above `{ timeout: 10_000 }` says matching the sweep's timeout "means this waits at most as long as the sweep could possibly run". With the 2 s bound that is no longer what the budget does. Replace the final sentence:
 
@@ -1016,7 +1016,7 @@ The comment above `{ timeout: 10_000 }` says matching the sweep's timeout "means
       { timeout: 10_000 },
 ```
 
-- [ ] **Step 4: `src/services/studio-class-template-lifecycle.ts` — the three-budget chain**
+- [x] **Step 4: `src/services/studio-class-template-lifecycle.ts` — the three-budget chain**
 
 The long comment above the studio archive's `{ timeout: 10_000 }` reasons about a chain of three 10 s budgets and ends by attributing the resulting error surface to this issue. The chain reasoning is now wrong in its conclusion: each link waits at most 2 s, so the last link cannot exhaust its budget in lock-wait. Replace from *"Three 10s budgets do not compose, though"* to the end of that paragraph:
 
@@ -1038,7 +1038,7 @@ The long comment above the studio archive's `{ timeout: 10_000 }` reasons about 
       // paragraph above describes.
 ```
 
-- [ ] **Step 5: Reconcile against the diff, not against a keyword**
+- [x] **Step 5: Reconcile against the diff, not against a keyword**
 
 Do not `grep` for a phrase. List what the wave changed and what it was supposed to change, and compare:
 
@@ -1050,7 +1050,7 @@ Expected, exactly four files: `src/lib/api-errors.ts`, `docs/lock-order.md`, `sr
 
 A keyword sweep scoped to one correction cannot see another correction's twin — that is how issue 41 shipped a defect through two gates.
 
-- [ ] **Step 6: Full verification**
+- [x] **Step 6: Full verification**
 
 Run: `npm run verify`
 
@@ -1058,7 +1058,7 @@ This is typecheck + lint + all three vitest projects, including every file in `t
 
 Expected: clean. Record the per-project file and test counts; the PR body needs them, and they must reconcile as a sum.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/lib/api-errors.ts docs/lock-order.md \
