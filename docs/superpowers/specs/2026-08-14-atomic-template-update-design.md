@@ -242,6 +242,49 @@ must include the survivors, not only the classes about to be deleted. Narrow it
 to the deletable set and the notification inserts start waiting again, and this
 arithmetic no longer holds.
 
+### 2.4.1 The archive pre-lock collides with a documented decision
+
+Found while writing the plan, not while writing §2.3. `class-template-lifecycle.ts:955-960`
+argues **against** the thing §2.3 requires:
+
+> "Locking every candidate class would work and is simply worse — it blocks
+> booking on every future class of the template for the duration of the
+> archive, to buy what a second read buys for free."
+
+That is exactly the pre-lock's row set. The collision is real and must be
+resolved in the open rather than papered over.
+
+**Why the pre-lock's set has to be the full candidate set.** For deadlock
+safety it must cover every `Class` row the transaction *could* lock, in
+ascending order. The `deleteMany` predicate is re-evaluated at execution time —
+that is the point of `:976-985`, and it must not be changed — so **any**
+candidate may match. The safe set is therefore
+`scheduledWhere(templateId, { gt: today })` in full:
+
+```
+{ templateId, date: { gt: today }, status: { in: ['draft', 'open'] } }
+```
+
+(`scheduledWhere:516-520`, `SCHEDULED_STATUSES:503`.)
+
+**Why the comment is not wrong, and is rewritten rather than deleted.** It
+weighs a lock against a second read for **notification correctness**, and for
+that purpose the read genuinely is free and better. The pre-lock buys something
+a read cannot buy at any price: a canonical lock order. The comment's trade-off
+predates the requirement rather than contradicting it.
+
+**The cost it names is real, and this branch pays it.** After this change an
+archive blocks booking (`POST /api/registrations` takes `SELECT … FOR UPDATE`
+on the class row) on every future class of that template for the archive's
+duration — bounded by `LOCK_TIMEOUT_SQL` per wait and the 10 s transaction
+budget, not unbounded. That is the price of closing 180 at this site, and it
+belongs in the PR body rather than in a comment nobody reads.
+
+**This subsumes §2.4's survivor requirement** rather than adding to it: the
+candidate set is `deletable ∪ waiter-held`, so survivors are inside it by
+construction. The plan does not need a separate instruction to include them —
+it needs the predicate above, unnarrowed.
+
 **Rows 4 and 5 are an assertion, not a measurement.** That `lock_timeout`
 bounds an index-entry `ShareLock` wait — not only row locks — must be probed in
 `psql` and the transcript recorded here before the arithmetic above can be
@@ -340,6 +383,10 @@ edited around:
   from "none" to ascending; the "live, unfixed, and partly branch-caused"
   section is **deleted, not narrowed** (180 acceptance 3)
 - `src/services/gdpr.ts:378-391` — names both sites as locking in heap order
+- `class-template-lifecycle.ts:955-960` — argues against locking every
+  candidate class. Rewritten per §2.4.1 to say what the lock now buys that the
+  second read cannot, and to keep the second read, which is still needed for
+  notification correctness and is **not** replaced by the lock
 
 ## 4. Tests, and the mutation that proves each bites
 
@@ -350,7 +397,7 @@ edited around:
 | Lock-then-re-read | Latch `settingsLocked` between the lock and the write; the propagation must skip that class |
 | Archive pre-lock | Its own cycle test — a fix at one site leaves the pairing live through the other (180) |
 | `{ timeout: 15_000 }` on the **update** transaction only | Recorded options assertion, modelled on `class-generator.test.ts:396`. The archive's existing `10_000` pin must still pass unchanged — if it needs editing, §2.4's consolidation argument is wrong and the budget question reopens |
-| The archive pre-lock covers survivors, not only deletable classes | Narrow it to the deletable set; the `createBulkNotifications` FK wait returns, which is the assumption §2.4 rests on |
+| The archive pre-lock uses the full `scheduledWhere` set | Narrow it by adding the `registrations: { none: … }` clause so it covers only deletable classes; the deadlock returns, because a candidate the `deleteMany` re-evaluates into scope was never locked (§2.4.1) |
 | `lock_timeout` bounds the index-entry wait | `psql` transcript recorded in §2.4 |
 
 **The trap 180 measured, which the plan must defeat.** A btree `ScalarArrayOp`
