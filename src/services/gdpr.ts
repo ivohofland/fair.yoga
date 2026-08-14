@@ -380,14 +380,15 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // recreating the exact inversion this sort exists to prevent.
     //
     // Ascending by id is this project's intended order for taking more than
-    // one `Class` row. Five sites do; three take it — this sort,
+    // one `Class` row. Five sites do, and all five now agree: this sort,
     // `withdrawWaitingEntriesForTeacher`'s ordered `FOR UPDATE OF c`
-    // (`waitlist.ts`), and `deleteTeacherAccount`'s cancel loop below — and
-    // two do NOT: `syncTemplateInstances` (`template-sync.ts`) and
-    // `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) lock in
-    // heap order, and THIS function cycles against both for real. Do not read
-    // the sort below as making that safe; `docs/lock-order.md`, "The two that
-    // do not", has the reproduction and why it is recorded rather than fixed.
+    // (`waitlist.ts`), `deleteTeacherAccount`'s cancel loop below, and
+    // `syncTemplateInstances` (`template-sync.ts`) and
+    // `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) — which
+    // used to lock in heap order and cycled against THIS function for real,
+    // closed by an ordered pre-lock ahead of each of their multi-row writes
+    // (issue 180, atomic-template-update). See `docs/lock-order.md`'s
+    // within-`Class` table for how each site takes its order.
     //
     // `deleteTeacherAccount` did NOT sort until the whole-branch review of
     // #174 — an earlier version of this very comment asserted it did, which
@@ -748,11 +749,13 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // `Class` row lock per iteration (the CAS `UPDATE`), so the order this
       // read returns IS this transaction's lock acquisition order. Ascending
       // by id is what `deleteStudentAccount` above and
-      // `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) also take; the two
-      // template sites named in `deleteStudentAccount`'s comment take no order
-      // at all, and this function's disagreement with those two is inherited,
-      // unfixed, and recorded in `docs/lock-order.md` under "The two that do
-      // not". Without this `orderBy` this read fell back to whatever the
+      // `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) also take. The two
+      // template sites named in `deleteStudentAccount`'s comment used to take
+      // no order at all, and this function's disagreement with those two was
+      // inherited from the same place `deleteStudentAccount`'s was — closed
+      // the same way, by an ordered pre-lock at both sites (issue 180,
+      // atomic-template-update). See `docs/lock-order.md`'s within-`Class`
+      // table. Without this `orderBy` this read fell back to whatever the
       // heap returned, which for a fresh pair of classes is insertion order —
       // and when that disagreed with ascending, a teacher erasure and a
       // student erasure overlapping on two classes formed an AB-BA cycle and

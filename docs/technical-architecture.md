@@ -266,7 +266,7 @@ const inserted = await db.class.createManyAndReturn({
 return { created: inserted.length, skipped }; // GenerationResult
 ```
 
-**Not a per-date insert loop, deliberately.** It was one until #164. Three of this function's four production call sites pass a transaction client (`syncTemplateInstances` is the exception), and Prisma does not savepoint individual queries inside an interactive transaction — so a per-date insert that hit a unique violation aborted the whole transaction, and a clash on the last date let `COMMIT` return the `ROLLBACK` tag with no error at all. A teacher resuming a template was told it worked while the template stayed paused. See `docs/superpowers/specs/2026-08-11-generator-slot-reporting-design.md`.
+**Not a per-date insert loop, deliberately.** It was one until #164. All four of this function's production call sites now pass a transaction client — `syncTemplateInstances` was the exception until the atomic-template-update branch (issue 83) stopped it opening a transaction of its own — and Prisma does not savepoint individual queries inside an interactive transaction, so a per-date insert that hit a unique violation aborted the whole transaction, and a clash on the last date let `COMMIT` return the `ROLLBACK` tag with no error at all. A teacher resuming a template was told it worked while the template stayed paused. See `docs/superpowers/specs/2026-08-11-generator-slot-reporting-design.md`.
 
 `services/studio-class-generator.ts` is the studio twin and has the same shape and the same `GenerationResult`.
 

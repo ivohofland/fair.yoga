@@ -102,8 +102,13 @@ function isTerminalStatusViolation(error: unknown): boolean {
  *   project sets one at every `lockClassRow` call and at the two template
  *   claims, so it is the one a user is most likely to meet.
  * - `40P01` deadlock_detected — Postgres broke an AB-BA cycle by killing one
- *   side. `docs/lock-order.md` records two live cycles against the template
- *   sites, so this is reachable today, not hypothetical.
+ *   side. Reachable today, not hypothetical: `docs/lock-order.md`, "The slot
+ *   key is a wait edge", records real reproduced deadlocks between
+ *   `syncTemplateInstances`/`updateClass` and between two `updateClass`
+ *   writes. It used to be reachable a second way too, via two live
+ *   `Class`-row-ordering cycles against the template sites; those closed
+ *   with an ordered pre-lock ahead of each site's multi-row write (issue
+ *   180, atomic-template-update).
  * - `40001` serialization_failure — nothing here uses a serializable or
  *   repeatable-read transaction yet, so this cannot fire at present; it is
  *   listed because it belongs to the same family and adding it later would

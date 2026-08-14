@@ -15,11 +15,16 @@ import { log } from '@/lib/log';
  * write"). `deleteStudentAccount` (`gdpr.ts`) takes them ASCENDING by id —
  * `[...ids].sort()` in JS, before the `lockClassRow` loop. Two rows, opposite
  * orders, one AB-BA cycle: reproduced against the real functions and
- * recorded in `docs/lock-order.md`, "The two that do not".
+ * recorded in issue 180, before either site had the ordered pre-lock this
+ * file now pins. `docs/lock-order.md`'s within-`Class` table records the fix,
+ * not the original reproduction — the section that used to hold that
+ * transcript was deleted rather than narrowed once both sites closed (issue
+ * 180 acceptance 3), per this project's own convention against leaving a
+ * trimmed-but-still-open-looking cycle on the page.
  *
- * The trigger (`docs/lock-order.md:297-299`): a student waitlisted on TWO
- * instances of one recurring template deletes their account while the
- * teacher edits that template.
+ * The trigger (issue 180): a student waitlisted on TWO instances of one
+ * recurring template deletes their account while the teacher edits that
+ * template.
  *
  * `syncTemplateInstances` now takes an ordered pre-lock (issue 180 task 2),
  * so this assertion is inverted from the version that shipped in task 1: it

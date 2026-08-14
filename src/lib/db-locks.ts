@@ -77,8 +77,9 @@ export type TransactionClientOnly = Prisma.TransactionClient & { $transaction?: 
  * template-claim sites), and a bound that is silently different in one place
  * is worse than one that is uniformly wrong: the two template claims and the
  * `Class` row lock deadlock against each other today (`docs/lock-order.md`,
- * "The two that do not"), and reasoning about which side loses that race
- * assumes both sides wait the same length of time.
+ * "Known violation, not fixed here" — the `{Class, ClassTemplate}`
+ * inversion), and reasoning about which side loses that race assumes both
+ * sides wait the same length of time.
  */
 export const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
 

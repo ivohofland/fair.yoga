@@ -97,12 +97,23 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // the conclusion flips.
       //
       // Nor does every peer transaction touching these rows decline the 5s
-      // default, which this comment also claimed: `syncTemplateInstances`
-      // (`template-sync.ts`) locks the same `Class` rows under it, as
-      // `docs/lock-order.md` records. The ones that do budget 10s are the four
-      // template lifecycle functions, both generator sweeps
+      // default, which this comment also claimed: `POST /api/registrations`;
+      // `waitlist.ts`'s `addToWaitlist`, `promoteNext`, `claimSpot` and
+      // `withdrawWaitingEntriesForTeacher`; `class-lifecycle.ts`'s
+      // `completeClass`; `class-transitions.ts`'s `autoCancelClasses`; and
+      // `invitations.ts`'s `acceptInvitation` and `unlinkTeacher` all open
+      // their `$transaction` with no options, so every one of them locks
+      // `Class` rows under it too. The ones that do budget past it are the
+      // four template lifecycle functions, both generator sweeps
       // (`generateClassInstances`, `generateStudioClassInstances`) and this
       // route's own studio twin — "most", not "every", and not "the four".
+      //
+      // `syncTemplateInstances` (`template-sync.ts`) no longer belongs on
+      // either list: since the atomic-template-update branch (issue 83) it
+      // opens no transaction of its own, so it runs under whatever budget its
+      // one production caller sets — `updateClassTemplate`'s
+      // `{ timeout: 15_000 }` (`class-template-lifecycle.ts`) — not under
+      // Prisma's 5s default the way it used to.
       //
       // No claim is taken here (the row is brand-new inside this transaction, so
       // nothing can race the insert), which also means no claim `lock_timeout`

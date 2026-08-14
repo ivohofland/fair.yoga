@@ -62,8 +62,8 @@ export async function syncTemplateInstances(
   // one statement, and Postgres visits the matching rows in whatever
   // order the planner picks, never the array's — cycling against
   // `deleteStudentAccount`'s ascending `lockClassRow` loop (`gdpr.ts`),
-  // reproduced as `40P01` in `docs/lock-order.md`, "The two that do not",
-  // and pinned by `template-lock-order.test.ts`. Sorting the id array is
+  // reproduced as `40P01` in issue 180 and pinned by
+  // `template-lock-order.test.ts`. Sorting the id array is
   // inert: the write still visits in plan order, never array order. Only
   // a separate ordered statement fixes it. Same shape as
   // `withdrawWaitingEntriesForTeacher` (`waitlist.ts`): the ids it

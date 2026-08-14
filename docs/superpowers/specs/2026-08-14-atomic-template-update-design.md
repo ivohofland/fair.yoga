@@ -422,8 +422,28 @@ edited around:
 | Lock-then-re-read | Latch `settingsLocked` between the lock and the write; the propagation must skip that class |
 | Archive pre-lock | Its own cycle test — a fix at one site leaves the pairing live through the other (180) |
 | `{ timeout: 15_000 }` on the **update** transaction only | Recorded options assertion, modelled on `class-generator.test.ts:396`. The archive's existing `10_000` pin must still pass unchanged — if it needs editing, §2.4's consolidation argument is wrong and the budget question reopens |
-| The archive pre-lock uses the full `scheduledWhere` set | Narrow it by adding the `registrations: { none: … }` clause so it covers only deletable classes; the deadlock returns, because a candidate the `deleteMany` re-evaluates into scope was never locked (§2.4.1) |
+| The archive pre-lock uses the full `scheduledWhere` set | Narrow it by adding the `registrations: { none: … }` clause so it covers only deletable classes; the deadlock returns, because a candidate the `deleteMany` re-evaluates into scope was never locked (§2.4.1). **True, but not exercised by this table's baseline fixture — see the note below** |
 | `lock_timeout` bounds the index-entry wait | `psql` transcript recorded in §2.4 |
+
+**Correction, added after review round 1: the row above needs a fixture the
+plan's baseline one cannot provide, and the claim itself is not weakened by
+that.** `template-lock-order.test.ts`'s shared
+`makeTemplateWithTwoWaitedInstances` fixture creates zero `Registration`
+rows — only `WaitlistEntry` ones — so narrowing the pre-lock to
+`registrations: { none: … }` coincides with the wide `scheduledWhere`
+predicate on that fixture: both lock exactly the same two rows, and the
+mutation as literally described above passes clean either way. That is a gap
+in the fixture, not evidence the wide set is unnecessary. The working
+negative control needs a charged `Registration` on the lower-id class at
+pre-lock time — not yet a delete candidate under the narrow predicate —
+cancelled from OUTSIDE the transaction during the candidate-read hook, via
+`registration.updateMany({ where: { id }, data: { status: 'cancelled' } })`,
+the same write `DELETE /api/registrations/[id]` makes and, like it, one that
+takes no `Class` row lock. Under a pre-lock narrowed that way this reproduces
+`40P01` at the `deleteMany`; under the wide, shipped pre-lock it produces
+`{ ok: true, deleted: 2, remaining: 0 }`. Measured this way, independently
+reproduced, and recorded in full — including both transcripts — in
+`task-4-report.md`, "0. The wide row set — now measured".
 
 **The trap 180 measured, which the plan must defeat.** A btree `ScalarArrayOp`
 index scan visits in **ascending id order**. On a large enough table the
@@ -475,7 +495,12 @@ deferred with a reason.
 ## 7. Risks
 
 1. **The `lock_timeout` assertion in §2.4.** If it does not bound index-entry
-   waits, two of five statements are unbounded and 15 s is a guess. Probe first.
+   waits, two of five statements are unbounded and 15 s is a guess. **Measured
+   in task 0, not left as a probe-first risk** — §2.4's "Rows 4 and 5, measured
+   rather than assumed" has the transcript: three runs, B settled at ~2 s each
+   time via `55P03`, well inside A's 6 s hold. Full script and cleanup
+   verification are in `task-0-report.md`. The `{ timeout: 15_000 }` budget
+   rests on that measurement.
 2. **A deadlock test that passes for the wrong reason** (§4). The pre-fix
    reproduction is the only artifact that can refute a fix-shaped no-op.
 3. **An ordered pre-lock is necessary but not sufficient** (180). A `Class` row

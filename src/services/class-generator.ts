@@ -102,11 +102,15 @@ type TemplateWithTimezone = Prisma.ClassTemplateGetPayload<{
  * resolved successfully while every row it reported was discarded (#164).
  * Named rather than counted, because a count goes stale on the first unrelated
  * change and this one was wrong on arrival: `api/class-templates/route.ts`,
- * `generateClassInstances` below, and `pauseOrResumeTemplate`
- * (`class-template-lifecycle.ts`) all pass a transaction client;
- * `syncTemplateInstances` (`template-sync.ts`) is the one that does not, and
- * passes a bare `PrismaClient`. In production, that is: this file's own tests
- * call it directly with a bare `prisma` too, which is why the roster says
+ * `generateClassInstances` below, `pauseOrResumeTemplate`
+ * (`class-template-lifecycle.ts`) and `syncTemplateInstances`
+ * (`template-sync.ts`) all pass a transaction client now.
+ * `syncTemplateInstances` was the one that did not, passing a bare
+ * `PrismaClient`, until the atomic-template-update branch (issue 83) stopped
+ * it opening a transaction of its own — it now composes into whichever
+ * transaction its own caller already holds instead. In production, that is:
+ * this file's own tests still call this function directly with a bare
+ * `prisma` (`class-generator.test.ts`), which is why the roster says
  * production rather than pretending to be exhaustive. Do not reintroduce a `catch` here; there is
  * nothing it can do that the constraint does not.
  *

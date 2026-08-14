@@ -550,9 +550,27 @@ AND r.status IN ('registered','attended','late_cancel'))` to the pre-lock, so it
 covers only deletable classes. Expected: FAIL — this is spec §2.4.1's claim that
 the full `scheduledWhere` set is required. Restore.
 
-If it does **not** fail, say so: the spec's stated reason for the wide set is
-then unproven, and the wide set needs a different justification or a narrower
-one is acceptable. Report rather than silently keeping either.
+**Run this first against the file's existing fixture, then check whether it
+actually probed anything.** `makeTemplateWithTwoWaitedInstances` (this file's
+shared fixture) creates zero `Registration` rows — only `WaitlistEntry`
+ones — so the narrowing clause above is vacuously true for both fixture
+classes and coincides with the wide predicate: expect this mutation to pass
+clean on that fixture, not to fail, and that passing-clean result does **not**
+mean the wide set is unnecessary. It means this fixture cannot distinguish the
+two predicates.
+
+To actually exercise the claim, build the negative control the wide set is
+for: a charged `Registration` on the lower-id class at pre-lock time (not yet
+a delete candidate under the narrow predicate), cancelled from OUTSIDE the
+transaction during the candidate-read hook via `registration.updateMany({
+where: { id }, data: { status: 'cancelled' } })` — the same write `DELETE
+/api/registrations/[id]` makes, and, like it, one that takes no `Class` row
+lock. Under the narrowed pre-lock this should reproduce `40P01` at the
+`deleteMany`; under the wide, shipped pre-lock it should produce `{ ok: true,
+deleted: 2, remaining: 0 }`. Report both outcomes rather than only the
+baseline-fixture result — a mutation that cannot fail on the fixture at hand
+is not evidence either way, and reporting it as if it were is exactly the
+failure mode this plan's own instructions warn against elsewhere.
 
 - [ ] **Step 7: Commit**
 

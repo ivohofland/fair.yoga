@@ -222,27 +222,33 @@ export type UpdateClassTemplateResult =
  * Takes `teacherId` rather than a session: this is the ownership check, and
  * keeping it a plain argument is what lets the function be tested without HTTP.
  *
- * The write and the propagation are deliberately NOT one transaction, matching
- * the behaviour this replaced: if `syncTemplateInstances` throws, the template
- * row is already updated. Three shapes are mapped below rather than left to
- * propagate: P2025 becomes `{ ok: false, reason: 'not_found' }`, because the
- * row is gone before the caller is answered (#100); a P2002 on
+ * The write and the propagation are ONE transaction (atomic-template-update,
+ * issue 83) — not two, as this function used to run them, and not three
+ * either: `syncTemplateInstances`'s delete/update step and the refill that
+ * follows a day change both compose into the same `tx` now too (see
+ * `template-sync.ts`), rather than the refill running afterward, outside any
+ * transaction. A failure anywhere in that chain rolls the template write back
+ * with it, so there is no longer a window where the row is updated but the
+ * propagation partially applied. The `catch` sits OUTSIDE the `$transaction`
+ * call, the same shape `archiveOrUnarchiveTemplate` and `POST
+ * /api/class-templates` already use: a P2002 raised inside Postgres aborts
+ * the transaction, so there is nothing to catch from within, and the whole
+ * thing rolling back is what makes catching it after the fact meaningful —
+ * every reason mapped below describes a transaction that did not commit.
+ *
+ * Four shapes are mapped below rather than left to propagate as a 500: P2025
+ * becomes `{ ok: false, reason: 'not_found' }`, because the row is gone
+ * before the caller is answered (#100); a P2002 on
  * `ClassTemplate_teacher_slot_unique` — raised by the `update` call above
  * writing this template's own `dayOfWeek`/`startTime` — becomes
- * `slot_conflict` (#196); and a P2002 on `Class_teacher_slot_unique` — raised
- * by `syncTemplateInstances`'s same-day rewrite colliding with an instance the
- * propagation never touches — becomes `sync_conflict` (#196). Everything else
- * from the sync call still propagates, so the caller sees a failure for a
- * partially applied change. That window is real and predates this function;
- * closing it for those remaining failures changes behaviour (a sync failure
- * would roll the edit back) and belongs in its own change, with its own test.
- *
- * That is not the only seam. `syncTemplateInstances` has one of its own:
- * deletes and updates run inside an inner `$transaction`, but the refill that
- * follows a day change runs after it, outside any transaction. A refill
- * failure there leaves the wrong-day instances already permanently deleted and
- * the window not refilled — the template write, the sync's delete/update step,
- * and the refill are three separately-committed steps, not one.
+ * `slot_conflict` (#196); a P2002 on `Class_teacher_slot_unique` — raised by
+ * `syncTemplateInstances`'s same-day rewrite colliding with an instance the
+ * propagation never touches — becomes `sync_conflict` (#196), and now means
+ * the whole transaction rolled back rather than a partially applied change
+ * (see that branch's own comment below); and `isTransientDbError` matching —
+ * a concurrent generation claim, archive, or pause/resume holding this row
+ * past the `setLockTimeout` bound below — becomes `busy`. Everything else
+ * still propagates as an opaque 500.
  */
 export async function updateClassTemplate(
   db: PrismaClient,
@@ -535,14 +541,20 @@ export type ArchiveTemplateResult =
    * Reading a `busy` in the logs and hunting for a 2s lock wait that never
    * happened is the mistake this paragraph exists to prevent.
    *
-   * Two calibrations, so this list does not send anyone the other way. The
-   * deadlock is the likelier answer only WHERE A CYCLE FORMS — the detector
-   * runs on a 1s `deadlock_timeout` and `docs/lock-order.md` records a live
-   * cycle against this function — while the branch's headline case, an archive
-   * queued behind the sweep's claim, has no cycle and ends in `55P03`. And
-   * `40001` is in the matcher but cannot fire yet: nothing here uses a
-   * serializable or repeatable-read transaction, as `api-errors.ts` says where
-   * it lists the code.
+   * Two calibrations, so this list does not send anyone the other way. This
+   * function used to have a reproduced `40P01` cycle against
+   * `deleteStudentAccount`'s ascending `Class`-row lock order — closed by
+   * this function's own ordered pre-lock (issue 180, atomic-template-update)
+   * — while the branch's headline case, an archive queued behind the sweep's
+   * claim, has no cycle and ends in `55P03`. A `40P01` seen here now most
+   * likely points at the still-open `{Class, ClassTemplate}` ordering
+   * question this function is one side of (`docs/lock-order.md`, "Known
+   * violation, not fixed here"; the decision is issue #229) rather than at a
+   * confirmed, already-reproduced pairing — that inversion is recorded as an
+   * unresolved ordering disagreement, not itself reproduced as a live
+   * deadlock. And `40001` is in the matcher but cannot fire yet: nothing here
+   * uses a serializable or repeatable-read transaction, as `api-errors.ts`
+   * says where it lists the code.
    *
    * The writer on the other side is equally unknown — the generation sweep, or
    * another tab's archive, pause or resume — which is why the copy names none
@@ -1035,8 +1047,8 @@ export async function archiveOrUnarchiveTemplate(
         // below takes them in heap order, whatever order Postgres's planner
         // visits matching rows in — never the read's order, and not
         // controllable by sorting anything in JS. Two rows, opposite orders,
-        // one AB-BA cycle (issue 180, `docs/lock-order.md`, "The two that do
-        // not"). Ordering this function's locks ascending, before either the
+        // one AB-BA cycle (issue 180, reproduced and recorded when the issue
+        // was filed). Ordering this function's locks ascending, before either the
         // read or the delete, is what closes it — the cost the earlier draft
         // named is real and is now paid: an archive blocks booking on this
         // template's future classes for its duration, bounded by the 2s

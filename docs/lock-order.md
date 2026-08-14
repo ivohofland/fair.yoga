@@ -61,23 +61,33 @@ sites lock more than one `Class` row inside a single transaction, and two of
 them taking the same pair in opposite sequences is an AB-BA cycle exactly like
 any cross-table one.
 
-**The rule: ascending by `id`. Three of the five follow it; two do not, and the
-disagreement is live** — see "The two that do not" below before assuming this
-section describes a solved problem, and "The slot key is a wait edge" below
-before assuming `id` is the only thing that orders two `Class` rows: since #196
-a unique index on `(teacherId, date, startTime)` makes plain INSERTs take part
-too, which is a case the five-site enumeration is built not to find. An
-earlier version of this section said "three sites" and "all three take it
-that way"; both were false, and an enumeration asserted as complete is
-exactly what stops the next reader looking for the ones it missed.
+**The rule: ascending by `id`. All five follow it now** — see "The slot key is
+a wait edge" below before assuming `id` is the only thing that orders two
+`Class` rows: since #196 a unique index on `(teacherId, date, startTime)`
+makes plain INSERTs take part too, which is a case the five-site enumeration
+is built not to find. An earlier version of this section said "three sites"
+and "all three take it that way"; both were false, and an enumeration
+asserted as complete is exactly what stops the next reader looking for the
+ones it missed. A later version said two of the five disagreed, live and
+unfixed; that too is now stale — `syncTemplateInstances` and
+`archiveOrUnarchiveTemplate` each closed it with an ordered pre-lock ahead of
+their respective multi-row write (issue 180, atomic-template-update).
 
 | Site | How it locks | Order it takes |
 |---|---|---|
 | `deleteStudentAccount` (`gdpr.ts`) | `lockClassRow` in a loop | ascending — `[...ids].sort()` in JS, before the loop |
 | `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) | one `SELECT … FOR UPDATE OF c` | ascending — `ORDER BY c.id` in SQL |
 | `deleteTeacherAccount` (`gdpr.ts`) | the per-class cancel CAS `UPDATE`, one per iteration | ascending — `orderBy: { id: 'asc' }` on the read the loop walks |
-| `syncTemplateInstances` (`template-sync.ts`) | `class.deleteMany` (wrong-day) then `class.updateMany` (same-day), each multi-row | **none** — statement order first, then heap order within each statement |
-| `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | one multi-row `class.deleteMany` | **none** — heap order; statements now bounded at 2s by its `SET LOCAL lock_timeout` |
+| `syncTemplateInstances` (`template-sync.ts`) | `class.deleteMany` (wrong-day) then `class.updateMany` (same-day), each multi-row | ascending — an ordered `SELECT … FOR UPDATE OF c … ORDER BY c.id` pre-lock (issue 180) taken before either write; the delete/update statements themselves still visit in whatever order the planner picks, but every row either could touch is already held by the pre-lock |
+| `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | one multi-row `class.deleteMany` | ascending — the same shape: an ordered `SELECT … FOR UPDATE OF c … ORDER BY c.id` pre-lock over the full `scheduledWhere` candidate set, taken before the `deleteMany`; both statements bounded at 2s by `SET LOCAL lock_timeout` |
+
+`syncTemplateInstances`'s pre-lock carries no `status`/`settingsLocked`
+narrowing beyond `templateId`/`teacherId`/`date > now`, so it briefly locks
+every future instance of the template — including ones already
+`settingsLocked` by a registration, which its own writes will never touch;
+that is the safe direction for lock ordering, but it means a booking on one of
+those instances can now contend with a template edit for the duration of the
+pre-lock, where before this branch it could not.
 
 ### How that enumeration was derived
 
@@ -280,69 +290,11 @@ which is worse than a plainly wrong order because it will test green.
 predicate, so it has no array to sort in the first place.
 
 Ordering a multi-row write means locking the rows first, explicitly: an
-`ORDER BY … FOR UPDATE` (what `withdrawWaitingEntriesForTeacher` does) or a
-`lockClassRow` loop over a sorted read (what `deleteStudentAccount` does).
-
-### The two that do not — live, unfixed, and partly branch-caused
-
-`syncTemplateInstances` and `archiveOrUnarchiveTemplate` take their `Class` row
-locks in heap order. Against the three ordered sites that is a real cycle, and
-it was reproduced against the real functions:
-
-```
-syncTemplateInstances : ok {"synced":1,"regenerated":1,"kept":0}
-deleteStudentAccount  : REJECTED 40P01,deadlock detected
-```
-
-The trigger is ordinary: a student waitlisted on two instances of one recurring
-template deletes their account while the teacher edits or archives that
-template.
-
-**The `deleteTeacherAccount` pairing is inherited; the `deleteStudentAccount`
-pairing is new in #174.** Proven by mutation rather than argued: with #174 task
-5's `lockClassRow` loop removed — pre-branch behaviour, where the erasure took
-no `Class` lock at all — the same race gives `syncTemplateInstances : ok` /
-`deleteStudentAccount : ok`. Restore the loop and the `40P01` returns. The
-branch took that trade knowingly in the other direction: without the loop the
-erasure renumbers a queue with no class lock, which is silent corruption, where
-this is a rare and retryable 500 on one side or the other.
-
-**Recorded rather than resolved, deliberately.** Three reasons, in order of
-weight:
-
-1. The cheap fix does not work. See the paragraph above — sorting the ids at
-   either site changes no lock order at all. Shipping it would leave the cycle
-   live under a comment saying it was closed, which is the failure mode this
-   whole document exists to prevent.
-2. The working fix is an ordered pre-lock ahead of the writes, and it has to
-   land at **both** sites or the pairing stays live through the other. Both are
-   request paths: `syncTemplateInstances` runs under Prisma's 5s default and
-   `archiveOrUnarchiveTemplate` under an explicit `{ timeout: 10_000 }`, and
-   adding N × 2s `lockClassRow` waits to either needs the same timeout
-    arithmetic `deleteStudentAccount` carries — get it wrong and a rare deadlock
-    becomes a routine `P2028` on an everyday action (editing a recurring
-    template), which is a worse failure more often.
-
-    Since the template lock-race work, `archiveOrUnarchiveTemplate` also issues
-    `SET LOCAL lock_timeout = '2s'`. That does not close this cycle and must not
-    be read as closing it: a bounded wait still deadlocks, it merely also has a
-    second way to end. What it changes is which SQLSTATE a caught race reports —
-    `40P01` when the detector fires first (it runs on a 1s `deadlock_timeout`, so
-    usually), `55P03` when the bound does. Both are in `TRANSIENT_SQLSTATES` and
-    both now answer `busy`, so the user-visible outcome is the same either way.
-
-    It also removes one of reason 2's obstacles rather than adding to it: the
-    arithmetic that paragraph worries about is now partly done. The archive's
-    transaction holds at most three statements that can wait on a lock — the CAS,
-    the `deleteMany`, and the notification inserts — so 3 × 2s sits inside the 10s
-    budget with headroom. An ordered pre-lock would add to that count, and its
-    author still owes this document the new sum.
-3. The template family is already filed here as an open decision — see "Known
-   violation, not fixed here" below, which parks `{Class, ClassTemplate}` for
-   the same reason: choosing an order there touches the whole family.
-
-So this is a decision to be taken with the template family, not from inside a
-lock-discipline fix wave. Nothing here is claimed to be safe.
+`ORDER BY … FOR UPDATE` ahead of the write itself — what
+`withdrawWaitingEntriesForTeacher` does, and what `syncTemplateInstances` and
+`archiveOrUnarchiveTemplate` now do too, as an ordered pre-lock ahead of their
+`updateMany`/`deleteMany` (issue 180) — or a `lockClassRow` loop over a sorted
+read (what `deleteStudentAccount` does).
 
 ### The slot key is a wait edge, and the table above cannot see it (#196)
 
@@ -785,17 +737,30 @@ that wasn't, is the basis for the choice — not a claim that
 ## Known violation, not fixed here
 
 `deleteTeacherAccount` takes `Class` before `ClassTemplate`; the generator
-(`src/services/class-generator.ts`) and three template paths take them in the
+(`src/services/class-generator.ts`) and four template paths take them in the
 opposite order, and that counterparty is a sweep that runs continuously.
 Choosing a canonical order there touches the whole template family, so it is
-filed as a decision rather than resolved from here.
+filed as a decision rather than resolved from here. See issue #229.
 
 **Inherited from an earlier draft of this document, not re-verified in #174
 task 7.** This entry is unrelated to either pair task 7 fixed, and nothing in
 that task's work re-derived it from the code. In particular, "three template
-paths" was not re-counted here and should not be trusted at that precision
-without an independent check — the count and file list above are
-as-inherited, not as-confirmed.
+paths" was not re-counted at that time and should not have been trusted at
+that precision without an independent check — the count and file list then
+were as-inherited, not as-confirmed.
+
+**Re-counted for the atomic-template-update branch (issue 180 §2.5).** The
+`ClassTemplate → Class` side is `1 generator + 4 template paths = 5`:
+`claimTemplateForGeneration` plus its refill, inside `generateClassInstances`
+(`class-generator.ts`); `pauseOrResumeTemplate`; `archiveOrUnarchiveTemplate`;
+`POST /api/class-templates` — all four counted before this branch — and, new
+here, `updateClassTemplate` (`class-template-lifecycle.ts`) as a **fifth**:
+now that its write and its instance sync are one transaction, it locks the
+template row before any `Class` row the same way the other four do.
+`deleteTeacherAccount` (`gdpr.ts`) remains the sole site on the inverse side,
+and carries its own tuned lock-timeout budget, which is part of why
+re-ordering it is not free. Still filed as a decision, not resolved here. See
+issue #229.
 
 ## Related, but not a lock-order issue — found while fixing the above, not fixed
 
