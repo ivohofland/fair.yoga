@@ -29,9 +29,17 @@ import { deleteStudentAccount } from './gdpr';
  * a later task's subject, not this one's.
  *
  * Asserted by SQLSTATE, not by "it passed": `/40P01|deadlock/i` deliberately
- * does NOT match `55P03` (a `lock_timeout` expiry) — a bounded-wait expiry is
- * a different failure and must fail this test rather than satisfy it, on
- * either side of the race.
+ * does NOT match `55P03` (a `lock_timeout` expiry), so a second, separate
+ * `not.toMatch(/55P03/)` catches that one explicitly below — folding it into
+ * one regex would let `not.toMatch(/40P01|deadlock|55P03/i)` read the same
+ * but a single miss anywhere in the alternation silently pass, where two
+ * assertions fail independently. `55P03` is a plausible outcome here, not a
+ * hypothetical one: the fix's own 2s `lock_timeout` means the side that asks
+ * second for a row the other already holds can wait out that bound — behind
+ * the erasure's deliberate 300ms hold plus the rest of its transaction — and
+ * time out rather than deadlock. A bounded-wait expiry is a different
+ * failure and must fail this test rather than satisfy it, on either side of
+ * the race.
  */
 const prisma = new PrismaClient();
 
@@ -281,9 +289,17 @@ describe('syncTemplateInstances and deleteStudentAccount take Class row locks in
     // "does not deadlock" tests: the ordered pre-lock forces whichever side
     // asks second to wait rather than cycle, not that either side is
     // guaranteed to win.
+    //
+    // Also the absence of `55P03`, asserted separately from `40P01|deadlock`
+    // (see this file's top docblock for why one regex would weaken the
+    // guarantee rather than just shorten it) — a lock_timeout expiry means
+    // the template edit did not happen, and that must fail this test, not
+    // satisfy it.
     for (const settled of await Promise.allSettled([a, b])) {
       if (settled.status === 'rejected') {
-        expect(String(settled.reason)).not.toMatch(/40P01|deadlock/i);
+        const reason = String(settled.reason);
+        expect(reason).not.toMatch(/40P01|deadlock/i);
+        expect(reason).not.toMatch(/55P03/);
       }
     }
   }, 30_000);

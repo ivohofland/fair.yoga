@@ -69,10 +69,13 @@ export async function syncTemplateInstances(
       // and pinned by `template-lock-order.test.ts`. Sorting the id array is
       // inert: the write still visits in plan order, never array order. Only
       // a separate ordered statement fixes it. Same shape as
-      // `withdrawWaitingEntriesForTeacher` (`waitlist.ts`), including the
-      // re-read that follows.
+      // `withdrawWaitingEntriesForTeacher` (`waitlist.ts`): the ids it
+      // returns are captured, not discarded, and the re-read below is scoped
+      // to exactly those ids — so the write set is a *subset* of the lock
+      // set by construction, not merely by an argument that the two
+      // statements share a predicate.
       await setLockTimeout(tx);
-      await tx.$queryRaw`
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT c.id
         FROM "Class" c
         WHERE c."templateId" = ${templateId}
@@ -81,13 +84,24 @@ export async function syncTemplateInstances(
         ORDER BY c.id
         FOR UPDATE OF c
       `;
+      const lockedIds = locked.map((row) => row.id);
 
       // Future generated instances; `gt: now` deliberately excludes today —
       // a class hours from starting should not shift under its students.
       //
       // Re-read UNDER the lock just taken above, not this transaction's
-      // first read of these rows. Before the pre-lock existed, this WAS the
-      // first read, and it ran unprotected: a registration committing
+      // first read of these rows, and additionally bounded to `lockedIds`:
+      // under READ COMMITTED, with no predicate lock, a `Class` row inserted
+      // and committed by a concurrent `generateInstancesForTemplate` between
+      // the two statements above would match this read's predicate without
+      // ever having been in the pre-lock's result set — `id: { in:
+      // lockedIds }` excludes it structurally rather than leaving that gap
+      // for an argument that the two predicates happen to agree. Harmless to
+      // exclude: a row created by the generator is already built from this
+      // template's current values, so skipping it here costs nothing.
+      //
+      // Before the pre-lock existed, this was the transaction's only read of
+      // these rows, and it ran unprotected: a registration committing
       // between it and the `updateMany` below could flip `settingsLocked`
       // after this had already decided the class was mutable, so the `kept`
       // guarantee was advisory rather than enforced. The pre-lock closes
@@ -105,7 +119,12 @@ export async function syncTemplateInstances(
       // every row it returns, and rental rates are never shared between teachers.
       // Scoping it means a regression in the create route stays a squat.
       const future = await tx.class.findMany({
-        where: { templateId, teacherId: template.teacherId, date: { gt: now } },
+        where: {
+          id: { in: lockedIds },
+          templateId,
+          teacherId: template.teacherId,
+          date: { gt: now },
+        },
         select: { id: true, date: true, settingsLocked: true, status: true },
       });
 
