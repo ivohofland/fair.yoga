@@ -554,7 +554,16 @@ Expected: FAIL — the resume waits the claim out and resolves `ok: true`.
 - [ ] **Step 4: Confirm the compile error**
 
 Run: `npx tsc --noEmit`
-Expected: FAIL at `src/app/api/class-templates/[id]/route.ts` on the **second** `const unhandled: never = result;` — the one after the pause/resume narrowing chain, not the archive one.
+Expected: FAIL at `src/app/api/class-templates/[id]/route.ts` on the **last** `const unhandled: never = result;` in the file — the one closing the pause/resume *reason* chain.
+
+Identify it by what it closes, not by counting. That file has **four** such guards and only two of them belong to this branch:
+
+| Guard closes | Touched by |
+|---|---|
+| `UpdateTemplateResult` (from `updateClassTemplate`) | nobody — leave it |
+| `ArchiveTemplateResult` | Task 1 |
+| `switch (result.action)` on the **`ok: true`** arm | nobody — `busy` is `ok: false` and never reaches it |
+| `PauseTemplateResult` reasons | **this task** |
 
 - [ ] **Step 5: Bound the wait and add the second sentinel**
 
@@ -745,7 +754,9 @@ Expected: FAIL — and note the *shape* of this failure differs from Tasks 1–3
 - [ ] **Step 4: Confirm the compile error**
 
 Run: `npx tsc --noEmit`
-Expected: FAIL at `src/app/api/studio-class-templates/[id]/route.ts` on the second `const unhandled: never = result;`.
+Expected: FAIL at `src/app/api/studio-class-templates/[id]/route.ts` on the **last** `const unhandled: never = result;` in the file — the one closing the pause/resume *reason* chain.
+
+That file has **three** such guards: the archive's (Task 2), one inside the `switch (result.action)` over the `ok: true` arm (untouched — `busy` is `ok: false`), and this one.
 
 - [ ] **Step 5: Bound the wait and add the catch that does not exist**
 
