@@ -73,7 +73,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       });
       const generation = await generateStudioInstancesForTemplate(tx, created);
       return { created, generation };
-    });
+    },
+    // Same reasoning as the class family's POST — both or neither. Raising
+    // one family's create budget without the other reintroduces exactly the
+    // asymmetry #191 was designed to avoid.
+    { timeout: 10_000 },
+  );
   } catch (err) {
     // The template's slot key, not `StudioClass`'s — see the class family's
     // POST for why no modelName disambiguation is needed here.

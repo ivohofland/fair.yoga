@@ -84,7 +84,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       });
       const generation = await generateInstancesForTemplate(tx, created);
       return { created, generation };
-    });
+    },
+    // Nine sequential statements on a 2GB VPS — one create, four candidate
+    // probes and four inserts — against Prisma's 5s default, which every
+    // peer transaction touching these rows already declines to run on. No
+    // claim is taken here (the row is brand-new inside this transaction, so
+    // nothing can race the insert), which also means no claim `lock_timeout`
+    // bounds the FK waits: each generated class needs `FOR KEY SHARE` on the
+    // `Teacher` row, and `email`/`pageSlug`/`accountId` are all `@unique`, so
+    // a teacher changing their page slug in another tab takes `FOR UPDATE`
+    // there and conflicts. This budget is what bounds that.
+    { timeout: 10_000 },
+  );
   } catch (err) {
     // The template's slot key, not `Class`'s. Both models share this
     // transaction, but only the template can raise P2002 here (see above),
