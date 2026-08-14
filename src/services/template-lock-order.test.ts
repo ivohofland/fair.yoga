@@ -1,8 +1,10 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { syncTemplateInstances } from './template-sync';
+import { archiveOrUnarchiveTemplate } from './class-template-lifecycle';
 import { deleteStudentAccount } from './gdpr';
+import { log } from '@/lib/log';
 
 /**
  * Issue 180. `syncTemplateInstances` (`template-sync.ts`) takes its `Class`
@@ -25,8 +27,11 @@ import { deleteStudentAccount } from './gdpr';
  * here, the same shape #174 task 7 used for the two `Class`-adjacent pairs it
  * actually closed (see the reordered-write tests in
  * `invitations-lock-order.test.ts`). `archiveOrUnarchiveTemplate`
- * (`class-template-lifecycle.ts`) shares the same defect and is untouched —
- * a later task's subject, not this one's.
+ * (`class-template-lifecycle.ts`) shares the same defect. Its own
+ * reproduction is the second `it` below, still in the task-1 shape —
+ * asserting the deadlock as real and unfixed, not yet inverted — because the
+ * fix itself is untouched here; that inversion is task 4's job, the same way
+ * this file's inversion above was task 2's.
  *
  * Asserted by SQLSTATE, not by "it passed": `/40P01|deadlock/i` deliberately
  * does NOT match `55P03` (a `lock_timeout` expiry), so a second, separate
@@ -39,7 +44,9 @@ import { deleteStudentAccount } from './gdpr';
  * the erasure's deliberate 300ms hold plus the rest of its transaction — and
  * time out rather than deadlock. A bounded-wait expiry is a different
  * failure and must fail this test rather than satisfy it, on either side of
- * the race.
+ * the race. The second `it` below needs no matching `not.toMatch` — its
+ * positive `toMatch(/40P01|deadlock/i)` already excludes `55P03` on its own;
+ * see that `it`'s own docblock for why an inverted version WOULD need one.
  */
 const prisma = new PrismaClient();
 
@@ -61,35 +68,29 @@ function futureDate(jsDayOfWeek: number, weeksOut: number): Date {
   return d;
 }
 
-describe('syncTemplateInstances and deleteStudentAccount take Class row locks in opposite orders (#180)', () => {
-  // Explicit ids, low and high, so "ascending by id" — deleteStudentAccount's
-  // order — is a KNOWN sequence rather than whatever two `uuid()` calls
-  // happened to produce. Inserted HIGH-then-LOW below, which is what makes
-  // the table's heap order the REVERSE of the sorted order — the whole
-  // premise of the race, asserted directly rather than assumed further down.
-  // Same technique `gdpr.test.ts`'s "the two erasures take multiple Class
-  // rows in one order" describe uses for the sibling pairing that IS fixed.
-  const LOW_CLASS_ID = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
-  const HIGH_CLASS_ID = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
-
-  let teacherId: string;
-  let teacherAccountId: string;
-  let roomId: string;
-  let templateId: string;
-  let studentId: string;
-  let studentAccountId: string;
+describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)', () => {
+  // Array-of-ids, not single `let`s: two `it`s below each build their own
+  // fixture through the shared helper, so cleanup has to track more than one
+  // of everything. Follows `invitations-lock-order.test.ts`'s own pattern.
+  const teacherIds: string[] = [];
+  const teacherAccountIds: string[] = [];
+  const roomIds: string[] = [];
+  const studentIds: string[] = [];
+  const studentAccountIds: string[] = [];
 
   afterAll(async () => {
-    if (studentId) await prisma.waitlistEntry.deleteMany({ where: { studentId } });
-    if (teacherId) {
-      await prisma.class.deleteMany({ where: { teacherId } });
-      await prisma.classTemplate.deleteMany({ where: { teacherId } });
-      await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    if (studentIds.length) {
+      await prisma.waitlistEntry.deleteMany({ where: { studentId: { in: studentIds } } });
     }
-    if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
-    if (studentId) await prisma.student.deleteMany({ where: { id: studentId } });
-    if (teacherId) await prisma.teacher.deleteMany({ where: { id: teacherId } });
-    const accountIds = [teacherAccountId, studentAccountId].filter(Boolean);
+    if (teacherIds.length) {
+      await prisma.class.deleteMany({ where: { teacherId: { in: teacherIds } } });
+      await prisma.classTemplate.deleteMany({ where: { teacherId: { in: teacherIds } } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    }
+    if (roomIds.length) await prisma.room.deleteMany({ where: { id: { in: roomIds } } });
+    if (studentIds.length) await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    if (teacherIds.length) await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
+    const accountIds = [...teacherAccountIds, ...studentAccountIds];
     if (accountIds.length) await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
     await prisma.$disconnect();
   });
@@ -99,9 +100,46 @@ describe('syncTemplateInstances and deleteStudentAccount take Class row locks in
    * it (`settingsLocked: false` — no bookings have touched them, only the
    * waitlist has), and a student `waiting` on both. Follows the fixture
    * style of `invitations-lock-order.test.ts:77-170`.
+   *
+   * Shared by both `it`s below, not duplicated: `syncTemplateInstances` and
+   * `archiveOrUnarchiveTemplate` each take `Class` row locks in heap order
+   * for a different multi-row statement, and both need this exact shape to
+   * disagree with `deleteStudentAccount`'s ascending sort — two rows, one
+   * student waiting on both, inserted so their heap order is the
+   * deterministic REVERSE of ascending-by-id (explicit ids below, not
+   * `uuid()` defaults — see the insertion-order comment inline).
+   *
+   * Also, incidentally, exactly what `archiveOrUnarchiveTemplate`'s
+   * `class.deleteMany` predicate requires to touch these rows at all:
+   * future-dated (`gt: today`), status `open` (one of `SCHEDULED_STATUSES`),
+   * and no registration in a `CHARGED_STATUSES` status. This fixture creates
+   * no `Registration` rows at all, only `WaitlistEntry`, so that `none`
+   * clause matches vacuously. A fixture ineligible for that predicate would
+   * make the archive `it` below deadlock on nothing — no rows matched, no
+   * locks taken, no cycle possible.
+   *
+   * Returns fresh ids every call: each `it` below gets its own
+   * teacher/template/student, not a shared one.
    */
-  it('does not deadlock: syncTemplateInstances (ordered pre-lock) vs deleteStudentAccount (ascending order) on two shared instances', async () => {
+  async function makeTemplateWithTwoWaitedInstances(): Promise<{
+    teacherId: string;
+    templateId: string;
+    studentId: string;
+    lowClassId: string;
+    highClassId: string;
+  }> {
     const local = uniqueSuffix();
+
+    // Explicit ids, low and high, so "ascending by id" — deleteStudentAccount's
+    // order — is a KNOWN sequence rather than whatever two `uuid()` calls
+    // happened to produce. Inserted HIGH-then-LOW below, which is what makes
+    // the table's heap order the REVERSE of the sorted order — the whole
+    // premise of the race, asserted directly by each `it` rather than
+    // assumed. Same technique `gdpr.test.ts`'s "the two erasures take
+    // multiple Class rows in one order" describe uses for the sibling
+    // pairing that IS fixed.
+    const lowClassId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
+    const highClassId = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
 
     const teacher = await prisma.teacher.create({
       data: {
@@ -114,8 +152,8 @@ describe('syncTemplateInstances and deleteStudentAccount take Class row locks in
       },
       select: { id: true, accountId: true },
     });
-    teacherId = teacher.id;
-    teacherAccountId = teacher.accountId;
+    teacherIds.push(teacher.id);
+    teacherAccountIds.push(teacher.accountId);
 
     const room = await prisma.room.create({
       data: {
@@ -126,14 +164,14 @@ describe('syncTemplateInstances and deleteStudentAccount take Class row locks in
         floor: '1',
         roomName: 'Main',
         maxCapacity: 20,
-        createdById: teacherId,
+        createdById: teacher.id,
       },
       select: { id: true },
     });
-    roomId = room.id;
+    roomIds.push(room.id);
 
     const teacherRoom = await prisma.teacherRoom.create({
-      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+      data: { teacherId: teacher.id, roomId: room.id, capacityOverride: 15, rentalRate: 30 },
       select: { id: true },
     });
 
@@ -144,7 +182,7 @@ describe('syncTemplateInstances and deleteStudentAccount take Class row locks in
 
     const template = await prisma.classTemplate.create({
       data: {
-        teacherId,
+        teacherId: teacher.id,
         teacherRoomId: teacherRoom.id,
         classType: 'Lock Order Flow',
         dayOfWeek,
@@ -159,12 +197,11 @@ describe('syncTemplateInstances and deleteStudentAccount take Class row locks in
       },
       select: { id: true },
     });
-    templateId = template.id;
 
     const classBase = {
-      teacherId,
+      teacherId: teacher.id,
       teacherRoomId: teacherRoom.id,
-      templateId,
+      templateId: template.id,
       classType: 'Lock Order Flow',
       startTime: '09:00',
       durationMinutes: 60,
@@ -179,14 +216,16 @@ describe('syncTemplateInstances and deleteStudentAccount take Class row locks in
 
     // HIGH inserted FIRST. An unordered scan over a table this small is a
     // sequential scan, which returns rows in physical order — insertion
-    // order for rows this fresh — so `syncTemplateInstances`'s multi-row
-    // `updateMany` visits [HIGH, LOW] while `deleteStudentAccount`'s sorted
-    // lock loop visits [LOW, HIGH]. Asserted below, not assumed.
+    // order for rows this fresh — so a multi-row `Class` writer with no
+    // explicit order (`syncTemplateInstances`'s `updateMany`,
+    // `archiveOrUnarchiveTemplate`'s `deleteMany`) visits [HIGH, LOW] while
+    // `deleteStudentAccount`'s sorted lock loop visits [LOW, HIGH]. Asserted
+    // by each `it` below, not assumed.
     await prisma.class.create({
-      data: { ...classBase, id: HIGH_CLASS_ID, date: futureDate(jsDayOfWeek, 2) },
+      data: { ...classBase, id: highClassId, date: futureDate(jsDayOfWeek, 2) },
     });
     await prisma.class.create({
-      data: { ...classBase, id: LOW_CLASS_ID, date: futureDate(jsDayOfWeek, 3) },
+      data: { ...classBase, id: lowClassId, date: futureDate(jsDayOfWeek, 3) },
     });
 
     const student = await prisma.student.create({
@@ -199,58 +238,198 @@ describe('syncTemplateInstances and deleteStudentAccount take Class row locks in
       },
       select: { id: true, accountId: true },
     });
-    studentId = student.id;
-    studentAccountId = student.accountId as string;
+    studentIds.push(student.id);
+    studentAccountIds.push(student.accountId as string);
 
     // Waiting in BOTH instances: the only way `deleteStudentAccount` locks
     // two `Class` rows at all, which is the only way the two orders can
     // disagree.
     await prisma.waitlistEntry.create({
-      data: { classId: HIGH_CLASS_ID, studentId, position: 1, status: 'waiting' },
+      data: { classId: highClassId, studentId: student.id, position: 1, status: 'waiting' },
     });
     await prisma.waitlistEntry.create({
-      data: { classId: LOW_CLASS_ID, studentId, position: 1, status: 'waiting' },
+      data: { classId: lowClassId, studentId: student.id, position: 1, status: 'waiting' },
     });
 
-    // The teacher edits the template — the trigger `docs/lock-order.md`
-    // names, and what makes `syncTemplateInstances`'s same-day `updateMany`
-    // run at all. Not what makes the write "real": Postgres takes the row
-    // lock and writes a new tuple version whether or not the new values
-    // differ from the old, so an edit back to the same `startTime` would
-    // lock exactly the same rows.
-    await prisma.classTemplate.update({
-      where: { id: templateId },
-      data: { startTime: '10:30' },
-    });
+    return { teacherId: teacher.id, templateId: template.id, studentId: student.id, lowClassId, highClassId };
+  }
 
-    // The premise, asserted rather than assumed: an unordered scan over
-    // these two rows returns them in insertion order, the REVERSE of
-    // ascending-by-id. If this ever stops holding — e.g. a bigger table
-    // pushing the planner onto a btree index scan, which visits ascending by
-    // `id` and would make BOTH sides agree — the race below can no longer
-    // form the cycle, and this assertion fails loudly instead of leaving the
-    // test green for an unrelated reason (docs/lock-order.md's own warning
-    // about the `ScalarArrayOp` index-scan trap).
+  it(
+    'does not deadlock: syncTemplateInstances (ordered pre-lock) vs deleteStudentAccount (ascending order) on two shared instances',
+    async () => {
+      const { templateId, studentId, lowClassId, highClassId } = await makeTemplateWithTwoWaitedInstances();
+
+      // The teacher edits the template — the trigger `docs/lock-order.md`
+      // names, and what makes `syncTemplateInstances`'s same-day `updateMany`
+      // run at all. Not what makes the write "real": Postgres takes the
+      // row lock and writes a new tuple version whether or not the new values
+      // differ from the old, so an edit back to the same `startTime` would
+      // lock exactly the same rows.
+      await prisma.classTemplate.update({
+        where: { id: templateId },
+        data: { startTime: '10:30' },
+      });
+
+      // The premise, asserted rather than assumed: an unordered scan over
+      // these two rows returns them in insertion order, the REVERSE of
+      // ascending-by-id. If this ever stops holding — e.g. a bigger table
+      // pushing the planner onto a btree index scan, which visits ascending by
+      // `id` and would make BOTH sides agree — the race below can no longer
+      // form the cycle, and this assertion fails loudly instead of leaving the
+      // test green for an unrelated reason (docs/lock-order.md's own warning
+      // about the `ScalarArrayOp` index-scan trap).
+      const heapOrder = await prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM "Class" WHERE "templateId" = ${templateId}
+      `;
+      expect(heapOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
+
+      // The handshake. `deleteStudentAccount`'s lock loop issues exactly two
+      // `$queryRaw` calls (`lockClassRow`'s `FOR UPDATE`, once per class,
+      // ascending — so LOW first, HIGH second). Keyed on the query's own bound
+      // value — the house rule this repo's other lock-order hooks follow
+      // (`invitations-lock-order.test.ts`: "keyed on args shape, not call
+      // order") — not on call sequence. The moment the LOW lock is granted,
+      // signal the test to start `syncTemplateInstances`, then hold this
+      // transaction here for a beat before letting it ask for HIGH — long
+      // enough for `syncTemplateInstances`'s own `updateMany` to start, lock
+      // HIGH (uncontended — nobody has asked for it yet), and block reaching
+      // for LOW. Without the hold, the two class locks in
+      // `deleteStudentAccount`'s loop are one round trip apart and nothing
+      // could reliably interleave between them — the same reasoning
+      // `invitations-lock-order.test.ts` and `gdpr.test.ts` give for their own
+      // handshakes.
+      let lowLocked!: () => void;
+      const lowLockedPromise = new Promise<void>((resolve) => {
+        lowLocked = resolve;
+      });
+      const erasureDb = prisma.$extends({
+        query: {
+          async $queryRaw({ args, query }) {
+            const rows = await query(args);
+            if (args.values[0] === lowClassId) {
+              lowLocked();
+              await new Promise((r) => setTimeout(r, 300));
+            }
+            return rows;
+          },
+        },
+        // `$extends` returns a client missing `$on`, so it is not assignable
+        // to `deleteStudentAccount`'s `PrismaClient`-typed `db` parameter even
+        // though every method it calls here is the real one, running against
+        // the real database — same cast `invitations-lock-order.test.ts` uses
+        // for its own hooked clients.
+      }) as unknown as PrismaClient;
+
+      const b = deleteStudentAccount(erasureDb, studentId);
+
+      await lowLockedPromise;
+
+      // Called directly, not wrapped in an outer `prisma.$transaction` — the
+      // function already opens and manages its own transaction internally
+      // (`template-sync.ts`), so wrapping it here would only start a second,
+      // unrelated transaction on the same client and prove nothing about the
+      // one that actually takes the locks.
+      const a = syncTemplateInstances(prisma, templateId);
+
+      // The assertion is the ABSENCE of `40P01`, not a specific success on
+      // either side — same rationale as `invitations-lock-order.test.ts`'s own
+      // "does not deadlock" tests: the ordered pre-lock forces whichever side
+      // asks second to wait rather than cycle, not that either side is
+      // guaranteed to win.
+      //
+      // Also the absence of `55P03`, asserted separately from `40P01|deadlock`
+      // (see this file's top docblock for why one regex would weaken the
+      // guarantee rather than just shorten it) — a lock_timeout expiry means
+      // the template edit did not happen, and that must fail this test, not
+      // satisfy it.
+      for (const settled of await Promise.allSettled([a, b])) {
+        if (settled.status === 'rejected') {
+          const reason = String(settled.reason);
+          expect(reason).not.toMatch(/40P01|deadlock/i);
+          expect(reason).not.toMatch(/55P03/);
+        }
+      }
+    },
+    30_000,
+  );
+
+  /**
+   * The second half of issue 180. `archiveOrUnarchiveTemplate`'s multi-row
+   * `class.deleteMany` takes its locks in heap order for the same reason
+   * `syncTemplateInstances`'s `updateMany` above does — and has no id array
+   * to sort even in principle, because its delete takes a predicate, not an
+   * `id: { in: [...] } }` filter (`docs/lock-order.md`: "`archiveOrUnarchiveTemplate`
+   * does not even pass ids — its `deleteMany` takes a predicate, so it has no
+   * array to sort in the first place").
+   *
+   * UNFIXED here, deliberately: this assertion is in the task-1 shape, not
+   * yet inverted — it asserts the deadlock is real, which it is. Task 4 adds
+   * the ordered pre-lock to `archiveOrUnarchiveTemplate` and inverts this the
+   * same way task 2 inverted the `it` above; leaving this one alone is this
+   * task's whole point (a fix at one site would otherwise leave the pairing
+   * live through the other, unnoticed).
+   *
+   * The handshake mirrors the one above, for the same reason: neither
+   * `deleteMany` (here) nor `updateMany` (above) is JS-observable
+   * mid-statement, so there is no moment to hook on the archive side itself.
+   * The hook lives on `deleteStudentAccount`'s `lockClassRow` loop instead —
+   * the same `erasureDb` shape, keyed on the LOW class id, signalling once
+   * LOW is locked and holding 300ms before reaching for HIGH. Once the
+   * signal fires, `archiveOrUnarchiveTemplate` starts fresh: its `deleteMany`
+   * locks HIGH first (uncontended — heap order, same as the `updateMany`
+   * above), blocks reaching for LOW (the erasure already holds it), and the
+   * cycle closes when the erasure's own hold elapses and it asks for HIGH.
+   *
+   * **Not a plain rejection race, unlike the sync test above — measured, not
+   * assumed from the brief's illustrative snippet.** A first run written to
+   * this file in the sync test's exact shape (`Promise.allSettled` +
+   * `toHaveLength(1)` rejection) produced a genuine `40P01 deadlock detected`
+   * (confirmed via `class-template-lifecycle.ts:986`'s own logged error) and
+   * then FAILED with zero rejections. The reason is `archiveOrUnarchiveTemplate`'s
+   * own `catch`: `isTransientDbError` matches `40P01` (`docs/lock-order.md`'s
+   * `ArchiveTemplateResult.busy` arm names the deadlock explicitly among the
+   * codes it catches) and maps it to a RESOLVED `{ ok: false, reason: 'busy' }`,
+   * logging the real error via `log.warn` — the "recurring class archive lost
+   * the template lock race" line — instead of letting it propagate. So when
+   * archiving is the side Postgres picks as the cycle's victim, the SQLSTATE
+   * has to be read off that log call, not off a rejection. When
+   * `deleteStudentAccount` is the victim instead, it still rejects directly —
+   * it has no such catch — so both shapes are handled below rather than
+   * assuming one.
+   *
+   * Which side is the victim is Postgres's choice, not this test's or this
+   * code's (same caveat the sync test's own comment states) — recorded
+   * empirically anyway: `archiveOrUnarchiveTemplate` was the victim in every
+   * run measured for this task (see the report), which is the same pattern
+   * task 1's report measured for `syncTemplateInstances` against this same
+   * erasure — the side whose 300ms artificial hold is NOT the erasure's own
+   * starts waiting on the contested row first, so its wait crosses
+   * Postgres's `deadlock_timeout` first.
+   *
+   * Asserted by SQLSTATE alone, per this file's top docblock: `55P03` (the
+   * archive's own `SET LOCAL lock_timeout = '2s'` expiring instead of the
+   * cycle being detected) does not contain "40P01" or "deadlock", so the
+   * positive `toMatch(/40P01|deadlock/i)` calls below already exclude it
+   * without a paired `not.toMatch`. That is a property of THIS direction
+   * only: once task 4 inverts these to `not.toMatch(...)`, the exclusion
+   * stops being automatic — a negated regex matches everything the regex
+   * doesn't, `55P03` included — and needs its own explicit
+   * `not.toMatch(/55P03/)` on both branches below, the same way the `it`
+   * above already carries both forms after its own fix round.
+   */
+  it('archiveOrUnarchiveTemplate and deleteStudentAccount deadlock on two instances', async () => {
+    const { templateId, studentId, teacherId, lowClassId, highClassId } =
+      await makeTemplateWithTwoWaitedInstances();
+
+    // The premise, asserted rather than assumed — same reasoning as the sync
+    // test's own heap-order check above, re-run here because this is a
+    // second, independent fixture with its own fresh ids, not a rerun of the
+    // same read.
     const heapOrder = await prisma.$queryRaw<Array<{ id: string }>>`
       SELECT id FROM "Class" WHERE "templateId" = ${templateId}
     `;
-    expect(heapOrder.map((r) => r.id)).toEqual([HIGH_CLASS_ID, LOW_CLASS_ID]);
+    expect(heapOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
 
-    // The handshake. `deleteStudentAccount`'s lock loop issues exactly two
-    // `$queryRaw` calls (`lockClassRow`'s `FOR UPDATE`, once per class,
-    // ascending — so LOW first, HIGH second). Keyed on the query's own bound
-    // value — the house rule this repo's other lock-order hooks follow
-    // (`invitations-lock-order.test.ts`: "keyed on args shape, not call
-    // order") — not on call sequence. The moment the LOW lock is granted,
-    // signal the test to start `syncTemplateInstances`, then hold this
-    // transaction here for a beat before letting it ask for HIGH — long
-    // enough for `syncTemplateInstances`'s own `updateMany` to start, lock
-    // HIGH (uncontended — nobody has asked for it yet), and block reaching
-    // for LOW. Without the hold, the two class locks in
-    // `deleteStudentAccount`'s loop are one round trip apart and nothing
-    // could reliably interleave between them — the same reasoning
-    // `invitations-lock-order.test.ts` and `gdpr.test.ts` give for their own
-    // handshakes.
     let lowLocked!: () => void;
     const lowLockedPromise = new Promise<void>((resolve) => {
       lowLocked = resolve;
@@ -259,48 +438,73 @@ describe('syncTemplateInstances and deleteStudentAccount take Class row locks in
       query: {
         async $queryRaw({ args, query }) {
           const rows = await query(args);
-          if (args.values[0] === LOW_CLASS_ID) {
+          if (args.values[0] === lowClassId) {
             lowLocked();
             await new Promise((r) => setTimeout(r, 300));
           }
           return rows;
         },
       },
-      // `$extends` returns a client missing `$on`, so it is not assignable
-      // to `deleteStudentAccount`'s `PrismaClient`-typed `db` parameter even
-      // though every method it calls here is the real one, running against
-      // the real database — same cast `invitations-lock-order.test.ts` uses
-      // for its own hooked clients.
+      // Same cast rationale as the sync test above.
     }) as unknown as PrismaClient;
 
-    const b = deleteStudentAccount(erasureDb, studentId);
+    // Spied so the SQLSTATE behind a resolved `busy` outcome is readable —
+    // see this `it`'s own docblock for why that path exists at all.
+    // `mockImplementation` matches `class-generator.test.ts`'s own use of
+    // this spy on the same log line, so the real warning is suppressed from
+    // the test's console output rather than merely observed.
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    try {
+      const b = deleteStudentAccount(erasureDb, studentId);
 
-    await lowLockedPromise;
+      await lowLockedPromise;
 
-    // Called directly, not wrapped in an outer `prisma.$transaction` — the
-    // function already opens and manages its own transaction internally
-    // (`template-sync.ts`), so wrapping it here would only start a second,
-    // unrelated transaction on the same client and prove nothing about the
-    // one that actually takes the locks.
-    const a = syncTemplateInstances(prisma, templateId);
+      // Fourth argument is the target state string, not a boolean — verified
+      // against `class-generator.test.ts:507`.
+      //
+      // Called directly, not wrapped in an outer `prisma.$transaction` — like
+      // `syncTemplateInstances` above, this function already opens and
+      // manages its own transaction internally (`class-template-lifecycle.ts`),
+      // on the same `db` argument it is passed, so wrapping it here would
+      // only start a second, unrelated transaction and prove nothing about
+      // the one that actually takes the locks.
+      const a = archiveOrUnarchiveTemplate(prisma, templateId, teacherId, 'archived');
 
-    // The assertion is the ABSENCE of `40P01`, not a specific success on
-    // either side — same rationale as `invitations-lock-order.test.ts`'s own
-    // "does not deadlock" tests: the ordered pre-lock forces whichever side
-    // asks second to wait rather than cycle, not that either side is
-    // guaranteed to win.
-    //
-    // Also the absence of `55P03`, asserted separately from `40P01|deadlock`
-    // (see this file's top docblock for why one regex would weaken the
-    // guarantee rather than just shorten it) — a lock_timeout expiry means
-    // the template edit did not happen, and that must fail this test, not
-    // satisfy it.
-    for (const settled of await Promise.allSettled([a, b])) {
-      if (settled.status === 'rejected') {
-        const reason = String(settled.reason);
-        expect(reason).not.toMatch(/40P01|deadlock/i);
-        expect(reason).not.toMatch(/55P03/);
+      const [aSettled, bSettled] = await Promise.allSettled([a, b]);
+
+      const archiveLostRaceLog = warn.mock.calls.find(
+        (call) => call[1] === 'recurring class archive lost the template lock race',
+      );
+
+      if (bSettled.status === 'rejected') {
+        // `deleteStudentAccount` was the cycle's victim: it rejects
+        // directly, and `archiveOrUnarchiveTemplate` — no longer contending
+        // for a row the erasure's rolled-back transaction released —
+        // committed rather than hitting its own transient-error `catch`.
+        expect(aSettled.status).toBe('fulfilled');
+        if (aSettled.status === 'fulfilled') {
+          expect(aSettled.value.ok).toBe(true);
+        }
+        expect(archiveLostRaceLog).toBeUndefined();
+        expect(String(bSettled.reason)).toMatch(/40P01|deadlock/i);
+      } else {
+        // `archiveOrUnarchiveTemplate` was the cycle's victim: per this
+        // `it`'s own docblock, it resolves `{ ok: false, reason: 'busy' }`
+        // instead of rejecting, and the erasure — no longer contending —
+        // committed (`deleteStudentAccount` resolves `void`, so a fulfilled
+        // settlement here IS the erasure succeeding, not merely "not a
+        // rejection").
+        expect(bSettled.status).toBe('fulfilled');
+        expect(aSettled.status).toBe('fulfilled');
+        if (aSettled.status === 'fulfilled') {
+          expect(aSettled.value).toEqual({ ok: false, reason: 'busy' });
+        }
+        expect(archiveLostRaceLog).toBeDefined();
+        const loggedErr = (archiveLostRaceLog?.[0] as { err?: unknown } | undefined)?.err;
+        expect(String(loggedErr)).toMatch(/40P01|deadlock/i);
       }
+    } finally {
+      warn.mockRestore();
     }
   }, 30_000);
 });
