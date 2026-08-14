@@ -285,11 +285,36 @@ candidate set is `deletable ∪ waiter-held`, so survivors are inside it by
 construction. The plan does not need a separate instruction to include them —
 it needs the predicate above, unnarrowed.
 
-**Rows 4 and 5 are an assertion, not a measurement.** That `lock_timeout`
-bounds an index-entry `ShareLock` wait — not only row locks — must be probed in
-`psql` and the transcript recorded here before the arithmetic above can be
-relied on. If it does not, those two statements are unbounded and the budget is
-the only ceiling, which changes the conclusion.
+**Rows 4 and 5, measured rather than assumed: `lock_timeout` DOES bound the
+index-entry `ShareLock` wait.** Probed non-interactively (two concurrent
+Prisma interactive transactions standing in for the brief's two `psql`
+sessions, same shape as `src/services/invitations-lock-order.test.ts`'s
+established two-`$transaction` races) against `DATABASE_URL_TEST`
+(`ethical_yoga_test`) — already migrated through
+`20260811202634_teacher_slot_unique_indexes`, so the collision lands on the
+real `Class_teacher_slot_unique` partial index rows 4 and 5 name, not a
+same-shaped stand-in. Full script, transcript, and cleanup verification are in
+`.superpowers/sdd/2026-08-14-atomic-template-update/task-0-report.md`
+(script itself is scratch, not committed).
+
+Session A opened a transaction, `INSERT`ed a `Class` row keyed on
+`(teacherId, date, startTime)`, and held it open uncommitted for 6 s before
+rolling back. Session B opened a transaction, ran `SET LOCAL lock_timeout =
+'2s'`, then attempted to `INSERT` a *different* `Class` row on the same key.
+Measured three runs, fresh throwaway teacher/room fixtures each time:
+
+```
+run 1: B settled after 2108ms — PrismaClientKnownRequestError P2010,
+       SQLSTATE 55P03, "canceling statement due to lock timeout"
+run 2: B settled after 2049ms — same SQLSTATE, same message
+run 3: B settled after 2086ms — same SQLSTATE, same message
+```
+
+All three runs: B fails at ~2 s, well inside A's 6 s hold — bounded by
+`lock_timeout`, not by however long A happened to keep the transaction open.
+The assumption holds: rows 4 and 5's `2 s` each in the `5 × 2 s = 10 s`
+arithmetic above is a real, measured bound. The `{ timeout: 15_000 }` budget
+stands.
 
 ### 2.5 The `{Class, ClassTemplate}` order stays parked
 
