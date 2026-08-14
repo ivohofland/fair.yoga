@@ -341,7 +341,7 @@ export async function updateClassTemplate(
     // from P2025 and from both `isUniqueConflictOn` column sets below, so a
     // transient error could not fall into either of those branches even
     // checked last — but kept first anyway so a reader does not have to
-    // re-derive that for each of the four template lifecycle functions this
+    // re-derive that for each of the five template lifecycle functions this
     // helper now guards.
     if (isTransientDbError(err)) {
       log.warn(
@@ -1096,18 +1096,54 @@ export async function archiveOrUnarchiveTemplate(
         // Why lock ⊇ delete holds here is not structural the way it is for
         // `syncTemplateInstances`'s own pre-lock (issue 180 task 2), which
         // reads its write set straight out of the ids the pre-lock itself
-        // returned. This one instead relies on two separate facts holding at
-        // once: the delete's predicate (`scheduledWhere` plus `registrations:
-        // { none: … }`) is a strict narrowing of this pre-lock's predicate
-        // (`scheduledWhere` alone), so it cannot match a row outside this
-        // set; and the only writer that could ADD a `Class` row to this set
-        // after the pre-lock runs — the generation sweep — cannot, because it
-        // serialises on the same `ClassTemplate` row the CAS above already
-        // holds (#95, the comment on that CAS). The delete cannot instead be
-        // scoped to exactly the ids this pre-lock returns, the way the sync
-        // fix's is: that would undo the wide candidate read and the survivor
-        // filter #86/#112 depend on, which stay wide on purpose (see the
-        // comment above the candidate read).
+        // returned — `id: { in: lockedIds }`, a structural subset, not a
+        // predicate re-evaluated later. This one instead relies on the
+        // delete's predicate (`scheduledWhere` plus `registrations: { none:
+        // … }`) being a strict narrowing of this pre-lock's predicate
+        // (`scheduledWhere` alone), so a row already matching the delete's
+        // predicate cannot escape this lock.
+        //
+        // That is NOT the same as lock ⊇ delete being total, and this branch
+        // once claimed it was by naming only one writer that could add a row
+        // to the set after the pre-lock runs. The generation sweep is one
+        // such writer and genuinely cannot: it serialises on the same
+        // `ClassTemplate` row the CAS above already holds (#95, the comment
+        // on that CAS). But it is not the only one. `updateClass`
+        // (`class-lifecycle.ts`) issues a bare `db.class.updateMany({ where:
+        // { id } })` with `date` in its teacher-editable set, taking neither
+        // the `ClassTemplate` lock nor any `Class` lock this pre-lock holds.
+        // A same-day instance — outside `c.date > ${today}` above, so never
+        // locked here — rescheduled into the future between this pre-lock
+        // and the `deleteMany` below (whose predicate is re-evaluated at
+        // execution time, by design — see its own comment) can still be
+        // matched and deleted without ever having been held by this
+        // statement. So the ascending-order guarantee at this site is not
+        // total: the AB-BA cycle against `deleteStudentAccount` can still
+        // form through this window. Measured, not just reasoned: template
+        // with class A dated today and class B two weeks out, one student
+        // waitlisted on both; a hook on the candidate read below moves A to
+        // +21 days from outside this transaction, mid-transaction. The
+        // pre-lock covered only B; the archive returned `{ ok: true, deleted:
+        // 2 }` — it locked and deleted a row the ordered pre-lock never held.
+        // Narrow (it needs a concurrent reschedule of a same-day instance AND
+        // an erasure of a student waitlisted across both classes, timed into
+        // the same gap) and no worse than the pre-branch state, which had no
+        // ordering at all. Tracked as a residual, not closed here — see spec
+        // §7 risk 3. `syncTemplateInstances` does not share this exposure,
+        // for the structural reason given above: its write set is a subset
+        // of ids the pre-lock itself returned, not a predicate argument
+        // re-evaluated against whatever the table looks like when the write
+        // finally runs.
+        //
+        // The delete cannot instead be scoped to exactly the ids this
+        // pre-lock returns, the way the sync fix's is: that would undo the
+        // wide candidate read and the survivor filter #86/#112 depend on,
+        // which stay wide on purpose (see the comment above the candidate
+        // read). Nor can the pre-lock be widened past `date > today` to close
+        // this window — issues 86/112 require the delete's live predicate
+        // re-evaluation regardless, and widening the pre-lock past `today`
+        // would lock history for no gain, since a past-dated row is never a
+        // delete candidate.
         await tx.$queryRaw`
           SELECT c.id
           FROM "Class" c

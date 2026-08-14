@@ -76,7 +76,7 @@ export type TransactionClientOnly = Prisma.TransactionClient & { $transaction?: 
  * separate copies of the same string literal (this module and the two
  * template-claim sites), and a bound that is silently different in one place
  * is worse than one that is uniformly wrong: the two template claims and the
- * `Class` row lock deadlock against each other today (`docs/lock-order.md`,
+ * `Class` row lock are ordered in opposite directions (`docs/lock-order.md`,
  * "Known violation, not fixed here" — the `{Class, ClassTemplate}`
  * inversion), and reasoning about which side loses that race assumes both
  * sides wait the same length of time.

@@ -119,19 +119,30 @@ a call):
    `(teacherId, date, startTime)`, which is why this check alone no longer
    bounds the candidate set for `Class`, and neither does the multiplicity
    filter below;
-2. `'"Class"'` — the raw statements. All but one are single-id `FOR UPDATE`:
-   four written inline, plus `lockClassRow`'s body (itself called from exactly
-   five places, grep 3 — re-derived on the waitlist-reconciliation branch,
-   where the previous count of four turned out to be already stale). The
-   reconciliation sweep (`services/waitlist-reconciliation.ts`) adds no call
-   site of either kind, but it reaches **both** kinds through
-   `handleSpotFreed`: the broadcast branch's bounded `lockClassRow` at
-   `waitlist.ts:704`, and — via the auto-promote branch and `promoteNext` — one
-   of the four inline `FOR UPDATE`s, which is unbounded (#104). Stating only
-   the first would understate what a contended tick can wait on. Its
-   multiplicity is `autoCancelClasses`': a loop over classes, each in its own
-   `db.$transaction`, so it holds one row lock at a time and never two. The
-   exception is `withdrawWaitingEntriesForTeacher`'s join;
+2. `'"Class"'` — the raw statements: **8** in total, re-counted for this
+   branch rather than trusted (grep it yourself before relying on this
+   number — that is this whole subsection's point). **5** are single-id
+   `FOR UPDATE`: four written inline, plus `lockClassRow`'s body (itself
+   called from exactly five places, grep 3 — re-derived on the
+   waitlist-reconciliation branch, where the previous count of four turned
+   out to be already stale). The reconciliation sweep
+   (`services/waitlist-reconciliation.ts`) adds no call site of either kind,
+   but it reaches **both** kinds through `handleSpotFreed`: the broadcast
+   branch's bounded `lockClassRow` at `waitlist.ts:704`, and — via the
+   auto-promote branch and `promoteNext` — one of the four inline
+   `FOR UPDATE`s, which is unbounded (#104). Stating only the first would
+   understate what a contended tick can wait on. Its multiplicity is
+   `autoCancelClasses`': a loop over classes, each in its own
+   `db.$transaction`, so it holds one row lock at a time and never two. **The
+   other 3 are multi-row, not one**: `withdrawWaitingEntriesForTeacher`'s join
+   (`waitlist.ts:904`), and the atomic-template-update branch's two ordered
+   pre-locks — `syncTemplateInstances` (`template-sync.ts:77`) and
+   `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts:1149`), each an
+   `ORDER BY c.id … FOR UPDATE OF c` ahead of its own multi-row write (issue
+   180, "Ordering WITHIN `Class`" above). An earlier version of this passage
+   said "all but one … the exception is `withdrawWaitingEntriesForTeacher`'s
+   join" — true before those two pre-locks existed, stale now that the table
+   above them already reflects both;
 3. `lockClassRow(` — the helper's callers;
 4. **parent deletes that cascade onto `Class` without naming it** — the
    category a grep for `class.` misses. `Class` holds three FKs pointing *out*

@@ -756,8 +756,17 @@ describe('PATCH /api/class-templates/[id]', () => {
  * sweep's claim does to the same row. The route's transaction opens with
  * `setLockTimeout`, so its compare-and-swap gives up after 2s instead of
  * waiting the holder out — which is the whole outcome under test.
+ *
+ * Covers PUT too, not just PATCH, despite the describe's original name
+ * surviving from before PUT had a `busy` arm at all — the atomic-template-
+ * update branch gave `updateClassTemplate` one (spec §3.2), and its own
+ * `class-generator.test.ts:672` unit test pins the *service* outcome but
+ * nothing at the wire pinned the status, code or copy the way both PATCH
+ * siblings below already were. Same `holdTemplateRow` helper, same
+ * contention shape — the PUT case is added alongside these two rather than
+ * split into its own describe.
  */
-describe('PATCH /api/class-templates/[id] — lock contention', () => {
+describe('PATCH & PUT /api/class-templates/[id] — lock contention', () => {
   const holdTemplateRow = (id: string) => {
     let release!: () => void;
     const held = new Promise<void>((resolve) => {
@@ -863,6 +872,66 @@ describe('PATCH /api/class-templates/[id] — lock contention', () => {
 
         const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
         expect(after.isActive).toBe(true);
+      } finally {
+        release();
+        await settled.catch(() => {});
+      }
+    },
+    20_000,
+  );
+
+  it(
+    'answers 503 TEMPLATE_BUSY when a PUT edit loses the row, and changes nothing',
+    async () => {
+      const t = await prisma.classTemplate.create({
+        data: {
+          teacherId,
+          teacherRoomId,
+          classType: 'Busy PUT',
+          dayOfWeek: DAY_OF_WEEK,
+          startTime: '09:55',
+          durationMinutes: 60,
+          roomCost: 15,
+          minRate: 10,
+          targetRate: 20,
+          minStudents: 2,
+          maxStudents: 8,
+        },
+      });
+
+      const { release, settled } = holdTemplateRow(t.id);
+      // Let the holder take the row before the request contends for it.
+      await new Promise((r) => setTimeout(r, 100));
+
+      try {
+        const res = await fetch(`${BASE_URL}/api/class-templates/${t.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+          body: JSON.stringify({ classType: 'Renamed While Busy' }),
+        });
+
+        expect(res.status).toBe(503);
+        const json = (await res.json()) as { error: { code: string; message: string } };
+        expect(json.error.code).toBe('TEMPLATE_BUSY');
+        // Distinct copy from both PATCH busy branches above (spec §3.2's
+        // requirement is specifically against the pause/resume wording,
+        // "could not update this recurring class"; checked against the
+        // archive wording too since both live in the same file): this is the
+        // edit, those are the toggle.
+        expect(json.error.message).toContain(
+          'could not save your changes to this recurring class',
+        );
+        expect(json.error.message).not.toContain('could not update this recurring class');
+        expect(json.error.message).not.toContain('could not archive this recurring class');
+        // Asserted on all three arms, not just the PATCH ones: this sentence
+        // is the rollback promise, and dropping it from any would otherwise
+        // go unnoticed.
+        expect(json.error.message).toContain('Nothing was changed.');
+
+        // That last sentence is a promise about the data, so it is read back
+        // rather than trusted, matching the archive case above.
+        const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
+        expect(after.classType).toBe('Busy PUT');
       } finally {
         release();
         await settled.catch(() => {});

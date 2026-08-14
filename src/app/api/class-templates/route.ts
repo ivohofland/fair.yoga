@@ -104,9 +104,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // `invitations.ts`'s `acceptInvitation` and `unlinkTeacher` all open
       // their `$transaction` with no options, so every one of them locks
       // `Class` rows under it too. The ones that do budget past it are the
-      // four template lifecycle functions, both generator sweeps
-      // (`generateClassInstances`, `generateStudioClassInstances`) and this
-      // route's own studio twin — "most", not "every", and not "the four".
+      // five template lifecycle functions (`updateClassTemplate`,
+      // `pauseOrResumeTemplate`, `archiveOrUnarchiveTemplate` and their two
+      // studio twins — `updateClassTemplate` is the fifth, since the
+      // atomic-template-update branch gave its transaction its own
+      // `{ timeout: 15_000 }`), both generator sweeps (`generateClassInstances`,
+      // `generateStudioClassInstances`) and this route's own studio twin —
+      // "most", not "every", and not "the five".
       //
       // `syncTemplateInstances` (`template-sync.ts`) no longer belongs on
       // either list: since the atomic-template-update branch (issue 83) it
@@ -126,7 +130,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // of this comment claimed it did. Prisma checks the budget at statement
       // boundaries, so it "cannot roll back a statement already blocked inside
       // Postgres, only refuse to start a new one" (`db-locks.ts`) — measured
-      // by the four lifecycle functions' mutation records, where removing
+      // by the five lifecycle functions' mutation records, where removing
       // their `setLockTimeout` leaves the blocked statement outliving the 10s
       // budget rather than being aborted at it. What the budget buys is room
       // for the three statements' own runtime; the FK wait itself is unbounded.

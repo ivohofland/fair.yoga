@@ -194,13 +194,18 @@ export function isRecordNotFound(error: unknown): boolean {
  * including non-Error throwables, yields an ApiFailure.
  *
  * The lock-race-to-503 mapping this docblock once described as unqueued has
- * landed (the transient branch below), and the `busy` variants on the four
- * template lifecycle result unions have landed alongside it. They remain
+ * landed (the transient branch below), and the `busy` variants on the five
+ * template lifecycle result unions have landed alongside it — the
+ * atomic-template-update branch made `UpdateClassTemplateResult`
+ * (`class-template-lifecycle.ts`) the fifth, alongside `PauseTemplateResult`,
+ * `ArchiveTemplateResult` and their two studio twins. They remain
  * complementary rather than redundant, and it is worth saying which does
- * what: the unions make contention a COMPILE error at four specific routes,
- * which a catch-all cannot; this branch makes it legible everywhere else,
- * which the unions cannot. A service that catches contention never reaches
- * here — by design, since it can say something more specific than this can.
+ * what: the unions make contention a COMPILE error at five specific routes
+ * (`PUT` and both `PATCH` branches at `/api/class-templates/[id]`, and both
+ * `PATCH` branches at `/api/studio-class-templates/[id]`), which a catch-all
+ * cannot; this branch makes it legible everywhere else, which the unions
+ * cannot. A service that catches contention never reaches here — by design,
+ * since it can say something more specific than this can.
  */
 export function classifyApiError(error: unknown): ApiFailure {
   // The terminality trigger (migration 20260805120000) raises with SQLSTATE

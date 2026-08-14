@@ -631,11 +631,20 @@ describe('generateClassInstances (DB)', () => {
      * `updateClassTemplate`'s own budget (`class-template-lifecycle.ts`),
      * pinned the same way the two transactions above pin theirs. Derived, not
      * arbitrary — spec §2.4: five statements in that transaction can each
-     * wait on the lock timeout at 2s (its own `setLockTimeout` call,
-     * `classTemplate.update`, and `syncTemplateInstances`'s own pre-lock,
-     * same-day update and wrong-day delete), so `10_000` would be consumed
-     * entirely by lock waits with nothing left over for the transaction's
-     * actual work.
+     * wait on the lock timeout at 2s. `setLockTimeout` itself is not one of
+     * them — it issues `SET LOCAL lock_timeout`, which can never wait on a
+     * lock. The five that can: `classTemplate.update` (the CAS), the ordered
+     * `FOR UPDATE OF c` pre-lock, `class.deleteMany` (the wrong-day delete —
+     * it cascades onto `WaitlistEntry` children the pre-lock does not cover,
+     * so the delete itself can still wait on one), `class.updateMany`
+     * (the same-day propagation, a real index-entry wait on
+     * `Class_teacher_slot_unique`), and the refill's `createManyAndReturn`
+     * (also a real index-entry wait, same index). Conservative, since
+     * `wrongDay` and `sameDay` are near-mutually-exclusive in practice — an
+     * earlier version of this comment named `setLockTimeout` and
+     * `syncTemplateInstances`'s own pre-lock as two of the five and omitted
+     * the refill; the total of five was right by coincidence, not by this
+     * derivation.
      *
      * `description`, not `classType` like the busy test below: this call is
      * expected to actually commit, and a distinct field keeps the two tests'

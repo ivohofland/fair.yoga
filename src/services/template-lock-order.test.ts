@@ -337,23 +337,48 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       // transaction that used to take them itself.
       const a = prisma.$transaction((tx) => syncTemplateInstances(tx, templateId));
 
-      // The assertion is the ABSENCE of `40P01`, not a specific success on
-      // either side — same rationale as `invitations-lock-order.test.ts`'s own
-      // "does not deadlock" tests: the ordered pre-lock forces whichever side
-      // asks second to wait rather than cycle, not that either side is
-      // guaranteed to win.
-      //
+      // Destructured, not looped over generically — matching the archive
+      // test below, and for the same reason it does: a loop that only ever
+      // inspects rejections asserts the ABSENCE of `40P01`/`55P03`, which a
+      // fixture that never contended for the rows would also satisfy. This
+      // side has no transient-error `catch` of its own — a real deadlock or
+      // lock-timeout surfaces as a rejection here, not a resolved `busy` —
+      // so a rejection check on `aSettled` stays meaningful. What it cannot
+      // catch on its own is a sync that ran uncontended over the WRONG rows
+      // (or none at all), which is why `aSettled.value` is asserted below
+      // too: `synced: 2` is what proves both fixture instances were actually
+      // matched and actually locked by this statement's writes — the same
+      // role `deleted: 2` plays for the archive test, and the heap-order
+      // assertion above plays for lock ORDER, this plays for lock EXISTENCE.
+      const [aSettled, bSettled] = await Promise.allSettled([a, b]);
+
+      expect(aSettled.status).toBe('fulfilled');
+      if (aSettled.status === 'fulfilled') {
+        // Both fixture instances are on the template's own day — only
+        // `startTime` changed, not `dayOfWeek` — so nothing is wrong-day:
+        // `regenerated` (the wrong-day delete count) is 0. Both are future
+        // and `settingsLocked: false`, so both are `mutable`: `synced` is 2
+        // and `kept` (`future.length - mutable.length`) is 0. `toMatchObject`,
+        // not `toEqual` — measured directly (this assertion started as
+        // `toEqual` and failed with the real shape before being corrected):
+        // `TemplateSyncResult` also carries `refilled`/`slotTaken`/
+        // `blockedByCancelled`, all legitimately 0 here (no dayOfWeek change,
+        // so no refill window at all), but asserting them by name isn't this
+        // test's job — `template-sync.test.ts` already owns that.
+        expect(aSettled.value).toMatchObject({ synced: 2, kept: 0, regenerated: 0 });
+      }
+
       // Also the absence of `55P03`, asserted separately from `40P01|deadlock`
       // (see this file's top docblock for why one regex would weaken the
       // guarantee rather than just shorten it) — a lock_timeout expiry means
       // the template edit did not happen, and that must fail this test, not
       // satisfy it.
-      for (const settled of await Promise.allSettled([a, b])) {
-        if (settled.status === 'rejected') {
-          const reason = String(settled.reason);
-          expect(reason).not.toMatch(/40P01|deadlock/i);
-          expect(reason).not.toMatch(/55P03/);
-        }
+      if (bSettled.status === 'rejected') {
+        const reason = String(bSettled.reason);
+        expect(reason).not.toMatch(/40P01|deadlock/i);
+        expect(reason).not.toMatch(/55P03/);
+      } else {
+        expect(bSettled.status).toBe('fulfilled');
       }
     },
     30_000,
@@ -432,7 +457,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    *    transient-error `catch` never fired. That also de-vacuums point 2:
    *    the spy's `.find()` is keyed on the exact log-message string
    *    ("recurring class archive lost the template lock race",
-   *    `class-template-lifecycle.ts:1104`), so a rename there would make
+   *    `class-template-lifecycle.ts:1324`), so a rename there would make
    *    `toBeUndefined()` pass for the wrong reason — silently, since a
    *    renamed message just never matches the old string again. The
    *    `ok: true` assertion has no such coupling and catches the same

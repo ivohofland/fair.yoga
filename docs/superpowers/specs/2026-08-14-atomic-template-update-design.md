@@ -507,6 +507,27 @@ deferred with a reason.
    lock can also be taken by an FK `FOR KEY SHARE` from an uncommitted `INSERT`
    into a `Class` child — a route no grep for `Class` will show. This branch does
    not add such an insert; a future one at either site reopens the cycle.
+   A second, narrower residual is already live at the archive's pre-lock
+   (`class-template-lifecycle.ts`), not the sync's: `updateClass`
+   (`class-lifecycle.ts`) writes `Class.date` through a bare
+   `db.class.updateMany` that holds neither the `ClassTemplate` lock nor a
+   `Class` lock this pre-lock takes. A same-day instance — outside the
+   pre-lock's `date > today` predicate — rescheduled into the future between
+   the pre-lock and the `deleteMany` (whose predicate is re-evaluated at
+   execution time, by design) can still be matched and deleted without ever
+   having been locked by the pre-lock. So the ascending-order guarantee at
+   this site is not total, and the AB-BA against `deleteStudentAccount` can
+   still form — narrow (it needs a concurrent reschedule of a same-day
+   instance *and* an erasure of a student waitlisted across both classes,
+   timed into the same gap) and no worse than the pre-branch state, which had
+   no ordering at all. `syncTemplateInstances`'s pre-lock does not share this
+   exposure: its write set is `id: { in: lockedIds }`, a structural subset of
+   the ids the pre-lock itself returned, not a predicate argument
+   re-evaluated later. Not fixed here — narrowing the `deleteMany` or
+   widening the pre-lock past `date > today` are both ruled out: issues 86/112
+   need the delete's live predicate re-evaluation regardless, and widening the
+   pre-lock past `today` would lock history for no gain, since a past-dated
+   row is never a delete candidate.
 4. **Longer-held locks on an everyday action.** Editing a recurring class now
    holds the template row and its instances for up to 15 s under contention
    where it previously held three shorter transactions. The `busy` outcome makes
