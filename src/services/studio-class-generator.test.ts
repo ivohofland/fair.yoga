@@ -7,7 +7,10 @@ import {
   claimStudioTemplateForGeneration,
   generateStudioInstancesForTemplate,
 } from './studio-class-generator';
-import { archiveOrUnarchiveStudioTemplate } from './studio-class-template-lifecycle';
+import {
+  archiveOrUnarchiveStudioTemplate,
+  pauseOrResumeStudioTemplate,
+} from './studio-class-template-lifecycle';
 // The studio family shares the class family's date maths (#94), so the tests
 // compute candidate dates the same way the generator does rather than
 // hardcoding them — a window-logic change then fails loudly instead of drifting.
@@ -307,6 +310,118 @@ describe('generateStudioClassInstances (DB)', () => {
       expect(result.ok).toBe(true);
       expect(recordedOptions).toEqual({ timeout: 10_000 });
     });
+
+    /**
+     * The studio half of the bound. The class family's equivalent
+     * (`class-generator.test.ts`'s `answers busy when the generation claim
+     * holds the row past the lock timeout`) proves the same mechanism, but
+     * this is not a duplicate of it: the two functions have separate
+     * transactions, separate catches and separate result unions, so a bound
+     * dropped from one leaves the other's test green.
+     *
+     * The upper bound is the assertion that matters — a 2s `lock_timeout`
+     * and a 10s transaction budget both end in a rejected wait, and only the
+     * timing separates them.
+     */
+    it(
+      'answers busy when the generation claim holds the row past the lock timeout',
+      async () => {
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+
+        const claiming = prisma.$transaction(
+          async (tx) => {
+            expect(await claimStudioTemplateForGeneration(tx, templateId)).not.toBeNull();
+            await held;
+          },
+          { timeout: 15_000 },
+        );
+
+        await new Promise((r) => setTimeout(r, 100));
+
+        const startedAt = Date.now();
+        const result = await archiveOrUnarchiveStudioTemplate(
+          prisma,
+          templateId,
+          teacherId,
+          'archived',
+        );
+        const waited = Date.now() - startedAt;
+
+        release();
+        await claiming;
+
+        expect(result).toEqual({ ok: false, reason: 'busy' });
+        expect(waited).toBeGreaterThanOrEqual(1_800);
+        expect(waited).toBeLessThan(5_000);
+      },
+      20_000,
+    );
+
+    /**
+     * The site the issue never names. Unlike its three siblings this function
+     * had no `catch` whatsoever, so a lost lock race propagated raw.
+     *
+     * The PAUSE arm, for the reason its class-family twin records in full:
+     * `claimStudioTemplateForGeneration` selects `WHERE isActive = true`, a
+     * resume only runs on a paused template, and the two sets are disjoint —
+     * so a resume cannot lose to the claim.
+     *
+     * One consequence worth stating, because it is a coverage gap rather than
+     * a non-issue: the pause arm does NOT take the generation claim (only the
+     * active arm does), so this test does not exercise the claim re-issuing
+     * the same 2s bound partway through the transaction. That re-issue is
+     * safe by `setLockTimeout`'s own documented overwrite semantics, and the
+     * bound the CAS waits under is the one set at the top either way — but
+     * nothing here proves it.
+     */
+    it(
+      'answers busy when a studio pause loses the row to the generation claim',
+      async () => {
+        // The sweep claims only an ACTIVE template, so this test needs one.
+        await prisma.studioClassTemplate.update({
+          where: { id: templateId },
+          data: { isActive: true, isArchived: false },
+        });
+
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+
+        const claiming = prisma.$transaction(
+          async (tx) => {
+            expect(await claimStudioTemplateForGeneration(tx, templateId)).not.toBeNull();
+            await held;
+          },
+          { timeout: 15_000 },
+        );
+
+        await new Promise((r) => setTimeout(r, 100));
+
+        const startedAt = Date.now();
+        const result = await pauseOrResumeStudioTemplate(prisma, templateId, teacherId, 'paused');
+        const waited = Date.now() - startedAt;
+
+        release();
+        await claiming;
+
+        expect(result).toEqual({ ok: false, reason: 'busy' });
+        expect(waited).toBeGreaterThanOrEqual(1_800);
+        expect(waited).toBeLessThan(5_000);
+
+        // Matters most during mutation runs: with the bound removed the pause
+        // SUCCEEDS, and an un-restored paused template would silently change
+        // what later tests in this file are running against.
+        await prisma.studioClassTemplate.update({
+          where: { id: templateId },
+          data: { isActive: true },
+        });
+      },
+      20_000,
+    );
   });
 
   describe('generateStudioClassInstances — archive mid-sweep', () => {

@@ -31,6 +31,8 @@ import type { NoneOf } from '@/lib/type-pins';
 import { startOfLocalDay } from '@/lib/timezone';
 import { formatDayHeader } from '@/lib/format';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { isTransientDbError } from '@/lib/api-errors';
+import { setLockTimeout } from '@/lib/db-locks';
 // Server-only (pino). Safe here: this module's sole importer is
 // `api/class-templates/[id]/route.ts`, and it already pulls `@/lib/log`
 // transitively through `class-generator`. No `'use client'` component
@@ -439,7 +441,8 @@ export type PauseTemplateResult =
   | { ok: true; action: 'unchanged'; template: ClassTemplate }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
-  | { ok: false; reason: 'archived' };
+  | { ok: false; reason: 'archived' }
+  | { ok: false; reason: 'busy' };
 
 /**
  * Archiving and un-archiving are different operations and report different
@@ -453,7 +456,14 @@ export type ArchiveTemplateResult =
   | { ok: true; action: 'unchanged'; template: ClassTemplate }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
-  | { ok: false; reason: 'slot_conflict' };
+  | { ok: false; reason: 'slot_conflict' }
+  /**
+   * The template row was held by another writer — the generation sweep, or
+   * another tab's archive or resume — for longer than the 2s `lock_timeout`.
+   * The whole transaction rolled back, so nothing was applied and the
+   * identical request can win the next attempt.
+   */
+  | { ok: false; reason: 'busy' };
 
 /**
  * Statuses a generated instance can still be withdrawn or regenerated from.
@@ -525,6 +535,11 @@ export async function pauseOrResumeTemplate(
   const updated = await db
     .$transaction(
       async (tx) => {
+        // Bounds every statement left in this transaction, the `update` below
+        // first among them — the sweep's claim holds this row `FOR UPDATE`,
+        // and without this the wait is bounded only by the 10s budget.
+        await setLockTimeout(tx);
+
         const t = await tx.classTemplate.update({
           where: { id: templateId },
           data: { isActive: desiredActive },
@@ -618,12 +633,29 @@ export async function pauseOrResumeTemplate(
       // just took — so on a transaction client that row provably exists and
       // cannot raise P2025. Safe for the reason the lock gives, not because
       // it is a read.
+      // Transient first, ahead of the P2025 sentinel below: `P2028`/`P2024`
+      // are `PrismaClientKnownRequestError`s too, so testing `err.code ===
+      // 'P2025'` first is safe today only because those codes differ — the
+      // ordering is kept explicit so it stays safe if either test widens.
+      //
+      // A SECOND sentinel, because `null` already means P2025 below. Both are
+      // narrowed at the call site; returning a bare `null` here for both would
+      // report a busy template as `not_found`, which is the wrong answer and
+      // an unretryable-sounding one.
+      if (isTransientDbError(err)) {
+        log.warn(
+          { err, templateId, teacherId },
+          'recurring class pause/resume lost the template lock race',
+        );
+        return 'busy' as const;
+      }
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
         return null;
       }
       throw err;
     });
 
+  if (updated === 'busy') return { ok: false, reason: 'busy' };
   if (updated === null) return { ok: false, reason: 'not_found' };
 
   const { template: updatedTemplate, generation, scheduled } = updated;
@@ -734,6 +766,11 @@ export async function archiveOrUnarchiveTemplate(
   try {
     return await db.$transaction(
       async (tx) => {
+        // Bounds every statement left in this transaction, the CAS below first
+        // among them — the sweep's claim holds this row `FOR UPDATE`, and
+        // without this the wait is bounded only by the 10s budget.
+        await setLockTimeout(tx);
+
         // Compare-and-swap, the pattern `updateClass` already uses for #72.
         // Constraining the write to `isArchived: !archiving` makes the
         // *transition* the thing that can happen only once: two archives that
@@ -976,14 +1013,20 @@ export async function archiveOrUnarchiveTemplate(
       // The compare-and-swap above locks the same row the generator sweep's
       // `claimTemplateForGeneration` (class-generator.ts) holds `FOR UPDATE` for
       // the duration of its own per-template transaction. The CAS's own `FOR NO
-      // KEY UPDATE` conflicts with that, so an archive can now block on a sweep
-      // in progress. Matching the sweep's 10s transaction
-      // timeout means this waits at most as long as the sweep could possibly
-      // run, not Prisma's 5s default — which a loaded VPS can exceed and turn
-      // an ordinary archive click into an opaque P2028.
+      // KEY UPDATE` conflicts with that, so an archive can block on a sweep in
+      // progress. The wait itself is now bounded by the transaction's own
+      // `setLockTimeout` (2s); this budget covers the transaction's own work —
+      // the delete, the notifications, the record write — not the wait. Matching
+      // the sweep's 10s transaction timeout still matters: a loaded VPS can
+      // exceed Prisma's 5s default and turn an ordinary archive click into an
+      // opaque P2028.
       { timeout: 10_000 },
     );
   } catch (err) {
+    if (isTransientDbError(err)) {
+      log.warn({ err, templateId, teacherId }, 'recurring class archive lost the template lock race');
+      return { ok: false, reason: 'busy' };
+    }
     if (isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime'])) {
       return { ok: false, reason: 'slot_conflict' };
     }

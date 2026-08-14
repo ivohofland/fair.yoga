@@ -35,6 +35,8 @@
 import type { PrismaClient, StudioClassTemplate } from '@prisma/client';
 import { startOfLocalDay } from '@/lib/timezone';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { isTransientDbError } from '@/lib/api-errors';
+import { setLockTimeout } from '@/lib/db-locks';
 import { countSkipReasons } from '@/lib/generation';
 // Server-only (pino). Safe here: this module's sole importer is
 // `api/studio-class-templates/[id]/route.ts`, and it already pulls `@/lib/log`
@@ -123,7 +125,8 @@ export type PauseStudioTemplateResult =
   | { ok: true; action: 'unchanged'; template: StudioClassTemplate }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
-  | { ok: false; reason: 'archived' };
+  | { ok: false; reason: 'archived' }
+  | { ok: false; reason: 'busy' };
 
 /**
  * Archiving and un-archiving are different operations and report different
@@ -143,7 +146,14 @@ export type ArchiveStudioTemplateResult =
   | { ok: true; action: 'unchanged'; template: StudioClassTemplate }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
-  | { ok: false; reason: 'slot_conflict' };
+  | { ok: false; reason: 'slot_conflict' }
+  /**
+   * The template row was held by another writer — the generation sweep, or
+   * another tab's archive or resume — for longer than the 2s `lock_timeout`.
+   * The whole transaction rolled back, so nothing was applied and the
+   * identical request can win the next attempt.
+   */
+  | { ok: false; reason: 'busy' };
 
 /**
  * Studio classes still on the schedule for a template, from the given
@@ -222,9 +232,10 @@ type ResumeTransactionOutcome =
  * rather than only wait for a contended row. The CAS itself takes `FOR NO
  * KEY UPDATE`, which conflicts with a sweep's claim (`FOR UPDATE`) or a
  * concurrent archive's own CAS (also `FOR NO KEY UPDATE`), and can queue
- * behind either for up to this transaction's 10s budget below — the claim's
- * 2s `lock_timeout` is not set yet at that point, so nothing bounds this
- * particular wait but the 10s. Once the CAS succeeds this transaction already
+ * behind either. The transaction's own `setLockTimeout(tx)` — its first
+ * statement — bounds that wait at the same 2s `lock_timeout`, so the 10s
+ * budget covers this transaction's own work, not the wait. Once the CAS
+ * succeeds this transaction already
  * holds `FOR NO KEY UPDATE`, so the claim's own `FOR UPDATE` below can then
  * only be blocked by something compatible with that but not with `FOR
  * UPDATE` — a concurrent `StudioClass` insert's `FOR KEY SHARE` FK check —
@@ -277,9 +288,16 @@ export async function pauseOrResumeStudioTemplate(
   // by the CAS's disambiguation below, not by this check.
   if (template.isArchived) return { ok: false, reason: 'archived' };
 
-  const result = await db.$transaction(
-    async (tx): Promise<ResumeTransactionOutcome> => {
-      // Compare-and-swap, mirroring `archiveOrUnarchiveStudioTemplate`:
+  let result: ResumeTransactionOutcome;
+  try {
+    result = await db.$transaction(
+      async (tx): Promise<ResumeTransactionOutcome> => {
+        // Bounds every statement left in this transaction, the CAS below first
+        // among them — the sweep's claim holds this row `FOR UPDATE`, and
+        // without this the wait is bounded only by the 10s budget.
+        await setLockTimeout(tx);
+
+        // Compare-and-swap, mirroring `archiveOrUnarchiveStudioTemplate`:
       // constraining the write to the exact `isActive`/`isArchived` values
       // already read above makes the transition itself — not just this
       // request — what can happen only once, closing the race the two fast
@@ -487,10 +505,30 @@ export async function pauseOrResumeStudioTemplate(
         slotTaken,
       };
     },
-    // The sweep's claim can hold this row for its own full 10s transaction;
-    // Prisma's 5s default would abort us mid-wait.
+    // Three 10s budgets: the claim's own transaction, this transaction, and
+    // this wait at the head of one of the sweep's. They used to compose as a
+    // chain — each 10s "waits at most as long as the next link runs" — but
+    // they do not: `claimStudioTemplateForGeneration` selects `WHERE
+    // "isActive" = true`, and the resume below only runs on a paused template
+    // (its CAS constrains `isActive: false`), so a resume can never sit
+    // between two claims as the middle link — it can only be the HEAD that
+    // waits out a sweep's claim. Matching the sweep's 10s transaction timeout
+    // still matters, because Prisma's 5s default can be exceeded by a loaded
+    // VPS and turn an ordinary resume click into an opaque P2028.
     { timeout: 10_000 },
   );
+  } catch (err) {
+    // Transient first, and this is the one lifecycle function that had no
+    // catch at all — a P2028 from a contended wait used to escape as a 500.
+    if (isTransientDbError(err)) {
+      log.warn(
+        { err, templateId, teacherId },
+        'studio class pause/resume lost the template lock race',
+      );
+      return { ok: false, reason: 'busy' };
+    }
+    throw err;
+  }
 
   // A `switch` rather than the four-`if` chain this replaces, because that
   // chain's exhaustiveness was accidental. It ended in a bare fall-through to
@@ -607,6 +645,11 @@ export async function archiveOrUnarchiveStudioTemplate(
   try {
     return await db.$transaction(
       async (tx) => {
+        // Bounds every statement left in this transaction, the CAS below first
+        // among them — the sweep's claim holds this row `FOR UPDATE`, and
+        // without this the wait is bounded only by the 10s budget.
+        await setLockTimeout(tx);
+
         // Compare-and-swap, mirroring `archiveOrUnarchiveTemplate` — see there
         // for what a plain `update` cost: the loser of a race overwrote the
         // winner's `archivedAt`/`withdrawnCount` with a `0` its own
@@ -725,24 +768,33 @@ export async function archiveOrUnarchiveStudioTemplate(
       // the CAS's own `FOR NO KEY UPDATE` conflicts with that — the conflict is
       // what gives this the claim-and-lock treatment, not the
       // timeout below; this archive can block on a sweep in progress today, or
-      // now on a resume: `pauseOrResumeStudioTemplate`'s own CAS holds this same
-      // row from its `updateMany` through generation to commit, on the same 10s
-      // budget, so a user-facing PATCH can make an archive wait exactly as a
-      // background sweep can (#94). The 10s figure matches both of those peers'
-      // transaction timeouts so Prisma's 5s default does not abort this update
-      // while it waits — a VPS can exceed 5s, which would otherwise turn an
-      // ordinary archive click into an opaque P2028. Three 10s budgets do not
-      // compose, though: if a sweep is holding the row when a resume queues
-      // behind it, and this archive then queues behind that resume, this
+      // now on a pause or resume: `pauseOrResumeStudioTemplate`'s own CAS holds
+      // this same row from its `updateMany` through generation to commit, on
+      // the same 10s budget, so a user-facing PATCH can make an archive wait
+      // exactly as a background sweep can (#94). The 10s figure matches both of
+      // those peers' transaction timeouts so Prisma's 5s default does not abort
+      // this update while it waits — a VPS can exceed 5s, which would otherwise
+      // turn an ordinary archive click into an opaque P2028. Three 10s budgets
+      // do not compose, though: if a sweep is holding the row when a pause
+      // queues behind it, and this archive then queues behind that pause, this
       // archive's own 10s clock is already running while it waits its turn —
       // so the last link in that chain — this archive, waiting behind a
       // waiter — is the one most likely to exhaust its own budget and surface
       // P2028 without ever reaching its own work (#113 owns that error
-      // surface). The sweep at the head holds rather than waits, so it is a
-      // chain of three participants but only two waiters.
+      // surface). A *resume* cannot be that middle link: the claim selects
+      // `WHERE "isActive" = true` while a resume only ever runs on a paused
+      // template (its CAS constrains `isActive: false`), so no claim is ever
+      // waiting on a row a resume holds — a resume can only ever be the HEAD
+      // of a wait chain, never a middle link. The sweep at the head holds
+      // rather than waits, so it is a chain of three participants but only two
+      // waiters.
       { timeout: 10_000 },
     );
   } catch (err) {
+    if (isTransientDbError(err)) {
+      log.warn({ err, templateId, teacherId }, 'studio class archive lost the template lock race');
+      return { ok: false, reason: 'busy' };
+    }
     if (isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime'])) {
       return { ok: false, reason: 'slot_conflict' };
     }

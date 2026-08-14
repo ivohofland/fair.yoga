@@ -157,6 +157,13 @@ export const PATCH = withErrorHandler(async (
         'DUPLICATE_TEMPLATE_SLOT',
       );
     }
+    if (result.reason === 'busy') {
+      return respondError(
+        `The system was busy and could not ${state === 'archived' ? 'archive' : 'unarchive'} this recurring class. Nothing was changed. Wait a moment, then try again.`,
+        503,
+        'TEMPLATE_BUSY',
+      );
+    }
 
     // Exhaustiveness: a new ArchiveTemplateResult reason becomes a compile
     // error here rather than being silently answered with the wrong status.
@@ -206,6 +213,13 @@ export const PATCH = withErrorHandler(async (
   // shelved.
   if (result.reason === 'archived') {
     return respondError('Unarchive the template before activating it', 409);
+  }
+  if (result.reason === 'busy') {
+    return respondError(
+      'The system was busy and could not update this recurring class. Nothing was changed. Wait a moment, then try again.',
+      503,
+      'TEMPLATE_BUSY',
+    );
   }
 
   // Exhaustiveness: a new PauseTemplateResult reason becomes a compile error

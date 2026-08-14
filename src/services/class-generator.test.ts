@@ -375,33 +375,24 @@ describe('generateClassInstances (DB)', () => {
     });
 
     /**
-     * Regression guard for `archiveOrUnarchiveTemplate`'s own
-     * `{ timeout: 10_000 }` (review round 1, finding 1). That fix is on the
-     * *Prisma* transaction timeout on the archive side, which is a different
-     * axis from the claim's 2s Postgres `lock_timeout` the test above and the
-     * mid-sweep race test both stay well under (~300-400ms of headroom) —
-     * neither of those can tell a 10s budget from Prisma's unset 5s default,
-     * because neither holds the lock anywhere near either number. This test
-     * has to actually cross 5s, or deleting `{ timeout: 10_000 }` from
-     * `archiveOrUnarchiveTemplate` leaves the whole suite green.
+     * Replaces a test that held the claim for 5.5s and asserted the archive
+     * still resolved `ok: true`, proving `{ timeout: 10_000 }` beat Prisma's
+     * 5s default. That proof is now unwritable: the archive takes a 2s
+     * `lock_timeout`, so it can no longer wait 5.5s for a row under any
+     * budget. The 10s budget still matters — it now covers the archive's own
+     * work rather than its wait — and `studio-class-generator.test.ts`'s
+     * `opens its transaction with { timeout: 10_000 }` pins that it is still
+     * passed.
      *
-     * Deliberately slow (~5.5s, on top of everything else in this file) —
-     * that's the cost of a guard that means something. Do not shorten the
-     * hold below 5s: it has to clear Prisma's default, not brush it.
-     *
-     * This is now the one place in either family that proves the timeout
-     * actually does something end to end. The studio side used to pay for an
-     * identical ~5.5s hold to prove the same mechanism a second time — since
-     * Prisma's `$transaction` timeout isn't family-specific, that bought
-     * nothing but 5.5 more seconds per run, so its test was replaced with a
-     * cheap assertion that `archiveOrUnarchiveStudioTemplate` still passes
-     * `{ timeout: 10_000 }` (`studio-class-generator.test.ts`'s `opens its
-     * transaction with { timeout: 10_000 }`). That leaves this test as the
-     * only one actually exercising the 5s boundary — do not delete it under
-     * the assumption the studio side still covers it.
+     * What this pins instead is the bound itself, and the two bounds are
+     * distinguishable only by timing: a 2s `lock_timeout` and a 10s
+     * transaction budget both end in a rejected wait, so asserting merely
+     * that the archive failed would go green against either. The upper bound
+     * below is the whole assertion — it fails if the `lock_timeout` is
+     * removed and the transaction budget produces the outcome instead.
      */
     it(
-      'lets a concurrent archive outlive its own transaction default once the claim holds past it',
+      'answers busy when the generation claim holds the row past the lock timeout',
       async () => {
         let release!: () => void;
         const held = new Promise<void>((resolve) => {
@@ -419,24 +410,80 @@ describe('generateClassInstances (DB)', () => {
         // Let the claim acquire the lock before the archive contends for it.
         await new Promise((r) => setTimeout(r, 100));
 
-        const archiving = archiveOrUnarchiveTemplate(prisma, templateId, teacherId, 'archived');
-
-        // Hold past Prisma's 5s default on the archive side — comfortably
-        // above it (5.5s), not just brushing it, so this doesn't flake right
-        // at the boundary it exists to cross.
-        await new Promise((r) => setTimeout(r, 5_500));
+        const startedAt = Date.now();
+        const result = await archiveOrUnarchiveTemplate(prisma, templateId, teacherId, 'archived');
+        const waited = Date.now() - startedAt;
 
         release();
         await claiming;
 
-        // With { timeout: 10_000 } on the archive's transaction, it waited
-        // out the lock and succeeded. Without it, Prisma would have aborted
-        // the archive's transaction with P2028 around the 5s mark, and this
-        // `await` would reject instead of resolving `ok: true`.
-        const result = await archiving;
-        expect(result.ok).toBe(true);
+        expect(result).toEqual({ ok: false, reason: 'busy' });
+
+        // The 2s lock_timeout produced this, not the 10s transaction budget.
+        // Lower bound proves it actually waited rather than failing instantly
+        // for some unrelated reason; upper bound proves which clock fired.
+        expect(waited).toBeGreaterThanOrEqual(1_800);
+        expect(waited).toBeLessThan(5_000);
       },
-      15_000,
+      20_000,
+    );
+
+    /**
+     * Pause/resume takes the same row as the archive, in the same kind of
+     * transaction, against the same sweep — so it had the same unbounded
+     * wait. Its own union carries `busy` separately, and a bound dropped
+     * here would leave the archive's test green.
+     *
+     * The PAUSE arm, not the resume. The plan's first draft called the resume
+     * with the template paused first; that cannot work, because the claim
+     * refuses paused templates (`WHERE "isActive" = true`), so the claim
+     * returned null and the test died at its own setup assertion — the
+     * plan's predicted failure ("the resume waits the claim out and resolves
+     * `ok: true`") was unreachable. A resume can never lose this race: the
+     * claim only locks active templates, and a resume only runs on a paused
+     * one. The arm that genuinely contends with the sweep is the pause —
+     * active template, claim holds the row, the pause's update blocks on it.
+     * Recorded in the mutations file under Task 3.
+     */
+    it(
+      'answers busy when a pause loses the row to the generation claim',
+      async () => {
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+
+        const claiming = prisma.$transaction(
+          async (tx) => {
+            expect(await claimTemplateForGeneration(tx, templateId)).not.toBeNull();
+            await held;
+          },
+          { timeout: 15_000 },
+        );
+
+        await new Promise((r) => setTimeout(r, 100));
+
+        const startedAt = Date.now();
+        const result = await pauseOrResumeTemplate(prisma, templateId, teacherId, 'paused');
+        const waited = Date.now() - startedAt;
+
+        release();
+        await claiming;
+
+        expect(result).toEqual({ ok: false, reason: 'busy' });
+        expect(waited).toBeGreaterThanOrEqual(1_800);
+        expect(waited).toBeLessThan(5_000);
+
+        // Restore even though the pause above lost: the mutation runs in
+        // this block (Step 9) can let the pause succeed and commit, and an
+        // un-restored paused template would silently change what later tests
+        // in this file run against.
+        await prisma.classTemplate.update({
+          where: { id: templateId },
+          data: { isActive: true },
+        });
+      },
+      20_000,
     );
   });
 

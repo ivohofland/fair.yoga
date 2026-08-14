@@ -116,6 +116,13 @@ export const PATCH = withErrorHandler(async (
         'DUPLICATE_STUDIO_TEMPLATE_SLOT',
       );
     }
+    if (result.reason === 'busy') {
+      return respondError(
+        `The system was busy and could not ${state === 'archived' ? 'archive' : 'unarchive'} this recurring studio class. Nothing was changed. Wait a moment, then try again.`,
+        503,
+        'STUDIO_TEMPLATE_BUSY',
+      );
+    }
 
     // Exhaustiveness: a new ArchiveStudioTemplateResult reason becomes a
     // compile error here rather than being silently answered with the wrong
@@ -170,6 +177,13 @@ export const PATCH = withErrorHandler(async (
   // `studio-class-template-lifecycle.test.ts`.
   if (result.reason === 'archived') {
     return respondError('Unarchive the template before activating it', 409);
+  }
+  if (result.reason === 'busy') {
+    return respondError(
+      'The system was busy and could not update this studio class. Nothing was changed. Wait a moment, then try again.',
+      503,
+      'STUDIO_TEMPLATE_BUSY',
+    );
   }
 
   // Exhaustiveness: a new PauseStudioTemplateResult reason becomes a compile
