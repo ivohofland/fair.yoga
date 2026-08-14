@@ -488,16 +488,27 @@ Add to `src/services/class-generator.test.ts`, in the same `describe` block as T
      * wait. Its own union carries `busy` separately, and a bound dropped
      * here would leave the archive's test green.
      *
-     * `active` rather than `paused` deliberately: the resume arm is the one
-     * that generates, so it holds the row longest and is the arm a teacher
-     * is most likely to have contend with a sweep.
+     * The PAUSE arm, and that is forced rather than chosen.
+     * `claimTemplateForGeneration` selects `WHERE isActive = true AND
+     * isArchived = false`, so the sweep never claims a paused template — and
+     * a resume only ever runs on one, because `isActive === desiredActive`
+     * returns `unchanged` before the transaction otherwise. The two sets are
+     * disjoint, so a resume cannot lose to the claim except through a narrow
+     * interleaving where the template is activated between this function's
+     * pre-transaction read and its write. The pause arm contends head-on:
+     * active template, sweep holds it `FOR UPDATE`, the write blocks.
+     *
+     * It is also the tighter test. The pause arm returns at `if (!t.isActive)`
+     * before generation, so its transaction is a single `update` — the lock
+     * wait under test is the only thing in it.
      */
     it(
-      'answers busy when a resume loses the row to the generation claim',
+      'answers busy when a pause loses the row to the generation claim',
       async () => {
+        // The sweep claims only an ACTIVE template, so this test needs one.
         await prisma.classTemplate.update({
           where: { id: templateId },
-          data: { isActive: false, isArchived: false },
+          data: { isActive: true, isArchived: false },
         });
 
         let release!: () => void;
@@ -516,7 +527,7 @@ Add to `src/services/class-generator.test.ts`, in the same `describe` block as T
         await new Promise((r) => setTimeout(r, 100));
 
         const startedAt = Date.now();
-        const result = await pauseOrResumeTemplate(prisma, templateId, teacherId, 'active');
+        const result = await pauseOrResumeTemplate(prisma, templateId, teacherId, 'paused');
         const waited = Date.now() - startedAt;
 
         release();
@@ -526,6 +537,10 @@ Add to `src/services/class-generator.test.ts`, in the same `describe` block as T
         expect(waited).toBeGreaterThanOrEqual(1_800);
         expect(waited).toBeLessThan(5_000);
 
+        // Not redundant with the setup above, and it matters most during
+        // mutation runs: with the bound removed the pause SUCCEEDS, and an
+        // un-restored paused template would silently change what later tests
+        // in this file are running against.
         await prisma.classTemplate.update({
           where: { id: templateId },
           data: { isActive: true },
@@ -537,8 +552,10 @@ Add to `src/services/class-generator.test.ts`, in the same `describe` block as T
 
 - [ ] **Step 2: Run it and watch it fail**
 
-Run: `npx vitest run --project unit src/services/class-generator.test.ts -t "answers busy when a resume"`
-Expected: FAIL — the resume waits the claim out and resolves `ok: true`.
+Run: `npx vitest run --project unit src/services/class-generator.test.ts -t "answers busy when a pause"`
+Expected: FAIL — the pause waits the claim out and resolves `{ ok: true, action: 'paused', ... }`.
+
+If instead it fails at the *setup* assertion (`claimTemplateForGeneration` returning `null`), the template was not active when the claim ran. That is the failure mode this test was originally written into and is the reason it now forces `isActive: true` first.
 
 - [ ] **Step 3: Widen the union**
 
@@ -658,7 +675,7 @@ git add src/services/class-template-lifecycle.ts \
         "src/app/api/class-templates/[id]/route.ts" \
         src/services/class-generator.test.ts \
         docs/superpowers/plans/2026-08-14-template-lock-race-reporting-mutations.md
-git commit -m "fix: a resume that loses the race stops calling itself not_found"
+git commit -m "fix: a pause that loses the race stops calling itself not_found"
 ```
 
 ---
@@ -681,21 +698,28 @@ Add to `src/services/studio-class-generator.test.ts`:
 ```ts
     /**
      * The site the issue never names. Unlike its three siblings this function
-     * had no `catch` whatsoever, so a lost lock race propagated raw — this
-     * test fails against a rejection, not against a wrong result value.
+     * had no `catch` whatsoever, so a lost lock race propagated raw.
      *
-     * A resume also exercises the one ordering subtlety in this branch: this
-     * function takes the generation claim partway through, and the claim
-     * issues the same 2s bound a second time. `setLockTimeout`'s docblock
-     * records that re-issuing overwrites rather than stacks, so the bound the
-     * CAS waits under is the one set at the top.
+     * The PAUSE arm, for the reason its class-family twin records in full:
+     * `claimStudioTemplateForGeneration` selects `WHERE isActive = true`, a
+     * resume only runs on a paused template, and the two sets are disjoint —
+     * so a resume cannot lose to the claim.
+     *
+     * One consequence worth stating, because it is a coverage gap rather than
+     * a non-issue: the pause arm does NOT take the generation claim (only the
+     * active arm does), so this test does not exercise the claim re-issuing
+     * the same 2s bound partway through the transaction. That re-issue is
+     * safe by `setLockTimeout`'s own documented overwrite semantics, and the
+     * bound the CAS waits under is the one set at the top either way — but
+     * nothing here proves it.
      */
     it(
-      'answers busy when a studio resume loses the row to the generation claim',
+      'answers busy when a studio pause loses the row to the generation claim',
       async () => {
+        // The sweep claims only an ACTIVE template, so this test needs one.
         await prisma.studioClassTemplate.update({
           where: { id: templateId },
-          data: { isActive: false, isArchived: false },
+          data: { isActive: true, isArchived: false },
         });
 
         let release!: () => void;
@@ -714,7 +738,7 @@ Add to `src/services/studio-class-generator.test.ts`:
         await new Promise((r) => setTimeout(r, 100));
 
         const startedAt = Date.now();
-        const result = await pauseOrResumeStudioTemplate(prisma, templateId, teacherId, 'active');
+        const result = await pauseOrResumeStudioTemplate(prisma, templateId, teacherId, 'paused');
         const waited = Date.now() - startedAt;
 
         release();
@@ -724,6 +748,9 @@ Add to `src/services/studio-class-generator.test.ts`:
         expect(waited).toBeGreaterThanOrEqual(1_800);
         expect(waited).toBeLessThan(5_000);
 
+        // Matters most during mutation runs: with the bound removed the pause
+        // SUCCEEDS, and an un-restored paused template would silently change
+        // what later tests in this file are running against.
         await prisma.studioClassTemplate.update({
           where: { id: templateId },
           data: { isActive: true },
@@ -737,8 +764,8 @@ Add `pauseOrResumeStudioTemplate` to the existing import from `./studio-class-te
 
 - [ ] **Step 2: Run it and watch it fail**
 
-Run: `npx vitest run --project unit src/services/studio-class-generator.test.ts -t "answers busy when a studio resume"`
-Expected: FAIL — and note the *shape* of this failure differs from Tasks 1–3. The resume waits the claim out and succeeds, because nothing bounds it yet.
+Run: `npx vitest run --project unit src/services/studio-class-generator.test.ts -t "answers busy when a studio pause"`
+Expected: FAIL — the pause waits the claim out and succeeds, because nothing bounds it yet. Same shape as Tasks 1–3 at this point; what makes this function different shows up at the mutation in Step 9, where removing the branch restores a function with no `catch` at all.
 
 - [ ] **Step 3: Widen the union**
 
@@ -995,13 +1022,20 @@ The long comment above the studio archive's `{ timeout: 10_000 }` reasons about 
 
 ```ts
       // ordinary archive click into an opaque P2028. Three 10s budgets used
-      // not to compose: a sweep holding the row, a resume queued behind it
-      // and this archive queued behind that resume meant the last link's own
-      // clock ran while it waited its turn, and it was the one most likely to
+      // not to compose: a sweep holding the row, a PAUSE queued behind it and
+      // this archive queued behind that pause meant the last link's own clock
+      // ran while it waited its turn, and it was the one most likely to
       // exhaust its budget without ever reaching its own work. The
       // `setLockTimeout` at the top of this transaction is what took that
       // apart — each link now waits at most 2s and reports `busy`, so the
       // budget below covers only this transaction's own statements.
+      //
+      // A pause, not a resume, and the distinction is worth keeping: the
+      // sweep's claim selects `WHERE isActive = true`, and a resume only runs
+      // on a paused template, so a resume cannot be the middle link of that
+      // chain. It can still be the HEAD of one — its CAS holds this row from
+      // its `updateMany` through generation to commit — which is the case the
+      // paragraph above describes.
 ```
 
 - [ ] **Step 5: Reconcile against the diff, not against a keyword**
