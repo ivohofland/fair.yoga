@@ -1,8 +1,9 @@
-import { describe, it, beforeAll, afterAll, expect } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { describe, it, beforeAll, afterAll, expect, vi, onTestFinished } from 'vitest';
+import { Prisma, PrismaClient } from '@prisma/client';
+import { log } from '@/lib/log';
 import { classStartInstant } from '@/lib/timezone';
-import { addToWaitlist, getWaitlistWindow, handleSpotFreed } from './waitlist';
-import { reconcileWaitlists } from './waitlist-reconciliation';
+import { addToWaitlist, claimSpot, getWaitlistWindow, handleSpotFreed } from './waitlist';
+import { ReconciliationFailedError, reconcileWaitlists } from './waitlist-reconciliation';
 
 const prisma = new PrismaClient();
 const suffix = `recon-${Date.now()}`;
@@ -26,28 +27,29 @@ function windowClocks(startTime: string) {
   };
 }
 
-function countSpotAvailable(classId: string): Promise<number> {
+/**
+ * Per RECIPIENT, not per class.
+ *
+ * The class-wide `count(...)).toBe(2)` form this file used to use was the
+ * single largest source of flakiness in it: the sweep is database-wide, so any
+ * leftover row or any concurrent run changed the number, and the assertions
+ * that broke were exactly these. Scoping to a student the test created makes
+ * the assertion immune to rows it did not write, which is the same argument
+ * the summary type makes for ids over counts.
+ */
+function spotNotifications(classId: string, studentId: string): Promise<number> {
   return prisma.notification.count({
-    where: { relatedClassId: classId, type: 'spot_available' },
+    where: { relatedClassId: classId, type: 'spot_available', recipientId: studentId },
   });
 }
 
-/**
- * Stamps a notification the SWEEP wrote into the 2099 claim window.
- *
- * Derailer 1: `Notification.createdAt` is `@default(now())`, so anything the
- * sweep writes during a test carries the database's 2026 clock while every
- * gate evaluates `createdAt >= claimWindowStart` in 2099. Without this, a
- * class the sweep has already broadcast to stays permanently
- * re-broadcastable, and any later sweep in a claim window tells its students
- * twice. In production both clocks are the same clock, so this exists only
- * because the tests inject one of them.
- */
-function restampIntoWindow(classId: string, at: Date): Promise<unknown> {
-  return prisma.notification.updateMany({
-    where: { relatedClassId: classId, type: 'spot_available' },
-    data: { createdAt: at },
+/** `Class.spotBroadcastAt` — the gate itself, read directly. */
+async function broadcastFlag(classId: string): Promise<Date | null> {
+  const cls = await prisma.class.findUniqueOrThrow({
+    where: { id: classId },
+    select: { spotBroadcastAt: true },
   });
+  return cls.spotBroadcastAt;
 }
 
 describe('reconcileWaitlists (DB)', () => {
@@ -120,12 +122,15 @@ describe('reconcileWaitlists (DB)', () => {
    * `reconciles a class with a waiting entry and no active registration`.
    *
    * `waiters` defaults to 1 because the auto-promote tests want a queue the
-   * promotion empties. The BROADCAST tests pass 2: §4.3's argument that a
-   * class-level gate is exact rests on `createBulkNotifications` being
-   * all-or-none across the queue, and with a queue of one, "did any student get
-   * told" and "did every student get told" are the same question — so a
-   * one-waiter fixture cannot demonstrate the property the gate's correctness
-   * depends on.
+   * promotion empties. Tests that need the all-or-none broadcast property pass
+   * 2: with a queue of one, "did any student get told" and "did every student
+   * get told" are the same question, so a one-waiter fixture cannot demonstrate
+   * it. Not every broadcast-window test needs that property — the ones probing
+   * the GATE rather than the fan-out take the default.
+   *
+   * Registrations are written directly rather than through
+   * `activateRegistration`, so the fixture never touches `spotBroadcastAt` and
+   * every class starts with a null flag — an open gate.
    */
   async function makeFreedSeat(
     label: string,
@@ -207,8 +212,7 @@ describe('reconcileWaitlists (DB)', () => {
    * live hook never delivered. This proves the sweep repairs that state; the
    * two tests that CREATE the state by dropping a real hook are `repairs an
    * auto-promotion dropped by the transaction budget` (`P2028`) and
-   * `reconciles the remaining classes when one loses its lock race`
-   * (`55P03`).
+   * `reconciles the remaining classes when one loses its lock race` (`55P03`).
    */
   it('promotes the queue head of a class with a free seat', async () => {
     const cls = await makeFreedSeat('Head');
@@ -240,9 +244,6 @@ describe('reconcileWaitlists (DB)', () => {
    * "The one fixture" is a claim `makeFreedSeat` is what makes true. Every
    * other class in this file keeps a surviving registration and therefore
    * appears in the `groupBy` result, where the default is never consulted.
-   * Before that, every fixture was zero-active and the `?? cls.maxStudents`
-   * mutation failed three tests instead of this one — a mutation that fails
-   * everywhere localises nothing.
    *
    * Reaching this state needs a hand-written entry: `addToWaitlist` requires the
    * class to be full, and a `maxStudents: 1` class with zero registrations is
@@ -316,8 +317,8 @@ describe('reconcileWaitlists (DB)', () => {
     // Snapshotted BEFORE `await holder`, which is the whole assertion. Read
     // after it, `released` is `true` unconditionally — the holder's body sets it
     // as its last statement, so awaiting the holder guarantees the value and the
-    // check cannot fail. The precedent is `waitlist.test.ts:1681`, which asserts
-    // its own flag before awaiting for exactly this reason.
+    // check cannot fail. The precedent is `waitlist.test.ts`, which asserts its
+    // own flag before awaiting for exactly this reason.
     const releasedWhenHookReturned = released;
     await holder;
     await holderClient.$disconnect();
@@ -353,48 +354,45 @@ describe('reconcileWaitlists (DB)', () => {
   }, 60_000);
 
   /**
-   * The gate is EXACT, not approximate, and that follows from atomicity:
-   * `createBulkNotifications` is one `createMany` with no `skipDuplicates` —
-   * all-or-throw, per `waitlist.ts:732`. So "did any student get told?" and "did
-   * every student get told?" are the same question, and a class-level check
-   * answers it without a per-recipient query or a new column.
+   * The gate, closed. `Class.spotBroadcastAt` stands for the seat that is
+   * currently free, so the sweep must not announce it again every tick.
    *
-   * `createdAt` is set explicitly — see derailer 1. The injected clock is in
-   * 2099 and `@default(now())` would stamp 2026, which the gate's
-   * `createdAt >= claimWindowStart` would correctly not see.
+   * The flag is written directly here rather than by running a broadcast: this
+   * test is about the gate reading it, and `re-broadcasts once a claim has
+   * consumed the seat` is the one that proves a real broadcast sets it.
    */
-  it('does not re-broadcast into a claim window that already has one', async () => {
+  it('does not re-broadcast while a broadcast still stands', async () => {
     const cls = await makeFreedSeat('Gate', { waiters: 2 });
     const clocks = windowClocks(cls.startTime);
 
-    // A broadcast that already went out, stamped inside the claim window.
-    await prisma.notification.create({
-      data: {
-        recipientType: 'student',
-        recipientId: cls.waiter,
-        type: 'spot_available',
-        title: 'A spot opened up',
-        body: 'already sent',
-        relatedClassId: cls.id,
-        createdAt: clocks.inClaimWindow,
-      },
+    await prisma.class.update({
+      where: { id: cls.id },
+      data: { spotBroadcastAt: clocks.inClaimWindow },
     });
 
     const summary = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow });
 
     expect(summary.reconciledClassIds).not.toContain(cls.id);
-    expect(await countSpotAvailable(cls.id)).toBe(1);
+    // The REASON, not merely the absence. `not.toContain` alone passes when the
+    // class was skipped for entirely the wrong reason — frozen, or read as
+    // full — which is what makes the reason list worth carrying per class.
+    expect(summary.skipped).toContainEqual({ classId: cls.id, reason: 'already_broadcast' });
+    for (const waiter of cls.waiters) {
+      expect(await spotNotifications(cls.id, waiter)).toBe(0);
+    }
   });
 
   /**
-   * The other half of the gate: with no prior broadcast in the window, the sweep
-   * must still fire. Without this, a gate stuck permanently closed passes the
-   * test above and delivers nothing — which is the bug this whole branch exists
-   * to fix, reintroduced one level up.
+   * The other half of the gate: with no broadcast standing, the sweep must
+   * still fire. Without this, a gate stuck permanently closed passes the test
+   * above and delivers nothing — which is the bug this whole branch exists to
+   * fix, reintroduced one level up.
    */
-  it('broadcasts when the claim window has no notification yet', async () => {
+  it('broadcasts when no broadcast stands, and records that one now does', async () => {
     const cls = await makeFreedSeat('OpenGate', { waiters: 2 });
     const clocks = windowClocks(cls.startTime);
+
+    expect(await broadcastFlag(cls.id)).toBeNull();
 
     const summary = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow });
 
@@ -403,76 +401,112 @@ describe('reconcileWaitlists (DB)', () => {
 
     // EVERY waiting student, not merely some student. With one waiter this and
     // the gate's "did any student get told" collapse into the same assertion,
-    // and the all-or-none property §4.3 rests on goes unproved.
-    expect(await countSpotAvailable(cls.id)).toBe(2);
+    // and the all-or-none property the class-level gate rests on goes unproved.
     for (const waiter of cls.waiters) {
-      expect(
-        await prisma.notification.count({
-          where: { relatedClassId: cls.id, type: 'spot_available', recipientId: waiter },
-        }),
-      ).toBe(1);
+      expect(await spotNotifications(cls.id, waiter)).toBe(1);
     }
-
-    await restampIntoWindow(cls.id, clocks.inClaimWindow);
+    // The broadcast set the flag, in the same transaction as the notifications.
+    expect(await broadcastFlag(cls.id)).toEqual(clocks.inClaimWindow);
   });
 
   /**
-   * The gate's lower bound, which nothing else pins: delete
-   * `createdAt: { gte: claimWindowStart }` and every other test in this file
-   * still passes, because each one either has no prior notification or has one
-   * inside the window. Only a notification stamped OUTSIDE the window
-   * distinguishes "already broadcast in THIS window" from "has ever been
-   * broadcast to".
+   * **The sequence the window-keyed gate could not repair, and the reason
+   * `spotBroadcastAt` exists.**
+   *
+   * One claim window is sixty minutes wide and can hold more than one
+   * seat-freeing event. Seat frees → broadcast succeeds → a waiter CLAIMS →
+   * the seat frees again → the live hook drops the second broadcast. The old
+   * gate asked "is there a `spot_available` notification inside this claim
+   * window", found the first one, and suppressed the sweep for the rest of the
+   * hour: the remaining waiter was never told, in exactly the state the sweep
+   * exists to repair.
+   *
+   * What makes the flag correct is that `claimSpot` reaches
+   * `activateRegistration`, which clears it. The seat the broadcast announced
+   * is gone, so the broadcast no longer stands. Nothing here writes the flag by
+   * hand — the claim does it, through the production path.
+   */
+  it('re-broadcasts once a claim has consumed the seat and another frees', async () => {
+    const cls = await makeFreedSeat('SecondSeat', { waiters: 2 });
+    const clocks = windowClocks(cls.startTime);
+    const [first, second] = cls.waiters as [string, string];
+
+    // Round one: the live broadcast goes out and the flag stands.
+    const opened = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow });
+    expect(opened.repairedClassIds).toContain(cls.id);
+    expect(await broadcastFlag(cls.id)).not.toBeNull();
+
+    // The first waiter claims the seat — the class is full again, and the
+    // broadcast that announced that seat no longer stands for anything.
+    await claimSpot(prisma, cls.id, first, clocks.inClaimWindow);
+    expect(await broadcastFlag(cls.id)).toBeNull();
+
+    // A second seat frees, and the live hook drops it (simulated by simply not
+    // running it — the two lock-race tests prove a real drop lands here).
+    await prisma.registration.updateMany({
+      where: { classId: cls.id, studentId: first },
+      data: { status: 'cancelled', cancelledAt: new Date() },
+    });
+    await prisma.waitlistEntry.updateMany({
+      where: { classId: cls.id, studentId: second },
+      data: { status: 'waiting' },
+    });
+
+    const repaired = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow });
+
+    expect(repaired.repairedClassIds).toContain(cls.id);
+    // The second waiter is told about the second seat. Under the window-keyed
+    // gate this was 1 — the first broadcast only — and stayed 1 forever.
+    expect(await spotNotifications(cls.id, second)).toBe(2);
+  });
+
+  /**
+   * The claim-window lower bound, which nothing else pins: delete
+   * `cls.spotBroadcastAt >= claimWindowStart` and every other test in this file
+   * still passes, because each one either has no standing broadcast or has one
+   * inside the window. Only a flag stamped OUTSIDE the window distinguishes
+   * "a broadcast stands for the CURRENT window" from "a broadcast has ever
+   * stood".
    *
    * Reachable in production: `date` and `startTime` are absent from
    * `ECONOMIC_FIELDS` (`lib/class-fields.ts`), so a class can be rescheduled
-   * after its settings lock. That opens a new claim window while the old
-   * `spot_available` rows persist, and without the bound the gate would be shut
-   * forever for that class — this branch's own defect, reintroduced for
-   * rescheduled classes.
+   * after its settings lock. That opens a new claim window while the old flag
+   * persists, and without the bound the gate would be shut forever for that
+   * class — this branch's own defect, reintroduced for rescheduled classes.
    */
-  it('broadcasts despite a notification stamped before the claim window', async () => {
-    const cls = await makeFreedSeat('OldNote');
+  it('broadcasts despite a broadcast flag stamped before the claim window', async () => {
+    const cls = await makeFreedSeat('OldFlag');
     const clocks = windowClocks(cls.startTime);
 
     // Six hours before `claimWindowStart`, which sits at classStart − 25h.
-    await prisma.notification.create({
-      data: {
-        recipientType: 'student',
-        recipientId: cls.waiter,
-        type: 'spot_available',
-        title: 'A spot opened up',
-        body: 'sent in a previous, since-rescheduled window',
-        relatedClassId: cls.id,
-        createdAt: new Date(clocks.classStart.getTime() - 31 * H),
-      },
+    await prisma.class.update({
+      where: { id: cls.id },
+      data: { spotBroadcastAt: new Date(clocks.classStart.getTime() - 31 * H) },
     });
 
     const summary = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow });
 
     expect(summary.reconciledClassIds).toContain(cls.id);
-    expect(await countSpotAvailable(cls.id)).toBe(2); // the stale one, plus a fresh one
-
-    await restampIntoWindow(cls.id, clocks.inClaimWindow);
+    expect(await spotNotifications(cls.id, cls.waiter)).toBe(1);
   });
 
   /**
    * Two candidates, the first held past `lockClassRow`'s 2 s bound so its
    * invocation throws `55P03`. The second must still be reconciled.
    *
-   * `isolatedSweeps` (`lib/scheduler.ts:46`) wraps whole sweeps, not the items
-   * inside one, so nothing outside this function protects the second class.
+   * `isolatedSweeps` (`lib/scheduler.ts`) wraps whole sweeps, not the items
+   * inside one, so nothing outside `reconcileOne` protects the second class.
    *
    * The two classes are created in one call so both are candidates of the same
-   * sweep; the loop order follows `class.findMany`, so this asserts on the
+   * sweep; the loop order is `orderBy: { id: 'asc' }`, so this asserts on the
    * OUTCOME of both rather than on which ran first.
    *
    * One clock serves both, and that is safe rather than sloppy: `nextSlot()`
    * separates their start times by a minute or two, while the claim window is
    * 60 minutes wide and `inClaimWindow` sits 30 minutes from either edge. The
-   * whole file creates fewer than a dozen classes, so the drift cannot approach
-   * that margin. If you ever add enough classes for `nextSlot()` to roll an
-   * hour, derive a clock per class instead.
+   * whole file creates fewer than two dozen classes, so the drift cannot
+   * approach that margin. If you ever add enough classes for `nextSlot()` to
+   * roll an hour, derive a clock per class instead.
    */
   it('reconciles the remaining classes when one loses its lock race', async () => {
     const blocked = await makeFreedSeat('IsoBlocked', { waiters: 2 });
@@ -506,49 +540,50 @@ describe('reconcileWaitlists (DB)', () => {
     expect(summary.failedClassIds).toContain(blocked.id);
     expect(summary.reconciledClassIds).not.toContain(blocked.id);
     expect(summary.reconciledClassIds).toContain(healthy.id);
-    expect(await countSpotAvailable(healthy.id)).toBe(2);
+    for (const waiter of healthy.waiters) {
+      expect(await spotNotifications(healthy.id, waiter)).toBe(1);
+    }
 
-    // Derailer 1, before the retry rather than at the end of the test: the
-    // sweep's own broadcast to `healthy` is 2026-stamped and invisible to the
-    // 2099 gate, so without this the retry below tells `healthy` a second
-    // time. Stamping it here means the retry ALSO proves the gate suppresses
-    // a class that has already been told, in a live sweep rather than a
-    // hand-written fixture.
-    await restampIntoWindow(healthy.id, clocks.inClaimWindow);
-
-    // **Spec §8 acceptance 1**, which the plan's self-review left to review:
-    // a class whose live broadcast was dropped by a lock timeout has its
-    // waiting students notified. Everything above proves the sweep SURVIVES a
-    // `55P03`; this proves it REPAIRS one. The holder has released, so the
-    // retry takes the lock on the class that lost the race a moment ago.
+    // **Spec §8 acceptance 1**: a class whose live broadcast was dropped by a
+    // lock timeout has its waiting students notified. Everything above proves
+    // the sweep SURVIVES a `55P03`; this proves it REPAIRS one. The holder has
+    // released, so the retry takes the lock on the class that lost the race a
+    // moment ago.
     //
-    // The auto-promote half is proved end-to-end by `repairs an
-    // auto-promotion dropped by the transaction budget` through a different
-    // mechanism (`P2028`, a Prisma client-side budget). This is the Postgres
+    // The auto-promote half is proved end-to-end by `repairs an auto-promotion
+    // dropped by the transaction budget` through a different mechanism
+    // (`P2028`, a Prisma client-side budget). This is the Postgres
     // `lock_timeout` half — the one #220 was actually filed about.
     const repair = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow });
 
     expect(repair.reconciledClassIds).toContain(blocked.id);
     expect(repair.repairedClassIds).toContain(blocked.id);
     expect(repair.failedClassIds).not.toContain(blocked.id);
-    expect(await countSpotAvailable(blocked.id)).toBe(2); // both waiters, all-or-none
-    expect(await countSpotAvailable(healthy.id)).toBe(2); // gated, not told twice
-
-    await restampIntoWindow(blocked.id, clocks.inClaimWindow);
+    for (const waiter of blocked.waiters) {
+      expect(await spotNotifications(blocked.id, waiter)).toBe(1);
+    }
+    // `healthy` broadcast on the first sweep and nothing has claimed its seat,
+    // so its flag still stands and the second sweep must leave it alone. No
+    // clock fixing-up is needed for that to hold: the flag was written from the
+    // same injected `now` the gate compares against.
+    expect(repair.skipped).toContainEqual({ classId: healthy.id, reason: 'already_broadcast' });
+    for (const waiter of healthy.waiters) {
+      expect(await spotNotifications(healthy.id, waiter)).toBe(1);
+    }
   }, 60_000);
 
   /**
    * An invocation that repairs nothing, which is what separates
    * `repairedClassIds` from `reconciledClassIds`. Without this test
-   * `repairedClassIds.push(cls.id)` unconditionally survives, and a sweep that
-   * invoked the hook fifty times and fixed nothing would log `repaired: 50` —
-   * inverting the one operator signal the split exists to provide.
+   * `repaired: true` unconditionally survives, and a sweep that invoked the
+   * hook fifty times and fixed nothing would log `repaired: 50` — inverting the
+   * one operator signal the split exists to provide.
    *
    * The state: a student holding BOTH an active registration and a `waiting`
-   * entry, which `promoteNext`'s head loop (`waitlist.ts:423-437`) exists to
-   * drain. It marks the stale head `removed`, finds no successor, and returns
-   * `null` → `{ action: 'none' }`. The class is invoked and the queue is
-   * cleaned, but no seat changes hands.
+   * entry, which `promoteNext`'s head loop exists to drain. It marks the stale
+   * head `removed`, finds no successor, and returns `null` → `{ action:
+   * 'none' }`. The class is invoked and the queue is cleaned, but no seat
+   * changes hands.
    */
   it('counts an invocation that repairs nothing as reconciled but not repaired', async () => {
     const cls = await makeClass(2);
@@ -580,13 +615,16 @@ describe('reconcileWaitlists (DB)', () => {
    * Two things enforce this — the `class: { status: 'open' }` join on the
    * candidate query and the `status: 'open'` filter on the class read — so this
    * test pins the OUTCOME rather than either mechanism; removing one alone
-   * leaves it green. That is deliberate. The join's job is bounding the
-   * candidate set, which is a cost property no unit test can observe; the
-   * filter's job is correctness, and this is what pins it.
+   * leaves it green, and that is worth saying plainly because an earlier
+   * revision of this comment claimed the filter was pinned and it is not. The
+   * join's job is bounding the candidate set, a cost property no unit test can
+   * observe; the filter's job is correctness against a class that completes
+   * between the two queries, a race no test enters. The outcome is what both
+   * exist for and the only thing worth asserting here.
    *
    * The state is reachable and documented: `gdpr.ts` records a residual where
    * `waiting` entries survive on a class that can never promote anyone, and
-   * neither `completeClass` nor `startClass` closes a queue.
+   * neither `completeClass` nor `autoTransitionToInProgress` closes a queue.
    */
   it('does not reconcile a class that is no longer open', async () => {
     const cls = await makeClass(2);
@@ -612,18 +650,13 @@ describe('reconcileWaitlists (DB)', () => {
 
   /**
    * **The production call path**, which no other test in this file touches:
-   * `reconcileWaitlists(prisma)` with no `opts`, exactly as `scheduler.ts:144`
-   * invokes it.
+   * `reconcileWaitlists(prisma)` with no `opts`, exactly as `buildJobs`'
+   * `waitlist-reconciliation` entry invokes it.
    *
-   * Two things only this shape can prove. First, the default-parameter path —
-   * thread `opts.now ?? new Date(0)` through the module and every other test
+   * Thread `opts.now ?? new Date(0)` through the module and every other test
    * stays green while production resolves every class to `auto_promote` and the
-   * broadcast branch never runs again. Second, and subtler: every other test
-   * gates against a `createdAt` the TEST wrote, because the injected 2099 clock
-   * and the database's `@default(now())` disagree (derailer 1) and
-   * `restampIntoWindow` papers over it. Here both clocks are the same clock, as
-   * they are in production, so the sequence "sweep broadcasts on tick N, is
-   * gated on tick N+1" is exercised for real.
+   * broadcast branch never runs again. Only a test that passes no clock at all
+   * can catch that.
    *
    * The class is built in the ACTUAL future and its window is asserted rather
    * than assumed, so a boundary error shows up as a failed precondition instead
@@ -687,12 +720,11 @@ describe('reconcileWaitlists (DB)', () => {
 
     const first = await reconcileWaitlists(prisma);
     expect(first.repairedClassIds).toContain(cls.id);
-    expect(await countSpotAvailable(cls.id)).toBe(1);
+    expect(await spotNotifications(cls.id, waiter)).toBe(1);
 
-    // No restamp: the gate now reads a timestamp the DATABASE wrote.
     const second = await reconcileWaitlists(prisma);
     expect(second.reconciledClassIds).not.toContain(cls.id);
-    expect(await countSpotAvailable(cls.id)).toBe(1);
+    expect(await spotNotifications(cls.id, waiter)).toBe(1);
   });
 
   /**
@@ -701,13 +733,6 @@ describe('reconcileWaitlists (DB)', () => {
    * `{ action: 'frozen' }` anyway, so this pins the sweep's OWN filter: without
    * it the hook is invoked and `reconciled` counts a class that was never
    * reconcilable.
-   *
-   * Still runs last, but no longer because anything depends on it. A frozen
-   * class is left with a free seat and a `waiting` entry, so it stays a
-   * reconcilable candidate for every later sweep — which used to inflate
-   * their `reconciled` counts. Scoping every assertion to its own class ids
-   * removed that coupling; the ordering is now convention rather than a
-   * load-bearing constraint, and moving this test would break nothing.
    */
   it('does not reconcile a class whose window has frozen', async () => {
     const cls = await makeFreedSeat('Frozen');
@@ -716,13 +741,141 @@ describe('reconcileWaitlists (DB)', () => {
       now: windowClocks(cls.startTime).frozen,
     });
 
-    // `not.toContain`, not `reconciled === 0`: the filter under test is about
-    // THIS class, and a leftover row elsewhere in the test database must not
-    // be able to turn that verdict into a failure — nor, worse, into a pass.
     expect(summary.reconciledClassIds).not.toContain(cls.id);
+    // The reason, so that a class skipped as `full` — or skipped by a gate that
+    // has jammed shut — cannot pass as a working frozen filter.
+    expect(summary.skipped).toContainEqual({ classId: cls.id, reason: 'frozen' });
     const promoted = await prisma.registration.findUnique({
       where: { classId_studentId: { classId: cls.id, studentId: cls.waiter } },
     });
     expect(promoted).toBeNull();
+  });
+
+  /**
+   * The classification, which nothing observed before: `isTransientDbError`
+   * decides only a log level and a message, so inverting it, or hard-coding
+   * either side, passed the entire suite.
+   *
+   * That mattered more than a normal logging gap. The module argues at length
+   * that the split is the difference between a permanently broken promotion
+   * path being visible and invisible — a defect that cannot clear on retry
+   * fires again every sixty seconds forever, and at `warn` nobody would ever
+   * look. Two tests, one per side, are what make that argument checkable.
+   *
+   * A healthy second class is created in each so the sweep still reconciles
+   * something; otherwise every invoked class fails and the sweep throws
+   * `ReconciliationFailedError`, which is its own test below.
+   */
+  it('logs a non-transient per-class failure at error level', async () => {
+    const broken = await makeFreedSeat('NonTransient');
+    const healthy = await makeFreedSeat('NonTransientOk');
+    const clocks = windowClocks(broken.startTime);
+
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    // Registered before anything can throw, so a failing assertion below still
+    // hands `log.error` back to the tests that run after this one.
+    onTestFinished(() => error.mockRestore());
+
+    // `handleSpotFreed`'s own first statement is `class.findUnique`, so this
+    // fails the hook for one class and leaves every other query untouched.
+    const faulty = prisma.$extends({
+      query: {
+        class: {
+          findUnique({ args, query }) {
+            if (args.where?.id === broken.id) throw new Error('schema drift');
+            return query(args);
+          },
+        },
+      },
+      // `$extends` returns a client missing `$on`, so it is not assignable to
+      // `reconcileWaitlists`' `PrismaClient`-typed parameter even though every
+      // method it calls here is the real one — same cast as the
+      // `email-fallback.test.ts` precedent.
+    }) as unknown as PrismaClient;
+
+    const summary = await reconcileWaitlists(faulty, { now: clocks.inClaimWindow });
+
+    expect(summary.failedClassIds).toContain(broken.id);
+    expect(summary.reconciledClassIds).toContain(healthy.id);
+    const logged = error.mock.calls.find(
+      (c) => (c[0] as { classId?: string } | undefined)?.classId === broken.id,
+    );
+    expect(logged).toBeDefined();
+    expect(logged?.[0]).toMatchObject({ classId: broken.id, transient: false });
+  });
+
+  it('logs a transient per-class failure at warn level', async () => {
+    const contended = await makeFreedSeat('Transient');
+    const healthy = await makeFreedSeat('TransientOk');
+    const clocks = windowClocks(contended.startTime);
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
+
+    // `P2024` is a connection-pool timeout, which `api-errors.ts` classifies
+    // transient — a real code from the set the catch block reasons about,
+    // rather than a hand-rolled error shaped to pass.
+    const faulty = prisma.$extends({
+      query: {
+        class: {
+          findUnique({ args, query }) {
+            if (args.where?.id === contended.id) {
+              throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
+                code: 'P2024',
+                clientVersion: Prisma.prismaVersion.client,
+              });
+            }
+            return query(args);
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const summary = await reconcileWaitlists(faulty, { now: clocks.inClaimWindow });
+
+    expect(summary.failedClassIds).toContain(contended.id);
+    expect(summary.reconciledClassIds).toContain(healthy.id);
+    const logged = warn.mock.calls.find(
+      (c) => (c[0] as { classId?: string } | undefined)?.classId === contended.id,
+    );
+    expect(logged).toBeDefined();
+    expect(logged?.[0]).toMatchObject({ classId: contended.id, transient: true });
+  });
+
+  /**
+   * A tick that invoked classes and failed every one must THROW, not return
+   * quietly.
+   *
+   * Returning is what let `scheduler.ts` stamp `lastSuccessAt` and null
+   * `lastError` on a sweep that repaired nothing, so `/api/health` answered
+   * `healthy: true` with a fresh timestamp — an affirmative false statement.
+   * Per-class isolation is still intact; it is the all-failed case that
+   * escalates.
+   *
+   * The fault is injected for EVERY class rather than a named one, which is
+   * what makes this robust on a shared database: whatever leftover candidates
+   * a killed run left behind, they fail too, so the all-failed condition holds
+   * without the test having to own every row.
+   */
+  it('throws when every class it invoked failed', async () => {
+    const cls = await makeFreedSeat('AllFail');
+    const clocks = windowClocks(cls.startTime);
+
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
+
+    const faulty = prisma.$extends({
+      query: {
+        class: {
+          findUnique() {
+            throw new Error('every class fails');
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    await expect(
+      reconcileWaitlists(faulty, { now: clocks.inClaimWindow }),
+    ).rejects.toThrow(ReconciliationFailedError);
   });
 });

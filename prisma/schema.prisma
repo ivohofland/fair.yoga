@@ -406,6 +406,27 @@ model Class {
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
 
+  /// When the first-come-first-claimed broadcast last went out for the seat
+  /// that is currently free — null when no broadcast stands for it (#220).
+  ///
+  /// Not "when a broadcast last happened". What invalidates a broadcast is not
+  /// time passing but a seat being FILLED, so `activateRegistration`
+  /// (services/waitlist.ts) clears this and `handleSpotFreed`'s broadcast
+  /// branch sets it. Every seat fill in the app funnels through that one
+  /// function — direct booking, `promoteNext`, `claimSpot` — and all three of
+  /// its callers already hold this row's `FOR UPDATE` lock, which is what
+  /// serializes the clear against the set.
+  ///
+  /// This replaced a gate that asked "does a `spot_available` notification
+  /// exist in the current claim window". That question is a proxy, and it
+  /// answered wrong for the sequence the sweep exists to repair: seat frees,
+  /// broadcast succeeds, a waiter claims, the seat frees AGAIN, and the live
+  /// hook drops the second broadcast. The window still held the first
+  /// notification, so the reconciliation sweep suppressed itself for the rest
+  /// of the hour and the remaining waiters were never told. A null check
+  /// cannot make that mistake, because a claim clears it.
+  spotBroadcastAt DateTime?
+
   teacher         Teacher         @relation(fields: [teacherId], references: [id], onDelete: Cascade)
   teacherRoom     TeacherRoom     @relation(fields: [teacherRoomId], references: [id])
   template        ClassTemplate?  @relation(fields: [templateId], references: [id], onDelete: SetNull)
@@ -599,16 +620,15 @@ model Notification {
 
   relatedClass Class? @relation(fields: [relatedClassId], references: [id], onDelete: SetNull)
 
+  // No index on `relatedClassId`, deliberately. An earlier commit on this
+  // branch added `(relatedClassId, type, createdAt)` to serve the waitlist
+  // reconciliation sweep's broadcast gate, which queried this table once per
+  // gated class every sixty seconds. `Class.spotBroadcastAt` replaced that
+  // query with a field read on a row the sweep had already loaded, so the
+  // index now serves nothing — and an unused index on the app's
+  // highest-volume table is not free: every notification insert maintains it.
+  // The same commit that removed the query dropped the index.
   @@index([recipientType, recipientId, isRead])
-  // The waitlist reconciliation sweep's broadcast gate
-  // (`services/waitlist-reconciliation.ts`) filters on exactly these three, once
-  // per gated class, every sixty seconds. Postgres does not index a foreign key
-  // and Prisma adds none, so without this the gate is a sequential scan of the
-  // whole table — which is the app's highest-volume one (a row per recipient per
-  // booking, cancellation, payment request, reminder and announcement) and has
-  // no retention sweep, so it only grows. Column order is
-  // equality, equality, range.
-  @@index([relatedClassId, type, createdAt])
 }
 
 model Announcement {

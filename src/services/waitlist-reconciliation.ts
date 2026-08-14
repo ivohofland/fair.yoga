@@ -10,7 +10,8 @@
  *   - the auto-promote branch blows Prisma's default 5s interactive-transaction
  *     budget with `P2028`, measured at 7014 ms against a 7 s hold — it waits out
  *     the whole hold and fails afterwards, because Prisma cannot cancel a
- *     statement already blocked inside Postgres (`gdpr.ts:602`).
+ *     statement already blocked inside Postgres (see `deleteStudentAccount`'s
+ *     transaction-budget note in `services/gdpr.ts`).
  *
  * Both of those callers log and swallow, so this sweep is the only thing that
  * makes either loss recoverable. It is also the answer to a July 2026 audit
@@ -24,6 +25,10 @@
  * hook, under the class row lock. That division is what makes the auto-promote
  * half covered without a line addressing it, and it is why re-running the hook
  * is the whole action.
+ *
+ * Line numbers are deliberately absent throughout this file. Every reference
+ * names a symbol instead: an earlier revision cited sixteen of them and eight
+ * were already wrong three commits into the branch that wrote them.
  */
 import type { CancelDeadline, PrismaClient } from '@prisma/client';
 import { isTransientDbError } from '@/lib/api-errors';
@@ -31,6 +36,24 @@ import { log } from '@/lib/log';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { classStartInstant } from '@/lib/timezone';
 import { DEADLINE_HOURS, getWaitlistWindow, handleSpotFreed } from './waitlist';
+
+/**
+ * Why a candidate class was not handed to `handleSpotFreed`. Three reasons,
+ * three distinct origins — a caller that cannot tell them apart cannot tell a
+ * legitimately idle tick from a gate that has jammed shut.
+ */
+export type SkipReason =
+  /** Past the cancel deadline: the queue is frozen and no promotion may happen. */
+  | 'frozen'
+  /** No free seat by the unlocked pre-count, so there is nothing to ask about. */
+  | 'full'
+  /** A broadcast already stands for the currently-free seat (`Class.spotBroadcastAt`). */
+  | 'already_broadcast';
+
+export interface SkippedClass {
+  readonly classId: string;
+  readonly reason: SkipReason;
+}
 
 /**
  * What one sweep did, by class rather than by count.
@@ -42,13 +65,18 @@ import { DEADLINE_HOURS, getWaitlistWindow, handleSpotFreed } from './waitlist';
  * the outcome for the class it built: stricter than a count, and immune to rows
  * it did not create. Anything wanting a number reads `.length`, which cannot
  * drift from the list it counts.
+ *
+ * Every candidate class lands in exactly one of the four lists — `reconciled`,
+ * `failed`, `skipped`, or (as a subset of `reconciled`) `repaired`. That is
+ * structural rather than documented: the loop computes one `ClassOutcome` per
+ * class and this shape is folded from those in a single pass, so disjointness
+ * cannot be broken by adding a statement in the wrong place.
  */
 export interface ReconcileSummary {
   /** Open classes holding at least one `waiting` entry that were examined. */
   readonly candidates: number;
   /**
-   * Classes whose `handleSpotFreed` invocation RETURNED — not the invocation
-   * count, which is this plus `failedClassIds`.
+   * Classes whose `handleSpotFreed` invocation RETURNED.
    *
    * Membership here means "invoked", not "repaired", and that is load-bearing
    * rather than sloppy: `does not reconcile a class whose window has frozen`
@@ -56,6 +84,10 @@ export interface ReconcileSummary {
    * invoked and land in this list, while `handleSpotFreed` returns
    * `{ action: 'frozen' }` and writes nothing either way. A list that held only
    * repairs would make that mutation survive.
+   *
+   * `failedClassIds` is NOT its complement. The per-class `try` covers the
+   * whole loop body, so a class can fail before the hook is reached — see the
+   * comment on that `try` for why it is drawn there.
    */
   readonly reconciledClassIds: readonly string[];
   /**
@@ -68,6 +100,57 @@ export interface ReconcileSummary {
   readonly repairedClassIds: readonly string[];
   /** Classes whose invocation threw. Disjoint from `reconciledClassIds`. */
   readonly failedClassIds: readonly string[];
+  /**
+   * Candidates deliberately not invoked, each with its reason.
+   *
+   * Reasons travel with the class rather than being reduced to counters
+   * inside this function, following `GenerationResult`/`SkippedSlot` in
+   * `lib/generation.ts`. The counters could only ever say "some class was
+   * frozen"; this lets a test assert that the class IT built was skipped for
+   * the reason under test, rather than settling for `not.toContain` — which
+   * passes when the class was skipped for entirely the wrong reason.
+   */
+  readonly skipped: readonly SkippedClass[];
+}
+
+/** Exactly one of these per candidate class. The summary is a fold of them. */
+type ClassOutcome =
+  | { kind: 'skipped'; reason: SkipReason }
+  | { kind: 'invoked'; repaired: boolean }
+  | { kind: 'failed' };
+
+/** The candidate shape the per-class body needs, and no more. */
+interface CandidateClass {
+  id: string;
+  date: Date;
+  startTime: string;
+  cancelDeadline: CancelDeadline;
+  maxStudents: number;
+  spotBroadcastAt: Date | null;
+  teacher: { defaultTimezone: string };
+}
+
+/**
+ * Thrown when a tick invoked the hook for at least one class and every single
+ * one failed.
+ *
+ * The sweep swallows per-class failures by design, which is what stops one
+ * contended class from abandoning the queue behind it. The cost of swallowing
+ * ALL of them is that `scheduler.ts` records `lastSuccessAt` and leaves
+ * `lastError` null, so `/api/health` reports this job `healthy: true` with a
+ * fresh timestamp while it repairs nothing — an affirmative false statement,
+ * not merely a missing signal. Rethrowing here is what `isolatedSweeps` does
+ * for the same reason ("the first is rethrown so job health still surfaces the
+ * failure"), and it costs nothing in the routine case: one contended class
+ * among several still returns normally.
+ */
+export class ReconciliationFailedError extends Error {
+  constructor(public readonly failedClassIds: readonly string[]) {
+    super(
+      `waitlist reconciliation invoked ${failedClassIds.length} class(es) and every one failed`,
+    );
+    this.name = 'ReconciliationFailedError';
+  }
 }
 
 export async function reconcileWaitlists(
@@ -78,19 +161,25 @@ export async function reconcileWaitlists(
   // queue, and this is the narrowest set that can possibly need reconciling.
   //
   // `class: { status: 'open' }` is not a duplicate of the filter below — it is
-  // what BOUNDS this set. Nothing closes a queue when a class completes:
-  // `class-lifecycle.ts` never touches `WaitlistEntry`, and only
-  // `autoCancelClasses` (`class-transitions.ts:322`) and the manual-cancel
-  // route mark entries `removed`. So every class that simply runs full with an
-  // unfulfilled queue leaves its `waiting` rows `waiting` forever, and
-  // completed classes are never deleted. Without this join the candidate list
-  // would grow monotonically for the life of the deployment and be rebuilt,
-  // and passed inline to the queries below, every sixty seconds — on the single
-  // 2 GB VPS this project is pinned to.
-  const queued = await db.waitlistEntry.findMany({
+  // what BOUNDS this set. Nothing closes a queue when a class COMPLETES:
+  // `class-lifecycle.ts` never touches `WaitlistEntry`. Six writers mark
+  // entries `removed` (`removeFromWaitlist`, `promoteNext`'s stale-head drain,
+  // `withdrawWaitingEntriesForTeacher`, `autoCancelClasses`, the manual-cancel
+  // transition route, and `deleteTeacherAccount`) and every one of them runs on
+  // a cancellation, a withdrawal or an erasure — never on completion. So a
+  // class that simply runs full with an unfulfilled queue leaves its `waiting`
+  // rows `waiting` forever, and completed classes are never deleted. Without
+  // this join the candidate list would grow monotonically for the life of the
+  // deployment and be rebuilt, and passed inline to the queries below, every
+  // sixty seconds — on the single 2 GB VPS this project is pinned to.
+  //
+  // `groupBy`, not `findMany({ distinct })`: Prisma does not compile `distinct`
+  // into SQL. It selects the rows (plus `id`, which it needs to compare) and
+  // dedupes in the query engine, so `distinct` would fetch one row per waiting
+  // STUDENT to produce one id per CLASS. `groupBy` pushes it into Postgres.
+  const queued = await db.waitlistEntry.groupBy({
+    by: ['classId'],
     where: { status: 'waiting', class: { status: 'open' } },
-    select: { classId: true },
-    distinct: ['classId'],
   });
   const candidateIds = queued.map((q) => q.classId);
   if (candidateIds.length === 0) {
@@ -100,20 +189,36 @@ export async function reconcileWaitlists(
 
   // Re-read status here rather than trusting the join above: a class can
   // complete between the two queries, and this is the filter `handleSpotFreed`
-  // itself applies (`waitlist.ts:639`).
+  // itself applies through its own `cls.status !== 'open'` early return.
+  //
+  // `orderBy` is not cosmetic. Without it Postgres may return these in any
+  // order, which makes the position of a given class in the sweep depend on the
+  // heap — and the two tests that hold a row lock against a wall clock then
+  // race against however much work happens before their target is reached.
   const classes = await db.class.findMany({
     where: { id: { in: candidateIds }, status: 'open' },
+    orderBy: { id: 'asc' },
     select: {
       id: true,
       date: true,
       startTime: true,
       cancelDeadline: true,
       maxStudents: true,
+      spotBroadcastAt: true,
       teacher: { select: { defaultTimezone: true } },
     },
   });
   if (classes.length === 0) {
-    log.debug({ candidates: 0 }, 'waitlist reconciliation found no open candidate class');
+    // `queuedClasses`, not a hardcoded zero: `candidateIds.length` is >= 1 here
+    // by construction, and it is the interesting number. One or two is an
+    // ordinary race with a completing class. Two hundred means the query above
+    // and the one here disagree about `status` — a drift worth seeing, and the
+    // figure that distinguishes them is exactly the one an earlier revision
+    // threw away by logging `candidates: 0` on both paths.
+    log.debug(
+      { candidates: 0, queuedClasses: candidateIds.length },
+      'waitlist reconciliation found no open candidate class',
+    );
     return emptySummary(0);
   }
 
@@ -131,146 +236,247 @@ export async function reconcileWaitlists(
   });
   const activeByClass = new Map(counts.map((c) => [c.classId, c._count._all]));
 
+  const outcomes: Array<{ classId: string; outcome: ClassOutcome }> = [];
+  for (const cls of classes) {
+    outcomes.push({
+      classId: cls.id,
+      outcome: await reconcileOne(db, cls, activeByClass.get(cls.id) ?? 0, opts.now),
+    });
+  }
+
+  const summary = foldOutcomes(classes.length, outcomes);
+  report(summary);
+  return summary;
+}
+
+/**
+ * One class, start to finish, reduced to a single outcome.
+ *
+ * Extracted so the outcome is a RETURN VALUE rather than three pushes into
+ * three arrays at three points in a loop body. That is what makes the summary's
+ * disjointness structural: a class has one outcome because this function
+ * returns one, not because the pushes happen to be arranged correctly.
+ */
+async function reconcileOne(
+  db: PrismaClient,
+  cls: CandidateClass,
+  activeCount: number,
+  now: Date | undefined,
+): Promise<ClassOutcome> {
+  // The whole body is inside the `try`, not just the `handleSpotFreed` call —
+  // and today nothing before that call can actually throw. `getWaitlistWindow`
+  // is arithmetic over a total `DEADLINE_HOURS` lookup, and `classStartInstant`
+  // catches an invalid stored timezone and degrades to UTC (#145) rather than
+  // raising. So this is a scope kept deliberately wider than its current need,
+  // not a live catch, and the reason is history: the gate used to be a database
+  // round-trip sitting ABOVE the `try`, where a `P2024` pool timeout escaped
+  // the loop, abandoned every class queued behind this one, and recorded
+  // nothing about which class failed. Drawing the boundary at the top of the
+  // body is what makes that unreachable by construction rather than by the
+  // current body happening to be infallible.
+  try {
+    const window = getWaitlistWindow(
+      cls.date,
+      cls.startTime,
+      cls.cancelDeadline,
+      cls.teacher.defaultTimezone,
+      now,
+    );
+    if (window === 'frozen') return { kind: 'skipped', reason: 'frozen' };
+
+    // A class ABSENT from the groupBy has zero active registrations, not zero
+    // free seats, and its caller defaults accordingly. `?? 0` there is what
+    // keeps the emptiest classes — the ones most obviously in need of
+    // reconciling — inside the candidate set. Defaulting the other way, or
+    // skipping the misses, inverts this filter exactly where it matters most.
+    //
+    // Deliberately NOT `readSeatCount`: that helper takes `TransactionClientOnly`
+    // and documents the Class row lock as a precondition. The predicate is
+    // `SeatCount.isFull`'s (`freeSeats <= 0`) written out, and that duplication
+    // is the cost of not being able to call the helper here.
+    //
+    // This unlocked read is NOT the mistake #212 existed to remove, and the
+    // difference is worth stating because it looks identical. #212's finding was
+    // that an unlocked count is meaningless AS A GUARD — it moves the race
+    // rather than closing it. This is not a guard. It decides only whether to
+    // ASK, and `handleSpotFreed` re-counts through `readSeatCount` under
+    // `lockClassRow` before it acts. Stale in either direction costs almost
+    // nothing: reads full when free, the seat waits one more tick; reads free
+    // when full, the hook's locked count suppresses it, as designed.
+    //
+    // "Almost", because there is one seat this loses: a class read as full on
+    // the last tick before its cancel deadline is `frozen` on the next one and
+    // never reconciled. One minute wide, and the queue was already past
+    // saving by then — but it is not literally free, and the `full` skip
+    // reason above is what would make it visible if it ever mattered.
+    //
+    // It is therefore an equivalent mutant and has no mutation test. Said out
+    // loud so the next reader does not mutation-test it, find nothing, and
+    // conclude this suite is weak — the same reason `handleSpotFreed` says it
+    // about its own `waiting.length === 0` line.
+    if (activeCount >= cls.maxStudents) return { kind: 'skipped', reason: 'full' };
+
+    // Only the broadcast needs a gate. A promotion fills one seat, so the
+    // auto-promote branch consumes its own trigger; a broadcast leaves the
+    // seat free and would go out again every tick.
+    if (window === 'first_come_first_claimed' && broadcastStillStands(cls)) {
+      return { kind: 'skipped', reason: 'already_broadcast' };
+    }
+
+    // Reading the result at all is the point spec §4.1 makes: the two live
+    // callers discard it, and that is what made a fired guard indistinguishable
+    // from an unreached one. `none` is reachable from this sweep several ways —
+    // `promoteNext` losing a `WaitlistPromotionError` race, or returning `null`
+    // after draining an all-stale queue, and `handleSpotFreed`'s locked recount
+    // suppressing a broadcast, or its `empty` branch when the last `waiting` row
+    // vanishes between the candidate query and the invocation. The list is
+    // illustrative; the distinction it draws is not.
+    const result = await handleSpotFreed(db, cls.id, now);
+    return {
+      kind: 'invoked',
+      repaired: result.action === 'promoted' || result.action === 'broadcast',
+    };
+  } catch (err) {
+    // Per class, mirroring `deleteStudentAccount`'s post-commit loop in
+    // `services/gdpr.ts`. `isolatedSweeps` isolates sweeps from each other, NOT
+    // items within one sweep — and this job is not registered through it in
+    // any case, so nothing outside this loop protects the classes behind a
+    // contended one.
+    //
+    // Classified, not blanket-`warn`: `api-errors.ts` reserves `error` for what
+    // should page someone, and a lock timeout on a contended row is the system
+    // doing what it was configured to do — retried on the next tick, which is
+    // what makes a separate retry unnecessary. That reasoning covers lock races
+    // and nothing else. A schema drift, a dangling FK, a `P2002` regression
+    // inside `promoteNext` — none of those clear on retry, and the trigger
+    // condition is not consumed by the failure, so the class fails again every
+    // sixty seconds forever. Blanket `warn` would make a permanently broken
+    // promotion path invisible, which is the shape of the defect this whole
+    // module exists to remove. Both live callers split on exactly this call —
+    // see `promoteAfterCancel` in the registrations route and
+    // `deleteStudentAccount`'s post-commit loop.
+    //
+    // What `error` does NOT currently buy: `lib/log.ts` is pino to stdout with
+    // no transport, so nothing pages anyone off either level today (#157). The
+    // level is the correct classification for when that is fixed; the thing
+    // that actually surfaces a broken sweep NOW is `ReconciliationFailedError`,
+    // which reaches `/api/health` through the scheduler.
+    const transient = isTransientDbError(err);
+    log[transient ? 'warn' : 'error'](
+      { err, classId: cls.id, transient },
+      transient
+        ? 'waitlist reconciliation lost a lock race for one class — retrying next tick'
+        : 'waitlist reconciliation failed for one class and will not recover by retrying',
+    );
+    return { kind: 'failed' };
+  }
+}
+
+/**
+ * True when a first-come-first-claimed broadcast already stands for the seat
+ * that is currently free.
+ *
+ * Two conditions, and they answer different questions.
+ *
+ * `spotBroadcastAt !== null` is the real gate. It is set inside
+ * `handleSpotFreed`'s broadcast transaction and cleared by
+ * `activateRegistration` — that is, by any seat being FILLED. What invalidates
+ * a broadcast is not time passing but the seat it announced being taken, so
+ * that is where the clear belongs.
+ *
+ * This replaced a gate that asked whether a `spot_available` notification
+ * existed anywhere in the current claim window, and the difference is the
+ * whole point: a claim window is sixty minutes wide and can hold more than one
+ * seat-freeing event. Seat frees, live broadcast succeeds, a waiter claims,
+ * the seat frees AGAIN, and the live hook drops the second broadcast — the old
+ * gate found the first notification still inside the window and suppressed the
+ * sweep for the rest of the hour, so the remaining waiters were never told.
+ * That is precisely the loss this module exists to repair, in a state the
+ * module could not repair. A flag cleared by the claim cannot make that
+ * mistake. It also costs no query: this is a column on a row the sweep has
+ * already loaded, where the old gate was a round-trip per gated class per tick
+ * and needed an index on the app's highest-volume table to be affordable.
+ *
+ * The claim-window lower bound survives as a secondary check, in memory and
+ * for free. `date` and `startTime` are absent from `ECONOMIC_FIELDS`
+ * (`lib/class-fields.ts`), so a class can be rescheduled after its settings
+ * lock — which opens a NEW claim window while a flag from the old one still
+ * stands. Without the bound the gate would be permanently shut for such a
+ * class, which is this branch's own defect reintroduced for rescheduled
+ * classes.
+ */
+function broadcastStillStands(cls: CandidateClass): boolean {
+  if (cls.spotBroadcastAt === null) return false;
+
+  const classStart = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
+  const claimWindowStart = new Date(
+    classStart.getTime() - (DEADLINE_HOURS[cls.cancelDeadline] + 1) * 60 * 60 * 1000,
+  );
+  return cls.spotBroadcastAt >= claimWindowStart;
+}
+
+/** The single pass that turns per-class outcomes into the summary. */
+function foldOutcomes(
+  candidates: number,
+  outcomes: ReadonlyArray<{ classId: string; outcome: ClassOutcome }>,
+): ReconcileSummary {
   const reconciledClassIds: string[] = [];
   const repairedClassIds: string[] = [];
   const failedClassIds: string[] = [];
-  // Why a tick did nothing, which the counts alone cannot say. A tick reporting
-  // 40 candidates and no work is otherwise indistinguishable between "40
-  // classes were legitimately full" and "a gate is broken and rejected all 40"
-  // — the exact ambiguity `waitlist.ts:750` added its own `debug` line to
-  // remove, for a guard whose firing was likewise invisible.
-  const skipped = { frozen: 0, full: 0, alreadyBroadcast: 0 };
+  const skipped: SkippedClass[] = [];
 
-  for (const cls of classes) {
-    // The `try` opens here, not at the `handleSpotFreed` call: the broadcast
-    // gate below is a database round-trip, and a `P2024` pool timeout on it —
-    // a code this project already classifies as transient
-    // (`api-errors.ts:124`) — would otherwise escape the loop and abandon every
-    // class queued behind this one, recording nothing about which class failed.
-    // That is the property this loop exists to hold.
-    try {
-      const window = getWaitlistWindow(
-        cls.date,
-        cls.startTime,
-        cls.cancelDeadline,
-        cls.teacher.defaultTimezone,
-        opts.now,
-      );
-      if (window === 'frozen') {
-        skipped.frozen += 1;
-        continue;
+  for (const { classId, outcome } of outcomes) {
+    switch (outcome.kind) {
+      case 'skipped':
+        skipped.push({ classId, reason: outcome.reason });
+        break;
+      case 'invoked':
+        reconciledClassIds.push(classId);
+        if (outcome.repaired) repairedClassIds.push(classId);
+        break;
+      case 'failed':
+        failedClassIds.push(classId);
+        break;
+      default: {
+        const unhandled: never = outcome;
+        throw new Error(`unhandled class outcome: ${JSON.stringify(unhandled)}`);
       }
-
-      // A class ABSENT from the groupBy has zero active registrations, not zero
-      // free seats. `?? 0` is what keeps the emptiest classes — the ones most
-      // obviously in need of reconciling — inside the candidate set. Defaulting
-      // the other way, or skipping the misses, inverts this filter exactly where
-      // it matters most.
-      const activeCount = activeByClass.get(cls.id) ?? 0;
-
-      // Deliberately NOT `readSeatCount`: that helper takes `TransactionClientOnly`
-      // and documents the Class row lock as a precondition (`capacity.ts:68`).
-      // The predicate is `SeatCount.isFull`'s (`freeSeats <= 0`) written out, and
-      // that duplication is the cost of not being able to call the helper here.
-      //
-      // This unlocked read is NOT the mistake #212 existed to remove, and the
-      // difference is worth stating because it looks identical. #212's finding was
-      // that an unlocked count is meaningless AS A GUARD — it moves the race
-      // rather than closing it. This is not a guard. It decides only whether to
-      // ASK, and `handleSpotFreed` re-counts through `readSeatCount` under
-      // `lockClassRow` before it acts. Stale in either direction costs almost
-      // nothing: reads full when free, the seat waits one more tick; reads free
-      // when full, the hook's locked count suppresses it, as designed.
-      //
-      // "Almost", because there is one seat this loses: a class read as full on
-      // the last tick before its cancel deadline is `frozen` on the next one and
-      // never reconciled. One minute wide, and the queue was already past
-      // saving by then — but it is not literally free, and the `skipped.full`
-      // tally above is what would make it visible if it ever mattered.
-      //
-      // It is therefore an equivalent mutant and has no mutation test. Said out
-      // loud so the next reader does not mutation-test it, find nothing, and
-      // conclude this suite is weak — the same reason `waitlist.ts:715` says it
-      // about its own `waiting.length === 0` line.
-      if (activeCount >= cls.maxStudents) {
-        skipped.full += 1;
-        continue;
-      }
-
-      // Only the broadcast needs a gate. A promotion fills one seat, so the
-      // auto-promote branch consumes its own trigger; a broadcast leaves the
-      // seat free and would go out again every tick. (A class with two free
-      // seats and two waiters does re-fire — once per tick, promoting one each
-      // time, which is the intended behaviour and not a re-broadcast.)
-      if (window === 'first_come_first_claimed' && (await alreadyBroadcastInWindow(db, cls))) {
-        skipped.alreadyBroadcast += 1;
-        continue;
-      }
-
-      const result = await handleSpotFreed(db, cls.id, opts.now);
-      reconciledClassIds.push(cls.id);
-      // Reading the result at all is the point spec §4.1 makes: the two live
-      // callers discard it (`waitlist.ts:626-628`), and that is what made a
-      // fired guard indistinguishable from an unreached one. `none` is
-      // reachable from this sweep several ways — `promoteNext` losing a
-      // `WaitlistPromotionError` race, or returning `null` after draining an
-      // all-stale queue (`waitlist.ts:439`), and the locked recount at
-      // `waitlist.ts:706` suppressing a broadcast, or its `empty` branch
-      // (`waitlist.ts:719`) when the last `waiting` row vanishes between the
-      // candidate query and the invocation. The list is illustrative; the
-      // distinction it draws is not.
-      if (result.action === 'promoted' || result.action === 'broadcast') {
-        repairedClassIds.push(cls.id);
-      }
-    } catch (err) {
-      // Per class, mirroring `deleteStudentAccount`'s post-commit loop
-      // (`gdpr.ts:654`). `isolatedSweeps` isolates sweeps from each other, NOT
-      // items within one sweep — and this job is not registered through it in
-      // any case, so nothing outside this loop protects the classes behind a
-      // contended one.
-      //
-      // Classified, not blanket-`warn`: `api-errors.ts:222` reserves `error`
-      // for what should page someone, and a lock timeout on a contended row is
-      // the system doing what it was configured to do — retried on the next
-      // tick, which is what makes a separate retry unnecessary. That reasoning
-      // covers lock races and nothing else. A schema drift, a dangling FK, a
-      // `P2002` regression inside `promoteNext` — none of those clear on retry,
-      // and the trigger condition is not consumed by the failure, so the class
-      // fails again every sixty seconds forever. Blanket `warn` would make a
-      // permanently broken promotion path invisible, which is the shape of the
-      // defect this whole module exists to remove. Both live callers split on
-      // exactly this line (`route.ts:238`, `gdpr.ts:661`).
-      const transient = isTransientDbError(err);
-      failedClassIds.push(cls.id);
-      log[transient ? 'warn' : 'error'](
-        { err, classId: cls.id, transient },
-        transient
-          ? 'waitlist reconciliation lost a lock race for one class — retrying next tick'
-          : 'waitlist reconciliation failed for one class and will not recover by retrying',
-      );
     }
   }
 
-  const summary: ReconcileSummary = {
-    candidates: classes.length,
-    reconciledClassIds,
-    repairedClassIds,
-    failedClassIds,
-  };
+  return { candidates, reconciledClassIds, repairedClassIds, failedClassIds, skipped };
+}
+
+/**
+ * The one log line per tick, and the rethrow when the tick accomplished
+ * nothing.
+ *
+ * Why a tick did nothing is what the counts alone cannot say. A tick reporting
+ * 40 candidates and no work is otherwise indistinguishable between "40 classes
+ * were legitimately full" and "a gate is broken and rejected all 40" — the
+ * exact ambiguity `handleSpotFreed` added its own `debug` line to remove, for a
+ * guard whose firing was likewise invisible.
+ */
+function report(summary: ReconcileSummary): void {
+  const skipCounts = countSkipReasons(summary.skipped);
   const payload = {
     candidates: summary.candidates,
-    reconciled: reconciledClassIds.length,
-    repaired: repairedClassIds.length,
-    failed: failedClassIds.length,
-    skipped,
+    reconciled: summary.reconciledClassIds.length,
+    repaired: summary.repairedClassIds.length,
+    failed: summary.failedClassIds.length,
+    skipped: skipCounts,
   };
 
-  if (failedClassIds.length > 0 && reconciledClassIds.length === 0) {
-    // Every class it tried, it failed. Individually each of those may be a
-    // routine lock race at `warn`; collectively, a tick that accomplished
-    // nothing is a different statement and deserves its own line.
-    log.warn(payload, 'waitlist reconciliation repaired nothing — every class it tried failed');
-  } else if (reconciledClassIds.length > 0 || failedClassIds.length > 0) {
+  if (summary.failedClassIds.length > 0 && summary.reconciledClassIds.length === 0) {
+    // `error`, not `warn`, whatever each individual failure was classified as.
+    // Individually each may be a routine lock race; a tick that invoked N
+    // classes and failed all N is a different statement at any N, and the one
+    // that must not be swallowed.
+    log.error(payload, 'waitlist reconciliation repaired nothing — every class it tried failed');
+    throw new ReconciliationFailedError(summary.failedClassIds);
+  }
+
+  if (summary.reconciledClassIds.length > 0 || summary.failedClassIds.length > 0) {
     // `info`, not `warn`: a reconciliation firing means the LIVE path failed and
     // this repaired it. That belongs in the record without paging anyone — the
     // lines at both live `handleSpotFreed` call sites already record the
@@ -279,18 +485,64 @@ export async function reconcileWaitlists(
     // "ran the hook" rather than "repaired", because `reconciled` cannot tell
     // those apart; `repaired` in the payload is the figure that can.
     log.info(payload, 'waitlist reconciliation ran the spot-freed hook');
-  } else {
-    // `debug` for a tick that found nothing, and for the reason `waitlist.ts:750`
-    // gives for its own: `debug` is off by default (`LOG_LEVEL`, `lib/log.ts`)
-    // so it costs nothing in production, and it is the difference between "the
-    // sweep ran and had nothing to do" and "the sweep did not run" — otherwise
-    // visible only as a timestamp in `/api/health`. `skipped` is what says
-    // WHICH nothing, since every candidate may have been gated rather than
-    // genuinely idle.
-    log.debug(payload, 'waitlist reconciliation invoked the hook for no class');
+    return;
   }
 
-  return summary;
+  const gated = skipCounts.frozen + skipCounts.alreadyBroadcast;
+  if (gated > 0) {
+    // `info`, and this is the branch the skip reasons exist for. A tick where
+    // every candidate was GATED is not an idle tick — it is the state that
+    // looks identical to a jammed gate, and an earlier revision logged it at
+    // `debug`, which is off by default. The diagnostic existed in the source
+    // and never in the output.
+    log.info(
+      { ...payload, gatedClassIds: summary.skipped.filter((s) => s.reason !== 'full') },
+      'waitlist reconciliation invoked no class — every candidate was gated',
+    );
+    return;
+  }
+
+  // `debug` for a tick that genuinely found nothing to do — every candidate
+  // simply full — and for the reason `handleSpotFreed` gives for its own:
+  // `debug` is off by default (`LOG_LEVEL`, `lib/log.ts`) so it costs nothing
+  // in production, and it is the difference between "the sweep ran and had
+  // nothing to do" and "the sweep did not run" — otherwise visible only as a
+  // timestamp in `/api/health`.
+  log.debug(payload, 'waitlist reconciliation invoked the hook for no class');
+}
+
+interface SkipCounts {
+  frozen: number;
+  full: number;
+  alreadyBroadcast: number;
+}
+
+/**
+ * Reduces skip reasons to counts for the log payload, with the exhaustive
+ * `switch` + `never` idiom `countSkipReasons` in `lib/generation.ts` uses: a
+ * fourth `SkipReason` member becomes a compile error here rather than
+ * vanishing silently from the one line an operator reads.
+ */
+function countSkipReasons(skipped: readonly SkippedClass[]): SkipCounts {
+  const counts: SkipCounts = { frozen: 0, full: 0, alreadyBroadcast: 0 };
+  for (const { reason } of skipped) {
+    switch (reason) {
+      case 'frozen':
+        counts.frozen += 1;
+        break;
+      case 'full':
+        counts.full += 1;
+        break;
+      case 'already_broadcast':
+        counts.alreadyBroadcast += 1;
+        break;
+      default: {
+        const unhandled: never = reason;
+        throw new Error(`unhandled skip reason: ${String(unhandled)}`);
+      }
+    }
+  }
+  return counts;
 }
 
 function emptySummary(candidates: number): ReconcileSummary {
@@ -299,66 +551,6 @@ function emptySummary(candidates: number): ReconcileSummary {
     reconciledClassIds: [],
     repairedClassIds: [],
     failedClassIds: [],
+    skipped: [],
   };
-}
-
-/**
- * True when this class's current claim window already carries a broadcast.
- *
- * Exact rather than approximate: the broadcast is one `createMany` with no
- * `skipDuplicates` (`waitlist.ts:732`), so a class's waiting students either all
- * received a `spot_available` notification or none did. There is no partial
- * state for a class-level check to be wrong about, and so no per-recipient query
- * and no new column.
- *
- * `claimWindowStart` is derived from the class rather than stored: it is
- * `classStart - (deadlineHours + 1) h`, the same boundary `getWaitlistWindow`
- * computes to decide the window in the first place. The lower bound is not
- * decoration — a class can be rescheduled after its settings lock (`date` and
- * `startTime` are absent from `ECONOMIC_FIELDS`, `lib/class-fields.ts`), which
- * opens a NEW claim window while the old `spot_available` rows persist. Without
- * the bound the gate would be permanently shut for such a class and the sweep
- * could never repair a dropped broadcast in its new window.
- *
- * Served by `Notification_relatedClassId_type_createdAt_idx`, added with this
- * sweep: the table's only other index is on the recipient, so unindexed this
- * would be a sequential scan of every notification ever written, once per gated
- * class, every sixty seconds.
- *
- * **The one race this does not close.** The read is outside the Class row lock,
- * so: this reads the gate → the live hook broadcasts → this invokes the hook →
- * a second broadcast. The sweep cannot race ITSELF — the `job.running` guard in
- * `lib/scheduler.ts` refuses a tick while one is running — only the live path.
- * The cost is one duplicate notification against a current cost of no
- * notification at all, and that trade was made deliberately.
- *
- * (Cited by name rather than by line: that guard has moved twice during this
- * branch alone, once because this branch registered a job above it and once
- * because it extracted `buildJobs`. A symbol survives what a line number does
- * not.)
- */
-async function alreadyBroadcastInWindow(
-  db: PrismaClient,
-  cls: {
-    id: string;
-    date: Date;
-    startTime: string;
-    cancelDeadline: CancelDeadline;
-    teacher: { defaultTimezone: string };
-  },
-): Promise<boolean> {
-  const classStart = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
-  const claimWindowStart = new Date(
-    classStart.getTime() - (DEADLINE_HOURS[cls.cancelDeadline] + 1) * 60 * 60 * 1000,
-  );
-
-  const existing = await db.notification.findFirst({
-    where: {
-      relatedClassId: cls.id,
-      type: 'spot_available',
-      createdAt: { gte: claimWindowStart },
-    },
-    select: { id: true },
-  });
-  return existing !== null;
 }

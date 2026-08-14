@@ -52,11 +52,33 @@ export class WaitlistJoinError extends Error {
  * WaitlistEntry are unique per (classId, studentId), and cancelled rows are
  * kept — plain `create` locks a student out of a class forever after one
  * cancellation. Reactivation resets the row instead.
+ *
+ * Also clears `Class.spotBroadcastAt`, and this is the only place that does
+ * (#220). Filling a seat is what makes a standing first-come-first-claimed
+ * broadcast stale — not time passing — so the clear belongs on the fill, and
+ * this function is where every fill in the app converges: direct booking
+ * (`POST /api/registrations`), `promoteNext` and `claimSpot`. All three hold
+ * this class row's `FOR UPDATE` lock before they call, which is what
+ * serializes the clear against `handleSpotFreed`'s set; a future booking path
+ * inherits the clear for free, because reactivating a cancelled row is the
+ * problem this function exists to solve and nothing else may do it.
  */
 export async function activateRegistration(
   tx: PrismaTransactionClient,
   input: { classId: string; studentId: string; tierAtBooking: number; isWalkIn?: boolean },
 ) {
+  // Unconditionally, not "only when this fill made the class full". The
+  // precise version needs a seat count on every booking and can drift from
+  // the thing it is counting; this one cannot. The cost is that with two
+  // seats free in the claim window, each claim re-opens the gate and the
+  // remaining waiters are told again — but a seat genuinely is still free
+  // when that happens, so the second message is true and actionable, and the
+  // live path already re-broadcasts on every freed seat with no gate at all.
+  await tx.class.update({
+    where: { id: input.classId },
+    data: { spotBroadcastAt: null },
+  });
+
   const existing = await tx.registration.findUnique({
     where: { classId_studentId: { classId: input.classId, studentId: input.studentId } },
   });
@@ -737,6 +759,16 @@ export async function handleSpotFreed(
         relatedClassId: classId,
       })),
     );
+    // The broadcast now stands for the seat that is currently free, and this
+    // is what says so (#220). Written inside the same transaction and under
+    // the same class row lock as the notifications, so the flag and the rows
+    // it describes commit together — a broadcast that rolls back leaves no
+    // flag claiming it happened. `activateRegistration` clears it again the
+    // moment anyone fills a seat.
+    await tx.class.update({
+      where: { id: classId },
+      data: { spotBroadcastAt: now ?? new Date() },
+    });
     // `notified` is `createMany`'s own count, not `waiting.length`. The two
     // cannot differ today (no `skipDuplicates`, so the insert is all-or-throw)
     // — but the return value exists to be checked, and reporting the size of

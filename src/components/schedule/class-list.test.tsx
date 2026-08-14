@@ -98,6 +98,7 @@ function classRow(
     effectiveTeacherRate: null,
     totalStudents: null,
     totalRevenue: null,
+    spotBroadcastAt: null,
     createdAt: AT,
     updatedAt: AT,
     _count: { registrations: payments?.length ?? 0 },

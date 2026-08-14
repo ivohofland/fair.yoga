@@ -228,11 +228,19 @@ export const DELETE = withErrorHandler(async (
  * to look. That is no longer true: the `waitlist-reconciliation` sweep
  * (`services/waitlist-reconciliation.ts`, #220) re-runs this same hook every
  * minute on any open class holding a free seat and a waiting queue, so a drop
- * here is normally repaired within a tick. Two things follow. This line is now
- * a record of the live path failing rather than an obituary — and adding a
- * retry HERE is still the wrong fix, for the reason the sweep exists: a
- * `55P03` means the contending writer is still holding the row, so an
- * immediate retry loses the same race again.
+ * here is repaired within a tick. Two things follow. This line is now a record
+ * of the live path failing rather than an obituary — and adding a retry HERE
+ * is still the wrong fix, for the reason the sweep exists: a `55P03` means the
+ * contending writer is still holding the row, so an immediate retry loses the
+ * same race again.
+ *
+ * One case the sweep still cannot reach, stated because "repaired within a
+ * tick" would otherwise read as unconditional: a drop in the final minute
+ * before the cancel deadline. The class is `frozen` by the next tick and the
+ * sweep will not promote past a deadline, so for that one minute this line is
+ * still the only record. It is not the multi-cancel case — a broadcast dropped
+ * after an earlier one succeeded IS repaired, because `Class.spotBroadcastAt`
+ * is cleared by the claim that consumed the earlier seat.
  */
 async function promoteAfterCancel(classId: string): Promise<void> {
   try {

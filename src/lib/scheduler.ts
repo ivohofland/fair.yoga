@@ -127,23 +127,9 @@ export async function startScheduler(): Promise<void> {
 
   const health = (globalThis.__fairYogaJobHealth ??= {});
   for (const job of jobs) {
-    health[job.name] = { lastRunAt: null, lastSuccessAt: null, lastError: null };
-    const tick = async () => {
-      if (job.running) return;
-      job.running = true;
-      const jobHealth = health[job.name]!;
-      jobHealth.lastRunAt = new Date().toISOString();
-      try {
-        await job.run(prisma);
-        jobHealth.lastSuccessAt = new Date().toISOString();
-        jobHealth.lastError = null;
-      } catch (err) {
-        log.error({ err, job: job.name }, 'scheduler job failed');
-        jobHealth.lastError = err instanceof Error ? err.message : String(err);
-      } finally {
-        job.running = false;
-      }
-    };
+    const jobHealth: JobHealth = { lastRunAt: null, lastSuccessAt: null, lastError: null };
+    health[job.name] = jobHealth;
+    const tick = makeTick(job, jobHealth, prisma);
 
     // First run shortly after boot, then on the interval. unref() so the
     // timers never keep a shutting-down process alive.
@@ -152,6 +138,39 @@ export async function startScheduler(): Promise<void> {
   }
 
   log.info({ jobs: jobs.length }, 'scheduler started');
+}
+
+/**
+ * One job's tick: the re-entrancy guard and the health bookkeeping, separated
+ * from `startScheduler` so both can be asserted without starting timers.
+ *
+ * Worth separating for the same reason `buildJobs` was. The `running` guard is
+ * load-bearing by another module's argument — `waitlist-reconciliation.ts`
+ * accepts a duplicate-notification race specifically because this refuses a
+ * tick while one is running — and until it was extracted, deleting it failed
+ * nothing in the suite. A premise of a documented trade-off should not be the
+ * one line nothing covers.
+ */
+export function makeTick(
+  job: Job,
+  jobHealth: JobHealth,
+  db: PrismaClient,
+): () => Promise<void> {
+  return async () => {
+    if (job.running) return;
+    job.running = true;
+    jobHealth.lastRunAt = new Date().toISOString();
+    try {
+      await job.run(db);
+      jobHealth.lastSuccessAt = new Date().toISOString();
+      jobHealth.lastError = null;
+    } catch (err) {
+      log.error({ err, job: job.name }, 'scheduler job failed');
+      jobHealth.lastError = err instanceof Error ? err.message : String(err);
+    } finally {
+      job.running = false;
+    }
+  };
 }
 
 /**
@@ -218,12 +237,14 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
       // overruns.
       //
       // Its own job name rather than a fourth sweep inside `class-transitions`,
-      // so its `lastRunAt` / `lastSuccessAt` describe this sweep alone. Note
-      // what that does NOT buy: `reconcileWaitlists` handles its per-class
-      // failures internally and does not throw, so `lastError` stays null even
-      // when every class fails. A reconciliation that is broken rather than
-      // merely contended surfaces as the `error`-level line the sweep logs
-      // itself — not as a degraded `/api/health`.
+      // so its `lastRunAt` / `lastSuccessAt` describe this sweep alone — and
+      // so `/api/health` can report it degraded. `reconcileWaitlists` swallows
+      // per-class failures (one contended class must not abandon the rest) but
+      // throws `ReconciliationFailedError` when it invoked classes and every
+      // one failed. Without that throw the tick below would record
+      // `lastSuccessAt` and null `lastError` on every pass, so a sweep
+      // repairing nothing at all would report `healthy: true` with a fresh
+      // timestamp — an affirmative false statement rather than a missing one.
       name: 'waitlist-reconciliation',
       intervalMs: 1 * MINUTE,
       run: (db) => reconcileWaitlists(db),
