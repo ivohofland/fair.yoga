@@ -1346,15 +1346,28 @@ describe('generateClassInstances (DB)', () => {
   });
 
   /**
-   * The archive's own `deleteMany` is bounded by the same `SET LOCAL`, and the
+   * The archive transaction is bounded by the same `SET LOCAL`, and the
    * writer it can lose to is not the sweep — it is an ordinary booking.
    * `POST /api/registrations` holds its `Class` row `FOR UPDATE` for the length
    * of its transaction and is one of the five deliberately unbounded sites
    * `db-locks.ts` lists, so "teacher archives a recurring class while a student
    * is booking one of its instances" now ends in `busy` at 2s where it used to
    * wait. That trade is deliberate; it was also untested.
+   *
+   * Named for the `deleteMany` originally, back when that was the only
+   * statement in this transaction that could contend for a `Class` row it
+   * did not already hold. Issue 180 task 4 added an ordered pre-lock ahead of
+   * it, over a superset of the rows the `deleteMany` can match, so the
+   * `deleteMany` can no longer be the one that waits — everything it might
+   * touch is already held by the time it runs. This test still measures the
+   * same guarantee (the 2s bound reaches an ordinary booking, not just the
+   * generation sweep); it is just the pre-lock's own `$queryRaw` that now
+   * blocks and times out, not the `deleteMany` below it. Measured, not
+   * assumed: the logged error this test's own assertions are built on now
+   * names `class-template-lifecycle.ts`'s pre-lock statement, not its
+   * `deleteMany`.
    */
-  describe('archiveOrUnarchiveTemplate — the bound reaches its deleteMany', () => {
+  describe('archiveOrUnarchiveTemplate — the bound reaches its pre-lock', () => {
     beforeEach(async () => {
       await prisma.class.deleteMany({ where: { teacherId } });
     });
@@ -1410,10 +1423,11 @@ describe('generateClassInstances (DB)', () => {
           expect(waited).toBeGreaterThanOrEqual(1_800);
           expect(waited).toBeLessThan(5_000);
 
-          // The CAS had already succeeded when the `deleteMany` blocked, so
-          // this also pins that the rollback took the flag back with it —
-          // otherwise the teacher is told nothing changed while the template
-          // sits archived.
+          // The CAS had already succeeded when the pre-lock blocked (issue
+          // 180 task 4 — the `deleteMany` never runs; see this describe's own
+          // updated docblock), so this also pins that the rollback took the
+          // flag back with it — otherwise the teacher is told nothing changed
+          // while the template sits archived.
           const after = await prisma.classTemplate.findUniqueOrThrow({
             where: { id: templateId },
           });

@@ -503,6 +503,36 @@ export type ArchiveTemplateResult =
 const SCHEDULED_STATUSES: readonly ClassStatus[] = Object.freeze(['draft', 'open']);
 
 /**
+ * `SCHEDULED_STATUSES`, pre-rendered as a raw SQL `IN (...)` list, for the
+ * ordered pre-lock's `$queryRaw` further down — the one caller of this
+ * constant that cannot go through `scheduledWhere`'s Prisma `{ in: [...] }`
+ * filter, because `FOR UPDATE OF c` and `ORDER BY` have no Prisma
+ * query-builder equivalent.
+ *
+ * Derived, not retyped: this was a second hand-written `'draft', 'open'`
+ * literal in the raw SQL, with nothing tying the two lists together —
+ * dropping a status from `SCHEDULED_STATUSES` above left this one stale, and
+ * measurement during issue 180 task 4's review showed exactly that: dropping
+ * `'draft'` from the raw list left all 102 tests across the four files that
+ * cover this function green, silently re-opening the deadlock the pre-lock
+ * exists to close. Deriving this from the same array makes that
+ * un-representable — there is only one list to edit now, not two to keep in
+ * sync.
+ *
+ * `Prisma.raw`, not `Prisma.join`: `Prisma.join` would bind each status as a
+ * separate parameter, and a bound text parameter compared against the
+ * `status` column's enum type needs an explicit `::text` cast to resolve —
+ * measured to cost the index the pre-lock's `WHERE` relies on. `Prisma.raw`
+ * instead embeds the values as literal SQL text, identical to what was
+ * hand-typed before, so the query plan is unchanged. Safe here specifically
+ * because `SCHEDULED_STATUSES` is a frozen, hard-coded constant — never user
+ * input, never touched by anything outside this module — which is the one
+ * precondition that makes building SQL text by string concatenation
+ * defensible at all.
+ */
+const SCHEDULED_STATUSES_SQL = Prisma.raw(SCHEDULED_STATUSES.map((s) => `'${s}'`).join(', '));
+
+/**
  * Classes still on the schedule for a template, from the given calendar-date
  * boundary onward.
  *
@@ -811,11 +841,18 @@ export async function archiveOrUnarchiveTemplate(
     return await db.$transaction(
       async (tx) => {
         // Bounds every statement left in this transaction — the CAS below
-        // first among them, and the `deleteMany` further down too, which is
-        // not incidental: that one can lose to an ordinary booking holding a
-        // `Class` row, so the 2s answer reaches a path the sweep never
+        // first among them, and the ordered pre-lock further down too, which
+        // is not incidental: that one can lose to an ordinary booking holding
+        // a `Class` row, so the 2s answer reaches a path the sweep never
         // touches (`class-generator.test.ts`, "the bound reaches its
-        // deleteMany").
+        // pre-lock" — issue 180 task 4 moved what that test actually blocks
+        // on from the `deleteMany` to the pre-lock ahead of it; see that
+        // test's own updated comment). The `deleteMany` itself can no longer
+        // be the one that waits on an external holder: the pre-lock already
+        // holds every row its predicate could possibly match (a subset of
+        // the pre-lock's row set, see that statement's own comment), so by
+        // the time the `deleteMany` runs, nothing it touches is still
+        // contested.
         //
         // Without it the wait is bounded by NOTHING, not by the 10s budget:
         // Prisma checks that budget at statement boundaries, so it "cannot
@@ -926,31 +963,6 @@ export async function archiveOrUnarchiveTemplate(
         const now = new Date();
         const today = startOfLocalDay(now, timeZone);
 
-        // #112. Who is waiting on a class this archive might withdraw.
-        //
-        // Read BEFORE the delete because `WaitlistEntry.class` is
-        // `onDelete: Cascade` (the `WaitlistEntry` model's `class` relation
-        // in `prisma/schema.prisma`) — after the delete these rows
-        // do not exist to be read. Decided AFTER it, from the survivor read
-        // below, because this read is not the delete's own evaluation.
-        //
-        // DELIBERATELY WIDER THAN THE DELETE: every waiting entry on a scheduled
-        // future class of this template, with no registration predicate. Mirror
-        // the delete's `registrations: { none: … }` here instead and the two
-        // reads disagree in a direction nothing downstream can repair — a class
-        // whose last charged registration is cancelled in the gap becomes
-        // deletable without ever having been a candidate, and its waiters are
-        // cascade-deleted unnotified. That is #112 itself, one window narrower.
-        // It is not exotic: a queue only forms at `maxStudents`, so a class
-        // carrying waiters normally DOES hold a charged registration, and any
-        // cancel that is not `late_cancel` writes plain `cancelled`
-        // (`registrations/[id]/route.ts` — a student's before-deadline cancel and
-        // a teacher's cancel at any hour both land there).
-        //
-        // Wide costs only rows: a class the delete spares is a survivor and is
-        // filtered out below, which is what the concurrency test pins. Wide plus
-        // that filter makes `withdrawn` exactly the set this `deleteMany` took.
-        //
         // A lock is not unavailable — `POST /api/registrations` does take
         // `SELECT … FOR UPDATE` on the class row inline rather than through
         // `lockClassRow` (`db-locks.ts` lists it as one of five deliberate inline
@@ -985,26 +997,84 @@ export async function archiveOrUnarchiveTemplate(
         // candidate may still match and must already be held before that
         // statement runs. Narrowing this set to only the deletable rows would
         // leave a candidate the delete's re-evaluation pulls into scope
-        // unlocked, and the cycle returns — reasoned, not measured: a
-        // narrowing mutation was run against `template-lock-order.test.ts`'s
-        // own fixture and did NOT reproduce the deadlock there, because that
-        // fixture holds no `Registration` row at all, so the narrower clause
-        // is vacuously true for both candidate classes and coincides with
-        // this wide one on that specific fixture (see the report for issue
-        // 180 task 4 for the full account and for the fixture shape that
-        // would be needed to exercise the difference). `setLockTimeout(tx)`
-        // is already in effect from this transaction's own call above;
-        // issuing it again here would be redundant, not wrong.
+        // unlocked, and the cycle returns — measured, not just reasoned.
+        // `template-lock-order.test.ts`'s own fixture cannot show this (it
+        // holds no `Registration` row at all, so a narrower clause would be
+        // vacuously true for both its candidate classes and coincide with
+        // this wide one). Review round 1 built the fixture that can: one
+        // class carries a charged `Registration` at pre-lock time — a narrow
+        // pre-lock would skip locking it, since it is not yet a delete
+        // candidate — and that registration is cancelled from OUTSIDE the
+        // transaction during the candidate read, via `registration.
+        // updateMany`, the same write `DELETE /api/registrations/[id]` makes
+        // and, like it, one that takes no `Class` row lock. Under a narrowed
+        // pre-lock this reproduces `40P01` at the `deleteMany`; under this
+        // wide one it produces `{ ok: true, deleted: 2, remaining: 0 }` (see
+        // the report for issue 180 task 4 for the full recipe and both
+        // outputs). `setLockTimeout(tx)` is already in effect from this
+        // transaction's own call above; issuing it again here would be
+        // redundant, not wrong.
+        //
+        // `c.date > ${today}`, not Prisma's `date: { gt: today }` used
+        // everywhere else `scheduledWhere` is called — `FOR UPDATE OF c` has
+        // no query-builder equivalent, so this statement is raw SQL end to
+        // end. The two forms are not obviously the same comparison and
+        // should not be assumed equivalent without saying why: `Class.date`
+        // is `@db.Date`, and for any Postgres session `TimeZone` this raw
+        // form and Prisma's parameterised form compare the same stored date
+        // values with the same `>` operator, so they always select the same
+        // set of rows — never a subset — which is what lock ⊇ delete
+        // (below) actually needs.
+        //
+        // Why lock ⊇ delete holds here is not structural the way it is for
+        // `syncTemplateInstances`'s own pre-lock (issue 180 task 2), which
+        // reads its write set straight out of the ids the pre-lock itself
+        // returned. This one instead relies on two separate facts holding at
+        // once: the delete's predicate (`scheduledWhere` plus `registrations:
+        // { none: … }`) is a strict narrowing of this pre-lock's predicate
+        // (`scheduledWhere` alone), so it cannot match a row outside this
+        // set; and the only writer that could ADD a `Class` row to this set
+        // after the pre-lock runs — the generation sweep — cannot, because it
+        // serialises on the same `ClassTemplate` row the CAS above already
+        // holds (#95, the comment on that CAS). The delete cannot instead be
+        // scoped to exactly the ids this pre-lock returns, the way the sync
+        // fix's is: that would undo the wide candidate read and the survivor
+        // filter #86/#112 depend on, which stay wide on purpose (see the
+        // comment above the candidate read).
         await tx.$queryRaw`
           SELECT c.id
           FROM "Class" c
           WHERE c."templateId" = ${templateId}
             AND c.date > ${today}
-            AND c.status IN ('draft', 'open')
+            AND c.status IN (${SCHEDULED_STATUSES_SQL})
           ORDER BY c.id
           FOR UPDATE OF c
         `;
 
+        // #112. Who is waiting on a class this archive might withdraw.
+        //
+        // Read BEFORE the delete because `WaitlistEntry.class` is
+        // `onDelete: Cascade` (the `WaitlistEntry` model's `class` relation
+        // in `prisma/schema.prisma`) — after the delete these rows
+        // do not exist to be read. Decided AFTER it, from the survivor read
+        // below, because this read is not the delete's own evaluation.
+        //
+        // DELIBERATELY WIDER THAN THE DELETE: every waiting entry on a scheduled
+        // future class of this template, with no registration predicate. Mirror
+        // the delete's `registrations: { none: … }` here instead and the two
+        // reads disagree in a direction nothing downstream can repair — a class
+        // whose last charged registration is cancelled in the gap becomes
+        // deletable without ever having been a candidate, and its waiters are
+        // cascade-deleted unnotified. That is #112 itself, one window narrower.
+        // It is not exotic: a queue only forms at `maxStudents`, so a class
+        // carrying waiters normally DOES hold a charged registration, and any
+        // cancel that is not `late_cancel` writes plain `cancelled`
+        // (`registrations/[id]/route.ts` — a student's before-deadline cancel and
+        // a teacher's cancel at any hour both land there).
+        //
+        // Wide costs only rows: a class the delete spares is a survivor and is
+        // filtered out below, which is what the concurrency test pins. Wide plus
+        // that filter makes `withdrawn` exactly the set this `deleteMany` took.
         const candidates = await tx.waitlistEntry.findMany({
           where: {
             status: 'waiting',
