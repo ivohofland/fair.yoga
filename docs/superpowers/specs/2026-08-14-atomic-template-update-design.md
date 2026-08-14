@@ -204,12 +204,43 @@ contention — not a production budget. Every production transaction in this
 family budgets 10 s. Do not repeat the softer claim; it makes a derived number
 look inherited.
 
-`archiveOrUnarchiveTemplate` goes from 3 waiting statements to 4 —
-`3 × 2 = 6 s` becomes `4 × 2 = 8 s` — inside a 10 s budget with 2 s left for
-work, which is too tight for a transaction that also inserts one notification
-per withdrawn waiter. It moves to **15 s** as well. That inverts the pin at
-`class-generator.test.ts:396` ("opens the archive transaction with
-`{ timeout: 10_000 }`"), deliberately and visibly.
+**`archiveOrUnarchiveTemplate` keeps `{ timeout: 10_000 }`, and the pin at
+`class-generator.test.ts:396` stands untouched.** An earlier draft moved it to
+15 s on the reasoning that a pre-lock takes it from 3 waiting statements to 4.
+That reasoning is wrong, and the error is worth recording because it inverts the
+conclusion.
+
+Its ten statements, classified by reading the transaction rather than inheriting
+`lock-order.md:336-338`'s count — which is **correct as written**:
+
+| Statement | Waits? |
+|---|---|
+| `setLockTimeout:824` | no |
+| `classTemplate.updateMany` CAS `:866` | **yes** — against `claimTemplateForGeneration`'s `FOR UPDATE` |
+| `classTemplate.findUnique:897`, `findUniqueOrThrow:914` | no — MVCC reads |
+| `waitlistEntry.findMany:961` | no — read |
+| `class.deleteMany:986` | **yes** — `Class` rows, plus the `WaitlistEntry` cascade |
+| `class.findMany:1007` survivors | no — read |
+| `createBulkNotifications:1031` | **yes** — FK `FOR KEY SHARE` on survivor classes |
+| `class.count:1041` | no — read |
+| `classTemplate.update:1058` | no — row already held `FOR NO KEY UPDATE` by the CAS |
+
+A pre-lock covering **every class the transaction touches** — the deletable ones
+*and* the survivors the notifications reference — makes rows 2 and 3 stop
+waiting on those rows, because the transaction already holds them. The
+`deleteMany` can then wait only on cascade children; the notification inserts
+cannot wait at all. The pre-lock **substitutes for** later waits rather than
+adding to them, so the realistic bound stays near `3 × 2 = 6 s`.
+
+This asymmetry does not rescue the update path, and the reason is the point:
+its statements 4 and 5 wait on an index-entry `ShareLock` — another
+transaction's uncommitted entry, not a row any pre-lock could hold. Those two
+waits are irreducible, so `5 × 2 s` stands there.
+
+**Load-bearing consequence for the plan:** the pre-lock's row set at the archive
+must include the survivors, not only the classes about to be deleted. Narrow it
+to the deletable set and the notification inserts start waiting again, and this
+arithmetic no longer holds.
 
 **Rows 4 and 5 are an assertion, not a measurement.** That `lock_timeout`
 bounds an index-entry `ShareLock` wait — not only row locks — must be probed in
@@ -250,15 +281,29 @@ this branch, and `lock-order.md`'s "Known violation" section is pointed at it.
 
 ## 3. What the teacher sees
 
-### 3.1 `sync_conflict` copy inverts back to the counterfactual
+### 3.1 `sync_conflict` copy: a third message, not a revert
 
-PR 208 changed *"That change **would** move one of your classes…"* to *"The
-recurring class **was updated, but**…"* because the template genuinely had
-committed. This branch makes that false again — nothing commits — so the copy
-returns to a "would" form and keeps naming the remedy.
+An earlier draft called this "a revert of a correction that was right". It is
+not, and the difference matters for review. PR 208 made **two** changes to that
+message and only one becomes false:
 
-**This is a revert of a correction that was right.** It must be stated in the
-PR body, or it reads as a regression of 208's work.
+1. *"That change **would** move…"* → *"The recurring class **was updated,
+   but**…"* — the state clause. **False after this branch**, because nothing
+   commits.
+2. Added *"Move or cancel that class, then edit this recurring class again."*
+   The pre-208 copy named no remedy at all. **Still true, and still the point of
+   208.**
+
+So 208's actual contribution survives. The replacement for clause 1 follows a
+convention this codebase already has: the `busy` copy at `[id]/route.ts:178`
+and `:235` both end *"Nothing was changed. Wait a moment, then try again."*
+
+> Your scheduled classes could not be moved — you already have a class at that
+> time. Nothing was changed. Move or cancel that class, then edit this
+> recurring class again.
+
+That is a third message. It keeps 208's remedy, drops the now-false "was
+updated", and does not reach back to the counterfactual "would" either.
 
 The distinct code `TEMPLATE_SYNC_SLOT_CONFLICT` **stays**. Cause and remedy
 still differ from `DUPLICATE_TEMPLATE_SLOT`: another *class* holds that date and
@@ -304,7 +349,8 @@ edited around:
 | Atomicity, integration | Existing test `class-templates-api.test.ts:1127-1186` **inverts**: it asserts `template.startTime === '11:18'` today and must assert unchanged |
 | Lock-then-re-read | Latch `settingsLocked` between the lock and the write; the propagation must skip that class |
 | Archive pre-lock | Its own cycle test — a fix at one site leaves the pairing live through the other (180) |
-| `{ timeout: 15_000 }` on both transactions | Recorded options assertion, as `class-generator.test.ts:396` already does for the archive |
+| `{ timeout: 15_000 }` on the **update** transaction only | Recorded options assertion, modelled on `class-generator.test.ts:396`. The archive's existing `10_000` pin must still pass unchanged — if it needs editing, §2.4's consolidation argument is wrong and the budget question reopens |
+| The archive pre-lock covers survivors, not only deletable classes | Narrow it to the deletable set; the `createBulkNotifications` FK wait returns, which is the assumption §2.4 rests on |
 | `lock_timeout` bounds the index-entry wait | `psql` transcript recorded in §2.4 |
 
 **The trap 180 measured, which the plan must defeat.** A btree `ScalarArrayOp`
