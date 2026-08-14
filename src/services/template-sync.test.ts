@@ -229,6 +229,118 @@ describe('syncTemplateInstances', () => {
     expect(result.slotTaken).toBe(targets.length);
     expect(result.blockedByCancelled).toBe(0);
   });
+
+  /**
+   * Before the ordered pre-lock, `future` was read from an unlocked snapshot, so
+   * a registration committing between that read and the `updateMany` let the
+   * propagation rewrite a class it was supposed to keep. The pre-lock plus the
+   * re-read under it closes that window — this pins the re-read, not the lock.
+   *
+   * Forced, not timed: the hook below pauses `syncTemplateInstances` right
+   * BEFORE its pre-lock `$queryRaw` executes and holds it there while a
+   * separate, unhooked write locks and flips `settingsLocked` on the one
+   * instance and commits — standing in for a booking that reaches the class
+   * first. Only then is the sync allowed to proceed. In the real, unmutated
+   * order (pre-lock before the re-read) this makes the re-read observe the
+   * committed flip and correctly keep the row; the mutation below moves the
+   * read above the pre-lock so it captures the row before the flip instead,
+   * which is exactly the hole this closes.
+   *
+   * Self-contained: its own template, isolated from the three tests above,
+   * which leave the shared `templateId` mutated (day changed, reactivated).
+   */
+  it('does not propagate to a class that became settingsLocked after the pre-lock read', async () => {
+    const pinTemplate = await prisma.classTemplate.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Pin Flow',
+        dayOfWeek: 2, // Wednesday (schema convention: 0 = Monday)
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: new Prisma.Decimal(20),
+        minRate: new Prisma.Decimal(15),
+        targetRate: new Prisma.Decimal(25),
+        minStudents: 2,
+        maxStudents: 10,
+        isActive: false,
+      },
+    });
+
+    const instance = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        templateId: pinTemplate.id,
+        classType: 'Pin Flow',
+        date: futureDate(dayInstanceWeekday(pinTemplate.dayOfWeek), 2),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: new Prisma.Decimal(20),
+        minRate: new Prisma.Decimal(15),
+        targetRate: new Prisma.Decimal(25),
+        minStudents: 2,
+        maxStudents: 10,
+        status: 'open',
+        settingsLocked: false,
+      },
+    });
+
+    await prisma.classTemplate.update({
+      where: { id: pinTemplate.id },
+      data: { startTime: '11:15' },
+    });
+
+    let preLockReached!: () => void;
+    const preLockReachedPromise = new Promise<void>((resolve) => {
+      preLockReached = resolve;
+    });
+    let goAhead!: () => void;
+    const goAheadPromise = new Promise<void>((resolve) => {
+      goAhead = resolve;
+    });
+
+    // Keyed on the query's own bound value — `templateId` is the pre-lock's
+    // first bind — not on call sequence, the house rule this repo's other
+    // lock-order hooks follow (`invitations-lock-order.test.ts`).
+    const hookedPrisma = prisma.$extends({
+      query: {
+        async $queryRaw({ args, query }) {
+          if (args.values[0] === pinTemplate.id) {
+            preLockReached();
+            await goAheadPromise;
+          }
+          return query(args);
+        },
+      },
+      // `$extends` returns a client missing `$on`, so it is not assignable to
+      // `syncTemplateInstances`'s `PrismaClient`-typed `db` parameter even
+      // though every method it calls here is the real one, running against
+      // the real database — same cast `template-lock-order.test.ts` uses for
+      // its own hooked client.
+    }) as unknown as PrismaClient;
+
+    const syncPromise = syncTemplateInstances(hookedPrisma, pinTemplate.id);
+    await preLockReachedPromise;
+
+    // The registration-shaped write, AWAITED to completion before `goAhead`.
+    // The hook fires BEFORE the pre-lock's `FOR UPDATE` executes, so nothing
+    // holds the row yet — this commits uncontested, standing in for a
+    // booking that reached the class first. Only once it has actually landed
+    // does the sync get to proceed past its own pre-lock.
+    await prisma.class.update({
+      where: { id: instance.id },
+      data: { settingsLocked: true },
+    });
+
+    goAhead();
+    const result = await syncPromise;
+
+    const finalRow = await prisma.class.findUniqueOrThrow({ where: { id: instance.id } });
+    expect(finalRow.startTime).toBe('09:00'); // kept, not overwritten to '11:15'
+    expect(result.kept).toBe(1);
+    expect(result.synced).toBe(0);
+  });
 });
 
 /** Schema dayOfWeek (0=Monday) → JS getUTCDay (0=Sunday). */

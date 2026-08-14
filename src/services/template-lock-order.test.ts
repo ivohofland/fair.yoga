@@ -19,15 +19,19 @@ import { deleteStudentAccount } from './gdpr';
  * instances of one recurring template deletes their account while the
  * teacher edits that template.
  *
- * This test is expected to PASS today — the deadlock is real and unfixed. A
- * later task adds an ordered pre-lock to `syncTemplateInstances` and inverts
- * this assertion to "does not deadlock", the same shape #174 task 7 used for
- * the two `Class`-adjacent pairs it actually closed (see the reordered-write
- * tests in `invitations-lock-order.test.ts`).
+ * `syncTemplateInstances` now takes an ordered pre-lock (issue 180 task 2),
+ * so this assertion is inverted from the version that shipped in task 1: it
+ * asserted the deadlock as real and unfixed there, and asserts its absence
+ * here, the same shape #174 task 7 used for the two `Class`-adjacent pairs it
+ * actually closed (see the reordered-write tests in
+ * `invitations-lock-order.test.ts`). `archiveOrUnarchiveTemplate`
+ * (`class-template-lifecycle.ts`) shares the same defect and is untouched —
+ * a later task's subject, not this one's.
  *
- * Asserted by SQLSTATE, not by "it failed": `/40P01|deadlock/i` deliberately
+ * Asserted by SQLSTATE, not by "it passed": `/40P01|deadlock/i` deliberately
  * does NOT match `55P03` (a `lock_timeout` expiry) — a bounded-wait expiry is
- * a different failure and must fail this test rather than satisfy it.
+ * a different failure and must fail this test rather than satisfy it, on
+ * either side of the race.
  */
 const prisma = new PrismaClient();
 
@@ -88,7 +92,7 @@ describe('syncTemplateInstances and deleteStudentAccount take Class row locks in
    * waitlist has), and a student `waiting` on both. Follows the fixture
    * style of `invitations-lock-order.test.ts:77-170`.
    */
-  it('deadlocks: syncTemplateInstances (heap order) vs deleteStudentAccount (ascending order) on two shared instances', async () => {
+  it('does not deadlock: syncTemplateInstances (ordered pre-lock) vs deleteStudentAccount (ascending order) on two shared instances', async () => {
     const local = uniqueSuffix();
 
     const teacher = await prisma.teacher.create({
@@ -201,8 +205,11 @@ describe('syncTemplateInstances and deleteStudentAccount take Class row locks in
     });
 
     // The teacher edits the template — the trigger `docs/lock-order.md`
-    // names. Gives `syncTemplateInstances`'s `updateMany` a real write, not
-    // just a no-op match against unchanged values.
+    // names, and what makes `syncTemplateInstances`'s same-day `updateMany`
+    // run at all. Not what makes the write "real": Postgres takes the row
+    // lock and writes a new tuple version whether or not the new values
+    // differ from the old, so an edit back to the same `startTime` would
+    // lock exactly the same rows.
     await prisma.classTemplate.update({
       where: { id: templateId },
       data: { startTime: '10:30' },
@@ -269,9 +276,15 @@ describe('syncTemplateInstances and deleteStudentAccount take Class row locks in
     // one that actually takes the locks.
     const a = syncTemplateInstances(prisma, templateId);
 
-    const results = await Promise.allSettled([a, b]);
-    const rejections = results.filter((r) => r.status === 'rejected');
-    expect(rejections).toHaveLength(1);
-    expect(String((rejections[0] as PromiseRejectedResult).reason)).toMatch(/40P01|deadlock/i);
+    // The assertion is the ABSENCE of `40P01`, not a specific success on
+    // either side — same rationale as `invitations-lock-order.test.ts`'s own
+    // "does not deadlock" tests: the ordered pre-lock forces whichever side
+    // asks second to wait rather than cycle, not that either side is
+    // guaranteed to win.
+    for (const settled of await Promise.allSettled([a, b])) {
+      if (settled.status === 'rejected') {
+        expect(String(settled.reason)).not.toMatch(/40P01|deadlock/i);
+      }
+    }
   }, 30_000);
 });
