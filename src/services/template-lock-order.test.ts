@@ -27,11 +27,10 @@ import { log } from '@/lib/log';
  * here, the same shape #174 task 7 used for the two `Class`-adjacent pairs it
  * actually closed (see the reordered-write tests in
  * `invitations-lock-order.test.ts`). `archiveOrUnarchiveTemplate`
- * (`class-template-lifecycle.ts`) shares the same defect. Its own
- * reproduction is the second `it` below, still in the task-1 shape —
- * asserting the deadlock as real and unfixed, not yet inverted — because the
- * fix itself is untouched here; that inversion is task 4's job, the same way
- * this file's inversion above was task 2's.
+ * (`class-template-lifecycle.ts`) shared the same defect and now takes its
+ * own ordered pre-lock too (issue 180 task 4); the second `it` below is
+ * inverted the same way, for the same reason — see that `it`'s own docblock
+ * for the extra care its inversion needed beyond this one's.
  *
  * Asserted by SQLSTATE, not by "it passed": `/40P01|deadlock/i` deliberately
  * does NOT match `55P03` (a `lock_timeout` expiry), so a second, separate
@@ -355,19 +354,22 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
 
   /**
    * The second half of issue 180. `archiveOrUnarchiveTemplate`'s multi-row
-   * `class.deleteMany` takes its locks in heap order for the same reason
-   * `syncTemplateInstances`'s `updateMany` above does — and has no id array
-   * to sort even in principle, because its delete takes a predicate, not an
+   * `class.deleteMany` took its locks in heap order for the same reason
+   * `syncTemplateInstances`'s `updateMany` above did — and had no id array to
+   * sort even in principle, because its delete takes a predicate, not an
    * `id: { in: [...] } }` filter (`docs/lock-order.md`: "`archiveOrUnarchiveTemplate`
    * does not even pass ids — its `deleteMany` takes a predicate, so it has no
    * array to sort in the first place").
    *
-   * UNFIXED here, deliberately: this assertion is in the task-1 shape, not
-   * yet inverted — it asserts the deadlock is real, which it is. Task 4 adds
-   * the ordered pre-lock to `archiveOrUnarchiveTemplate` and inverts this the
-   * same way task 2 inverted the `it` above; leaving this one alone is this
-   * task's whole point (a fix at one site would otherwise leave the pairing
-   * live through the other, unnoticed).
+   * INVERTED here (issue 180 task 4), the same way task 2 inverted the `it`
+   * above: `archiveOrUnarchiveTemplate` now opens with an ordered pre-lock —
+   * `SELECT ... FOR UPDATE OF c ... ORDER BY c.id` over the full
+   * `scheduledWhere(templateId, { gt: today })` set, immediately before the
+   * `waitlistEntry.findMany` candidate read (`class-template-lifecycle.ts`) —
+   * so this assertion now asserts the deadlock's ABSENCE, not its presence.
+   * Leaving this `it` unfixed while task 2 fixed the sibling above was task
+   * 1/3's whole point (a fix at one site would otherwise leave the pairing
+   * live through the other, unnoticed); closing this one is task 4's.
    *
    * The handshake mirrors the one above, for the same reason: neither
    * `deleteMany` (here) nor `updateMany` (above) is JS-observable
@@ -375,91 +377,49 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * The hook lives on `deleteStudentAccount`'s `lockClassRow` loop instead —
    * the same `erasureDb` shape, keyed on the LOW class id, signalling once
    * LOW is locked and holding 300ms before reaching for HIGH. Once the
-   * signal fires, `archiveOrUnarchiveTemplate` starts fresh: its `deleteMany`
-   * locks HIGH first (uncontended — heap order, same as the `updateMany`
-   * above), blocks reaching for LOW (the erasure already holds it), and the
-   * cycle closes when the erasure's own hold elapses and it asks for HIGH.
+   * signal fires, `archiveOrUnarchiveTemplate` starts fresh: its pre-lock now
+   * asks for LOW first too — ascending, the same order the erasure already
+   * takes — finds it held, and WAITS rather than reaching for HIGH out of
+   * order first. That wait is what used to be the cycle: with the pre-lock,
+   * it is bounded instead, by the transaction's own 2s `lock_timeout`
+   * (`setLockTimeout`, issued once at this transaction's top) against the
+   * erasure's 300ms artificial hold — comfortably inside the bound. Once the
+   * erasure commits and releases both rows, the pre-lock finishes acquiring
+   * them (LOW then HIGH, still ascending) and the rest of the transaction —
+   * the candidate read, the `deleteMany`, the notifications, the record
+   * write — runs uncontended, because every row it touches is already held.
    *
    * **Not a plain rejection race, unlike the sync test above — measured, not
-   * assumed from the brief's illustrative snippet.** A first run written to
-   * this file in the sync test's exact shape (`Promise.allSettled` +
-   * `toHaveLength(1)` rejection) produced a genuine `40P01 deadlock detected`
-   * (confirmed via `class-template-lifecycle.ts:986`'s own logged error) and
-   * then FAILED with zero rejections. The reason is `archiveOrUnarchiveTemplate`'s
-   * own `catch`: `isTransientDbError` matches `40P01` (`docs/lock-order.md`'s
-   * `ArchiveTemplateResult.busy` arm names the deadlock explicitly among the
-   * codes it catches) and maps it to a RESOLVED `{ ok: false, reason: 'busy' }`,
-   * logging the real error via `log.warn` — the "recurring class archive lost
-   * the template lock race" line — instead of letting it propagate. So when
-   * archiving is the side Postgres picks as the cycle's victim, the SQLSTATE
-   * has to be read off that log call, not off a rejection. When
-   * `deleteStudentAccount` is the victim instead, it still rejects directly —
-   * it has no such catch — so both shapes are handled below rather than
-   * assuming one.
+   * assumed from the brief's illustrative snippet.** Before this task's fix
+   * existed, a first run written to this file in the sync test's exact shape
+   * (`Promise.allSettled` + a rejection-only negation) was tried directly
+   * against the still-unfixed code and PASSED green while a genuine `40P01
+   * deadlock detected` fired underneath it (confirmed via
+   * `class-template-lifecycle.ts`'s own logged error) — because
+   * `archiveOrUnarchiveTemplate`'s own `catch` maps `isTransientDbError`
+   * matches, `40P01` among them, to a RESOLVED `{ ok: false, reason: 'busy'
+   * }` and logs the real error via `log.warn` (the "recurring class archive
+   * lost the template lock race" line) instead of letting it propagate. A
+   * rejection-only negation never looks at that channel, so it can't tell a
+   * real fix from no fix at all. The five requirements below are what a
+   * negation on THIS pairing needs to actually mean something, in the order
+   * that mattered while writing it — the first is the one that would have
+   * made every other correct-looking assertion worthless if skipped:
    *
-   * Which side is the victim is Postgres's choice, not this test's or this
-   * code's (same caveat the sync test's own comment states) — recorded
-   * empirically anyway: `archiveOrUnarchiveTemplate` was the victim in every
-   * run measured for this task (see the report), which is the same pattern
-   * task 1's report measured for `syncTemplateInstances` against this same
-   * erasure — the side whose 300ms artificial hold is NOT the erasure's own
-   * starts waiting on the contested row first, so its wait crosses
-   * Postgres's `deadlock_timeout` first.
-   *
-   * Asserted by SQLSTATE, not by rejection alone. `/40P01|deadlock/i` also
-   * happens to match Prisma's own `P2034` wording ("write conflict or a
-   * deadlock") — substantively the same class of event as `40P01`, not a
-   * false positive, but the regex is not strictly SQLSTATE-exact and a
-   * future reader should not have to rediscover that by tracing Prisma's own
-   * error text. Separately: `55P03` (the archive's own
-   * `SET LOCAL lock_timeout = '2s'` expiring instead of the cycle being
-   * detected) does not contain "40P01" or "deadlock", so the positive
-   * `toMatch(/40P01|deadlock/i)` calls below already exclude it without a
-   * paired `not.toMatch`. That exclusion is a property of THIS direction
-   * only — see the handover below for what changes once the assertion is
-   * inverted.
-   *
-   * ---
-   *
-   * **HANDOVER TO TASK 4 — read this before writing the inversion, not
-   * after.** The obvious move is to take the sync test's inverted
-   * rejection-loop above (`for (const settled of ...) { if (rejected)
-   * expect(...).not.toMatch(/40P01|deadlock/i) }`) and point it at this
-   * fixture instead. That was tried directly, against the STILL-UNFIXED
-   * code below, and it PASSED:
-   *
-   * ```
-   * PROBE_B_RESULT {"aStatus":"fulfilled","aValue":{"ok":false,"reason":"busy"},
-   *                 "bStatus":"fulfilled","deadlockInLog":true}
-   * ✓ B: naive inverted "does not deadlock" (rejection-loop only) against UNFIXED code
-   * ```
-   *
-   * The deadlock fired — same as every run recorded in the report — and the
-   * naive inversion was green anyway, because it only ever looks at
-   * `Promise.allSettled`'s rejection channel, and this function's `catch`
-   * empties that channel out on the side that matters. A "fix" that does
-   * nothing at all would still pass a test written that way. Five
-   * requirements for the inversion, not one, stated in order because the
-   * first is the one that makes every other correct-looking piece worthless
-   * if skipped:
-   *
-   * 1. **Never invert on rejections for this pairing.** Say it first.
+   * 1. **Never invert on rejections for this pairing.**
    *    `archiveOrUnarchiveTemplate` resolves `{ ok: false, reason: 'busy' }`
-   *    on the deadlock rather than rejecting, so a rejection-only negation —
-   *    the sync test's own shape — passes unconditionally for this fixture,
-   *    fixed or not. The transcript above is that exact mistake, made once
-   *    on purpose, to prove it catches nothing.
-   * 2. **Keep the `log.warn` spy this `it` already sets up, and flip its
-   *    assertion**: today's `expect(archiveLostRaceLog).toBeDefined()`
-   *    becomes `expect(archiveLostRaceLog).toBeUndefined()`. One assertion
-   *    is enough to cover `40P01`, `55P03` AND `P2028` at once, because all
-   *    three reach this same `catch` via `isTransientDbError` — no need to
-   *    enumerate them separately the way `not.toMatch` has to on the
-   *    erasure's own rejection channel.
-   * 3. **Flip today's `expect(aSettled.value).toEqual({ ok: false, reason:
-   *    'busy' })` to a positive success shape**:
-   *    `expect(aSettled.value).toMatchObject({ ok: true, action: 'archived' })`.
-   *    With this exact fixture — a template the caller owns, not already
+   *    on a deadlock rather than rejecting, so a rejection-only negation —
+   *    the sync test's own shape — would pass unconditionally for this
+   *    fixture, fixed or not (see the transcript above).
+   * 2. **Keep the `log.warn` spy this `it` sets up, with its assertion
+   *    flipped**: `expect(archiveLostRaceLog).toBeDefined()` becomes
+   *    `expect(archiveLostRaceLog).toBeUndefined()`. One assertion covers
+   *    `40P01`, `55P03` AND `P2028` at once, because all three reach this
+   *    same `catch` via `isTransientDbError`.
+   * 3. **Assert a positive success shape**:
+   *    `expect(aSettled.value).toMatchObject({ ok: true, action: 'archived' })`
+   *    in place of the old `toEqual({ ok: false, reason: 'busy' })`. With
+   *    this exact fixture — a template the caller owns, not already
    *    archived, no slot it could collide on — `not_found`/`forbidden`/
    *    `slot_conflict` are unreachable, so `ok: true` here can only mean the
    *    transient-error `catch` never fired. That also de-vacuums point 2:
@@ -481,109 +441,115 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    *    deadlock"; it is "never tried". `deleted: 2` is what proves both
    *    fixture classes were actually matched and actually locked by this
    *    statement — the same role the heap-order assertion below plays for
-   *    lock ORDER, this plays for lock EXISTENCE. (Cannot be asserted in
-   *    THIS direction, unfixed: the archive returns `{ ok: false, reason:
-   *    'busy' }` here and carries no `deleted` field at all.)
+   *    lock ORDER, this plays for lock EXISTENCE.
    * 5. **Leave the erasure branch as a rejection check, and keep the
    *    heap-order assertion above.** Nothing in points 1-4 touches
    *    `deleteStudentAccount`'s side of the race — it has no transient-error
    *    `catch` of its own, so `bSettled.status === 'rejected'` stays a
-   *    meaningful, direct signal there, same as in the unfixed version
-   *    below. And the heap-order read stays load-bearing under the fix for
-   *    the same reason it is load-bearing here: if `HIGH`/`LOW` insertion
-   *    ever stopped producing the reverse-of-ascending heap order this
-   *    fixture depends on, "does not deadlock" would be true of a race that
-   *    was never adversarial in the first place, proving nothing about the
-   *    pre-lock.
+   *    meaningful, direct signal there. And the heap-order read stays
+   *    load-bearing under the fix for the same reason it was load-bearing
+   *    before: if `HIGH`/`LOW` insertion ever stopped producing the
+   *    reverse-of-ascending heap order this fixture depends on, "does not
+   *    deadlock" would be true of a race that was never adversarial in the
+   *    first place, proving nothing about the pre-lock.
+   *
+   * Asserted by SQLSTATE where the erasure side does reject, not by
+   * rejection alone — `/40P01|deadlock/i` also happens to match Prisma's own
+   * `P2034` wording ("write conflict or a deadlock"), substantively the same
+   * class of event as `40P01`, and a separate `not.toMatch(/55P03/)` catches
+   * a bare lock-timeout expiry explicitly, for the same reason the sync
+   * test's own two-assertion split does (see this file's top docblock).
    */
-  it('archiveOrUnarchiveTemplate and deleteStudentAccount deadlock on two instances', async () => {
-    const { templateId, studentId, teacherId, lowClassId, highClassId } =
-      await makeTemplateWithTwoWaitedInstances();
+  it(
+    'does not deadlock: archiveOrUnarchiveTemplate (ordered pre-lock) vs deleteStudentAccount (ascending order) on two shared instances',
+    async () => {
+      const { templateId, studentId, teacherId, lowClassId, highClassId } =
+        await makeTemplateWithTwoWaitedInstances();
 
-    // The premise, asserted rather than assumed — same reasoning as the sync
-    // test's own heap-order check above, re-run here because this is a
-    // second, independent fixture with its own fresh ids, not a rerun of the
-    // same read.
-    const heapOrder = await prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT id FROM "Class" WHERE "templateId" = ${templateId}
-    `;
-    expect(heapOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
+      // The premise, asserted rather than assumed — same reasoning as the sync
+      // test's own heap-order check above, re-run here because this is a
+      // second, independent fixture with its own fresh ids, not a rerun of the
+      // same read.
+      const heapOrder = await prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM "Class" WHERE "templateId" = ${templateId}
+      `;
+      expect(heapOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
 
-    let lowLocked!: () => void;
-    const lowLockedPromise = new Promise<void>((resolve) => {
-      lowLocked = resolve;
-    });
-    const erasureDb = prisma.$extends({
-      query: {
-        async $queryRaw({ args, query }) {
-          const rows = await query(args);
-          if (args.values[0] === lowClassId) {
-            lowLocked();
-            await new Promise((r) => setTimeout(r, 300));
-          }
-          return rows;
+      let lowLocked!: () => void;
+      const lowLockedPromise = new Promise<void>((resolve) => {
+        lowLocked = resolve;
+      });
+      const erasureDb = prisma.$extends({
+        query: {
+          async $queryRaw({ args, query }) {
+            const rows = await query(args);
+            if (args.values[0] === lowClassId) {
+              lowLocked();
+              await new Promise((r) => setTimeout(r, 300));
+            }
+            return rows;
+          },
         },
-      },
-      // Same cast rationale as the sync test above.
-    }) as unknown as PrismaClient;
+        // Same cast rationale as the sync test above.
+      }) as unknown as PrismaClient;
 
-    // Spied so the SQLSTATE behind a resolved `busy` outcome is readable —
-    // see this `it`'s own docblock for why that path exists at all.
-    // `mockImplementation` matches `class-generator.test.ts`'s own use of
-    // this spy on the same log line, so the real warning is suppressed from
-    // the test's console output rather than merely observed.
-    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
-    try {
-      const b = deleteStudentAccount(erasureDb, studentId);
+      // Spied so an unexpected transient-error `catch` is visible rather than
+      // silently swallowed — see point 2 above. `mockImplementation` matches
+      // `class-generator.test.ts`'s own use of this spy on the same log line,
+      // so the real warning is suppressed from the test's console output
+      // rather than merely observed.
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+      try {
+        const b = deleteStudentAccount(erasureDb, studentId);
 
-      await lowLockedPromise;
+        await lowLockedPromise;
 
-      // Fourth argument is the target state string, not a boolean — verified
-      // against `class-generator.test.ts:507`.
-      //
-      // Called directly, not wrapped in an outer `prisma.$transaction` — like
-      // `syncTemplateInstances` above, this function already opens and
-      // manages its own transaction internally (`class-template-lifecycle.ts`),
-      // on the same `db` argument it is passed, so wrapping it here would
-      // only start a second, unrelated transaction and prove nothing about
-      // the one that actually takes the locks.
-      const a = archiveOrUnarchiveTemplate(prisma, templateId, teacherId, 'archived');
+        // Fourth argument is the target state string, not a boolean —
+        // verified against `class-generator.test.ts:507`.
+        //
+        // Called directly, not wrapped in an outer `prisma.$transaction` —
+        // like `syncTemplateInstances` above, this function already opens and
+        // manages its own transaction internally (`class-template-lifecycle.ts`),
+        // on the same `db` argument it is passed, so wrapping it here would
+        // only start a second, unrelated transaction and prove nothing about
+        // the one that actually takes the locks.
+        const a = archiveOrUnarchiveTemplate(prisma, templateId, teacherId, 'archived');
 
-      const [aSettled, bSettled] = await Promise.allSettled([a, b]);
+        const [aSettled, bSettled] = await Promise.allSettled([a, b]);
 
-      const archiveLostRaceLog = warn.mock.calls.find(
-        (call) => call[1] === 'recurring class archive lost the template lock race',
-      );
+        const archiveLostRaceLog = warn.mock.calls.find(
+          (call) => call[1] === 'recurring class archive lost the template lock race',
+        );
 
-      if (bSettled.status === 'rejected') {
-        // `deleteStudentAccount` was the cycle's victim: it rejects
-        // directly, and `archiveOrUnarchiveTemplate` — no longer contending
-        // for a row the erasure's rolled-back transaction released —
-        // committed rather than hitting its own transient-error `catch`.
+        // Points 1, 3 & 4: never a rejection-based negation on the archive
+        // side — assert positive success, including deleted:2/remaining:0 so
+        // an ineligible fixture (which would report deleted:0) cannot satisfy
+        // this vacuously.
         expect(aSettled.status).toBe('fulfilled');
         if (aSettled.status === 'fulfilled') {
-          expect(aSettled.value.ok).toBe(true);
+          expect(aSettled.value).toMatchObject({
+            ok: true,
+            action: 'archived',
+            deleted: 2,
+            remaining: 0,
+          });
         }
+        // Point 2: the transient-error catch never fired.
         expect(archiveLostRaceLog).toBeUndefined();
-        expect(String(bSettled.reason)).toMatch(/40P01|deadlock/i);
-      } else {
-        // `archiveOrUnarchiveTemplate` was the cycle's victim: per this
-        // `it`'s own docblock, it resolves `{ ok: false, reason: 'busy' }`
-        // instead of rejecting, and the erasure — no longer contending —
-        // committed (`deleteStudentAccount` resolves `void`, so a fulfilled
-        // settlement here IS the erasure succeeding, not merely "not a
-        // rejection").
-        expect(bSettled.status).toBe('fulfilled');
-        expect(aSettled.status).toBe('fulfilled');
-        if (aSettled.status === 'fulfilled') {
-          expect(aSettled.value).toEqual({ ok: false, reason: 'busy' });
+
+        // Point 5: the erasure side stays a genuine rejection check — it has
+        // no transient-error catch of its own, so a rejection here would be a
+        // real deadlock or lock-timeout, not a false negative to explain away.
+        if (bSettled.status === 'rejected') {
+          expect(String(bSettled.reason)).not.toMatch(/40P01|deadlock/i);
+          expect(String(bSettled.reason)).not.toMatch(/55P03/);
+        } else {
+          expect(bSettled.status).toBe('fulfilled');
         }
-        expect(archiveLostRaceLog).toBeDefined();
-        const loggedErr = (archiveLostRaceLog?.[0] as { err?: unknown } | undefined)?.err;
-        expect(String(loggedErr)).toMatch(/40P01|deadlock/i);
+      } finally {
+        warn.mockRestore();
       }
-    } finally {
-      warn.mockRestore();
-    }
-  }, 30_000);
+    },
+    30_000,
+  );
 });

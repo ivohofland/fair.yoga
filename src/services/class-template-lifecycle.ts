@@ -951,13 +951,60 @@ export async function archiveOrUnarchiveTemplate(
         // filtered out below, which is what the concurrency test pins. Wide plus
         // that filter makes `withdrawn` exactly the set this `deleteMany` took.
         //
-        // A lock is not the alternative, and an earlier draft of this comment was
-        // wrong to say one was unavailable: `POST /api/registrations` does take
+        // A lock is not unavailable — `POST /api/registrations` does take
         // `SELECT … FOR UPDATE` on the class row inline rather than through
         // `lockClassRow` (`db-locks.ts` lists it as one of five deliberate inline
-        // sites). Locking every candidate class would work and is simply worse —
-        // it blocks booking on every future class of the template for the
-        // duration of the archive, to buy what a second read buys for free.
+        // sites) — and this transaction now takes one too, immediately below.
+        // An earlier draft of this comment argued that locking every candidate
+        // class would work and was simply worse than a second read, because it
+        // blocks booking on every future class of the template for the
+        // duration of the archive, to buy what the read below buys for free.
+        // That was right for what it weighed: a lock against a read, for
+        // NOTIFICATION correctness, where the read genuinely is better — and
+        // the read is still here, still needed, unreplaced by the lock below.
+        // But a pre-lock buys something a read cannot buy at any price: a
+        // CANONICAL LOCK ORDER. `deleteStudentAccount` (`gdpr.ts`) takes its
+        // `Class` row locks ascending by id; this function's `deleteMany`
+        // below takes them in heap order, whatever order Postgres's planner
+        // visits matching rows in — never the read's order, and not
+        // controllable by sorting anything in JS. Two rows, opposite orders,
+        // one AB-BA cycle (issue 180, `docs/lock-order.md`, "The two that do
+        // not"). Ordering this function's locks ascending, before either the
+        // read or the delete, is what closes it — the cost the earlier draft
+        // named is real and is now paid: an archive blocks booking on this
+        // template's future classes for its duration, bounded by the 2s
+        // `SET LOCAL lock_timeout` at the head of this transaction and its
+        // 10s budget.
+        //
+        // Ordered pre-lock (issue 180 task 4). Deliberately the FULL
+        // `scheduledWhere(templateId, { gt: today })` set — every scheduled
+        // future class of this template — not narrowed to the `deleteMany`'s
+        // `registrations: { none: … }` predicate below. The `deleteMany`
+        // re-evaluates its predicate at execution time (deliberately — see
+        // its own comment below, which this does not change), so ANY
+        // candidate may still match and must already be held before that
+        // statement runs. Narrowing this set to only the deletable rows would
+        // leave a candidate the delete's re-evaluation pulls into scope
+        // unlocked, and the cycle returns — reasoned, not measured: a
+        // narrowing mutation was run against `template-lock-order.test.ts`'s
+        // own fixture and did NOT reproduce the deadlock there, because that
+        // fixture holds no `Registration` row at all, so the narrower clause
+        // is vacuously true for both candidate classes and coincides with
+        // this wide one on that specific fixture (see the report for issue
+        // 180 task 4 for the full account and for the fixture shape that
+        // would be needed to exercise the difference). `setLockTimeout(tx)`
+        // is already in effect from this transaction's own call above;
+        // issuing it again here would be redundant, not wrong.
+        await tx.$queryRaw`
+          SELECT c.id
+          FROM "Class" c
+          WHERE c."templateId" = ${templateId}
+            AND c.date > ${today}
+            AND c.status IN ('draft', 'open')
+          ORDER BY c.id
+          FOR UPDATE OF c
+        `;
+
         const candidates = await tx.waitlistEntry.findMany({
           where: {
             status: 'waiting',

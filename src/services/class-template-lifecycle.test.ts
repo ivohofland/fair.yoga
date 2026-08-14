@@ -843,21 +843,60 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   });
 
   /**
-   * #112. The one guard in this change that needs real concurrency to bite.
+   * #112, then #180 task 4. Used to be the one guard in this change that
+   * needed real concurrency to bite: without it, notifying from the
+   * candidate read and notifying from the survivor filter were
+   * indistinguishable, since every non-concurrent case produces identical
+   * output — see "does not tell a waiting student when the class was
+   * spared" and "notifies only the waiters of the classes it actually
+   * withdrew" above for that non-racy protection, which this test does not
+   * duplicate and #180 task 4 does not touch.
    *
-   * Without this test, notifying from the candidate read and notifying from
-   * the survivor filter are indistinguishable — every non-concurrent case
-   * produces identical output, so the filter could be deleted and the suite
-   * would stay green while students were told their live classes had been
-   * withdrawn.
+   * The race this test used to run is CLOSED, by design, as of #180 task 4's
+   * ordered pre-lock: this docblock used to read "the archive transaction
+   * locks the TEMPLATE row, not these classes, so the registration below
+   * commits from outside it." That stopped being true the moment the
+   * pre-lock (`class-template-lifecycle.ts`, immediately above the candidate
+   * read) started taking `FOR UPDATE OF c` on every scheduled future class of
+   * the template BEFORE the candidate read runs, in ascending id order. A new
+   * `Registration` referencing one of these classes needs Postgres's own
+   * `FOR KEY SHARE` on the parent `Class` row to satisfy the foreign key —
+   * standard referential-integrity locking, not anything this project
+   * configures — and that conflicts with the pre-lock's `FOR UPDATE`. So the
+   * insert below no longer lands in the gap between the candidate read and
+   * the `deleteMany`; it cannot even start until the archive transaction
+   * ends.
    *
-   * The archive transaction locks the TEMPLATE row, not these classes, so the
-   * registration below commits from outside it. Under READ COMMITTED the
-   * `deleteMany` re-evaluates its predicate when it runs, sees a charged
-   * registration, and spares the class — #86's whole reason for keeping that
-   * delete a single statement.
+   * Proven the hard way, not asserted: an earlier version of this test still
+   * `await`ed the insert from inside the `waitlistEntry.findMany` hook, the
+   * same shape as before the fix. That hung — a genuine application-level
+   * deadlock, invisible to Postgres's own detector, which only ever sees
+   * cyclic waits between backends. Here the two "backends" never formed a
+   * cycle Postgres could see: the archive transaction's connection held the
+   * pre-lock and was not blocked on anything in Postgres, while the insert's
+   * connection blocked on that lock, and the archive's own JS control flow
+   * could not resume — and release the lock — until the `await`ed insert
+   * (nested inside the very hook the archive's own `findMany` call was
+   * awaiting) returned. Nothing on either side times out that: the pre-lock
+   * bounds waits INSIDE the archive's transaction, and the insert here uses a
+   * separate, un-bounded connection. It only ever resolved via this file's
+   * outer test timeout — recorded here so a future reader doesn't have to
+   * rediscover the same hang to learn the fix has to be a fire-and-forget,
+   * below.
+   *
+   * What still needs covering, and what this test covers instead: that a
+   * booking racing an in-flight archive queues behind the pre-lock rather
+   * than silently landing in a gap that no longer exists, and — once
+   * released, because the archive committed having deleted this class — it
+   * fails outright instead of quietly surviving as a registration on a row
+   * that is gone. `#86`'s original reason for the delete's own
+   * execution-time predicate re-evaluation (keeping it one statement) still
+   * holds for the direction that remains genuinely concurrent: see "notifies
+   * a waiter whose class became deletable after the candidate read" below,
+   * whose `registration.update` never touches the `Class` row's foreign key
+   * and so still races freely against the pre-lock.
    */
-  it('does not notify a waiter whose class was booked after the candidate read', async () => {
+  it('a booking racing the archive queues behind the pre-lock and fails once the class is gone', async () => {
     const t = await makeTemplate('Race Spare');
     const c = await makeClass(t.id, { date: future() });
     await prisma.waitlistEntry.create({
@@ -866,17 +905,22 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
 
     let calls = 0;
     let candidateRows = -1;
+    let bookingAttempt: Promise<unknown> | undefined;
     const interposing = prisma.$extends({
       query: {
         waitlistEntry: {
           async findMany({ args, query }) {
             calls++;
             const rows = await query(args);
-            // Once, and only after the candidate read has returned: commit a
-            // charged registration from outside the archive transaction.
+            // Started, deliberately NOT awaited, unlike the pre-#180-task-4
+            // version of this test: this hook runs inside the archive's own
+            // transaction (see the docblock above), which already holds this
+            // class row's pre-lock by the time `findMany` returns. Awaiting
+            // the insert here would deadlock the test itself — proven, not
+            // guessed, see the docblock above.
             if (calls === 1) {
               candidateRows = rows.length;
-              await prisma.registration.create({
+              bookingAttempt = prisma.registration.create({
                 data: { classId: c.id, studentId, tierAtBooking: 3, status: 'registered' },
               });
             }
@@ -886,30 +930,37 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       },
     }) as unknown as typeof prisma;
 
-    const result = expectArchived(
-      await archiveOrUnarchiveTemplate(interposing, t.id, teacherId, 'archived'),
-    );
+    try {
+      const result = expectArchived(
+        await archiveOrUnarchiveTemplate(interposing, t.id, teacherId, 'archived'),
+      );
 
-    // Exactly one — no more, no fewer, the same pin `gdpr.test.ts:1046` and
-    // the sibling interposition at `class-transitions.test.ts` carry.
-    //
-    // A bare "it fired at all" flag is not enough here, and PR review proved
-    // it: with the survivor filter deleted AND one extra `waitlistEntry`
-    // read added anywhere earlier in the archive branch, this test passed.
-    // The race landed on the wrong read, the candidate read then came back
-    // empty, and every assertion below was satisfied while students were
-    // being told live classes had been withdrawn. What the test actually
-    // needs is that the read it raced against WAS the candidate read — so
-    // pin the count, and pin that the read it interposed on saw the waiter.
-    expect(calls).toBe(1);
-    expect(candidateRows).toBe(1);
-    // The delete re-evaluated and spared the class.
-    expect(result.deleted).toBe(0);
-    expect(await prisma.class.count({ where: { id: c.id } })).toBe(1);
-    // So the waiter must NOT have been told it was withdrawn.
-    expect(
-      await prisma.notification.count({ where: { recipientId: waiterId, type: 'class_cancelled' } }),
-    ).toBe(0);
+      // Same pin as before: the read the booking attempt raced against WAS
+      // the candidate read, and it saw the waiter — not some other
+      // `waitlistEntry` read earlier in the branch.
+      expect(calls).toBe(1);
+      expect(candidateRows).toBe(1);
+      // The archive proceeded exactly as if the booking did not exist —
+      // because, from behind its own pre-lock, at the time it ran, it did
+      // not.
+      expect(result.deleted).toBe(1);
+      expect(await prisma.class.count({ where: { id: c.id } })).toBe(0);
+      // The class really was withdrawn, so the waiter really must be told.
+      expect(
+        await prisma.notification.count({ where: { recipientId: waiterId, type: 'class_cancelled' } }),
+      ).toBe(1);
+
+      // Released once the archive transaction ends, and rejected — its
+      // `classId` foreign key now points at a row that no longer exists.
+      await expect(bookingAttempt).rejects.toThrow();
+    } finally {
+      // This test, unlike the one it replaced, does leave a notification
+      // behind — the class really was withdrawn — so it has to clean up
+      // after itself the same way its neighbours above do, or the next
+      // test's unscoped `findFirstOrThrow` on this same `waiterId` (below)
+      // picks up this row instead of its own.
+      await prisma.notification.deleteMany({ where: { recipientId: waiterId } });
+    }
   });
 
   /**
