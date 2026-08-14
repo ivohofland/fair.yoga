@@ -9,6 +9,7 @@ import {
 import { startOfLocalDay, classStartInstant } from '@/lib/timezone';
 import { getNextOccurrences } from './class-generator';
 import { formatDayHeader } from '@/lib/format';
+import { setLockTimeout } from '@/lib/db-locks';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -256,7 +257,9 @@ describe('updateClassTemplate (DB)', () => {
    * pinning that second window used to stand here; it hung rather than
    * failed once the window closed, because the out-of-band delete it relied
    * on now blocks on the lock instead of racing it. This is the only window
-   * left, and the only test for it.
+   * left; its replacement — pinning the blocking behaviour the closed window
+   * now produces in place of a race — sits below, once task 7 of the
+   * atomic-template-update work gave that wait a bound to test against.
    *
    * Interposed rather than raced, like the pause guard's twin: the extension
    * performs the real read and then deletes the row before returning it, which
@@ -295,6 +298,112 @@ describe('updateClassTemplate (DB)', () => {
 
     expect(result).toEqual({ ok: false, reason: 'not_found' });
   });
+
+  /**
+   * The replacement for the test task 6 deleted (see the docblock above).
+   * Before task 6, `classTemplate.update` and `syncTemplateInstances`'s own
+   * read ran as two separately-committed statements with no lock held in
+   * between, so an out-of-band delete could land in the gap and race the
+   * write. After task 6 they run inside ONE transaction, so the write's row
+   * lock is held for that whole transaction's lifetime — there is no longer
+   * a gap for a concurrent delete to land in, only a lock to queue behind.
+   *
+   * That is why the deleted test could not simply be un-deleted: once this
+   * window closed, its own out-of-band delete stopped racing and started
+   * blocking — and it hung rather than failed, because it ran SYNCHRONOUSLY
+   * *inside* the very `$extends` hook intercepting the write, awaited from
+   * within the still-open transaction whose row lock that delete needed. The
+   * transaction could never reach `COMMIT` to release the lock (it was
+   * paused awaiting the delete), and the delete — issued on a separate
+   * connection with no `lock_timeout` of its own — had nothing to time out
+   * against either. A genuine deadlock, not a slow test, which is why it
+   * outlasted the file's 10s `afterAll` hook rather than merely failing one
+   * assertion (task 7's mutation record has the measurement).
+   *
+   * This version does not reproduce that: the hook only signals that the
+   * write landed and then waits on a promise the test controls, so the
+   * concurrent delete can run from the test's own top level — on its own
+   * connection, in its own transaction, bounded by `setLockTimeout` the same
+   * way any bounded wait in this project is. `hookedPrisma.$transaction`'s
+   * query extension still applies inside the interactive transaction it
+   * opens (`template-sync.test.ts` proves the same mechanism for its own
+   * hooked pre-lock), so this fires on `tx.classTemplate.update` while that
+   * transaction is genuinely still open — not merely believed to be.
+   */
+  it(
+    'a concurrent delete blocks on the write lock and completes cleanly once the edit commits',
+    async () => {
+      const t = await makeTemplate('P2025 Sync Replacement');
+
+      let writeLocked!: () => void;
+      const locked = new Promise<void>((resolve) => {
+        writeLocked = resolve;
+      });
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+
+      // Cast for the same reason the sibling hook above needs one: `$extends`
+      // is missing `$on`, so it is not assignable to `updateClassTemplate`'s
+      // `PrismaClient`-typed `db` parameter.
+      const interposing = prisma.$extends({
+        query: {
+          classTemplate: {
+            async update({ args, query }) {
+              const row = await query(args);
+              // The write has landed; its row lock is held by this
+              // still-open transaction. Signal, then hold — deliberately
+              // NOT performing the delete from inside this hook. See the
+              // docblock above for why that deadlocked the test this
+              // replaces.
+              writeLocked();
+              await held;
+              return row;
+            },
+          },
+        },
+      }) as unknown as PrismaClient;
+
+      const editing = updateClassTemplate(interposing, t.id, teacherId, {
+        classType: 'Renamed',
+      });
+
+      await locked;
+
+      let deleteSettled = false;
+      const deleting = prisma
+        .$transaction(async (tx) => {
+          await setLockTimeout(tx);
+          await tx.classTemplate.delete({ where: { id: t.id } });
+        })
+        .then(() => {
+          deleteSettled = true;
+        });
+
+      try {
+        // The edit's transaction is still open and holds the row; the
+        // delete must still be queued behind it rather than having raced it.
+        await new Promise((r) => setTimeout(r, 300));
+        expect(deleteSettled).toBe(false);
+      } finally {
+        // In a `finally`, so a failed assertion above still releases the
+        // edit's transaction rather than leaving it — and the connection it
+        // holds — parked on `held` for the rest of the file's run.
+        release();
+      }
+
+      const result = await editing;
+      expect(result.ok).toBe(true);
+
+      // Completes rather than hanging, now that the edit committed and
+      // released the lock — the assertion this test exists to make.
+      await deleting;
+      expect(deleteSettled).toBe(true);
+      expect(await prisma.classTemplate.findUnique({ where: { id: t.id } })).toBeNull();
+    },
+    10_000,
+  );
 });
 
 describe('archiveOrUnarchiveTemplate (DB)', () => {

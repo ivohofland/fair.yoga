@@ -8,7 +8,11 @@ import {
   generateInstancesForTemplate,
   claimTemplateForGeneration,
 } from './class-generator';
-import { archiveOrUnarchiveTemplate, pauseOrResumeTemplate } from './class-template-lifecycle';
+import {
+  archiveOrUnarchiveTemplate,
+  pauseOrResumeTemplate,
+  updateClassTemplate,
+} from './class-template-lifecycle';
 
 type TransactionOptions = NonNullable<Parameters<PrismaClient['$transaction']>[1]>;
 
@@ -618,6 +622,109 @@ describe('generateClassInstances (DB)', () => {
             where: { id: templateId },
             data: { isActive: true },
           });
+        }
+      },
+      20_000,
+    );
+
+    /**
+     * `updateClassTemplate`'s own budget (`class-template-lifecycle.ts`),
+     * pinned the same way the two transactions above pin theirs. Derived, not
+     * arbitrary — spec §2.4: five statements in that transaction can each
+     * wait on the lock timeout at 2s (its own `setLockTimeout` call,
+     * `classTemplate.update`, and `syncTemplateInstances`'s own pre-lock,
+     * same-day update and wrong-day delete), so `10_000` would be consumed
+     * entirely by lock waits with nothing left over for the transaction's
+     * actual work.
+     *
+     * `description`, not `classType` like the busy test below: this call is
+     * expected to actually commit, and a distinct field keeps the two tests'
+     * writes from reading as the same edit if one of their assertions ever
+     * needs the other's payload for comparison.
+     */
+    it('opens the template-edit transaction with { timeout: 15_000 }', async () => {
+      let recordedOptions: TransactionOptions | undefined;
+      const spyingClient = new Proxy(prisma, {
+        get(target, prop, receiver) {
+          if (prop === '$transaction') {
+            return (
+              fn: (tx: Prisma.TransactionClient) => Promise<unknown>,
+              options?: TransactionOptions,
+            ) => {
+              recordedOptions = options;
+              return target.$transaction(fn, options);
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      });
+
+      const result = await updateClassTemplate(spyingClient, templateId, teacherId, {
+        description: 'template-edit budget pin',
+      });
+
+      expect(result.ok).toBe(true);
+      expect(recordedOptions).toEqual({ timeout: 15_000 });
+    });
+
+    /**
+     * `updateClassTemplate`'s own contention race, matching the two above: its
+     * transaction now takes the same row lock the generation claim does (the
+     * `setLockTimeout(tx)` hoisted to be its first statement — task 7 of the
+     * atomic-template-update work; the archive and the pause/resume already
+     * had theirs), so it can lose to a sweep in progress the same way they
+     * can.
+     */
+    it(
+      'answers busy when the generation claim holds the row past the lock timeout',
+      async () => {
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+
+        const claiming = prisma.$transaction(
+          async (tx) => {
+            expect(await claimTemplateForGeneration(tx, templateId)).not.toBeNull();
+            await held;
+          },
+          { timeout: 15_000 },
+        );
+
+        // Let the claim acquire the lock before the edit contends for it.
+        await new Promise((r) => setTimeout(r, 100));
+
+        const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+        try {
+          const startedAt = Date.now();
+          const result = await updateClassTemplate(prisma, templateId, teacherId, {
+            classType: 'Yin',
+          });
+          const waited = Date.now() - startedAt;
+
+          expect(result).toEqual({ ok: false, reason: 'busy' });
+
+          // Same bounds and same reasoning as the archive's test above: the
+          // lower bound proves it really waited, the upper that it answered
+          // well inside the 15s budget. Neither pins the bound's VALUE —
+          // `db-locks.test.ts` does that.
+          expect(waited).toBeGreaterThanOrEqual(1_800);
+          expect(waited).toBeLessThan(5_000);
+
+          // A RETURNED failure never reaches `withErrorHandler`, and
+          // `respondError` does not log — so without this line the race is
+          // silent.
+          expect(warn).toHaveBeenCalledWith(
+            expect.objectContaining({ templateId, teacherId }),
+            'recurring class edit lost the template lock race',
+          );
+        } finally {
+          // In a `finally`, matching the archive/pause busy tests above: a
+          // failure in the assertions must not leave the claim holding the
+          // row for its full 15s.
+          release();
+          await claiming.catch(() => {});
+          warn.mockRestore();
         }
       },
       20_000,

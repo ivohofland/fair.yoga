@@ -104,6 +104,17 @@ export const PUT = withErrorHandler(async (
       'TEMPLATE_SYNC_SLOT_CONFLICT',
     );
   }
+  // This transaction lost a contention race (#100/#209) — a generation
+  // claim, archive, or pause/resume held the template row past the lock
+  // bound. Distinct copy from the PATCH pause/resume branch below ("could not
+  // update this recurring class"): this is the edit, that is the toggle.
+  if (result.reason === 'busy') {
+    return respondError(
+      'The system was busy and could not save your changes to this recurring class. Nothing was changed. Wait a moment, then try again.',
+      503,
+      'TEMPLATE_BUSY',
+    );
+  }
 
   // Exhaustiveness: a new UpdateClassTemplateResult variant becomes a compile
   // error here rather than being silently answered as "Invalid teacher room".

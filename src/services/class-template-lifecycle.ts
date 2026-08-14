@@ -203,7 +203,17 @@ export type UpdateClassTemplateResult =
   | { ok: false; reason: 'no_fields' }
   | { ok: false; reason: 'invalid_room' }
   | { ok: false; reason: 'slot_conflict' }
-  | { ok: false; reason: 'sync_conflict' };
+  | { ok: false; reason: 'sync_conflict' }
+  /**
+   * This transaction lost a contention race — a concurrent generation claim,
+   * archive, or pause/resume holding this template row past the `setLockTimeout`
+   * bound below — and rolled back whole, so nothing was applied and the
+   * identical request can win the next attempt.
+   *
+   * See `ArchiveTemplateResult`'s `busy` arm for the fuller range of causes
+   * `isTransientDbError` matches; this arm is produced by the same helper.
+   */
+  | { ok: false; reason: 'busy' };
 
 /**
  * Apply a partial update to a class template, then propagate it to the
@@ -285,6 +295,28 @@ export async function updateClassTemplate(
   try {
     ({ updated, sync } = await db.$transaction(
       async (tx) => {
+        // First statement, deliberately — bounds every statement left in this
+        // transaction, the `update` immediately below it first among them. A
+        // concurrent generation claim, archive, or pause/resume can hold this
+        // row locked for the duration of its own transaction.
+        //
+        // Without it the wait is bounded by NOTHING, not by the 15s budget
+        // below: Prisma checks that budget at statement boundaries, so it
+        // "cannot roll back a statement already blocked inside Postgres, only
+        // refuse to start a new one" (`db-locks.ts`).
+        //
+        // `syncTemplateInstances` (`template-sync.ts`) issues its own
+        // `setLockTimeout(tx)`, but only just before its own pre-lock — which
+        // runs AFTER `classTemplate.update` below, so that call alone would
+        // leave this transaction's true first statement unbounded. Calling it
+        // again here is not redundant: `SET LOCAL lock_timeout` is idempotent
+        // within one transaction — verified in psql that a later call
+        // overwrites the earlier rather than stacking or erroring
+        // (`db-locks.ts:82-87`) — so the two coexist safely, and the one
+        // inside `syncTemplateInstances` still matters for its other callers,
+        // which do not already run inside this bound.
+        await setLockTimeout(tx);
+
         const template = await tx.classTemplate.update({ where: { id: templateId }, data });
         // Composed into this transaction, not opening its own. Safe since
         // #164/#192 (PR #204): `generateInstancesForTemplate` has no `catch`
@@ -297,6 +329,22 @@ export async function updateClassTemplate(
       { timeout: 15_000 },
     ));
   } catch (err) {
+    // Transient first, matching the order `pauseOrResumeTemplate` and
+    // `archiveOrUnarchiveTemplate` use in this same file. Not
+    // correctness-critical here — `isTransientDbError`'s codes are disjoint
+    // from P2025 and from both `isUniqueConflictOn` column sets below, so a
+    // transient error could not fall into either of those branches even
+    // checked last — but kept first anyway so a reader does not have to
+    // re-derive that for each of the four template lifecycle functions this
+    // helper now guards.
+    if (isTransientDbError(err)) {
+      log.warn(
+        { err, templateId, teacherId },
+        'recurring class edit lost the template lock race',
+      );
+      return { ok: false, reason: 'busy' };
+    }
+
     // The read above and the write inside the transaction are not the same
     // statement, so a delete landing in the gap between them still surfaces
     // here as Prisma's P2025 — but from one source now, not two.
