@@ -319,9 +319,11 @@ describe('generateStudioClassInstances (DB)', () => {
      * transactions, separate catches and separate result unions, so a bound
      * dropped from one leaves the other's test green.
      *
-     * The upper bound is the assertion that matters — a 2s `lock_timeout`
-     * and a 10s transaction budget both end in a rejected wait, and only the
-     * timing separates them.
+     * The timing assertions carry it, the same way the twin's docblock
+     * explains in full: the lower bound proves the archive waited, the upper
+     * proves it answered near the 2s bound. Removing the bound does not slide
+     * that answer later — it stops the archive settling at all, so the test
+     * dies on its own 20s timeout (mutation record, Task 2).
      */
     it(
       'answers busy when the generation claim holds the row past the lock timeout',

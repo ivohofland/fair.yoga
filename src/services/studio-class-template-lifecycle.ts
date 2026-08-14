@@ -298,225 +298,225 @@ export async function pauseOrResumeStudioTemplate(
         await setLockTimeout(tx);
 
         // Compare-and-swap, mirroring `archiveOrUnarchiveStudioTemplate`:
-      // constraining the write to the exact `isActive`/`isArchived` values
-      // already read above makes the transition itself — not just this
-      // request — what can happen only once, closing the race the two fast
-      // paths above cannot.
-      //
-      // No P2025 guard here, unlike `updateClassTemplate` and
-      // `pauseOrResumeTemplate` in the class family (#100). Not an omission:
-      // `updateMany` returns `{ count: 0 }` rather than throwing when nothing
-      // matches, and the zero-count branch below already answers `not_found`
-      // by re-reading. The `findUniqueOrThrow` on the paused arm below, and
-      // `claimStudioTemplateForGeneration`'s own read on the active arm, *can*
-      // raise P2025, but only run after this CAS matched, which — as this
-      // function's own docstring above notes — holds `FOR NO KEY UPDATE` on
-      // this row until commit. That conflicts with the `FOR UPDATE`-strength
-      // lock a concurrent `DELETE` needs, so it blocks rather than wins.
-      // What a plain single-record `update` would change is not the lock —
-      // it takes the same mode — but the first limb: it raises P2025 where
-      // `updateMany` returns `{ count: 0 }`, so the write itself becomes a
-      // P2025 source needing its own guard.
-      //
-      // No P2002 guard here either, and this one is worth proving rather
-      // than asserting — the class family's `pauseOrResumeTemplate`
-      // (`class-template-lifecycle.ts`) carries the identical proof for its
-      // own CAS, and it never got ported here. `data` below is
-      // `{ isActive: desiredActive }` — nothing else — and
-      // `StudioClassTemplate_teacher_slot_unique` covers `(teacherId,
-      // dayOfWeek, startTime)` `WHERE isArchived = false`. None of those four
-      // columns is in this write's `data`, so the indexed values themselves
-      // are unchanged: a row that already satisfied the constraint still
-      // does, regardless of which mechanism Postgres uses to re-check it.
-      // That exemption is local to this write, not to the file:
-      // `archiveOrUnarchiveStudioTemplate`'s own CAS, further down, DOES
-      // write `isArchived`, and un-archiving into a slot another live
-      // template holds is exactly what makes that one raise P2002 — see its
-      // own `catch` for where that is handled.
-      const swapped = await tx.studioClassTemplate.updateMany({
-        where: { id: templateId, isArchived: false, isActive: !desiredActive },
-        data: { isActive: desiredActive },
-      });
-
-      if (swapped.count === 0) {
-        // The fast paths above missed a race. A miss here may or may not
-        // leave this transaction holding a lock on the row, and the plain
-        // re-read below does not depend on which: if the conflicting change
-        // committed before this `updateMany`'s own snapshot, the `where`
-        // simply evaluated against, and was rejected by, that already-
-        // committed version, and nothing was locked. If instead the change
-        // committed while this `updateMany` was already blocked waiting on
-        // it — the exact interleaving the race tests in
-        // `studio-class-template-lifecycle.test.ts` construct — Postgres
-        // locks the newest row version first and only then re-checks the
-        // `where` against it; a rejection at that point still leaves the lock
-        // held to commit. Disambiguate with a plain re-read either way,
-        // exactly as `archiveOrUnarchiveStudioTemplate`'s own miss branch
-        // does — and see there for why taking a lock here on purpose would
-        // not be worth it. Follow that hop with the paragraph above in hand,
-        // though: it forwards to `class-template-lifecycle.ts`, whose version
-        // of this comment asserts flatly that a missed CAS "holds no lock:
-        // the CAS matched nothing, so it acquired none". That sentence is
-        // wrong for exactly the blocked-then-rejected case described here,
-        // and #117 owns correcting it — the reasoning about whether to lock
-        // survives it, the claim about what is already held does not.
-        const current = await tx.studioClassTemplate.findUnique({ where: { id: templateId } });
-        if (!current) return { outcome: 'not_found' };
-        // `isActive === desiredActive` before `isArchived`, deliberately —
-        // the same order as the fast paths above, and for the same reason:
-        // archiving forces `isActive: false`, so an archived row racing a
-        // *pause* is simultaneously "already the desired state" and
-        // "archived". Checking already-desired first answers that case
-        // `unchanged`, matching the fast path and the guard order this
-        // function documents there; checking `isArchived` first would answer
-        // a plain pause with a 409 meant for resuming an archived template.
-        // A racing *resume* is not already-desired (its `isActive` is still
-        // `false`), so it falls through to the `isArchived` check below
-        // regardless of order.
-        if (current.isActive === desiredActive) {
-          return { outcome: 'unchanged', template: current };
-        }
-        if (current.isArchived) return { outcome: 'archived' };
-        // Residual, not provably unreachable this time — said plainly after
-        // getting that claim wrong once already on this branch. The CAS's own
-        // `where` is `isArchived: false AND isActive: !desiredActive`; a miss
-        // means `isArchived` OR `isActive === desiredActive` held *when the
-        // CAS ran* — both checked above against a *second*, later read. Under
-        // READ COMMITTED each statement gets its own snapshot, so a row that
-        // could change back between those two snapshots — a second race
-        // stacked on the first — could in principle reach here. Surfacing
-        // that rather than silently falling through to the code below, which
-        // assumes the CAS actually succeeded.
-        throw new Error(
-          `pauseOrResumeStudioTemplate: template ${templateId} matched neither the CAS ` +
-            'nor any of its disambiguated misses — its state changed again between them',
-        );
-      }
-
-      if (!desiredActive) {
-        // `updateMany` returns a count, not a row. Safe to read back here
-        // specifically because the CAS above holds this row's lock until we
-        // commit — the same lock-then-read pattern the generator's claim
-        // uses.
-        const paused = await tx.studioClassTemplate.findUniqueOrThrow({
-          where: { id: templateId },
+        // constraining the write to the exact `isActive`/`isArchived` values
+        // already read above makes the transition itself — not just this
+        // request — what can happen only once, closing the race the two fast
+        // paths above cannot.
+        //
+        // No P2025 guard here, unlike `updateClassTemplate` and
+        // `pauseOrResumeTemplate` in the class family (#100). Not an omission:
+        // `updateMany` returns `{ count: 0 }` rather than throwing when nothing
+        // matches, and the zero-count branch below already answers `not_found`
+        // by re-reading. The `findUniqueOrThrow` on the paused arm below, and
+        // `claimStudioTemplateForGeneration`'s own read on the active arm, *can*
+        // raise P2025, but only run after this CAS matched, which — as this
+        // function's own docstring above notes — holds `FOR NO KEY UPDATE` on
+        // this row until commit. That conflicts with the `FOR UPDATE`-strength
+        // lock a concurrent `DELETE` needs, so it blocks rather than wins.
+        // What a plain single-record `update` would change is not the lock —
+        // it takes the same mode — but the first limb: it raises P2025 where
+        // `updateMany` returns `{ count: 0 }`, so the write itself becomes a
+        // P2025 source needing its own guard.
+        //
+        // No P2002 guard here either, and this one is worth proving rather
+        // than asserting — the class family's `pauseOrResumeTemplate`
+        // (`class-template-lifecycle.ts`) carries the identical proof for its
+        // own CAS, and it never got ported here. `data` below is
+        // `{ isActive: desiredActive }` — nothing else — and
+        // `StudioClassTemplate_teacher_slot_unique` covers `(teacherId,
+        // dayOfWeek, startTime)` `WHERE isArchived = false`. None of those four
+        // columns is in this write's `data`, so the indexed values themselves
+        // are unchanged: a row that already satisfied the constraint still
+        // does, regardless of which mechanism Postgres uses to re-check it.
+        // That exemption is local to this write, not to the file:
+        // `archiveOrUnarchiveStudioTemplate`'s own CAS, further down, DOES
+        // write `isArchived`, and un-archiving into a slot another live
+        // template holds is exactly what makes that one raise P2002 — see its
+        // own `catch` for where that is handled.
+        const swapped = await tx.studioClassTemplate.updateMany({
+          where: { id: templateId, isArchived: false, isActive: !desiredActive },
+          data: { isActive: desiredActive },
         });
-        return { outcome: 'paused', template: paused };
-      }
 
-      // Take the row lock before generating. The CAS above only flipped
-      // `isActive`, a non-key column, so Postgres grants it `FOR NO KEY
-      // UPDATE` — which does not conflict with the `FOR KEY SHARE` a
-      // concurrent `StudioClass` insert takes on this template for FK
-      // integrity. Without this claim that race is live; `FOR UPDATE` makes
-      // the collision impossible instead of leaving it to the generator's
-      // `ON CONFLICT DO NOTHING`, which would cost that date's class with no
-      // error (#94).
-      const claimed = await claimStudioTemplateForGeneration(tx, templateId);
-      if (!claimed) {
-        // Genuinely unreachable now, not just believed to be. The CAS above
-        // just proved `isArchived: false` and `isActive: true` in the same
-        // statement that took this row's write lock, and that lock is still
-        // held here — nothing else can have archived, paused or deleted the
-        // row since. A null here would mean the claim's eligibility
-        // predicate and this CAS's have drifted apart from each other, not
-        // that a race slipped past either one.
-        throw new Error(
-          `pauseOrResumeStudioTemplate: claim returned null for template ${templateId} ` +
-            "right after this transaction's own CAS confirmed it eligible — " +
-            'the claim predicate and the CAS predicate have diverged',
-        );
-      }
-      // Must be `tx`, not `db` — the two are not interchangeable here even
-      // though both satisfy the parameter's type. The claim above holds
-      // `FOR UPDATE` on this row on `tx`'s connection; a `StudioClass`
-      // insert issued through `db` runs on a separate connection and needs
-      // `FOR KEY SHARE` on the same row for its FK check, which cannot be
-      // granted while `FOR UPDATE` is open. `tx` cannot close to release it
-      // because it is awaiting this very call. Passing `db` here therefore
-      // does not fail fast or cleanly: it blocks for the full 10s
-      // transaction timeout below, then throws — Postgres's deadlock
-      // detector does not step in, because this is one connection waiting
-      // on a lock, not a wait-for cycle between two backends. Measured, not
-      // reasoned: swapping `tx` for `db` and running this shape standalone
-      // fails at 10.0s with Prisma's P2028 ("transaction already closed").
-      //
-      // Under vitest it looks like 5s instead, because vitest's own default
-      // `testTimeout` is 5000ms and fires first — a property of the harness,
-      // not of Prisma or of this code. Do not read that 5s as the real
-      // budget, and do not "correct" the 10s above to match it.
-      const generation = await generateStudioInstancesForTemplate(tx, claimed);
-      const added = generation.created;
-      // `countSkipReasons` (`@/lib/generation`) is the one place
-      // `blockedByCancelled`/`slotTaken` are reduced from
-      // `generation.skipped` — see its docblock for why a fifth
-      // `SkipReason` fails the build here instead of vanishing.
-      const { blockedByCancelled, slotTaken } = countSkipReasons(generation.skipped);
+        if (swapped.count === 0) {
+          // The fast paths above missed a race. A miss here may or may not
+          // leave this transaction holding a lock on the row, and the plain
+          // re-read below does not depend on which: if the conflicting change
+          // committed before this `updateMany`'s own snapshot, the `where`
+          // simply evaluated against, and was rejected by, that already-
+          // committed version, and nothing was locked. If instead the change
+          // committed while this `updateMany` was already blocked waiting on
+          // it — the exact interleaving the race tests in
+          // `studio-class-template-lifecycle.test.ts` construct — Postgres
+          // locks the newest row version first and only then re-checks the
+          // `where` against it; a rejection at that point still leaves the lock
+          // held to commit. Disambiguate with a plain re-read either way,
+          // exactly as `archiveOrUnarchiveStudioTemplate`'s own miss branch
+          // does — and see there for why taking a lock here on purpose would
+          // not be worth it. Follow that hop with the paragraph above in hand,
+          // though: it forwards to `class-template-lifecycle.ts`, whose version
+          // of this comment asserts flatly that a missed CAS "holds no lock:
+          // the CAS matched nothing, so it acquired none". That sentence is
+          // wrong for exactly the blocked-then-rejected case described here,
+          // and #117 owns correcting it — the reasoning about whether to lock
+          // survives it, the claim about what is already held does not.
+          const current = await tx.studioClassTemplate.findUnique({ where: { id: templateId } });
+          if (!current) return { outcome: 'not_found' };
+          // `isActive === desiredActive` before `isArchived`, deliberately —
+          // the same order as the fast paths above, and for the same reason:
+          // archiving forces `isActive: false`, so an archived row racing a
+          // *pause* is simultaneously "already the desired state" and
+          // "archived". Checking already-desired first answers that case
+          // `unchanged`, matching the fast path and the guard order this
+          // function documents there; checking `isArchived` first would answer
+          // a plain pause with a 409 meant for resuming an archived template.
+          // A racing *resume* is not already-desired (its `isActive` is still
+          // `false`), so it falls through to the `isArchived` check below
+          // regardless of order.
+          if (current.isActive === desiredActive) {
+            return { outcome: 'unchanged', template: current };
+          }
+          if (current.isArchived) return { outcome: 'archived' };
+          // Residual, not provably unreachable this time — said plainly after
+          // getting that claim wrong once already on this branch. The CAS's own
+          // `where` is `isArchived: false AND isActive: !desiredActive`; a miss
+          // means `isArchived` OR `isActive === desiredActive` held *when the
+          // CAS ran* — both checked above against a *second*, later read. Under
+          // READ COMMITTED each statement gets its own snapshot, so a row that
+          // could change back between those two snapshots — a second race
+          // stacked on the first — could in principle reach here. Surfacing
+          // that rather than silently falling through to the code below, which
+          // assumes the CAS actually succeeded.
+          throw new Error(
+            `pauseOrResumeStudioTemplate: template ${templateId} matched neither the CAS ` +
+              'nor any of its disambiguated misses — its state changed again between them',
+          );
+        }
 
-      // Same helper and same boundary as `archiveOrUnarchiveStudioTemplate`'s
-      // `remaining`, so archiving and resuming report on one basis. `gte`, not
-      // `gt`: this path deletes nothing, so there is no spare-today carve-out
-      // to mirror — a class dated today is on the schedule and must be counted.
-      //
-      // `claimed.teacher.defaultTimezone`, and it must be that value rather
-      // than any other read of the same column. Not because it is locked — it
-      // is not: the claim's `FOR UPDATE` is on the `StudioClassTemplate` row,
-      // while `defaultTimezone` lives on `Teacher`, reached by the claim's
-      // `include` join, and it is not a unique column, so a concurrent change
-      // to it takes `FOR NO KEY UPDATE` and commits straight past us. The
-      // reason is stronger than a lock: `generateStudioInstancesForTemplate`
-      // filtered its candidate dates with `classStartInstant(date, startTime,
-      // template.teacher.defaultTimezone)` off this same `claimed`, so keying
-      // the count's boundary to a *different* read of that column is the one
-      // way `scheduled < added` becomes reachable. Concretely, a filter that
-      // admitted today-in-`Pacific/Niue` (UTC-11) against a count whose `today`
-      // came from `Pacific/Kiritimati` (UTC+14) would put the just-added row a
-      // day outside `gte`. Do not "simplify" this to `template.teacher.…`.
-      const today = startOfLocalDay(new Date(), claimed.teacher.defaultTimezone);
-      const scheduled = await tx.studioClass.count({
-        where: scheduledWhere(templateId, { gte: today }),
-      });
+        if (!desiredActive) {
+          // `updateMany` returns a count, not a row. Safe to read back here
+          // specifically because the CAS above holds this row's lock until we
+          // commit — the same lock-then-read pattern the generator's claim
+          // uses.
+          const paused = await tx.studioClassTemplate.findUniqueOrThrow({
+            where: { id: templateId },
+          });
+          return { outcome: 'paused', template: paused };
+        }
 
-      // The state the POST's own transaction exists to prevent — a template
-      // flagged live that produces no classes — is reachable here *without
-      // failing*: every candidate date already holds a cancelled row, so
-      // generation creates nothing and there is no throw for `withErrorHandler`
-      // to classify. The teacher is told (`resumeStudioMessage`'s
-      // `scheduled === 0` branch); this line carries the measured breakdown to
-      // the operator side — the counting that used to stop at "every candidate
-      // date is blocked" without saying which mechanism blocked them. Rare
-      // enough not to be noise: only fires on a resume that leaves the window
-      // empty.
-      if (scheduled === 0) {
-        log.warn(
-          { templateId, teacherId, added, blockedByCancelled, slotTaken },
-          'studio template resumed live with an empty window',
-        );
-      }
+        // Take the row lock before generating. The CAS above only flipped
+        // `isActive`, a non-key column, so Postgres grants it `FOR NO KEY
+        // UPDATE` — which does not conflict with the `FOR KEY SHARE` a
+        // concurrent `StudioClass` insert takes on this template for FK
+        // integrity. Without this claim that race is live; `FOR UPDATE` makes
+        // the collision impossible instead of leaving it to the generator's
+        // `ON CONFLICT DO NOTHING`, which would cost that date's class with no
+        // error (#94).
+        const claimed = await claimStudioTemplateForGeneration(tx, templateId);
+        if (!claimed) {
+          // Genuinely unreachable now, not just believed to be. The CAS above
+          // just proved `isArchived: false` and `isActive: true` in the same
+          // statement that took this row's write lock, and that lock is still
+          // held here — nothing else can have archived, paused or deleted the
+          // row since. A null here would mean the claim's eligibility
+          // predicate and this CAS's have drifted apart from each other, not
+          // that a race slipped past either one.
+          throw new Error(
+            `pauseOrResumeStudioTemplate: claim returned null for template ${templateId} ` +
+              "right after this transaction's own CAS confirmed it eligible — " +
+              'the claim predicate and the CAS predicate have diverged',
+          );
+        }
+        // Must be `tx`, not `db` — the two are not interchangeable here even
+        // though both satisfy the parameter's type. The claim above holds
+        // `FOR UPDATE` on this row on `tx`'s connection; a `StudioClass`
+        // insert issued through `db` runs on a separate connection and needs
+        // `FOR KEY SHARE` on the same row for its FK check, which cannot be
+        // granted while `FOR UPDATE` is open. `tx` cannot close to release it
+        // because it is awaiting this very call. Passing `db` here therefore
+        // does not fail fast or cleanly: it blocks for the full 10s
+        // transaction timeout below, then throws — Postgres's deadlock
+        // detector does not step in, because this is one connection waiting
+        // on a lock, not a wait-for cycle between two backends. Measured, not
+        // reasoned: swapping `tx` for `db` and running this shape standalone
+        // fails at 10.0s with Prisma's P2028 ("transaction already closed").
+        //
+        // Under vitest it looks like 5s instead, because vitest's own default
+        // `testTimeout` is 5000ms and fires first — a property of the harness,
+        // not of Prisma or of this code. Do not read that 5s as the real
+        // budget, and do not "correct" the 10s above to match it.
+        const generation = await generateStudioInstancesForTemplate(tx, claimed);
+        const added = generation.created;
+        // `countSkipReasons` (`@/lib/generation`) is the one place
+        // `blockedByCancelled`/`slotTaken` are reduced from
+        // `generation.skipped` — see its docblock for why a fifth
+        // `SkipReason` fails the build here instead of vanishing.
+        const { blockedByCancelled, slotTaken } = countSkipReasons(generation.skipped);
 
-      const { teacher: _claimTeacher, ...bareClaimed } = claimed;
-      void _claimTeacher;
-      return {
-        outcome: 'active',
-        template: bareClaimed,
-        scheduled,
-        added,
-        blockedByCancelled,
-        slotTaken,
-      };
-    },
-    // Three 10s budgets: the claim's own transaction, this transaction, and
-    // this wait at the head of one of the sweep's. They used to compose as a
-    // chain — each 10s "waits at most as long as the next link runs" — but
-    // they do not: `claimStudioTemplateForGeneration` selects `WHERE
-    // "isActive" = true`, and the resume below only runs on a paused template
-    // (its CAS constrains `isActive: false`), so a resume can never sit
-    // between two claims as the middle link — it can only be the HEAD that
-    // waits out a sweep's claim. Matching the sweep's 10s transaction timeout
-    // still matters, because Prisma's 5s default can be exceeded by a loaded
-    // VPS and turn an ordinary resume click into an opaque P2028.
-    { timeout: 10_000 },
-  );
+        // Same helper and same boundary as `archiveOrUnarchiveStudioTemplate`'s
+        // `remaining`, so archiving and resuming report on one basis. `gte`, not
+        // `gt`: this path deletes nothing, so there is no spare-today carve-out
+        // to mirror — a class dated today is on the schedule and must be counted.
+        //
+        // `claimed.teacher.defaultTimezone`, and it must be that value rather
+        // than any other read of the same column. Not because it is locked — it
+        // is not: the claim's `FOR UPDATE` is on the `StudioClassTemplate` row,
+        // while `defaultTimezone` lives on `Teacher`, reached by the claim's
+        // `include` join, and it is not a unique column, so a concurrent change
+        // to it takes `FOR NO KEY UPDATE` and commits straight past us. The
+        // reason is stronger than a lock: `generateStudioInstancesForTemplate`
+        // filtered its candidate dates with `classStartInstant(date, startTime,
+        // template.teacher.defaultTimezone)` off this same `claimed`, so keying
+        // the count's boundary to a *different* read of that column is the one
+        // way `scheduled < added` becomes reachable. Concretely, a filter that
+        // admitted today-in-`Pacific/Niue` (UTC-11) against a count whose `today`
+        // came from `Pacific/Kiritimati` (UTC+14) would put the just-added row a
+        // day outside `gte`. Do not "simplify" this to `template.teacher.…`.
+        const today = startOfLocalDay(new Date(), claimed.teacher.defaultTimezone);
+        const scheduled = await tx.studioClass.count({
+          where: scheduledWhere(templateId, { gte: today }),
+        });
+
+        // The state the POST's own transaction exists to prevent — a template
+        // flagged live that produces no classes — is reachable here *without
+        // failing*: every candidate date already holds a cancelled row, so
+        // generation creates nothing and there is no throw for `withErrorHandler`
+        // to classify. The teacher is told (`resumeStudioMessage`'s
+        // `scheduled === 0` branch); this line carries the measured breakdown to
+        // the operator side — the counting that used to stop at "every candidate
+        // date is blocked" without saying which mechanism blocked them. Rare
+        // enough not to be noise: only fires on a resume that leaves the window
+        // empty.
+        if (scheduled === 0) {
+          log.warn(
+            { templateId, teacherId, added, blockedByCancelled, slotTaken },
+            'studio template resumed live with an empty window',
+          );
+        }
+
+        const { teacher: _claimTeacher, ...bareClaimed } = claimed;
+        void _claimTeacher;
+        return {
+          outcome: 'active',
+          template: bareClaimed,
+          scheduled,
+          added,
+          blockedByCancelled,
+          slotTaken,
+        };
+      },
+      // Three 10s budgets: the claim's own transaction, this transaction, and
+      // this wait at the head of one of the sweep's. They used to compose as a
+      // chain — each 10s "waits at most as long as the next link runs" — but
+      // they do not: `claimStudioTemplateForGeneration` selects `WHERE
+      // "isActive" = true`, and the resume below only runs on a paused template
+      // (its CAS constrains `isActive: false`), so a resume can never sit
+      // between two claims as the middle link — it can only be the HEAD that
+      // waits out a sweep's claim. Matching the sweep's 10s transaction timeout
+      // still matters, because Prisma's 5s default can be exceeded by a loaded
+      // VPS and turn an ordinary resume click into an opaque P2028.
+      { timeout: 10_000 },
+    );
   } catch (err) {
     // Transient first, and this is the one lifecycle function that had no
     // catch at all — a P2028 from a contended wait used to escape as a 500.
@@ -771,17 +771,21 @@ export async function archiveOrUnarchiveStudioTemplate(
       // now on a pause or resume: `pauseOrResumeStudioTemplate`'s own CAS holds
       // this same row from its `updateMany` through generation to commit, on
       // the same 10s budget, so a user-facing PATCH can make an archive wait
-      // exactly as a background sweep can (#94). The 10s figure matches both of
-      // those peers' transaction timeouts so Prisma's 5s default does not abort
-      // this update while it waits — a VPS can exceed 5s, which would otherwise
-      // turn an ordinary archive click into an opaque P2028. Three 10s budgets
-      // do not compose, though: if a sweep is holding the row when a pause
-      // queues behind it, and this archive then queues behind that pause, this
-      // archive's own 10s clock is already running while it waits its turn —
-      // so the last link in that chain — this archive, waiting behind a
-      // waiter — is the one most likely to exhaust its own budget and surface
-      // P2028 without ever reaching its own work (#113 owns that error
-      // surface). A *resume* cannot be that middle link: the claim selects
+      // exactly as a background sweep can (#94).
+      //
+      // The wait itself is now bounded by this transaction's own
+      // `setLockTimeout` (2s), so the 10s figure no longer governs the wait —
+      // it governs this transaction's own work once the lock is won: the
+      // delete, the notifications, the record write, which a loaded VPS can
+      // push past Prisma's 5s default and turn into an opaque P2028. Three 10s
+      // budgets used not to compose: a sweep holding the row, a pause queued
+      // behind it and this archive queued behind that pause meant the last
+      // link's own clock ran while it waited its turn, and it was the one most
+      // likely to exhaust its budget without ever reaching its own work. The
+      // bound is what took that apart — every link now waits at most 2s and
+      // answers `busy`.
+      //
+      // A *resume* cannot be that middle link: the claim selects
       // `WHERE "isActive" = true` while a resume only ever runs on a paused
       // template (its CAS constrains `isActive: false`), so no claim is ever
       // waiting on a row a resume holds — a resume can only ever be the HEAD
@@ -791,6 +795,10 @@ export async function archiveOrUnarchiveStudioTemplate(
       { timeout: 10_000 },
     );
   } catch (err) {
+    // Transient first, ahead of the slot-conflict branch — see the class
+    // family's twin (`archiveOrUnarchiveTemplate`) for why that ordering is
+    // load-bearing rather than stylistic, and for why the log line lives here
+    // rather than being left to the API wrapper.
     if (isTransientDbError(err)) {
       log.warn({ err, templateId, teacherId }, 'studio class archive lost the template lock race');
       return { ok: false, reason: 'busy' };

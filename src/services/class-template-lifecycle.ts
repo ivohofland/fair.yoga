@@ -1023,6 +1023,18 @@ export async function archiveOrUnarchiveTemplate(
       { timeout: 10_000 },
     );
   } catch (err) {
+    // First, ahead of the unique-constraint branch below: `P2028`/`P2024` are
+    // `PrismaClientKnownRequestError`s too, and testing for a slot conflict
+    // first would let a transient code fall past a branch that cannot match it
+    // into the rethrow — which is the generic failure this exists to remove.
+    // Same ordering, same reason, as `classifyApiError`.
+    //
+    // Logged here rather than left to the API wrapper: returning instead of
+    // throwing means the wrapper never sees this, and its automatic line
+    // disappears with it. The message names the operation because the wrapper
+    // cannot — an archive and a resume reach the same route with the same
+    // method and the same path, and the query parameter that separates them is
+    // deliberately excluded from request logs.
     if (isTransientDbError(err)) {
       log.warn({ err, templateId, teacherId }, 'recurring class archive lost the template lock race');
       return { ok: false, reason: 'busy' };

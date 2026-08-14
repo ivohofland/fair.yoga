@@ -384,12 +384,17 @@ describe('generateClassInstances (DB)', () => {
      * `opens its transaction with { timeout: 10_000 }` pins that it is still
      * passed.
      *
-     * What this pins instead is the bound itself, and the two bounds are
-     * distinguishable only by timing: a 2s `lock_timeout` and a 10s
-     * transaction budget both end in a rejected wait, so asserting merely
-     * that the archive failed would go green against either. The upper bound
-     * below is the whole assertion — it fails if the `lock_timeout` is
-     * removed and the transaction budget produces the outcome instead.
+     * What this pins instead is the bound itself, and the timing assertions
+     * are how. Without the `lock_timeout` the archive does not fail later —
+     * it does not settle at all: the claim holds the row until `release()`,
+     * `release()` only runs after the archive settles, and the transaction
+     * budget cannot break that tie, because Prisma checks it at statement
+     * boundaries and a statement blocked inside Postgres never reaches one
+     * (`src/lib/db-locks.ts` says so; the mutation record's Task 1 measured
+     * it as a 20s test timeout). So the lower bound proves the archive really
+     * waited rather than failing instantly for an unrelated reason, and the
+     * upper bound proves it answered near the 2s bound rather than under any
+     * longer clock.
      */
     it(
       'answers busy when the generation claim holds the row past the lock timeout',
@@ -448,6 +453,16 @@ describe('generateClassInstances (DB)', () => {
     it(
       'answers busy when a pause loses the row to the generation claim',
       async () => {
+        // The sweep claims only an ACTIVE template, so this test needs one.
+        // This describe's `afterEach` restores exactly this state, so the row
+        // is already active in an ordinary run — stated here anyway so the
+        // precondition the claim below asserts on is owned by the test that
+        // depends on it, matching the studio twin.
+        await prisma.classTemplate.update({
+          where: { id: templateId },
+          data: { isActive: true, isArchived: false },
+        });
+
         let release!: () => void;
         const held = new Promise<void>((resolve) => {
           release = resolve;

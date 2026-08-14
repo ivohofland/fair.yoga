@@ -85,17 +85,31 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       const generation = await generateInstancesForTemplate(tx, created);
       return { created, generation };
     },
-    // Nine sequential statements on a 2GB VPS — one create, four candidate
-    // probes and four inserts — against Prisma's 5s default, which every
-    // peer transaction touching these rows already declines to run on. No
-    // claim is taken here (the row is brand-new inside this transaction, so
-    // nothing can race the insert), which also means no claim `lock_timeout`
-    // bounds the FK waits: each generated class needs `FOR KEY SHARE` on the
-    // `Teacher` row, and `email`/`pageSlug`/`accountId` are all `@unique`, so
-    // a teacher changing their page slug in another tab takes `FOR UPDATE`
-    // there and conflicts. This budget is what bounds that.
-    { timeout: 10_000 },
-  );
+      // Nine sequential statements on a 2GB VPS — one create, four candidate
+      // probes and four inserts — against Prisma's 5s default, which every
+      // peer transaction touching these rows already declines to run on. No
+      // claim is taken here (the row is brand-new inside this transaction, so
+      // nothing can race the insert), which also means no claim `lock_timeout`
+      // bounds the FK waits: each generated class needs `FOR KEY SHARE` on the
+      // `Teacher` row, and `email`/`pageSlug`/`accountId` are all `@unique`, so
+      // a teacher changing their page slug in another tab takes `FOR UPDATE`
+      // there and conflicts.
+      //
+      // What this budget does NOT do is bound that wait, and an earlier draft
+      // of this comment claimed it did. Prisma checks the budget at statement
+      // boundaries, so it "cannot roll back a statement already blocked inside
+      // Postgres, only refuse to start a new one" (`db-locks.ts`) — measured
+      // by the four lifecycle functions' mutation records, where removing
+      // their `setLockTimeout` leaves the blocked statement outliving the 10s
+      // budget rather than being aborted at it. What the budget buys is room
+      // for the nine statements' own runtime; the FK wait itself is unbounded.
+      //
+      // No `setLockTimeout` here, and that is a scope decision rather than an
+      // oversight: this route has no `busy` arm to answer with, so a 2s bound
+      // would turn a wait that usually succeeds into the generic
+      // `classifyApiError` 503 instead of a named one.
+      { timeout: 10_000 },
+    );
   } catch (err) {
     // The template's slot key, not `Class`'s. Both models share this
     // transaction, but only the template can raise P2002 here (see above),

@@ -180,7 +180,7 @@ export const PATCH = withErrorHandler(async (
   }
   if (result.reason === 'busy') {
     return respondError(
-      'The system was busy and could not update this studio class. Nothing was changed. Wait a moment, then try again.',
+      'The system was busy and could not update this recurring studio class. Nothing was changed. Wait a moment, then try again.',
       503,
       'STUDIO_TEMPLATE_BUSY',
     );
