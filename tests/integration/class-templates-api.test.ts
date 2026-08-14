@@ -1120,10 +1120,9 @@ describe('PUT /api/class-templates/[id]', () => {
   // new `startTime` onto its still-mutable generated `Class` rows
   // (`template-sync.ts`), which can land one of those instances on a slot an
   // unrelated class already occupies (`Class_teacher_slot_unique`). The
-  // template row and the sync are not one transaction (by design — see
-  // `updateClassTemplate`'s docblock), so the template's own `startTime`
-  // commits before the sync's `updateMany` fails — asserted below rather than
-  // assumed.
+  // template row and the sync are one transaction now (#83, #209), so this
+  // collision rolls the whole write back — the template's own `startTime`
+  // never commits either — asserted below rather than assumed.
   it('refuses a startTime change whose propagation to a generated instance would collide', async () => {
     const id = await createTemplate('Sync Slot Template', '11:17');
     const instances = await prisma.class.findMany({
@@ -1160,27 +1159,27 @@ describe('PUT /api/class-templates/[id]', () => {
     });
     expect(res.status).toBe(409);
     const json = (await res.json()) as { error: { code: string; message: string } };
-    // A distinct code from the plain slot collision (#209): the template
-    // itself committed here, and only the instance sync rolled back.
+    // A distinct code from the plain slot collision (#209): this one is
+    // raised by the generated instance's collision, not the template's own
+    // slot, even though both now roll the whole write back with nothing
+    // changed.
     expect(json.error.code).toBe('TEMPLATE_SYNC_SLOT_CONFLICT');
-    // The message must describe what actually happened, not a hypothetical:
-    // by this point the template write below has already committed, only
-    // the instance sync rolled back, so "would move" (implying nothing
-    // happened) would be false. It also has to name the remedy — a teacher
-    // reading only "you already have a class at that time" has no way to
-    // know the template and its instances are now desynced or what to do
-    // about it.
+    // The message must describe what actually happened: nothing did, because
+    // the template write and the sync are one transaction now (#83, #209)
+    // and this collision rolled both back. It still has to name the remedy —
+    // a teacher reading only "you already have a class at that time" has no
+    // way to know what to do about it.
     expect(json.error.message).toBe(
-      'The recurring class was updated, but its scheduled classes could not be moved — you already have a class at that time. Move or cancel that class, then edit this recurring class again.',
+      'Your scheduled classes could not be moved — you already have a class at that time. Nothing was changed. Move or cancel that class, then edit this recurring class again.',
     );
 
-    // The template row's own write already committed — it is not in the same
-    // transaction as the sync that failed.
+    // The template write is now in the same transaction as the sync that
+    // failed, so it rolled back with it (#83, #209). This assertion is the
+    // inverse of the one that stood here before: it asserted `'11:18'`,
+    // pinning the half-applied write as intended behaviour.
     const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
-    expect(template.startTime).toBe('11:18');
+    expect(template.startTime).toBe('11:17');
 
-    // The colliding instance's write rolled back with the rest of the
-    // `sameDay` batch: it is still at the template's old startTime.
     const instance = await prisma.class.findUniqueOrThrow({ where: { id: instances[0]!.id } });
     expect(instance.startTime).toBe('11:17');
   });

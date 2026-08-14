@@ -118,7 +118,7 @@ describe('syncTemplateInstances', () => {
       data: { startTime: '10:30', targetRate: new Prisma.Decimal(30), classType: 'Sync Flow II' },
     });
 
-    const result = await syncTemplateInstances(prisma, templateId);
+    const result = await prisma.$transaction((tx) => syncTemplateInstances(tx, templateId));
     expect(result.synced).toBe(1);
     expect(result.kept).toBe(2);
     expect(result.regenerated).toBe(0);
@@ -149,7 +149,7 @@ describe('syncTemplateInstances', () => {
     );
     expect(mutableBefore.length).toBeGreaterThanOrEqual(1);
 
-    const result = await syncTemplateInstances(prisma, templateId);
+    const result = await prisma.$transaction((tx) => syncTemplateInstances(tx, templateId));
     expect(result.regenerated).toBe(mutableBefore.length);
     expect(result.kept).toBe(2); // locked + in_progress survive on the old day
 
@@ -222,7 +222,7 @@ describe('syncTemplateInstances', () => {
       data: { dayOfWeek: newDay, isActive: true },
     });
 
-    const result = await syncTemplateInstances(prisma, templateId);
+    const result = await prisma.$transaction((tx) => syncTemplateInstances(tx, templateId));
 
     expect(result.regenerated).toBeGreaterThan(0); // deleted from the old day
     expect(result.refilled).toBe(0); // and none created on the new one
@@ -313,14 +313,25 @@ describe('syncTemplateInstances', () => {
           return query(args);
         },
       },
-      // `$extends` returns a client missing `$on`, so it is not assignable to
-      // `syncTemplateInstances`'s `PrismaClient`-typed `db` parameter even
-      // though every method it calls here is the real one, running against
-      // the real database — same cast `template-lock-order.test.ts` uses for
-      // its own hooked client.
+      // `$extends` returns a client whose own `.$transaction` callback is
+      // typed against its extended `DynamicClientExtensionThis`, not the
+      // plain `Prisma.TransactionClient` the `TransactionClientOnly` brand is
+      // built on — `tx.account.findUnique`'s extended argument type is not
+      // assignable to the plain one, so passing that `tx` straight to
+      // `syncTemplateInstances` fails to compile. The cast below discards
+      // only the extension's TYPE, not its behaviour: every method still
+      // runs the real hook, against the real database — same cast
+      // `template-lock-order.test.ts` uses for its own hooked client.
     }) as unknown as PrismaClient;
 
-    const syncPromise = syncTemplateInstances(hookedPrisma, pinTemplate.id);
+    // `syncTemplateInstances` no longer manages its own transaction (task 6,
+    // atomic-template-update) — it takes a transaction client and expects
+    // the caller to open one, so the hook has to wrap the call the same way
+    // `updateClassTemplate` composes it in production. `hookedPrisma.
+    // $transaction`'s query extension still applies inside the interactive
+    // transaction it opens, so the hook still fires on the pre-lock's
+    // `$queryRaw` below.
+    const syncPromise = hookedPrisma.$transaction((tx) => syncTemplateInstances(tx, pinTemplate.id));
     await preLockReachedPromise;
 
     // The registration-shaped write, AWAITED to completion before `goAhead`.

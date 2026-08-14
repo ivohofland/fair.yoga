@@ -323,12 +323,14 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
 
       await lowLockedPromise;
 
-      // Called directly, not wrapped in an outer `prisma.$transaction` — the
-      // function already opens and manages its own transaction internally
-      // (`template-sync.ts`), so wrapping it here would only start a second,
-      // unrelated transaction on the same client and prove nothing about the
-      // one that actually takes the locks.
-      const a = syncTemplateInstances(prisma, templateId);
+      // Wrapped in `prisma.$transaction` now: `syncTemplateInstances`
+      // (`template-sync.ts`) no longer opens its own transaction (task 6,
+      // atomic-template-update) — it takes a transaction client and expects
+      // the caller to supply one, composed into `updateClassTemplate`'s
+      // transaction in production. This wrapper IS the transaction that
+      // takes the locks, not a second, unrelated one wrapped around an inner
+      // transaction that used to take them itself.
+      const a = prisma.$transaction((tx) => syncTemplateInstances(tx, templateId));
 
       // The assertion is the ABSENCE of `40P01`, not a specific success on
       // either side — same rationale as `invitations-lock-order.test.ts`'s own
@@ -508,11 +510,14 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
         // verified against `class-generator.test.ts:507`.
         //
         // Called directly, not wrapped in an outer `prisma.$transaction` —
-        // like `syncTemplateInstances` above, this function already opens and
-        // manages its own transaction internally (`class-template-lifecycle.ts`),
-        // on the same `db` argument it is passed, so wrapping it here would
-        // only start a second, unrelated transaction and prove nothing about
-        // the one that actually takes the locks.
+        // this function opens and manages its own transaction internally
+        // (`class-template-lifecycle.ts`), on the same `db` argument it is
+        // passed, so wrapping it here would only start a second, unrelated
+        // transaction and prove nothing about the one that actually takes
+        // the locks. `syncTemplateInstances` above no longer shares this
+        // shape: task 6 of the atomic-template-update work made it take an
+        // externally supplied transaction client instead, which is why its
+        // own call site just above IS wrapped.
         const a = archiveOrUnarchiveTemplate(prisma, templateId, teacherId, 'archived');
 
         const [aSettled, bSettled] = await Promise.allSettled([a, b]);

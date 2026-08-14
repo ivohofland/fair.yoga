@@ -18,6 +18,13 @@ import type { Prisma } from '@prisma/client';
  *   adopt  `claimTemplateForGeneration` (`class-generator.ts`) and
  *          `claimStudioTemplateForGeneration` (`studio-class-generator.ts`) —
  *          each issues `LOCK_TIMEOUT_SQL` and then a `FOR UPDATE`.
+ *   adopt  `syncTemplateInstances` (`template-sync.ts`) — issues
+ *          `LOCK_TIMEOUT_SQL` via `setLockTimeout` and then its own ordered
+ *          `FOR UPDATE OF c` pre-lock (issue 180) before its re-read. Composed
+ *          into `updateClassTemplate`'s transaction (`class-template-
+ *          lifecycle.ts`) rather than opening its own — task 6 of the
+ *          atomic-template-update work removed the inner `$transaction` this
+ *          function used to wrap that pre-lock and the propagation in.
  *   adopt  `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) — `FOR UPDATE
  *          OF c` inside the statement that selects the rows, with the
  *          `updateMany` and reorder that lock exists to protect after it.

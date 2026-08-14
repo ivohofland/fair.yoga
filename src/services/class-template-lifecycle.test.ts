@@ -242,15 +242,21 @@ describe('updateClassTemplate (DB)', () => {
   });
 
   /**
-   * #100, the first of the two windows the one `catch` covers: the read at the
-   * top of `updateClassTemplate` and the `update` are not one transaction, so
-   * a delete landing between them raises P2025 at the write. Before #100 that
-   * escaped as a 500 — the bug this issue exists to close.
+   * #100. The read at the top of `updateClassTemplate` and the `update`
+   * inside the transaction it opens are not one statement, so a delete
+   * landing between them raises P2025 at the write. Before #100 that escaped
+   * as a 500 — the bug this issue exists to close.
    *
-   * The sync test below cannot stand in for this one. Hoist the `update` out
-   * of the `try` and it still passes (its P2025 comes from the sync call,
-   * which stays inside), while this one starts throwing — so this is the test
-   * that holds the write inside the guard.
+   * This used to be the first of two windows one `catch` covered. The
+   * second — a delete landing between the write committing and
+   * `syncTemplateInstances`'s own read — closed when task 6 of the
+   * atomic-template-update work put both inside one transaction: that read
+   * now runs on a row the write above has already locked, so nothing can
+   * delete it out from under the read before the transaction ends. A test
+   * pinning that second window used to stand here; it hung rather than
+   * failed once the window closed, because the out-of-band delete it relied
+   * on now blocks on the lock instead of racing it. This is the only window
+   * left, and the only test for it.
    *
    * Interposed rather than raced, like the pause guard's twin: the extension
    * performs the real read and then deletes the row before returning it, which
@@ -262,8 +268,8 @@ describe('updateClassTemplate (DB)', () => {
     const t = await makeTemplate('P2025 Write');
 
     let deleted = false;
-    // Cast for the same reason as the sync test's `interposing` below: the
-    // extended client is missing `$on`, so it is not assignable to
+    // Cast for the same reason `template-sync.test.ts`'s hooked clients need
+    // one: the extended client is missing `$on`, so it is not assignable to
     // `updateClassTemplate`'s `PrismaClient`-typed `db` parameter, and reusing
     // the existing stub-client cast is the only accepted way past that without
     // loosening the parameter's type.
@@ -288,69 +294,6 @@ describe('updateClassTemplate (DB)', () => {
     });
 
     expect(result).toEqual({ ok: false, reason: 'not_found' });
-  });
-
-  /**
-   * #100. `syncTemplateInstances` runs after the `update` and opens with a
-   * `findUniqueOrThrow` — a P2025 source on Prisma 6 — so it had a window of
-   * its own. It now sits *inside* the same `try` as the write, which is what
-   * this pins; before #100 it sat outside and the P2025 escaped as a 500.
-   *
-   * Note what this asserts: `not_found` for a write that *did* land. That is
-   * deliberate. The row is gone before the caller is answered, so "no such
-   * template" is the state their world is actually in; the alternative is
-   * reporting a successful update of something that no longer exists.
-   *
-   * "Did land" is asserted, not just claimed. `{ ok: false, reason:
-   * 'not_found' }` on its own is byte-identical to what the update-half of the
-   * same `catch` produces — the test above — so the reason code alone cannot
-   * say which window this is. `writtenClassType` below is what pins it: it is
-   * read off the row the `UPDATE … RETURNING` handed back, so it is only set
-   * if the write reached the database before the delete did.
-   *
-   * `string | undefined` rather than a `ClassTemplate`: an extension's `query`
-   * callback is typed for a caller that may have passed a `select`, so every
-   * field on the result it hands back is optional.
-   */
-  it('maps a delete landing between the write and the sync to not_found', async () => {
-    const t = await makeTemplate('P2025 Sync');
-
-    let writtenClassType: string | undefined;
-    let deleted = false;
-    // `$extends` returns a `DynamicClientExtensionThis`, not a `PrismaClient`
-    // — it is missing `$on`, which `PrismaClient` requires and this test
-    // double has no need of. `updateClassTemplate`'s `db` parameter is typed
-    // as the concrete class, not a structural subset, so nothing short of a
-    // cast satisfies it here; the alternative, widening that parameter's
-    // type, would be a production-code change to accommodate a test. Cast
-    // to the same target the stub-client precedent in
-    // `studio-class-generator.test.ts` already casts to, rather than
-    // inventing a new one.
-    const interposing = prisma.$extends({
-      query: {
-        classTemplate: {
-          async update({ args, query }) {
-            const row = await query(args);
-            writtenClassType = row.classType;
-            if (!deleted) {
-              deleted = true;
-              await prisma.class.deleteMany({ where: { templateId: t.id } });
-              await prisma.classTemplate.delete({ where: { id: t.id } });
-            }
-            return row;
-          },
-        },
-      },
-    }) as unknown as PrismaClient;
-
-    const result = await updateClassTemplate(interposing, t.id, teacherId, {
-      classType: 'Renamed',
-    });
-
-    expect(result).toEqual({ ok: false, reason: 'not_found' });
-    // The write reached the database before the delete did — which is what
-    // makes this the sync half of the guard and not the update half.
-    expect(writtenClassType).toBe('Renamed');
   });
 });
 

@@ -283,46 +283,48 @@ export async function updateClassTemplate(
   let updated: ClassTemplate;
   let sync: TemplateSyncResult;
   try {
-    updated = await db.classTemplate.update({ where: { id: templateId }, data });
-    // Inside the same `try` as the write above, deliberately. This call opens
-    // with a `findUniqueOrThrow` (`template-sync.ts`) and runs after the
-    // update has already committed, with no lock held in between — so it has
-    // a P2025 window of its own (#100).
-    sync = await syncTemplateInstances(db, templateId);
+    ({ updated, sync } = await db.$transaction(
+      async (tx) => {
+        const template = await tx.classTemplate.update({ where: { id: templateId }, data });
+        // Composed into this transaction, not opening its own. Safe since
+        // #164/#192 (PR #204): `generateInstancesForTemplate` has no `catch`
+        // and inserts with a bare `ON CONFLICT DO NOTHING`, so the refill
+        // cannot abort the transaction it now runs inside.
+        return { updated: template, sync: await syncTemplateInstances(tx, templateId) };
+      },
+      // Five statements here can wait on a lock at 2s each (spec §2.4);
+      // 10_000 would be consumed entirely by lock waits.
+      { timeout: 15_000 },
+    ));
   } catch (err) {
-    // The read above and the two statements in the `try` are not one
-    // transaction, so a delete landing in between surfaces here as Prisma's
-    // P2025 from either of them. Map it to the same outcome the read-time
-    // check above would have produced, rather than letting it fall through as
-    // an opaque 500.
+    // The read above and the write inside the transaction are not the same
+    // statement, so a delete landing in the gap between them still surfaces
+    // here as Prisma's P2025 — but from one source now, not two.
+    // `syncTemplateInstances`'s opening `findUniqueOrThrow` used to be a
+    // second source: before this ran inside the same transaction as the
+    // write, it re-read the row after the update had already committed with
+    // no lock held in between, so a delete landing in that gap could raise
+    // its own P2025, and telling the two apart needed the invocation line at
+    // the head of `err.message` rather than the one-word-apart cause string.
+    // That second source is gone: `syncTemplateInstances`'s read now runs
+    // inside this same transaction, on a row `classTemplate.update` has
+    // already locked, so nothing else can delete it out from under that read
+    // before this transaction ends. Only `classTemplate.update` itself can
+    // still raise this — when a concurrent delete lands between the read-time
+    // guard above and this transaction's own `update` — so map it to the
+    // same outcome that guard would have produced, rather than letting it
+    // fall through as an opaque 500.
     //
-    // Two different statements under the one code, and telling them apart in
-    // a log is harder than it looks. Measured against this repo's
-    // `@prisma/client` 6.19.3: the `update` raises the cause "No record was
-    // found for an update.", `syncTemplateInstances`'s opening
-    // `findUniqueOrThrow` "No record was found for a query." One word apart,
-    // so do not go grepping for either — the discriminator that actually
-    // works is the invocation line Prisma puts at the head of `err.message`
-    // ("Invalid `prisma.classTemplate.update()` invocation" versus
-    // "…findUniqueOrThrow() invocation"). Both cause strings are Prisma's
-    // wording, not ours, and they have changed across its major versions;
-    // re-measure before relying on either.
-    //
-    // From the sync call this means answering `not_found` for an update that
-    // *did* commit. That is the honest answer rather than a convenient one:
-    // the row is gone before the caller is answered, so reporting a
-    // successful update of a template that no longer exists would be the lie.
-    // The `sync` counts are lost with it, which costs nothing — but not
-    // because there is nothing left. `Class.template` is `onDelete: SetNull`
+    // That reports `not_found` for a delete that beat this transaction to the
+    // row, so nothing here commits — no template write, no sync. The row
+    // really is gone, though, so the write that raced this one has its own
+    // consequences worth naming: `Class.template` is `onDelete: SetNull`
     // (`prisma/schema.prisma`), so deleting a template does not take its
-    // generated classes with it: each keeps standing with `templateId: null`,
+    // generated classes with it. Each keeps standing with `templateId: null`,
     // still `open`, still on the teacher's schedule and public booking page,
-    // frozen with whatever settings it had before this edit. What the delete
-    // removed is the link, so `syncTemplateInstances`'s `templateId` filter
-    // now matches nothing and the counts it would have returned are `{ synced:
-    // 0, regenerated: 0, kept: 0 }` — worth nothing to a caller. Whoever
-    // writes the delete path this guard exists for inherits those orphans:
-    // they are that path's problem, not this function's.
+    // frozen with whatever settings it had before this edit. Whoever writes
+    // the delete path this guard exists for inherits those orphans; they are
+    // that path's problem, not this function's.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
       return { ok: false, reason: 'not_found' };
     }

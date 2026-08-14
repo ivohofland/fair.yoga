@@ -83,23 +83,23 @@ export const PUT = withErrorHandler(async (
       'DUPLICATE_TEMPLATE_SLOT',
     );
   }
-  // The startTime change propagated to a still-mutable generated instance and
-  // landed it on a slot a different class already occupies (#196). By the
-  // time this branch runs, `db.classTemplate.update` has already committed —
-  // only the instance sync rolled back — so the message describes what
-  // happened, not a hypothetical: the template moved, its generated classes
-  // did not, and the two are now desynced. Names the remedy, not just the
-  // state, because "you already have a class at that time" alone leaves the
-  // teacher with a template that no longer matches its own instances and
-  // nothing to do about it (#209).
+  // The startTime change would propagate to a still-mutable generated
+  // instance and land it on a slot a different class already occupies
+  // (#196). `updateClassTemplate` now runs the write and the sync in one
+  // transaction (#83, #209): this collision rolls the whole thing back, the
+  // template's own `startTime` included, so the message can no longer say
+  // the template moved. Still names the remedy, not just the state — "you
+  // already have a class at that time" alone leaves the teacher with no next
+  // step.
   //
   // A distinct code from the create/reschedule paths' `DUPLICATE_CLASS_SLOT`
-  // — `slot_conflict` above means "your write was rejected, nothing
-  // changed"; this means the template committed and only the sync rolled
-  // back, a different failure a client needs to be able to tell apart.
+  // and from `slot_conflict` above: the cause still differs — this is a
+  // generated instance colliding with an unrelated class, not the template's
+  // own slot — even though all three now decline the write the same way,
+  // with nothing changed.
   if (result.reason === 'sync_conflict') {
     return respondError(
-      'The recurring class was updated, but its scheduled classes could not be moved — you already have a class at that time. Move or cancel that class, then edit this recurring class again.',
+      'Your scheduled classes could not be moved — you already have a class at that time. Nothing was changed. Move or cancel that class, then edit this recurring class again.',
       409,
       'TEMPLATE_SYNC_SLOT_CONFLICT',
     );
