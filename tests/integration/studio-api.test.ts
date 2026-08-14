@@ -625,6 +625,99 @@ describe('PATCH /api/studio-class-templates/[id]', () => {
   });
 });
 
+/**
+ * The studio family's `busy` arms at the wire — see the class family's
+ * equivalent block for why the compile-time `never` guard does not cover this.
+ *
+ * The un-archive direction deliberately, where the class family covers the
+ * archive one: the route interpolates
+ * `state === 'archived' ? 'archive' : 'unarchive'` into the message, both
+ * limbs read as ordinary English, and nothing else in either suite would
+ * notice the ternary inverted.
+ */
+describe('PATCH /api/studio-class-templates/[id] — lock contention', () => {
+  const holdTemplateRow = (id: string) => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const settled = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "StudioClassTemplate" WHERE id = ${id} FOR UPDATE`;
+        await held;
+      },
+      { timeout: 15_000 },
+    );
+    return { release, settled };
+  };
+
+  it(
+    'answers 503 STUDIO_TEMPLATE_BUSY when an un-archive loses the row, and changes nothing',
+    async () => {
+      const id = (
+        await makeTemplate(ownerId, 'Busy Unarchive', '18:31', {
+          isArchived: true,
+          isActive: false,
+        })
+      ).id;
+
+      const { release, settled } = holdTemplateRow(id);
+      await new Promise((r) => setTimeout(r, 100));
+
+      try {
+        const res = await send(
+          'PATCH',
+          ownerToken,
+          `/api/studio-class-templates/${id}?state=unarchived`,
+        );
+
+        expect(res.status).toBe(503);
+        const json = (await res.json()) as { error: { code: string; message: string } };
+        expect(json.error.code).toBe('STUDIO_TEMPLATE_BUSY');
+        expect(json.error.message).toContain('could not unarchive this recurring studio class');
+        expect(json.error.message).toContain('Nothing was changed.');
+
+        const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id } });
+        expect(after.isArchived).toBe(true);
+      } finally {
+        release();
+        await settled.catch(() => {});
+      }
+    },
+    20_000,
+  );
+
+  it(
+    'answers 503 STUDIO_TEMPLATE_BUSY when a pause loses the row',
+    async () => {
+      const id = (await makeTemplate(ownerId, 'Busy Studio Pause', '18:32')).id;
+
+      const { release, settled } = holdTemplateRow(id);
+      await new Promise((r) => setTimeout(r, 100));
+
+      try {
+        const res = await send(
+          'PATCH',
+          ownerToken,
+          `/api/studio-class-templates/${id}?state=paused`,
+        );
+
+        expect(res.status).toBe(503);
+        const json = (await res.json()) as { error: { code: string; message: string } };
+        expect(json.error.code).toBe('STUDIO_TEMPLATE_BUSY');
+        expect(json.error.message).toContain('could not update this recurring studio class');
+
+        const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id } });
+        expect(after.isActive).toBe(true);
+      } finally {
+        release();
+        await settled.catch(() => {});
+      }
+    },
+    20_000,
+  );
+});
+
 describe('PATCH /api/studio-class-templates/[id] — resume reporting', () => {
   /**
    * #119. The service produced this number and four layers dropped it, ending

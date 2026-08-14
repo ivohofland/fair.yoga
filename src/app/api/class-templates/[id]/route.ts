@@ -134,15 +134,31 @@ export const PATCH = withErrorHandler(async (
     // Only the archiving direction reports counts. The other two arms deleted
     // nothing, and answering them with zeros would put two numbers on the wire
     // that mean "not applicable" while reading like "archived, nothing matched".
+    //
+    // A `switch` rather than the two-way ternary this replaces, for the reason
+    // the pause/resume arm below already records against its own former
+    // ternary: the `else` limb stays correct for the two actions it was
+    // written for, so a NEW success action compiles clean, falls into it, and
+    // is answered 200 with its own fields silently dropped. The `never` guard
+    // closing the reason chain below cannot catch that — it only sees the
+    // `ok: false` half of this union. This closes the `ok: true` half.
     if (result.ok) {
-      return result.action === 'archived'
-        ? respondOk({
+      switch (result.action) {
+        case 'archived':
+          return respondOk({
             ...result.template,
             action: result.action,
             deleted: result.deleted,
             remaining: result.remaining,
-          })
-        : respondOk({ ...result.template, action: result.action });
+          });
+        case 'unarchived':
+        case 'unchanged':
+          return respondOk({ ...result.template, action: result.action });
+        default: {
+          const unhandled: never = result;
+          return unhandled;
+        }
+      }
     }
 
     if (result.reason === 'not_found') return respondError('Class template not found', 404);

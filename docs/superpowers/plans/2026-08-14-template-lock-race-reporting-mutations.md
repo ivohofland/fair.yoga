@@ -1,7 +1,8 @@
 # Mutation records — template lock-race reporting (issue 113)
 
 Each task records the exact error text every guard mutation produced, then
-restores and re-verifies. Created in Task 1; appended to by Tasks 2-4.
+restores and re-verifies. Created in Task 1; appended to by Tasks 2-4, and
+again by the multi-agent review round that followed them.
 
 ## Task 1
 
@@ -137,3 +138,42 @@ Task's own mutation records (plan Step 9), recorded after implementation:
   10000ms. This is the exact shape the issue never named: the function had no
   `catch` at all, so this raw rejection is what used to reach the API
   wrapper.
+
+## Review round 2
+
+Five guards were added or restored after the multi-agent review. Each was
+mutated, and each mutation is recorded with the exact text it produced, then
+restored and re-verified.
+
+- **The archive routes' new `switch (result.action)` + `never`.** Before the
+  change, adding an `ok: true` arm to both archive unions compiled clean —
+  that is what the review measured, and it is why the change exists. After:
+  `src/app/api/class-templates/[id]/route.ts(219,15): error TS2322: Type
+  '{ ok: true; action: "mutNewArm"; template: {...}; purged: number; }' is not
+  assignable to type 'never'.` and the same at
+  `src/app/api/studio-class-templates/[id]/route.ts(176,15)`. Two sites, two
+  errors, restored clean.
+
+- **The four `log.warn` lines.** Deleting only the class archive's call and
+  keeping its `return` — which left every test green before this round — now
+  fails: `AssertionError: expected "LOG" to be called with arguments:
+  [ ObjectContaining{…}, …(1) ]` on `answers busy when the generation claim
+  holds the row past the lock timeout`.
+
+- **`{ timeout: 10_000 }` on the two class-family functions.** Deleting both
+  literals now fails two tests, where before it failed none:
+  `AssertionError: expected undefined to deeply equal { timeout: 10000 }` on
+  both `opens the archive transaction with { timeout: 10_000 }` and `opens the
+  pause/resume transaction with { timeout: 10_000 }`.
+
+- **The route copy's archive/unarchive ternary.** Inverting it to
+  `state === 'archived' ? 'unarchive' : 'archive'` in the studio route fails
+  the new integration test: `AssertionError: expected 'The system was busy and
+  could not arc…' to contain 'could not unarchive this recurring st…'`. Both
+  limbs are grammatical English, so nothing else in either suite noticed.
+
+- **`setLockTimeout` reaching past the CAS.** Commenting it out of
+  `archiveOrUnarchiveTemplate` fails the new `deleteMany` test with
+  `Error: Test timed out in 20000ms.` — the same shape Tasks 1-4 record, and
+  for the same reason: the blocked statement never reaches the boundary where
+  Prisma checks its budget, so nothing aborts it.

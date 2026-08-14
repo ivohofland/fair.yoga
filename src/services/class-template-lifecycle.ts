@@ -442,6 +442,13 @@ export type PauseTemplateResult =
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'archived' }
+  /**
+   * See `ArchiveTemplateResult`'s `busy` arm for what it guarantees and the
+   * full range of causes. Reachable from more statements here than there:
+   * this transaction's bound also covers generation's insert, so a resume can
+   * answer `busy` after losing a slot race rather than reporting that date as
+   * `raced` (`class-generator.test.ts`, "the clash outlives the lock timeout").
+   */
   | { ok: false; reason: 'busy' };
 
 /**
@@ -458,10 +465,22 @@ export type ArchiveTemplateResult =
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'slot_conflict' }
   /**
-   * The template row was held by another writer — the generation sweep, or
-   * another tab's archive or resume — for longer than the 2s `lock_timeout`.
-   * The whole transaction rolled back, so nothing was applied and the
-   * identical request can win the next attempt.
+   * This transaction lost a contention race and rolled back whole, so nothing
+   * was applied and the identical request can win the next attempt.
+   *
+   * Not only a `lock_timeout` expiry, though that is the case this branch
+   * added and the one the copy is written for. The arm is produced by
+   * `isTransientDbError`, which also matches a deadlock the detector broke
+   * (`40P01` — in fact the LIKELIER of the two, since the detector runs on a
+   * 1s `deadlock_timeout` and `docs/lock-order.md` records a live cycle
+   * against this very function), a serialization failure, an exhausted
+   * connection pool (`P2024`) and the transaction budget expiring (`P2028`).
+   * Reading a `busy` in the logs and hunting for a 2s lock wait that never
+   * happened is the mistake this paragraph exists to prevent.
+   *
+   * The writer on the other side is equally unknown — the generation sweep, or
+   * another tab's archive, pause or resume — which is why the copy names none
+   * of them.
    */
   | { ok: false; reason: 'busy' };
 
@@ -536,8 +555,13 @@ export async function pauseOrResumeTemplate(
     .$transaction(
       async (tx) => {
         // Bounds every statement left in this transaction, the `update` below
-        // first among them — the sweep's claim holds this row `FOR UPDATE`,
-        // and without this the wait is bounded only by the 10s budget.
+        // first among them — the sweep's claim holds this row `FOR UPDATE`.
+        //
+        // Without it the wait is bounded by NOTHING, not by the 10s budget:
+        // Prisma checks that budget at statement boundaries, so it "cannot
+        // roll back a statement already blocked inside Postgres, only refuse
+        // to start a new one" (`db-locks.ts`), which the mutation records
+        // measure as a hung test rather than a 10s abort.
         await setLockTimeout(tx);
 
         const t = await tx.classTemplate.update({
@@ -584,8 +608,17 @@ export async function pauseOrResumeTemplate(
         });
         return { template: t, generation, scheduled };
       },
-      // The claim in `class-generator.ts` holds this row's lock for up to its
-      // own 10s transaction; Prisma's 5s default would abort us mid-wait.
+      // The wait is bounded at 2s by the `setLockTimeout` at the top of this
+      // transaction, so this budget no longer governs it — it governs this
+      // transaction's own work once the row is won: the `update`, generation's
+      // occupancy read and its batched insert, and the `count`. A loaded VPS
+      // can push those past Prisma's 5s default.
+      //
+      // The sentence this replaces said the 5s default "would abort us
+      // mid-wait". It would not, and could not: Prisma checks the budget at
+      // statement boundaries, and a statement blocked inside Postgres never
+      // reaches one. It was the third of three comments making that claim and
+      // the one the correction wave missed.
       { timeout: 10_000 },
     )
     .catch((err: unknown) => {
@@ -644,7 +677,7 @@ export async function pauseOrResumeTemplate(
       // an unretryable-sounding one.
       if (isTransientDbError(err)) {
         log.warn(
-          { err, templateId, teacherId },
+          { err, templateId, teacherId, target },
           'recurring class pause/resume lost the template lock race',
         );
         return 'busy' as const;
@@ -766,9 +799,17 @@ export async function archiveOrUnarchiveTemplate(
   try {
     return await db.$transaction(
       async (tx) => {
-        // Bounds every statement left in this transaction, the CAS below first
-        // among them — the sweep's claim holds this row `FOR UPDATE`, and
-        // without this the wait is bounded only by the 10s budget.
+        // Bounds every statement left in this transaction — the CAS below
+        // first among them, and the `deleteMany` further down too, which is
+        // not incidental: that one can lose to an ordinary booking holding a
+        // `Class` row, so the 2s answer reaches a path the sweep never
+        // touches (`class-generator.test.ts`, "the bound reaches its
+        // deleteMany").
+        //
+        // Without it the wait is bounded by NOTHING, not by the 10s budget:
+        // Prisma checks that budget at statement boundaries, so it "cannot
+        // roll back a statement already blocked inside Postgres, only refuse
+        // to start a new one" (`db-locks.ts`).
         await setLockTimeout(tx);
 
         // Compare-and-swap, the pattern `updateClass` already uses for #72.
@@ -1023,11 +1064,19 @@ export async function archiveOrUnarchiveTemplate(
       { timeout: 10_000 },
     );
   } catch (err) {
-    // First, ahead of the unique-constraint branch below: `P2028`/`P2024` are
-    // `PrismaClientKnownRequestError`s too, and testing for a slot conflict
-    // first would let a transient code fall past a branch that cannot match it
-    // into the rethrow — which is the generic failure this exists to remove.
-    // Same ordering, same reason, as `classifyApiError`.
+    // Transient first — and the honest reason is narrower than the one this
+    // comment used to give, which the spec, the plan and the handover all
+    // repeated. It claimed that testing for a slot conflict first would let a
+    // transient code "fall past a branch that cannot match it into the
+    // rethrow". It would not: `isUniqueConflictOn` returns false unless the
+    // code is `P2002`, the two predicates are disjoint, and a non-match falls
+    // to the NEXT branch rather than to the rethrow. Reordering these two is
+    // behaviour-neutral today, and no mutation could show otherwise.
+    //
+    // Kept explicit anyway, for the reason the pause/resume twin in this file
+    // states correctly: it is safe today only BECAUSE those codes differ, and
+    // either predicate widening would end that silently. `classifyApiError`
+    // orders itself the same way for the same defensive reason.
     //
     // Logged here rather than left to the API wrapper: returning instead of
     // throwing means the wrapper never sees this, and its automatic line
@@ -1036,10 +1085,24 @@ export async function archiveOrUnarchiveTemplate(
     // method and the same path, and the query parameter that separates them is
     // deliberately excluded from request logs.
     if (isTransientDbError(err)) {
-      log.warn({ err, templateId, teacherId }, 'recurring class archive lost the template lock race');
+      // `target` because this function serves both directions and the message
+      // cannot name which: the wrapper's own line could not tell an archive
+      // from an un-archive either, and the route's copy does distinguish them.
+      log.warn(
+        { err, templateId, teacherId, target },
+        'recurring class archive lost the template lock race',
+      );
       return { ok: false, reason: 'busy' };
     }
     if (isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime'])) {
+      // Logged for the same reason the branch above is, and it predates that
+      // branch only because nothing had stated the rule yet: a RETURNED
+      // failure never reaches `withErrorHandler`, and `respondError` does not
+      // log, so without this line an un-archive refused by the slot index is a
+      // 409 to the teacher and complete silence on the server. `classifyApiError`
+      // logs this same P2002 at `warn` when it escapes; catching it here must
+      // not be what removes that.
+      log.warn({ err, templateId, teacherId }, 'recurring class un-archive refused: slot already held');
       return { ok: false, reason: 'slot_conflict' };
     }
     throw err;

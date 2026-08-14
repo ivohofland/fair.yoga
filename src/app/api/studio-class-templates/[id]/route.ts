@@ -93,15 +93,28 @@ export const PATCH = withErrorHandler(async (
 
     // Only the archiving direction reports counts — same reasoning as the
     // class family's route.
+    //
+    // A `switch` rather than the two-way ternary this replaces — see the class
+    // family's twin for why the ternary's `else` limb makes a new success
+    // action a silent 200 rather than a compile error, and why the `never`
+    // guard closing the reason chain below cannot catch it.
     if (result.ok) {
-      return result.action === 'archived'
-        ? respondOk({
+      switch (result.action) {
+        case 'archived':
+          return respondOk({
             ...result.template,
             action: result.action,
             deleted: result.deleted,
             remaining: result.remaining,
-          })
-        : respondOk({ ...result.template, action: result.action });
+          });
+        case 'unarchived':
+        case 'unchanged':
+          return respondOk({ ...result.template, action: result.action });
+        default: {
+          const unhandled: never = result;
+          return unhandled;
+        }
+      }
     }
 
     if (result.reason === 'not_found') return respondError('Studio class template not found', 404);

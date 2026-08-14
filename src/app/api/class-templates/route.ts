@@ -85,10 +85,23 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       const generation = await generateInstancesForTemplate(tx, created);
       return { created, generation };
     },
-      // Nine sequential statements on a 2GB VPS — one create, four candidate
-      // probes and four inserts — against Prisma's 5s default, which every
-      // peer transaction touching these rows already declines to run on. No
-      // claim is taken here (the row is brand-new inside this transaction, so
+      // Three sequential statements on a 2GB VPS — the create, generation's
+      // single occupancy read and its single batched insert — against Prisma's
+      // 5s default. An earlier draft of this comment said nine, "one create,
+      // four candidate probes and four inserts": that is the pre-#196 shape,
+      // and `generateInstancesForTemplate` has issued one `findMany` plus one
+      // `createManyAndReturn` since. The count mattered, not just the prose —
+      // at nine statements with four separate inserts the arithmetic for a 2s
+      // bound comes out at five waitable statements against a 10s budget, and
+      // the conclusion flips.
+      //
+      // Nor does every peer transaction touching these rows decline the 5s
+      // default, which this comment also claimed: `syncTemplateInstances`
+      // (`template-sync.ts`) locks the same `Class` rows under it, as
+      // `docs/lock-order.md` records. The peers that budget 10s are the four
+      // template lifecycle functions.
+      //
+      // No claim is taken here (the row is brand-new inside this transaction, so
       // nothing can race the insert), which also means no claim `lock_timeout`
       // bounds the FK waits: each generated class needs `FOR KEY SHARE` on the
       // `Teacher` row, and `email`/`pageSlug`/`accountId` are all `@unique`, so
@@ -102,11 +115,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // by the four lifecycle functions' mutation records, where removing
       // their `setLockTimeout` leaves the blocked statement outliving the 10s
       // budget rather than being aborted at it. What the budget buys is room
-      // for the nine statements' own runtime; the FK wait itself is unbounded.
+      // for the three statements' own runtime; the FK wait itself is unbounded.
       //
       // No `setLockTimeout` here, and that is a scope decision rather than an
-      // oversight: this route has no `busy` arm to answer with, so a 2s bound
-      // would turn a wait that usually succeeds into the generic
+      // oversight — tracked as issue 228, which moves this transaction into a
+      // service so it can carry the bound AND a `busy` arm together. Alone,
+      // the bound would turn a wait that usually succeeds into the generic
       // `classifyApiError` 503 instead of a named one.
       { timeout: 10_000 },
     );

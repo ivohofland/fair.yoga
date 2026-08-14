@@ -269,22 +269,27 @@ describe('generateStudioClassInstances (DB)', () => {
      * `{ timeout: 10_000 }` — the studio side of review round 1's finding 1.
      * This used to be a ~5.5s test that held the claim's lock past Prisma's
      * 5s default and asserted the archive still resolved instead of P2028'ing
-     * (mirroring the class family's version). That end-to-end proof already
-     * exists on the class side
-     * (`class-generator.test.ts`'s `lets a concurrent archive outlive its own
-     * transaction default once the claim holds past it`) — the mechanism it
-     * proves, Prisma's `$transaction` timeout actually extending the wait
-     * budget, is not family-specific, so paying for it twice bought nothing
-     * but 5.5 more seconds in every run of this file. The family-specific
-     * half — that the archive path takes a lock the sweep can contend for at
-     * all — is already covered above by the ~400ms mutual-exclusion test.
+     * (mirroring the class family's version), so paying for it twice bought
+     * nothing but 5.5 more seconds in every run of this file. The
+     * family-specific half — that the archive path takes a lock the sweep can
+     * contend for at all — is already covered above by the ~400ms
+     * mutual-exclusion test.
+     *
+     * This paragraph used to defer to the class family's 5.5s test by name for
+     * the end-to-end half. That test no longer exists: the 2s `lock_timeout`
+     * made its premise unwritable and it was re-pointed at the bound, so the
+     * reference named a deleted test for a proof that had been removed
+     * deliberately. The class family now pins its own budget the same cheap
+     * way this test does.
      *
      * What this pins instead: that `archiveOrUnarchiveStudioTemplate` still
      * passes `{ timeout: 10_000 }` as its transaction's options, so a future
      * edit can't silently drop it back to Prisma's 5s default and have this
-     * file stay green. It does not re-prove that the option changes Prisma's
-     * behaviour — that's the sibling test's job — only that the option is
-     * still there. `spyingClient` is a `Proxy` around the real client that
+     * file stay green. It does not prove that the option changes Prisma's
+     * behaviour, and nothing does any more: the only test that ever crossed
+     * the 5s boundary end to end was the class family's, and the 2s bound made
+     * that unwritable. What survives is the literal, pinned. `spyingClient` is
+     * a `Proxy` around the real client that
      * intercepts `$transaction` to record its `options` argument and then
      * delegates to the real call, so the archive still runs for real.
      */
@@ -343,21 +348,33 @@ describe('generateStudioClassInstances (DB)', () => {
 
         await new Promise((r) => setTimeout(r, 100));
 
-        const startedAt = Date.now();
-        const result = await archiveOrUnarchiveStudioTemplate(
-          prisma,
-          templateId,
-          teacherId,
-          'archived',
-        );
-        const waited = Date.now() - startedAt;
+        const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+        try {
+          const startedAt = Date.now();
+          const result = await archiveOrUnarchiveStudioTemplate(
+            prisma,
+            templateId,
+            teacherId,
+            'archived',
+          );
+          const waited = Date.now() - startedAt;
 
-        release();
-        await claiming;
+          expect(result).toEqual({ ok: false, reason: 'busy' });
+          expect(waited).toBeGreaterThanOrEqual(1_800);
+          expect(waited).toBeLessThan(5_000);
 
-        expect(result).toEqual({ ok: false, reason: 'busy' });
-        expect(waited).toBeGreaterThanOrEqual(1_800);
-        expect(waited).toBeLessThan(5_000);
+          // See the class family's twin for why the log line is asserted
+          // rather than assumed: it is the only server-side trace a returned
+          // failure leaves.
+          expect(warn).toHaveBeenCalledWith(
+            expect.objectContaining({ templateId, teacherId, target: 'archived' }),
+            'studio class archive lost the template lock race',
+          );
+        } finally {
+          release();
+          await claiming.catch(() => {});
+          warn.mockRestore();
+        }
       },
       20_000,
     );
@@ -403,24 +420,36 @@ describe('generateStudioClassInstances (DB)', () => {
 
         await new Promise((r) => setTimeout(r, 100));
 
-        const startedAt = Date.now();
-        const result = await pauseOrResumeStudioTemplate(prisma, templateId, teacherId, 'paused');
-        const waited = Date.now() - startedAt;
+        const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+        try {
+          const startedAt = Date.now();
+          const result = await pauseOrResumeStudioTemplate(prisma, templateId, teacherId, 'paused');
+          const waited = Date.now() - startedAt;
 
-        release();
-        await claiming;
+          expect(result).toEqual({ ok: false, reason: 'busy' });
+          expect(waited).toBeGreaterThanOrEqual(1_800);
+          expect(waited).toBeLessThan(5_000);
 
-        expect(result).toEqual({ ok: false, reason: 'busy' });
-        expect(waited).toBeGreaterThanOrEqual(1_800);
-        expect(waited).toBeLessThan(5_000);
-
-        // Matters most during mutation runs: with the bound removed the pause
-        // SUCCEEDS, and an un-restored paused template would silently change
-        // what later tests in this file are running against.
-        await prisma.studioClassTemplate.update({
-          where: { id: templateId },
-          data: { isActive: true },
-        });
+          expect(warn).toHaveBeenCalledWith(
+            expect.objectContaining({ templateId, teacherId, target: 'paused' }),
+            'studio class pause/resume lost the template lock race',
+          );
+        } finally {
+          release();
+          await claiming.catch(() => {});
+          warn.mockRestore();
+          // A local restatement, not the guarantee — this block's `afterEach`
+          // already restores `isActive`/`isArchived`/`startTime`. Kept, and
+          // moved into the `finally` where it actually runs, so a mutation run
+          // that let the pause COMMIT could not leak a paused template into
+          // the next test. Worth stating plainly that the recorded mutations
+          // never produced that commit: with the bound removed the pause does
+          // not win the row, it never settles at all (mutations file, Task 4).
+          await prisma.studioClassTemplate.update({
+            where: { id: templateId },
+            data: { isActive: true },
+          });
+        }
       },
       20_000,
     );

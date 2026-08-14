@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { log } from '@/lib/log';
 import { classStartInstant, startOfLocalDay } from '@/lib/timezone';
 import {
@@ -9,6 +9,8 @@ import {
   claimTemplateForGeneration,
 } from './class-generator';
 import { archiveOrUnarchiveTemplate, pauseOrResumeTemplate } from './class-template-lifecycle';
+
+type TransactionOptions = NonNullable<Parameters<PrismaClient['$transaction']>[1]>;
 
 // ===========================================================================
 // Pure logic tests — getNextOccurrences
@@ -375,14 +377,98 @@ describe('generateClassInstances (DB)', () => {
     });
 
     /**
+     * The class family's `{ timeout: 10_000 }` pin, and it exists because this
+     * branch removed the only other one. The 5.5s test below used to prove the
+     * budget end to end by outlasting Prisma's 5s default; under a 2s
+     * `lock_timeout` no archive can wait that long, so that proof became
+     * unwritable and the test was re-pointed at the bound. The docblock that
+     * replaced it then claimed `studio-class-generator.test.ts`'s `opens its
+     * transaction with { timeout: 10_000 }` still covered this. It does not —
+     * that test proxies `archiveOrUnarchiveStudioTemplate`, a different
+     * function in a different module — so between the re-point and this test,
+     * deleting the literal from either class-family function left the whole
+     * suite green.
+     *
+     * Cheap where the old proof was expensive: the Proxy records the options
+     * argument and delegates to the real `$transaction`, so nothing has to
+     * cross a five-second boundary to observe it.
+     */
+    it('opens the archive transaction with { timeout: 10_000 }', async () => {
+      let recordedOptions: TransactionOptions | undefined;
+      const spyingClient = new Proxy(prisma, {
+        get(target, prop, receiver) {
+          if (prop === '$transaction') {
+            return (
+              fn: (tx: Prisma.TransactionClient) => Promise<unknown>,
+              options?: TransactionOptions,
+            ) => {
+              recordedOptions = options;
+              return target.$transaction(fn, options);
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      });
+
+      const result = await archiveOrUnarchiveTemplate(
+        spyingClient,
+        templateId,
+        teacherId,
+        'archived',
+      );
+
+      expect(result.ok).toBe(true);
+      expect(recordedOptions).toEqual({ timeout: 10_000 });
+    });
+
+    /**
+     * `pauseOrResumeTemplate` carries the same budget and had never been
+     * pinned at all — the deleted 5.5s test only ever exercised the archive.
+     *
+     * `'paused'` rather than `'active'`, and that is forced: the function
+     * returns `unchanged` before opening any transaction when the template is
+     * already in the requested state, and this block's `afterEach` leaves it
+     * active. The pause arm then returns inside the transaction before
+     * generation, so the option is observable without four inserts running.
+     */
+    it('opens the pause/resume transaction with { timeout: 10_000 }', async () => {
+      let recordedOptions: TransactionOptions | undefined;
+      const spyingClient = new Proxy(prisma, {
+        get(target, prop, receiver) {
+          if (prop === '$transaction') {
+            return (
+              fn: (tx: Prisma.TransactionClient) => Promise<unknown>,
+              options?: TransactionOptions,
+            ) => {
+              recordedOptions = options;
+              return target.$transaction(fn, options);
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      });
+
+      const result = await pauseOrResumeTemplate(spyingClient, templateId, teacherId, 'paused');
+
+      expect(result.ok).toBe(true);
+      expect(recordedOptions).toEqual({ timeout: 10_000 });
+    });
+
+    /**
      * Replaces a test that held the claim for 5.5s and asserted the archive
      * still resolved `ok: true`, proving `{ timeout: 10_000 }` beat Prisma's
      * 5s default. That proof is now unwritable: the archive takes a 2s
      * `lock_timeout`, so it can no longer wait 5.5s for a row under any
      * budget. The 10s budget still matters — it now covers the archive's own
-     * work rather than its wait — and `studio-class-generator.test.ts`'s
-     * `opens its transaction with { timeout: 10_000 }` pins that it is still
-     * passed.
+     * work rather than its wait — and the two `opens the … transaction with
+     * { timeout: 10_000 }` tests above pin that it is still passed.
+     *
+     * Those two exist because an earlier draft of this docblock pointed at
+     * `studio-class-generator.test.ts`'s spy instead, which proxies
+     * `archiveOrUnarchiveStudioTemplate` — a different function in a different
+     * module. For the interval between the re-point and those tests, this
+     * family's budget was pinned by nothing at all while a comment said
+     * otherwise.
      *
      * What this pins instead is the bound itself, and the timing assertions
      * are how. Without the `lock_timeout` the archive does not fail later —
@@ -415,20 +501,42 @@ describe('generateClassInstances (DB)', () => {
         // Let the claim acquire the lock before the archive contends for it.
         await new Promise((r) => setTimeout(r, 100));
 
-        const startedAt = Date.now();
-        const result = await archiveOrUnarchiveTemplate(prisma, templateId, teacherId, 'archived');
-        const waited = Date.now() - startedAt;
+        const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+        try {
+          const startedAt = Date.now();
+          const result = await archiveOrUnarchiveTemplate(prisma, templateId, teacherId, 'archived');
+          const waited = Date.now() - startedAt;
 
-        release();
-        await claiming;
+          expect(result).toEqual({ ok: false, reason: 'busy' });
 
-        expect(result).toEqual({ ok: false, reason: 'busy' });
+          // The 2s lock_timeout produced this. The lower bound proves the
+          // archive really waited rather than failing instantly for some
+          // unrelated reason; the upper bound proves it answered near that
+          // bound rather than under a longer one — a widened
+          // `LOCK_TIMEOUT_SQL` fails here.
+          expect(waited).toBeGreaterThanOrEqual(1_800);
+          expect(waited).toBeLessThan(5_000);
 
-        // The 2s lock_timeout produced this, not the 10s transaction budget.
-        // Lower bound proves it actually waited rather than failing instantly
-        // for some unrelated reason; upper bound proves which clock fired.
-        expect(waited).toBeGreaterThanOrEqual(1_800);
-        expect(waited).toBeLessThan(5_000);
+          // Asserted, not assumed. Returning instead of throwing is what
+          // removes `withErrorHandler`'s automatic line, so this `log.warn` is
+          // the entire server-side trace of a lost race — and until this
+          // assertion existed, deleting it left every test green.
+          expect(warn).toHaveBeenCalledWith(
+            expect.objectContaining({ templateId, teacherId, target: 'archived' }),
+            'recurring class archive lost the template lock race',
+          );
+        } finally {
+          // In a `finally`, so a failure above fails this test alone. Without
+          // it the claim holds the row for its full 15s, this block's
+          // `afterEach` queues behind it, and one broken guard reports as a
+          // test timeout plus a hook timeout with the real cause buried.
+          release();
+          // Swallowed deliberately: if the claim itself failed, the assertions
+          // above have already said so more precisely, and a throwing
+          // `finally` would replace that message with this one.
+          await claiming.catch(() => {});
+          warn.mockRestore();
+        }
       },
       20_000,
     );
@@ -478,25 +586,37 @@ describe('generateClassInstances (DB)', () => {
 
         await new Promise((r) => setTimeout(r, 100));
 
-        const startedAt = Date.now();
-        const result = await pauseOrResumeTemplate(prisma, templateId, teacherId, 'paused');
-        const waited = Date.now() - startedAt;
+        const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+        try {
+          const startedAt = Date.now();
+          const result = await pauseOrResumeTemplate(prisma, templateId, teacherId, 'paused');
+          const waited = Date.now() - startedAt;
 
-        release();
-        await claiming;
+          expect(result).toEqual({ ok: false, reason: 'busy' });
+          expect(waited).toBeGreaterThanOrEqual(1_800);
+          expect(waited).toBeLessThan(5_000);
 
-        expect(result).toEqual({ ok: false, reason: 'busy' });
-        expect(waited).toBeGreaterThanOrEqual(1_800);
-        expect(waited).toBeLessThan(5_000);
-
-        // Restore even though the pause above lost: the mutation runs in
-        // this block (Step 9) can let the pause succeed and commit, and an
-        // un-restored paused template would silently change what later tests
-        // in this file run against.
-        await prisma.classTemplate.update({
-          where: { id: templateId },
-          data: { isActive: true },
-        });
+          // `target` is asserted because the message cannot carry it: one
+          // function serves both directions, and both reach the same route
+          // with the same method and path.
+          expect(warn).toHaveBeenCalledWith(
+            expect.objectContaining({ templateId, teacherId, target: 'paused' }),
+            'recurring class pause/resume lost the template lock race',
+          );
+        } finally {
+          release();
+          await claiming.catch(() => {});
+          warn.mockRestore();
+          // A local restatement, not the guarantee — this block's `afterEach`
+          // restores `isActive`/`isArchived`/`startTime` unconditionally. Kept,
+          // and moved into the `finally` where it actually runs, so a mutation
+          // run that lets the pause COMMIT cannot leak a paused template into
+          // the next test even when the assertions above throw.
+          await prisma.classTemplate.update({
+            where: { id: templateId },
+            data: { isActive: true },
+          });
+        }
       },
       20_000,
     );
@@ -1154,6 +1274,161 @@ describe('generateClassInstances (DB)', () => {
       expect(await prisma.class.count({ where: { templateId, date: dates[3]! } })).toBe(1);
       expect(await prisma.class.count({ where: { templateId } })).toBe(4);
     });
+
+    /**
+     * The bound reaches past the CAS, and this is where that stops being
+     * academic. `SET LOCAL lock_timeout` governs every statement left in the
+     * transaction — generation's insert among them — so #164's contract holds
+     * only while the colliding writer commits inside 2s. Past that, the resume
+     * does not report the date as `raced`; the whole transaction rolls back
+     * and the answer is `busy`.
+     *
+     * The two tests above hold for 400ms and cannot see this. Written because
+     * nothing in the branch that added the bound acknowledged it reached this
+     * far — the four contention tests all stop at the CAS.
+     */
+    it(
+      'answers busy when the clash outlives the lock timeout, instead of reporting it raced',
+      async () => {
+        const now = new Date();
+        const dates = candidates(now);
+        for (const d of dates.slice(0, 3)) await prisma.class.create({ data: classRow(d) });
+
+        const holder = new PrismaClient();
+        let release!: () => void;
+        let collided!: () => void;
+        const released = new Promise<void>((r) => {
+          release = r;
+        });
+        const parked = new Promise<void>((r) => {
+          collided = r;
+        });
+
+        const holding = holder.$transaction(
+          async (tx) => {
+            await tx.class.create({ data: classRow(dates[3]!) });
+            collided();
+            await released;
+          },
+          { timeout: 20_000 },
+        );
+
+        try {
+          // Same parking as `raceResumeAgainst`: the holder's row is in flight,
+          // invisible to the resume's pre-check, and its pending unique entry
+          // is what the resume's insert waits on. The difference is that
+          // nothing releases it before the bound fires.
+          await parked;
+          const startedAt = Date.now();
+          const result = await pauseOrResumeTemplate(prisma, templateId, teacherId, 'active');
+          const waited = Date.now() - startedAt;
+
+          expect(result).toEqual({ ok: false, reason: 'busy' });
+          expect(waited).toBeGreaterThanOrEqual(1_800);
+          expect(waited).toBeLessThan(5_000);
+
+          // The rollback took the flag with it: a resume that answers `busy`
+          // must not leave the template live with a half-filled window.
+          const after = await prisma.classTemplate.findUniqueOrThrow({
+            where: { id: templateId },
+          });
+          expect(after.isActive).toBe(false);
+        } finally {
+          release();
+          await holding.catch(() => {});
+          await holder.$disconnect();
+        }
+      },
+      20_000,
+    );
+  });
+
+  /**
+   * The archive's own `deleteMany` is bounded by the same `SET LOCAL`, and the
+   * writer it can lose to is not the sweep — it is an ordinary booking.
+   * `POST /api/registrations` holds its `Class` row `FOR UPDATE` for the length
+   * of its transaction and is one of the five deliberately unbounded sites
+   * `db-locks.ts` lists, so "teacher archives a recurring class while a student
+   * is booking one of its instances" now ends in `busy` at 2s where it used to
+   * wait. That trade is deliberate; it was also untested.
+   */
+  describe('archiveOrUnarchiveTemplate — the bound reaches its deleteMany', () => {
+    beforeEach(async () => {
+      await prisma.class.deleteMany({ where: { teacherId } });
+    });
+
+    afterEach(async () => {
+      await prisma.class.deleteMany({ where: { teacherId } });
+      await prisma.classTemplate.update({
+        where: { id: templateId },
+        data: { isActive: true, isArchived: false, archivedAt: null, withdrawnCount: 0 },
+      });
+    });
+
+    it(
+      'answers busy when a held class row outlives the lock timeout',
+      async () => {
+        const generated = await generateInstancesForTemplate(prisma, await freshTemplate(), new Date());
+        expect(generated.created).toBeGreaterThan(0);
+
+        // The furthest-out instance, deliberately: the archive's `deleteMany`
+        // is scoped `gt: today`, so today's class — which generation keeps
+        // while its start is still ahead — is not one of the rows it locks.
+        const victim = await prisma.class.findFirstOrThrow({
+          where: { templateId },
+          orderBy: { date: 'desc' },
+        });
+
+        // Captured rather than assumed null: earlier tests in this file archive
+        // this same fixture successfully, and their `afterEach` restores
+        // `isArchived` without clearing the stamp. "Nothing changed" is a claim
+        // about this transaction, so it is measured against what was there.
+        const before = await prisma.classTemplate.findUniqueOrThrow({ where: { id: templateId } });
+
+        const holder = new PrismaClient();
+        let release!: () => void;
+        const released = new Promise<void>((r) => {
+          release = r;
+        });
+        const holding = holder.$transaction(
+          async (tx) => {
+            await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${victim.id} FOR UPDATE`;
+            await released;
+          },
+          { timeout: 20_000 },
+        );
+        await new Promise((r) => setTimeout(r, 100));
+
+        try {
+          const startedAt = Date.now();
+          const result = await archiveOrUnarchiveTemplate(prisma, templateId, teacherId, 'archived');
+          const waited = Date.now() - startedAt;
+
+          expect(result).toEqual({ ok: false, reason: 'busy' });
+          expect(waited).toBeGreaterThanOrEqual(1_800);
+          expect(waited).toBeLessThan(5_000);
+
+          // The CAS had already succeeded when the `deleteMany` blocked, so
+          // this also pins that the rollback took the flag back with it —
+          // otherwise the teacher is told nothing changed while the template
+          // sits archived.
+          const after = await prisma.classTemplate.findUniqueOrThrow({
+            where: { id: templateId },
+          });
+          expect(after.isArchived).toBe(false);
+          expect(after.archivedAt).toEqual(before.archivedAt);
+          expect(after.withdrawnCount).toBe(before.withdrawnCount);
+
+          // And the window it was about to withdraw is still there.
+          expect(await prisma.class.count({ where: { templateId } })).toBe(generated.created);
+        } finally {
+          release();
+          await holding.catch(() => {});
+          await holder.$disconnect();
+        }
+      },
+      20_000,
+    );
   });
 });
 

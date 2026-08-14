@@ -126,6 +126,12 @@ export type PauseStudioTemplateResult =
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'archived' }
+  /**
+   * See `ArchiveTemplateResult`'s `busy` arm — same guarantee, same causes.
+   * This function is the one of the four that had no `catch` at all before the
+   * arm existed, so before it a lost race here propagated raw to the API
+   * wrapper.
+   */
   | { ok: false; reason: 'busy' };
 
 /**
@@ -148,10 +154,12 @@ export type ArchiveStudioTemplateResult =
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'slot_conflict' }
   /**
-   * The template row was held by another writer — the generation sweep, or
-   * another tab's archive or resume — for longer than the 2s `lock_timeout`.
-   * The whole transaction rolled back, so nothing was applied and the
-   * identical request can win the next attempt.
+   * See `ArchiveTemplateResult`'s `busy` arm (`class-template-lifecycle.ts`)
+   * for what it guarantees and for the full range of causes behind it — a
+   * `lock_timeout` expiry is only the most obvious one. Kept as a pointer
+   * rather than a second copy of that paragraph: this file's own header
+   * records the two families drifting apart once already, and duplicated prose
+   * is what drifts.
    */
   | { ok: false; reason: 'busy' };
 
@@ -293,8 +301,14 @@ export async function pauseOrResumeStudioTemplate(
     result = await db.$transaction(
       async (tx): Promise<ResumeTransactionOutcome> => {
         // Bounds every statement left in this transaction, the CAS below first
-        // among them — the sweep's claim holds this row `FOR UPDATE`, and
-        // without this the wait is bounded only by the 10s budget.
+        // among them — the sweep's claim holds this row `FOR UPDATE`.
+        //
+        // Without it the wait is bounded by NOTHING, which is a stronger
+        // statement than the 10s budget and the one that is true: Prisma
+        // checks that budget at statement boundaries, so it "cannot roll back
+        // a statement already blocked inside Postgres, only refuse to start a
+        // new one" (`db-locks.ts`). The mutation records measure it — removing
+        // this line ends in a hung test, never a 10s abort.
         await setLockTimeout(tx);
 
         // Compare-and-swap, mirroring `archiveOrUnarchiveStudioTemplate`:
@@ -522,7 +536,7 @@ export async function pauseOrResumeStudioTemplate(
     // catch at all — a P2028 from a contended wait used to escape as a 500.
     if (isTransientDbError(err)) {
       log.warn(
-        { err, templateId, teacherId },
+        { err, templateId, teacherId, target },
         'studio class pause/resume lost the template lock race',
       );
       return { ok: false, reason: 'busy' };
@@ -646,8 +660,14 @@ export async function archiveOrUnarchiveStudioTemplate(
     return await db.$transaction(
       async (tx) => {
         // Bounds every statement left in this transaction, the CAS below first
-        // among them — the sweep's claim holds this row `FOR UPDATE`, and
-        // without this the wait is bounded only by the 10s budget.
+        // among them — the sweep's claim holds this row `FOR UPDATE`.
+        //
+        // Without it the wait is bounded by NOTHING, which is a stronger
+        // statement than the 10s budget and the one that is true: Prisma
+        // checks that budget at statement boundaries, so it "cannot roll back
+        // a statement already blocked inside Postgres, only refuse to start a
+        // new one" (`db-locks.ts`). The mutation records measure it — removing
+        // this line ends in a hung test, never a 10s abort.
         await setLockTimeout(tx);
 
         // Compare-and-swap, mirroring `archiveOrUnarchiveTemplate` — see there
@@ -776,8 +796,12 @@ export async function archiveOrUnarchiveStudioTemplate(
       // The wait itself is now bounded by this transaction's own
       // `setLockTimeout` (2s), so the 10s figure no longer governs the wait —
       // it governs this transaction's own work once the lock is won: the
-      // delete, the notifications, the record write, which a loaded VPS can
-      // push past Prisma's 5s default and turn into an opaque P2028. Three 10s
+      // `deleteMany`, the `remaining` count and the record `update`, which a
+      // loaded VPS can push past Prisma's 5s default and turn into an opaque
+      // P2028. The class family's twin lists a notification write among its
+      // own and this comment was copied from it — wrongly: this family has no
+      // registrations to notify, which is why the module imports no
+      // notification helper at all (see the file header). Three 10s
       // budgets used not to compose: a sweep holding the row, a pause queued
       // behind it and this archive queued behind that pause meant the last
       // link's own clock ran while it waited its turn, and it was the one most
@@ -800,10 +824,19 @@ export async function archiveOrUnarchiveStudioTemplate(
     // load-bearing rather than stylistic, and for why the log line lives here
     // rather than being left to the API wrapper.
     if (isTransientDbError(err)) {
-      log.warn({ err, templateId, teacherId }, 'studio class archive lost the template lock race');
+      // `target` for the reason the class family's twin records: the message
+      // names the function, not the direction, and both reach the same route.
+      log.warn(
+        { err, templateId, teacherId, target },
+        'studio class archive lost the template lock race',
+      );
       return { ok: false, reason: 'busy' };
     }
     if (isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime'])) {
+      // See the class family's twin: a returned failure never reaches
+      // `withErrorHandler`, so without this line this 409 leaves no server-side
+      // trace at all.
+      log.warn({ err, templateId, teacherId }, 'studio class un-archive refused: slot already held');
       return { ok: false, reason: 'slot_conflict' };
     }
     throw err;

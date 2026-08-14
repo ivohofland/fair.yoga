@@ -741,6 +741,133 @@ describe('PATCH /api/class-templates/[id]', () => {
   });
 });
 
+/**
+ * The `busy` arms, at the wire.
+ *
+ * Their *existence* is compile-forced — each route closes its reason chain
+ * with `const unhandled: never = result`, so a new reason cannot be ignored.
+ * That pins nothing about what the arm answers: a 503 typed as 500, the studio
+ * code pasted into the class route, or an inverted
+ * `state === 'archived' ? 'archive' : 'unarchive'` all compile clean, and all
+ * three produce grammatical English. The sibling `slot_conflict` arm, three
+ * lines up the same chain, has been pinned this way since it shipped.
+ *
+ * Holding the row `FOR UPDATE` from this process is what the hourly generation
+ * sweep's claim does to the same row. The route's transaction opens with
+ * `setLockTimeout`, so its compare-and-swap gives up after 2s instead of
+ * waiting the holder out — which is the whole outcome under test.
+ */
+describe('PATCH /api/class-templates/[id] — lock contention', () => {
+  const holdTemplateRow = (id: string) => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const settled = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "ClassTemplate" WHERE id = ${id} FOR UPDATE`;
+        await held;
+      },
+      { timeout: 15_000 },
+    );
+    return { release, settled };
+  };
+
+  it(
+    'answers 503 TEMPLATE_BUSY when an archive loses the row, and changes nothing',
+    async () => {
+      const t = await prisma.classTemplate.create({
+        data: {
+          teacherId,
+          teacherRoomId,
+          classType: 'Busy Archive',
+          dayOfWeek: DAY_OF_WEEK,
+          startTime: '09:53',
+          durationMinutes: 60,
+          roomCost: 15,
+          minRate: 10,
+          targetRate: 20,
+          minStudents: 2,
+          maxStudents: 8,
+        },
+      });
+
+      const { release, settled } = holdTemplateRow(t.id);
+      // Let the holder take the row before the request contends for it.
+      await new Promise((r) => setTimeout(r, 100));
+
+      try {
+        const res = await fetch(`${BASE_URL}/api/class-templates/${t.id}?state=archived`, {
+          method: 'PATCH',
+          headers: cookie(sessionToken),
+        });
+
+        expect(res.status).toBe(503);
+        const json = (await res.json()) as { error: { code: string; message: string } };
+        expect(json.error.code).toBe('TEMPLATE_BUSY');
+        expect(json.error.message).toContain('could not archive this recurring class');
+        expect(json.error.message).toContain('Nothing was changed.');
+
+        // That last sentence is a promise about the data, so it is read back
+        // rather than trusted — and it is what makes the retry the copy
+        // invites safe to offer.
+        const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
+        expect(after.isArchived).toBe(false);
+        expect(after.archivedAt).toBeNull();
+      } finally {
+        release();
+        await settled.catch(() => {});
+      }
+    },
+    20_000,
+  );
+
+  it(
+    'answers 503 TEMPLATE_BUSY when a pause loses the row',
+    async () => {
+      const t = await prisma.classTemplate.create({
+        data: {
+          teacherId,
+          teacherRoomId,
+          classType: 'Busy Pause',
+          dayOfWeek: DAY_OF_WEEK,
+          startTime: '09:54',
+          durationMinutes: 60,
+          roomCost: 15,
+          minRate: 10,
+          targetRate: 20,
+          minStudents: 2,
+          maxStudents: 8,
+        },
+      });
+
+      const { release, settled } = holdTemplateRow(t.id);
+      await new Promise((r) => setTimeout(r, 100));
+
+      try {
+        const res = await fetch(`${BASE_URL}/api/class-templates/${t.id}?state=paused`, {
+          method: 'PATCH',
+          headers: cookie(sessionToken),
+        });
+
+        expect(res.status).toBe(503);
+        const json = (await res.json()) as { error: { code: string; message: string } };
+        expect(json.error.code).toBe('TEMPLATE_BUSY');
+        // "update", not "pause": this arm serves both directions, and the CAS
+        // makes the transition itself the thing that did not happen.
+        expect(json.error.message).toContain('could not update this recurring class');
+
+        const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
+        expect(after.isActive).toBe(true);
+      } finally {
+        release();
+        await settled.catch(() => {});
+      }
+    },
+    20_000,
+  );
+});
+
 describe('PUT /api/class-templates/[id]', () => {
   // startTime is required, not defaulted, so every call site below is
   // forced to pick its own slot — see templateBody's comment above.
