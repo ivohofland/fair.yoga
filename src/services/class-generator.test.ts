@@ -479,8 +479,8 @@ describe('generateClassInstances (DB)', () => {
      * (`src/lib/db-locks.ts` says so; the mutation record's Task 1 measured
      * it as a 20s test timeout). So the lower bound proves the archive really
      * waited rather than failing instantly for an unrelated reason, and the
-     * upper bound proves it answered near the 2s bound rather than under any
-     * longer clock.
+     * upper bound proves it answered well inside the 10s budget rather than at
+     * it. Neither pins the bound's exact value — `db-locks.test.ts` does that.
      */
     it(
       'answers busy when the generation claim holds the row past the lock timeout',
@@ -511,9 +511,11 @@ describe('generateClassInstances (DB)', () => {
 
           // The 2s lock_timeout produced this. The lower bound proves the
           // archive really waited rather than failing instantly for some
-          // unrelated reason; the upper bound proves it answered near that
-          // bound rather than under a longer one — a widened
-          // `LOCK_TIMEOUT_SQL` fails here.
+          // unrelated reason; the upper bound proves it answered well inside
+          // the 10s budget. Neither is a tight pin on the bound's VALUE —
+          // widening `LOCK_TIMEOUT_SQL` to '3s' or '4s' still passes both.
+          // `db-locks.test.ts` pins the literal exactly; this pins that the
+          // literal is what governs the wait.
           expect(waited).toBeGreaterThanOrEqual(1_800);
           expect(waited).toBeLessThan(5_000);
 

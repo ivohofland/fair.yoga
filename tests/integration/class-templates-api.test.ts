@@ -856,6 +856,10 @@ describe('PATCH /api/class-templates/[id] — lock contention', () => {
         // "update", not "pause": this arm serves both directions, and the CAS
         // makes the transition itself the thing that did not happen.
         expect(json.error.message).toContain('could not update this recurring class');
+        // Asserted on both arms, not just the archive ones: this sentence is
+        // the rollback promise, and dropping it from either would otherwise go
+        // unnoticed.
+        expect(json.error.message).toContain('Nothing was changed.');
 
         const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
         expect(after.isActive).toBe(true);

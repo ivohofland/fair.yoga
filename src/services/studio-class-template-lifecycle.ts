@@ -127,10 +127,10 @@ export type PauseStudioTemplateResult =
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'archived' }
   /**
-   * See `ArchiveTemplateResult`'s `busy` arm — same guarantee, same causes.
-   * This function is the one of the four that had no `catch` at all before the
-   * arm existed, so before it a lost race here propagated raw to the API
-   * wrapper.
+   * See `ArchiveTemplateResult`'s `busy` arm (`class-template-lifecycle.ts`) —
+   * same guarantee, same causes. This function is the one of the four that had
+   * no `catch` at all before the arm existed, so before it a lost race here
+   * propagated raw to the API wrapper.
    */
   | { ok: false; reason: 'busy' };
 
@@ -821,8 +821,10 @@ export async function archiveOrUnarchiveStudioTemplate(
   } catch (err) {
     // Transient first, ahead of the slot-conflict branch — see the class
     // family's twin (`archiveOrUnarchiveTemplate`) for why that ordering is
-    // load-bearing rather than stylistic, and for why the log line lives here
-    // rather than being left to the API wrapper.
+    // defensive rather than load-bearing (the predicates are disjoint today,
+    // so reordering is behaviour-neutral, and the point is that it stays safe
+    // only while they are), and for why the log line lives here rather than
+    // being left to the API wrapper.
     if (isTransientDbError(err)) {
       // `target` for the reason the class family's twin records: the message
       // names the function, not the direction, and both reach the same route.

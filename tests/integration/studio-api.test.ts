@@ -706,6 +706,9 @@ describe('PATCH /api/studio-class-templates/[id] — lock contention', () => {
         const json = (await res.json()) as { error: { code: string; message: string } };
         expect(json.error.code).toBe('STUDIO_TEMPLATE_BUSY');
         expect(json.error.message).toContain('could not update this recurring studio class');
+        // The rollback promise, asserted on the pause arms too — see the class
+        // family's twin.
+        expect(json.error.message).toContain('Nothing was changed.');
 
         const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id } });
         expect(after.isActive).toBe(true);

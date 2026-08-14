@@ -444,10 +444,14 @@ export type PauseTemplateResult =
   | { ok: false; reason: 'archived' }
   /**
    * See `ArchiveTemplateResult`'s `busy` arm for what it guarantees and the
-   * full range of causes. Reachable from more statements here than there:
-   * this transaction's bound also covers generation's insert, so a resume can
-   * answer `busy` after losing a slot race rather than reporting that date as
-   * `raced` (`class-generator.test.ts`, "the clash outlives the lock timeout").
+   * range of causes behind it.
+   *
+   * Two statements here can wait on a lock — the `update` below and
+   * generation's insert — against the archive's three, so this is the smaller
+   * exposure of the two. The second of them is what makes this arm worth its
+   * own note: the bound reaches generation, so a resume that loses a slot race
+   * answers `busy` rather than reporting that date as `raced`
+   * (`class-generator.test.ts`, "the clash outlives the lock timeout").
    */
   | { ok: false; reason: 'busy' };
 
@@ -471,12 +475,19 @@ export type ArchiveTemplateResult =
    * Not only a `lock_timeout` expiry, though that is the case this branch
    * added and the one the copy is written for. The arm is produced by
    * `isTransientDbError`, which also matches a deadlock the detector broke
-   * (`40P01` — in fact the LIKELIER of the two, since the detector runs on a
-   * 1s `deadlock_timeout` and `docs/lock-order.md` records a live cycle
-   * against this very function), a serialization failure, an exhausted
+   * (`40P01`), Prisma's own write-conflict code (`P2034`), an exhausted
    * connection pool (`P2024`) and the transaction budget expiring (`P2028`).
    * Reading a `busy` in the logs and hunting for a 2s lock wait that never
    * happened is the mistake this paragraph exists to prevent.
+   *
+   * Two calibrations, so this list does not send anyone the other way. The
+   * deadlock is the likelier answer only WHERE A CYCLE FORMS — the detector
+   * runs on a 1s `deadlock_timeout` and `docs/lock-order.md` records a live
+   * cycle against this function — while the branch's headline case, an archive
+   * queued behind the sweep's claim, has no cycle and ends in `55P03`. And
+   * `40001` is in the matcher but cannot fire yet: nothing here uses a
+   * serializable or repeatable-read transaction, as `api-errors.ts` says where
+   * it lists the code.
    *
    * The writer on the other side is equally unknown — the generation sweep, or
    * another tab's archive, pause or resume — which is why the copy names none

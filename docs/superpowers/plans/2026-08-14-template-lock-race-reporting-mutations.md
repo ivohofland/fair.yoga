@@ -141,18 +141,43 @@ Task's own mutation records (plan Step 9), recorded after implementation:
 
 ## Review round 2
 
-Five guards were added or restored after the multi-agent review. Each was
+Six guards were added or restored after the multi-agent review. Each was
 mutated, and each mutation is recorded with the exact text it produced, then
-restored and re-verified.
+restored and re-verified. The sixth and the correction to the first were both
+added after a scoped review pass over the round-2 commit itself — the first
+recording of that commit claimed five mutations for six guards, and the one it
+was missing is the last entry here.
 
-- **The archive routes' new `switch (result.action)` + `never`.** Before the
-  change, adding an `ok: true` arm to both archive unions compiled clean —
-  that is what the review measured, and it is why the change exists. After:
-  `src/app/api/class-templates/[id]/route.ts(219,15): error TS2322: Type
-  '{ ok: true; action: "mutNewArm"; template: {...}; purged: number; }' is not
-  assignable to type 'never'.` and the same at
-  `src/app/api/studio-class-templates/[id]/route.ts(176,15)`. Two sites, two
-  errors, restored clean.
+- **The archive routes' new `switch (result.action)` + `never`.** Recorded
+  twice, because the first recording was wrong and the way it was wrong is
+  worth keeping.
+
+  *First attempt, void.* The mutation was applied with a `perl s///` anchored
+  on `| { ok: true; action: 'unchanged'; template: ClassTemplate }` — a line
+  that appears in BOTH `PauseTemplateResult` (line 441) and
+  `ArchiveTemplateResult` (line 463). With no `/g`, only the first matched, so
+  the arm landed on the PAUSE union and the two errors it produced —
+  `class-templates/[id]/route.ts(219,15)` and
+  `studio-class-templates/[id]/route.ts(176,15)` — are the pause switches'
+  guards, which predate this commit. The mutation confirmed a guard that was
+  already there and said nothing about the new one. Caught by the review pass
+  over this commit, from the line positions alone.
+
+  *Re-run, targeted by line so the anchor cannot slip.* With the arm inside
+  `ArchiveTemplateResult` (confirmed present at lines 460-470 before running
+  `tsc`):
+  `src/app/api/class-templates/[id]/route.ts(158,17): error TS2322: Type
+  '{ ok: true; action: "mutArchiveArm"; template: {...}; purged: number; }' is
+  not assignable to type 'never'.` and
+  `src/app/api/studio-class-templates/[id]/route.ts(114,17)` for the studio
+  arm. Those two positions are the archive switches' defaults — 10-space
+  indent, column 17 — where the pause defaults sit at column 15.
+
+  *The other half, measured rather than inherited.* With only the two route
+  files reverted to `69e8575` (ternary present: 1, `case 'archived':` present:
+  0), baseline `tsc` errors 0, the same mutation confirmed inside
+  `ArchiveTemplateResult`, mutated `tsc` errors **0**. The ternary does not
+  catch a new success arm; the `switch` does.
 
 - **The four `log.warn` lines.** Deleting only the class archive's call and
   keeping its `return` — which left every test green before this round — now
@@ -172,8 +197,17 @@ restored and re-verified.
   could not arc…' to contain 'could not unarchive this recurring st…'`. Both
   limbs are grammatical English, so nothing else in either suite noticed.
 
-- **`setLockTimeout` reaching past the CAS.** Commenting it out of
-  `archiveOrUnarchiveTemplate` fails the new `deleteMany` test with
+- **`setLockTimeout` reaching past the CAS, archive side.** Commenting it out
+  of `archiveOrUnarchiveTemplate` fails the new `deleteMany` test with
   `Error: Test timed out in 20000ms.` — the same shape Tasks 1-4 record, and
   for the same reason: the blocked statement never reaches the boundary where
   Prisma checks its budget, so nothing aborts it.
+
+- **`setLockTimeout` reaching past the CAS, resume side.** The guard the first
+  recording of this section left unmutated. Commenting it out of
+  `pauseOrResumeTemplate` fails `answers busy when the clash outlives the lock
+  timeout, instead of reporting it raced` with
+  `Error: Test timed out in 20000ms.` The resume's insert parks on the
+  holder's pending unique-index entry, the holder is only released after the
+  resume settles, and with no bound neither moves — which is precisely the
+  narrowing of #164's contract the test exists to pin.

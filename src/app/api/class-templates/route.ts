@@ -88,9 +88,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // Three sequential statements on a 2GB VPS — the create, generation's
       // single occupancy read and its single batched insert — against Prisma's
       // 5s default. An earlier draft of this comment said nine, "one create,
-      // four candidate probes and four inserts": that is the pre-#196 shape,
-      // and `generateInstancesForTemplate` has issued one `findMany` plus one
-      // `createManyAndReturn` since. The count mattered, not just the prose —
+      // four candidate probes and four inserts": that shape was replaced by
+      // #164/#192's generator work (commit `a960f9e`), since when
+      // `generateInstancesForTemplate` has issued one `findMany` plus one
+      // `createManyAndReturn`. The count mattered, not just the prose —
       // at nine statements with four separate inserts the arithmetic for a 2s
       // bound comes out at five waitable statements against a 10s budget, and
       // the conclusion flips.
@@ -98,8 +99,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // Nor does every peer transaction touching these rows decline the 5s
       // default, which this comment also claimed: `syncTemplateInstances`
       // (`template-sync.ts`) locks the same `Class` rows under it, as
-      // `docs/lock-order.md` records. The peers that budget 10s are the four
-      // template lifecycle functions.
+      // `docs/lock-order.md` records. The ones that do budget 10s are the four
+      // template lifecycle functions, both generator sweeps
+      // (`generateClassInstances`, `generateStudioClassInstances`) and this
+      // route's own studio twin — "most", not "every", and not "the four".
       //
       // No claim is taken here (the row is brand-new inside this transaction, so
       // nothing can race the insert), which also means no claim `lock_timeout`

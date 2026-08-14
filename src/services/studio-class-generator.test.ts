@@ -286,9 +286,11 @@ describe('generateStudioClassInstances (DB)', () => {
      * passes `{ timeout: 10_000 }` as its transaction's options, so a future
      * edit can't silently drop it back to Prisma's 5s default and have this
      * file stay green. It does not prove that the option changes Prisma's
-     * behaviour, and nothing does any more: the only test that ever crossed
-     * the 5s boundary end to end was the class family's, and the 2s bound made
-     * that unwritable. What survives is the literal, pinned. `spyingClient` is
+     * behaviour, and nothing does any more: both families once had a test that
+     * crossed the 5s boundary end to end — this one, replaced by the spy
+     * above, and the class family's, re-pointed at the bound — and the 2s
+     * `lock_timeout` made that proof unwritable in either. What survives is
+     * the literal, pinned. `spyingClient` is
      * a `Proxy` around the real client that
      * intercepts `$transaction` to record its `options` argument and then
      * delegates to the real call, so the archive still runs for real.
