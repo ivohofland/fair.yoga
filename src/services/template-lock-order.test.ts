@@ -406,16 +406,95 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * starts waiting on the contested row first, so its wait crosses
    * Postgres's `deadlock_timeout` first.
    *
-   * Asserted by SQLSTATE alone, per this file's top docblock: `55P03` (the
-   * archive's own `SET LOCAL lock_timeout = '2s'` expiring instead of the
-   * cycle being detected) does not contain "40P01" or "deadlock", so the
-   * positive `toMatch(/40P01|deadlock/i)` calls below already exclude it
-   * without a paired `not.toMatch`. That is a property of THIS direction
-   * only: once task 4 inverts these to `not.toMatch(...)`, the exclusion
-   * stops being automatic — a negated regex matches everything the regex
-   * doesn't, `55P03` included — and needs its own explicit
-   * `not.toMatch(/55P03/)` on both branches below, the same way the `it`
-   * above already carries both forms after its own fix round.
+   * Asserted by SQLSTATE, not by rejection alone. `/40P01|deadlock/i` also
+   * happens to match Prisma's own `P2034` wording ("write conflict or a
+   * deadlock") — substantively the same class of event as `40P01`, not a
+   * false positive, but the regex is not strictly SQLSTATE-exact and a
+   * future reader should not have to rediscover that by tracing Prisma's own
+   * error text. Separately: `55P03` (the archive's own
+   * `SET LOCAL lock_timeout = '2s'` expiring instead of the cycle being
+   * detected) does not contain "40P01" or "deadlock", so the positive
+   * `toMatch(/40P01|deadlock/i)` calls below already exclude it without a
+   * paired `not.toMatch`. That exclusion is a property of THIS direction
+   * only — see the handover below for what changes once the assertion is
+   * inverted.
+   *
+   * ---
+   *
+   * **HANDOVER TO TASK 4 — read this before writing the inversion, not
+   * after.** The obvious move is to take the sync test's inverted
+   * rejection-loop above (`for (const settled of ...) { if (rejected)
+   * expect(...).not.toMatch(/40P01|deadlock/i) }`) and point it at this
+   * fixture instead. That was tried directly, against the STILL-UNFIXED
+   * code below, and it PASSED:
+   *
+   * ```
+   * PROBE_B_RESULT {"aStatus":"fulfilled","aValue":{"ok":false,"reason":"busy"},
+   *                 "bStatus":"fulfilled","deadlockInLog":true}
+   * ✓ B: naive inverted "does not deadlock" (rejection-loop only) against UNFIXED code
+   * ```
+   *
+   * The deadlock fired — same as every run recorded in the report — and the
+   * naive inversion was green anyway, because it only ever looks at
+   * `Promise.allSettled`'s rejection channel, and this function's `catch`
+   * empties that channel out on the side that matters. A "fix" that does
+   * nothing at all would still pass a test written that way. Five
+   * requirements for the inversion, not one, stated in order because the
+   * first is the one that makes every other correct-looking piece worthless
+   * if skipped:
+   *
+   * 1. **Never invert on rejections for this pairing.** Say it first.
+   *    `archiveOrUnarchiveTemplate` resolves `{ ok: false, reason: 'busy' }`
+   *    on the deadlock rather than rejecting, so a rejection-only negation —
+   *    the sync test's own shape — passes unconditionally for this fixture,
+   *    fixed or not. The transcript above is that exact mistake, made once
+   *    on purpose, to prove it catches nothing.
+   * 2. **Keep the `log.warn` spy this `it` already sets up, and flip its
+   *    assertion**: today's `expect(archiveLostRaceLog).toBeDefined()`
+   *    becomes `expect(archiveLostRaceLog).toBeUndefined()`. One assertion
+   *    is enough to cover `40P01`, `55P03` AND `P2028` at once, because all
+   *    three reach this same `catch` via `isTransientDbError` — no need to
+   *    enumerate them separately the way `not.toMatch` has to on the
+   *    erasure's own rejection channel.
+   * 3. **Flip today's `expect(aSettled.value).toEqual({ ok: false, reason:
+   *    'busy' })` to a positive success shape**:
+   *    `expect(aSettled.value).toMatchObject({ ok: true, action: 'archived' })`.
+   *    With this exact fixture — a template the caller owns, not already
+   *    archived, no slot it could collide on — `not_found`/`forbidden`/
+   *    `slot_conflict` are unreachable, so `ok: true` here can only mean the
+   *    transient-error `catch` never fired. That also de-vacuums point 2:
+   *    the spy's `.find()` is keyed on the exact log-message string
+   *    ("recurring class archive lost the template lock race",
+   *    `class-template-lifecycle.ts:1104`), so a rename there would make
+   *    `toBeUndefined()` pass for the wrong reason — silently, since a
+   *    renamed message just never matches the old string again. The
+   *    `ok: true` assertion has no such coupling and catches the same
+   *    failure a different way.
+   * 4. **Assert `deleted: 2` and `remaining: 0` on that same success value —
+   *    mandatory, not optional.** This is the actual vacuity hole: an
+   *    INELIGIBLE fixture (wrong status, wrong date, a stray charged
+   *    registration) makes `archiveOrUnarchiveTemplate` return
+   *    `{ ok: true, action: 'archived', deleted: 0, remaining: 0 }`, which
+   *    satisfies an `ok: true`-only inversion perfectly while the
+   *    `deleteMany` took ZERO `Class` row locks and no cycle was ever
+   *    possible. A test that never contended for the rows is not "does not
+   *    deadlock"; it is "never tried". `deleted: 2` is what proves both
+   *    fixture classes were actually matched and actually locked by this
+   *    statement — the same role the heap-order assertion below plays for
+   *    lock ORDER, this plays for lock EXISTENCE. (Cannot be asserted in
+   *    THIS direction, unfixed: the archive returns `{ ok: false, reason:
+   *    'busy' }` here and carries no `deleted` field at all.)
+   * 5. **Leave the erasure branch as a rejection check, and keep the
+   *    heap-order assertion above.** Nothing in points 1-4 touches
+   *    `deleteStudentAccount`'s side of the race — it has no transient-error
+   *    `catch` of its own, so `bSettled.status === 'rejected'` stays a
+   *    meaningful, direct signal there, same as in the unfixed version
+   *    below. And the heap-order read stays load-bearing under the fix for
+   *    the same reason it is load-bearing here: if `HIGH`/`LOW` insertion
+   *    ever stopped producing the reverse-of-ascending heap order this
+   *    fixture depends on, "does not deadlock" would be true of a race that
+   *    was never adversarial in the first place, proving nothing about the
+   *    pre-lock.
    */
   it('archiveOrUnarchiveTemplate and deleteStudentAccount deadlock on two instances', async () => {
     const { templateId, studentId, teacherId, lowClassId, highClassId } =
