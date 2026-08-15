@@ -318,9 +318,20 @@ export async function updateClassTemplate(
         // again here is not redundant: `SET LOCAL lock_timeout` is idempotent
         // within one transaction — verified in psql that a later call
         // overwrites the earlier rather than stacking or erroring
-        // (`db-locks.ts:82-87`) — so the two coexist safely, and the one
-        // inside `syncTemplateInstances` still matters for its other callers,
-        // which do not already run inside this bound.
+        // (`db-locks.ts:82-87`) — so the two coexist safely.
+        //
+        // Which of the two is load-bearing, stated exactly, because the
+        // tempting shorthand ("the inner one covers its other callers") is
+        // false: this is `syncTemplateInstances`'s ONLY production call site
+        // (`api/class-templates/route.ts` says the same thing from the other
+        // side — "its one production caller"). The inner `setLockTimeout` is
+        // therefore not covering production traffic this call does not; it
+        // earns its place two other ways. It bounds the test harnesses that
+        // compose the function directly into a bare `prisma.$transaction`
+        // (`template-sync.test.ts`, `template-lock-order.test.ts`), none of
+        // which issues the bound itself. And it keeps the function correct
+        // standalone, so a second caller can compose it without having to
+        // know that the bound is someone else's responsibility.
         await setLockTimeout(tx);
 
         const template = await tx.classTemplate.update({ where: { id: templateId }, data });
@@ -1076,22 +1087,48 @@ export async function archiveOrUnarchiveTemplate(
         // updateMany`, the same write `DELETE /api/registrations/[id]` makes
         // and, like it, one that takes no `Class` row lock. Under a narrowed
         // pre-lock this reproduces `40P01` at the `deleteMany`; under this
-        // wide one it produces `{ ok: true, deleted: 2, remaining: 0 }` (see
-        // the report for issue 180 task 4 for the full recipe and both
-        // outputs). `setLockTimeout(tx)` is already in effect from this
+        // wide one it produces `{ ok: true, deleted: 2, remaining: 0 }` (full
+        // recipe and both transcripts in the atomic-template-update spec,
+        // §4 — inlined there rather than left in a task report, because
+        // `.superpowers/sdd/` is gitignored and this is the only evidence
+        // that the wide set is required rather than merely conservative).
+        // `setLockTimeout(tx)` is already in effect from this
         // transaction's own call above; issuing it again here would be
         // redundant, not wrong.
         //
         // `c.date > ${today}`, not Prisma's `date: { gt: today }` used
         // everywhere else `scheduledWhere` is called — `FOR UPDATE OF c` has
         // no query-builder equivalent, so this statement is raw SQL end to
-        // end. The two forms are not obviously the same comparison and
-        // should not be assumed equivalent without saying why: `Class.date`
-        // is `@db.Date`, and for any Postgres session `TimeZone` this raw
-        // form and Prisma's parameterised form compare the same stored date
-        // values with the same `>` operator, so they always select the same
-        // set of rows — never a subset — which is what lock ⊇ delete
-        // (below) actually needs.
+        // end. The two forms are NOT the same comparison, and the difference
+        // is worth stating precisely rather than waving through, because the
+        // property this pre-lock needs is one-directional.
+        //
+        // `Class.date` is `@db.Date`. Prisma's `date: { gt: today }` binds a
+        // `date` parameter, so Postgres compares `date > date`. A `$queryRaw`
+        // binds a JS `Date` as `timestamptz`, so this statement compares
+        // `date > timestamptz`, which promotes `c.date` to an instant at
+        // midnight IN THE SESSION `TimeZone`. Measured, both directions:
+        //
+        //   TimeZone=UTC               '2026-08-15'::date > '2026-08-15T00:00:00Z' → f
+        //   TimeZone=America/New_York  same comparison                             → t
+        //                              (Prisma's `date > date` stays f in both)
+        //
+        // So under UTC the two forms select exactly the same rows, and west
+        // of UTC this raw form additionally matches TODAY-dated rows that the
+        // `deleteMany` below will never delete. That is a SUPERSET, never a
+        // subset — which is the only thing lock ⊇ delete (below) actually
+        // needs, and it holds under every session `TimeZone`, not just this
+        // deployment's. Do not restate it as "the same set" and do not use
+        // that as licence to narrow either side to match the other: equality
+        // is a UTC-only accident, containment is the guarantee.
+        //
+        // This deployment runs UTC — the `postgres:16-alpine` default, since
+        // neither `docker-compose.yml` nor `docker-compose.prod.yml` sets
+        // `TZ`. That is where the equality comes from; it is not pinned by
+        // configuration, which is the second reason not to depend on it.
+        // Off UTC the cost is a slightly wider pre-lock: today's scheduled
+        // classes are held for this transaction's duration too, contending
+        // with bookings on classes this archive cannot delete.
         //
         // Why lock ⊇ delete holds here is not structural the way it is for
         // `syncTemplateInstances`'s own pre-lock (issue 180 task 2), which

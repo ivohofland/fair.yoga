@@ -441,9 +441,41 @@ cancelled from OUTSIDE the transaction during the candidate-read hook, via
 the same write `DELETE /api/registrations/[id]` makes and, like it, one that
 takes no `Class` row lock. Under a pre-lock narrowed that way this reproduces
 `40P01` at the `deleteMany`; under the wide, shipped pre-lock it produces
-`{ ok: true, deleted: 2, remaining: 0 }`. Measured this way, independently
-reproduced, and recorded in full — including both transcripts — in
-`task-4-report.md`, "0. The wide row set — now measured".
+`{ ok: true, deleted: 2, remaining: 0 }`. Measured this way and independently
+reproduced.
+
+Both transcripts are inlined here rather than only cited, because this is the
+sole evidence separating "the wide set is required" from "the wide set is
+merely conservative" — the paragraph above establishes that the baseline
+fixture cannot distinguish the two predicates at all, so a reference alone
+would leave the branch's most-defended design decision resting on a file the
+repo does not carry (`.superpowers/sdd/` is gitignored). §2.4 already inlines
+task 0's three runs for the same reason; this closes the asymmetry.
+
+With the pre-lock narrowed to `AND NOT EXISTS (SELECT 1 FROM "Registration" r
+WHERE r."classId" = c.id AND r.status IN ('registered','attended','no_show',
+'late_cancel'))`:
+
+```
+recurring class archive lost the template lock race :: PrismaClientUnknownRequestError:
+Invalid `tx.class.deleteMany()` invocation in
+.../src/services/class-template-lifecycle.ts
+Error occurred during query execution:
+ConnectorError(... PostgresError { code: "40P01", message: "deadlock detected", ... })
+{"a":{"fulfilled":{"ok":false,"reason":"busy"}},"b":{}}
+```
+
+With the shipped, wide pre-lock:
+
+```
+{"a":{"fulfilled":{"ok":true,"action":"archived", ... "deleted":2,"remaining":0}},"b":{}}
+```
+
+The negative control was a throwaway `it` built on
+`template-lock-order.test.ts`'s existing `makeTemplateWithTwoWaitedInstances`
+fixture, run and then removed rather than committed — it depends on hooking
+the archive's candidate read to land a write mid-transaction, which is a
+mutation harness, not a regression guard. The wide row set is what ships.
 
 **The trap 180 measured, which the plan must defeat.** A btree `ScalarArrayOp`
 index scan visits in **ascending id order**. On a large enough table the
