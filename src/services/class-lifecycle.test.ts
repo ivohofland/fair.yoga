@@ -585,9 +585,15 @@ describe('completeClass (DB)', () => {
   });
 
   afterAll(async () => {
-    // Clean up in dependency order: payments → registrations → class → students → teacherRoom → room → teacher.
+    // Clean up in dependency order: waitlist entries → payments → registrations → class → students → teacherRoom → room → teacher.
     // Filtered by teacherId, not just the fixed `classId`, so this also
     // catches the extra classes `makeClass` creates in the lock tests below.
+    // WaitlistEntry must go first: it FK-references Class, and the
+    // 'closes the waitlist...' test above is the first in this block to
+    // create one — left out, it blocks `class.deleteMany` below on every run,
+    // including the mutation-tested failing ones, and leaks this whole
+    // fixture set into the shared test database.
+    await prisma.waitlistEntry.deleteMany({ where: { class: { teacherId } } });
     await prisma.payment.deleteMany({
       where: { registration: { class: { teacherId } } },
     });
@@ -796,6 +802,23 @@ describe('completeClass (DB)', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/Invalid transition/);
     expect(await prisma.payment.count({ where: { registration: { classId: cls.id } } })).toBe(0);
+  });
+
+  it('closes the waitlist when a teacher completes an open class directly', async () => {
+    const cls = await makeClass({ status: 'open' });
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId: studentIds[0]!, status: 'registered', tierAtBooking: 3 },
+    });
+    const entry = await prisma.waitlistEntry.create({
+      data: { classId: cls.id, studentId: studentIds[1]!, position: 1, status: 'waiting' },
+    });
+
+    const result = await completeClass(prisma, cls.id);
+    expect(result.ok).toBe(true);
+
+    const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
+    // `expired`, not `removed`: this student never got in, they did not leave.
+    expect(after.status).toBe('expired');
   });
 });
 

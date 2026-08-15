@@ -18,6 +18,7 @@ import { lockClassRow } from '@/lib/db-locks';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
+import { closeQueueOnStart } from './waitlist';
 
 export { ECONOMIC_FIELDS, type EconomicField };
 
@@ -209,6 +210,11 @@ export async function completeClass(
       const toInProgress = validateTransition('open', 'in_progress');
       if (!toInProgress.ok) return toInProgress;
       await tx.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
+      // #216, third of the three `open -> in_progress` exits. The other two go
+      // through `transitionClass` and `autoTransitionToInProgress`; this one
+      // does not, so it needs its own call. Inside the lock this function
+      // already holds, so it is atomic with the status flip above.
+      await closeQueueOnStart(tx, classId);
     } else {
       const validation = validateTransition(cls.status, 'completed');
       if (!validation.ok) return validation;
