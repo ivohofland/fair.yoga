@@ -317,22 +317,31 @@ export async function autoCancelClasses(
         //
         // Still benign, unlike at the erasure sites, but the argument is
         // longer now because one of the six is a WRITE that takes row locks.
-        // It cannot be the first place this transaction blocks: every writer
-        // of `WaitlistEntry` is serialized behind a conflicting `Class` row
-        // lock before it writes — either by calling `lockClassRow` itself or
-        // by writing through a CAS `UPDATE` that already took one.
-        // `closeQueueOnStart` is the one exception in FORM, not in substance:
-        // it takes no lock of its own and instead trusts its caller to have
-        // already taken one — `lockClassRow` from `autoTransitionToInProgress`
-        // and `completeClass`, or the CAS `UPDATE` from `transitionClass` (see
-        // its own docblock in `waitlist.ts`). This is a property every site
-        // has to satisfy, not a fixed roster to keep hand-counted in sync with
-        // the codebase: to re-derive membership,
-        // `grep -rn 'waitlistEntry\.(create|createMany|update|updateMany|delete|deleteMany|upsert)' src`,
-        // excluding tests, then check each hit's enclosing transaction for the
-        // lock. This transaction is already holding the lock from the line
-        // below either way, so any contention therefore materialises at
-        // `lockClassRow`, exactly as it did before #112.
+        // It cannot be the first place THIS transaction blocks, because this
+        // transaction is already holding the `Class` row lock from the line
+        // below — so any contention materialises at `lockClassRow`, exactly as
+        // it did before #112. That is the whole argument, and it depends only
+        // on this function's own lock, not on a property of every other writer.
+        //
+        // Stated that narrowly on purpose. An earlier version of this comment
+        // claimed that EVERY writer of `WaitlistEntry` is serialized behind a
+        // conflicting `Class` row lock, "either by calling `lockClassRow` or by
+        // writing through a CAS `UPDATE` that already took one". Both halves
+        // were wrong. The mechanism list omitted the most common one — an
+        // inline `SELECT ... FOR UPDATE` on the class row, which is what
+        // `addToWaitlist`, `promoteNext`, `claimSpot`,
+        // `withdrawWaitingEntriesForTeacher` and `POST /api/registrations` all
+        // do — and the universal claim is false regardless: issue #183 is open
+        // precisely because `deleteStudentAccount`'s write set can exceed its
+        // lock set. It replaced a correct hand-written roster with a general
+        // rule, on the reasoning that rosters go stale. They do; a false
+        // invariant is worse, because the next person adding a writer checks it
+        // and concludes they are safe.
+        //
+        // To re-derive the real roster:
+        // `grep -rnE 'waitlistEntry\.(create|update|delete|upsert)' src`,
+        // excluding tests, then read each hit's enclosing transaction for which
+        // of the three mechanisms it uses, if any.
         //
         // If one did time out, the per-class `catch` at the bottom of this
         // loop logs it and the sweep moves to the next class — no partial

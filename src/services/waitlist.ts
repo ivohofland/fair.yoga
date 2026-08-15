@@ -313,7 +313,7 @@ export async function addToWaitlist(
  * Removes a student from the waitlist and reorders remaining positions.
  *
  * Scoped to `status: 'waiting'` — see the inline comment on the `updateMany`
- * below for why (#F3, whole-branch review of #216/#182). Then gets all
+ * below for why (whole-branch review of #216/#182). Then gets all
  * remaining 'waiting' entries ordered by position and reorders them
  * sequentially starting at 1.
  *
@@ -378,7 +378,7 @@ export async function removeFromWaitlist(
     await lockClassRow(tx, classId);
 
     // Scoped to `status: 'waiting'`, not a bare `update` on the
-    // `(classId, studentId)` key. #F3: an unconditional write let a DELETE
+    // `(classId, studentId)` key. An unconditional write let a DELETE
     // sent from a stale `/bookings` render — the class has since started,
     // `closeQueueOnStart` (#216) already flipped this row to `expired` —
     // overwrite it to `removed`, turning "never got in" into "withdrew", the
@@ -998,7 +998,8 @@ export async function reorderWaitingEntries(
  * Closes a class's queue because the class has STARTED, not because it was
  * cancelled or left.
  *
- * `expired`, and it is the only writer of that value in the codebase. The three
+ * `expired`, and it is the only writer of that value in production code (four
+ * test files fixture the status directly). The three
  * cancel paths write `removed`, matching `removeFromWaitlist` — a student who
  * left. This one means the opposite: a student who never got in. The
  * distinction is not decorative. `exportStudentData` (`gdpr.ts`) publishes
@@ -1009,7 +1010,7 @@ export async function reorderWaitingEntries(
  *
  * No reorder. `reorderWaitingEntries` renumbers only `waiting` rows, so closed
  * rows keep stale positions by design (#183); closing an entire queue at once
- * leaves nothing to renumber, which is why the two cancel paths issue their
+ * leaves nothing to renumber, which is why the three cancel paths issue their
  * `updateMany` without one either.
  *
  * No notification. #112's promise was about a class ceasing to be OFFERED. A

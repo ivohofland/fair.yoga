@@ -188,7 +188,7 @@ export async function reconcileWaitlists(
   // category this paragraph is not about: a fulfilled entry leaves `waiting`
   // because the student got a seat, not because the queue closed under them.
   // To re-derive either roster:
-  // `grep -rn 'waitlistEntry\.(create|createMany|update|updateMany|delete|deleteMany|upsert)' src`,
+  // `grep -rnE 'waitlistEntry\.(create|update|delete|upsert)' src`,
   // excluding tests, then read each hit for which status it writes, or
   // whether it deletes the row. The join above is kept anyway — it still
   // narrows the scan to classes whose queue could still matter, which is

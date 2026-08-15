@@ -217,11 +217,11 @@ export async function transitionClass(
  * `ACTIVE_REGISTRATION_STATUSES` (`@/lib/registration-status`) do. That set
  * is this one minus `late_cancel`: it asks who occupies a seat, this one asks
  * who gets billed. This constant stays here rather than joining it in `lib/`
- * because only server-side services use it, and two comments in two test
- * files name this file as its home — `class-transitions.test.ts` and
- * `tests/integration/registrations-api.test.ts` — both by name rather than
- * by line number, deliberately: this docblock has already grown twice since
- * either comment was written (once before this branch, once again by it),
+ * because only server-side services use it, and comments in
+ * `class-transitions.test.ts` and `tests/integration/registrations-api.test.ts`
+ * name this file as its home — all by name rather than by line number,
+ * deliberately: this docblock has already grown twice since the earliest of
+ * them was written (once before this branch, once again by it),
  * and a line-number citation into a docblock that keeps growing is exactly
  * the kind of claim that goes stale silently.
  */

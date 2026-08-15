@@ -378,7 +378,7 @@ describe('GET /class/[id] (page) — the waitlist count', () => {
   });
 
   /**
-   * #F1b, whole-branch review of #216/#182. A fresh class+fixture, not the
+   * Whole-branch review of #216/#182. A fresh class+fixture, not the
    * shared `countClassId` above: that one is deliberately `open`, and its
    * `expired` row proves the OPPOSITE of this test — that `expired` must NOT
    * be folded into the count there. `in_progress` is the one status where it

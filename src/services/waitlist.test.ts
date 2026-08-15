@@ -474,7 +474,7 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
   });
 
   /**
-   * #F3, whole-branch review of #216/#182. A student's `/bookings` page
+   * Whole-branch review of #216/#182. A student's `/bookings` page
    * rendered while their entry was still `waiting`; by the time they tap
    * "Leave waitlist" the class has started and `closeQueueOnStart` already
    * flipped the row to `expired`. Before this fix `removeFromWaitlist`'s
@@ -1542,7 +1542,7 @@ describe('removeFromWaitlist takes the class lock (DB)', () => {
    * and this write. Before #174 that surfaced as Prisma's `P2025`, which
    * `classifyApiError` had no branch for, so a student tapping "leave
    * waitlist" at the wrong moment got a bare 500 on a request whose whole
-   * meaning was "make this entry go away". Since #F3 (whole-branch review of
+   * meaning was "make this entry go away". Since the whole-branch review of
    * #216/#182) the write is an `updateMany` scoped to `status: 'waiting'`
    * rather than a bare `update` on the unique key — see `removeFromWaitlist`'s
    * docblock — so a vanished row now surfaces the same way a row that exists

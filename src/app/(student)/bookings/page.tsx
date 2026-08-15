@@ -66,10 +66,11 @@ export default async function StudentBookingsPage() {
       // refused as `NOT_FOUND` rather than overwriting it to `removed`, which
       // would turn "never got in" into "withdrew". This predicate keeps the
       // stale click from being offered; that guard is what makes it harmless
-      // when it happens anyway. `closeQueueOnStart` and the three cancel paths
-      // are the drains now — #216 is no longer the only one, since this
-      // branch also closes the `open -> in_progress` exits it used to leave
-      // standing.
+      // when it happens anyway, and the route answers it with a 409 and a
+      // refresh rather than claiming the entry does not exist.
+      //
+      // Four drains now close a queue: `closeQueueOnStart` (#216, the class
+      // starting) and the three cancel paths (#195).
       where: { studentId: session.studentId, status: 'waiting', class: { status: 'open' } },
       include: {
         class: {

@@ -400,7 +400,7 @@ describe('POST /api/registrations', () => {
   });
 
   /**
-   * #F1a, whole-branch review of #216/#182. `closeQueueOnStart` flips every
+   * Whole-branch review of #216/#182. `closeQueueOnStart` flips every
    * `waiting` row to `expired` in the same transaction as the class's
    * `in_progress` write — including the row of a student who is about to be
    * walked in at the door. The entry-resolution read a few lines above this

@@ -622,9 +622,13 @@ describe('reconcileWaitlists (DB)', () => {
    * between the two queries, a race no test enters. The outcome is what both
    * exist for and the only thing worth asserting here.
    *
-   * The state is reachable and documented: `gdpr.ts` records a residual where
-   * `waiting` entries survive on a class that can never promote anyone, and
-   * neither `completeClass` nor `autoTransitionToInProgress` closes a queue.
+   * The state is reachable, though less often than when this was written:
+   * `closeQueueOnStart` (#216) now closes the queue at all three
+   * `open -> in_progress` exits, `completeClass`'s inline bump included, so a
+   * class that simply RAN no longer leaves `waiting` rows behind. What remains
+   * are rows predating that change, and any future path that moves a class out
+   * of `open` without going through those three — which is exactly what this
+   * test is here to keep harmless.
    */
   it('does not reconcile a class that is no longer open', async () => {
     const cls = await makeClass(2);
