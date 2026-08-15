@@ -951,3 +951,49 @@ export async function reorderWaitingEntries(
     }
   }
 }
+
+/**
+ * Closes a class's queue because the class has STARTED, not because it was
+ * cancelled or left.
+ *
+ * `expired`, and it is the only writer of that value in the codebase. The three
+ * cancel paths write `removed`, matching `removeFromWaitlist` — a student who
+ * left. This one means the opposite: a student who never got in. The
+ * distinction is not decorative. `exportStudentData` (`gdpr.ts`) publishes
+ * `WaitlistEntry.status` verbatim and, unlike the registrations half of the
+ * same export, does NOT select the class's status — so `removed` here would
+ * tell a subject-access request that the student withdrew, which is a
+ * different and equally wrong story from the one the data supports.
+ *
+ * No reorder. `reorderWaitingEntries` renumbers only `waiting` rows, so closed
+ * rows keep stale positions by design (#183); closing an entire queue at once
+ * leaves nothing to renumber, which is why the two cancel paths issue their
+ * `updateMany` without one either.
+ *
+ * No notification. #112's promise was about a class ceasing to be OFFERED. A
+ * class that ran is not that, and "it happened without you" is noise to
+ * someone who was never promised a seat.
+ *
+ * No read-before-write, unlike the cancel paths: they read first because they
+ * need a recipient list, and this one has no recipients. The returned count is
+ * the whole result.
+ *
+ * `TransactionClientOnly` rather than this module's `PrismaTransactionClient`
+ * alias, deliberately: running this outside a transaction — where the status
+ * flip and the queue close could commit separately — IS the defect, so the
+ * type refuses a bare client rather than trusting the caller.
+ *
+ * The caller must have already taken the `Class` row lock, or written the
+ * status via a CAS `UPDATE` that took it. Every other `WaitlistEntry` writer
+ * conflicts on that row, so this statement cannot interleave with one.
+ */
+export async function closeQueueOnStart(
+  tx: TransactionClientOnly,
+  classId: string,
+): Promise<number> {
+  const { count } = await tx.waitlistEntry.updateMany({
+    where: { classId, status: 'waiting' },
+    data: { status: 'expired' },
+  });
+  return count;
+}

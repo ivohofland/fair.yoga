@@ -7,6 +7,7 @@ import {
   promoteNext,
   claimSpot,
   handleSpotFreed,
+  closeQueueOnStart,
   WaitlistJoinError,
   WaitlistPromotionError,
 } from './waitlist';
@@ -192,6 +193,41 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
   const studentIds: string[] = [];
   const fillerIds: string[] = [];
 
+  // Counter-derived startTime: this describe's `beforeAll` calls `makeClass`
+  // 3 times, and the nested `closeQueueOnStart` describe below calls it more
+  // — none of these tests read or assert a created row's literal startTime,
+  // so a distinct minute per call is enough to keep every create legal under
+  // Class_teacher_slot_unique. Routed through the module-level `slotTime`
+  // rather than a raw `09:${counter}` literal. Hoisted to describe scope
+  // (rather than declared inside `beforeAll`, as it originally was) so the
+  // nested describe can call it too, after `teacherId`/`teacherRoomId` are
+  // set.
+  let makeClassCounter = 0;
+  async function makeClass(
+    status: 'open' | 'draft' | 'in_progress',
+    maxStudents: number,
+  ): Promise<string> {
+    makeClassCounter += 1;
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Hatha',
+        date: new Date('2099-06-01'),
+        startTime: slotTime(makeClassCounter),
+        durationMinutes: 60,
+        roomCost: 35,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 1,
+        maxStudents,
+        status,
+        settingsLocked: true,
+      },
+    });
+    return cls.id;
+  }
+
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
       data: {
@@ -228,35 +264,6 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
       },
     });
     teacherRoomId = teacherRoom.id;
-
-    // Counter-derived startTime: this beforeAll calls makeClass 3 times for
-    // one teacher/date, and none of this describe's tests read or assert the
-    // created rows' literal startTime — so a distinct minute per call is
-    // enough to keep every create legal under Class_teacher_slot_unique.
-    // Routed through the module-level `slotTime` rather than a raw
-    // `09:${counter}` literal.
-    let makeClassCounter = 0;
-    async function makeClass(status: 'open' | 'draft', maxStudents: number): Promise<string> {
-      makeClassCounter += 1;
-      const cls = await prisma.class.create({
-        data: {
-          teacherId,
-          teacherRoomId,
-          classType: 'Hatha',
-          date: new Date('2099-06-01'),
-          startTime: slotTime(makeClassCounter),
-          durationMinutes: 60,
-          roomCost: 35,
-          minRate: 15,
-          targetRate: 25,
-          minStudents: 1,
-          maxStudents,
-          status,
-          settingsLocked: true,
-        },
-      });
-      return cls.id;
-    }
 
     // The waitlist class holds 2 and both spots are taken by fillers.
     classId = await makeClass('open', 2);
@@ -387,6 +394,70 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
       where: { classId, studentId: studentIds[1]! },
     });
     expect(entries).toHaveLength(1);
+  });
+
+  describe('closeQueueOnStart', () => {
+    it('closes every waiting row to expired and leaves other statuses alone', async () => {
+      const closingClassId = await makeClass('in_progress', 2);
+      await prisma.waitlistEntry.createMany({
+        data: [
+          { classId: closingClassId, studentId: studentIds[0]!, position: 1, status: 'waiting' },
+          { classId: closingClassId, studentId: studentIds[1]!, position: 2, status: 'removed' },
+          { classId: closingClassId, studentId: studentIds[2]!, position: 3, status: 'promoted' },
+        ],
+      });
+
+      const closed = await prisma.$transaction((tx) => closeQueueOnStart(tx, closingClassId));
+      expect(closed).toBe(1);
+
+      const rows = await prisma.waitlistEntry.findMany({
+        where: { classId: closingClassId },
+        orderBy: { position: 'asc' },
+        select: { position: true, status: true },
+      });
+      // Three distinct statuses, so no off-by-one predicate reproduces this.
+      // `removed` and `promoted` are BOTH present because a helper that wrote
+      // every row, or that keyed on `not: 'expired'`, would pass against
+      // either one alone.
+      expect(rows).toEqual([
+        { position: 1, status: 'expired' },
+        { position: 2, status: 'removed' },
+        { position: 3, status: 'promoted' },
+      ]);
+
+      await prisma.waitlistEntry.deleteMany({ where: { classId: closingClassId } });
+      await prisma.class.delete({ where: { id: closingClassId } });
+    });
+
+    it('returns 0 and writes nothing when there is no queue', async () => {
+      const closingClassId = await makeClass('in_progress', 2);
+      const closed = await prisma.$transaction((tx) => closeQueueOnStart(tx, closingClassId));
+      expect(closed).toBe(0);
+      await prisma.class.delete({ where: { id: closingClassId } });
+    });
+
+    it('leaves another class queue untouched', async () => {
+      const mineClassId = await makeClass('in_progress', 2);
+      const theirsClassId = await makeClass('open', 2);
+      await prisma.waitlistEntry.createMany({
+        data: [
+          { classId: mineClassId, studentId: studentIds[0]!, position: 1, status: 'waiting' },
+          { classId: theirsClassId, studentId: studentIds[0]!, position: 1, status: 'waiting' },
+        ],
+      });
+
+      await prisma.$transaction((tx) => closeQueueOnStart(tx, mineClassId));
+
+      const other = await prisma.waitlistEntry.findFirstOrThrow({
+        where: { classId: theirsClassId },
+      });
+      expect(other.status).toBe('waiting');
+
+      await prisma.waitlistEntry.deleteMany({
+        where: { classId: { in: [mineClassId, theirsClassId] } },
+      });
+      await prisma.class.deleteMany({ where: { id: { in: [mineClassId, theirsClassId] } } });
+    });
   });
 });
 
