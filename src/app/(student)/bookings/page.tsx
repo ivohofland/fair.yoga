@@ -57,11 +57,16 @@ export default async function StudentBookingsPage() {
       // queue, which is the one thing it would be fatal to get wrong: a queue
       // only forms once a class fills.
       //
-      // One guard deliberately does NOT require `open`, and this predicate
-      // disables the only way to reach it once a queue has closed:
-      // `removeFromWaitlist` has no status check, so a student could leave a
-      // dead queue from the row this hides (`waitlist-entry-actions.tsx` is
-      // its sole call site). `closeQueueOnStart` and the three cancel paths
+      // One guard deliberately does NOT require `open`, and hiding the row
+      // here is now the second of two defences rather than the only one.
+      // `removeFromWaitlist` (sole call site `waitlist-entry-actions.tsx`)
+      // scopes its write to `status: 'waiting'`, so a DELETE sent from a
+      // stale render of this page — the class has since started and
+      // `closeQueueOnStart` has already flipped the row to `expired` — is
+      // refused as `NOT_FOUND` rather than overwriting it to `removed`, which
+      // would turn "never got in" into "withdrew". This predicate keeps the
+      // stale click from being offered; that guard is what makes it harmless
+      // when it happens anyway. `closeQueueOnStart` and the three cancel paths
       // are the drains now — #216 is no longer the only one, since this
       // branch also closes the `open -> in_progress` exits it used to leave
       // standing.
