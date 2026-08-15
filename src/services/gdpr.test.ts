@@ -29,7 +29,25 @@ const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
  * there is otherwise nothing for a counterparty to hold.
  */
 async function makeStudentWaitingInClass(
-  { waiting = true, registered = false }: { waiting?: boolean; registered?: boolean } = {},
+  {
+    waiting = true,
+    registered = false,
+    entryStatus = 'waiting',
+  }: {
+    waiting?: boolean;
+    registered?: boolean;
+    /**
+     * The status of the entry `waiting: true` creates. Defaults to `waiting`
+     * because that is what every caller wanted before `expired` had a writer.
+     *
+     * It matters that this is a knob rather than a constant: the erasure's
+     * `waitlistEntry.deleteMany` is unscoped by status, so its `Class` lock set
+     * has to cover entries of EVERY status, and a fixture that can only produce
+     * `waiting` rows cannot tell a correct lock set from one that merely
+     * happens to coincide with it.
+     */
+    entryStatus?: 'waiting' | 'promoted' | 'claimed' | 'expired' | 'removed';
+  } = {},
 ) {
   const suffix = `gdpr-lock-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   const teacher = await prisma.teacher.create({
@@ -88,7 +106,7 @@ async function makeStudentWaitingInClass(
   });
   if (waiting) {
     await prisma.waitlistEntry.create({
-      data: { classId: cls.id, studentId: student.id, position: 1, status: 'waiting' },
+      data: { classId: cls.id, studentId: student.id, position: 1, status: entryStatus },
     });
   }
   const registration = registered
@@ -342,6 +360,72 @@ let studentAccountId: string;
 
       await holder;
       expect(await erasing).toBe('returned');
+    } finally {
+      await cleanupStudentWaitingInClass(fixture);
+    }
+  }, 15_000);
+
+  /**
+   * The same lever as the test above, on a CLOSED entry — and it is the closed
+   * case this erasure got wrong.
+   *
+   * `waitlistEntry.deleteMany({ where: { studentId } })` deletes every entry the
+   * student holds, of every status. The `Class` lock set was built from a read
+   * scoped to `status: 'waiting'`. Those two sets coincided only by accident:
+   * before #216 nothing closed a queue when a class STARTED, so a student who
+   * never got in stayed `waiting` for ever and their class stayed in the lock
+   * set. `closeQueueOnStart` flips exactly those rows to `expired` — which is
+   * the fix — and in doing so dropped their classes out of the lock set while
+   * the delete went on deleting them.
+   *
+   * Unlocked is not theoretical here. `POST /api/registrations` resolves an
+   * `expired` entry when a teacher walks a queued student in, holding the class
+   * row while it does; an erasure landing in that window deleted the row out
+   * from under it, and the walk-in's `update` by id then raised `P2025` — which
+   * `classifyApiError` has no branch for, so a bare 500 with the whole
+   * registration rolled back.
+   *
+   * Without the widened lock set this test does not merely assert something
+   * weaker — it goes GREEN by returning immediately, because the erasure never
+   * asks for the row the holder is sitting on.
+   */
+  it('waits for a class row another transaction holds even when the erased entry is closed', async () => {
+    const fixture = await makeStudentWaitingInClass({ entryStatus: 'expired' });
+    const { studentId: fixtureStudentId, classId: fixtureClassId } = fixture;
+    try {
+      let holderReleased = false;
+
+      const holder = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${fixtureClassId} FOR UPDATE`;
+          await new Promise((r) => setTimeout(r, 900));
+          holderReleased = true;
+        },
+        { timeout: 10_000 },
+      );
+      await new Promise((r) => setTimeout(r, 150));
+
+      const erasing = deleteStudentAccount(prisma, fixtureStudentId).then(() => 'returned' as const);
+      const outcome = await Promise.race([
+        erasing,
+        new Promise<'waiting'>((r) => setTimeout(() => r('waiting'), 400)),
+      ]);
+
+      // Parked on the lock, not finished. This is the assertion a lock set
+      // scoped to `waiting` cannot satisfy: it would read 'returned' here.
+      expect(outcome).toBe('waiting');
+      expect(holderReleased).toBe(false);
+
+      await holder;
+      expect(await erasing).toBe('returned');
+
+      // And the entry is still gone afterwards. The widened lock set changes
+      // WHEN the delete happens, never whether it does — an erasure that locked
+      // more but erased less would be a worse bug than the one being fixed.
+      const remaining = await prisma.waitlistEntry.count({
+        where: { studentId: fixtureStudentId },
+      });
+      expect(remaining).toBe(0);
     } finally {
       await cleanupStudentWaitingInClass(fixture);
     }

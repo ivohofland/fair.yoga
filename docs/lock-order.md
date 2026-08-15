@@ -634,12 +634,33 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   wrong because it generalised from a counterparty that upserted
   `TeacherStudent` first — which is not where the registration route puts it.
 - **`deleteStudentAccount`** (`src/services/gdpr.ts`) — `Class`, looped via
-  `lockClassRow` over every class the student is `waiting` in (sorted
-  ascending; see "Ordering WITHIN `Class`"), hoisted ahead of every row write
-  by #174 task 5. Then `Registration`, `StudentPrivacy`, `TeacherStudent`,
-  `WaitlistEntry`, `Invitation` (anonymized in place, not deleted). Was
-  already `StudentPrivacy` before `TeacherStudent`; not the outlier on that
-  pair.
+  `lockClassRow` over every class the student holds a `WaitlistEntry` in, of
+  **any** status (sorted ascending; see "Ordering WITHIN `Class`"), hoisted
+  ahead of every row write by #174 task 5. Then `Registration`,
+  `StudentPrivacy`, `TeacherStudent`, `WaitlistEntry`, `Invitation`
+  (anonymized in place, not deleted). Was already `StudentPrivacy` before
+  `TeacherStudent`; not the outlier on that pair.
+
+  **Any status, not `waiting` only, and that is a fix rather than caution**
+  (#216/#182 whole-branch review). The `deleteMany` below is keyed on
+  `studentId` with no status scope, so a lock set scoped to `waiting` is
+  strictly smaller than the write set it is meant to gate. The two used to
+  coincide by accident: before #216 nothing closed a queue when a class
+  *started*, so a student who never got in stayed `waiting` for ever.
+  `closeQueueOnStart` flips exactly those rows to `expired`, which dropped
+  their classes out of the lock set while the delete went on deleting them —
+  and `POST /api/registrations` writes `expired` entries under the class row
+  lock when a teacher walks a queued student in, so the window was live, not
+  theoretical.
+
+  It is deliberately not narrowed to "statuses another writer can still
+  touch". `addToWaitlist` revives an existing entry of any status on a rejoin
+  (it updates back to `waiting` rather than creating), so no status here is
+  provably nobody else's to write. Write set equals lock set is the only form
+  of this that does not rest on such a claim staying true. Pinned by
+  "waits for a class row another transaction holds even when the erased entry
+  is closed" (`gdpr.test.ts`), which returns immediately rather than parking if
+  the lock set narrows again.
 
   It is the outlier on `WaitlistEntry`, though, and in **three** ways, not the
   one this entry used to name: it writes `Registration`, `StudentPrivacy` AND
@@ -647,13 +668,13 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   `WaitlistEntry` before all three. The whole-branch review of #174 added the
   two that were missing here.
 
-  What protects all three is the same thing, and it is partial. "`Class` is
-  the real gate" above applies, but only to the classes this function actually
-  locked — the ones the student was `waiting` in **as of its own read of that
-  set**. Its `waitlistEntry.deleteMany` is keyed on `studentId` alone, with no
-  class scope, so its `WaitlistEntry` write set is strictly larger than its
-  `Class` lock set: an entry that appears after that read is written but was
-  never gated. Both halves were reproduced directly against the real
+  What protects all three is the same thing, and it is partial — though
+  narrower now than it was. "`Class` is the real gate" above applies, but only
+  to the classes this function actually locked: the ones the student held an
+  entry in **as of its own read of that set**. Its `waitlistEntry.deleteMany`
+  is keyed on `studentId` alone, so the gap is now purely a TIME one — an entry
+  created after that read is written but was never gated. It used to be a
+  status one as well, which was the larger hole and is closed above. Both halves were reproduced directly against the real
   functions (#174 whole-branch review):
 
   - **Inside the gate — no cycle.** Student already `waiting` in the class:
