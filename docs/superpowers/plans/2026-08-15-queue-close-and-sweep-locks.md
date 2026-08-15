@@ -43,6 +43,23 @@ Vitest (three projects: `unit`, `components`, `integration`).
   sweep already accepts proves nothing.
 - **Never start or restart the dev server on :3000.** The user runs it; the
   `integration` project talks to it over HTTP.
+- **Test fixtures: hoist the expensive ones, sweep the cheap ones.** This is the
+  codebase's actual rule, and it is narrower than "hoist everything". Teachers, rooms,
+  teacherRooms and students are created once in `beforeAll` — they are shared and
+  costly. Per-test **classes** are created inline, because tests need different class
+  states and hoisting them would make tests share mutable rows.
+
+  What makes inline classes safe is the block's `afterAll` being a **catch-all**:
+  `class-transitions.test.ts:115-116` sweeps `class.deleteMany({ where: { teacherId } })`
+  and `teacherRoom.deleteMany({ where: { teacherId } })`, so a class from a test that
+  died before its own cleanup is still removed. A block whose `afterAll` deletes by an
+  explicit id list instead — as `waitlist.test.ts:302-315` did — leaks the class and
+  then dies on an FK violation at `teacherRoom.delete`.
+
+  **So: before adding an inline-class test to an existing block, check that block's
+  `afterAll` sweeps by `teacherId`. If it deletes by an id list, convert it first.**
+  The mutation protocol guarantees failing runs, so this is not hypothetical — it fired
+  on Task 1.
 - **Never `git add -A` or `git add .`** — stage exact paths. Quote paths containing
   parentheses: `"src/app/(student)/bookings/page.tsx"`.
 - **Commit per task.** The PR is rebase-merged; the commit-per-task history is the record.
