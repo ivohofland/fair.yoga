@@ -456,6 +456,97 @@ describe('POST /api/classes/[id]/transition', () => {
     expect(entry.status).toBe('removed');
   });
 
+  it('names the class as it stands when cancelled, not as first read', async () => {
+    const cls = await prisma.class.create({
+      data: {
+        teacherId: ownerId,
+        teacherRoomId,
+        classType: 'Hatha',
+        date: new Date('2099-01-01'),
+        startTime: '10:00',
+        durationMinutes: 60,
+        roomCost: 30,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 2,
+        maxStudents: 4,
+        status: 'open',
+      },
+    });
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId: waitStudentId, status: 'registered', tierAtBooking: 3 },
+    });
+    // CORRECTED after the first implementation attempt proved this test could
+    // not fail. The original line here was:
+    //     await prisma.class.update({ ..., data: { classType: 'Vinyasa' } });
+    // fully awaited BEFORE the request. That cannot exercise anything: the
+    // handler's own top-of-handler read (`route.ts:25`) then sees 'Vinyasa'
+    // too, so `cls` and the in-transaction re-read are identical and switching
+    // the interpolation between them is unobservable. The mutation in Step 5
+    // stayed green, and the implementer correctly refused to commit.
+    //
+    // A window is REQUIRED, and one is reachable. The handler reads `cls`,
+    // then awaits `parseBody`, then opens its transaction and CASes — so a
+    // write that lands after the read but before the CAS commits is exactly
+    // what `fresh` sees and `cls` does not.
+    //
+    // The deterministic lever is this suite's established one, not a new
+    // technique: a second client holds the `Class` row `FOR UPDATE` so the
+    // handler's CAS parks, and the rewrite lands while it is parked. Copy
+    // `announcements-api.test.ts` (~`:240-290`), which does this on a `Class`
+    // row; see also `payments-api.test.ts:361`, `registrations-api.test.ts:1130`
+    // and `account-api.test.ts:619`. It appears in eight integration files.
+    const holder = new PrismaClient();
+    let release!: () => void;
+    let locked!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    // The handshake, without which the lever is decorative: `$transaction`
+    // returns before its callback has run, and a fresh client must connect and
+    // start its engine first (50-200ms, measured in `announcements-api`), so
+    // the request could finish before the lock was ever taken.
+    const parked = new Promise<void>((r) => { locked = r; });
+    const holding = holder.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
+        locked();
+        await released;
+        // Lands while the handler is parked on its CAS: after the
+        // top-of-handler read, before the in-transaction re-read.
+        await tx.$executeRaw`UPDATE "Class" SET "classType" = 'Vinyasa' WHERE id = ${cls.id}`;
+      },
+      { timeout: 20_000 },
+    );
+    await parked;
+
+    const pending = transition(ownerToken, cls.id, { status: 'cancelled' });
+
+    // The lever is asserted, not assumed. If the request answered inside this
+    // second it never parked, the rewrite never interleaved, and a green run
+    // would prove nothing — which is precisely how the first version of this
+    // test passed against both the fix and its mutation.
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(settled).toBe(false);
+
+    release();
+    await holding;
+    const res = await pending;
+    expect(res.status).toBe(200);
+
+    const notice = await prisma.notification.findFirstOrThrow({
+      where: { relatedClassId: cls.id, type: 'class_cancelled', recipientType: 'student' },
+    });
+    expect(notice.body).toContain('Vinyasa');
+    expect(notice.body).not.toContain('Hatha');
+
+    await holder.$disconnect();
+
+    await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+    await prisma.registration.deleteMany({ where: { classId: cls.id } });
+    await prisma.class.delete({ where: { id: cls.id } });
+  });
+
   it('409s cancelling an already-cancelled class', async () => {
     const res = await transition(ownerToken, cancelClassId, { status: 'cancelled' });
     expect(res.status).toBe(409);

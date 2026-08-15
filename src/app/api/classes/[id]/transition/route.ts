@@ -63,37 +63,29 @@ export const POST = withErrorHandler(async (
       // `open` class, deliberately, so the inbox row is inert. A waitlisted
       // recipient has even less — their entry was closed to `removed` a few
       // lines above, which drops the class off `/bookings`.
+
+      // Re-read under the CAS above, which is this transaction's serialization
+      // point — not from `cls`, the handler's top-of-function read, which was
+      // taken before `parseBody`'s await and outside this transaction.
       //
-      // KNOWN RESIDUAL, recorded rather than fixed. `cls` is the read at the
-      // top of this handler, taken before `parseBody`'s await and outside this
-      // transaction — so these three fields are a snapshot, not the row as it
-      // stands here. `autoCancelClasses` deliberately re-reads inside its
-      // transaction under the row lock for exactly this reason, and says so.
-      // This route does not, and #200 is what made that matter: `date` and
-      // `startTime` are NOT in `ECONOMIC_FIELDS` (`lib/class-fields.ts`), so
-      // `settingsLocked` does not freeze them and a teacher can reschedule a
-      // booked open class. Reschedule inside the window and the notice names
-      // the old day. Before #200 only `classType` was stale, which changes far
-      // less often.
+      // `date` and `startTime` are NOT in `ECONOMIC_FIELDS`
+      // (`lib/class-fields.ts`), so `settingsLocked` does not freeze them and a
+      // teacher can reschedule a booked open class at any time. Reschedule
+      // while cancelling and the notice named the old day. `autoCancelClasses`
+      // (`class-transitions.ts`) re-reads inside its own transaction for
+      // exactly this reason and says so; this route now matches it.
       //
-      // Left as-is on purpose: no test can observe a window this narrow, the
-      // harm is wrong words rather than a wrong write, and an untestable
-      // behaviour change does not belong in a copy fix.
-      //
-      // Not filed as work — pointed at from #182 instead, which owns this
-      // mechanism for the sites where it corrupts a *decision* rather than a
-      // message. This route already satisfies #182's rule: its CAS above is
-      // status-predicated and status is the only input to the decision. If
-      // that issue's in-transaction re-read lands, doing the same here is
-      // about four lines (`tx.class.findUnique` after the CAS, interpolate
-      // from that) and needs no new lock, because the CAS is already the
-      // serialization point.
+      // No new lock: the CAS already holds this row.
+      const fresh = await tx.class.findUniqueOrThrow({
+        where: { id },
+        select: { classType: true, date: true, startTime: true },
+      });
       const notifications: CreateNotificationInput[] = [...registrations, ...waiting].map((r) => ({
         recipientType: 'student' as const,
         recipientId: r.studentId,
         type: 'class_cancelled' as const,
         title: 'Class cancelled',
-        body: `${cls.classType} class on ${formatDayHeader(cls.date)} at ${cls.startTime} has been cancelled by your teacher.`,
+        body: `${fresh.classType} class on ${formatDayHeader(fresh.date)} at ${fresh.startTime} has been cancelled by your teacher.`,
         relatedClassId: id,
       }));
       if (notifications.length > 0) {
