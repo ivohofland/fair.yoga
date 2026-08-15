@@ -104,10 +104,20 @@ export async function autoTransitionToInProgress(
           },
         });
         // Deleted, or no longer open — a concurrent cancel, completion or
-        // teacher action got here first. Not an error; the same outcome by a
-        // different route, which is why this returns `false` rather than
-        // logging, as `autoCancelClasses` does for the same case.
-        if (!fresh || fresh.status !== 'open') return false;
+        // teacher action got here first. The same outcome by a different route,
+        // so `debug`: worth being able to see when a sweep did nothing for
+        // forty classes, not worth paging anyone.
+        if (!fresh) {
+          log.debug({ classId: cls.id }, 'start sweep: class gone before the lock');
+          return false;
+        }
+        if (fresh.status !== 'open') {
+          log.debug(
+            { classId: cls.id, status: fresh.status },
+            'start sweep: no longer open',
+          );
+          return false;
+        }
 
         // Recomputed from `fresh`, not re-tested against the snapshot's
         // `start`. Re-testing the old instant is the defect wearing a lock.
@@ -116,7 +126,19 @@ export async function autoTransitionToInProgress(
           fresh.startTime,
           fresh.teacher.defaultTimezone,
         );
-        if (freshStart > currentTime) return false;
+        if (freshStart > currentTime) {
+          // The race the lock exists to catch: rescheduled between the snapshot
+          // and the lock. Expected and self-resolving — the next tick
+          // re-evaluates the new start — but `warn`, not `debug`, so the guard
+          // is visible when it fires. Its sibling `autoCompleteClasses` logs the
+          // identical race at `warn`; the two must not disagree about the same
+          // event.
+          log.warn(
+            { classId: cls.id, freshStart, currentTime },
+            'start sweep: class rescheduled after the snapshot, deferring',
+          );
+          return false;
+        }
 
         // Redundant with the `fresh.status` check above, kept anyway for the
         // reason `autoCancelClasses` keeps its own: it costs nothing inside a
@@ -126,7 +148,17 @@ export async function autoTransitionToInProgress(
           where: { id: cls.id, status: 'open' },
           data: { status: 'in_progress' },
         });
-        if (updated.count === 0) return false;
+        if (updated.count === 0) {
+          // This one is NOT benign, and it is the reason the others are logged
+          // quietly rather than not at all. `lockClassRow` above holds this row,
+          // and `fresh.status` was read as `open` UNDER that lock, so nothing
+          // can have changed it before this statement. A count of zero here
+          // means the lock did not do what every other sweep on this table
+          // assumes it does. `error`, and deliberately louder than the refusals
+          // around it.
+          log.error({ classId: cls.id }, 'start sweep: CAS lost under a held row lock');
+          return false;
+        }
 
         // #216. First of the three `open -> in_progress` exits. Atomic with
         // the CAS above: a class that started with its queue left standing is

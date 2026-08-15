@@ -206,15 +206,37 @@ describe('class transitions (DB, timezone-aware)', () => {
       },
     }) as unknown as PrismaClient;
 
-    const transitioned = await autoTransitionToInProgress(racing, new Date('2026-07-20T16:00:00Z'));
+    // The guard firing must be VISIBLE. Four outcomes return a bare `false`
+    // from inside that transaction, and in production the scheduler discards
+    // the sweep's return value entirely — so without a log line, forty skipped
+    // classes and a healthy sweep are indistinguishable in the only place an
+    // operator looks. `warn` matches what `autoCompleteClasses` does with the
+    // identical race; the two must not disagree about the same event.
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => log);
+    try {
+      const transitioned = await autoTransitionToInProgress(
+        racing,
+        new Date('2026-07-20T16:00:00Z'),
+      );
 
-    expect(hookCalls).toBe(1);
-    expect(transitioned).toBe(0);
+      expect(hookCalls).toBe(1);
+      expect(transitioned).toBe(0);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(updated.status).toBe('open');
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(updated.status).toBe('open');
 
-    await prisma.class.delete({ where: { id: cls.id } });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toMatchObject({ classId: cls.id });
+      // `error` is reserved here for the CAS losing under a held lock, which
+      // cannot happen on this path. Asserting its silence is what stops the
+      // reschedule branch being "fixed" by making everything loud.
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+      await prisma.class.delete({ where: { id: cls.id } });
+    }
   });
 
   /**
