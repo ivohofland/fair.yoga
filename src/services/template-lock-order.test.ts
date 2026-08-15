@@ -88,6 +88,12 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
   afterAll(async () => {
     if (studentIds.length) {
       await prisma.waitlistEntry.deleteMany({ where: { studentId: { in: studentIds } } });
+      // Explicit rather than left to the `Class` cascade below: the wide-row-set
+      // test's archive DELETES the classes its registration hangs off, so by
+      // this point the cascade may already have taken it — but only if that
+      // test reached its delete. On a mid-test failure it did not, and the
+      // student delete further down would then fail its FK.
+      await prisma.registration.deleteMany({ where: { studentId: { in: studentIds } } });
     }
     if (teacherIds.length) {
       await prisma.class.deleteMany({ where: { teacherId: { in: teacherIds } } });
@@ -231,8 +237,23 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
     await prisma.class.create({
       data: { ...classBase, id: highClassId, date: futureDate(jsDayOfWeek, 2) },
     });
+    // LOW is `draft`, HIGH is `open` — one of each of `SCHEDULED_STATUSES`,
+    // deliberately, and specifically `draft` on the row that must be locked
+    // FIRST for the order to hold.
+    //
+    // Both statuses are equally valid here (`draft` and `open` are both
+    // mutable to `syncTemplateInstances` and both delete candidates for the
+    // archive, so every count below is unchanged), but a fixture that used
+    // only `open` could not observe the pre-lock's status list at all.
+    // `archiveOrUnarchiveTemplate`'s pre-lock renders that list from
+    // `SCHEDULED_STATUSES` into raw SQL, and dropping `'draft'` from it left
+    // every test covering that function green while the deadlock reopened —
+    // measured during issue 180 task 4, and still true of this file until
+    // this line: with two `open` rows, a `'open'`-only pre-lock locks exactly
+    // what the full one locks. With LOW as `draft`, a narrowed list skips the
+    // row the erasure takes first, and the archive `it` below fails.
     await prisma.class.create({
-      data: { ...classBase, id: lowClassId, date: futureDate(jsDayOfWeek, 3) },
+      data: { ...classBase, id: lowClassId, status: 'draft', date: futureDate(jsDayOfWeek, 3) },
     });
 
     const student = await prisma.student.create({
@@ -358,6 +379,21 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       // assertion above plays for lock ORDER, this plays for lock EXISTENCE.
       const [aSettled, bSettled] = await Promise.allSettled([a, b]);
 
+      // SQLSTATE first, THEN the status check — and the order is the point.
+      // This side is where every pre-lock mutation actually lands (remove the
+      // `FOR UPDATE`, remove the `ORDER BY`, narrow the row set), so a bare
+      // `expect(status).toBe('fulfilled')` reports "expected 'rejected' to be
+      // 'fulfilled'" and names nothing: a `40P01`, a `55P03` and a broken
+      // fixture all look identical in the failure output. That made this
+      // file's own header claim — "Asserted by SQLSTATE, not by 'it passed'"
+      // — true of the erasure branch below and false of the branch that does
+      // the detecting. Asserting the reason first means a reverted pre-lock
+      // fails with the cycle named.
+      if (aSettled.status === 'rejected') {
+        const reason = String(aSettled.reason);
+        expect(reason).not.toMatch(/40P01|deadlock/i);
+        expect(reason).not.toMatch(/55P03/);
+      }
       expect(aSettled.status).toBe('fulfilled');
       if (aSettled.status === 'fulfilled') {
         // Both fixture instances are on the template's own day — only
@@ -379,12 +415,13 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       // guarantee rather than just shorten it) — a lock_timeout expiry means
       // the template edit did not happen, and that must fail this test, not
       // satisfy it.
+      // No `else` asserting `'fulfilled'`: `PromiseSettledResult` has exactly
+      // two states, so inside an `else` on `status === 'rejected'` that
+      // assertion cannot fail. It read as coverage and was not.
       if (bSettled.status === 'rejected') {
         const reason = String(bSettled.reason);
         expect(reason).not.toMatch(/40P01|deadlock/i);
         expect(reason).not.toMatch(/55P03/);
-      } else {
-        expect(bSettled.status).toBe('fulfilled');
       }
     },
     30_000,
@@ -584,11 +621,166 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
         // Point 5: the erasure side stays a genuine rejection check — it has
         // no transient-error catch of its own, so a rejection here would be a
         // real deadlock or lock-timeout, not a false negative to explain away.
+        // No `else` asserting `'fulfilled'` — see the sync test's own note:
+        // inside an `else` on `status === 'rejected'` it cannot fail.
         if (bSettled.status === 'rejected') {
           expect(String(bSettled.reason)).not.toMatch(/40P01|deadlock/i);
           expect(String(bSettled.reason)).not.toMatch(/55P03/);
-        } else {
-          expect(bSettled.status).toBe('fulfilled');
+        }
+      } finally {
+        warn.mockRestore();
+      }
+    },
+    30_000,
+  );
+
+  /**
+   * The archive pre-lock's ROW SET, which the two `it`s above cannot probe.
+   *
+   * They lock the same rows whether the pre-lock uses the full
+   * `scheduledWhere(templateId, { gt: today })` predicate or the narrower
+   * "deletable only" one (`AND NOT EXISTS (… charged Registration …)`),
+   * because their fixture creates no `Registration` rows at all — so that
+   * clause is vacuously true for both classes and the two predicates
+   * coincide. Narrowing the shipped pre-lock therefore left every test
+   * covering `archiveOrUnarchiveTemplate` green, which is not evidence the
+   * wide set is unnecessary; it is evidence the fixture cannot tell.
+   *
+   * This is the negative control that can. It was built and measured during
+   * issue 180 task 4's review, run as a throwaway, and then NOT committed —
+   * the spec called it "a mutation harness, not a regression guard". That
+   * reasoning does not hold up: both `it`s above are the same shape (each
+   * hooks `deleteStudentAccount`'s `lockClassRow` loop to land a write
+   * mid-transaction), and the design decision this protects is the branch's
+   * most-defended one — about forty lines of comment argue for the wide set,
+   * and narrowing it for performance is a natural-looking optimisation that
+   * silently reopens a reproduced `40P01`.
+   *
+   * The mechanism, and why it needs a charged registration specifically:
+   *
+   * 1. LOW carries a `registered` registration when the pre-lock runs, so a
+   *    NARROW pre-lock skips it — it is not a delete candidate yet.
+   * 2. The candidate read is hooked to cancel that registration from OUTSIDE
+   *    the archive transaction — `registration.updateMany` on `status` alone,
+   *    the same write `DELETE /api/registrations/[id]` makes, and like it one
+   *    that writes no FK column and so takes no `Class` row lock. That is what
+   *    lets it land while the archive holds locks.
+   * 3. The `deleteMany` re-evaluates its predicate at execution time (by
+   *    design), now matches LOW, and reaches for a row a narrow pre-lock never
+   *    held — out of order, against the erasure's ascending loop.
+   *
+   * Under the shipped wide pre-lock: `{ ok: true, deleted: 2, remaining: 0 }`.
+   * Under a narrowed one: `40P01` at the `deleteMany`, swallowed by
+   * `archiveOrUnarchiveTemplate`'s own `catch` into `{ ok: false, reason:
+   * 'busy' }` — which is why this asserts the positive shape and the absence
+   * of the lock-race log line, exactly as the archive `it` above does, and
+   * never a rejection.
+   */
+  it(
+    'does not deadlock when the archive pre-lock must cover a class that only becomes deletable mid-transaction',
+    async () => {
+      const { templateId, studentId, teacherId, lowClassId, highClassId } =
+        await makeTemplateWithTwoWaitedInstances();
+
+      const heapOrder = await prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM "Class" WHERE "templateId" = ${templateId}
+      `;
+      expect(heapOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
+
+      // A SECOND student, registered rather than waitlisted, so the erasure
+      // below (which erases the waitlisted one) leaves this row standing for
+      // the hook to cancel.
+      const local = uniqueSuffix();
+      const booker = await prisma.student.create({
+        data: {
+          firstName: 'Booked',
+          lastName: 'Student',
+          email: `template-lock-order-booker-${local}@test.local`,
+          claimedAt: new Date(),
+          account: { create: { email: `template-lock-order-booker-${local}@test.local` } },
+        },
+        select: { id: true, accountId: true },
+      });
+      studentIds.push(booker.id);
+      studentAccountIds.push(booker.accountId as string);
+
+      const reg = await prisma.registration.create({
+        data: { classId: lowClassId, studentId: booker.id, tierAtBooking: 3, status: 'registered' },
+        select: { id: true },
+      });
+
+      let lowLocked!: () => void;
+      const lowLockedPromise = new Promise<void>((resolve) => {
+        lowLocked = resolve;
+      });
+      const erasureDb = prisma.$extends({
+        query: {
+          async $queryRaw({ args, query }) {
+            const rows = await query(args);
+            if (args.values[0] === lowClassId) {
+              lowLocked();
+              await new Promise((r) => setTimeout(r, 300));
+            }
+            return rows;
+          },
+        },
+      }) as unknown as PrismaClient;
+
+      // The archive's own hook: cancel the charge once the candidate read has
+      // returned, from outside the archive's transaction.
+      let candidateReads = 0;
+      const archiveDb = prisma.$extends({
+        query: {
+          waitlistEntry: {
+            async findMany({ args, query }) {
+              candidateReads++;
+              const rows = await query(args);
+              if (candidateReads === 1) {
+                await prisma.registration.updateMany({
+                  where: { id: reg.id },
+                  data: { status: 'cancelled' },
+                });
+              }
+              return rows;
+            },
+          },
+        },
+      }) as unknown as PrismaClient;
+
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+      try {
+        const b = deleteStudentAccount(erasureDb, studentId);
+        await lowLockedPromise;
+        const a = archiveOrUnarchiveTemplate(archiveDb, templateId, teacherId, 'archived');
+
+        const [aSettled, bSettled] = await Promise.allSettled([a, b]);
+
+        const archiveLostRaceLog = warn.mock.calls.find(
+          (call) => call[1] === 'recurring class archive lost the template lock race',
+        );
+
+        expect(aSettled.status).toBe('fulfilled');
+        if (aSettled.status === 'fulfilled') {
+          // `deleted: 2` is the whole point: LOW was NOT a delete candidate
+          // when the pre-lock ran and became one before the delete, so a
+          // narrow pre-lock reaches it unheld. Both rows going means the
+          // re-evaluation really did pull it into scope.
+          expect(aSettled.value).toMatchObject({
+            ok: true,
+            action: 'archived',
+            deleted: 2,
+            remaining: 0,
+          });
+        }
+        expect(archiveLostRaceLog).toBeUndefined();
+        // The hook fired on the candidate read, not somewhere else — without
+        // this the cancel could have landed on an unrelated read and the
+        // race would never have been set up.
+        expect(candidateReads).toBe(1);
+
+        if (bSettled.status === 'rejected') {
+          expect(String(bSettled.reason)).not.toMatch(/40P01|deadlock/i);
+          expect(String(bSettled.reason)).not.toMatch(/55P03/);
         }
       } finally {
         warn.mockRestore();

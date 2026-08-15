@@ -391,6 +391,122 @@ describe('syncTemplateInstances', () => {
    * (`templateId`, `teacherId`, then the date), identified by its first bind
    * rather than by call order, the house rule this file's other hook follows.
    */
+  /**
+   * `id: { in: lockedIds }` on the re-read — the structural bound that makes
+   * this function's write set a subset of its lock set by construction rather
+   * than by an argument that two predicates agree.
+   *
+   * It is the property `class-template-lifecycle.ts` cites as the reason
+   * `syncTemplateInstances` does NOT share the archive's residual exposure,
+   * and the atomic-template-update spec's risk list leans on it in the same
+   * way — so it was reasoning holding up a documented risk assessment with
+   * nothing exercising it. Deleting the clause left every test in this file
+   * green.
+   *
+   * The case it excludes: under READ COMMITTED, with no predicate lock, a
+   * `Class` row inserted and committed by a concurrent
+   * `generateInstancesForTemplate` AFTER the pre-lock ran matches the
+   * re-read's `templateId`/`teacherId`/`date` predicate perfectly, while never
+   * having been in the pre-lock's result set. Without the id bound the
+   * propagation would write to a row it never locked.
+   *
+   * Simulated by inserting that row directly rather than by running the
+   * generator: the generator would take the template's claim lock and
+   * serialise behind this very transaction, which is the reason it cannot
+   * actually produce this interleaving in production. The insert is what a
+   * future writer with no such claim would do, and it is the shape the
+   * comment on the re-read describes.
+   *
+   * Harmless to exclude, which is why the assertion is "untouched" rather
+   * than "kept": a row the generator just created is already built from this
+   * template's current values, so skipping it costs nothing.
+   */
+  it('does not propagate to a class committed between the pre-lock and the re-read', async () => {
+    const raceTemplate = await prisma.classTemplate.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Race Flow',
+        dayOfWeek: 3, // Thursday (schema convention: 0 = Monday)
+        startTime: '08:00',
+        durationMinutes: 60,
+        roomCost: new Prisma.Decimal(20),
+        minRate: new Prisma.Decimal(15),
+        targetRate: new Prisma.Decimal(25),
+        minStudents: 2,
+        maxStudents: 10,
+        isActive: false,
+      },
+    });
+
+    const instanceBase = {
+      teacherId,
+      teacherRoomId,
+      templateId: raceTemplate.id,
+      classType: 'Race Flow',
+      startTime: '08:00',
+      durationMinutes: 60,
+      roomCost: new Prisma.Decimal(20),
+      minRate: new Prisma.Decimal(15),
+      targetRate: new Prisma.Decimal(25),
+      minStudents: 2,
+      maxStudents: 10,
+      status: 'open' as const,
+      settingsLocked: false,
+    };
+
+    const locked = await prisma.class.create({
+      data: { ...instanceBase, date: futureDate(dayInstanceWeekday(raceTemplate.dayOfWeek), 2) },
+    });
+
+    await prisma.classTemplate.update({
+      where: { id: raceTemplate.id },
+      data: { startTime: '14:45' },
+    });
+
+    // Inserted from OUTSIDE the sync transaction, after its pre-lock has run
+    // and before its re-read. A different date from `locked`, so the two
+    // cannot collide on `Class_teacher_slot_unique`.
+    let latecomerId: string | undefined;
+    const hookedPrisma = prisma.$extends({
+      query: {
+        async $queryRaw({ args, query }) {
+          const rows = await query(args);
+          if (args.values[0] === raceTemplate.id && !latecomerId) {
+            const latecomer = await prisma.class.create({
+              data: {
+                ...instanceBase,
+                date: futureDate(dayInstanceWeekday(raceTemplate.dayOfWeek), 3),
+              },
+            });
+            latecomerId = latecomer.id;
+          }
+          return rows;
+        },
+      },
+      // Same cast rationale as this file's other hooks.
+    }) as unknown as PrismaClient;
+
+    const result = await hookedPrisma.$transaction((tx) =>
+      syncTemplateInstances(tx, raceTemplate.id),
+    );
+
+    expect(latecomerId).toBeDefined();
+
+    // Only the pre-locked row was propagated to.
+    expect(result.synced).toBe(1);
+    const lockedAfter = await prisma.class.findUniqueOrThrow({ where: { id: locked.id } });
+    expect(lockedAfter.startTime).toBe('14:45');
+
+    // The latecomer was never locked, so it is never written — it keeps the
+    // value it was created with. Drop `id: { in: lockedIds }` and this becomes
+    // '14:45' with `synced: 2`.
+    const latecomerAfter = await prisma.class.findUniqueOrThrow({
+      where: { id: latecomerId as string },
+    });
+    expect(latecomerAfter.startTime).toBe('08:00');
+  });
+
   it('binds the pre-lock to UTC midnight, not the raw instant', async () => {
     let bound: unknown;
     const hookedPrisma = prisma.$extends({
