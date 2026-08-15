@@ -226,12 +226,22 @@ describe('class transitions (DB, timezone-aware)', () => {
       const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
       expect(updated.status).toBe('open');
 
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0]?.[0]).toMatchObject({ classId: cls.id });
-      // `error` is reserved here for the CAS losing under a held lock, which
-      // cannot happen on this path. Asserting its silence is what stops the
-      // reschedule branch being "fixed" by making everything loud.
-      expect(error).not.toHaveBeenCalled();
+      // Filtered to THIS class. `autoTransitionToInProgress` sweeps every open
+      // class in the shared unit database, so a bare call count asserts
+      // something about the whole database rather than about this fixture — one
+      // leaked class from a sibling would fail this for an unrelated reason.
+      expect(
+        warn.mock.calls.filter((c) => (c[0] as { classId?: string })?.classId === cls.id),
+      ).toHaveLength(1);
+      // `error` is reserved for the CAS losing under a held lock, which cannot
+      // happen on this path — and the sweep's per-class `catch` also logs at
+      // `error`, so its silence is what separates "the guard fired cleanly" from
+      // "the transaction threw and was swallowed". Both of those yield
+      // `transitioned === 0` and status `open`, so nothing else here can tell
+      // them apart.
+      expect(
+        error.mock.calls.filter((c) => (c[0] as { classId?: string })?.classId === cls.id),
+      ).toHaveLength(0);
     } finally {
       warn.mockRestore();
       error.mockRestore();
@@ -281,22 +291,48 @@ describe('class transitions (DB, timezone-aware)', () => {
       // sweep asks for the same row — otherwise this tests nothing.
       await new Promise((r) => setTimeout(r, 150));
 
-      const sweeping = autoTransitionToInProgress(prisma, new Date('2026-07-20T16:00:00Z'));
-      const settled = await Promise.race([
-        sweeping.then(() => true),
-        new Promise<false>((r) => setTimeout(() => r(false), 300)),
-      ]);
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+      try {
+        const sweeping = autoTransitionToInProgress(prisma, new Date('2026-07-20T16:00:00Z'));
+        const settled = await Promise.race([
+          sweeping.then(() => true),
+          new Promise<false>((r) => setTimeout(() => r(false), 300)),
+        ]);
 
-      // Asserted rather than assumed: without this the test cannot tell a
-      // sweep that waited from one that ran before the holder ever locked.
-      expect(settled).toBe(false);
-      expect(holderCommitted).toBe(false);
+        // Asserted rather than assumed: without this the test cannot tell a
+        // sweep that waited from one that ran before the holder ever locked.
+        expect(settled).toBe(false);
+        expect(holderCommitted).toBe(false);
 
-      await holder;
-      expect(await sweeping).toBe(0);
+        await holder;
+        expect(await sweeping).toBe(0);
 
-      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-      expect(updated.status).toBe('open');
+        const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+        expect(updated.status).toBe('open');
+
+        // POSITIVE evidence that the locked re-read is what refused, and the
+        // only assertion here that cannot be satisfied by accident.
+        //
+        // Everything above is also satisfied by a second path: if the sweep's
+        // own `findMany` happens to land AFTER the holder commits — which a
+        // starved connection pool produces — the outer pre-filter sees the new
+        // date, `continue`s, and returns 0 with the class still `open`, exactly
+        // as a correct run does. `settled` is still false, because the sweep
+        // itself was slow. Reproduced against a lockless mutant with a 600ms
+        // delay injected on that read: every other assertion passed. The test
+        // degrades to a tautology rather than flaking, which is worse — CI stays
+        // green while the guard is gone.
+        //
+        // This line only fires if execution reached the re-read inside the
+        // transaction, which is behind the lock.
+        const ours = warn.mock.calls.filter(
+          (c) => (c[0] as { classId?: string })?.classId === cls.id,
+        );
+        expect(ours).toHaveLength(1);
+        expect(ours[0]?.[1]).toBe('start sweep: class rescheduled after the snapshot, deferring');
+      } finally {
+        warn.mockRestore();
+      }
     } finally {
       await prisma.class.delete({ where: { id: cls.id } });
     }
@@ -996,9 +1032,12 @@ describe('class transitions (DB, timezone-aware)', () => {
       // the class's new end time — so it must not page anyone. Every OTHER
       // refusal reason still goes to `error`, which is why both are asserted:
       // downgrading the whole branch would pass a `warn`-only check.
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0]?.[0]).toMatchObject({ classId: cls.id });
-      expect(error).not.toHaveBeenCalled();
+      expect(
+        warn.mock.calls.filter((c) => (c[0] as { classId?: string })?.classId === cls.id),
+      ).toHaveLength(1);
+      expect(
+        error.mock.calls.filter((c) => (c[0] as { classId?: string })?.classId === cls.id),
+      ).toHaveLength(0);
     } finally {
       warn.mockRestore();
       error.mockRestore();

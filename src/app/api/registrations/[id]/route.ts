@@ -112,9 +112,12 @@ export const PUT = withErrorHandler(async (
   // class that had enough students. Moves OUT are harmless — the count reads
   // too high and the class merely survives a sweep, a one-tick delay.
   //
-  // `late_cancel -> attended` is the only accepted transition that moves INTO
-  // the set, and it is refused only while the class is `open`, because that is
-  // the only window in which the race exists: `autoCancelClasses` both selects
+  // TWO accepted transitions move INTO the set, not one: `late_cancel ->
+  // attended` and `late_cancel -> no_show`, because `no_show` is in
+  // `ACTIVE_REGISTRATION_STATUSES` too. That is why this scopes the SOURCE
+  // rather than the target — keying it on `attended` would leave the other one
+  // open with every test still green. Both are refused only while the class is
+  // `open`, because that is the only window in which the race exists: `autoCancelClasses` both selects
   // and CASes on `status: 'open'`. Once the class has started, a student who
   // late-cancelled and turned up anyway is the teacher's call to record, and
   // costs nothing to allow — `late_cancel` and `attended` are both in

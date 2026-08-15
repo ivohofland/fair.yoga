@@ -287,9 +287,11 @@ export async function autoCancelClasses(
         // — a one-tick delay, the same cost as a stale pre-filter above.
         //
         // `PUT` is closed too, and closed exactly where the risk is. Its
-        // `updateMany` WHERE (`registrations/[id]/route.ts`) refuses the one
-        // accepted transition that moves INTO the counted set,
-        // `late_cancel -> attended`, while the class is still `open` — which
+        // `updateMany` WHERE (`registrations/[id]/route.ts`) scopes the SOURCE,
+        // so it refuses every move INTO the counted set — both
+        // `late_cancel -> attended` and `late_cancel -> no_show`, since
+        // `no_show` is in the set as well — while the class is still `open`,
+        // which
         // is the whole of this sweep's reach, since it both selects and CASes
         // on `status: 'open'`. Once a class has started, that same move is
         // allowed and cannot affect this count, because this sweep will never

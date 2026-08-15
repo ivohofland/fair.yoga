@@ -1030,10 +1030,13 @@ describe('registration writes return no stored income tier', () => {
 
 describe('PUT /api/registrations/[id] — attendance is scoped by source status (#182)', () => {
   /**
-   * The ONE move this endpoint refuses, and only while the class is still
-   * `open`. `late_cancel` is outside `ACTIVE_REGISTRATION_STATUSES` and
-   * `attended` is inside it, so this is the only transition the schema accepts
-   * that RAISES the seat count — and a rise landing between
+   * The moves this endpoint refuses, and only while the class is still `open`.
+   *
+   * `late_cancel` is outside `ACTIVE_REGISTRATION_STATUSES`; `attended` AND
+   * `no_show` are both inside it. So there are TWO schema-accepted transitions
+   * that raise the seat count, not one — a fact worth pinning, because the
+   * guard works by scoping the SOURCE and would silently lose half its coverage
+   * if anyone re-keyed it on the target. A rise landing between
    * `autoCancelClasses`' count and its CAS cancels a class that had enough
    * students. That sweep selects `status: 'open'`, so `open` is the entire
    * window in which the race exists.
@@ -1047,6 +1050,33 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
       body: JSON.stringify({ status: 'attended' }),
+    });
+    expect(res.status).toBe(409);
+    // The MESSAGE, not just the code. The defect this replaced was a refusal
+    // whose reason never reached the teacher, so a 409 with unhelpful copy
+    // would be only half a fix — and swapping the two `respondError` bodies in
+    // the route is otherwise green.
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toContain('once the class has started');
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
+    expect(after.status).toBe('late_cancel');
+  });
+
+  /**
+   * The second half of that pair, and the reason it is a separate test: keying
+   * the guard on `parsed.data.status === 'attended'` — a natural-looking
+   * simplification — passes every other test in this file while reopening the
+   * `autoCancelClasses` race through this transition.
+   */
+  it('409s marking a late-cancelled student a no-show while the class is still open', async () => {
+    const classId = await makeClass(4);
+    const reg = await prisma.registration.create({
+      data: { classId, studentId: studentIds[0]!, status: 'late_cancel', tierAtBooking: 3 },
+    });
+    const res = await fetch(`${BASE_URL}/api/registrations/${reg.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
+      body: JSON.stringify({ status: 'no_show' }),
     });
     expect(res.status).toBe(409);
     const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });

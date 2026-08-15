@@ -671,7 +671,10 @@ describe('POST /api/classes/[id]/transition', () => {
       // deleted this row, and a `delete` would throw P2025 out of the cleanup.
       await prisma.class.deleteMany({ where: { id: cls.id } });
     }
-  });
+    // Explicit: this test sleeps 1s by design and then makes a full Next.js
+    // round trip, against a 5s default that the suite has already been observed
+    // to exceed under cross-project Postgres contention.
+  }, 15_000);
 
   it('409s cancelling an already-cancelled class', async () => {
     const res = await transition(ownerToken, cancelClassId, { status: 'cancelled' });

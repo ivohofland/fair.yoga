@@ -390,6 +390,7 @@ describe('GET /class/[id] (page) — the waitlist count', () => {
     const inProgressCountClassId = await makeClass(`w199-inprog-count-${suffix}`, 'in_progress', 5);
     const waitingHere = await makeStudent('inprog-waiting');
     const expiredHere = await makeStudent('inprog-expired');
+    const removedHere = await makeStudent('inprog-removed');
     await prisma.waitlistEntry.createMany({
       data: [
         { classId: inProgressCountClassId, studentId: waitingHere.id, position: 1, status: 'waiting' },
@@ -399,6 +400,19 @@ describe('GET /class/[id] (page) — the waitlist count', () => {
           position: 2,
           status: 'expired',
           promotedAt: new Date(),
+        },
+        // The third row is what makes this a boundary rather than a total.
+        // `removed` is deliberately OUTSIDE `CLAIMABLE_WAITLIST_STATUSES` — that
+        // student left, so no walk-in can resolve them — and the count beside
+        // the **Add walk-in** button must agree with what the button can
+        // actually consume. Without this row, widening the page's count to
+        // every status is green while the resolver stays narrow, and those two
+        // disagreeing is precisely the #216 regression.
+        {
+          classId: inProgressCountClassId,
+          studentId: removedHere.id,
+          position: 3,
+          status: 'removed',
         },
       ],
     });
@@ -420,6 +434,8 @@ describe('GET /class/[id] (page) — the waitlist count', () => {
     // was actually counted.
     expect(html).toContain("2 didn't get a spot");
     expect(html).not.toContain('2 on waitlist');
+    // Three entries exist; only the two claimable ones are counted.
+    expect(html).not.toContain("3 didn't get a spot");
   });
 
   it('drops the count once the class can no longer consume its queue', async () => {

@@ -742,11 +742,12 @@ export async function handleSpotFreed(
   // they were WAITING in, so a class they were registered in but not queued
   // in is written unlocked too.
   //
-  // Only attendance could ever move a row INTO the counted set (`late_cancel
-  // → attended`); the other two only move rows out, which makes the count too
-  // high and this branch too quiet — the safe direction.
+  // Only attendance could ever move a row INTO the counted set — from
+  // `late_cancel` to either `attended` or `no_show`, both of which are in it.
+  // The other two writers only move rows out, which makes the count too high
+  // and this branch too quiet: the safe direction.
   //
-  // That one move is closed STRUCTURALLY, not by timing:
+  // Those moves are closed STRUCTURALLY, not by timing:
   // `PUT /api/registrations/[id]` scopes its write so `late_cancel → attended`
   // is refused while the class is `open`, and this branch only ever runs on an
   // `open` class. Once a class starts the move is allowed, and by then this

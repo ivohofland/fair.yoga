@@ -18,6 +18,24 @@ import {
 // We use string literals matching the Prisma ClassStatus enum values.
 // This keeps tests independent of the Prisma client being generated.
 
+/**
+ * `CompletionTiming` is REQUIRED, and this is what enforces it.
+ *
+ * The union's whole argument is that silence must not mean "skip the clock" —
+ * but a default (`timing: CompletionTiming = { finishedEarly: true }`) restores
+ * exactly that and passes `tsc` and every runtime test, because no call site
+ * omits the argument. Only an unused `@ts-expect-error` can catch it: this
+ * function is never called, and `tsconfig.json` includes every `.ts` in the
+ * repo, so weakening the signature fails the build on this line rather than
+ * leaving a green suite. Same instrument, same reason, as
+ * `_theBrandRejectsABareClient` in `lib/db-locks.test.ts`.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _completionTimingIsRequired(db: PrismaClient): Promise<void> {
+  // @ts-expect-error Omitting the timing must never mean "do not check the clock".
+  await completeClass(db, 'never-called');
+}
+
 describe('VALID_TRANSITIONS', () => {
   it('defines transitions for every ClassStatus value', () => {
     const allStatuses = [
@@ -939,6 +957,22 @@ describe('completeClass (DB)', () => {
    * derives `startTime` from a counter, so a hardcoded time would pin the wrong
    * minute as soon as another test is added ahead of it.
    */
+  /**
+   * The `Number.isNaN` guard. An `Invalid Date` is truthy and every comparison
+   * against it is false, so without this check a broken clock passes straight
+   * through the timing guard and completes the class — writing `Payment` rows.
+   * Deleting the check is otherwise green.
+   */
+  it('throws rather than completing when requireEndedBy is not a real date', async () => {
+    const cls = await makeClass({ status: 'in_progress' });
+    await expect(
+      completeClass(prisma, cls.id, { requireEndedBy: new Date('not-a-date') }),
+    ).rejects.toThrow(TypeError);
+
+    const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(unchanged.status).toBe('in_progress');
+  });
+
   it('completes a class at exactly its end instant, not one tick later', async () => {
     const cls = await makeClass({ status: 'in_progress' });
     const row = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
@@ -975,6 +1009,56 @@ describe('completeClass (DB)', () => {
     const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
     expect(updated.status).toBe('completed');
   });
+
+  /**
+   * `setLockTimeout` in `transitionClass`, which was the entire subject of the
+   * commit that added it and which nothing pinned — deleting the call passed
+   * 1172 unit and integration tests.
+   *
+   * `transitionClass` takes its `Class` row lock through the CAS rather than
+   * through `lockClassRow`, so it inherited no per-statement bound. Once the
+   * CAS moved inside an interactive transaction that mattered: an unbounded
+   * wait becomes Prisma's 5s budget expiring mid-transaction (`P2028`, which
+   * `classifyApiError` answers with a 503 the caller cannot act on) instead of
+   * the 2s `55P03` every sibling gets and which maps to retry advice.
+   *
+   * The bounds are deliberately loose, as this repo's sibling lock-timeout
+   * tests are (`class-generator.test.ts`): the lower one proves it really
+   * waited on the row rather than sailing through, the upper that it gave up on
+   * the 2s bound rather than Prisma's 5s. Neither pins the bound's VALUE, which
+   * belongs to `db-locks.ts`.
+   */
+  it('gives up on the 2s bound when another transaction holds the class row', async () => {
+    const cls = await makeClass({ status: 'open' });
+    let release!: () => void;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
+        await held;
+      },
+      { timeout: 20_000 },
+    );
+    await new Promise((r) => setTimeout(r, 150));
+
+    try {
+      const startedAt = Date.now();
+      await expect(transitionClass(prisma, cls.id, 'in_progress')).rejects.toThrow();
+      const waited = Date.now() - startedAt;
+
+      expect(waited).toBeGreaterThan(1_000);
+      expect(waited).toBeLessThan(4_000);
+
+      const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(unchanged.status).toBe('open');
+    } finally {
+      release();
+      await holder;
+    }
+  }, 20_000);
 
   it('still completes early for a teacher, who passes no requireEndedBy', async () => {
     // The option is what makes the sweep strict; omitting it must NOT become
