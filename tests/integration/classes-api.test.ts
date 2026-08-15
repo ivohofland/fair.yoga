@@ -237,8 +237,12 @@ afterAll(async () => {
   // cleanup, leaving a class that still references `teacherRoomId` and would
   // fail the `teacherRoom.deleteMany` below on an FK violation. Same shape as
   // `class-lifecycle.test.ts`'s `transitionClass (DB)` afterAll guards
-  // against. Waitlist entries first, same reason as that block's comment:
-  // they FK-reference the class.
+  // against. The waitlist entries are deleted too, but not because they
+  // FK-reference the class: `WaitlistEntry.class` is `onDelete: Cascade`
+  // (`prisma/schema.prisma:575`), so an entry disappears with its class
+  // whether or not this line runs. It is harmless and mildly defensive,
+  // nothing more — the actual FK risk below is the surviving `Class` row
+  // against `teacherRoom`/`room`, which is what the ordering above guards.
   if (ownerId) {
     await prisma.waitlistEntry.deleteMany({ where: { class: { teacherId: ownerId } } });
     await prisma.class.deleteMany({ where: { teacherId: ownerId } });

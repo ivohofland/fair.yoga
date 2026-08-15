@@ -311,13 +311,15 @@ describe('transitionClass (DB)', () => {
   });
 
   afterAll(async () => {
-    // WaitlistEntry must go first: it FK-references Class, and the 'closes
-    // the waitlist...' test below is the first in this block to create one —
-    // left out, it blocks `class.deleteMany` below on every run, including
-    // the mutation-tested failing ones, and leaks this whole fixture set into
-    // the shared test database. Same fix as `completeClass (DB)`'s afterAll
-    // below and `addToWaitlist + removeFromWaitlist (DB)`'s in
-    // waitlist.test.ts.
+    // Not because it blocks `class.deleteMany`: `WaitlistEntry.class` is
+    // `onDelete: Cascade` (`prisma/schema.prisma:575`), so a waitlist row
+    // disappears with its class whether or not this line ever runs. What
+    // actually blocks teardown is the surviving `Class` row itself, via the
+    // plain `Class.teacherRoomId` FK — `class.deleteMany` below has to run
+    // before `teacherRoom.deleteMany`/`room.delete` further down, or those
+    // fail on the FK instead. Kept anyway: harmless, and mildly defensive.
+    // Same shape as `completeClass (DB)`'s afterAll below and
+    // `addToWaitlist + removeFromWaitlist (DB)`'s in waitlist.test.ts.
     await prisma.waitlistEntry.deleteMany({ where: { class: { teacherId } } });
     // Clean up all classes created during tests, then fixtures
     await prisma.class.deleteMany({ where: { teacherId } });
@@ -667,11 +669,13 @@ describe('completeClass (DB)', () => {
     // Clean up in dependency order: waitlist entries → payments → registrations → class → students → teacherRoom → room → teacher.
     // Filtered by teacherId, not just the fixed `classId`, so this also
     // catches the extra classes `makeClass` creates in the lock tests below.
-    // WaitlistEntry must go first: it FK-references Class, and the
-    // 'closes the waitlist...' test above is the first in this block to
-    // create one — left out, it blocks `class.deleteMany` below on every run,
-    // including the mutation-tested failing ones, and leaks this whole
-    // fixture set into the shared test database.
+    // Not because it blocks `class.deleteMany`: `WaitlistEntry.class` is
+    // `onDelete: Cascade` (`prisma/schema.prisma:575`), so a waitlist row
+    // disappears with its class whether or not this line ever runs. What
+    // actually blocks teardown is the surviving `Class` row itself, via the
+    // plain `Class.teacherRoomId` FK — `class.deleteMany` below has to run
+    // before `teacherRoom.delete` further down, or that fails on the FK
+    // instead. Kept anyway: harmless, and mildly defensive.
     await prisma.waitlistEntry.deleteMany({ where: { class: { teacherId } } });
     await prisma.payment.deleteMany({
       where: { registration: { class: { teacherId } } },

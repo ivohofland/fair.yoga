@@ -39,13 +39,16 @@ export default async function StudentBookingsPage() {
       },
     }),
     prisma.waitlistEntry.findMany({
-      // #199. The entry's own status is not enough: nothing closes the queue
-      // when a class leaves `open` by starting (#216), so a `waiting` row
-      // outlives its class and renders as "position 2" on a class that will
-      // never take another student. Positive, not `not: 'cancelled'` — `open`
-      // is the predicate `addToWaitlist`, `promoteNext`, `claimSpot` and
-      // `handleSpotFreed` all already require, and a negative predicate would
-      // need extending for every terminal state added later.
+      // #199. The entry's own status is not enough on its own: `closeQueueOnStart`
+      // (#216) now closes the queue the moment a class leaves `open` by
+      // starting, but this predicate still earns its place — it guards
+      // pre-existing rows from before #216 shipped, and it is belt-and-braces
+      // against any future path that moves a class out of `open` without
+      // going through the three call sites #216 covers. Positive, not
+      // `not: 'cancelled'` — `open` is the predicate `addToWaitlist`,
+      // `promoteNext`, `claimSpot` and `handleSpotFreed` all already require,
+      // and a negative predicate would need extending for every terminal
+      // state added later.
       //
       // `open` covers a full class: CLAUDE.md describes the lifecycle as
       // `open → full → in_progress`, but `ClassStatus` has no `full` — a class
@@ -54,11 +57,14 @@ export default async function StudentBookingsPage() {
       // queue, which is the one thing it would be fatal to get wrong: a queue
       // only forms once a class fills.
       //
-      // One guard deliberately does NOT require `open`, and this change
-      // disables the only way to reach it: `removeFromWaitlist` has no status
-      // check, so a student could leave a dead queue from the row this now
-      // hides (`waitlist-entry-actions.tsx` is its sole call site). Nothing
-      // else can close those entries — #216 is now the only drain.
+      // One guard deliberately does NOT require `open`, and this predicate
+      // disables the only way to reach it once a queue has closed:
+      // `removeFromWaitlist` has no status check, so a student could leave a
+      // dead queue from the row this hides (`waitlist-entry-actions.tsx` is
+      // its sole call site). `closeQueueOnStart` and the three cancel paths
+      // are the drains now — #216 is no longer the only one, since this
+      // branch also closes the `open -> in_progress` exits it used to leave
+      // standing.
       where: { studentId: session.studentId, status: 'waiting', class: { status: 'open' } },
       include: {
         class: {

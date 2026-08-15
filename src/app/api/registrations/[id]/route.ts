@@ -102,6 +102,13 @@ export const PUT = withErrorHandler(async (
   // change who is billed. There is a test pinning this; it is a product
   // requirement, not an oversight.
   //
+  // The UI cannot reach this allowance yet — `AttendanceList` only renders
+  // under `showCheckin` (`(teacher)/class/[id]/page.tsx`), which goes false
+  // within about a minute of the class ending, once `autoCompleteClasses`
+  // flips it to `completed`. That gap is UI work, filed separately as issue
+  // #TBD (number to be back-filled once it is filed) — this guard is what
+  // makes building it safe, not evidence the allowance was never used.
+  //
   // No guard on class TIME either, and that is also deliberate: check-in
   // renders on an `open` class within 15 minutes of its start
   // (`(teacher)/class/[id]/page.tsx`), so attendance before the class begins

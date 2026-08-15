@@ -103,6 +103,16 @@ export default async function ClassDetailPage({
 
   // Check-in available: in_progress, or open within 15 min of start
   // (class start resolved in the teacher's timezone)
+  //
+  // This expression IS the gap issue #TBD (number to be back-filled once
+  // filed) is about: `autoCompleteClasses` flips a class to `completed`
+  // within 60 seconds of its scheduled end, `showCheckin` goes false the
+  // moment that happens, and `AttendanceList` below stops rendering — so a
+  // teacher mid-checklist loses the ability to finish it about a minute
+  // after the class ends, every class. The PUT route's guard
+  // (`registrations/[id]/route.ts`) keeps `completed` writable precisely so
+  // that gap can be closed without a lock-discipline change; this line is
+  // where the UI fix has to start.
   const classStart = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
   const minutesToStart = (classStart.getTime() - now) / 60_000;
   const showCheckin = cls.status === 'in_progress' || (cls.status === 'open' && minutesToStart <= 15);

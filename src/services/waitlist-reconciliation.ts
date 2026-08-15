@@ -160,18 +160,31 @@ export async function reconcileWaitlists(
   // Start from the waiting entries, not from the classes: most classes have no
   // queue, and this is the narrowest set that can possibly need reconciling.
   //
-  // `class: { status: 'open' }` is not a duplicate of the filter below — it is
-  // what BOUNDS this set. Nothing closes a queue when a class COMPLETES:
-  // `class-lifecycle.ts` never touches `WaitlistEntry`. Six writers mark
-  // entries `removed` (`removeFromWaitlist`, `promoteNext`'s stale-head drain,
-  // `withdrawWaitingEntriesForTeacher`, `autoCancelClasses`, the manual-cancel
-  // transition route, and `deleteTeacherAccount`) and every one of them runs on
-  // a cancellation, a withdrawal or an erasure — never on completion. So a
-  // class that simply runs full with an unfulfilled queue leaves its `waiting`
-  // rows `waiting` forever, and completed classes are never deleted. Without
-  // this join the candidate list would grow monotonically for the life of the
-  // deployment and be rebuilt, and passed inline to the queries below, every
-  // sixty seconds — on the single 2 GB VPS this project is pinned to.
+  // `class: { status: 'open' }` is not a duplicate of the filter below — it
+  // USED TO be what BOUNDS this set. Since #216 it is a cost bound rather
+  // than a correctness guard: removing it fails no test by design (#222).
+  // Before #216, nothing closed a queue when a class left `open` by starting
+  // — `class-lifecycle.ts` never touched `WaitlistEntry` on that path, and a
+  // queue only forms at `maxStudents`, so "a full class that starts" is the
+  // ordinary case, not an edge one — so the candidate list grew
+  // monotonically for the life of the deployment, rebuilt and passed inline
+  // to the queries below every sixty seconds, on the single 2 GB VPS this
+  // project is pinned to.
+  //
+  // `closeQueueOnStart` (`waitlist.ts`, #216) closes that growth at the
+  // source now: atomic with each of the three `open -> in_progress` exits
+  // (`autoTransitionToInProgress`, `transitionClass`, and `completeClass`'s
+  // inline bump when a teacher completes an `open` class directly), it
+  // writes `expired` over every `waiting` row before the class can leave
+  // `open` any way but to `cancelled`. Seven writers now move a `waiting`
+  // row out of the queue: `removeFromWaitlist`, `promoteNext`'s stale-head
+  // drain, `withdrawWaitingEntriesForTeacher`, `autoCancelClasses`, the
+  // manual-cancel transition route and `deleteTeacherAccount` write
+  // `removed` on a cancellation, a withdrawal or an erasure; `closeQueueOnStart`
+  // writes `expired` on the class starting. The join above is kept anyway —
+  // it still narrows the scan to classes whose queue could still matter,
+  // which is worth avoiding even though nothing downstream depends on it for
+  // correctness any more.
   //
   // `groupBy`, not `findMany({ distinct })`: Prisma does not compile `distinct`
   // into SQL. It selects the rows (plus `id`, which it needs to compare) and

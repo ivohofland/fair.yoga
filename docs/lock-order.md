@@ -224,6 +224,7 @@ full, with the class each one's notifications carry:
 |---|---|
 | `deleteTeacherAccount` (`gdpr.ts`) | one — the loop's current class (the named exception above) |
 | `autoCancelClasses` (`class-transitions.ts`) | one — `cls.id`, and one transaction per class |
+| `autoTransitionToInProgress` (`class-transitions.ts`) | one — `cls.id`, and one transaction per class |
 | `completeClass` (`class-lifecycle.ts`) | one — `cls.id` |
 | `promoteNext` (`waitlist.ts`) | one — `classId` |
 | `claimSpot` (`waitlist.ts`) | one — `classId` |
@@ -697,10 +698,23 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   `lockClassRow`, then `Registration`, `Payment`. `transitionClass`'s own
   docblock names this and `autoCancelClasses`
   as the two sites that read more state than a bare status under the
-  decision, and take the lock instead of a plain CAS for that reason.
+  decision, and take the lock instead of a plain CAS for that reason. Since
+  #216/#182 this is also where `autoCompleteClasses`' timing decision lives:
+  `autoCompleteClasses` itself takes no lock of its own — its optional
+  `requireEndedBy` is compared against the fresh, locked row's recomputed end
+  time inside this function, under the same `lockClassRow` that already
+  guards the status re-read, rather than in a second lock the sweep would
+  otherwise need to take.
 - **`autoCancelClasses`** (`src/services/class-transitions.ts`) — `Class` via
   `lockClassRow` (#174 task 6), then a `Registration` count read, then the
   CAS `class.updateMany`. Matches `transitionClass`'s docblock.
+- **`autoTransitionToInProgress`** (`src/services/class-transitions.ts`) —
+  `Class` via `lockClassRow` (#216/#182), then a fresh re-read of `status`,
+  `date` and `startTime` to recompute the class's start instant from the
+  locked row rather than the pre-transaction snapshot, then the CAS
+  `class.updateMany`, then `closeQueueOnStart` (`waitlist.ts`) — atomic with
+  the CAS, inside the same lock. Same shape as `autoCancelClasses` immediately
+  above: one row lock at a time, one transaction per class.
 - **`addToWaitlist`** (`src/services/waitlist.ts`) — `Class`, then
   `TeacherStudent` (upsert), then `TeacherBlock`/`Invitation` via
   `resolveInvitationOnLink`, then `WaitlistEntry`. That call takes

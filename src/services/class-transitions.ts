@@ -254,18 +254,26 @@ export async function autoCancelClasses(
         // the class merely survives a sweep it might have been cancelled in
         // — a one-tick delay, the same cost as a stale pre-filter above.
         //
-        // `PUT` is NOT, and the claim here used to say it was. It accepts
-        // `attended | no_show | late_cancel` with no guard on the
-        // registration's current status and none on the class's, so
-        // `late_cancel -> attended` moves a registration INTO the counted
-        // set. Landing between this count and the CAS below, that makes the
-        // count too LOW — the harmful direction, on a class that is being
-        // cancelled for being under its minimum. The window is small (one
-        // statement) and the action is a teacher marking attendance on a
-        // class that has not started, which is not a normal thing to do; it
-        // is recorded rather than closed because guarding `PUT` is a product
-        // decision about which attendance transitions are legal, not a
-        // lock-discipline fix.
+        // `PUT` is now closed too, by a source-status scope added in the
+        // route itself (`registrations/[id]/route.ts`): its `updateMany`
+        // WHERE excludes `cancelled` and `late_cancel`, so a registration can
+        // only move WITHIN the counted set — `late_cancel -> attended` is no
+        // longer reachable through that endpoint at all, and the harmful
+        // direction this comment used to worry about cannot happen any more.
+        //
+        // Before that guard existed, what actually protected the ordinary
+        // case was narrower than "not a normal thing to do" claimed to be:
+        // checking in on an `open` class within 15 minutes of its start IS
+        // the designed flow (`class/[id]/page.tsx`'s `showCheckin`), so a
+        // teacher marking attendance before a class starts is routine, not
+        // an anomaly. What protected the count was that the check-in UI's
+        // toggle only ever writes `attended <-> no_show`
+        // (`attendance-list.tsx:27`), and both are already inside
+        // `ACTIVE_REGISTRATION_STATUSES` — so the UI itself never sent a
+        // request that could move a registration INTO the counted set. Only
+        // a direct API call naming a `late_cancel` registration could have,
+        // and the route's own guard now closes that path server-side rather
+        // than leaving it to depend on what the UI happens to send.
         //
         // Scope note, the same one `gdpr.ts` and `waitlist.ts`'s
         // `removeFromWaitlist` each carry at their own `lockClassRow` call:
@@ -281,10 +289,16 @@ export async function autoCancelClasses(
         // It cannot be the first place this transaction blocks: every writer
         // of `WaitlistEntry` — `addToWaitlist`, `removeFromWaitlist`,
         // `promoteNext`, `claimSpot`, `withdrawWaitingEntriesForTeacher`,
-        // `deleteTeacherAccount` — takes a conflicting `Class` row lock
-        // first, and this transaction is already holding that lock from the
-        // line below. Any contention therefore materialises at
-        // `lockClassRow`, exactly as it did before #112.
+        // `deleteTeacherAccount`, and, since #216, `closeQueueOnStart` — takes
+        // or is covered by a conflicting `Class` row lock first. The first six
+        // take it themselves; `closeQueueOnStart` takes none of its own and
+        // instead trusts its caller to have already taken one — `lockClassRow`
+        // from `autoTransitionToInProgress` and `completeClass`, or the CAS
+        // `UPDATE` from `transitionClass` (see its own docblock in
+        // `waitlist.ts`). Seven writers, not six, and this transaction is
+        // already holding the lock from the line below either way. Any
+        // contention therefore materialises at `lockClassRow`, exactly as it
+        // did before #112.
         //
         // If one did time out, the per-class `catch` at the bottom of this
         // loop logs it and the sweep moves to the next class — no partial
@@ -307,12 +321,14 @@ export async function autoCancelClasses(
         // now terminal in Postgres, so the teacher cannot undo it in the
         // app.
         //
-        // The identical stale-window race is still live in
-        // `autoTransitionToInProgress` above and `autoCompleteClasses`
-        // below. Both predate this branch and neither is fixed here; they
-        // are filed separately, because widening a lock-discipline fix into
-        // "re-read everything everywhere" is how a wave stops being
-        // reviewable.
+        // The identical stale-window race no longer sits open in either
+        // sibling. `autoTransitionToInProgress` above now re-reads `date` and
+        // `startTime` from the fresh, locked row before recomputing its own
+        // start instant, the same shape as this function. `autoCompleteClasses`
+        // below takes no lock of its own; the equivalent decision moved into
+        // `completeClass` (`class-lifecycle.ts`), which already held the lock
+        // and now also compares its caller's `requireEndedBy` against the
+        // fresh row's recomputed end time before completing.
         const fresh = await tx.class.findUnique({
           where: { id: cls.id },
           select: {

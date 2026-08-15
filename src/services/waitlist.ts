@@ -705,23 +705,27 @@ export async function handleSpotFreed(
   // registration takes this same row lock, so they serialise against this
   // transaction: one arriving after the count blocks until this commits.
   //
-  // Three writers sit outside that. `class-transitions.ts:189` names two
-  // beside its own count-under-lock — `PUT /api/registrations/[id]`
-  // (attendance) and `DELETE /api/registrations/[id]` (cancel) — and its
-  // enumeration is short by one: `deleteStudentAccount` (`gdpr.ts`) cancels
-  // registrations in every draft/open class of the erased student while
-  // locking only the classes they were WAITING in, so a class they were
-  // registered in but not queued in is written unlocked too.
+  // Three writers sit outside that. `autoCancelClasses`'s own comment in
+  // `class-transitions.ts` names two beside its own count-under-lock —
+  // `PUT /api/registrations/[id]` (attendance) and `DELETE
+  // /api/registrations/[id]` (cancel) — and its enumeration is short by one:
+  // `deleteStudentAccount` (`gdpr.ts`) cancels registrations in every
+  // draft/open class of the erased student while locking only the classes
+  // they were WAITING in, so a class they were registered in but not queued
+  // in is written unlocked too.
   //
-  // Only attendance can move a row INTO the counted set (`late_cancel →
-  // attended`); the other two only move rows out, which makes the count too
-  // high and this branch too quiet — the safe direction. Attendance is
+  // Only attendance could ever move a row INTO the counted set (`late_cancel
+  // → attended`); the other two only move rows out, which makes the count
+  // too high and this branch too quiet — the safe direction. Attendance is
   // written at or after class time and this branch runs at least 6 h before
   // the start (the claim window ends at `start − deadlineHours`, minimum 6),
-  // so in practice the two do not meet. "In practice" is the honest strength:
-  // `PUT /api/registrations/[id]` has no guard on class time, class status or
-  // current registration status — `class-transitions.ts:199` says so in as
-  // many words — so nothing enforces the separation. #182 owns that gap.
+  // so the two never met in practice even before this was closed off. Now
+  // they cannot meet at all: `PUT /api/registrations/[id]` guards current
+  // registration status and class status — the source-status WHERE that
+  // route's own comment explains — so `late_cancel → attended` is no longer
+  // reachable through it. It still does not guard class TIME, deliberately:
+  // check-in on an `open` class within 15 minutes of its start is the
+  // designed flow, not a gap (`class/[id]/page.tsx`'s `showCheckin`).
   //
   // `lockClassRow`, not the inline `FOR UPDATE` the three functions above
   // use: those are pre-existing unbounded waits that `db-locks.ts` reserves
@@ -858,20 +862,25 @@ async function hasActiveRegistration(
  * `src/lib/db-locks.ts` for the bounded-vs-unbounded split (#104) that
  * remains among the ones that do lock.
  *
- * A narrower, still-open gap: two writers flip `WaitlistEntry.status` from
- * `waiting` to `removed` — never touching `position`, so "renumbering
- * writer" above does not cover them — without going through `lockClassRow`:
- * the cancel branch of `POST /api/classes/[id]/transition` (its
- * `waitlistEntry.updateMany` on `status: 'waiting'`) and
- * `deleteTeacherAccount`'s own cancel loop (`gdpr.ts`,
- * near its `class.updateMany` CAS). Both take a conflicting lock on the
- * Class row first, via that CAS `UPDATE`, so they cannot race a
- * `lockClassRow` holder into corrupting anything — but neither bounds its
- * own wait the way `lockClassRow` does, and `deleteStudentAccount`'s
- * `reorderWaitingEntries` loop inherits `lockClassRow`'s 2s bound for every
- * statement it runs, these two mutators' rows included. Named here so the
- * next reader of that budget's arithmetic (`gdpr.ts`, the erasure
- * transaction's `timeout`) does not have to rediscover them.
+ * A narrower, still-open gap: three writers flip `WaitlistEntry.status` out
+ * of `waiting` — never touching `position`, so "renumbering writer" above
+ * does not cover them — without calling `lockClassRow` themselves: the
+ * cancel branch of `POST /api/classes/[id]/transition` (its
+ * `waitlistEntry.updateMany` on `status: 'waiting'`, to `removed`),
+ * `deleteTeacherAccount`'s own cancel loop (`gdpr.ts`, near its
+ * `class.updateMany` CAS, also to `removed`), and `closeQueueOnStart` below
+ * (to `expired` — see its own docblock for the detail). The first two take a
+ * conflicting lock on the Class row themselves, via that CAS `UPDATE`;
+ * `closeQueueOnStart` takes none of its own and instead trusts its caller to
+ * have already taken one — `lockClassRow` from `autoTransitionToInProgress`
+ * and `completeClass`, or the CAS `UPDATE` from `transitionClass`. Either
+ * way, none of the three can race a `lockClassRow` holder into corrupting
+ * anything. The first two still do not bound their own wait the way
+ * `lockClassRow` does, and `deleteStudentAccount`'s `reorderWaitingEntries`
+ * loop inherits `lockClassRow`'s 2s bound for every statement it runs, these
+ * two mutators' rows included. Named here so the next reader of that
+ * budget's arithmetic (`gdpr.ts`, the erasure transaction's `timeout`) does
+ * not have to rediscover them.
  *
  * The lock is taken BY the statement that chooses the classes, so there is
  * no window between choosing them and holding them.

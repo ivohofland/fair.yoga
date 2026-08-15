@@ -280,6 +280,12 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
   // student (`@@unique([classId, studentId])`); nothing caps how many
   // distinct classes one student can simultaneously be `waiting` in, so a
   // fixed transaction budget can't be "sized to the worst case" honestly.
+  // Since #216, though, the population this counts no longer grows without
+  // bound: `closeQueueOnStart` (`waitlist.ts`) closes every class's queue
+  // the moment it starts, so a class this student never got into eventually
+  // drops out of this count on its own rather than sitting in it forever —
+  // it just doesn't drop out by the time this query runs, which is exactly
+  // what the undershoot below still has to account for.
   // This count is read outside any lock (cheap: no transaction, no FOR
   // UPDATE) purely to size that budget, and it can drift low if a waitlist
   // join for this same student lands in the gap before the transaction

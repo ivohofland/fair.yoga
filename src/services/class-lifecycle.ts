@@ -192,8 +192,11 @@ export async function transitionClass(
  * who gets billed. This constant stays here rather than joining it in `lib/`
  * because only server-side services use it, and two comments in two test
  * files name this file as its home — `class-transitions.test.ts` and
- * `tests/integration/registrations-api.test.ts` — one of them by line number,
- * which this docblock's own growth has already invalidated once.
+ * `tests/integration/registrations-api.test.ts` — both by name rather than
+ * by line number, deliberately: this docblock has already grown twice since
+ * either comment was written (once before this branch, once again by it),
+ * and a line-number citation into a docblock that keeps growing is exactly
+ * the kind of claim that goes stale silently.
  */
 export const CHARGED_STATUSES: readonly RegistrationStatus[] = Object.freeze([
   'registered',
