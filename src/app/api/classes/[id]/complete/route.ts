@@ -22,7 +22,9 @@ export const POST = withErrorHandler(async (
   if (!cls) return respondError('Class not found', 404);
   if (cls.teacherId !== session.teacherId) return respondError('Not your class', 403);
 
-  const result = await completeClass(prisma, id);
+  // `finishedEarly`: this endpoint IS the teacher ending a class early, which
+  // is why it does not pass a clock to check against.
+  const result = await completeClass(prisma, id, { finishedEarly: true });
   if (!result.ok) return respondError(result.error, 409);
 
   return respondOk(result);

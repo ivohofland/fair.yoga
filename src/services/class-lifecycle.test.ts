@@ -691,7 +691,7 @@ describe('completeClass (DB)', () => {
   });
 
   it('calculates pricing and creates payments for charged registrations', async () => {
-    const result = await completeClass(prisma, classId);
+    const result = await completeClass(prisma, classId, { finishedEarly: true });
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.newStatus).toBe('completed');
@@ -753,7 +753,7 @@ describe('completeClass (DB)', () => {
   });
 
   it('returns error for non-existent class', async () => {
-    const result = await completeClass(prisma, 'non-existent-id');
+    const result = await completeClass(prisma, 'non-existent-id', { finishedEarly: true });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toContain('not found');
@@ -821,7 +821,7 @@ describe('completeClass (DB)', () => {
     );
     await new Promise((r) => setTimeout(r, 150));
 
-    const completingResult = completeClass(prisma, cls.id);
+    const completingResult = completeClass(prisma, cls.id, { finishedEarly: true });
     const completing = completingResult.then(() => 'returned' as const);
     const outcome = await Promise.race([
       completing,
@@ -879,7 +879,7 @@ describe('completeClass (DB)', () => {
       data: { status: 'cancelled' },
     });
 
-    const result = await completeClass(prisma, cls.id);
+    const result = await completeClass(prisma, cls.id, { finishedEarly: true });
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/Invalid transition/);
@@ -895,7 +895,7 @@ describe('completeClass (DB)', () => {
       data: { classId: cls.id, studentId: studentIds[1]!, position: 1, status: 'waiting' },
     });
 
-    const result = await completeClass(prisma, cls.id);
+    const result = await completeClass(prisma, cls.id, { finishedEarly: true });
     expect(result.ok).toBe(true);
 
     const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
@@ -931,7 +931,7 @@ describe('completeClass (DB)', () => {
     // The option is what makes the sweep strict; omitting it must NOT become
     // strict by default, or a teacher can no longer finish a class early.
     const cls = await makeClass({ status: 'in_progress' });
-    const result = await completeClass(prisma, cls.id);
+    const result = await completeClass(prisma, cls.id, { finishedEarly: true });
     expect(result.ok).toBe(true);
   });
 });
@@ -1049,7 +1049,9 @@ describe('completeClass — billing path throws rather than mis-charging a bypas
         registrationId,
       );
 
-      await expect(completeClass(prisma, classId)).rejects.toThrow(/outside 1-5/);
+      await expect(
+        completeClass(prisma, classId, { finishedEarly: true }),
+      ).rejects.toThrow(/outside 1-5/);
 
       // The transaction rolled back — the class must not have completed.
       const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId } });

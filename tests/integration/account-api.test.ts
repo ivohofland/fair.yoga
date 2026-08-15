@@ -511,7 +511,7 @@ describe('DELETE /api/account', () => {
    * The teacher-only path, and the one thing its message may NOT say.
    *
    * `deleteTeacherAccount` is not a single transaction: before `db
-   * .$transaction` opens it runs `completeClass(db, cls.id)` for every
+   * .$transaction` opens it runs `completeClass(db, cls.id, { finishedEarly: true })` for every
    * in-progress class, and each of those commits on its own — pricing the
    * class, writing a `Payment` per charged registration, sending
    * notifications. So a failure after that loop leaves real, irreversible

@@ -750,7 +750,9 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
     // deliberately left uncaught here, not wrapped in a try — but bounded
     // beats unbounded, and the next reader should not have to re-derive why
     // the window moved.
-    const result = await completeClass(db, cls.id);
+    // `finishedEarly`: erasure closes in-flight classes regardless of the
+    // clock — the subject's right does not wait for the class to end.
+    const result = await completeClass(db, cls.id, { finishedEarly: true });
     if (!result.ok) {
       // Fall through: the cancel sweep below still picks the class up.
       //

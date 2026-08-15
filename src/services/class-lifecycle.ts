@@ -239,10 +239,28 @@ export const CHARGED_STATUSES: readonly RegistrationStatus[] = Object.freeze([
  * Wrapped in a transaction so that all DB mutations (class status,
  * registration prices, payment creation) succeed or fail atomically.
  */
+/**
+ * Whether this completion has to prove the class has actually ended.
+ *
+ * REQUIRED, and a union rather than an optional field, because the dangerous
+ * mode is the one you get by saying nothing. `completeClass(db, id)` used to
+ * read as "complete it" while silently meaning "and skip the clock" — and the
+ * two callers that legitimately want that were indistinguishable from a third
+ * that forgot. #182 was exactly the forgetting: `autoCompleteClasses` decided
+ * from its own pre-transaction snapshot, so a class rescheduled in the gap was
+ * completed against a time it no longer had, and completion runs the pricing
+ * engine and writes `Payment` rows.
+ *
+ * `finishedEarly` is not decoration either. A teacher ending a class early
+ * (`POST /api/classes/[id]/complete`) and `deleteTeacherAccount` closing
+ * in-flight classes during erasure both mean it, and now have to say so.
+ */
+export type CompletionTiming = { requireEndedBy: Date } | { finishedEarly: true };
+
 export async function completeClass(
   db: PrismaClient,
   classId: string,
-  opts: { requireEndedBy?: Date } = {},
+  timing: CompletionTiming,
 ): Promise<TransitionDbResult> {
   return db.$transaction(async (tx) => {
     // Before the read, not with the first write. Everything below decides
@@ -269,16 +287,24 @@ export async function completeClass(
     // had — and completion runs the pricing engine and creates `Payment`
     // rows, so students were billed for a class whose start had moved.
     //
-    // OPTIONAL, and that is the design rather than a convenience: the two
-    // callers that omit it want exactly the old behaviour. A teacher
-    // finishing early (`POST /api/classes/[id]/complete`) is legitimate, and
-    // `deleteTeacherAccount` (`gdpr.ts`) completes in-flight classes during
-    // erasure regardless of the clock. Making this mandatory would break
-    // both.
-    if (opts.requireEndedBy) {
+    // Two callers legitimately skip the check — a teacher finishing early
+    // (`POST /api/classes/[id]/complete`) and `deleteTeacherAccount`
+    // (`gdpr.ts`) closing in-flight classes during erasure — which is why
+    // `finishedEarly` exists rather than the check being unconditional. They
+    // have to SAY so: see `CompletionTiming` for why skipping cannot be the
+    // silent default.
+    if ('requireEndedBy' in timing) {
+      // Not a truthiness test. An `Invalid Date` is truthy, and every
+      // comparison against it is false, so the old shape let a broken clock
+      // through the guard silently. `in` narrows on the KEY, and the explicit
+      // NaN check turns a caller bug into a loud one rather than a completed
+      // class.
+      if (Number.isNaN(timing.requireEndedBy.getTime())) {
+        throw new TypeError('completeClass: requireEndedBy is not a valid Date');
+      }
       const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
       const end = new Date(start.getTime() + cls.durationMinutes * 60 * 1000);
-      if (opts.requireEndedBy < end) {
+      if (timing.requireEndedBy < end) {
         return {
           ok: false,
           reason: 'NOT_ENDED_YET',

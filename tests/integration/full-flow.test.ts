@@ -278,7 +278,7 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
   // Step 13: Complete class (runs pricing engine, creates payments)
   // -----------------------------------------------------------------------
   it('Step 13: completes the class, runs pricing engine, creates payments', async () => {
-    const result = await completeClass(prisma, classId);
+    const result = await completeClass(prisma, classId, { finishedEarly: true });
 
     expect(result.ok).toBe(true);
     if (result.ok) {

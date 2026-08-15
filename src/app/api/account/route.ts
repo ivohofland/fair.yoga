@@ -44,7 +44,7 @@ import {
  *   errors, so nothing that escapes the function ran after the commit. "The
  *   rest of your data is unchanged" is exact here.
  * - `deleteTeacherAccount` is NOT. Before its `db.$transaction` opens it runs
- *   `completeClass(db, cls.id)` for every in-progress class, and each of
+ *   `completeClass(db, cls.id, { finishedEarly: true })` for every in-progress class, and each of
  *   those is its own committed transaction that prices the class, writes
  *   `Payment` rows and sends notifications. A failure anywhere after that
  *   loop leaves those completions standing. Telling that teacher "nothing was
