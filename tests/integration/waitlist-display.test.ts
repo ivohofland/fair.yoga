@@ -247,8 +247,13 @@ beforeAll(async () => {
   //   the negative enumeration one step further out again. No longer
   //   hypothetical: `closeQueueOnStart` (`waitlist.ts`, #216) writes it every
   //   time a class starts with an unfulfilled queue, which is the ordinary
-  //   case for any class that filled. It is the third of the three
-  //   double-counts the production comment names.
+  //   case for any class that filled. Unlike `promoted` and `claimed`, this
+  //   is not a double-count — `closeQueueOnStart` writes no `Registration`,
+  //   it only flips the entry's status, so an `expired` student is counted
+  //   once when they should not be counted at all. The leak has a simpler
+  //   cause: a negative enumeration cannot exclude a state that did not
+  //   exist when it was written, which is exactly what just happened on
+  //   this branch.
   //
   // The closed rows deliberately carry no `registrationId`: in production
   // `promoteNext` and `claimSpot` write one (`activateRegistration`, linked on
