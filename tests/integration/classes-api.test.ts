@@ -228,7 +228,20 @@ afterAll(async () => {
   // than mass-delete, but that throw aborts the rest of this function before
   // the student cleanup below — guarding it too keeps teardown running to
   // completion instead of stopping partway.
+  //
+  // The waitlist-entry and class sweep below is the same guard applied to a
+  // teacher-scoped backstop rather than a single id: the queue-close test
+  // above (#216) creates its own class + waitlist entry outside
+  // `allClassIds`, cleaning up after itself on the happy path — but a failing
+  // run (mutation-tested ones included) can exit before reaching that inline
+  // cleanup, leaving a class that still references `teacherRoomId` and would
+  // fail the `teacherRoom.deleteMany` below on an FK violation. Same shape as
+  // `class-lifecycle.test.ts`'s `transitionClass (DB)` afterAll guards
+  // against. Waitlist entries first, same reason as that block's comment:
+  // they FK-reference the class.
   if (ownerId) {
+    await prisma.waitlistEntry.deleteMany({ where: { class: { teacherId: ownerId } } });
+    await prisma.class.deleteMany({ where: { teacherId: ownerId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId: ownerId } });
   }
   if (roomId) {
@@ -455,6 +468,46 @@ describe('POST /api/classes/[id]/transition', () => {
 
     const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: cancelClassId } });
     expect(unchanged.status).toBe('cancelled');
+  });
+
+  /**
+   * #216. Covers the route, not just `transitionClass` — the unit tests in
+   * `class-lifecycle.test.ts`'s `transitionClass (DB)` block never reach
+   * `POST /api/classes/[id]/transition`. A fresh class, not `classId` or
+   * `noticeClassId`: both are asserted against by other tests in this file.
+   * Cleaned up inline on the happy path; the file-level `afterAll`'s
+   * teacher-scoped sweep is the backstop for a run that fails before reaching
+   * this tail.
+   */
+  it('closes the waitlist when a teacher moves a class to in_progress', async () => {
+    const cls = await prisma.class.create({
+      data: {
+        teacherId: ownerId,
+        teacherRoomId,
+        classType: 'Queue Close',
+        date: new Date('2099-01-01'),
+        startTime: '10:00',
+        durationMinutes: 60,
+        roomCost: 30,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 2,
+        maxStudents: 4,
+        status: 'open',
+      },
+    });
+    const entry = await prisma.waitlistEntry.create({
+      data: { classId: cls.id, studentId: waitStudentId, position: 1, status: 'waiting' },
+    });
+
+    const res = await transition(ownerToken, cls.id, { status: 'in_progress' });
+    expect(res.status).toBe(200);
+
+    const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
+    expect(after.status).toBe('expired');
+
+    await prisma.waitlistEntry.deleteMany({ where: { classId: cls.id } });
+    await prisma.class.delete({ where: { id: cls.id } });
   });
 });
 

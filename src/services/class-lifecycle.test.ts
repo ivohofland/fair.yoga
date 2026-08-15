@@ -230,6 +230,33 @@ describe('transitionClass (DB)', () => {
   let teacherId: string;
   let roomId: string;
   let teacherRoomId: string;
+  let studentId: string;
+
+  // Per-test classes for the queue-close tests below (#216) — a date none of
+  // the four hand-written tests above use, so the counter-derived startTime
+  // only has to avoid colliding with itself across the two calls in this
+  // describe, not with those tests' literal '09:00'/'10:00' slots. Mirrors
+  // `completeClass (DB)`'s own `makeClass` below.
+  let makeClassCounter = 0;
+  const makeClass = ({ status }: { status: ClassStatus }) => {
+    makeClassCounter += 1;
+    return prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Vinyasa',
+        date: new Date('2026-06-05'),
+        startTime: slotTime(makeClassCounter),
+        durationMinutes: 60,
+        roomCost: 35,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 4,
+        maxStudents: 12,
+        status,
+      },
+    });
+  };
 
   beforeAll(async () => {
     const teacher = await prisma.teacher.create({
@@ -267,11 +294,33 @@ describe('transitionClass (DB)', () => {
       },
     });
     teacherRoomId = teacherRoom.id;
+
+    // Needed by the queue-close tests below (#216), which put a waiting
+    // WaitlistEntry under a class this block owns — hoisted here rather than
+    // created inline, per this file's fixture rule.
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Transition',
+        lastName: 'Student',
+        email: `transition-student-${uniqueSuffix}@test.local`,
+        incomeTier: 3,
+      },
+    });
+    studentId = student.id;
   });
 
   afterAll(async () => {
+    // WaitlistEntry must go first: it FK-references Class, and the 'closes
+    // the waitlist...' test below is the first in this block to create one —
+    // left out, it blocks `class.deleteMany` below on every run, including
+    // the mutation-tested failing ones, and leaks this whole fixture set into
+    // the shared test database. Same fix as `completeClass (DB)`'s afterAll
+    // below and `addToWaitlist + removeFromWaitlist (DB)`'s in
+    // waitlist.test.ts.
+    await prisma.waitlistEntry.deleteMany({ where: { class: { teacherId } } });
     // Clean up all classes created during tests, then fixtures
     await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.student.delete({ where: { id: studentId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
     await prisma.teacher.delete({ where: { id: teacherId } });
@@ -447,6 +496,35 @@ describe('transitionClass (DB)', () => {
     const missing = await transitionClass(prisma, 'no-such-class-id', 'open');
     expect(missing.ok).toBe(false);
     if (!missing.ok) expect(missing.error).toMatch(/Class not found/);
+  });
+
+  it('closes the waitlist when it moves a class to in_progress', async () => {
+    const cls = await makeClass({ status: 'open' });
+    const entry = await prisma.waitlistEntry.create({
+      data: { classId: cls.id, studentId, position: 1, status: 'waiting' },
+    });
+
+    const result = await transitionClass(prisma, cls.id, 'in_progress');
+    expect(result.ok).toBe(true);
+
+    const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
+    expect(after.status).toBe('expired');
+  });
+
+  it('leaves the waitlist alone when it moves a class to open', async () => {
+    // The close is predicated on the TARGET, not on "any successful CAS".
+    // Without that predicate this row would be expired by a draft -> open
+    // publish, which is the opposite of what the queue means.
+    const cls = await makeClass({ status: 'draft' });
+    const entry = await prisma.waitlistEntry.create({
+      data: { classId: cls.id, studentId, position: 1, status: 'waiting' },
+    });
+
+    const result = await transitionClass(prisma, cls.id, 'open');
+    expect(result.ok).toBe(true);
+
+    const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
+    expect(after.status).toBe('waiting');
   });
 });
 

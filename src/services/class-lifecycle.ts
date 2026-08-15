@@ -121,17 +121,38 @@ export type TransitionDbResult =
  * and `autoCancelClasses` since #174 Task 6 started deciding from a
  * registration count read under its own cancel decision) take the lock
  * instead; see `docs/lock-order.md`.
+ *
+ * Since #216 this also closes the class's waitlist when the target is
+ * `in_progress`, which is why the CAS now sits in a transaction. That does not
+ * weaken the no-lock argument above: the close's own predicate (`classId`,
+ * `status: 'waiting'`) is re-evaluated by Postgres at execution time, and the
+ * CAS `UPDATE` has already taken the `Class` row lock that every
+ * `WaitlistEntry` writer conflicts on — so a concurrent join or promotion is
+ * either committed before this transaction's CAS or blocked behind it. This is
+ * the same shape the manual-cancel branch of
+ * `POST /api/classes/[id]/transition` has used since #112.
  */
 export async function transitionClass(
   db: PrismaClient,
   classId: string,
   targetStatus: ClassStatus,
 ): Promise<TransitionDbResult> {
-  const updated = await db.class.updateMany({
-    where: { id: classId, status: { in: sourceStatesFor(targetStatus) } },
-    data: { status: targetStatus },
+  // The CAS and the queue close in one transaction; the diagnostic reads below
+  // stay outside it, because they decide nothing that gets persisted and would
+  // only hold the transaction open on the failure path.
+  const moved = await db.$transaction(async (tx) => {
+    const updated = await tx.class.updateMany({
+      where: { id: classId, status: { in: sourceStatesFor(targetStatus) } },
+      data: { status: targetStatus },
+    });
+    if (updated.count !== 1) return false;
+    // #216. Predicated on the TARGET: `draft -> open` must not expire a queue,
+    // and `-> cancelled` never reaches here (the route intercepts it, and no
+    // other caller passes it).
+    if (targetStatus === 'in_progress') await closeQueueOnStart(tx, classId);
+    return true;
   });
-  if (updated.count === 1) return { ok: true, newStatus: targetStatus };
+  if (moved) return { ok: true, newStatus: targetStatus };
 
   // Nothing was written, so this read decides nothing that gets persisted —
   // it only tells the caller which refusal happened, and the route maps both
