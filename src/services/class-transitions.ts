@@ -287,18 +287,21 @@ export async function autoCancelClasses(
         // Still benign, unlike at the erasure sites, but the argument is
         // longer now because one of the six is a WRITE that takes row locks.
         // It cannot be the first place this transaction blocks: every writer
-        // of `WaitlistEntry` — `addToWaitlist`, `removeFromWaitlist`,
-        // `promoteNext`, `claimSpot`, `withdrawWaitingEntriesForTeacher`,
-        // `deleteTeacherAccount`, and, since #216, `closeQueueOnStart` — takes
-        // or is covered by a conflicting `Class` row lock first. The first six
-        // take it themselves; `closeQueueOnStart` takes none of its own and
-        // instead trusts its caller to have already taken one — `lockClassRow`
-        // from `autoTransitionToInProgress` and `completeClass`, or the CAS
-        // `UPDATE` from `transitionClass` (see its own docblock in
-        // `waitlist.ts`). Seven writers, not six, and this transaction is
-        // already holding the lock from the line below either way. Any
-        // contention therefore materialises at `lockClassRow`, exactly as it
-        // did before #112.
+        // of `WaitlistEntry` is serialized behind a conflicting `Class` row
+        // lock before it writes — either by calling `lockClassRow` itself or
+        // by writing through a CAS `UPDATE` that already took one.
+        // `closeQueueOnStart` is the one exception in FORM, not in substance:
+        // it takes no lock of its own and instead trusts its caller to have
+        // already taken one — `lockClassRow` from `autoTransitionToInProgress`
+        // and `completeClass`, or the CAS `UPDATE` from `transitionClass` (see
+        // its own docblock in `waitlist.ts`). This is a property every site
+        // has to satisfy, not a fixed roster to keep hand-counted in sync with
+        // the codebase: to re-derive membership,
+        // `grep -rn 'waitlistEntry\.(create|createMany|update|updateMany|delete|deleteMany|upsert)' src`,
+        // excluding tests, then check each hit's enclosing transaction for the
+        // lock. This transaction is already holding the lock from the line
+        // below either way, so any contention therefore materialises at
+        // `lockClassRow`, exactly as it did before #112.
         //
         // If one did time out, the per-class `catch` at the bottom of this
         // loop logs it and the sweep moves to the next class — no partial

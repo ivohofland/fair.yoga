@@ -176,14 +176,23 @@ export async function reconcileWaitlists(
   // (`autoTransitionToInProgress`, `transitionClass`, and `completeClass`'s
   // inline bump when a teacher completes an `open` class directly), it
   // writes `expired` over every `waiting` row before the class can leave
-  // `open` any way but to `cancelled`. Seven writers now move a `waiting`
-  // row out of the queue: `removeFromWaitlist`, `promoteNext`'s stale-head
-  // drain, `withdrawWaitingEntriesForTeacher`, `autoCancelClasses`, the
-  // manual-cancel transition route and `deleteTeacherAccount` write
-  // `removed` on a cancellation, a withdrawal or an erasure; `closeQueueOnStart`
-  // writes `expired` on the class starting. The join above is kept anyway —
-  // it still narrows the scan to classes whose queue could still matter,
-  // which is worth avoiding even though nothing downstream depends on it for
+  // `open` any way but to `cancelled`. That is the property this join relies
+  // on, not a fixed roster of writers to keep in sync: every path that takes
+  // a `waiting` entry out of contention WITHOUT fulfilling it — a
+  // cancellation, a withdrawal, an erasure, or the class starting — either
+  // writes a terminal status (`removed` or `expired`) or deletes the row
+  // outright (`deleteStudentAccount`, `gdpr.ts`, is a hard delete rather than
+  // a status write). FULFILMENT — `promoteNext`'s own promotion, `claimSpot`,
+  // or a queued student booking directly through `POST /api/registrations`
+  // (all of which write `promoted`/`claimed`) — is a different, self-limiting
+  // category this paragraph is not about: a fulfilled entry leaves `waiting`
+  // because the student got a seat, not because the queue closed under them.
+  // To re-derive either roster:
+  // `grep -rn 'waitlistEntry\.(create|createMany|update|updateMany|delete|deleteMany|upsert)' src`,
+  // excluding tests, then read each hit for which status it writes, or
+  // whether it deletes the row. The join above is kept anyway — it still
+  // narrows the scan to classes whose queue could still matter, which is
+  // worth avoiding even though nothing downstream depends on it for
   // correctness any more.
   //
   // `groupBy`, not `findMany({ distinct })`: Prisma does not compile `distinct`
