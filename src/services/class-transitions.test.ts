@@ -177,6 +177,61 @@ describe('class transitions (DB, timezone-aware)', () => {
     await prisma.class.delete({ where: { id: cls.id } });
   });
 
+  it('does not start a class rescheduled after the sweep read it', async () => {
+    const cls = await makeClass({});
+
+    let hookCalls = 0;
+    const racing = prisma.$extends({
+      query: {
+        class: {
+          async findMany({ args, query }) {
+            // Shape-keyed, per this file's house rule. THIS sweep's read carries
+            // a `date` filter; `autoCancelClasses`' carries a bare `status`.
+            const where = args.where as { status?: unknown; date?: unknown } | undefined;
+            if (where?.status !== 'open' || where.date === undefined) return query(args);
+
+            hookCalls += 1;
+            const rows = await query(args);
+            // A WEEK later, not minutes: 16:00Z on July 20 is nowhere near the
+            // new start on July 27, so no rounding or timezone offset can make
+            // the stale decision accidentally correct.
+            await prisma.class.update({
+              where: { id: cls.id },
+              data: { date: new Date('2026-07-27') },
+            });
+            return rows;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const transitioned = await autoTransitionToInProgress(racing, new Date('2026-07-20T16:00:00Z'));
+
+    expect(hookCalls).toBe(1);
+    expect(transitioned).toBe(0);
+
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(updated.status).toBe('open');
+
+    await prisma.class.delete({ where: { id: cls.id } });
+  });
+
+  it('closes the waitlist when it starts a class', async () => {
+    const cls = await makeClass({});
+    const entry = await prisma.waitlistEntry.create({
+      data: { classId: cls.id, studentId: waiterStudentId, position: 1, status: 'waiting' },
+    });
+
+    const transitioned = await autoTransitionToInProgress(prisma, new Date('2026-07-20T16:00:00Z'));
+    expect(transitioned).toBeGreaterThanOrEqual(1);
+
+    const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
+    expect(after.status).toBe('expired');
+
+    await prisma.waitlistEntry.deleteMany({ where: { classId: cls.id } });
+    await prisma.class.delete({ where: { id: cls.id } });
+  });
+
   it('auto-cancels below-minimum classes inside the local check window and notifies the teacher', async () => {
     // HOURS_2 check window before 16:00Z start = 14:00Z–16:00Z.
     const cls = await makeClass({ autoCancelCheck: 'HOURS_2' });

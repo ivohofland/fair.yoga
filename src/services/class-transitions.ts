@@ -8,13 +8,14 @@
  */
 
 import type { PrismaClient } from '@prisma/client';
-import { transitionClass, completeClass } from './class-lifecycle';
+import { completeClass } from './class-lifecycle';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { classStartInstant } from '@/lib/timezone';
 import { formatDayHeader } from '@/lib/format';
 import { log } from '@/lib/log';
 import { lockClassRow } from '@/lib/db-locks';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
+import { closeQueueOnStart } from './waitlist';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -70,15 +71,71 @@ export async function autoTransitionToInProgress(
     // Per-class isolation: one bad class (corrupt timezone, failed
     // transition) must not halt the sweep for every other class.
     try {
+      // Pre-filter from the snapshot, and an OPTIMISATION ONLY — the same
+      // shape and the same reasoning as `autoCancelClasses` below. A stale
+      // pre-filter can only DELAY a transition to the next 60-second tick,
+      // never cause a wrong one, because nothing here transitions: it only
+      // decides whether to open a transaction and look properly.
       const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
-      if (start <= currentTime) {
-        const result = await transitionClass(db, cls.id, 'in_progress');
-        if (result.ok) {
-          transitioned++;
-        } else {
-          log.error({ classId: cls.id, reason: result.error }, 'transition to in_progress rejected');
-        }
-      }
+      if (start > currentTime) continue;
+
+      const didTransition = await db.$transaction(async (tx) => {
+        // Locked before anything is read, not just before the write. This
+        // decision reads more than a status — it reads `date` and `startTime`
+        // and resolves them against the teacher's timezone — so per the rule
+        // in `transitionClass`'s docblock this is a locking site, not a
+        // CAS-only one. See `docs/lock-order.md`.
+        await lockClassRow(tx, cls.id);
+
+        // Re-read HERE and decide from THIS row. `date` and `startTime` are
+        // NOT in `ECONOMIC_FIELDS` (`lib/class-fields.ts`), so `settingsLocked`
+        // does not freeze them and a teacher can reschedule an `open` class
+        // with registrations at any time, including while this sweep is
+        // mid-flight. Deciding from the outer `findMany` started a class
+        // against a time it no longer had — and `in_progress` can only go to
+        // `completed`, so the teacher cannot undo it in the app.
+        const fresh = await tx.class.findUnique({
+          where: { id: cls.id },
+          select: {
+            status: true,
+            date: true,
+            startTime: true,
+            teacher: { select: { defaultTimezone: true } },
+          },
+        });
+        // Deleted, or no longer open — a concurrent cancel, completion or
+        // teacher action got here first. Not an error; the same outcome by a
+        // different route, which is why this returns `false` rather than
+        // logging, as `autoCancelClasses` does for the same case.
+        if (!fresh || fresh.status !== 'open') return false;
+
+        // Recomputed from `fresh`, not re-tested against the snapshot's
+        // `start`. Re-testing the old instant is the defect wearing a lock.
+        const freshStart = classStartInstant(
+          fresh.date,
+          fresh.startTime,
+          fresh.teacher.defaultTimezone,
+        );
+        if (freshStart > currentTime) return false;
+
+        // Redundant with the `fresh.status` check above, kept anyway for the
+        // reason `autoCancelClasses` keeps its own: it costs nothing inside a
+        // statement that has to run regardless, and it is the guard that
+        // survives if someone later moves or drops the re-read.
+        const updated = await tx.class.updateMany({
+          where: { id: cls.id, status: 'open' },
+          data: { status: 'in_progress' },
+        });
+        if (updated.count === 0) return false;
+
+        // #216. First of the three `open -> in_progress` exits. Atomic with
+        // the CAS above: a class that started with its queue left standing is
+        // exactly the state this write exists to make unreachable.
+        await closeQueueOnStart(tx, cls.id);
+        return true;
+      });
+
+      if (didTransition) transitioned++;
     } catch (err) {
       log.error({ err, classId: cls.id }, 'transition to in_progress failed');
     }
