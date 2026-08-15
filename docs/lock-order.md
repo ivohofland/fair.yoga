@@ -694,8 +694,24 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   `StudentPrivacy`, `TeacherStudent`, `Invitation` (deleted, not anonymized —
   the teacher is soft-deleted, not scrubbed like a student's identity is). Was
   already `StudentPrivacy` before `TeacherStudent`; not the outlier.
+- **`transitionClass`** (`src/services/class-lifecycle.ts`) — takes its
+  `Class` lock a different way than every other site on this list: not
+  `lockClassRow`, not an inline `SELECT ... FOR UPDATE`, but a bare CAS
+  `class.updateMany` on the outer client, opened as an interactive
+  transaction since #216/#182 (it was a single autocommit `UPDATE` before).
+  When the CAS succeeds and the target is `in_progress`, it writes
+  `WaitlistEntry` next, via `closeQueueOnStart` — `Class → WaitlistEntry`,
+  conformant with the order above, and the whole write set is the two
+  tables and nothing else: the refusal-diagnosis reads below the
+  transaction decide nothing that gets persisted. The only production
+  caller left since #216/#182 removed the sweep's is
+  `POST /api/classes/[id]/transition`'s generic branch.
 - **`completeClass`** (`src/services/class-lifecycle.ts`) — `Class` via
-  `lockClassRow`, then `Registration`, `Payment`. `transitionClass`'s own
+  `lockClassRow`, then `WaitlistEntry` (via `closeQueueOnStart`, #216/#182 —
+  only on the inline `open → in_progress` bump this function does when a
+  teacher completes an `open` class directly; the `else` branch, a class
+  already `in_progress`, writes none because its queue closed on the way in),
+  then `Registration`, `Payment`. `transitionClass`'s own
   docblock names this and `autoCancelClasses`
   as the two sites that read more state than a bare status under the
   decision, and take the lock instead of a plain CAS for that reason. Since

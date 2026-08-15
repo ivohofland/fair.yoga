@@ -57,6 +57,12 @@ export default async function ClassDetailPage({
       // which stops rendering the count once the class can no longer consume
       // its queue. Filtering here cannot do that: a relation `_count` filters
       // the related rows, not the parent's status.
+      //
+      // Stays `waiting`-only on purpose — do not fold `expired` in here. The
+      // `in_progress` walk-in case (#F1, below `cls`) needs `expired` counted
+      // too, but only there: `waitlist-display.test.ts`'s count fixture puts
+      // an `expired` row on an OPEN class specifically to catch a query that
+      // already counts it unconditionally.
       _count: { select: { waitlistEntries: { where: { status: 'waiting' } } } },
     },
   });
@@ -64,6 +70,22 @@ export default async function ClassDetailPage({
   if (!cls || cls.teacherId !== session.teacherId) {
     redirect('/');
   }
+
+  // #F1 (whole-branch review of #216/#182). `_count` above stays `waiting`-only
+  // — it must, `waitlist-display.test.ts`'s count fixture fixtures an `expired`
+  // row on an OPEN class specifically to prove a query that folds `expired` in
+  // unconditionally is wrong there. But while `in_progress`, a teacher can
+  // still walk a queued student in at the door (`api/registrations/route.ts`
+  // now matches `waiting` OR `expired` for exactly this), so the count on THIS
+  // screen must include `expired` too, or it reads 0 next to the **Add
+  // walk-in** button that consumes it. A second, conditional read rather than
+  // a broadened `where` above: the two statuses must total differently
+  // depending on `cls.status`, which this query does not know about itself.
+  const expiredWaitlistCount =
+    cls.status === 'in_progress'
+      ? await prisma.waitlistEntry.count({ where: { classId: cls.id, status: 'expired' } })
+      : 0;
+  const waitlistCount = cls._count.waitlistEntries + expiredWaitlistCount;
 
   const activeRegistrations = cls.registrations.filter((r) => r.status !== 'cancelled');
 
@@ -133,7 +155,7 @@ export default async function ClassDetailPage({
       <ClassInfo
         cls={cls}
         registrationCount={seatCount}
-        waitlistCount={cls._count.waitlistEntries}
+        waitlistCount={waitlistCount}
       />
 
       {/* Check-in mode: attendance checklist + walk-ins + pricing estimate */}

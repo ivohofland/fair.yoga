@@ -399,6 +399,57 @@ describe('POST /api/registrations', () => {
     expect(student.status).toBe(409);
   });
 
+  /**
+   * #F1a, whole-branch review of #216/#182. `closeQueueOnStart` flips every
+   * `waiting` row to `expired` in the same transaction as the class's
+   * `in_progress` write — including the row of a student who is about to be
+   * walked in at the door. The entry-resolution read a few lines above this
+   * test's assertions used to match `status: 'waiting'` only, so it returned
+   * null for that row, and the queued student kept a live, billed
+   * `Registration` next to a `WaitlistEntry` stuck on `expired` with no
+   * `registrationId` — which `exportStudentData` (`gdpr.ts`) would then
+   * publish verbatim as "never got in", for a class the student attended and
+   * paid for.
+   */
+  it('walks in a queued student whose entry was closed by the class starting — resolves to claimed, not left expired', async () => {
+    const classId = await makeClass(1);
+    const fill = await post(studentTokens[0]!, { classId });
+    expect(fill.status).toBe(201);
+
+    // Student 1 queues on the full class.
+    await prisma.waitlistEntry.create({
+      data: { classId, studentId: studentIds[1]!, position: 1, status: 'waiting' },
+    });
+
+    // The class starts through the real production path —
+    // `POST .../transition` → `transitionClass` (`class-lifecycle.ts`) — not
+    // a direct prisma write, so this exercises the actual mechanism that
+    // flips the entry to `expired`, the same one the sweep and
+    // `completeClass` share.
+    const transitioned = await fetch(`${BASE_URL}/api/classes/${classId}/transition`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
+      body: JSON.stringify({ status: 'in_progress' }),
+    });
+    expect(transitioned.status).toBe(200);
+    const expired = await prisma.waitlistEntry.findUniqueOrThrow({
+      where: { classId_studentId: { classId, studentId: studentIds[1]! } },
+    });
+    expect(expired.status).toBe('expired');
+
+    // Student 1 turns up at the door; the teacher walks them in.
+    const walkIn = await post(ownerToken, { classId, studentId: studentIds[1] });
+    expect(walkIn.status).toBe(201);
+    const walkInJson = (await walkIn.json()) as { data: { id: string } };
+
+    // The entry must resolve to `claimed` with the new registration linked.
+    const entry = await prisma.waitlistEntry.findUniqueOrThrow({
+      where: { classId_studentId: { classId, studentId: studentIds[1]! } },
+    });
+    expect(entry.status).toBe('claimed');
+    expect(entry.registrationId).toBe(walkInJson.data.id);
+  });
+
   it('rebooking after a cancellation reactivates the old registration row', async () => {
     const classId = await makeClass(5);
     const first = await post(studentTokens[0]!, { classId });

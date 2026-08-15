@@ -175,10 +175,30 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         });
       }
 
-      // Booking directly while on the waitlist resolves the waiting entry —
-      // otherwise the stale entry poisons future promotions of this queue.
+      // Booking directly while on the waitlist resolves the entry — otherwise
+      // the stale entry poisons future promotions of this queue.
+      //
+      // Matches `waiting` AND `expired`, not `waiting` alone. `closeQueueOnStart`
+      // (#216) flips every `waiting` row to `expired` in the same transaction
+      // that starts the class, and a teacher walk-in of a queued student
+      // (`isWalkIn` above, true for `in_progress`) is exactly that student
+      // arriving AFTER the flip. `waiting`-only left their entry unresolved —
+      // `expired`, `registrationId: null` — forever, while they held a live,
+      // billed `Registration` for the same class. `exportStudentData`
+      // (`gdpr.ts`) publishes `WaitlistEntry.status` verbatim, so their own
+      // Article 15 export would read "expired" — never got in — for a class
+      // they attended and paid for: the exact wrong story `expired` was chosen
+      // over `removed` to prevent (`closeQueueOnStart`'s docblock), reintroduced
+      // from the other side of the same transaction.
+      //
+      // Deliberately NOT `removed`: that status means the student already left
+      // on their own (`removeFromWaitlist`) or a cancel path closed the queue
+      // (#195) — a decision already made about them, and resolving it to
+      // `claimed` here would assert the opposite of what happened. `expired`
+      // alone means "never got in yet", which is the one story a walk-in can
+      // still make true.
       const waitingEntry = await tx.waitlistEntry.findFirst({
-        where: { classId: body.classId, studentId, status: 'waiting' },
+        where: { classId: body.classId, studentId, status: { in: ['waiting', 'expired'] } },
       });
       if (waitingEntry) {
         await tx.waitlistEntry.update({

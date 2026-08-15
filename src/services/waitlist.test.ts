@@ -472,6 +472,34 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
       await prisma.class.deleteMany({ where: { id: { in: [mineClassId, theirsClassId] } } });
     });
   });
+
+  /**
+   * #F3, whole-branch review of #216/#182. A student's `/bookings` page
+   * rendered while their entry was still `waiting`; by the time they tap
+   * "Leave waitlist" the class has started and `closeQueueOnStart` already
+   * flipped the row to `expired`. Before this fix `removeFromWaitlist`'s
+   * unconditional write overwrote it to `removed` anyway — turning "never
+   * got in" into "withdrew", the wrong story #216 exists to prevent, one
+   * status over. Scoping the write to `status: 'waiting'` refuses this as a
+   * no-op instead.
+   */
+  it('refuses to overwrite an expired entry rather than reporting it removed', async () => {
+    const staleClassId = await makeClass('in_progress', 2);
+    await prisma.waitlistEntry.create({
+      data: { classId: staleClassId, studentId: studentIds[0]!, position: 1, status: 'expired' },
+    });
+
+    const result = await removeFromWaitlist(prisma, staleClassId, studentIds[0]!);
+    expect(result).toEqual({ ok: false, reason: 'NOT_FOUND' });
+
+    const entry = await prisma.waitlistEntry.findUniqueOrThrow({
+      where: { classId_studentId: { classId: staleClassId, studentId: studentIds[0]! } },
+    });
+    expect(entry.status).toBe('expired');
+
+    await prisma.waitlistEntry.deleteMany({ where: { classId: staleClassId } });
+    await prisma.class.delete({ where: { id: staleClassId } });
+  });
 });
 
 describe('promoteNext (DB)', () => {
@@ -1503,19 +1531,24 @@ describe('removeFromWaitlist takes the class lock (DB)', () => {
   });
 
   /**
-   * #174 four-specialist review, Important 6. `removeFromWaitlist` updates
-   * the entry by its `(classId, studentId)` key, and a concurrent
+   * #174 four-specialist review, Important 6. `removeFromWaitlist` writes the
+   * entry keyed on `(classId, studentId)`, and a concurrent
    * `deleteStudentAccount` (`gdpr.ts`) deletes every `WaitlistEntry` the
    * student holds — so the row can vanish between the route's own pre-read
-   * and this write. Prisma answers that with `P2025`, and `classifyApiError`
-   * has no branch for it, so a student tapping "leave waitlist" at the wrong
-   * moment got a bare 500 on a request whose whole meaning was "make this
-   * entry go away".
+   * and this write. Before #174 that surfaced as Prisma's `P2025`, which
+   * `classifyApiError` had no branch for, so a student tapping "leave
+   * waitlist" at the wrong moment got a bare 500 on a request whose whole
+   * meaning was "make this entry go away". Since #F3 (whole-branch review of
+   * #216/#182) the write is an `updateMany` scoped to `status: 'waiting'`
+   * rather than a bare `update` on the unique key — see `removeFromWaitlist`'s
+   * docblock — so a vanished row now surfaces the same way a row that exists
+   * but is no longer `waiting` does: `count === 0`, no throw either way.
    *
-   * The delete is interposed inside the `waitlistEntry.update` hook rather
-   * than issued before the call, so it lands after `removeFromWaitlist` has
-   * already taken the class lock and decided to proceed — the actual shape of
-   * the race, not a rearrangement of it that would also pass on unfixed code.
+   * The delete is interposed inside the `waitlistEntry.updateMany` hook
+   * rather than issued before the call, so it lands after `removeFromWaitlist`
+   * has already taken the class lock and decided to proceed — the actual
+   * shape of the race, not a rearrangement of it that would also pass on
+   * unfixed code.
    */
   it('reports NOT_FOUND when the entry is deleted after the lock but before the write', async () => {
     const victimId = studentIds[2]!;
@@ -1524,11 +1557,23 @@ describe('removeFromWaitlist takes the class lock (DB)', () => {
     const racing = prisma.$extends({
       query: {
         waitlistEntry: {
-          async update({ args, query }) {
+          async updateMany({ args, query }) {
             // Shape-keyed, per the house rule: `removeFromWaitlist`'s own
-            // write is the one keyed on the composite `(classId, studentId)`.
-            const where = args.where as { classId_studentId?: unknown } | undefined;
-            if (!where?.classId_studentId) return query(args);
+            // write is the one keyed on a plain `(classId, studentId)` pair
+            // scoped to `status: 'waiting'`. `closeQueueOnStart`'s `updateMany`
+            // has no `studentId` in its `where`, and
+            // `withdrawWaitingEntriesForTeacher`'s keys `classId` with
+            // `{ in: [...] }`, not a bare string — neither shape matches here.
+            const where = args.where as
+              | { classId?: unknown; studentId?: unknown; status?: unknown }
+              | undefined;
+            if (
+              typeof where?.classId !== 'string' ||
+              typeof where?.studentId !== 'string' ||
+              where.status !== 'waiting'
+            ) {
+              return query(args);
+            }
 
             hookCalls += 1;
             await prisma.waitlistEntry.deleteMany({ where: { classId, studentId: victimId } });

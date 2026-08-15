@@ -12,7 +12,6 @@ import { classStartInstant } from '@/lib/timezone';
 import { createBulkNotifications } from './notifications';
 import { resolveInvitationOnLink } from './link-consent';
 import { lockClassRow, type TransactionClientOnly } from '@/lib/db-locks';
-import { isRecordNotFound } from '@/lib/api-errors';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { readSeatCount } from './capacity';
 // pino, and server-only. Safe here and checked rather than assumed: no
@@ -313,73 +312,86 @@ export async function addToWaitlist(
 /**
  * Removes a student from the waitlist and reorders remaining positions.
  *
- * Marks the entry as 'removed', then gets all remaining 'waiting' entries
- * ordered by position and reorders them sequentially starting at 1.
+ * Scoped to `status: 'waiting'` — see the inline comment on the `updateMany`
+ * below for why (#F3, whole-branch review of #216/#182). Then gets all
+ * remaining 'waiting' entries ordered by position and reorders them
+ * sequentially starting at 1.
  *
  * Wrapped in a transaction so removal and reordering are atomic.
  *
- * `NOT_FOUND` covers the one race the caller cannot pre-empt: the entry is
- * keyed by `(classId, studentId)`, and a concurrent `deleteStudentAccount`
- * (`gdpr.ts`) deletes every `WaitlistEntry` the student holds. `DELETE
- * /api/waitlist/[id]` reads the entry before calling this and 404s when it is
- * missing; if it disappears in the gap, the honest answer is the same 404,
- * not the bare 500 that `P2025` used to fall through to (`classifyApiError`
- * has no branch for it).
+ * `NOT_FOUND` now covers two cases the caller cannot distinguish and does not
+ * need to: the entry never existed for this `(classId, studentId)`, or it
+ * exists but is no longer `waiting` — already `removed`/`promoted`/`claimed`
+ * by something else, or `expired` because `closeQueueOnStart` (#216) closed
+ * the queue since the caller's page last rendered. Both read as the same 404
+ * to a client whose action is a no-op either way. The race `DELETE
+ * /api/waitlist/[id]` cannot pre-empt: it reads the entry before calling
+ * this, so a concurrent `deleteStudentAccount` (`gdpr.ts`, deletes every
+ * `WaitlistEntry` the student holds) or `closeQueueOnStart` landing in the
+ * gap both now surface as this same `NOT_FOUND` rather than a bare 500.
  *
- * The window is NARROWER since #174, not wider: this function now takes the
- * class row lock first, so an erasure either committed before this
- * transaction opened — the case handled here — or blocks behind the lock
- * until this one is done. Before that, the two interleaved unlocked and the
- * failure modes were less describable than one clean `P2025`.
+ * The deletion race is NARROWER since #174, not wider: this function takes
+ * the class row lock first, so a concurrent erasure either committed before
+ * this transaction opened — the case handled above — or blocks behind the
+ * lock until this one is done.
  *
- * No sentinel-error dance is needed, unlike `acceptInvitation`'s
- * `NotPendingError` (`invitations.ts`): there, the decision to give up is
- * made by our own code inside the transaction, where a bare `return` would
- * commit the writes above it. Here Prisma itself throws, which aborts the
- * transaction on the way out — so catching it OUTSIDE `$transaction` is
- * already the rollback, and the translation is the only thing left to do.
+ * No sentinel-error dance, and no `try`/`catch` either — unlike
+ * `acceptInvitation`'s `NotPendingError` (`invitations.ts`), which throws
+ * because a bare `return` inside that transaction would commit the writes
+ * above it. Here `updateMany`'s returned count already IS that decision: zero
+ * rows matched means nothing was written and nothing needs rolling back, so
+ * `$transaction` just returns `false` and the caller translates it after the
+ * fact — the same shape as every CAS in this codebase (`transitionClass`,
+ * `autoCancelClasses`, `autoTransitionToInProgress`).
  */
 export async function removeFromWaitlist(
   db: PrismaClient,
   classId: string,
   studentId: string,
 ): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' }> {
-  try {
-    await db.$transaction(async (tx) => {
-      // The same row and `FOR UPDATE` mode `addToWaitlist`, `promoteNext`,
-      // `claimSpot` and `withdrawWaitingEntriesForTeacher` take — though this
-      // wait is bounded to 2s by `lockClassRow`'s `SET LOCAL lock_timeout`,
-      // unlike those four inline sites' unbounded wait (#104; not this
-      // branch's to fix). Without the lock at all, two renumberings of one
-      // queue interleave, each having read a snapshot the other invalidated,
-      // and nothing errors: there is no unique on `(classId, position)`, only
-      // a plain index. `promoteNext` then picks its head by lowest position
-      // and promotes the wrong student.
-      //
-      // `SET LOCAL` bounds every statement left in this transaction, not just
-      // the `FOR UPDATE` above it — including the reorder loop's own
-      // `UPDATE`s below (`lockClassRow`'s docblock). `deleteStudentAccount`
-      // (`gdpr.ts`) takes the same bounded lock on the same queue too, since
-      // #174 Task 5 — so a race between the two now waits, up to 2s, on
-      // whichever of them got there first, rather than interleaving unlocked.
-      // At 2s the loser gets a Postgres `lock_timeout`, which
-      // `classifyApiError` now answers with a 503 and "please try again"
-      // rather than the 500 it used to — not swallowed either way.
-      await lockClassRow(tx, classId);
+  const removed = await db.$transaction(async (tx) => {
+    // The same row and `FOR UPDATE` mode `addToWaitlist`, `promoteNext`,
+    // `claimSpot` and `withdrawWaitingEntriesForTeacher` take — though this
+    // wait is bounded to 2s by `lockClassRow`'s `SET LOCAL lock_timeout`,
+    // unlike those four inline sites' unbounded wait (#104; not this
+    // branch's to fix). Without the lock at all, two renumberings of one
+    // queue interleave, each having read a snapshot the other invalidated,
+    // and nothing errors: there is no unique on `(classId, position)`, only
+    // a plain index. `promoteNext` then picks its head by lowest position
+    // and promotes the wrong student.
+    //
+    // `SET LOCAL` bounds every statement left in this transaction, not just
+    // the `FOR UPDATE` above it — including the reorder loop's own
+    // `UPDATE`s below (`lockClassRow`'s docblock). `deleteStudentAccount`
+    // (`gdpr.ts`) takes the same bounded lock on the same queue too, since
+    // #174 Task 5 — so a race between the two now waits, up to 2s, on
+    // whichever of them got there first, rather than interleaving unlocked.
+    // At 2s the loser gets a Postgres `lock_timeout`, which
+    // `classifyApiError` now answers with a 503 and "please try again"
+    // rather than the 500 it used to — not swallowed either way.
+    await lockClassRow(tx, classId);
 
-      // Mark as removed
-      await tx.waitlistEntry.update({
-        where: { classId_studentId: { classId, studentId } },
-        data: { status: 'removed' },
-      });
-
-      // Reorder remaining 'waiting' entries
-      await reorderWaitingEntries(tx, classId);
+    // Scoped to `status: 'waiting'`, not a bare `update` on the
+    // `(classId, studentId)` key. #F3: an unconditional write let a DELETE
+    // sent from a stale `/bookings` render — the class has since started,
+    // `closeQueueOnStart` (#216) already flipped this row to `expired` —
+    // overwrite it to `removed`, turning "never got in" into "withdrew", the
+    // wrong story #216 exists to prevent, one status over. `waiting` is the
+    // one status this function's whole point is to leave from ("a student
+    // must be able to leave a dead queue", spec §1.1) — that stays true, this
+    // only refuses a no-op on a row some other writer already closed.
+    const result = await tx.waitlistEntry.updateMany({
+      where: { classId, studentId, status: 'waiting' },
+      data: { status: 'removed' },
     });
-  } catch (err) {
-    if (isRecordNotFound(err)) return { ok: false, reason: 'NOT_FOUND' };
-    throw err;
-  }
+    if (result.count === 0) return false;
+
+    // Reorder remaining 'waiting' entries
+    await reorderWaitingEntries(tx, classId);
+    return true;
+  });
+
+  if (!removed) return { ok: false, reason: 'NOT_FOUND' };
   return { ok: true };
 }
 

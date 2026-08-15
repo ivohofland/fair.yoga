@@ -377,6 +377,45 @@ describe('GET /class/[id] (page) — the waitlist count', () => {
     expect(html).not.toContain('2 on waitlist');
   });
 
+  /**
+   * #F1b, whole-branch review of #216/#182. A fresh class+fixture, not the
+   * shared `countClassId` above: that one is deliberately `open`, and its
+   * `expired` row proves the OPPOSITE of this test — that `expired` must NOT
+   * be folded into the count there. `in_progress` is the one status where it
+   * must, because a teacher can still walk a queued student in at the door
+   * (`api/registrations/route.ts` now matches `waiting` OR `expired`), and
+   * the count is the only cue that anyone was waiting when the class started.
+   */
+  it('folds expired into the count while in_progress, past tense', async () => {
+    const inProgressCountClassId = await makeClass(`w199-inprog-count-${suffix}`, 'in_progress', 5);
+    const waitingHere = await makeStudent('inprog-waiting');
+    const expiredHere = await makeStudent('inprog-expired');
+    await prisma.waitlistEntry.createMany({
+      data: [
+        { classId: inProgressCountClassId, studentId: waitingHere.id, position: 1, status: 'waiting' },
+        {
+          classId: inProgressCountClassId,
+          studentId: expiredHere.id,
+          position: 2,
+          status: 'expired',
+          promotedAt: new Date(),
+        },
+      ],
+    });
+
+    const res = await fetch(`${BASE_URL}/class/${inProgressCountClassId}`, {
+      headers: cookie(teacherToken),
+    });
+    expect(res.status).toBe(200);
+    const html = (await res.text()).replaceAll('<!-- -->', '');
+
+    // Past tense, not "2 on waitlist": #199's defect was the PRESENT-tense
+    // claim about a queue that could no longer be affected, not the presence
+    // of a number (see `class-info.tsx`'s comment).
+    expect(html).toContain('2 were on the waitlist');
+    expect(html).not.toContain('2 on waitlist');
+  });
+
   it('drops the count once the class can no longer consume its queue', async () => {
     // The completed class carries two `waiting` entries (one per student), so
     // an ungated render reads "2 on waitlist" on a class that has finished —

@@ -38,7 +38,20 @@ export const POST = withErrorHandler(async (
         data: { status: 'cancelled' },
       });
       if (updated.count === 0) {
-        return { ok: false as const, error: `Cannot cancel a class with status "${cls.status}"` };
+        // Re-read rather than naming `cls`, the handler's top-of-function
+        // snapshot taken before `parseBody`'s await and outside this
+        // transaction (#F6, whole-branch review of #216/#182 — the same
+        // staleness Task 7 fixed for the success path's notification body,
+        // a few lines below). Without this, cancelling a class concurrently
+        // cancelled a moment earlier reports 409 `status "open"` for a class
+        // that is already `cancelled`. Cheap here: the CAS already failed, so
+        // there is nothing left to protect by not reading — one more select
+        // on a row this transaction is not writing to.
+        const current = await tx.class.findUnique({ where: { id }, select: { status: true } });
+        return {
+          ok: false as const,
+          error: `Cannot cancel a class with status "${current?.status ?? cls.status}"`,
+        };
       }
 
       const registrations = await tx.registration.findMany({
