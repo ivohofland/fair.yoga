@@ -24,8 +24,18 @@ Vitest (three projects: `unit`, `components`, `integration`).
 
 - **TypeScript `strict: true`.** No `any`, no implicit types. `noUncheckedIndexedAccess`
   is on — indexing an array yields `T | undefined`.
-- **Test-first.** Write the failing test, run it, see it fail *for the stated reason*,
-  then implement.
+- **Test-first, with one stated exception.** Most tests here are **drivers**: write it,
+  run it, see it fail *for the reason this plan predicts*, then implement. A test that
+  fails for a different reason proves nothing about the fix — stop and report.
+
+  Some tests here are **guards**, and a guard is expected to **PASS before the
+  change**. A guard asserts that the implementation does not over-reach or regress
+  something that already works — `transitionClass` not expiring a queue on
+  `draft → open` (Task 3), `completeClass` still finishing early without
+  `requireEndedBy` (Task 5), attendance still writable on a `completed` class
+  (Task 6), the cancel notice naming the current class (Task 7). **A guard is proved
+  by its mutation, not by failing first.** Each task says which of its tests are
+  which; report both, and never "fix" a guard to make it fail first.
 - **Every guard gets a mutation proof.** Break it, record the **exact** failure text in
   the task report, restore, re-verify. A guard that cannot fail certifies nothing.
 - **Mutation values must be ones the code under test cannot produce.** For date
