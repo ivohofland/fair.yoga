@@ -797,7 +797,33 @@ Add the import: `import { closeQueueOnStart } from './waitlist';`
 **Two deliberate losses, both to be stated in the task report:**
 1. The `transitionClass` call goes away, and with it `sourceStatesFor`'s derivation from
    the state machine. The CAS hardcodes `status: 'open'`, exactly as `autoCancelClasses`
-   does. Accepted for consistency with the sibling sweep.
+   does.
+
+   **Measured after the fact, because "accepted for consistency" understated it and a
+   reader deserves the stronger claim: this loses no behaviour at all.**
+   `VALID_TRANSITIONS` (`class-lifecycle.ts:33-39`) lists `in_progress` in exactly one
+   state's transition list — `open`'s — so `sourceStatesFor('in_progress')` returns
+   `['open']` and the hardcoded CAS is **literally equivalent** to the derived one.
+   Nothing reachable was dropped. What is lost is only the *coupling*: if a future state
+   ever gains `in_progress` as a target, this CAS will not follow the state machine and
+   the sweep will silently skip that state. That is a real but different cost, and it is
+   the one to write down.
+
+   Two things were ruled out while checking this, both worth recording so nobody
+   re-derives them. There is **no `full` status**: the Prisma enum
+   (`schema.prisma:50-56`) and `VALID_TRANSITIONS` both carry exactly five states, and
+   `full` is a *derived display* state computed as `activeCount >= maxStudents`
+   (`src/components/ui/status-badge.tsx:55`, `src/app/(public)/[slug]/page.tsx:107`) —
+   so a "full" class is stored as `open` and this sweep starts it correctly. CLAUDE.md's
+   lifecycle line reads `draft → open → full → in_progress → …`, which is the
+   user-visible sequence, not the stored one; it is imprecise rather than wrong, and it
+   is **not** this branch's to fix. And `transitionClass` has no side effect beyond the
+   CAS and its `in_progress` queue-close (`class-lifecycle.ts:143-153`), so no
+   notification or downstream write was silently dropped with the call.
+
+   **The same question applies to Task 5** and should be answered there rather than
+   assumed: `sourceStatesFor('completed')` likewise resolves to a single state
+   (`in_progress`), so check it explicitly instead of inheriting this paragraph.
 2. The `log.error({ reason: result.error }, 'transition to in_progress rejected')` at
    `:79` goes away. A refusal is no longer an error — it is the ordinary "someone else
    got there first" outcome, which `autoCancelClasses` returns silently.
