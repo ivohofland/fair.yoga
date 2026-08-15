@@ -300,15 +300,23 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
   });
 
   afterAll(async () => {
-    // Clean up in dependency order
-    const ids = [classId, notFullClassId, draftClassId];
-    await prisma.waitlistEntry.deleteMany({ where: { classId: { in: ids } } });
-    await prisma.registration.deleteMany({ where: { classId: { in: ids } } });
-    await prisma.class.deleteMany({ where: { id: { in: ids } } });
+    // Clean up in dependency order: waitlist entries → registrations → class
+    // → students → teacherRoom → room → teacher. Filtered by teacherId, not
+    // just the fixed [classId, notFullClassId, draftClassId] ids, so this
+    // also sweeps the classes the nested `closeQueueOnStart` describe below
+    // creates inline via `makeClass`. A test that dies before reaching its
+    // own inline cleanup — which the mutation-testing protocol guarantees
+    // will happen — must not leave a class behind that then breaks this
+    // teardown's `teacherRoom` delete on an FK violation, the way an
+    // id-list-scoped version did. Same fix as the sibling `afterAll`s in
+    // `class-transitions.test.ts` and `class-lifecycle.test.ts`.
+    await prisma.waitlistEntry.deleteMany({ where: { class: { teacherId } } });
+    await prisma.registration.deleteMany({ where: { class: { teacherId } } });
+    await prisma.class.deleteMany({ where: { teacherId } });
     for (const sid of [...studentIds, ...fillerIds]) {
       await prisma.student.delete({ where: { id: sid } });
     }
-    await prisma.teacherRoom.delete({ where: { id: teacherRoomId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
     await prisma.teacher.delete({ where: { id: teacherId } });
     await prisma.$disconnect();
@@ -408,8 +416,12 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
       });
 
       const closed = await prisma.$transaction((tx) => closeQueueOnStart(tx, closingClassId));
-      expect(closed).toBe(1);
 
+      // Row-level evidence first: this is what a `where`-predicate mutation
+      // (e.g. keying on `not: 'expired'` instead of `waiting`) actually gets
+      // wrong, and asserting it before the count below means a broken
+      // predicate fails here, on the rows it corrupted, rather than only on
+      // the count.
       const rows = await prisma.waitlistEntry.findMany({
         where: { classId: closingClassId },
         orderBy: { position: 'asc' },
@@ -424,6 +436,7 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
         { position: 2, status: 'removed' },
         { position: 3, status: 'promoted' },
       ]);
+      expect(closed).toBe(1);
 
       await prisma.waitlistEntry.deleteMany({ where: { classId: closingClassId } });
       await prisma.class.delete({ where: { id: closingClassId } });
