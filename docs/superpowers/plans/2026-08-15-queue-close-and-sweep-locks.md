@@ -1424,11 +1424,62 @@ it('names the class as it stands when cancelled, not as first read', async () =>
   await prisma.registration.create({
     data: { classId: cls.id, studentId: waitStudentId, status: 'registered', tierAtBooking: 3 },
   });
-  // Rewrite the row after creation, so a handler interpolating anything other
-  // than a fresh in-transaction read would name 'Hatha'.
-  await prisma.class.update({ where: { id: cls.id }, data: { classType: 'Vinyasa' } });
+  // CORRECTED after the first implementation attempt proved this test could
+  // not fail. The original line here was:
+  //     await prisma.class.update({ ..., data: { classType: 'Vinyasa' } });
+  // fully awaited BEFORE the request. That cannot exercise anything: the
+  // handler's own top-of-handler read (`route.ts:25`) then sees 'Vinyasa'
+  // too, so `cls` and the in-transaction re-read are identical and switching
+  // the interpolation between them is unobservable. The mutation in Step 5
+  // stayed green, and the implementer correctly refused to commit.
+  //
+  // A window is REQUIRED, and one is reachable. The handler reads `cls`,
+  // then awaits `parseBody`, then opens its transaction and CASes — so a
+  // write that lands after the read but before the CAS commits is exactly
+  // what `fresh` sees and `cls` does not.
+  //
+  // The deterministic lever is this suite's established one, not a new
+  // technique: a second client holds the `Class` row `FOR UPDATE` so the
+  // handler's CAS parks, and the rewrite lands while it is parked. Copy
+  // `announcements-api.test.ts` (~`:240-290`), which does this on a `Class`
+  // row; see also `payments-api.test.ts:361`, `registrations-api.test.ts:1130`
+  // and `account-api.test.ts:619`. It appears in eight integration files.
+  const holder = new PrismaClient();
+  let release!: () => void;
+  let locked!: () => void;
+  const released = new Promise<void>((r) => { release = r; });
+  // The handshake, without which the lever is decorative: `$transaction`
+  // returns before its callback has run, and a fresh client must connect and
+  // start its engine first (50-200ms, measured in `announcements-api`), so
+  // the request could finish before the lock was ever taken.
+  const parked = new Promise<void>((r) => { locked = r; });
+  const holding = holder.$transaction(
+    async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
+      locked();
+      await released;
+      // Lands while the handler is parked on its CAS: after the
+      // top-of-handler read, before the in-transaction re-read.
+      await tx.$executeRaw`UPDATE "Class" SET "classType" = 'Vinyasa' WHERE id = ${cls.id}`;
+    },
+    { timeout: 20_000 },
+  );
+  await parked;
 
-  const res = await transition(ownerToken, cls.id, { status: 'cancelled' });
+  const pending = transition(ownerToken, cls.id, { status: 'cancelled' });
+
+  // The lever is asserted, not assumed. If the request answered inside this
+  // second it never parked, the rewrite never interleaved, and a green run
+  // would prove nothing — which is precisely how the first version of this
+  // test passed against both the fix and its mutation.
+  let settled = false;
+  void pending.then(() => { settled = true; });
+  await new Promise((r) => setTimeout(r, 1000));
+  expect(settled).toBe(false);
+
+  release();
+  await holding;
+  const res = await pending;
   expect(res.status).toBe(200);
 
   const notice = await prisma.notification.findFirstOrThrow({
@@ -1437,22 +1488,43 @@ it('names the class as it stands when cancelled, not as first read', async () =>
   expect(notice.body).toContain('Vinyasa');
   expect(notice.body).not.toContain('Hatha');
 
+  await holder.$disconnect();
+
   await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
   await prisma.registration.deleteMany({ where: { classId: cls.id } });
   await prisma.class.delete({ where: { id: cls.id } });
 });
 ```
 
-This test **passes before the change** (the top-of-handler read happens after the
-update). It is a characterisation test that locks the property in; the *proof* is
-mutation (a) in step 5, which is what distinguishes the two reads. State this plainly
-in the report — do not claim it as a failing-first test.
+**CORRECTED — this is now a failing-first driver, not a characterisation test.** The
+paragraph here used to say the test passes before the change, because with a
+fully-awaited update there was no window and both reads returned the same row. With the
+`FOR UPDATE` lever there is a real window, so before the fix the notice is built from
+`cls` and still says 'Hatha' — the test **fails**. That is a better test, and it is the
+reason the correction was worth making rather than downgrading the task.
 
-- [ ] **Step 2: Run the test and confirm it passes for the stated reason**
+Worth stating in the report and in the PR body, because it corrects the deleted comment
+rather than merely removing it: the `KNOWN RESIDUAL` block justified leaving this unfixed
+partly on the grounds that **"no test can observe a window this narrow"**. That claim is
+false, and this test is the counter-example. The block's other two reasons stand — the
+harm is wrong words rather than a wrong write, and it was reasonable not to fold a
+behaviour change into a copy fix — so do not overstate the correction: what was wrong
+was the untestability, not the judgement call about scope at the time.
+
+- [ ] **Step 2: Run the test and confirm it FAILS**
 
 Run: `npx vitest run --project integration tests/integration/classes-api.test.ts -t "as it stands when cancelled"`
-Expected: PASS. Confirm in the report that it passes *before* the implementation, and
-why that is expected here rather than a broken test.
+
+Expected: **FAIL**, with the notice naming the pre-rewrite value —
+`expected '…Hatha class on…' not to contain 'Hatha'`. **Record the exact text.**
+
+Two ways this can go wrong, and both mean stop rather than proceed:
+- If it **passes**, the lever did not engage — the request was answered before it parked.
+  The `expect(settled).toBe(false)` assertion should have caught that first; if that
+  assertion is the one that failed, say so, because it is a different diagnosis.
+- If it fails on a **timeout** rather than the assertion, the hold is outliving a
+  transaction timeout. The handler's `$transaction` has Prisma's default 5s; the hold is
+  1s. Report the numbers rather than lengthening the hold blindly.
 
 - [ ] **Step 3: Implement**
 
