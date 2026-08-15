@@ -60,6 +60,16 @@ Vitest (three projects: `unit`, `components`, `integration`).
   `afterAll` sweeps by `teacherId`. If it deletes by an id list, convert it first.**
   The mutation protocol guarantees failing runs, so this is not hypothetical — it fired
   on Task 1.
+
+  **Get the mechanism right — an earlier version of this constraint did not, and the
+  wrong version reached three comments in two test files.** The row that blocks
+  teardown is the surviving **`Class`**, and what it blocks is
+  `teacherRoom.deleteMany` / `room.delete`, because `Class.teacherRoomId` is a plain
+  FK. It is **not** the `WaitlistEntry`: `WaitlistEntry.class` is
+  `onDelete: Cascade` (`prisma/schema.prisma:575`), so waitlist rows disappear with
+  their class and can never block a class delete. A `waitlistEntry.deleteMany` in an
+  `afterAll` is harmless and mildly defensive, but it is **not** what makes the
+  teardown FK-safe, and any comment claiming it is should be corrected (Task 9).
 - **Never `git add -A` or `git add .`** — stage exact paths. Quote paths containing
   parentheses: `"src/app/(student)/bookings/page.tsx"`.
 - **Commit per task.** The PR is rebase-merged; the commit-per-task history is the record.
@@ -1565,6 +1575,7 @@ reason.
 | `src/app/api/classes/[id]/transition/route.ts:67-90` | Already deleted in Task 7 — confirm it is gone. |
 | `tests/integration/waitlist-display.test.ts` | Already done in Task 8 — confirm. |
 | `src/services/class-lifecycle.ts` `CHARGED_STATUSES` docblock (`:160-174`) | It names `class-transitions.test.ts` and `tests/integration/registrations-api.test.ts` as citing it, "one of them by line number, which this docblock's own growth has already invalidated once". Both files change in this branch — re-check that citation. |
+| **Three test-teardown comments this branch itself wrote, all stating a false FK mechanism.** `src/services/class-lifecycle.test.ts` (~`:314-319` and ~`:668-673`) and `tests/integration/classes-api.test.ts` (~`:240-241`) | Each says the `WaitlistEntry` row "blocks `class.deleteMany`". **It does not.** `WaitlistEntry.class` is `onDelete: Cascade` (`prisma/schema.prisma:575`), so waitlist rows go with their class. The row that actually blocks teardown is the surviving **`Class`**, and what it blocks is `teacherRoom.deleteMany` / `room.delete` via the plain `Class.teacherRoomId` FK — which the `classes-api.test.ts` comment states correctly at `~:237-238` before appending the wrong reason for the waitlist line. **Keep the `waitlistEntry.deleteMany` calls** (harmless, mildly defensive) and correct the stated reason in all three places. This claim originated in the controller's own task dispatches, not in an implementer's reasoning — record that in the PR body, since "where the errors were, including your own" is the standard this project holds. |
 
 - [ ] **Step 3: Correct the issue bodies and the roadmap**
 
