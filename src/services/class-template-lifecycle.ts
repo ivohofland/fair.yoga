@@ -322,10 +322,8 @@ export async function updateClassTemplate(
     }
   }
 
-  let updated: ClassTemplate;
-  let sync: TemplateSyncResult;
   try {
-    ({ updated, sync } = await db.$transaction(
+    const { updated, sync } = await db.$transaction(
       async (tx) => {
         // First statement, deliberately — bounds every statement left in this
         // transaction, the `update` immediately below it first among them. A
@@ -362,17 +360,33 @@ export async function updateClassTemplate(
         // know that the bound is someone else's responsibility.
         await setLockTimeout(tx);
 
-        const template = await tx.classTemplate.update({ where: { id: templateId }, data });
+        // `updated`, not `template`: the pre-transaction read at the head of
+        // this function is already called `template`, and the `catch` below
+        // turns on keeping the two apart — "the read above and the write
+        // inside the transaction are not the same statement" is the sentence
+        // that explains why P2025 now has one source instead of two. Two
+        // values that the error mapping distinguishes should not share a name.
+        const updated = await tx.classTemplate.update({ where: { id: templateId }, data });
+
         // Composed into this transaction, not opening its own. Safe since
         // #164/#192 (PR #204): `generateInstancesForTemplate` has no `catch`
         // and inserts with a bare `ON CONFLICT DO NOTHING`, so the refill
         // cannot abort the transaction it now runs inside.
-        return { updated: template, sync: await syncTemplateInstances(tx, templateId) };
+        //
+        // A statement rather than a property initialiser in the `return`
+        // below: this is the second of the transaction's two load-bearing
+        // steps — a pre-lock, four reads and up to three writes — and it read
+        // as an afterthought inlined into an object literal.
+        const sync = await syncTemplateInstances(tx, templateId);
+
+        return { updated, sync };
       },
       // Five statements here can wait on a lock at 2s each (spec §2.4);
       // 10_000 would be consumed entirely by lock waits.
       { timeout: 15_000 },
-    ));
+    );
+
+    return { ok: true, template: updated, sync };
   } catch (err) {
     // Transient first, matching the order `pauseOrResumeTemplate` and
     // `archiveOrUnarchiveTemplate` use in this same file. Not
@@ -469,8 +483,6 @@ export async function updateClassTemplate(
     }
     throw err;
   }
-
-  return { ok: true, template: updated, sync };
 }
 
 // ---------------------------------------------------------------------------

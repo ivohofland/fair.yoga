@@ -208,8 +208,6 @@ export async function syncTemplateInstances(
     });
   }
 
-  const result = { synced: sameDay.length, regenerated: wrongDay.length, kept };
-
   // Refill the window after a day change. Idempotent, but not by the
   // `(templateId, date)` constraint alone any more: `generateInstancesForTemplate`
   // pre-checks occupancy and inserts with a bare `ON CONFLICT DO NOTHING`, so a
@@ -233,7 +231,13 @@ export async function syncTemplateInstances(
   // happens now: it runs on `tx`, the same transaction as the delete/update
   // above and the caller's own `classTemplate.update`.
   const refill =
-    result.regenerated > 0 && template.isActive
+    // `wrongDay.length > 0`, the same condition the delete above is guarded
+    // by, rather than the count read back out of a result object. That is the
+    // actual causal link — we deleted wrong-day rows, so refill the window —
+    // and routing it through an intermediate hid that the two are the same
+    // array. The intermediate existed because the inner `$transaction` this
+    // function used to open returned it; that transaction is gone.
+    wrongDay.length > 0 && template.isActive
       ? await generateInstancesForTemplate(tx, template)
       : { created: 0, skipped: [] };
 
@@ -242,7 +246,9 @@ export async function syncTemplateInstances(
   // its docblock for why a fifth `SkipReason` fails the build here instead
   // of vanishing.
   return {
-    ...result,
+    synced: sameDay.length,
+    regenerated: wrongDay.length,
+    kept,
     refilled: refill.created,
     ...countSkipReasons(refill.skipped),
   };
