@@ -344,7 +344,9 @@ export async function updateClassTemplate(
         // again here is not redundant: `SET LOCAL lock_timeout` is idempotent
         // within one transaction — verified in psql that a later call
         // overwrites the earlier rather than stacking or erroring
-        // (`db-locks.ts:82-87`) — so the two coexist safely.
+        // (`db-locks.ts`, `LOCK_TIMEOUT_SQL`'s docblock, the
+        // "verified in psql that a later `SET LOCAL lock_timeout` overwrites
+        // the earlier one" sentence) — so the two coexist safely.
         //
         // Which of the two is load-bearing, stated exactly, because the
         // tempting shorthand ("the inner one covers its other callers") is
@@ -627,11 +629,14 @@ const SCHEDULED_STATUSES: readonly ClassStatus[] = Object.freeze(['draft', 'open
  * literal in the raw SQL, with nothing tying the two lists together —
  * dropping a status from `SCHEDULED_STATUSES` above left this one stale, and
  * measurement during issue 180 task 4's review showed exactly that: dropping
- * `'draft'` from the raw list left all 102 tests across the four files that
- * cover this function green, silently re-opening the deadlock the pre-lock
- * exists to close. Deriving this from the same array makes that
- * un-representable — there is only one list to edit now, not two to keep in
- * sync.
+ * `'draft'` from the raw list left every test covering this function green,
+ * silently re-opening the deadlock the pre-lock exists to close. (A count and
+ * a file count stood here — "all 102 tests across the four files" — with the
+ * files unnamed and the number already stale by the time the branch ended.
+ * The measurement is real and scoped to that moment; the number was doing no
+ * work except going out of date.) Deriving this from the same array makes the
+ * desync un-representable — there is only one list to edit now, not two to
+ * keep in sync.
  *
  * `Prisma.raw`, not `Prisma.join`: `Prisma.join` would bind each status as a
  * separate parameter, and a bound text parameter compared against the

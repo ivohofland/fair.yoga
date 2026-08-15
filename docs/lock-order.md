@@ -151,7 +151,8 @@ a call):
    out to be already stale). The reconciliation sweep
    (`services/waitlist-reconciliation.ts`) adds no call site of either kind,
    but it reaches **both** kinds through `handleSpotFreed`: the broadcast
-   branch's bounded `lockClassRow` at `waitlist.ts:704`, and — via the
+   branch's bounded `lockClassRow` in `handleSpotFreed` (`waitlist.ts`),
+   and — via the
    auto-promote branch and `promoteNext` — one of the four inline
    `FOR UPDATE`s, which is unbounded (#104). Stating only the first would
    understate what a contended tick can wait on. Its multiplicity is
@@ -160,7 +161,9 @@ a call):
    other 3 are multi-row, not one**: `withdrawWaitingEntriesForTeacher`'s join
    (`waitlist.ts:904`), and the atomic-template-update branch's two ordered
    pre-locks — `syncTemplateInstances` (`template-sync.ts:77`) and
-   `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts:1149`), each an
+   `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`, the
+   `$queryRaw` immediately above its `waitlistEntry.findMany` candidate
+   read), each an
    `ORDER BY c.id … FOR UPDATE OF c` ahead of its own multi-row write (issue
    180, "Ordering WITHIN `Class`" above). An earlier version of this passage
    said "all but one … the exception is `withdrawWaitingEntriesForTeacher`'s

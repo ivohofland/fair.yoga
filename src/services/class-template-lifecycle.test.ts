@@ -258,8 +258,12 @@ describe('updateClassTemplate (DB)', () => {
    * failed once the window closed, because the out-of-band delete it relied
    * on now blocks on the lock instead of racing it. This is the only window
    * left; its replacement — pinning the blocking behaviour the closed window
-   * now produces in place of a race — sits below, once task 7 of the
-   * atomic-template-update work gave that wait a bound to test against.
+   * now produces in place of a race — sits below. (Not "once task 7 gave that
+   * wait a bound to test against", as this said: task 7's `setLockTimeout`
+   * bounds the EDIT's waits, and the party that waits in the replacement is
+   * the concurrent delete, bounded by that test's own `setLockTimeout(tx)`
+   * call. The replacement asserts blocking-then-completion and never tests
+   * against a bound at all.)
    *
    * Interposed rather than raced, like the pause guard's twin: the extension
    * performs the real read and then deletes the row before returning it, which
@@ -271,11 +275,14 @@ describe('updateClassTemplate (DB)', () => {
     const t = await makeTemplate('P2025 Write');
 
     let deleted = false;
-    // Cast for the same reason `template-sync.test.ts`'s hooked clients need
-    // one: the extended client is missing `$on`, so it is not assignable to
-    // `updateClassTemplate`'s `PrismaClient`-typed `db` parameter, and reusing
-    // the existing stub-client cast is the only accepted way past that without
-    // loosening the parameter's type.
+    // Cast for the same reason `template-lock-order.test.ts`'s hooked clients
+    // need one: the extended client is missing `$on`, so it is not assignable
+    // to `updateClassTemplate`'s `PrismaClient`-typed `db` parameter, and
+    // reusing the existing stub-client cast is the only accepted way past that
+    // without loosening the parameter's type. (Not `template-sync.test.ts`,
+    // which this pointed at: its casts exist for a DIFFERENT reason — the
+    // extended `$transaction` callback's `tx` is not assignable to
+    // `TransactionClientOnly` — and nothing to do with `$on`.)
     const interposing = prisma.$extends({
       query: {
         classTemplate: {
@@ -318,7 +325,11 @@ describe('updateClassTemplate (DB)', () => {
    * connection with no `lock_timeout` of its own — had nothing to time out
    * against either. A genuine deadlock, not a slow test, which is why it
    * outlasted the file's 10s `afterAll` hook rather than merely failing one
-   * assertion (task 7's mutation record has the measurement).
+   * assertion. Observed while writing task 7 and recorded here rather than
+   * cited: the task reports live under `.superpowers/sdd/`, which is
+   * gitignored, so a pointer to one is a pointer to nothing after merge —
+   * the same reason the archive pre-lock's evidence was inlined into the
+   * spec instead.
    *
    * This version does not reproduce that: the hook only signals that the
    * write landed and then waits on a promise the test controls, so the
@@ -938,7 +949,8 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
    * `attended` in the gap, so the delete's live re-evaluation excludes it
    * and the class survives.
    *
-   * Exactly one — no more, no fewer, the same pin `gdpr.test.ts:1046` and the
+   * Exactly one — no more, no fewer, the same pin `gdpr.test.ts`'s own
+   * candidate-read interposition and the
    * sibling interposition at `class-transitions.test.ts` carry, and the same
    * reasoning the #112 mutation ledger's own note on this guard gives: a bare
    * "it fired at all" flag lets the race land on the wrong read and every

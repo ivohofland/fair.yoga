@@ -293,16 +293,35 @@ describe('generateClassInstances (DB)', () => {
     // other tests in this file assert the fixture's own startTime, so a
     // guessed restore value would corrupt them.
     let originalStartTime: string;
+    // Captured alongside `startTime` because two `it`s in this `describe`
+    // now commit real edits through `updateClassTemplate` — the budget pin
+    // writes `description`, the `busy` test writes `classType` — and both
+    // propagate onto this template's future instances via
+    // `syncTemplateInstances`. Restoring only the three fields the older
+    // tests touched left the fixture mutated for anything added after them;
+    // today nothing reads those two columns later in file order, which makes
+    // it latent rather than broken, and latent is exactly how this `afterEach`
+    // earns its keep.
+    let originalClassType: string;
+    let originalDescription: string | null;
 
     beforeAll(async () => {
       const t = await prisma.classTemplate.findUniqueOrThrow({ where: { id: templateId } });
       originalStartTime = t.startTime;
+      originalClassType = t.classType;
+      originalDescription = t.description;
     });
 
     afterEach(async () => {
       await prisma.classTemplate.update({
         where: { id: templateId },
-        data: { isActive: true, isArchived: false, startTime: originalStartTime },
+        data: {
+          isActive: true,
+          isArchived: false,
+          startTime: originalStartTime,
+          classType: originalClassType,
+          description: originalDescription,
+        },
       });
     });
 
@@ -633,7 +652,10 @@ describe('generateClassInstances (DB)', () => {
      * arbitrary — spec §2.4: five statements in that transaction can each
      * wait on the lock timeout at 2s. `setLockTimeout` itself is not one of
      * them — it issues `SET LOCAL lock_timeout`, which can never wait on a
-     * lock. The five that can: `classTemplate.update` (the CAS), the ordered
+     * lock. The five that can: `classTemplate.update` (the template write —
+     * an unconditional update by primary key, NOT a CAS; this file uses that
+     * term for the archive's and pause/resume's conditional writes, and spec
+     * §2.4 calls this row plainly `classTemplate.update`), the ordered
      * `FOR UPDATE OF c` pre-lock, `class.deleteMany` (the wrong-day delete —
      * it cascades onto `WaitlistEntry` children the pre-lock does not cover,
      * so the delete itself can still wait on one), `class.updateMany`
@@ -641,10 +663,12 @@ describe('generateClassInstances (DB)', () => {
      * `Class_teacher_slot_unique`), and the refill's `createManyAndReturn`
      * (also a real index-entry wait, same index). Conservative, since
      * `wrongDay` and `sameDay` are near-mutually-exclusive in practice — an
-     * earlier version of this comment named `setLockTimeout` and
-     * `syncTemplateInstances`'s own pre-lock as two of the five and omitted
-     * the refill; the total of five was right by coincidence, not by this
-     * derivation.
+     * earlier version of this comment named `setLockTimeout` as one of the
+     * five and omitted the refill; the total of five was right by
+     * coincidence, not by this derivation. (That retraction previously also
+     * disowned "`syncTemplateInstances`'s own pre-lock", which was never the
+     * error: the ordered `FOR UPDATE OF c` above IS that pre-lock —
+     * `updateClassTemplate` has no other — and spec §2.4 lists it as row 2.)
      *
      * `description`, not `classType` like the busy test below: this call is
      * expected to actually commit, and a distinct field keeps the two tests'
@@ -677,15 +701,23 @@ describe('generateClassInstances (DB)', () => {
     });
 
     /**
-     * `updateClassTemplate`'s own contention race, matching the two above: its
-     * transaction now takes the same row lock the generation claim does (the
-     * `setLockTimeout(tx)` hoisted to be its first statement — task 7 of the
-     * atomic-template-update work; the archive and the pause/resume already
-     * had theirs), so it can lose to a sweep in progress the same way they
-     * can.
+     * `updateClassTemplate`'s own contention race, matching the two above.
+     * Its `classTemplate.update` takes the same row lock the generation claim
+     * does — it always did, and that is not what task 7 added. What task 7
+     * added is the BOUND: `setLockTimeout(tx)` hoisted to be the
+     * transaction's first statement (the archive and the pause/resume already
+     * had theirs), so the edit now gives up at 2s and answers `busy` instead
+     * of waiting the holder out. `setLockTimeout` takes no lock itself — it
+     * issues `SET LOCAL lock_timeout`, as this file's own 15s derivation says
+     * a few lines above.
+     *
+     * Named for the edit specifically. Its two siblings in this `describe`
+     * cover the archive and the pause/resume, and an unqualified name here
+     * made the failure header ambiguous between them under mutation and made
+     * `vitest -t` unable to select one.
      */
     it(
-      'answers busy when the generation claim holds the row past the lock timeout',
+      'answers busy when the generation claim holds the row past the lock timeout (template edit)',
       async () => {
         let release!: () => void;
         const held = new Promise<void>((resolve) => {

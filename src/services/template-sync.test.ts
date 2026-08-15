@@ -242,9 +242,12 @@ describe('syncTemplateInstances', () => {
    * instance and commits — standing in for a booking that reaches the class
    * first. Only then is the sync allowed to proceed. In the real, unmutated
    * order (pre-lock before the re-read) this makes the re-read observe the
-   * committed flip and correctly keep the row; the mutation below moves the
-   * read above the pre-lock so it captures the row before the flip instead,
-   * which is exactly the hole this closes.
+   * committed flip and correctly keep the row. The mutation that proves this
+   * bites — hoisting the `class.findMany` re-read above the pre-lock, so it
+   * captures the row before the flip — is spec §4's "Lock-then-re-read" row.
+   * It is described there rather than performed here; running it turns the
+   * `startTime` assertion below into `'11:15'`. ("The mutation below" is what
+   * this said before, and there is no mutation below — only the test body.)
    *
    * Self-contained: its own template, isolated from the three tests above,
    * which leave the shared `templateId` mutated (day changed, reactivated).

@@ -760,7 +760,9 @@ describe('PATCH /api/class-templates/[id]', () => {
  * Covers PUT too, not just PATCH, despite the describe's original name
  * surviving from before PUT had a `busy` arm at all — the atomic-template-
  * update branch gave `updateClassTemplate` one (spec §3.2), and its own
- * `class-generator.test.ts:672` unit test pins the *service* outcome but
+ * `class-generator.test.ts` unit test ("answers busy when the generation
+ * claim holds the row past the lock timeout (template edit)") pins the
+ * *service* outcome but
  * nothing at the wire pinned the status, code or copy the way both PATCH
  * siblings below already were. Same `holdTemplateRow` helper, same
  * contention shape — the PUT case is added alongside these two rather than

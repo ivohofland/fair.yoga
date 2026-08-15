@@ -1327,12 +1327,24 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     expect(casCalls).toBe(2);
   }, 30_000);
 
-  /**
-   * The two `Class` lock-order deadlock cycles once tracked here by
-   * `it.todo` markers ("delete both when 180 lands") are closed. Both are
-   * now pinned by real, SQLSTATE-asserting tests in
-   * `src/services/template-lock-order.test.ts`, not by a bare timeout.
-   */
+  // The two `Class` lock-order deadlock cycles once tracked here by `it.todo`
+  // markers ("delete both when 180 lands") now have real tests, in
+  // `src/services/template-lock-order.test.ts` — one per site, neither a bare
+  // timeout.
+  //
+  // Stated precisely, because the two are pinned differently and "both
+  // SQLSTATE-asserting" was the shorthand that replaced the markers: the sync
+  // pairing is asserted by SQLSTATE negation on the erasure's rejection, while
+  // the archive pairing cannot be, because `archiveOrUnarchiveTemplate`
+  // RESOLVES `{ ok: false, reason: 'busy' }` on a `40P01` instead of
+  // rejecting. That one is pinned by a positive `{ ok: true, deleted: 2 }`
+  // plus the absence of its own lock-race log line. That file's docblock
+  // records the transcript proving a rejection-based negation passes green
+  // there with the deadlock intact.
+  //
+  // A line comment, not a `/** */` docblock: as a docblock immediately before
+  // the closing `});` it documented no test, and tooling attached it to
+  // nothing.
 });
 
 /**

@@ -221,16 +221,26 @@ Its ten statements, classified by reading the transaction rather than inheriting
 | `waitlistEntry.findMany:961` | no — read |
 | `class.deleteMany:986` | **yes** — `Class` rows, plus the `WaitlistEntry` cascade |
 | `class.findMany:1007` survivors | no — read |
-| `createBulkNotifications:1031` | **yes** — FK `FOR KEY SHARE` on survivor classes |
+| `createBulkNotifications:1031` | **no** — see the correction below |
 | `class.count:1041` | no — read |
 | `classTemplate.update:1058` | no — row already held `FOR NO KEY UPDATE` by the CAS |
 
-A pre-lock covering **every class the transaction touches** — the deletable ones
-*and* the survivors the notifications reference — makes rows 2 and 3 stop
-waiting on those rows, because the transaction already holds them. The
-`deleteMany` can then wait only on cascade children; the notification inserts
-cannot wait at all. The pre-lock **substitutes for** later waits rather than
-adding to them, so the realistic bound stays near `3 × 2 = 6 s`.
+**Correction, from the PR review wave: the `createBulkNotifications` row said
+"yes — FK `FOR KEY SHARE` on survivor classes", and that is false.** The
+withdrawal notifications deliberately carry **no** `relatedClassId` — the class
+row is being deleted, and `class-template-lifecycle.ts` says so at the insert:
+"Passing the id would fail the insert's FK outright." No FK column written
+means no `FOR KEY SHARE` on any `Class` row, so this statement cannot wait at
+all, with or without a pre-lock. The archive's waitable count is therefore
+**two**, not three.
+
+That does not change what the archive ships, but it does change why. A pre-lock
+covering the deletable classes makes row 2 (the CAS is on `ClassTemplate`, not
+`Class`) — more precisely, makes the `deleteMany` stop waiting on the `Class`
+rows it matches, leaving it only its cascade children. The pre-lock still
+**substitutes for** a later wait rather than adding one, and the realistic bound
+is `2 × 2 = 4 s` inside the 10 s budget, with more headroom than this section
+originally claimed rather than less.
 
 This asymmetry does not rescue the update path, and the reason is the point:
 its statements 4 and 5 wait on an index-entry `ShareLock` — another
@@ -238,9 +248,17 @@ transaction's uncommitted entry, not a row any pre-lock could hold. Those two
 waits are irreducible, so `5 × 2 s` stands there.
 
 **Load-bearing consequence for the plan:** the pre-lock's row set at the archive
-must include the survivors, not only the classes about to be deleted. Narrow it
-to the deletable set and the notification inserts start waiting again, and this
-arithmetic no longer holds.
+must be the full candidate set, not only the classes about to be deleted.
+
+The reason given here originally — "narrow it and the notification inserts start
+waiting again" — does **not** hold, per the correction above: those inserts take
+no `Class` lock either way. The conclusion survives on the independent and much
+stronger argument in §2.4.1: the `deleteMany`'s predicate is re-evaluated at
+execution time, so any candidate may match it, and a candidate the pre-lock
+never held is a row deleted out of order. That is a deadlock-safety requirement,
+not a budgeting one. Recorded rather than silently rewritten because a
+conclusion that keeps its shape while its stated premise collapses is exactly
+the thing this document keeps catching elsewhere.
 
 ### 2.4.1 The archive pre-lock collides with a documented decision
 

@@ -98,19 +98,33 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       //
       // Nor does every peer transaction touching these rows decline the 5s
       // default, which this comment also claimed: `POST /api/registrations`;
-      // `waitlist.ts`'s `addToWaitlist`, `promoteNext`, `claimSpot` and
-      // `withdrawWaitingEntriesForTeacher`; `class-lifecycle.ts`'s
-      // `completeClass`; `class-transitions.ts`'s `autoCancelClasses`; and
-      // `invitations.ts`'s `acceptInvitation` and `unlinkTeacher` all open
-      // their `$transaction` with no options, so every one of them locks
-      // `Class` rows under it too. The ones that do budget past it are the
-      // five template lifecycle functions (`updateClassTemplate`,
+      // `waitlist.ts`'s `addToWaitlist`, `promoteNext` and `claimSpot`;
+      // `class-lifecycle.ts`'s `completeClass`; `class-transitions.ts`'s
+      // `autoCancelClasses`; and `invitations.ts`'s `acceptInvitation` and
+      // `unlinkTeacher` all open their `$transaction` with no options, so
+      // every one of them locks `Class` rows under it too.
+      //
+      // `withdrawWaitingEntriesForTeacher` was on that list and does not
+      // belong on it: it takes `tx: TransactionClientOnly` and opens no
+      // transaction at all (`db-locks.ts` brands it for exactly that reason),
+      // so it inherits whichever budget `acceptInvitation`/`unlinkTeacher`
+      // set — which is the 5s default, so the point survives, but through a
+      // caller rather than through itself.
+      //
+      // Sites that DO budget past 5s, stated as a list rather than as the
+      // list: the five template lifecycle functions (`updateClassTemplate`,
       // `pauseOrResumeTemplate`, `archiveOrUnarchiveTemplate` and their two
       // studio twins — `updateClassTemplate` is the fifth, since the
       // atomic-template-update branch gave its transaction its own
       // `{ timeout: 15_000 }`), both generator sweeps (`generateClassInstances`,
-      // `generateStudioClassInstances`) and this route's own studio twin —
-      // "most", not "every", and not "the five".
+      // `generateStudioClassInstances`), this route's own studio twin, and
+      // **both GDPR erasures** — `deleteStudentAccount`'s sized
+      // `Math.min(5_000 + waitingCount * 2_000, 20_000)` and
+      // `deleteTeacherAccount`'s flat `{ timeout: 10_000 }` (`gdpr.ts`), both
+      // of which lock `Class` rows and the first of which is the counterparty
+      // in the deadlock issue 180 closed. An earlier version of this sentence
+      // said "the ones that do budget past it are" and omitted both, which is
+      // the definite-article trap this whole comment is otherwise about.
       //
       // `syncTemplateInstances` (`template-sync.ts`) no longer belongs on
       // either list: since the atomic-template-update branch (issue 83) it
@@ -130,9 +144,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // of this comment claimed it did. Prisma checks the budget at statement
       // boundaries, so it "cannot roll back a statement already blocked inside
       // Postgres, only refuse to start a new one" (`db-locks.ts`) — measured
-      // by the five lifecycle functions' mutation records, where removing
-      // their `setLockTimeout` leaves the blocked statement outliving the 10s
-      // budget rather than being aborted at it. What the budget buys is room
+      // by the four 10s lifecycle functions' mutation records, where removing
+      // their `setLockTimeout` leaves the blocked statement outliving that
+      // budget rather than being aborted at it. Four, not five: the fifth,
+      // `updateClassTemplate`, budgets `{ timeout: 15_000 }`, so "the 10s
+      // budget" was never its measurement to cite. What the budget buys is room
       // for the three statements' own runtime; the FK wait itself is unbounded.
       //
       // No `setLockTimeout` here, and that is a scope decision rather than an

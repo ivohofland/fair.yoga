@@ -7,8 +7,9 @@ import { deleteStudentAccount } from './gdpr';
 import { log } from '@/lib/log';
 
 /**
- * Issue 180. `syncTemplateInstances` (`template-sync.ts`) takes its `Class`
- * row locks in HEAP order — its same-day `class.updateMany({ where: { id: {
+ * Issue 180, both halves now fixed — read past this first paragraph before
+ * its tense misleads you. `syncTemplateInstances` (`template-sync.ts`) USED
+ * TO take its `Class` row locks in HEAP order — its same-day `class.updateMany({ where: { id: {
  * in: [...] } } })` is one statement, and Postgres visits the matching rows
  * in whatever order the planner picks, never the array's
  * (`docs/lock-order.md`, "Sorting the id array does NOT order a multi-row
@@ -48,9 +49,11 @@ import { log } from '@/lib/log';
  * the erasure's deliberate 300ms hold plus the rest of its transaction — and
  * time out rather than deadlock. A bounded-wait expiry is a different
  * failure and must fail this test rather than satisfy it, on either side of
- * the race. The second `it` below needs no matching `not.toMatch` — its
- * positive `toMatch(/40P01|deadlock/i)` already excludes `55P03` on its own;
- * see that `it`'s own docblock for why an inverted version WOULD need one.
+ * the race. The second `it` below carries the same two-assertion split on its
+ * own erasure branch, for the same reason — see its docblock. (An earlier
+ * version of this paragraph said that `it` needed no `not.toMatch` because
+ * its `toMatch` was positive. That described the pre-inversion test: task 4
+ * inverted it, and no positive `toMatch` remains anywhere in this file.)
  */
 const prisma = new PrismaClient();
 
@@ -291,8 +294,11 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       // `$queryRaw` calls (`lockClassRow`'s `FOR UPDATE`, once per class,
       // ascending — so LOW first, HIGH second). Keyed on the query's own bound
       // value — the house rule this repo's other lock-order hooks follow
-      // (`invitations-lock-order.test.ts`: "keyed on args shape, not call
-      // order") — not on call sequence. The moment the LOW lock is granted,
+      // (`invitations-lock-order.test.ts` keys its own hooks on which bound
+      // key the query carries, not on how many times it has fired) — not on
+      // call sequence. Paraphrased, not quoted: an earlier version put
+      // "keyed on args shape, not call order" in quotation marks as if it
+      // were a line from that file. No such sentence exists there. The moment the LOW lock is granted,
       // signal the test to start `syncTemplateInstances`, then hold this
       // transaction here for a beat before letting it ask for HIGH — long
       // enough for `syncTemplateInstances`'s own `updateMany` to start, lock
@@ -457,7 +463,9 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    *    transient-error `catch` never fired. That also de-vacuums point 2:
    *    the spy's `.find()` is keyed on the exact log-message string
    *    ("recurring class archive lost the template lock race",
-   *    `class-template-lifecycle.ts:1324`), so a rename there would make
+   *    `class-template-lifecycle.ts`, the `log.warn` in
+   *    `archiveOrUnarchiveTemplate`'s `isTransientDbError` branch), so a
+   *    rename there would make
    *    `toBeUndefined()` pass for the wrong reason — silently, since a
    *    renamed message just never matches the old string again. The
    *    `ok: true` assertion has no such coupling and catches the same
@@ -537,7 +545,8 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
         await lowLockedPromise;
 
         // Fourth argument is the target state string, not a boolean —
-        // verified against `class-generator.test.ts:507`.
+        // verified against `class-generator.test.ts`'s own archive call in
+        // "answers busy when an ordinary booking holds a class row".
         //
         // Called directly, not wrapped in an outer `prisma.$transaction` —
         // this function opens and manages its own transaction internally
