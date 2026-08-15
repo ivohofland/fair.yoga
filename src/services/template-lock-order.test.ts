@@ -366,7 +366,9 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
             // `docs/lock-order.md`'s within-`Class` table — rather than by a
             // reproduction. That is a real reduction in coverage, traded for a
             // lock loop whose cost grew with account age until erasure became
-            // impossible; it should not be discovered later as a surprise.
+            // impossible. Filed as #237: one tested helper for ordered
+            // multi-row `Class` locking repays it for all five sites at once,
+            // which a per-pairing reproduction cannot.
             if (args.values[0] === studentId) {
               lowLocked();
               await new Promise((r) => setTimeout(r, 300));
@@ -619,7 +621,9 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
             // `docs/lock-order.md`'s within-`Class` table — rather than by a
             // reproduction. That is a real reduction in coverage, traded for a
             // lock loop whose cost grew with account age until erasure became
-            // impossible; it should not be discovered later as a surprise.
+            // impossible. Filed as #237: one tested helper for ordered
+            // multi-row `Class` locking repays it for all five sites at once,
+            // which a per-pairing reproduction cannot.
             if (args.values[0] === studentId) {
               lowLocked();
               await new Promise((r) => setTimeout(r, 300));
@@ -806,7 +810,9 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
             // `docs/lock-order.md`'s within-`Class` table — rather than by a
             // reproduction. That is a real reduction in coverage, traded for a
             // lock loop whose cost grew with account age until erasure became
-            // impossible; it should not be discovered later as a surprise.
+            // impossible. Filed as #237: one tested helper for ordered
+            // multi-row `Class` locking repays it for all five sites at once,
+            // which a per-pairing reproduction cannot.
             if (args.values[0] === studentId) {
               lowLocked();
               await new Promise((r) => setTimeout(r, 300));

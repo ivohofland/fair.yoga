@@ -295,6 +295,10 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
   // performance note but an Article 17 failure. `waiting` drains on its own
   // (`closeQueueOnStart` closes every queue when its class starts), so this
   // count is self-healing and the ceiling stays the backstop it was written as.
+  //
+  // The lock SET below is still unbounded by account age, even though its
+  // round-trip cost no longer is. #238 is the root fix: nothing ever reaps a
+  // closed, unfulfilled `WaitlistEntry`, so the population only grows.
   // This count is read outside any lock (cheap: no transaction, no FOR
   // UPDATE) purely to size that budget, and it can drift low if a waitlist
   // join for this same student lands in the gap before the transaction
