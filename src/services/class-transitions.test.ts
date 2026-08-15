@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import {
   autoTransitionToInProgress,
@@ -8,6 +8,7 @@ import {
 import { lockClassRow } from '@/lib/db-locks';
 import { getWaitlistWindow } from './waitlist';
 import { formatDayHeader } from '@/lib/format';
+import { log } from '@/lib/log';
 
 // ===========================================================================
 // Automated class transitions (DB) — timezone-aware lifecycle sweeps.
@@ -950,19 +951,38 @@ describe('class transitions (DB, timezone-aware)', () => {
       },
     }) as unknown as PrismaClient;
 
-    const completed = await autoCompleteClasses(racing, new Date('2026-07-20T17:30:00Z'));
+    // The consumer side of the refusal reason, which nothing tested before.
+    // `completeClass`'s own test pins that it RETURNS `NOT_ENDED_YET`; these
+    // spies pin that this sweep does something different with it. Between the
+    // two, the discriminator that used to be a substring match on free text is
+    // covered from both ends.
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => log);
+    try {
+      const completed = await autoCompleteClasses(racing, new Date('2026-07-20T17:30:00Z'));
 
-    expect(hookCalls).toBe(1);
-    expect(completed).toBe(0);
+      expect(hookCalls).toBe(1);
+      expect(completed).toBe(0);
 
-    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(updated.status).toBe('in_progress');
-    // No payments for a class that has not happened. This is the assertion that
-    // makes the defect concrete: completion creates Payment rows.
-    expect(await prisma.payment.count({ where: { registration: { classId: cls.id } } })).toBe(0);
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(updated.status).toBe('in_progress');
+      // No payments for a class that has not happened. This is the assertion
+      // that makes the defect concrete: completion creates Payment rows.
+      expect(await prisma.payment.count({ where: { registration: { classId: cls.id } } })).toBe(0);
 
-    await prisma.registration.deleteMany({ where: { classId: cls.id } });
-    await prisma.class.delete({ where: { id: cls.id } });
+      // A reschedule is expected and self-resolving — the next tick re-evaluates
+      // the class's new end time — so it must not page anyone. Every OTHER
+      // refusal reason still goes to `error`, which is why both are asserted:
+      // downgrading the whole branch would pass a `warn`-only check.
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toMatchObject({ classId: cls.id });
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+      await prisma.registration.deleteMany({ where: { classId: cls.id } });
+      await prisma.class.delete({ where: { id: cls.id } });
+    }
   });
 
   it('auto-completes an in-progress class after its local end time', async () => {

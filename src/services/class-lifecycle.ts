@@ -43,7 +43,29 @@ export const VALID_TRANSITIONS: Record<ClassStatus, ClassStatus[]> = {
 // Types
 // ---------------------------------------------------------------------------
 
-export type TransitionResult = { ok: true } | { ok: false; error: string };
+/**
+ * Why a transition was refused, as a value rather than as prose.
+ *
+ * `error` alongside it stays free text for humans — a 409 body, a log line. The
+ * split matters: those two have opposite change pressures. User-facing copy
+ * wants to be rewritten (and, per CLAUDE.md's "international from day one",
+ * eventually translated); something another module branches on must never
+ * change silently. Before this existed, `autoCompleteClasses` told the
+ * reschedule race apart from every other refusal with
+ * `result.error.endsWith('has not ended yet')`, so appending a debug detail to
+ * the message — still importing the shared constant, still green under `tsc`
+ * and the suite — would have flipped a benign, self-resolving race back to
+ * logging at `error` on every tick.
+ */
+export type TransitionFailureReason =
+  | 'NOT_FOUND'
+  | 'ILLEGAL_TRANSITION'
+  | 'NOT_ENDED_YET'
+  | 'CONCURRENT_MODIFICATION';
+
+export type TransitionResult =
+  | { ok: true }
+  | { ok: false; reason: 'ILLEGAL_TRANSITION'; error: string };
 
 // ---------------------------------------------------------------------------
 // Functions
@@ -70,6 +92,7 @@ export function validateTransition(
   }
   return {
     ok: false,
+    reason: 'ILLEGAL_TRANSITION',
     error: `Invalid transition: cannot move from "${from}" to "${to}". Valid transitions from "${from}": [${VALID_TRANSITIONS[from].join(', ')}]`,
   };
 }
@@ -104,7 +127,7 @@ export function isEconomicFieldLocked(settingsLocked: boolean): boolean {
 
 export type TransitionDbResult =
   | { ok: true; newStatus: ClassStatus }
-  | { ok: false; error: string };
+  | { ok: false; reason: TransitionFailureReason; error: string };
 
 /**
  * Transition a class to a new status in the database.
@@ -159,7 +182,7 @@ export async function transitionClass(
   // it only tells the caller which refusal happened, and the route maps both
   // to a 409.
   const cls = await db.class.findUnique({ where: { id: classId }, select: { status: true } });
-  if (!cls) return { ok: false, error: `Class not found: ${classId}` };
+  if (!cls) return { ok: false, reason: 'NOT_FOUND', error: `Class not found: ${classId}` };
 
   const validation = validateTransition(cls.status, targetStatus);
   if (!validation.ok) return validation;
@@ -167,7 +190,11 @@ export async function transitionClass(
   // The CAS matched nothing, yet the status now permits the move: the row
   // changed twice while we were deciding. Refuse rather than retry — the
   // caller's decision was made against a world that no longer exists.
-  return { ok: false, error: `Concurrent modification of class ${classId}` };
+  return {
+    ok: false,
+    reason: 'CONCURRENT_MODIFICATION',
+    error: `Concurrent modification of class ${classId}`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -212,16 +239,6 @@ export const CHARGED_STATUSES: readonly RegistrationStatus[] = Object.freeze([
  * Wrapped in a transaction so that all DB mutations (class status,
  * registration prices, payment creation) succeed or fail atomically.
  */
-// Shared with `class-transitions.ts`'s `autoCompleteClasses`, which matches
-// on this fragment to tell the `requireEndedBy` race refusal apart from
-// every other refusal reason (so it can log that one case at `warn` instead
-// of `error` — see the comment there). A free-text `.error` string is
-// otherwise an unpinned coupling: reword the message here without this
-// constant and the sweep's discriminator silently stops matching, with no
-// test failure to catch it. Both sides importing the same constant is what
-// makes a reword a single edit instead of two that can drift apart.
-export const CLASS_NOT_ENDED_YET = 'has not ended yet';
-
 export async function completeClass(
   db: PrismaClient,
   classId: string,
@@ -242,7 +259,7 @@ export async function completeClass(
         teacher: { select: { defaultTimezone: true } },
       },
     });
-    if (!cls) return { ok: false, error: `Class not found: ${classId}` };
+    if (!cls) return { ok: false, reason: 'NOT_FOUND', error: `Class not found: ${classId}` };
 
     // #182. The TIMING decision lives here, under the lock this function
     // already holds, rather than in the caller's pre-transaction snapshot.
@@ -262,7 +279,11 @@ export async function completeClass(
       const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
       const end = new Date(start.getTime() + cls.durationMinutes * 60 * 1000);
       if (opts.requireEndedBy < end) {
-        return { ok: false, error: `Class ${classId} ${CLASS_NOT_ENDED_YET}` };
+        return {
+          ok: false,
+          reason: 'NOT_ENDED_YET',
+          error: `Class ${classId} has not ended yet`,
+        };
       }
     }
 
