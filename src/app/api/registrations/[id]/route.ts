@@ -82,9 +82,14 @@ export const PUT = withErrorHandler(async (
 
   const { id } = await params;
 
+  // `teacherId` only, deliberately. Ownership is a fact about the class that
+  // this route cannot change and no concurrent writer moves, so reading it here
+  // is safe. The class's STATUS is not read: testing it here would be a
+  // read-then-write across `parseBody`'s await, so it belongs in the write's
+  // own WHERE below and is deliberately absent from this select.
   const registration = await prisma.registration.findUnique({
     where: { id },
-    include: { class: { select: { teacherId: true, status: true } } },
+    include: { class: { select: { teacherId: true } } },
   });
 
   if (!registration) return respondError('Registration not found', 404);
@@ -92,57 +97,79 @@ export const PUT = withErrorHandler(async (
     return respondError('Not your class', 403);
   }
 
-  // #182. A cancelled class has no attendance to record.
-  //
-  // `completed` is DELIBERATELY absent from this check. A teacher learns the
-  // exact no-shows after the class, not during it — someone arrives a minute
-  // late, is let in, and nobody stops to tap a checkbox. All three values
-  // `updateRegistrationSchema` accepts are in `CHARGED_STATUSES`
-  // (`class-lifecycle.ts`), so a correction made after completion cannot
-  // change who is billed. There is a test pinning this; it is a product
-  // requirement, not an oversight.
-  //
-  // The UI cannot reach this allowance yet — `AttendanceList` only renders
-  // under `showCheckin` (`(teacher)/class/[id]/page.tsx`), which goes false
-  // within about a minute of the class ending, once `autoCompleteClasses`
-  // flips it to `completed`. That gap is UI work, filed separately as issue
-  // #234 — this guard is what makes building it safe, not evidence the
-  // allowance was never used.
-  //
-  // No guard on class TIME either, and that is also deliberate: check-in
-  // renders on an `open` class within 15 minutes of its start
-  // (`(teacher)/class/[id]/page.tsx`), so attendance before the class begins
-  // is the designed flow.
-  if (registration.class.status === 'cancelled') {
-    return respondError('Cannot record attendance on a cancelled class', 409);
-  }
-
   const parsed = await parseBody(request, updateRegistrationSchema);
   if ('error' in parsed) return parsed.error;
 
-  // Status in the WHERE, not just a pre-check, for the same reason both DELETE
-  // branches below scope their writes: this handler opens no transaction, so a
-  // read-then-write races.
+  // #182. Every condition in the WHERE, none as a pre-check: this handler opens
+  // no transaction, so anything read above and tested here is a read-then-write
+  // that races. The DELETE branches below scope their writes for the same
+  // reason.
   //
-  // What it closes: `autoCancelClasses` (`class-transitions.ts`) counts
+  // What the scope closes: `autoCancelClasses` (`class-transitions.ts`) counts
   // registrations in `ACTIVE_REGISTRATION_STATUSES` under its row lock, then
   // CASes. This route takes no `Class` lock, so it can commit between the two.
-  // A registration moving INTO that set — `late_cancel -> attended` — makes
-  // the count too LOW and cancels a class that had enough students. Scoping
-  // the SOURCE means a registration can only ever move WITHIN the counted set,
-  // so the count cannot rise. Moves OUT stay possible and are harmless: they
-  // make the count too high, and the class merely survives a sweep it might
-  // have been cancelled in — a one-tick delay.
+  // A registration moving INTO that set makes the count too LOW and cancels a
+  // class that had enough students. Moves OUT are harmless — the count reads
+  // too high and the class merely survives a sweep, a one-tick delay.
   //
-  // A `Class` row lock would also close it, and is not used: this write moves
-  // no money (`no_show` is in both `ACTIVE_REGISTRATION_STATUSES` and
-  // `CHARGED_STATUSES`, so attendance changes no seat count and no price), and
-  // locking the hottest row in the app to protect it is not proportionate.
+  // `late_cancel -> attended` is the only accepted transition that moves INTO
+  // the set, and it is refused only while the class is `open`, because that is
+  // the only window in which the race exists: `autoCancelClasses` both selects
+  // and CASes on `status: 'open'`. Once the class has started, a student who
+  // late-cancelled and turned up anyway is the teacher's call to record, and
+  // costs nothing to allow — `late_cancel` and `attended` are both in
+  // `CHARGED_STATUSES`, so the pricing divisor does not move and no price
+  // changes for anyone. The check-in list renders those students deliberately
+  // (`activeRegistrations`, `class/[id]/page.tsx`); refusing the write would
+  // only stop a teacher recording what happened in their own room.
+  //
+  // `completed` is DELIBERATELY absent from the class clause. A teacher learns
+  // the exact no-shows after the class, not during it. All three values
+  // `updateRegistrationSchema` accepts are in `CHARGED_STATUSES`, so a
+  // correction made after completion cannot change who is billed. There is a
+  // test pinning this as a product requirement; #234 is the UI work that makes
+  // it reachable.
+  //
+  // No guard on class TIME either: check-in renders on an `open` class within
+  // 15 minutes of its start, so attendance before the class begins is the
+  // designed flow, not an anomaly.
+  //
+  // A `Class` row lock would also close the race and is not used: this write
+  // moves no money, and locking the hottest row in the app to protect a
+  // one-tick scheduling delay is not proportionate.
   const updated = await prisma.registration.updateMany({
-    where: { id, status: { notIn: ['cancelled', 'late_cancel'] } },
+    where: {
+      id,
+      status: { not: 'cancelled' },
+      class: { status: { not: 'cancelled' } },
+      // NOT(late_cancel AND class open), written as its contrapositive so each
+      // arm is a plain condition Prisma can compile without a nested relation
+      // negation.
+      OR: [{ status: { not: 'late_cancel' } }, { class: { status: { not: 'open' } } }],
+    },
     data: { status: parsed.data.status },
   });
+
   if (updated.count === 0) {
+    // The write has already failed, so there is nothing left to protect by not
+    // reading — and the snapshot above was taken before `parseBody`'s await,
+    // which makes naming a status from it the same staleness the sibling cancel
+    // route had to fix separately. Decide from the WHERE, explain from a fresh
+    // read.
+    const current = await prisma.registration.findUnique({
+      where: { id },
+      select: { status: true, class: { select: { status: true } } },
+    });
+    if (!current) return respondError('Registration not found', 404);
+    if (current.class.status === 'cancelled') {
+      return respondError('Cannot record attendance on a cancelled class', 409);
+    }
+    if (current.status === 'late_cancel') {
+      return respondError(
+        'This student cancelled late. You can mark them attended once the class has started.',
+        409,
+      );
+    }
     return respondError('Cannot record attendance on a cancelled registration', 409);
   }
 

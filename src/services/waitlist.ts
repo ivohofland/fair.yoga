@@ -727,17 +727,22 @@ export async function handleSpotFreed(
   // in is written unlocked too.
   //
   // Only attendance could ever move a row INTO the counted set (`late_cancel
-  // → attended`); the other two only move rows out, which makes the count
-  // too high and this branch too quiet — the safe direction. Attendance is
-  // written at or after class time and this branch runs at least 6 h before
-  // the start (the claim window ends at `start − deadlineHours`, minimum 6),
-  // so the two never met in practice even before this was closed off. Now
-  // they cannot meet at all: `PUT /api/registrations/[id]` guards current
-  // registration status and class status — the source-status WHERE that
-  // route's own comment explains — so `late_cancel → attended` is no longer
-  // reachable through it. It still does not guard class TIME, deliberately:
-  // check-in on an `open` class within 15 minutes of its start is the
-  // designed flow, not a gap (`class/[id]/page.tsx`'s `showCheckin`).
+  // → attended`); the other two only move rows out, which makes the count too
+  // high and this branch too quiet — the safe direction.
+  //
+  // That one move is closed STRUCTURALLY, not by timing:
+  // `PUT /api/registrations/[id]` scopes its write so `late_cancel → attended`
+  // is refused while the class is `open`, and this branch only ever runs on an
+  // `open` class. Once a class starts the move is allowed, and by then this
+  // branch cannot run at all.
+  //
+  // Deliberately NOT argued from the clock. An earlier version reasoned that
+  // the two "never met in practice" because this branch runs at least 6 h
+  // before the start (minimum `DEADLINE_HOURS`) while attendance is written at
+  // class time. That spacer is a property of today's window boundaries, not of
+  // this code — #236 proposes broadcasting freed spots right up to class start,
+  // which would erase it. The structural argument above survives that change;
+  // the timing one would not.
   //
   // `lockClassRow`, not the inline `FOR UPDATE` the three functions above
   // use: those are pre-existing unbounded waits that `db-locks.ts` reserves

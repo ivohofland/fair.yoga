@@ -963,7 +963,16 @@ describe('registration writes return no stored income tier', () => {
 });
 
 describe('PUT /api/registrations/[id] — attendance is scoped by source status (#182)', () => {
-  it('409s attendance on a late-cancelled registration', async () => {
+  /**
+   * The ONE move this endpoint refuses, and only while the class is still
+   * `open`. `late_cancel` is outside `ACTIVE_REGISTRATION_STATUSES` and
+   * `attended` is inside it, so this is the only transition the schema accepts
+   * that RAISES the seat count — and a rise landing between
+   * `autoCancelClasses`' count and its CAS cancels a class that had enough
+   * students. That sweep selects `status: 'open'`, so `open` is the entire
+   * window in which the race exists.
+   */
+  it('409s marking a late-cancelled student attended while the class is still open', async () => {
     const classId = await makeClass(4);
     const reg = await prisma.registration.create({
       data: { classId, studentId: studentIds[0]!, status: 'late_cancel', tierAtBooking: 3 },
@@ -976,6 +985,65 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
     expect(res.status).toBe(409);
     const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
     expect(after.status).toBe('late_cancel');
+  });
+
+  /**
+   * The other side of that boundary, and a REAL shipped flow rather than a
+   * hypothetical: a student late-cancels, turns up anyway, and the teacher lets
+   * them in. `activeRegistrations` (`class/[id]/page.tsx`) keeps `late_cancel`
+   * rows deliberately, so the check-in list renders them with a live checkbox.
+   *
+   * Once the class is `in_progress`, `autoCancelClasses` no longer looks at it
+   * — that sweep both selects and CASes on `status: 'open'` — so the count race
+   * this scope exists to close cannot happen, and refusing the write would only
+   * stop a teacher recording what actually happened in their own room. Nobody's
+   * price moves either: `late_cancel` and `attended` are both in
+   * `CHARGED_STATUSES`, so the pricing divisor is identical before and after.
+   */
+  it('allows a late-cancelled student to be marked attended once the class has started', async () => {
+    const classId = await makeClass(4);
+    const reg = await prisma.registration.create({
+      data: { classId, studentId: studentIds[0]!, status: 'late_cancel', tierAtBooking: 3 },
+    });
+    await prisma.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
+
+    const res = await fetch(`${BASE_URL}/api/registrations/${reg.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
+      body: JSON.stringify({ status: 'attended' }),
+    });
+    expect(res.status).toBe(200);
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
+    expect(after.status).toBe('attended');
+  });
+
+  /**
+   * Pins the OTHER half of the source scope. Written because the sibling half
+   * was already known to be insufficient on its own: `registrations-api.test.ts`'s
+   * "does not let a raced late cancel rewrite a free cancel into a charged one"
+   * exists precisely because an earlier reviewer found `notIn: ['late_cancel']`
+   * surviving on the DELETE branch. Narrowing this WHERE the same way would make
+   * `cancelled -> attended` reachable — resurrecting a registration the student
+   * or teacher already cancelled, and moving it INTO the counted set.
+   *
+   * On an `in_progress` class deliberately, so the refusal can only be about the
+   * REGISTRATION's status: the class-status clause is satisfied here.
+   */
+  it('409s attendance on a cancelled registration', async () => {
+    const classId = await makeClass(4);
+    const reg = await prisma.registration.create({
+      data: { classId, studentId: studentIds[0]!, status: 'cancelled', tierAtBooking: 3 },
+    });
+    await prisma.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
+
+    const res = await fetch(`${BASE_URL}/api/registrations/${reg.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
+      body: JSON.stringify({ status: 'attended' }),
+    });
+    expect(res.status).toBe(409);
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
+    expect(after.status).toBe('cancelled');
   });
 
   it('409s attendance on a cancelled class', async () => {

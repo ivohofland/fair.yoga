@@ -161,7 +161,7 @@ export default async function ClassDetailPage({
       {/* Check-in mode: attendance checklist + walk-ins + pricing estimate */}
       {showCheckin && (
         <>
-          <AttendanceList items={attendanceItems} />
+          <AttendanceList items={attendanceItems} classIsOpen={cls.status === 'open'} />
           <div className="py-2">
             <AddWalkIn
               classId={cls.id}

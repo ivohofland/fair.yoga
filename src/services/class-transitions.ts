@@ -254,26 +254,25 @@ export async function autoCancelClasses(
         // the class merely survives a sweep it might have been cancelled in
         // — a one-tick delay, the same cost as a stale pre-filter above.
         //
-        // `PUT` is now closed too, by a source-status scope added in the
-        // route itself (`registrations/[id]/route.ts`): its `updateMany`
-        // WHERE excludes `cancelled` and `late_cancel`, so a registration can
-        // only move WITHIN the counted set — `late_cancel -> attended` is no
-        // longer reachable through that endpoint at all, and the harmful
-        // direction this comment used to worry about cannot happen any more.
+        // `PUT` is closed too, and closed exactly where the risk is. Its
+        // `updateMany` WHERE (`registrations/[id]/route.ts`) refuses the one
+        // accepted transition that moves INTO the counted set,
+        // `late_cancel -> attended`, while the class is still `open` — which
+        // is the whole of this sweep's reach, since it both selects and CASes
+        // on `status: 'open'`. Once a class has started, that same move is
+        // allowed and cannot affect this count, because this sweep will never
+        // look at the class again.
         //
-        // Before that guard existed, what actually protected the ordinary
-        // case was narrower than "not a normal thing to do" claimed to be:
-        // checking in on an `open` class within 15 minutes of its start IS
-        // the designed flow (`class/[id]/page.tsx`'s `showCheckin`), so a
-        // teacher marking attendance before a class starts is routine, not
-        // an anomaly. What protected the count was that the check-in UI's
-        // toggle only ever writes `attended <-> no_show`
-        // (`attendance-list.tsx:27`), and both are already inside
-        // `ACTIVE_REGISTRATION_STATUSES` — so the UI itself never sent a
-        // request that could move a registration INTO the counted set. Only
-        // a direct API call naming a `late_cancel` registration could have,
-        // and the route's own guard now closes that path server-side rather
-        // than leaving it to depend on what the UI happens to send.
+        // An earlier version of this comment claimed the check-in UI could
+        // never send that request, on the grounds that its toggle writes only
+        // `attended <-> no_show`. That was wrong, and worth recording because
+        // it is a tempting mistake: the toggle's TARGET is always
+        // attended/no_show, but its SOURCE is whatever the row already is, and
+        // `activeRegistrations` (`class/[id]/page.tsx`) deliberately keeps
+        // `late_cancel` rows in the check-in list. A student who cancelled late
+        // and turned up anyway is one tap away, every class. The guard is
+        // server-side precisely so it does not depend on what the UI happens
+        // to send.
         //
         // Scope note, the same one `gdpr.ts` and `waitlist.ts`'s
         // `removeFromWaitlist` each carry at their own `lockClassRow` call:

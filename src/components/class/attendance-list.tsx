@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Icon } from '@/components/ui/icon';
+import { readErrorMessage } from '@/lib/client-errors';
 
 export interface AttendanceItem {
   registrationId: string;
@@ -11,9 +12,22 @@ export interface AttendanceItem {
 
 interface AttendanceListProps {
   items: AttendanceItem[];
+  /**
+   * Whether the class is still `open` — i.e. this is the 15-minute pre-start
+   * check-in window rather than the class itself.
+   *
+   * A late-cancelled student who turns up anyway can be marked present, but only
+   * once the class has STARTED: while it is `open`, moving them into the counted
+   * set can race `autoCancelClasses` into cancelling a class that had enough
+   * students (see the WHERE in `api/registrations/[id]/route.ts`). Their row is
+   * shown either way — the teacher needs to see who is expected — but the
+   * control is inert until the refusal window has passed, because offering a
+   * button that is guaranteed to 409 is worse than not offering it.
+   */
+  classIsOpen: boolean;
 }
 
-export function AttendanceList({ items }: AttendanceListProps) {
+export function AttendanceList({ items, classIsOpen }: AttendanceListProps) {
   const [attendanceState, setAttendanceState] = useState<
     Record<string, string>
   >(
@@ -41,7 +55,10 @@ export function AttendanceList({ items }: AttendanceListProps) {
           [registrationId]: newStatus,
         }));
       } else {
-        setError(`Failed to update attendance for this student. Please try again.`);
+        // The server's own words, not a generic retry prompt: every refusal this
+        // endpoint issues is permanent for the request as sent, so "try again"
+        // is advice that cannot work.
+        setError(await readErrorMessage(response, 'Could not update attendance.'));
       }
     } catch {
       setError('Network error. Please check your connection and try again.');
@@ -74,6 +91,16 @@ export function AttendanceList({ items }: AttendanceListProps) {
           const status = attendanceState[item.registrationId] ?? 'registered';
           const isAttended = status === 'attended';
           const isUpdating = updating === item.registrationId;
+          // Shown, but not yet actionable — see `classIsOpen`. Once the class
+          // starts this goes false and the row behaves like any other.
+          const lockedUntilStart = status === 'late_cancel' && classIsOpen;
+          // A late cancel is neither present nor a no-show, and labelling it
+          // "No-show" is what made the inert control look worth tapping.
+          const statusLabel = isAttended
+            ? 'Present'
+            : status === 'late_cancel'
+              ? 'Late cancel'
+              : 'No-show';
 
           return (
             <div
@@ -84,21 +111,28 @@ export function AttendanceList({ items }: AttendanceListProps) {
               <span className="text-[17px] text-ink">{item.studentName}</span>
 
               <div className="flex items-center gap-3">
-                <span className="type-caption">
-                  {isAttended ? 'Present' : 'No-show'}
-                </span>
+                <span className="type-caption">{statusLabel}</span>
                 <button
                   type="button"
                   onClick={() => toggleAttendance(item.registrationId)}
-                  disabled={isUpdating}
+                  disabled={isUpdating || lockedUntilStart}
+                  title={
+                    lockedUntilStart
+                      ? 'Can be marked present once the class has started'
+                      : undefined
+                  }
                   className={`
                     w-11 h-11 rounded-field border-[1.5px] flex items-center justify-center
                     ${isAttended
                       ? 'bg-teal border-teal text-cream'
                       : 'bg-sand-soft border-border text-transparent'}
-                    ${isUpdating ? 'opacity-50' : ''}
+                    ${isUpdating || lockedUntilStart ? 'opacity-50' : ''}
                   `}
-                  aria-label={`Mark ${item.studentName} as ${isAttended ? 'no-show' : 'present'}`}
+                  aria-label={
+                    lockedUntilStart
+                      ? `${item.studentName} cancelled late — can be marked present once the class has started`
+                      : `Mark ${item.studentName} as ${isAttended ? 'no-show' : 'present'}`
+                  }
                 >
                   {isAttended && <Icon name="check" size={22} />}
                 </button>
