@@ -319,16 +319,22 @@ export async function addToWaitlist(
  *
  * Wrapped in a transaction so removal and reordering are atomic.
  *
- * `NOT_FOUND` now covers two cases the caller cannot distinguish and does not
- * need to: the entry never existed for this `(classId, studentId)`, or it
- * exists but is no longer `waiting` — already `removed`/`promoted`/`claimed`
- * by something else, or `expired` because `closeQueueOnStart` (#216) closed
- * the queue since the caller's page last rendered. Both read as the same 404
- * to a client whose action is a no-op either way. The race `DELETE
- * /api/waitlist/[id]` cannot pre-empt: it reads the entry before calling
- * this, so a concurrent `deleteStudentAccount` (`gdpr.ts`, deletes every
- * `WaitlistEntry` the student holds) or `closeQueueOnStart` landing in the
- * gap both now surface as this same `NOT_FOUND` rather than a bare 500.
+ * Two distinct refusals, because they are two distinct things to tell a person.
+ *
+ * `NOT_FOUND` — no entry for this `(classId, studentId)` at all. That is the
+ * race `DELETE /api/waitlist/[id]` cannot pre-empt: it reads the entry before
+ * calling this, and a concurrent `deleteStudentAccount` (`gdpr.ts`, which
+ * deletes every `WaitlistEntry` the student holds) can land in the gap.
+ * Answering it with a 404 is honest, and it replaced the bare 500 Prisma's
+ * `P2025` used to fall through to (`classifyApiError` has no branch for it).
+ *
+ * `NOT_WAITING` — the entry is right there, and is no longer this student's to
+ * leave: already `removed`/`promoted`/`claimed`, or `expired` because
+ * `closeQueueOnStart` (#216) closed the queue since their page last rendered.
+ * That last case is not exotic; it is the DESIGNED consequence of a class
+ * starting while a `/bookings` tab is open. Folding it into `NOT_FOUND` told a
+ * student "waitlist entry not found" about a row they can see on screen and
+ * will see again in their own Article 15 export.
  *
  * The deletion race is NARROWER since #174, not wider: this function takes
  * the class row lock first, so a concurrent erasure either committed before
@@ -348,8 +354,8 @@ export async function removeFromWaitlist(
   db: PrismaClient,
   classId: string,
   studentId: string,
-): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' }> {
-  const removed = await db.$transaction(async (tx) => {
+): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_WAITING' }> {
+  return db.$transaction(async (tx) => {
     // The same row and `FOR UPDATE` mode `addToWaitlist`, `promoteNext`,
     // `claimSpot` and `withdrawWaitingEntriesForTeacher` take — though this
     // wait is bounded to 2s by `lockClassRow`'s `SET LOCAL lock_timeout`,
@@ -384,15 +390,25 @@ export async function removeFromWaitlist(
       where: { classId, studentId, status: 'waiting' },
       data: { status: 'removed' },
     });
-    if (result.count === 0) return false;
+    if (result.count === 0) {
+      // Which of the two it was, decided INSIDE the lock so the answer cannot
+      // race the thing it is describing. One indexed lookup on a unique key,
+      // and only on a path where the write has already failed — effectively
+      // free, and it is the difference between telling a student their entry
+      // does not exist and telling them it is no longer theirs to leave.
+      const existing = await tx.waitlistEntry.findUnique({
+        where: { classId_studentId: { classId, studentId } },
+        select: { id: true },
+      });
+      return existing
+        ? ({ ok: false, reason: 'NOT_WAITING' } as const)
+        : ({ ok: false, reason: 'NOT_FOUND' } as const);
+    }
 
     // Reorder remaining 'waiting' entries
     await reorderWaitingEntries(tx, classId);
-    return true;
+    return { ok: true } as const;
   });
-
-  if (!removed) return { ok: false, reason: 'NOT_FOUND' };
-  return { ok: true };
 }
 
 /**

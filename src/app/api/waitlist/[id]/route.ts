@@ -31,14 +31,22 @@ export const DELETE = withErrorHandler(async (
     }
   }
 
-  // The entry read above can be gone by the time the removal runs — a
-  // concurrent `deleteStudentAccount` deletes every `WaitlistEntry` the
-  // student holds. That used to reach the client as a bare 500 (Prisma
-  // `P2025`, which `classifyApiError` has no branch for). The same 404 the
-  // pre-read already returns is the honest answer: whichever way it went, the
-  // entry is not there.
+  // Two refusals, two answers. The entry read above can be GONE by the time the
+  // removal runs — a concurrent `deleteStudentAccount` deletes every
+  // `WaitlistEntry` the student holds — and 404 is honest for that; it also
+  // replaced the bare 500 Prisma's `P2025` used to fall through to.
+  //
+  // But it can equally still be there and no longer theirs to leave, which is
+  // what a stale render produces every time a class starts with this page open:
+  // `closeQueueOnStart` (#216) flips the row to `expired`, and `NOT_FOUND` for
+  // that denies the existence of a row the student is looking at and will find
+  // again in their own data export. 409 and a refresh, not a denial.
   const result = await removeFromWaitlist(prisma, entry.classId, entry.studentId);
-  if (!result.ok) return respondError('Waitlist entry not found', 404);
+  if (!result.ok) {
+    return result.reason === 'NOT_FOUND'
+      ? respondError('Waitlist entry not found', 404)
+      : respondError('That waitlist spot is no longer active — refresh to see the latest.', 409);
+  }
 
   return respondOk({ message: 'Removed from waitlist' });
 });

@@ -641,6 +641,37 @@ describe('DELETE /api/waitlist/[id] — profile-presence authorization', () => {
     const res = await del(studentTokens[1]!, entry.id);
     expect(res.status).toBe(403);
   });
+
+  /**
+   * The stale-render case, which is the ordinary one rather than an edge: the
+   * student's `/bookings` tab rendered while their entry was `waiting`, the
+   * class then started, and `closeQueueOnStart` (#216) flipped the row to
+   * `expired`. They tap "Leave waitlist" against a page that no longer matches
+   * the database.
+   *
+   * 404 "Waitlist entry not found" would be a false statement about a row the
+   * student is looking at and will find again in their own Article 15 export.
+   * The write is still correctly refused — that part was never in doubt — but
+   * the answer has to distinguish "gone" from "no longer yours to leave".
+   */
+  it('409s leaving a queue that closed under the student, without denying the entry exists', async () => {
+    const classId = await makeClass(1);
+    const entry = await prisma.waitlistEntry.create({
+      data: { classId, studentId: studentIds[0]!, position: 1, status: 'expired' },
+    });
+
+    const res = await del(studentTokens[0]!, entry.id);
+
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toContain('no longer active');
+    expect(json.error.message).not.toContain('not found');
+
+    // Still refused, and still `expired` — "never got in" must not become
+    // "withdrew" on the way to a better error message.
+    const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
+    expect(after.status).toBe('expired');
+  });
 });
 
 /**

@@ -489,8 +489,12 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
       data: { classId: staleClassId, studentId: studentIds[0]!, position: 1, status: 'expired' },
     });
 
+    // `NOT_WAITING`, not `NOT_FOUND`. The row is right there — the student can
+    // see it, and so can their Article 15 export — it is simply no longer
+    // theirs to leave. The route answers this with a 409 and a refresh rather
+    // than denying the entry exists.
     const result = await removeFromWaitlist(prisma, staleClassId, studentIds[0]!);
-    expect(result).toEqual({ ok: false, reason: 'NOT_FOUND' });
+    expect(result).toEqual({ ok: false, reason: 'NOT_WAITING' });
 
     const entry = await prisma.waitlistEntry.findUniqueOrThrow({
       where: { classId_studentId: { classId: staleClassId, studentId: studentIds[0]! } },
