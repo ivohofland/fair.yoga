@@ -516,35 +516,62 @@ describe('POST /api/classes/[id]/transition', () => {
       },
       { timeout: 20_000 },
     );
-    await parked;
 
-    const pending = transition(ownerToken, cls.id, { status: 'cancelled' });
+    // PR review, Task 7 fix round. Everything below used to run only on the
+    // happy path — release/await/disconnect/cleanup all sat after every
+    // `expect`, so a failure at either assertion skipped them. At `settled`,
+    // the holder parks until its own 20s timeout and its `Vinyasa` write (and
+    // the `Notification` it produces once released) is never cleaned up; at
+    // `toContain('Vinyasa')`, the request has already completed and its
+    // `Notification` is orphaned outright. `Notification.relatedClass` is
+    // `onDelete: SetNull`, not Cascade (`prisma/schema.prisma`) — deleting the
+    // class does not take it with it — and the file's `afterAll` notification
+    // sweep only covers the fixed `allClassIds` array, which can't know about
+    // a class this test creates dynamically. Reproduced twice for real during
+    // this task's own required mutation runs. `try/finally` is this suite's
+    // house fix for the same concern (`account-api.test.ts:626-640`).
+    let pending: ReturnType<typeof transition> | undefined;
+    try {
+      await parked;
 
-    // The lever is asserted, not assumed. If the request answered inside this
-    // second it never parked, the rewrite never interleaved, and a green run
-    // would prove nothing — which is precisely how the first version of this
-    // test passed against both the fix and its mutation.
-    let settled = false;
-    void pending.then(() => { settled = true; });
-    await new Promise((r) => setTimeout(r, 1000));
-    expect(settled).toBe(false);
+      pending = transition(ownerToken, cls.id, { status: 'cancelled' });
 
-    release();
-    await holding;
-    const res = await pending;
-    expect(res.status).toBe(200);
+      // The lever is asserted, not assumed. If the request answered inside this
+      // second it never parked, the rewrite never interleaved, and a green run
+      // would prove nothing — which is precisely how the first version of this
+      // test passed against both the fix and its mutation.
+      let settled = false;
+      void pending.then(() => { settled = true; });
+      await new Promise((r) => setTimeout(r, 1000));
+      expect(settled).toBe(false);
 
-    const notice = await prisma.notification.findFirstOrThrow({
-      where: { relatedClassId: cls.id, type: 'class_cancelled', recipientType: 'student' },
-    });
-    expect(notice.body).toContain('Vinyasa');
-    expect(notice.body).not.toContain('Hatha');
+      release();
+      await holding;
+      const res = await pending;
+      expect(res.status).toBe(200);
 
-    await holder.$disconnect();
+      const notice = await prisma.notification.findFirstOrThrow({
+        where: { relatedClassId: cls.id, type: 'class_cancelled', recipientType: 'student' },
+      });
+      expect(notice.body).toContain('Vinyasa');
+      expect(notice.body).not.toContain('Hatha');
+    } finally {
+      // Idempotent on every exit path: `release()` is a no-op if the happy
+      // path already called it, and awaiting `holding`/`pending` again just
+      // resolves immediately if they already have. Lets the holder's
+      // transaction and the in-flight request both finish before anything is
+      // deleted, regardless of which assertion above threw or whether none did.
+      release();
+      await holding;
+      if (pending) await pending.catch(() => undefined);
+      await holder.$disconnect();
 
-    await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
-    await prisma.registration.deleteMany({ where: { classId: cls.id } });
-    await prisma.class.delete({ where: { id: cls.id } });
+      // Notifications first — SetNull means deleting the class first would
+      // orphan them, the exact failure mode this block exists to close.
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+      await prisma.registration.deleteMany({ where: { classId: cls.id } });
+      await prisma.class.delete({ where: { id: cls.id } });
+    }
   });
 
   it('409s cancelling an already-cancelled class', async () => {
