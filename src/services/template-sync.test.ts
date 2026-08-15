@@ -352,6 +352,108 @@ describe('syncTemplateInstances', () => {
     expect(result.kept).toBe(1);
     expect(result.synced).toBe(0);
   });
+
+  /**
+   * The pre-lock's `WHERE` and the re-read's `WHERE` compare against
+   * different SQL types, so agreeing on this deployment is not evidence they
+   * agree. `syncTemplateInstances` scopes its re-read to `id: { in: lockedIds
+   * }`, which makes the write set a structural subset of the LOCK set — good
+   * for lock ordering, and precisely why a pre-lock that is too NARROW fails
+   * silently instead of loudly: a row the pre-lock skipped is dropped from
+   * `future` altogether, so it is neither updated nor deleted nor counted in
+   * `kept`, and the caller is told `synced: N` for a set missing it.
+   *
+   * The bound is therefore truncated to the UTC calendar date (`lockBound`,
+   * `template-sync.ts`) rather than bound as the raw instant. This pins that
+   * choice against the comparison that motivated it.
+   *
+   * Deterministic by construction: the instant and the dates are fixed here
+   * rather than read off the clock, so this asserts the comparison itself and
+   * not whatever time of day the suite happens to run at. The old bound only
+   * misbehaved in the late UTC hours, which is exactly the kind of bug a
+   * clock-dependent test reports as a flake.
+   *
+   * `SET LOCAL` inside `$transaction` puts every statement below on one
+   * connection at that `TimeZone`, which is what lets a single test cover
+   * session settings the deployment does not currently use. UTC is today's
+   * value (`postgres:16-alpine`'s default, unpinned by either compose file) —
+   * the reason to test the others is that nothing holds it there.
+   */
+  /**
+   * The property test below pins the COMPARISON; this pins that the code
+   * actually uses it. Without this one, reverting `lockBound` to the raw
+   * `now` leaves the property test green — it asserts SQL semantics, not the
+   * call site, so it would go on describing a bound the function no longer
+   * binds. Keyed on the third bound value of the pre-lock's own statement
+   * (`templateId`, `teacherId`, then the date), identified by its first bind
+   * rather than by call order, the house rule this file's other hook follows.
+   */
+  it('binds the pre-lock to UTC midnight, not the raw instant', async () => {
+    let bound: unknown;
+    const hookedPrisma = prisma.$extends({
+      query: {
+        async $queryRaw({ args, query }) {
+          if (args.values[0] === templateId) bound = args.values[2];
+          return query(args);
+        },
+      },
+      // Same cast rationale as the hook above.
+    }) as unknown as PrismaClient;
+
+    await hookedPrisma.$transaction((tx) => syncTemplateInstances(tx, templateId));
+
+    expect(bound).toBeInstanceOf(Date);
+    const d = bound as Date;
+    expect([d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds()]).toEqual(
+      [0, 0, 0, 0],
+    );
+  });
+
+  it('the pre-lock bound never selects fewer rows than the re-read, in any session TimeZone', async () => {
+    // 22:30 UTC: late enough that a raw-instant bound stops covering
+    // tomorrow once the session TimeZone is far enough east.
+    const instant = '2026-08-15 22:30:00+00';
+    const utcMidnight = '2026-08-15 00:00:00+00';
+
+    for (const timeZone of ['UTC', 'Europe/Amsterdam', 'Asia/Tokyo', 'Pacific/Kiritimati', 'America/New_York']) {
+      const rows = await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL TimeZone = '${timeZone}'`);
+        return tx.$queryRawUnsafe<
+          Array<{ day: string; reread: boolean; shipped: boolean; rawInstant: boolean }>
+        >(`
+          SELECT d::text                                        AS day,
+                 (d > DATE '2026-08-15')                        AS reread,
+                 (d > TIMESTAMPTZ '${utcMidnight}')             AS shipped,
+                 (d > TIMESTAMPTZ '${instant}')                 AS "rawInstant"
+          FROM (VALUES (DATE '2026-08-14'), (DATE '2026-08-15'), (DATE '2026-08-16')) AS t(d)
+        `);
+      });
+
+      for (const row of rows) {
+        // The guarantee: superset in every session TimeZone, subset in none.
+        // Stated as an implication rather than equality — west of UTC the
+        // shipped bound legitimately locks today as well, which the re-read
+        // then excludes, and that direction is safe.
+        if (row.reread) {
+          expect(
+            row.shipped,
+            `${timeZone}: ${row.day} is wanted by the re-read but not covered by the pre-lock`,
+          ).toBe(true);
+        }
+      }
+
+      // The negative control, so this test cannot quietly become vacuous:
+      // the bound this replaced DID drop tomorrow east of UTC. If Postgres
+      // ever stopped promoting `date` through the session TimeZone, both
+      // columns would agree everywhere and the assertion above would pass
+      // without meaning anything.
+      const tomorrow = rows.find((r) => r.day === '2026-08-16');
+      if (timeZone === 'Asia/Tokyo' || timeZone === 'Pacific/Kiritimati') {
+        expect(tomorrow?.rawInstant).toBe(false);
+        expect(tomorrow?.shipped).toBe(true);
+      }
+    }
+  });
 });
 
 /** Schema dayOfWeek (0=Monday) → JS getUTCDay (0=Sunday). */

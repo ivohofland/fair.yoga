@@ -57,6 +57,42 @@ export async function syncTemplateInstances(
   // that the pre-lock never covered — the ordering hole this closes.
   const now = new Date();
 
+  // The pre-lock's bound, derived from that same instant but truncated to
+  // the UTC calendar date it falls on. NOT `now` itself, and the difference
+  // is a real defect this fixes rather than a stylistic one.
+  //
+  // The two statements below compare against different types. Prisma's
+  // `date: { gt: now }` on a `@db.Date` column compares `date > date` — it
+  // takes the UTC calendar date out of the instant and is therefore
+  // independent of the Postgres session `TimeZone`. A `$queryRaw` binds a JS
+  // `Date` as `timestamptz`, so the raw form compares `date > timestamptz`,
+  // which promotes `c.date` to midnight IN THE SESSION `TimeZone`. Binding
+  // the raw instant made the pre-lock a strict SUBSET of the re-read east of
+  // UTC — measured, `now` at 22:30 UTC against a row dated tomorrow:
+  //
+  //   TimeZone=UTC          raw locks it: t   prisma wants it: t
+  //   TimeZone=Asia/Tokyo   raw locks it: f   prisma wants it: t
+  //
+  // and a subset is the one direction that breaks this function. Not for
+  // lock ordering — the write set stays inside the lock set either way,
+  // because `id: { in: lockedIds }` below is a structural bound. It breaks
+  // the PROPAGATION: a row the pre-lock skipped is dropped from `future`
+  // entirely, so the nearest instance is neither updated nor deleted nor
+  // counted in `kept`, and the teacher is told `synced: N` for a set that
+  // silently omits it.
+  //
+  // Truncating to UTC midnight makes the raw form agree exactly under UTC
+  // and east of it, and a SUPERSET west of it (a west-of-UTC session locks
+  // today's instances too, which the re-read then excludes). Superset in
+  // every session `TimeZone`, subset in none — the same guarantee
+  // `archiveOrUnarchiveTemplate`'s pre-lock states, arrived at the same way,
+  // and it does not depend on the session `TimeZone` being UTC. It is here
+  // today (`postgres:16-alpine`'s default, unpinned by either compose file),
+  // which is exactly why this must not rely on it.
+  const lockBound = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
+
   // Ordered pre-lock (issue 180). `syncTemplateInstances` used to take
   // its `Class` locks in heap order — its same-day `updateMany` below is
   // one statement, and Postgres visits the matching rows in whatever
@@ -71,13 +107,16 @@ export async function syncTemplateInstances(
   // to exactly those ids — so the write set is a *subset* of the lock
   // set by construction, not merely by an argument that the two
   // statements share a predicate.
+  //
+  // `lockBound`, not `now` — see its own comment above for why the raw
+  // form needs the truncated date to stay a superset of the re-read.
   await setLockTimeout(tx);
   const locked = await tx.$queryRaw<Array<{ id: string }>>`
     SELECT c.id
     FROM "Class" c
     WHERE c."templateId" = ${templateId}
       AND c."teacherId" = ${template.teacherId}
-      AND c.date > ${now}
+      AND c.date > ${lockBound}
     ORDER BY c.id
     FOR UPDATE OF c
   `;
