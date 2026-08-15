@@ -8,7 +8,7 @@
  */
 
 import type { PrismaClient } from '@prisma/client';
-import { completeClass } from './class-lifecycle';
+import { completeClass, CLASS_NOT_ENDED_YET } from './class-lifecycle';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { classStartInstant } from '@/lib/timezone';
 import { formatDayHeader } from '@/lib/format';
@@ -468,7 +468,7 @@ export async function autoCompleteClasses(
         const result = await completeClass(db, cls.id, { requireEndedBy: currentTime });
         if (result.ok) {
           completed++;
-        } else if (result.error.endsWith('has not ended yet')) {
+        } else if (result.error.endsWith(CLASS_NOT_ENDED_YET)) {
           // The race `requireEndedBy` exists to catch: this class was
           // rescheduled to a later time between the `findMany` snapshot
           // above and `completeClass`'s locked re-read. Not a failure — the

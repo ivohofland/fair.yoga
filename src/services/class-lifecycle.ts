@@ -209,6 +209,16 @@ export const CHARGED_STATUSES: readonly RegistrationStatus[] = Object.freeze([
  * Wrapped in a transaction so that all DB mutations (class status,
  * registration prices, payment creation) succeed or fail atomically.
  */
+// Shared with `class-transitions.ts`'s `autoCompleteClasses`, which matches
+// on this fragment to tell the `requireEndedBy` race refusal apart from
+// every other refusal reason (so it can log that one case at `warn` instead
+// of `error` — see the comment there). A free-text `.error` string is
+// otherwise an unpinned coupling: reword the message here without this
+// constant and the sweep's discriminator silently stops matching, with no
+// test failure to catch it. Both sides importing the same constant is what
+// makes a reword a single edit instead of two that can drift apart.
+export const CLASS_NOT_ENDED_YET = 'has not ended yet';
+
 export async function completeClass(
   db: PrismaClient,
   classId: string,
@@ -249,7 +259,7 @@ export async function completeClass(
       const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
       const end = new Date(start.getTime() + cls.durationMinutes * 60 * 1000);
       if (opts.requireEndedBy < end) {
-        return { ok: false, error: `Class ${classId} has not ended yet` };
+        return { ok: false, error: `Class ${classId} ${CLASS_NOT_ENDED_YET}` };
       }
     }
 

@@ -9,6 +9,7 @@ import {
   isEconomicFieldLocked,
   transitionClass,
   completeClass,
+  CLASS_NOT_ENDED_YET,
   updateClass,
   UpdateClassInvariantError,
   type EconomicField,
@@ -912,6 +913,13 @@ describe('completeClass (DB)', () => {
       requireEndedBy: new Date('2026-06-01T16:30:00Z'),
     });
     expect(result.ok).toBe(false);
+    // Pins the producer's message to the shared `CLASS_NOT_ENDED_YET`
+    // constant that `autoCompleteClasses` matches on to downgrade this one
+    // refusal reason to `log.warn`. Without this assertion a reword of the
+    // producer's message — even one that keeps using the constant
+    // elsewhere but drifts the literal text apart — would desync the
+    // sweep's discriminator with zero test failure anywhere in the suite.
+    if (!result.ok) expect(result.error).toContain(CLASS_NOT_ENDED_YET);
     const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
     expect(updated.status).toBe('in_progress');
   });
