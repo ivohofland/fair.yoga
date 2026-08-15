@@ -1473,15 +1473,24 @@ describe('generateClassInstances (DB)', () => {
    * Named for the `deleteMany` originally, back when that was the only
    * statement in this transaction that could contend for a `Class` row it
    * did not already hold. Issue 180 task 4 added an ordered pre-lock ahead of
-   * it, over a superset of the rows the `deleteMany` can match, so the
-   * `deleteMany` can no longer be the one that waits — everything it might
-   * touch is already held by the time it runs. This test still measures the
-   * same guarantee (the 2s bound reaches an ordinary booking, not just the
-   * generation sweep); it is just the pre-lock's own `$queryRaw` that now
-   * blocks and times out, not the `deleteMany` below it. Measured, not
-   * assumed: the logged error this test's own assertions are built on now
-   * names `class-template-lifecycle.ts`'s pre-lock statement, not its
-   * `deleteMany`.
+   * it, over a superset of the `Class` rows the `deleteMany` can match, so
+   * the pre-lock is now what blocks in THIS test's scenario — a booking
+   * holding one of those rows. This test still measures the same guarantee:
+   * the 2s bound reaches an ordinary booking, not just the generation sweep.
+   *
+   * Not the stronger claim an earlier version of this docblock made. The
+   * `deleteMany` is not immune to waiting — it cascades onto `Registration`
+   * and `WaitlistEntry` children (`onDelete: Cascade`) that no `Class`
+   * pre-lock covers, and its predicate is re-evaluated at execution time, so
+   * a row moved into scope after the pre-lock ran is not held either. See the
+   * pre-lock's own comment in `class-template-lifecycle.ts`. What changed is
+   * which statement blocks HERE, not that the delete can no longer block.
+   *
+   * The evidence for that was observed during issue 180 task 4 by reading the
+   * logged error, and this test does not assert it: it installs no log spy
+   * and inspects no error text — its assertions are the returned result, the
+   * elapsed time, and three DB read-backs. Stated as provenance, not as
+   * something the committed artifact checks.
    */
   describe('archiveOrUnarchiveTemplate — the bound reaches its pre-lock', () => {
     beforeEach(async () => {

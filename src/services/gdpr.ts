@@ -380,15 +380,32 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // recreating the exact inversion this sort exists to prevent.
     //
     // Ascending by id is this project's intended order for taking more than
-    // one `Class` row. Five sites do, and all five now agree: this sort,
-    // `withdrawWaitingEntriesForTeacher`'s ordered `FOR UPDATE OF c`
+    // one `Class` row. Five sites do, and all five now TAKE an order — this
+    // sort, `withdrawWaitingEntriesForTeacher`'s ordered `FOR UPDATE OF c`
     // (`waitlist.ts`), `deleteTeacherAccount`'s cancel loop below, and
     // `syncTemplateInstances` (`template-sync.ts`) and
-    // `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) — which
-    // used to lock in heap order and cycled against THIS function for real,
-    // closed by an ordered pre-lock ahead of each of their multi-row writes
-    // (issue 180, atomic-template-update). See `docs/lock-order.md`'s
-    // within-`Class` table for how each site takes its order.
+    // `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`), which
+    // used to lock in heap order and cycled against THIS function for real
+    // until each gained an ordered pre-lock ahead of its multi-row write
+    // (issue 180, atomic-template-update).
+    //
+    // "Takes an order", deliberately, not "agree" — one of the five is not
+    // total, and the exception is a pairing with THIS function, so it must
+    // not be read out of this comment. `archiveOrUnarchiveTemplate`'s
+    // pre-lock covers `date > today`; `updateClass` (`class-lifecycle.ts`)
+    // can reschedule a same-day instance into the future from outside that
+    // transaction, between the pre-lock and the `deleteMany` whose predicate
+    // is re-evaluated at execution time by design. That row is deleted
+    // without ever having been held in order, so the AB-BA cycle against
+    // this function can still form through that window — narrow, measured,
+    // and tracked as a residual rather than closed. See that pre-lock's own
+    // comment and the atomic-template-update spec's risk list before
+    // treating this pairing as settled. `syncTemplateInstances` does not
+    // share the exposure: its write set is `id: { in: lockedIds }`, a
+    // structural subset of what its pre-lock returned.
+    //
+    // See `docs/lock-order.md`'s within-`Class` table for how each site
+    // takes its order.
     //
     // `deleteTeacherAccount` did NOT sort until the whole-branch review of
     // #174 — an earlier version of this very comment asserted it did, which

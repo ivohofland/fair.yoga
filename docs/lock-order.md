@@ -61,7 +61,8 @@ sites lock more than one `Class` row inside a single transaction, and two of
 them taking the same pair in opposite sequences is an AB-BA cycle exactly like
 any cross-table one.
 
-**The rule: ascending by `id`. All five follow it now** — see "The slot key is
+**The rule: ascending by `id`. All five take an order now — but one of the
+five is not total, and that exception is load-bearing.** See "The slot key is
 a wait edge" below before assuming `id` is the only thing that orders two
 `Class` rows: since #196 a unique index on `(teacherId, date, startTime)`
 makes plain INSERTs take part too, which is a case the five-site enumeration
@@ -69,9 +70,27 @@ is built not to find. An earlier version of this section said "three sites"
 and "all three take it that way"; both were false, and an enumeration
 asserted as complete is exactly what stops the next reader looking for the
 ones it missed. A later version said two of the five disagreed, live and
-unfixed; that too is now stale — `syncTemplateInstances` and
-`archiveOrUnarchiveTemplate` each closed it with an ordered pre-lock ahead of
-their respective multi-row write (issue 180, atomic-template-update).
+unfixed; that too is stale — `syncTemplateInstances` and
+`archiveOrUnarchiveTemplate` each gained an ordered pre-lock ahead of their
+respective multi-row write (issue 180, atomic-template-update).
+
+**A third version said "all five follow it now", flatly, and that is the one
+this paragraph exists to correct.** `archiveOrUnarchiveTemplate`'s pre-lock
+covers `date > today`, so a same-day instance rescheduled into the future by
+`updateClass` (`class-lifecycle.ts`) — a bare `db.class.updateMany` holding
+neither the template lock nor any `Class` lock — between that pre-lock and
+the `deleteMany` is deleted without ever having been held in order. The
+AB-BA cycle against `deleteStudentAccount` can still form through that
+window. It is narrow (it needs a concurrent reschedule *and* an erasure of a
+student waitlisted across both classes, timed into the same gap), it is
+measured rather than theorised, and it is no worse than the pre-branch state,
+which had no ordering at all — but it is not closed, and the deleted "two
+that do not" section warned in as many words that shipping a cycle under a
+comment saying it was closed is the failure mode this whole document exists
+to prevent. Tracked as a residual in the atomic-template-update spec's risk
+list. `syncTemplateInstances` does not share it: its write set is
+`id: { in: lockedIds }`, a structural subset of what its own pre-lock
+returned, not a predicate re-evaluated later.
 
 | Site | How it locks | Order it takes |
 |---|---|---|
@@ -79,15 +98,19 @@ their respective multi-row write (issue 180, atomic-template-update).
 | `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) | one `SELECT … FOR UPDATE OF c` | ascending — `ORDER BY c.id` in SQL |
 | `deleteTeacherAccount` (`gdpr.ts`) | the per-class cancel CAS `UPDATE`, one per iteration | ascending — `orderBy: { id: 'asc' }` on the read the loop walks |
 | `syncTemplateInstances` (`template-sync.ts`) | `class.deleteMany` (wrong-day) then `class.updateMany` (same-day), each multi-row | ascending — an ordered `SELECT … FOR UPDATE OF c … ORDER BY c.id` pre-lock (issue 180) taken before either write; the delete/update statements themselves still visit in whatever order the planner picks, but every row either could touch is already held by the pre-lock |
-| `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | one multi-row `class.deleteMany` | ascending — the same shape: an ordered `SELECT … FOR UPDATE OF c … ORDER BY c.id` pre-lock over the full `scheduledWhere` candidate set, taken before the `deleteMany`; both statements bounded at 2s by `SET LOCAL lock_timeout` |
+| `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | one multi-row `class.deleteMany` | ascending, **but not total** — an ordered `SELECT … FOR UPDATE OF c … ORDER BY c.id` pre-lock over the full `scheduledWhere` candidate set, taken before the `deleteMany`; both statements bounded at 2s by `SET LOCAL lock_timeout`. The pre-lock covers `date > today`, so an instance rescheduled out of today by `updateClass` after it runs is deleted unheld — see the paragraph above the table |
 
 `syncTemplateInstances`'s pre-lock carries no `status`/`settingsLocked`
-narrowing beyond `templateId`/`teacherId`/`date > now`, so it briefly locks
-every future instance of the template — including ones already
-`settingsLocked` by a registration, which its own writes will never touch;
-that is the safe direction for lock ordering, but it means a booking on one of
-those instances can now contend with a template edit for the duration of the
-pre-lock, where before this branch it could not.
+narrowing beyond `templateId`/`teacherId`/`date >` the current UTC calendar
+date, so it briefly locks every future instance of the template — including
+ones already `settingsLocked` by a registration, which its own writes will
+never touch. That is the safe direction for lock ordering, but it means a
+booking on one of those instances can now contend with a template edit, where
+before this branch it could not — **for the rest of the edit transaction, not
+merely for the pre-lock statement**. `SELECT … FOR UPDATE` holds until the
+transaction ends, so in production the exposure is bounded by
+`updateClassTemplate`'s `{ timeout: 15_000 }`, not by how long the `SELECT`
+itself takes.
 
 ### How that enumeration was derived
 
@@ -769,9 +792,14 @@ here, `updateClassTemplate` (`class-template-lifecycle.ts`) as a **fifth**:
 now that its write and its instance sync are one transaction, it locks the
 template row before any `Class` row the same way the other four do.
 `deleteTeacherAccount` (`gdpr.ts`) remains the sole site on the inverse side,
-and carries its own tuned lock-timeout budget, which is part of why
-re-ordering it is not free. Still filed as a decision, not resolved here. See
-issue #229.
+and carries a flat `{ timeout: 10_000 }` **transaction** budget already argued
+to be tight for the per-class cancel loop it walks — which is part of why
+re-ordering it is not free. (Not a *lock* timeout, and not the tuned one: the
+sized budget, `Math.min(5_000 + waitingCount * 2_000, 20_000)`, belongs to
+`deleteStudentAccount`. An earlier version of this sentence conflated the two,
+which matters because the tuned budget is the one that would absorb a
+re-ordering and the flat one is not.) Still filed as a decision, not resolved
+here. See issue #229.
 
 ## Related, but not a lock-order issue — found while fixing the above, not fixed
 

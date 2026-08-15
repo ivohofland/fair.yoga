@@ -961,12 +961,26 @@ export async function archiveOrUnarchiveTemplate(
         // touches (`class-generator.test.ts`, "the bound reaches its
         // pre-lock" — issue 180 task 4 moved what that test actually blocks
         // on from the `deleteMany` to the pre-lock ahead of it; see that
-        // test's own updated comment). The `deleteMany` itself can no longer
-        // be the one that waits on an external holder: the pre-lock already
-        // holds every row its predicate could possibly match (a subset of
-        // the pre-lock's row set, see that statement's own comment), so by
-        // the time the `deleteMany` runs, nothing it touches is still
-        // contested.
+        // test's own updated comment). The `deleteMany` below no longer waits
+        // on an external holder OF A `Class` ROW THE PRE-LOCK COVERED — that
+        // much the pre-lock does buy. It can still wait, two ways, and an
+        // earlier version of this comment claimed otherwise on both:
+        //
+        //   - **Cascade children.** `Registration.class` and
+        //     `WaitlistEntry.class` are `onDelete: Cascade`
+        //     (`prisma/schema.prisma`), so the delete takes row locks on child
+        //     rows no `Class` pre-lock holds. Spec §2.4 counts exactly this
+        //     ("the `deleteMany` can then wait only on cascade children"), and
+        //     `class-generator.test.ts`'s 15s derivation counts the sync's
+        //     equivalent statement as a waiting one for the same reason.
+        //   - **Rows the pre-lock never covered.** The `deleteMany` predicate
+        //     is re-evaluated at execution time by design, and the pre-lock
+        //     stops at `date > today` — see that statement's own comment for
+        //     the `updateClass` window, which is measured, not theorised.
+        //
+        // The distinction matters for budgeting, not just for accuracy:
+        // someone trimming this transaction's 10s on the strength of "nothing
+        // it touches is still contested" would under-size it.
         //
         // Without it the wait is bounded by NOTHING, not by the 10s budget:
         // Prisma checks that budget at statement boundaries, so it "cannot
