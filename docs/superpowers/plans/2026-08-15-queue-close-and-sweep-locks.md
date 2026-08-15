@@ -821,9 +821,13 @@ Add the import: `import { closeQueueOnStart } from './waitlist';`
    CAS and its `in_progress` queue-close (`class-lifecycle.ts:143-153`), so no
    notification or downstream write was silently dropped with the call.
 
-   **The same question applies to Task 5** and should be answered there rather than
-   assumed: `sourceStatesFor('completed')` likewise resolves to a single state
-   (`in_progress`), so check it explicitly instead of inheriting this paragraph.
+   **This does not carry to Task 5, checked rather than assumed.** An earlier version of
+   this paragraph told Task 5 to answer the same question; it does not arise there.
+   `completeClass` never CASes on a derived source set — it gates with
+   `validateTransition(cls.status, 'completed')` (`:240`) and updates directly — and
+   Task 5 touches neither. Corrected here as well as in Task 5's section, because a
+   pointer left standing in one artifact is how a wrong claim survives being fixed in
+   the other.
 2. The `log.error({ reason: result.error }, 'transition to in_progress rejected')` at
    `:79` goes away. A refusal is no longer an error — it is the ordinary "someone else
    got there first" outcome, which `autoCancelClasses` returns silently.
@@ -873,8 +877,8 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ## Task 5: `completeClass` owns the timing decision; `autoCompleteClasses` delegates it
 
 **Files:**
-- Modify: `src/services/class-lifecycle.ts:189-205` (signature + include + the check)
-- Modify: `src/services/class-transitions.ts:395-409`
+- Modify: `src/services/class-lifecycle.ts:211-227` (signature + include + the check)
+- Modify: `src/services/class-transitions.ts:452-470`
 - Test: `src/services/class-transitions.test.ts`, `src/services/class-lifecycle.test.ts`
 
 **Interfaces:**
@@ -883,10 +887,31 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
   callers that omit it compile unchanged.
 
 **Context — why this one does NOT get its own transaction.** `completeClass` already
-takes `lockClassRow` *before* its read (`:199`) and already re-reads the class row. Only
+takes `lockClassRow` *before* its read (`:221`) and already re-reads the class row. Only
 the **timing** decision is unprotected, and it lives in the caller. Wrapping a second
 lock around `completeClass` from the sweep would be redundant; the decision moves to
 where the lock already is.
+
+**Line references re-derived at `d6f45c8`, because Tasks 2, 3 and 4 all moved these
+files.** Use these, not the ones this section was written against:
+
+| What | Was | Is now |
+|---|---|---|
+| `completeClass` signature | `class-lifecycle.ts:189-205` | `class-lifecycle.ts:211-214` |
+| its `lockClassRow` | `:199` | `:221` |
+| its `include: { registrations: true }` | — | `:225` |
+| its `if (!cls)` guard, where the new check goes after | — | `:227` |
+| `autoCompleteClasses` | — | `class-transitions.ts:439`; loop body `:452-470` |
+| the `completeClass(db, cls.id)` call | `class-transitions.ts:403` | `class-transitions.ts:460` |
+| its `'class completion rejected'` log | — | `:464` |
+
+**`sourceStatesFor` does not arise here — disregard the pointer left in Task 4's
+"deliberate losses" note.** That note asked Task 5 to answer the same question, written
+before this section had been read against the source. `completeClass` does not CAS on a
+derived source set at all: it gates with `validateTransition(cls.status, 'completed')`
+(`class-lifecycle.ts:240`) and then updates directly, and this task does not touch either.
+Nothing to check. (For the record, `sourceStatesFor('completed')` would be `['in_progress']`,
+since `in_progress` is the only state listing `completed` as a target.)
 
 **Optional is the point, not a convenience:**
 
@@ -950,9 +975,16 @@ In `src/services/class-lifecycle.test.ts`:
 ```ts
 it('refuses to complete a class that has not ended when requireEndedBy is given', async () => {
   const cls = await makeClass({ status: 'in_progress' });
-  // 18:00 Amsterdam = 16:00Z, 60 minutes long, so it ends at 17:00Z.
+  // This block's `makeClass` (`class-lifecycle.test.ts:552`) plants the class on
+  // **2026-06-01** at `slotTime(540 + counter)` — 18:01, 18:02, … — for
+  // **75** minutes, teacher timezone Europe/Amsterdam (schema default,
+  // `schema.prisma:136`). June is CEST, so 18:01 local is 16:01Z and the
+  // class ends at 17:16Z. The counter makes the exact minute depend on how
+  // many tests in this block called `makeClass` first, so pick an instant
+  // that is safely inside the class for ANY counter value rather than one
+  // derived from a specific start.
   const result = await completeClass(prisma, cls.id, {
-    requireEndedBy: new Date('2026-07-20T16:30:00Z'),
+    requireEndedBy: new Date('2026-06-01T16:30:00Z'),
   });
   expect(result.ok).toBe(false);
   const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
@@ -971,12 +1003,24 @@ it('still completes early for a teacher, who passes no requireEndedBy', async ()
 - [ ] **Step 2: Run the tests and verify they fail**
 
 Run: `npx vitest run --project unit src/services/class-lifecycle.test.ts -t requireEndedBy`
-Expected: FAIL — a TypeScript error on the third argument, or `expected false to be true`.
-**Record the exact text.**
+(This filter matches **both** new tests — each title contains the word. That is
+intended here; contrast Task 4, whose filter caught only one of its two.)
+
+Expected: the refusal test FAILS with **`expected true to be false`** — `result.ok` is
+`true` because nothing yet refuses. **Not** `expected false to be true`, which is the
+same assertion read backwards, and **not** a TypeScript error: vitest runs through
+esbuild, which strips types without checking them, so a surplus third argument is
+silently ignored at runtime. (Task 1 hit this exact class of mis-prediction; see the
+ledger.) `tsc --noEmit` is where the type error would appear, and Step 5(b) is where
+that is proved deliberately. **Record the exact text.**
 
 Run: `npx vitest run --project unit src/services/class-transitions.test.ts -t "rescheduled after the sweep read it"`
-Expected: the new completion test FAILS with `expected 1 to be 0`, plus a non-zero
-payment count. **Record both.**
+
+**This filter now matches two tests, not one** — Task 4 added 'does not **start** a class
+rescheduled after the sweep read it' to this same file, and it must PASS. Expect
+`1 passed | 1 failed`; the failure is the new completion test, with `expected 1 to be +0`
+(vitest renders zero as `+0` — Task 4's run confirmed that rendering) plus a non-zero
+payment count. **Record both, and confirm the Task 4 test passed rather than assuming it.**
 
 The 'still completes early' test is expected to **PASS** before the change — it is a
 regression guard against the option becoming mandatory. Say so in the report.
@@ -1083,9 +1127,21 @@ Expected: PASS.
 **Record both texts.** Restore.
 
 (b) Make the option mandatory — change `opts: { requireEndedBy?: Date } = {}` to
-`opts: { requireEndedBy: Date }`. Expected: `tsc --noEmit` FAILS naming the two callers
-that omit it. **Record the text.** Restore. This proves the optionality is load-bearing
-rather than incidental.
+`opts: { requireEndedBy: Date }`. Expected: `tsc --noEmit` FAILS. **Record the text.**
+Restore. This proves the optionality is load-bearing rather than incidental.
+
+**It will name far more than "the two callers", and that is correct, not a sign you
+broke something.** Measured at HEAD: `completeClass` has three production call sites —
+`api/classes/[id]/complete/route.ts:25` and `gdpr.ts:716`, which omit the argument, and
+`class-transitions.ts:460`, which after Step 3 passes it. Every *test* call site omits
+it too: six in `class-lifecycle.test.ts`, one in `tests/integration/account-api.test.ts`,
+one in `tests/integration/full-flow.test.ts:281`, plus the one you add in Step 1. So
+expect roughly a dozen errors, and check that **`gdpr.ts:716` and the complete route are
+among them** — those two are the ones whose behaviour the optionality exists to protect.
+A mutation that named only two would mean `tsc` was not seeing the test files.
+
+(Note the sibling docblock at `api/account/route.ts:47` mentions `completeClass(db, cls.id)`
+in prose. It is a comment, not a call — do not count it, and do not edit it.)
 
 - [ ] **Step 6: Commit**
 
