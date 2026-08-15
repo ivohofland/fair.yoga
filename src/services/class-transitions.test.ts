@@ -216,20 +216,94 @@ describe('class transitions (DB, timezone-aware)', () => {
     await prisma.class.delete({ where: { id: cls.id } });
   });
 
+  /**
+   * The LOCK, not the re-read. The sibling test above proves the sweep decides
+   * from a fresh row rather than the `findMany` snapshot; deleting
+   * `lockClassRow` entirely still passed it, and passed all 68 unit tests —
+   * which is what this branch is named after.
+   *
+   * The two are genuinely different guards. The re-read closes the window
+   * between the snapshot and the transaction. The lock closes the window
+   * between the re-read and the CAS, and only the lock can: without it the
+   * `findUnique` runs unblocked against whatever is committed at that moment,
+   * the CAS then blocks on the contended row anyway, and by the time it is
+   * granted its own predicate (`status: 'open'`) is still satisfied — so the
+   * class starts against a time it no longer has. Under the lock the re-read
+   * cannot run until the writer is done, so it sees the reschedule.
+   *
+   * That is why the assertion is on the class's final status and not only on
+   * `settled`: a sweep with no `lockClassRow` parks too, at the CAS. Parking
+   * proves the path was contended, not that the guard exists.
+   */
+  it('re-reads under the lock, so a reschedule landing while it waits is seen', async () => {
+    const cls = await makeClass({});
+    try {
+      let holderCommitted = false;
+
+      const holder = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
+          await new Promise((r) => setTimeout(r, 700));
+          // A WEEK later, the same margin the sibling test uses: no rounding or
+          // timezone offset can make the stale decision accidentally correct.
+          await tx.class.update({
+            where: { id: cls.id },
+            data: { date: new Date('2026-07-27') },
+          });
+          holderCommitted = true;
+        },
+        { timeout: 10_000 },
+      );
+      // Long enough for the holder's `FOR UPDATE` to be in place before the
+      // sweep asks for the same row — otherwise this tests nothing.
+      await new Promise((r) => setTimeout(r, 150));
+
+      const sweeping = autoTransitionToInProgress(prisma, new Date('2026-07-20T16:00:00Z'));
+      const settled = await Promise.race([
+        sweeping.then(() => true),
+        new Promise<false>((r) => setTimeout(() => r(false), 300)),
+      ]);
+
+      // Asserted rather than assumed: without this the test cannot tell a
+      // sweep that waited from one that ran before the holder ever locked.
+      expect(settled).toBe(false);
+      expect(holderCommitted).toBe(false);
+
+      await holder;
+      expect(await sweeping).toBe(0);
+
+      const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(updated.status).toBe('open');
+    } finally {
+      await prisma.class.delete({ where: { id: cls.id } });
+    }
+  }, 15_000);
+
   it('closes the waitlist when it starts a class', async () => {
     const cls = await makeClass({});
-    const entry = await prisma.waitlistEntry.create({
-      data: { classId: cls.id, studentId: waiterStudentId, position: 1, status: 'waiting' },
-    });
+    try {
+      const entry = await prisma.waitlistEntry.create({
+        data: { classId: cls.id, studentId: waiterStudentId, position: 1, status: 'waiting' },
+      });
 
-    const transitioned = await autoTransitionToInProgress(prisma, new Date('2026-07-20T16:00:00Z'));
-    expect(transitioned).toBeGreaterThanOrEqual(1);
+      const transitioned = await autoTransitionToInProgress(
+        prisma,
+        new Date('2026-07-20T16:00:00Z'),
+      );
+      expect(transitioned).toBeGreaterThanOrEqual(1);
 
-    const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
-    expect(after.status).toBe('expired');
-
-    await prisma.waitlistEntry.deleteMany({ where: { classId: cls.id } });
-    await prisma.class.delete({ where: { id: cls.id } });
+      const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
+      expect(after.status).toBe('expired');
+    } finally {
+      // `finally`, not inline after the assertions — the convention this file
+      // already records at its `#174` fixture. A failing assertion skipping its
+      // own cleanup leaves a class behind, and the next test in this file then
+      // fails for a reason that has nothing to do with what it asserts. That
+      // matters more here than usual: this project's review protocol is
+      // mutation testing, whose whole signal is WHICH test failed.
+      await prisma.waitlistEntry.deleteMany({ where: { classId: cls.id } });
+      await prisma.class.delete({ where: { id: cls.id } });
+    }
   });
 
   it('auto-cancels below-minimum classes inside the local check window and notifies the teacher', async () => {
