@@ -911,6 +911,70 @@ describe('registration writes return no stored income tier', () => {
   });
 });
 
+describe('PUT /api/registrations/[id] — attendance is scoped by source status (#182)', () => {
+  it('409s attendance on a late-cancelled registration', async () => {
+    const classId = await makeClass(4);
+    const reg = await prisma.registration.create({
+      data: { classId, studentId: studentIds[0]!, status: 'late_cancel', tierAtBooking: 3 },
+    });
+    const res = await fetch(`${BASE_URL}/api/registrations/${reg.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
+      body: JSON.stringify({ status: 'attended' }),
+    });
+    expect(res.status).toBe(409);
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
+    expect(after.status).toBe('late_cancel');
+  });
+
+  it('409s attendance on a cancelled class', async () => {
+    const classId = await makeClass(4);
+    const reg = await prisma.registration.create({
+      data: { classId, studentId: studentIds[0]!, status: 'registered', tierAtBooking: 3 },
+    });
+    // Cancelled AFTER the registration exists: a cancelled class cannot be booked.
+    await prisma.class.update({ where: { id: classId }, data: { status: 'cancelled' } });
+
+    const res = await fetch(`${BASE_URL}/api/registrations/${reg.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
+      body: JSON.stringify({ status: 'attended' }),
+    });
+    expect(res.status).toBe(409);
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
+    expect(after.status).toBe('registered');
+  });
+
+  /**
+   * A PRODUCT requirement pinned as a test, not a defect guard.
+   *
+   * A teacher does attendance admin AFTER the class, not during it: someone
+   * arrives a minute late, is let in, and nobody stops to tap a checkbox. This
+   * assertion exists so a future lock-discipline pass cannot quietly reject
+   * `completed` alongside `cancelled` on the grounds that both are terminal.
+   *
+   * It is safe because all three values `updateRegistrationSchema` accepts are
+   * in `CHARGED_STATUSES` (`class-lifecycle.ts`), so a correction made after
+   * completion cannot change who is billed or by how much.
+   */
+  it('allows attendance corrections on a completed class', async () => {
+    const classId = await makeClass(4);
+    const reg = await prisma.registration.create({
+      data: { classId, studentId: studentIds[0]!, status: 'registered', tierAtBooking: 3 },
+    });
+    await prisma.class.update({ where: { id: classId }, data: { status: 'completed' } });
+
+    const res = await fetch(`${BASE_URL}/api/registrations/${reg.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
+      body: JSON.stringify({ status: 'no_show' }),
+    });
+    expect(res.status).toBe(200);
+    const after = await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } });
+    expect(after.status).toBe('no_show');
+  });
+});
+
 describe('registration cancel is retry-safe against a concurrent duplicate (#196)', () => {
   // A dedicated UTC teacher so the window math is plain UTC arithmetic, the
   // same convention as the resolve describe in invitations-api.test.ts.

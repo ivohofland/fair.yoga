@@ -84,7 +84,7 @@ export const PUT = withErrorHandler(async (
 
   const registration = await prisma.registration.findUnique({
     where: { id },
-    include: { class: { select: { teacherId: true } } },
+    include: { class: { select: { teacherId: true, status: true } } },
   });
 
   if (!registration) return respondError('Registration not found', 404);
@@ -92,15 +92,54 @@ export const PUT = withErrorHandler(async (
     return respondError('Not your class', 403);
   }
 
+  // #182. A cancelled class has no attendance to record.
+  //
+  // `completed` is DELIBERATELY absent from this check. A teacher learns the
+  // exact no-shows after the class, not during it — someone arrives a minute
+  // late, is let in, and nobody stops to tap a checkbox. All three values
+  // `updateRegistrationSchema` accepts are in `CHARGED_STATUSES`
+  // (`class-lifecycle.ts`), so a correction made after completion cannot
+  // change who is billed. There is a test pinning this; it is a product
+  // requirement, not an oversight.
+  //
+  // No guard on class TIME either, and that is also deliberate: check-in
+  // renders on an `open` class within 15 minutes of its start
+  // (`(teacher)/class/[id]/page.tsx`), so attendance before the class begins
+  // is the designed flow.
+  if (registration.class.status === 'cancelled') {
+    return respondError('Cannot record attendance on a cancelled class', 409);
+  }
+
   const parsed = await parseBody(request, updateRegistrationSchema);
   if ('error' in parsed) return parsed.error;
 
-  const updated = await prisma.registration.update({
-    where: { id },
+  // Status in the WHERE, not just a pre-check, for the same reason both DELETE
+  // branches below scope their writes: this handler opens no transaction, so a
+  // read-then-write races.
+  //
+  // What it closes: `autoCancelClasses` (`class-transitions.ts`) counts
+  // registrations in `ACTIVE_REGISTRATION_STATUSES` under its row lock, then
+  // CASes. This route takes no `Class` lock, so it can commit between the two.
+  // A registration moving INTO that set — `late_cancel -> attended` — makes
+  // the count too LOW and cancels a class that had enough students. Scoping
+  // the SOURCE means a registration can only ever move WITHIN the counted set,
+  // so the count cannot rise. Moves OUT stay possible and are harmless: they
+  // make the count too high, and the class merely survives a sweep it might
+  // have been cancelled in — a one-tick delay.
+  //
+  // A `Class` row lock would also close it, and is not used: this write moves
+  // no money (`no_show` is in both `ACTIVE_REGISTRATION_STATUSES` and
+  // `CHARGED_STATUSES`, so attendance changes no seat count and no price), and
+  // locking the hottest row in the app to protect it is not proportionate.
+  const updated = await prisma.registration.updateMany({
+    where: { id, status: { notIn: ['cancelled', 'late_cancel'] } },
     data: { status: parsed.data.status },
   });
+  if (updated.count === 0) {
+    return respondError('Cannot record attendance on a cancelled registration', 409);
+  }
 
-  return respondOk({ id: updated.id, status: updated.status });
+  return respondOk({ id, status: parsed.data.status });
 });
 
 export const DELETE = withErrorHandler(async (
