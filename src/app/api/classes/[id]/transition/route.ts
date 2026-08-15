@@ -40,17 +40,27 @@ export const POST = withErrorHandler(async (
       if (updated.count === 0) {
         // Re-read rather than naming `cls`, the handler's top-of-function
         // snapshot taken before `parseBody`'s await and outside this
-        // transaction (#F6, whole-branch review of #216/#182 — the same
-        // staleness Task 7 fixed for the success path's notification body,
-        // a few lines below). Without this, cancelling a class concurrently
-        // cancelled a moment earlier reports 409 `status "open"` for a class
-        // that is already `cancelled`. Cheap here: the CAS already failed, so
-        // there is nothing left to protect by not reading — one more select
-        // on a row this transaction is not writing to.
+        // transaction. Without this, cancelling a class that was cancelled a
+        // moment earlier reports 409 `status "open"` for a class that is
+        // already `cancelled`. Cheap here: the CAS already failed, so there is
+        // nothing left to protect by not reading.
         const current = await tx.class.findUnique({ where: { id }, select: { status: true } });
+
+        // GONE, not "still whatever the snapshot said". A failed CAS means this
+        // transaction holds no lock on the row — the `UPDATE` matched nothing
+        // and so locked nothing — and the row is freely deletable in that
+        // window: archiving a recurring template hard-deletes its future
+        // `draft`/`open` instances, the same status set this CAS matches on.
+        // Falling back to `cls.status` here told the teacher "cannot cancel a
+        // class with status open" about a class that no longer exists, which
+        // is the very staleness the re-read above was added to remove. The
+        // handler already answers this condition honestly sixty lines up.
+        if (!current) return { ok: false as const, httpStatus: 404, error: 'Class not found' };
+
         return {
           ok: false as const,
-          error: `Cannot cancel a class with status "${current?.status ?? cls.status}"`,
+          httpStatus: 409 as const,
+          error: `Cannot cancel a class with status "${current.status}"`,
         };
       }
 
@@ -107,12 +117,16 @@ export const POST = withErrorHandler(async (
       return { ok: true as const, newStatus: 'cancelled' as const };
     });
 
-    if (!outcome.ok) return respondError(outcome.error, 409);
+    if (!outcome.ok) return respondError(outcome.error, outcome.httpStatus);
     return respondOk(outcome);
   }
 
   const result = await transitionClass(prisma, id, parsed.data.status);
-  if (!result.ok) return respondError(result.error, 409);
+  // `NOT_FOUND` is a 404, not a 409. Mapping every refusal to 409 answered a
+  // deleted class with `409 "Class not found: <id>"` — a status code and a
+  // message that contradict each other. The reason is a value now (#182), so
+  // this no longer needs to guess from the message text.
+  if (!result.ok) return respondError(result.error, result.reason === 'NOT_FOUND' ? 404 : 409);
 
   return respondOk(result);
 });

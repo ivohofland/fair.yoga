@@ -578,6 +578,101 @@ describe('POST /api/classes/[id]/transition', () => {
     }
   });
 
+  /**
+   * The refusal's OTHER branch, which nothing could test before.
+   *
+   * When the cancel CAS matches nothing, this transaction holds no lock on the
+   * row — an `UPDATE` that matched nothing locked nothing — so the row is
+   * freely deletable in that window. Archiving a recurring template
+   * hard-deletes its future `draft`/`open` instances, the same status set the
+   * CAS matches on, so the window is reachable through the product rather than
+   * only in theory.
+   *
+   * The old code fell back to `cls.status`, the handler's top-of-function
+   * snapshot, and answered `409 "Cannot cancel a class with status "open""`
+   * about a class that no longer existed — reintroducing, on the failure path,
+   * exactly the staleness the sibling test above fixed on the success path.
+   *
+   * The existing "409s cancelling an already-cancelled class" cannot cover
+   * this: its class is already `cancelled` at the top-of-handler read, so the
+   * snapshot and the re-read are the same string and swapping one for the other
+   * is unobservable. This needs the row to CHANGE while the request is parked,
+   * which is what the lever provides.
+   */
+  it('404s when the class is deleted while the cancel is parked on its row', async () => {
+    const cls = await prisma.class.create({
+      data: {
+        teacherId: ownerId,
+        teacherRoomId,
+        classType: 'Hatha',
+        date: new Date('2099-01-02'),
+        startTime: '11:00',
+        durationMinutes: 60,
+        roomCost: 30,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 2,
+        maxStudents: 4,
+        status: 'open',
+      },
+    });
+    // No registrations, deliberately: this class has to be deletable, which is
+    // also what makes the scenario real — the archive path only hard-deletes
+    // instances carrying no charged registration.
+
+    const holder = new PrismaClient();
+    let release!: () => void;
+    let locked!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    const parked = new Promise<void>((r) => { locked = r; });
+    const holding = holder.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
+        locked();
+        await released;
+        // Lands while the handler is parked on its CAS: after the
+        // top-of-handler read that proved the class existed, before the
+        // in-transaction re-read that has to notice it no longer does.
+        await tx.$executeRaw`DELETE FROM "Class" WHERE id = ${cls.id}`;
+      },
+      { timeout: 20_000 },
+    );
+
+    let pending: ReturnType<typeof transition> | undefined;
+    try {
+      await parked;
+
+      pending = transition(ownerToken, cls.id, { status: 'cancelled' });
+
+      // Asserted, not assumed — the same reason as the sibling above. A request
+      // that answered without parking would prove nothing.
+      let settled = false;
+      void pending.then(() => { settled = true; }).catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 1000));
+      expect(settled).toBe(false);
+
+      release();
+      await holding;
+      const res = await pending;
+
+      expect(res.status).toBe(404);
+      const json = (await res.json()) as { error: { message: string } };
+      expect(json.error.message).toBe('Class not found');
+      // The specific lie the fallback used to tell.
+      expect(json.error.message).not.toContain('status "open"');
+    } finally {
+      release();
+      await holding;
+      if (pending) await pending.catch(() => undefined);
+      await holder.$disconnect();
+
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+      // `deleteMany`, not `delete`: on the happy path the holder already
+      // deleted this row, and a `delete` would throw P2025 out of the cleanup.
+      await prisma.class.deleteMany({ where: { id: cls.id } });
+    }
+  });
+
   it('409s cancelling an already-cancelled class', async () => {
     const res = await transition(ownerToken, cancelClassId, { status: 'cancelled' });
     expect(res.status).toBe(409);
