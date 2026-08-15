@@ -453,13 +453,30 @@ export async function autoCompleteClasses(
     // Per-class isolation — see autoTransitionToInProgress. Completion also
     // runs the pricing engine, which has more ways to fail per class.
     try {
+      // Pre-filter from the snapshot, an OPTIMISATION ONLY — the authoritative
+      // timing check now lives inside `completeClass`, under the row lock it
+      // already takes. A stale pre-filter can only DELAY a completion to the
+      // next 60-second tick, never cause a wrong one.
       const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
       const endTime = new Date(start.getTime() + cls.durationMinutes * 60 * 1000);
 
       if (currentTime >= endTime) {
-        const result = await completeClass(db, cls.id);
+        // `requireEndedBy` is what makes the decision the locked row's, not
+        // this snapshot's. Without it this sweep completes a class
+        // rescheduled after the read above — creating `Payment` rows for a
+        // class that has not happened.
+        const result = await completeClass(db, cls.id, { requireEndedBy: currentTime });
         if (result.ok) {
           completed++;
+        } else if (result.error.endsWith('has not ended yet')) {
+          // The race `requireEndedBy` exists to catch: this class was
+          // rescheduled to a later time between the `findMany` snapshot
+          // above and `completeClass`'s locked re-read. Not a failure — the
+          // lock did its job and deferred to the next tick, which will
+          // re-evaluate the class's now-current end time. `warn`, not
+          // `error`, so this expected, self-resolving outcome does not page
+          // anyone; every OTHER refusal reason still logs at `error` below.
+          log.warn({ classId: cls.id, reason: result.error }, 'class completion rejected');
         } else {
           log.error({ classId: cls.id, reason: result.error }, 'class completion rejected');
         }

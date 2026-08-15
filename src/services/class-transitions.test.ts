@@ -842,6 +842,55 @@ describe('class transitions (DB, timezone-aware)', () => {
     await prisma.class.delete({ where: { id: cls.id } });
   });
 
+  // Ordered before 'auto-completes an in-progress class after its local end
+  // time' below on purpose: that test reuses the default `makeClass` slot
+  // (`teacherId`+`2026-07-20`+`18:00`, `Class_teacher_slot_unique`) and,
+  // being the block's original last test, relies on this block's `afterAll`
+  // (teacherId sweep) rather than an inline delete — so it must run AFTER
+  // this test's own inline cleanup frees that slot, not before.
+  it('does not complete a class rescheduled after the sweep read it', async () => {
+    const cls = await makeClass({ status: 'in_progress' });
+    await prisma.registration.create({
+      data: { classId: cls.id, studentId, status: 'registered', tierAtBooking: 3 },
+    });
+
+    let hookCalls = 0;
+    const racing = prisma.$extends({
+      query: {
+        class: {
+          async findMany({ args, query }) {
+            // Shape-keyed: `autoCompleteClasses` is the only sweep reading
+            // `status: 'in_progress'`.
+            const where = args.where as { status?: unknown } | undefined;
+            if (where?.status !== 'in_progress') return query(args);
+
+            hookCalls += 1;
+            const rows = await query(args);
+            await prisma.class.update({
+              where: { id: cls.id },
+              data: { date: new Date('2026-07-27') },
+            });
+            return rows;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const completed = await autoCompleteClasses(racing, new Date('2026-07-20T17:30:00Z'));
+
+    expect(hookCalls).toBe(1);
+    expect(completed).toBe(0);
+
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(updated.status).toBe('in_progress');
+    // No payments for a class that has not happened. This is the assertion that
+    // makes the defect concrete: completion creates Payment rows.
+    expect(await prisma.payment.count({ where: { registration: { classId: cls.id } } })).toBe(0);
+
+    await prisma.registration.deleteMany({ where: { classId: cls.id } });
+    await prisma.class.delete({ where: { id: cls.id } });
+  });
+
   it('auto-completes an in-progress class after its local end time', async () => {
     const cls = await makeClass({ status: 'in_progress', minStudents: 1 });
     await prisma.registration.create({

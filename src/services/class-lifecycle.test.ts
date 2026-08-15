@@ -898,6 +898,31 @@ describe('completeClass (DB)', () => {
     // `expired`, not `removed`: this student never got in, they did not leave.
     expect(after.status).toBe('expired');
   });
+
+  it('refuses to complete a class that has not ended when requireEndedBy is given', async () => {
+    const cls = await makeClass({ status: 'in_progress' });
+    // This block's `makeClass` plants the class on 2026-06-01 at
+    // `slotTime(540 + counter)` — 18:01, 18:02, … — for 75 minutes, teacher
+    // timezone Europe/Amsterdam (schema default). June is CEST, so 18:01
+    // local is 16:01Z and the class ends at 17:16Z. The counter makes the
+    // exact minute depend on how many tests in this block called
+    // `makeClass` first, so this instant is safely inside the class for ANY
+    // counter value rather than derived from a specific start.
+    const result = await completeClass(prisma, cls.id, {
+      requireEndedBy: new Date('2026-06-01T16:30:00Z'),
+    });
+    expect(result.ok).toBe(false);
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(updated.status).toBe('in_progress');
+  });
+
+  it('still completes early for a teacher, who passes no requireEndedBy', async () => {
+    // The option is what makes the sweep strict; omitting it must NOT become
+    // strict by default, or a teacher can no longer finish a class early.
+    const cls = await makeClass({ status: 'in_progress' });
+    const result = await completeClass(prisma, cls.id);
+    expect(result.ok).toBe(true);
+  });
 });
 
 // ===========================================================================

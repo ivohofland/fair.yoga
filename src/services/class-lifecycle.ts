@@ -19,6 +19,7 @@ import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { closeQueueOnStart } from './waitlist';
+import { classStartInstant } from '@/lib/timezone';
 
 export { ECONOMIC_FIELDS, type EconomicField };
 
@@ -211,6 +212,7 @@ export const CHARGED_STATUSES: readonly RegistrationStatus[] = Object.freeze([
 export async function completeClass(
   db: PrismaClient,
   classId: string,
+  opts: { requireEndedBy?: Date } = {},
 ): Promise<TransitionDbResult> {
   return db.$transaction(async (tx) => {
     // Before the read, not with the first write. Everything below decides
@@ -222,9 +224,34 @@ export async function completeClass(
 
     const cls = await tx.class.findUnique({
       where: { id: classId },
-      include: { registrations: true },
+      include: {
+        registrations: true,
+        teacher: { select: { defaultTimezone: true } },
+      },
     });
     if (!cls) return { ok: false, error: `Class not found: ${classId}` };
+
+    // #182. The TIMING decision lives here, under the lock this function
+    // already holds, rather than in the caller's pre-transaction snapshot.
+    // `autoCompleteClasses` used to compute the end time from its outer
+    // `findMany` and pass only the id, so a class rescheduled between that
+    // read and this transaction was completed against a time it no longer
+    // had — and completion runs the pricing engine and creates `Payment`
+    // rows, so students were billed for a class whose start had moved.
+    //
+    // OPTIONAL, and that is the design rather than a convenience: the two
+    // callers that omit it want exactly the old behaviour. A teacher
+    // finishing early (`POST /api/classes/[id]/complete`) is legitimate, and
+    // `deleteTeacherAccount` (`gdpr.ts`) completes in-flight classes during
+    // erasure regardless of the clock. Making this mandatory would break
+    // both.
+    if (opts.requireEndedBy) {
+      const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
+      const end = new Date(start.getTime() + cls.durationMinutes * 60 * 1000);
+      if (opts.requireEndedBy < end) {
+        return { ok: false, error: `Class ${classId} has not ended yet` };
+      }
+    }
 
     // If open, transition to in_progress first (teacher completing directly)
     if (cls.status === 'open') {
