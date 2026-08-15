@@ -223,12 +223,13 @@ beforeAll(async () => {
     ],
   });
 
-  // The count fixture: one class carrying one entry in each of four states —
-  // `waiting`, `promoted`, `claimed`, `removed`. Every property is load-bearing,
-  // and each was added because a wrong predicate survived without it:
+  // The count fixture: one class carrying one entry in each of five states —
+  // `waiting`, `promoted`, `claimed`, `removed`, `expired`. Every property is
+  // load-bearing, and each was added because a wrong predicate survived
+  // without it:
   //
-  // - FOUR entries against ONE `waiting` makes the filtered and unfiltered
-  //   counts differ by three, so no off-by-one predicate reproduces the right
+  // - FIVE entries against ONE `waiting` makes the filtered and unfiltered
+  //   counts differ by four, so no off-by-one predicate reproduces the right
   //   answer. A symmetric fixture is the shape that let #39 ship three guards
   //   that could not fail.
   // - `promoted` kills `status: { not: 'removed' }` — a natural mistake
@@ -242,10 +243,12 @@ beforeAll(async () => {
   // - `removed` stays represented: it is the state every queue #195 closed now
   //   sits in.
   //
-  // `expired` is absent because nothing in `src` writes it. If #216 chooses
-  // `expired` as the state that closes a queue when a class starts, add a row
-  // here the same day — otherwise `notIn: ['removed','promoted','claimed']`
-  // becomes a live leak this fixture cannot see.
+  // - `expired` kills `status: { notIn: ['removed','promoted','claimed'] }`,
+  //   the negative enumeration one step further out again. No longer
+  //   hypothetical: `closeQueueOnStart` (`waitlist.ts`, #216) writes it every
+  //   time a class starts with an unfulfilled queue, which is the ordinary
+  //   case for any class that filled. It is the third of the three
+  //   double-counts the production comment names.
   //
   // The closed rows deliberately carry no `registrationId`: in production
   // `promoteNext` and `claimSpot` write one (`activateRegistration`, linked on
@@ -257,6 +260,7 @@ beforeAll(async () => {
   const seated = await makeStudent('count-promoted');
   const booked = await makeStudent('count-claimed');
   const gone = await makeStudent('count-gone');
+  const lapsed = await makeStudent('count-expired');
   await prisma.waitlistEntry.createMany({
     data: [
       { classId: countClassId, studentId: waiting.id, position: 1, status: 'waiting' },
@@ -275,6 +279,13 @@ beforeAll(async () => {
         promotedAt: new Date(),
       },
       { classId: countClassId, studentId: gone.id, position: 3, status: 'removed' },
+      {
+        classId: countClassId,
+        studentId: lapsed.id,
+        position: 5,
+        status: 'expired',
+        promotedAt: new Date(),
+      },
     ],
   });
 });
@@ -348,12 +359,14 @@ describe('GET /class/[id] (page) — the waitlist count', () => {
 
     expect(html).toContain('1 on waitlist');
 
-    // Each number names a predicate that would produce it: 4 unfiltered, 3
-    // under `not: 'removed'`, 2 under `notIn: ['removed','promoted']`. All
-    // three keep counting students who hold a live registration on this same
-    // page — in production, not in this fixture, whose closed rows carry no
+    // Each number names a predicate that would produce it: 5 unfiltered, 4
+    // under `not: 'removed'`, 3 under `notIn: ['removed','promoted']`, 2
+    // under `notIn: ['removed','promoted','claimed']`. All four keep counting
+    // students who hold a live registration on this same page — in
+    // production, not in this fixture, whose closed rows carry no
     // `registrationId` deliberately. The discrimination lives in the fixture;
     // these assertions document it.
+    expect(html).not.toContain('5 on waitlist');
     expect(html).not.toContain('4 on waitlist');
     expect(html).not.toContain('3 on waitlist');
     expect(html).not.toContain('2 on waitlist');
