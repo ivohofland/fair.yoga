@@ -205,13 +205,37 @@ export type UpdateClassTemplateResult =
   | { ok: false; reason: 'slot_conflict' }
   | { ok: false; reason: 'sync_conflict' }
   /**
-   * This transaction lost a contention race — a concurrent generation claim,
-   * archive, or pause/resume holding this template row past the `setLockTimeout`
-   * bound below — and rolled back whole, so nothing was applied and the
-   * identical request can win the next attempt.
+   * This transaction lost a contention race and rolled back whole, so nothing
+   * was applied and the identical request can win the next attempt.
+   *
+   * TWO row families can produce it, and an earlier version of this docblock
+   * named only the first — which made the enumeration wrong from the moment
+   * the write and the sync became one transaction:
+   *
+   * 1. The `ClassTemplate` row, held by a concurrent generation claim,
+   *    archive, or pause/resume. The only cause while this function's write
+   *    was a transaction of its own.
+   * 2. **Any `Class` row of this template**, held by an ordinary booking.
+   *    `syncTemplateInstances` (`template-sync.ts`) is composed into this
+   *    transaction now and takes an ordered `FOR UPDATE OF c` over every
+   *    future instance, while `POST /api/registrations` holds its `Class` row
+   *    `FOR UPDATE` for the length of its own transaction — one of the five
+   *    deliberately UNBOUNDED sites `db-locks.ts` lists. So a student booking
+   *    one instance can now time a teacher's edit out at 2s.
+   *    `archiveOrUnarchiveTemplate` documents the same exposure for its own
+   *    pre-lock ("that one can lose to an ordinary booking holding a `Class`
+   *    row"); this function acquired it in the same branch and inherits it.
+   *
+   * The log line at the `catch` deliberately names neither, because the code
+   * cannot tell them apart — `err`'s invocation line can, and is logged.
    *
    * See `ArchiveTemplateResult`'s `busy` arm for the fuller range of causes
    * `isTransientDbError` matches; this arm is produced by the same helper.
+   * Read its `40P01` paragraph with care, though: it says "this function is
+   * one side of" the `{Class, ClassTemplate}` ordering question (issue #229),
+   * meaning the archive. This branch made `updateClassTemplate` a fifth site
+   * on that same side (`docs/lock-order.md`, "Known violation, not fixed
+   * here"), so a `40P01` here carries the same reading.
    */
   | { ok: false; reason: 'busy' };
 
@@ -246,9 +270,11 @@ export type UpdateClassTemplateResult =
  * propagation never touches — becomes `sync_conflict` (#196), and now means
  * the whole transaction rolled back rather than a partially applied change
  * (see that branch's own comment below); and `isTransientDbError` matching —
- * a concurrent generation claim, archive, or pause/resume holding this row
- * past the `setLockTimeout` bound below — becomes `busy`. Everything else
- * still propagates as an opaque 500.
+ * a holder of either the `ClassTemplate` row or any of this template's
+ * future `Class` rows outlasting the `setLockTimeout` bound below — becomes
+ * `busy`. The second family is new with this transaction and is easy to miss:
+ * see the `busy` arm's own docblock on `UpdateClassTemplateResult` above,
+ * which enumerates both. Everything else still propagates as an opaque 500.
  */
 export async function updateClassTemplate(
   db: PrismaClient,
@@ -355,9 +381,19 @@ export async function updateClassTemplate(
     // re-derive that for each of the five template lifecycle functions this
     // helper now guards.
     if (isTransientDbError(err)) {
+      // "a lock race", not "the template lock race". Since the write and the
+      // sync became one transaction this can be lost on the `ClassTemplate`
+      // row OR on any future `Class` row of the template — the sync's ordered
+      // pre-lock takes those, and an ordinary booking holds one unbounded
+      // (`db-locks.ts`). Naming the template row sent an operator to check
+      // the generation sweep and the archive path for a race that was
+      // actually a student booking, and find nothing. The code cannot tell
+      // the two apart; `err`'s invocation line can, which is why it is logged
+      // rather than summarised here. See the `busy` arm on
+      // `UpdateClassTemplateResult` for both families.
       log.warn(
         { err, templateId, teacherId },
-        'recurring class edit lost the template lock race',
+        'recurring class edit lost a lock race (template row or one of its instances) — nothing committed',
       );
       return { ok: false, reason: 'busy' };
     }

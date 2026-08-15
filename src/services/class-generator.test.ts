@@ -725,7 +725,7 @@ describe('generateClassInstances (DB)', () => {
           // silent.
           expect(warn).toHaveBeenCalledWith(
             expect.objectContaining({ templateId, teacherId }),
-            'recurring class edit lost the template lock race',
+            'recurring class edit lost a lock race (template row or one of its instances) — nothing committed',
           );
         } finally {
           // In a `finally`, matching the archive/pause busy tests above: a

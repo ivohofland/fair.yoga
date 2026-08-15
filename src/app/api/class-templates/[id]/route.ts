@@ -104,9 +104,13 @@ export const PUT = withErrorHandler(async (
       'TEMPLATE_SYNC_SLOT_CONFLICT',
     );
   }
-  // This transaction lost a contention race (#100/#209) — a generation
-  // claim, archive, or pause/resume held the template row past the lock
-  // bound. Distinct copy from the PATCH pause/resume branch below ("could not
+  // This transaction lost a contention race (#100/#209) — either a
+  // generation claim, archive or pause/resume holding the template row, or
+  // an ordinary booking holding one of this template's future classes, since
+  // the edit's transaction now takes those too via `syncTemplateInstances`'s
+  // ordered pre-lock. The copy names neither, which is correct: the service
+  // cannot tell them apart and the teacher's next step is the same either
+  // way. Distinct copy from the PATCH pause/resume branch below ("could not
   // update this recurring class"): this is the edit, that is the toggle.
   if (result.reason === 'busy') {
     return respondError(
