@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, type ClassStatus } from '@prisma/client';
+import { classStartInstant } from '@/lib/timezone';
 import {
   VALID_TRANSITIONS,
   ECONOMIC_FIELDS,
@@ -925,6 +926,54 @@ describe('completeClass (DB)', () => {
     if (!result.ok) expect(result.reason).toBe('NOT_ENDED_YET');
     const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
     expect(updated.status).toBe('in_progress');
+  });
+
+  /**
+   * The boundary itself. `requireEndedBy < end` refuses; `=== end` must
+   * complete, because a class that has just reached its end time HAS ended and
+   * the sweep runs on a 60-second tick that will land on that instant.
+   * Flipping the comparison to `<=` survived the suite before this existed.
+   *
+   * The instant is computed from the row rather than written as a literal, for
+   * the reason the sibling test above spells out: this block's `makeClass`
+   * derives `startTime` from a counter, so a hardcoded time would pin the wrong
+   * minute as soon as another test is added ahead of it.
+   */
+  it('completes a class at exactly its end instant, not one tick later', async () => {
+    const cls = await makeClass({ status: 'in_progress' });
+    const row = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    const start = classStartInstant(row.date, row.startTime, 'Europe/Amsterdam');
+    const end = new Date(start.getTime() + row.durationMinutes * 60 * 1000);
+
+    const result = await completeClass(prisma, cls.id, { requireEndedBy: end });
+    expect(result.ok).toBe(true);
+
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(updated.status).toBe('completed');
+  });
+
+  /**
+   * The OTHER direction of the reschedule the guard exists to catch. Moving a
+   * class LATER must block completion (the sibling above); moving it EARLIER
+   * must not, because the class really has ended. Nothing pinned this, so a
+   * future "improvement" that compared the absolute distance between the two
+   * instants — rather than their order — would look correct and quietly refuse
+   * to complete classes that finished early.
+   */
+  it('completes a class rescheduled EARLIER, where the guard must not fire', async () => {
+    const cls = await makeClass({ status: 'in_progress' });
+    await prisma.class.update({
+      where: { id: cls.id },
+      data: { date: new Date('2026-05-25') },
+    });
+
+    const result = await completeClass(prisma, cls.id, {
+      requireEndedBy: new Date('2026-06-01T16:30:00Z'),
+    });
+    expect(result.ok).toBe(true);
+
+    const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(updated.status).toBe('completed');
   });
 
   it('still completes early for a teacher, who passes no requireEndedBy', async () => {

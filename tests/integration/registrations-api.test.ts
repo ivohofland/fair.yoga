@@ -450,6 +450,41 @@ describe('POST /api/registrations', () => {
     expect(entry.registrationId).toBe(walkInJson.data.id);
   });
 
+  /**
+   * The boundary of the set above, which nothing pinned: broadening the
+   * resolver to include `removed` passed the entire suite.
+   *
+   * `removed` means a decision was already made ABOUT this student — they left
+   * the queue themselves, or a cancel path (#195) closed it. Resolving that to
+   * `claimed` would assert the opposite of what happened, in a status
+   * `exportStudentData` publishes verbatim. `expired` is the only closed status
+   * that means "never got in YET", which is the one story a walk-in can still
+   * make true.
+   *
+   * The walk-in itself must still succeed — the teacher's decision at the door
+   * is not the waitlist's to veto. What must not happen is the entry being
+   * rewritten to say they claimed a spot they had already given up.
+   */
+  it('walks in a student who had LEFT the queue without rewriting their removed entry', async () => {
+    const classId = await makeClass(1);
+    const fill = await post(studentTokens[0]!, { classId });
+    expect(fill.status).toBe(201);
+
+    await prisma.waitlistEntry.create({
+      data: { classId, studentId: studentIds[1]!, position: 1, status: 'removed' },
+    });
+    await prisma.class.update({ where: { id: classId }, data: { status: 'in_progress' } });
+
+    const walkIn = await post(ownerToken, { classId, studentId: studentIds[1] });
+    expect(walkIn.status).toBe(201);
+
+    const entry = await prisma.waitlistEntry.findUniqueOrThrow({
+      where: { classId_studentId: { classId, studentId: studentIds[1]! } },
+    });
+    expect(entry.status).toBe('removed');
+    expect(entry.registrationId).toBeNull();
+  });
+
   it('rebooking after a cancellation reactivates the old registration row', async () => {
     const classId = await makeClass(5);
     const first = await post(studentTokens[0]!, { classId });
