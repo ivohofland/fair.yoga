@@ -20,6 +20,7 @@ import { AddWalkIn } from '@/components/class/add-walk-in';
 import { SendAnnouncement } from '@/components/class/send-announcement';
 import { toIncomeTier } from '@/lib/tiers.server';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
+import { CLAIMABLE_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 
 export default async function ClassDetailPage({
   params,
@@ -58,11 +59,10 @@ export default async function ClassDetailPage({
       // its queue. Filtering here cannot do that: a relation `_count` filters
       // the related rows, not the parent's status.
       //
-      // Stays `waiting`-only on purpose — do not fold `expired` in here. The
-      // `in_progress` walk-in case (#F1, below `cls`) needs `expired` counted
-      // too, but only there: `waitlist-display.test.ts`'s count fixture puts
-      // an `expired` row on an OPEN class specifically to catch a query that
-      // already counts it unconditionally.
+      // Stays `waiting`-only: this is the count for a LIVE queue, and folding
+      // `expired` in here would inflate an open class's. The `in_progress` case
+      // needs a different set and is read separately below, because a relation
+      // `_count` cannot vary with the parent's own status.
       _count: { select: { waitlistEntries: { where: { status: 'waiting' } } } },
     },
   });
@@ -71,21 +71,26 @@ export default async function ClassDetailPage({
     redirect('/');
   }
 
-  // #F1 (whole-branch review of #216/#182). `_count` above stays `waiting`-only
-  // — it must, `waitlist-display.test.ts`'s count fixture fixtures an `expired`
-  // row on an OPEN class specifically to prove a query that folds `expired` in
-  // unconditionally is wrong there. But while `in_progress`, a teacher can
-  // still walk a queued student in at the door (`api/registrations/route.ts`
-  // now matches `waiting` OR `expired` for exactly this), so the count on THIS
-  // screen must include `expired` too, or it reads 0 next to the **Add
-  // walk-in** button that consumes it. A second, conditional read rather than
-  // a broadened `where` above: the two statuses must total differently
-  // depending on `cls.status`, which this query does not know about itself.
-  const expiredWaitlistCount =
+  // Two different questions, so two different reads.
+  //
+  // While `open`, the number that matters is who is still queuing. While
+  // `in_progress`, it is who the teacher can still walk in at the door —
+  // `CLAIMABLE_WAITLIST_STATUSES`, because `closeQueueOnStart` (#216) has
+  // already flipped every `waiting` row to `expired` by then. Get that wrong and
+  // this reads 0 beside the **Add walk-in** button that consumes exactly those
+  // entries; this page and `api/registrations/route.ts` are the two sites that
+  // must agree on that set, which is why it has a name rather than being
+  // spelled out at each.
+  //
+  // REPLACES the `_count` rather than adding to it, so there is no double-count
+  // to reason about: `addToWaitlist` requires `status === 'open'`, so an
+  // `in_progress` class has no `waiting` rows this would miss.
+  const waitlistCount =
     cls.status === 'in_progress'
-      ? await prisma.waitlistEntry.count({ where: { classId: cls.id, status: 'expired' } })
-      : 0;
-  const waitlistCount = cls._count.waitlistEntries + expiredWaitlistCount;
+      ? await prisma.waitlistEntry.count({
+          where: { classId: cls.id, status: { in: [...CLAIMABLE_WAITLIST_STATUSES] } },
+        })
+      : cls._count.waitlistEntries;
 
   const activeRegistrations = cls.registrations.filter((r) => r.status !== 'cancelled');
 

@@ -19,58 +19,32 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
   const variant = deriveBadgeVariant(cls.status, registrationCount, cls.minStudents, cls.maxStudents);
   const showProgress = cls.status === 'open' || cls.status === 'in_progress';
 
-  // #199, second half; corrected by the whole-branch review of #216/#182 —
-  // this was the untouched twin of the identical sentence Task 9 fixed in
-  // `bookings/page.tsx`, missed by that pass's keyword grep because a grep
-  // scoped to one claim cannot see another claim's twin.
-  //
-  // Both of the following are now true, where the paragraph below used to
-  // claim their opposites:
-  //
-  // 1. `closeQueueOnStart` (#216) DOES close a queue the moment a class
-  //    leaves `open` by starting — it flips every `waiting` row to `expired`,
-  //    in the same transaction as the `in_progress` write, at all three exits
-  //    (`transitionClass`, `autoTransitionToInProgress`, `completeClass`'s
-  //    inline bump).
-  // 2. `api/registrations/route.ts`'s walk-in resolution now matches
-  //    `waiting` OR `expired` (it did not before #F1), which is what makes
-  //    "closes that student's entry to `claimed`" true again. Left
-  //    `waiting`-only, an `in_progress` class has zero `waiting` rows by
-  //    construction, so a queued student walked in at the door held a live,
-  //    billed registration next to a `WaitlistEntry` stuck on `expired`
-  //    forever — the exact "never got in" story `expired` exists to prevent,
-  //    reintroduced from the other side of the same transaction.
-  //
-  // `in_progress` stays included rather than `open` alone, for the reason
-  // above: during check-in a teacher may still walk a waiting — now
-  // waiting-or-expired — student in. But the count fed in from
-  // `class/[id]/page.tsx` must now total `waiting + expired` while
-  // `in_progress`, or this reads 0 next to the very **Add walk-in** button it
-  // is meant to cue (that total is computed there, not here — see its
-  // comment for why `expired` cannot simply be folded into the `_count`
-  // unconditionally).
-  //
-  // The label below switches to PAST tense on `in_progress` ("N were on the
-  // waitlist") rather than repeating `open`'s "N on waitlist". #199's defect
-  // was the PRESENT-tense claim about a queue that could no longer be
-  // affected, not the presence of a number — so naming it as history keeps
-  // the affordance (a teacher still knows to look for a walk-in) without
-  // reasserting that defect. `open`'s queue is still live, so it keeps the
-  // present tense.
-  //
-  // After `completed` nothing can consume the queue, so it stops rendering.
-  // `cancelled` already reads 0 — every cancel path closes its entries to
-  // `removed` (#195), never `expired` — so `completed` is the only status
-  // this file still has to gate out by hand.
+  // #199. `in_progress` is included, not `open` alone: `closeQueueOnStart`
+  // (#216) closes the queue the moment a class starts, but a teacher can still
+  // walk one of those students in at the door, so the number stays actionable.
+  // After `completed` nothing can consume it, so it stops rendering.
   //
   // Written as its own condition rather than reusing `showProgress`: the two
   // windows coincide today for the same reason (registrations still matter),
-  // but they are separate decisions and a change to one must not silently
-  // move the other.
+  // but they are separate decisions and a change to one must not silently move
+  // the other.
   const queueIsLive = cls.status === 'open' || cls.status === 'in_progress';
+
+  // Two different sets, so two different sentences — and the sentence has to
+  // describe the set the caller actually counted, or it goes stale as the
+  // number moves.
+  //
+  // While `open`, `waitlistCount` is the live queue: "N on waitlist" is true and
+  // stays true. While `in_progress` it is `CLAIMABLE_WAITLIST_STATUSES` — the
+  // students who never got a seat and can still be walked in — and that number
+  // FALLS as the teacher walks them in. "N were on the waitlist" would be wrong
+  // in both directions: it never counted the students who were promoted before
+  // the class started, and it would keep shrinking while claiming to be history.
+  // "N didn't get a spot" describes exactly the set being counted, and stays
+  // true as walk-ins remove people from it.
   const waitlistLabel =
     cls.status === 'in_progress'
-      ? `${waitlistCount} ${waitlistCount === 1 ? 'was' : 'were'} on the waitlist`
+      ? `${waitlistCount} didn't get a spot`
       : `${waitlistCount} on waitlist`;
 
   return (

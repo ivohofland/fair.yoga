@@ -386,7 +386,7 @@ describe('GET /class/[id] (page) — the waitlist count', () => {
    * (`api/registrations/route.ts` now matches `waiting` OR `expired`), and
    * the count is the only cue that anyone was waiting when the class started.
    */
-  it('folds expired into the count while in_progress, past tense', async () => {
+  it('counts every claimable entry while in_progress, and names the set it counted', async () => {
     const inProgressCountClassId = await makeClass(`w199-inprog-count-${suffix}`, 'in_progress', 5);
     const waitingHere = await makeStudent('inprog-waiting');
     const expiredHere = await makeStudent('inprog-expired');
@@ -409,10 +409,16 @@ describe('GET /class/[id] (page) — the waitlist count', () => {
     expect(res.status).toBe(200);
     const html = (await res.text()).replaceAll('<!-- -->', '');
 
-    // Past tense, not "2 on waitlist": #199's defect was the PRESENT-tense
-    // claim about a queue that could no longer be affected, not the presence
-    // of a number (see `class-info.tsx`'s comment).
-    expect(html).toContain('2 were on the waitlist');
+    // Both rows counted — `waiting` AND `expired`, the two members of
+    // `CLAIMABLE_WAITLIST_STATUSES` — because both can still be walked in.
+    //
+    // "didn't get a spot", not "2 on waitlist" (#199's defect: a present-tense
+    // claim about a queue that can no longer be joined) and not "2 were on the
+    // waitlist" either, which would assert a historical total this number is
+    // not — it excludes anyone promoted before the class started, and it falls
+    // as the teacher walks people in. The sentence has to describe the set that
+    // was actually counted.
+    expect(html).toContain("2 didn't get a spot");
     expect(html).not.toContain('2 on waitlist');
   });
 
