@@ -1730,8 +1730,10 @@ reason.
 | `src/services/gdpr.ts:288-298` | **Do not change the `waitingCount` query.** Add one sentence noting the population it counts no longer grows, now that `closeQueueOnStart` closes rows at source. |
 | `src/app/api/classes/[id]/transition/route.ts:67-90` | Already deleted in Task 7 — confirm it is gone. |
 | `tests/integration/waitlist-display.test.ts` | Already done in Task 8 — confirm. |
-| `src/services/class-lifecycle.ts` `CHARGED_STATUSES` docblock (`:160-174`) | It names `class-transitions.test.ts` and `tests/integration/registrations-api.test.ts` as citing it, "one of them by line number, which this docblock's own growth has already invalidated once". Both files change in this branch — re-check that citation. |
-| **Three test-teardown comments this branch itself wrote, all stating a false FK mechanism.** `src/services/class-lifecycle.test.ts` (~`:314-319` and ~`:668-673`) and `tests/integration/classes-api.test.ts` (~`:240-241`) | Each says the `WaitlistEntry` row "blocks `class.deleteMany`". **It does not.** `WaitlistEntry.class` is `onDelete: Cascade` (`prisma/schema.prisma:575`), so waitlist rows go with their class. The row that actually blocks teardown is the surviving **`Class`**, and what it blocks is `teacherRoom.deleteMany` / `room.delete` via the plain `Class.teacherRoomId` FK — which the `classes-api.test.ts` comment states correctly at `~:237-238` before appending the wrong reason for the waitlist line. **Keep the `waitlistEntry.deleteMany` calls** (harmless, mildly defensive) and correct the stated reason in all three places. This claim originated in the controller's own task dispatches, not in an implementer's reasoning — record that in the PR body, since "where the errors were, including your own" is the standard this project holds. |
+| `src/services/class-lifecycle.ts` `CHARGED_STATUSES` docblock — **`:177-197`** (was `:160-174`; Tasks 2 and 5 grew this file), the citation sentence at **`:194-195`** | It names `class-transitions.test.ts` and `tests/integration/registrations-api.test.ts` as citing it, "one of them by line number, which this docblock's own growth has already invalidated once". Both files change in this branch — re-check that citation. **And note the docblock has now grown again, by this very branch, which is the second time.** Prefer naming the comment over re-deriving the number, the same ruling as the `waitlist.ts` row above. |
+| **Three test-teardown comments this branch itself wrote, all stating a false FK mechanism.** `src/services/class-lifecycle.test.ts` (~`:314-319` and ~`:668-673`) and `tests/integration/classes-api.test.ts` (~`:240-241`) | Each says the `WaitlistEntry` row "blocks `class.deleteMany`". **It does not.** `WaitlistEntry.class` is `onDelete: Cascade` (`prisma/schema.prisma:575`), so waitlist rows go with their class. The row that actually blocks teardown is the surviving **`Class`**, and what it blocks is `teacherRoom.deleteMany` / `room.delete` via the plain `Class.teacherRoomId` FK — which the `classes-api.test.ts` comment states correctly at `:238` before appending the wrong reason for the waitlist line. **Keep the `waitlistEntry.deleteMany` calls** (harmless, mildly defensive) and correct the stated reason in all three places.
+
+**Re-derived at `c125f9d`, and the third location does NOT match a grep for the other two.** The two in `class-lifecycle.test.ts` are at **`:314-319`** and **`:670-675`** and both read "it FK-references Class … blocks `class.deleteMany`". The one in `classes-api.test.ts` is at **`:240-241`** and reads differently — *"Waitlist entries first, same reason as that block's comment: they FK-reference the class."* A `grep` for either phrasing finds only its own pair. **This is §4's keyword-sweep hazard in the wild: the twin is real, it is 200 lines away in another file, and the obvious search cannot see it.** Find all three by reasoning about the mechanism, then verify by opening each. Note also that `classes-api.test.ts:240-241` is doubly wrong — its stated reason is false *and* it forwards authority to the two comments that are also false. This claim originated in the controller's own task dispatches, not in an implementer's reasoning — record that in the PR body, since "where the errors were, including your own" is the standard this project holds. |
 
 - [ ] **Step 3: Correct the issue bodies and the roadmap**
 
@@ -1843,3 +1845,36 @@ Stop and report rather than working around, if:
 - What the PR does **not** do — using "**#N is unaffected**", never the phrase that
   GitHub's parser closes on.
 - That #182's `PUT` class-*time* guard was deliberately not added, and why.
+- **The controller's own errors, named as such.** Four, and they are worth stating
+  together because they share one cause:
+  1. The **teardown mechanism** given to the Tasks 2 and 3 implementers was wrong —
+     a `WaitlistEntry` was said to block `class.deleteMany`; it cannot, the relation is
+     `onDelete: Cascade`. It reached three comments in two files, which is what this
+     task's sweep exists to correct.
+  2. **"About a dozen"** `tsc` errors predicted for Task 5's mutation (b), including one
+     in `account-api.test.ts`. It was **10**, and that file has no call site — all four
+     of its mentions are prose in comments. The grep matched a docblock.
+  3. **"Both live count sites"** claimed for the `status: 'waiting'` predicate in Task 8's
+     dispatch, from a grep of exactly those two files. The site actually under test was a
+     third, `(teacher)/class/[id]/page.tsx:60`, and the predicate appears in many more
+     production modules.
+  4. A pointer left in Task 4's notes telling Task 5 to check `sourceStatesFor`, which
+     does not arise there — withdrawn in both places rather than only where it was noticed.
+  Three of the four are **counts asserted from a grep narrower than the claim it
+  supported**. State the pattern, not just the instances; it is more useful to the next
+  reader than four separate apologies.
+- **That correcting a stale claim is not a safe operation**, with Task 8 as the worked
+  example: a task whose entire purpose was fixing stale numbers introduced a new false one
+  (`expired` called "the third of the three double-counts", when the cited comment names
+  two and `expired` is not a double-count at all), and it contradicted an unmodified
+  paragraph four lines above. Caught at review. The mechanism was paraphrasing a comment
+  in another file instead of opening it.
+- **That the deleted `KNOWN RESIDUAL` block's untestability claim was false.** It justified
+  leaving the cancel-notice race unfixed partly on "no test can observe a window this
+  narrow"; Task 7's held-`FOR UPDATE` test is the counter-example. Its other two reasons
+  stand — say so, so the correction is not overstated into a criticism of the original
+  scope judgement.
+- **That three other integration files share the unguarded lock-lever shape**
+  (`announcements-api`, `payments-api`, `registrations-api`), that this branch fixed only
+  its own, and that the others were deliberately not filed: pre-existing, developer-side
+  only, made visible rather than worse.
