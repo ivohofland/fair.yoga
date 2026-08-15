@@ -15,7 +15,7 @@ import { createBulkNotifications, type CreateNotificationInput } from './notific
 import { formatDayHeader } from '@/lib/format';
 import { completeClass } from './class-lifecycle';
 import { handleSpotFreed, reorderWaitingEntries } from './waitlist';
-import { lockClassRow, setLockTimeout } from '@/lib/db-locks';
+import { setLockTimeout } from '@/lib/db-locks';
 import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 
@@ -281,16 +281,20 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
   // distinct classes one student can simultaneously be `waiting` in, so a
   // fixed transaction budget can't be "sized to the worst case" honestly.
   //
-  // EVERY status, not just `waiting`, because this has to size the lock loop
-  // inside the transaction and that loop now covers every class this student
-  // holds an entry in — see the read that builds it for why the lock set has to
-  // equal the delete's write set. That makes this count grow over a student's
-  // lifetime rather than with their current queue depth: closed entries are
-  // never cleaned up, and completed classes are never deleted. The
-  // `Math.min(…, 20_000)` ceiling below is exactly the backstop for that, and
-  // was already written to be one — a count with no upper bound is the case it
-  // names. What binding the cap costs is a P2028 and a retry, atomically rolled
-  // back, not a partial erasure.
+  // `waiting` only, and that is deliberate after a round of getting it wrong.
+  //
+  // This sizes the REORDER loop below, which is the only remaining work in the
+  // transaction that scales with the row count — the class locks are now taken
+  // by a single statement, not a loop. Counting every entry instead was a real
+  // defect, not a conservative choice: nothing in production deletes a
+  // `WaitlistEntry` except the `deleteMany` in this very transaction, and
+  // completed classes are never deleted, so an all-status count is monotone
+  // non-decreasing for the life of the account. Past the `Math.min` ceiling the
+  // erasure would fail, and the retry would re-read the same count and fail
+  // identically — an account that can never be erased, which is not a
+  // performance note but an Article 17 failure. `waiting` drains on its own
+  // (`closeQueueOnStart` closes every queue when its class starts), so this
+  // count is self-healing and the ceiling stays the backstop it was written as.
   // This count is read outside any lock (cheap: no transaction, no FOR
   // UPDATE) purely to size that budget, and it can drift low if a waitlist
   // join for this same student lands in the gap before the transaction
@@ -306,10 +310,10 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
   // teacher erasure cannot claim the same. A retryable failure, not a silent
   // or partial one. See the transaction's `timeout` option below for the
   // ceiling this count still has to respect.
-  const entryCount = await db.waitlistEntry.count({ where: { studentId } });
+  const waitingCount = await db.waitlistEntry.count({ where: { studentId, status: 'waiting' } });
 
   const freedClassIds = await db.$transaction(async (tx) => {
-    // FIRST statement, unconditionally — not left to `lockClassRow` below.
+    // FIRST statement, unconditionally — not left to a lock helper further down.
     //
     // The bound used to arrive only as a side effect of the lock loop, which
     // runs only when `sortedWaitingClassIds` is non-empty. A student waiting
@@ -367,20 +371,50 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // before any write. See that loop for why the order matters, not just the
     // fact of locking.
     //
-    // One entry per class per student (`@@unique([classId, studentId])`), so
-    // these class ids are already distinct and need no de-duplication.
-    const entries = await tx.waitlistEntry.findMany({
-      where: { studentId },
-      select: { classId: true, status: true },
-    });
-    const sortedEntryClassIds = entries.map((w) => w.classId).sort();
-    // The reorder below stays `waiting`-only: closed rows keep stale positions
-    // by design (#183), so a class where this student held only a closed entry
-    // has nothing to renumber even though it must still be locked.
-    const sortedWaitingClassIds = entries
-      .filter((w) => w.status === 'waiting')
-      .map((w) => w.classId)
-      .sort();
+    // ONE statement, not a `lockClassRow` loop, and the difference is not
+    // stylistic. `lockClassRow` is two round trips (`setLockTimeout`, then the
+    // `FOR UPDATE`), so a loop cost 2N of them and the transaction budget had to
+    // grow with N to pay for it. Measured on an idle local Postgres, the loop
+    // took 6.0s where this statement takes 13ms for the same class set. On the
+    // single 2GB VPS this deployment targets (`CLAUDE.md`) the loop's ceiling
+    // was reachable, and reaching it was terminal rather than transient — see
+    // `waitingCount` above.
+    //
+    // The same shape `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) uses,
+    // for the same reasons: ascending by `c.id` so two concurrent erasures take
+    // any shared classes in one order, `FOR UPDATE OF c` so only the `Class`
+    // rows are locked, and — the part a loop cannot have — the lock is taken BY
+    // the statement that chooses the rows, so there is no window between
+    // choosing them and holding them. No `DISTINCT`: Postgres refuses it
+    // alongside `FOR UPDATE`. `@@unique([classId, studentId])` means one entry
+    // per class per student, so the join cannot duplicate a class anyway.
+    //
+    // EVERY status, matching the unscoped `deleteMany` below. The lock set has
+    // to cover the write set: before #216 a student who never got in stayed
+    // `waiting` for ever, so a `waiting`-scoped lock happened to cover it;
+    // `closeQueueOnStart` flips those rows to `expired`, and the walk-in
+    // resolver in `POST /api/registrations` writes `expired` entries under this
+    // same class row lock, so the gap was live.
+    await tx.$queryRaw`
+      SELECT c.id
+      FROM "Class" c
+      JOIN "WaitlistEntry" w ON w."classId" = c.id
+      WHERE w."studentId" = ${studentId}
+      ORDER BY c.id
+      FOR UPDATE OF c
+    `;
+
+    // Read AFTER the lock rather than before it — under the rows this
+    // transaction now holds, so it cannot see a queue another writer is
+    // mid-change. The reorder stays `waiting`-only: closed rows keep stale
+    // positions by design (#183), so a class where this student held only a
+    // closed entry must still be LOCKED but has nothing to renumber.
+    const sortedWaitingClassIds = (
+      await tx.waitlistEntry.findMany({
+        where: { studentId, status: 'waiting' },
+        select: { classId: true },
+      })
+    ).map((w) => w.classId);
 
     // Locked here, before this transaction's first write below — not merely
     // before the reorder loop the lock used to sit beside. Round 1 review
@@ -454,10 +488,6 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // missed the two above. JS `[...].sort()` and SQL `ORDER BY id` agree here
     // because these ids are uuid-shaped `text`; see `docs/lock-order.md`,
     // "Ordering WITHIN `Class`", for that check and for the rule itself.
-    for (const classId of sortedEntryClassIds) {
-      await lockClassRow(tx, classId);
-    }
-
     // Cancel upcoming registrations so open classes free the spots.
     await tx.registration.updateMany({
       where: {
@@ -604,7 +634,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
 
     return upcoming.filter((r) => r.class.status === 'open').map((r) => r.classId);
   }, {
-    // Arithmetic (see `entryCount` above for why the base term can't be a
+    // Arithmetic (see `waitingCount` above for why the base term can't be a
     // flat constant): 5_000ms matches Prisma's own default transaction
     // timeout, which is the budget every read and write above already ran
     // inside before this task — reads and writes on `Registration`,
@@ -628,7 +658,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // other transactions (that contention is exactly what the class-lock
     // ordering above resolves) — the claim is narrower, that this specific
     // set of statements already fit inside 5s before this task added
-    // anything. `entryCount * 2_000` covers the lock loop's own worst
+    // anything. `waitingCount * 2_000` covers the lock loop's own worst
     // case: `lockClassRow`'s `SET LOCAL lock_timeout` bounds each class's
     // `FOR UPDATE` wait to 2s, and N contended classes can burn that in
     // sequence.
@@ -665,7 +695,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // `reorderWaitingEntries`'s (`waitlist.ts`) own `findMany` plus up to M
     // individual `UPDATE`s per class, run after the lock loop above, also
     // inherit the same 2s bound — adding real, uncounted time on top of
-    // `entryCount * 2_000` regardless of how often any single one of them
+    // `waitingCount * 2_000` regardless of how often any single one of them
     // actually waits (round 1 review, I2 — also names two writers elsewhere
     // that flip `WaitlistEntry.status` from `waiting` to `removed` without
     // going through `lockClassRow`, `transition/route.ts`'s cancel branch
@@ -676,7 +706,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // before it starts, as the part this formula still doesn't price in).
     //
     // The `Math.min` below is the backstop for both gaps at once — the
-    // uncounted per-row time just described, and `entryCount` itself
+    // uncounted per-row time just described, and `waitingCount` itself
     // having no upper bound (I3: nothing caps how many distinct classes a
     // student can be `waiting` in, and that count is attacker-influenceable
     // by joining more waitlists before requesting erasure). 20_000ms:
@@ -693,7 +723,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // transaction, so a rollback leaves nothing partially applied and a
     // retry is byte-identical to a first attempt — verified end to end in
     // round 1 review), not a correctness problem.
-    timeout: Math.min(5_000 + entryCount * 2_000, 20_000),
+    timeout: Math.min(5_000 + waitingCount * 2_000, 20_000),
   });
 
   // The seats are freed and the erasure is committed — a promotion failure

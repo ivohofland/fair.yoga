@@ -385,12 +385,22 @@ let studentAccountId: string;
    * `classifyApiError` has no branch for, so a bare 500 with the whole
    * registration rolled back.
    *
+   * Run over EVERY status, not just `expired`. The stated invariant is write
+   * set equals lock set, and a fixture that only ever produces one status
+   * cannot distinguish that from a lock set that merely happens to include it —
+   * scoping the pre-lock to `waiting` ∪ `expired` would pass a single-status
+   * version of this test while still deleting `promoted`, `claimed` and
+   * `removed` rows outside the lock. (`waiting` passes either way and is kept
+   * as the control.)
+   *
    * Without the widened lock set this test does not merely assert something
    * weaker — it goes GREEN by returning immediately, because the erasure never
    * asks for the row the holder is sitting on.
    */
-  it('waits for a class row another transaction holds even when the erased entry is closed', async () => {
-    const fixture = await makeStudentWaitingInClass({ entryStatus: 'expired' });
+  it.each(['waiting', 'promoted', 'claimed', 'expired', 'removed'] as const)(
+    'waits for a class row another transaction holds when the erased entry is %s',
+    async (entryStatus) => {
+    const fixture = await makeStudentWaitingInClass({ entryStatus });
     const { studentId: fixtureStudentId, classId: fixtureClassId } = fixture;
     try {
       let holderReleased = false;
@@ -405,19 +415,23 @@ let studentAccountId: string;
       );
       await new Promise((r) => setTimeout(r, 150));
 
-      const erasing = deleteStudentAccount(prisma, fixtureStudentId).then(() => 'returned' as const);
-      const outcome = await Promise.race([
-        erasing,
-        new Promise<'waiting'>((r) => setTimeout(() => r('waiting'), 400)),
-      ]);
-
-      // Parked on the lock, not finished. This is the assertion a lock set
-      // scoped to `waiting` cannot satisfy: it would read 'returned' here.
-      expect(outcome).toBe('waiting');
-      expect(holderReleased).toBe(false);
+      // CAUSAL, not a wall-clock threshold. Resolving the erasure to the
+      // holder's own flag asserts the ORDER of the two — the erasure finished
+      // only after the holder let go — which is the property the lock provides.
+      // A `Promise.race` against a fixed timer proves only "did not finish
+      // within N ms", which a loaded runner can satisfy for reasons unrelated to
+      // locking; and the `holderReleased` check that used to sit beside it was
+      // sampled before the holder's own sleep elapsed, so it could not fail
+      // either way and carried no information.
+      const erasedAfterHolder = deleteStudentAccount(prisma, fixtureStudentId).then(
+        () => holderReleased,
+      );
 
       await holder;
-      expect(await erasing).toBe('returned');
+      // False here would mean the erasure sailed past a held row lock, which is
+      // exactly what a lock set scoped to `waiting` does: it never asks for this
+      // class, so it finishes while the holder is still sleeping.
+      expect(await erasedAfterHolder).toBe(true);
 
       // And the entry is still gone afterwards. The widened lock set changes
       // WHEN the delete happens, never whether it does — an erasure that locked
@@ -429,7 +443,9 @@ let studentAccountId: string;
     } finally {
       await cleanupStudentWaitingInClass(fixture);
     }
-  }, 15_000);
+    },
+    15_000,
+  );
 
   /**
    * #174 four-specialist review, Important 5. The 2s bound used to arrive

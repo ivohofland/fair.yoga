@@ -336,12 +336,42 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       const erasureDb = prisma.$extends({
         query: {
           async $queryRaw({ args, query }) {
-            const rows = await query(args);
-            if (args.values[0] === lowClassId) {
+            // Keyed on `studentId`, because that is what `deleteStudentAccount`
+            // now binds: since the #216/#182 review its class locks are taken by
+            // ONE ordered `SELECT … FOR UPDATE OF c` joined through
+            // `WaitlistEntry`, not by a `lockClassRow` per class. The old hook
+            // keyed on `lowClassId` and simply never fired against that shape,
+            // so this test hung on its own handshake for 30s rather than
+            // failing — the harness broke, not the property.
+            //
+            // The interleaving therefore INVERTS, and so does what this test
+            // can prove. There is no window between the LOW and HIGH locks to
+            // slip the other writer into any more, so this signals BEFORE the
+            // statement runs and holds, letting `syncTemplateInstances` take its
+            // own ordered pre-lock first; the erasure then asks for both rows at
+            // once and blocks behind it.
+            //
+            // BE HONEST ABOUT THE COST. With both sides taking every class lock
+            // in a single ordered statement, the AB-BA cycle cannot form — but
+            // it also cannot be CONSTRUCTED, so this test no longer detects a
+            // missing `ORDER BY` on the erasure side. Verified: deleting that
+            // clause leaves all three tests green. What still fails here is a
+            // reverted pre-lock on the sync/archive side (no `FOR UPDATE`, no
+            // pre-lock at all, or a narrowed row set), which is where this
+            // file's mutations were always aimed.
+            //
+            // The erasure's ordering is now guarded the same way
+            // `withdrawWaitingEntriesForTeacher`'s always has been — by the
+            // shared `ORDER BY c.id … FOR UPDATE OF c` idiom and by
+            // `docs/lock-order.md`'s within-`Class` table — rather than by a
+            // reproduction. That is a real reduction in coverage, traded for a
+            // lock loop whose cost grew with account age until erasure became
+            // impossible; it should not be discovered later as a surprise.
+            if (args.values[0] === studentId) {
               lowLocked();
               await new Promise((r) => setTimeout(r, 300));
             }
-            return rows;
+            return query(args);
           },
         },
         // `$extends` returns a client missing `$on`, so it is not assignable
@@ -559,12 +589,42 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       const erasureDb = prisma.$extends({
         query: {
           async $queryRaw({ args, query }) {
-            const rows = await query(args);
-            if (args.values[0] === lowClassId) {
+            // Keyed on `studentId`, because that is what `deleteStudentAccount`
+            // now binds: since the #216/#182 review its class locks are taken by
+            // ONE ordered `SELECT … FOR UPDATE OF c` joined through
+            // `WaitlistEntry`, not by a `lockClassRow` per class. The old hook
+            // keyed on `lowClassId` and simply never fired against that shape,
+            // so this test hung on its own handshake for 30s rather than
+            // failing — the harness broke, not the property.
+            //
+            // The interleaving therefore INVERTS, and so does what this test
+            // can prove. There is no window between the LOW and HIGH locks to
+            // slip the other writer into any more, so this signals BEFORE the
+            // statement runs and holds, letting `syncTemplateInstances` take its
+            // own ordered pre-lock first; the erasure then asks for both rows at
+            // once and blocks behind it.
+            //
+            // BE HONEST ABOUT THE COST. With both sides taking every class lock
+            // in a single ordered statement, the AB-BA cycle cannot form — but
+            // it also cannot be CONSTRUCTED, so this test no longer detects a
+            // missing `ORDER BY` on the erasure side. Verified: deleting that
+            // clause leaves all three tests green. What still fails here is a
+            // reverted pre-lock on the sync/archive side (no `FOR UPDATE`, no
+            // pre-lock at all, or a narrowed row set), which is where this
+            // file's mutations were always aimed.
+            //
+            // The erasure's ordering is now guarded the same way
+            // `withdrawWaitingEntriesForTeacher`'s always has been — by the
+            // shared `ORDER BY c.id … FOR UPDATE OF c` idiom and by
+            // `docs/lock-order.md`'s within-`Class` table — rather than by a
+            // reproduction. That is a real reduction in coverage, traded for a
+            // lock loop whose cost grew with account age until erasure became
+            // impossible; it should not be discovered later as a surprise.
+            if (args.values[0] === studentId) {
               lowLocked();
               await new Promise((r) => setTimeout(r, 300));
             }
-            return rows;
+            return query(args);
           },
         },
         // Same cast rationale as the sync test above.
@@ -716,12 +776,42 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       const erasureDb = prisma.$extends({
         query: {
           async $queryRaw({ args, query }) {
-            const rows = await query(args);
-            if (args.values[0] === lowClassId) {
+            // Keyed on `studentId`, because that is what `deleteStudentAccount`
+            // now binds: since the #216/#182 review its class locks are taken by
+            // ONE ordered `SELECT … FOR UPDATE OF c` joined through
+            // `WaitlistEntry`, not by a `lockClassRow` per class. The old hook
+            // keyed on `lowClassId` and simply never fired against that shape,
+            // so this test hung on its own handshake for 30s rather than
+            // failing — the harness broke, not the property.
+            //
+            // The interleaving therefore INVERTS, and so does what this test
+            // can prove. There is no window between the LOW and HIGH locks to
+            // slip the other writer into any more, so this signals BEFORE the
+            // statement runs and holds, letting `syncTemplateInstances` take its
+            // own ordered pre-lock first; the erasure then asks for both rows at
+            // once and blocks behind it.
+            //
+            // BE HONEST ABOUT THE COST. With both sides taking every class lock
+            // in a single ordered statement, the AB-BA cycle cannot form — but
+            // it also cannot be CONSTRUCTED, so this test no longer detects a
+            // missing `ORDER BY` on the erasure side. Verified: deleting that
+            // clause leaves all three tests green. What still fails here is a
+            // reverted pre-lock on the sync/archive side (no `FOR UPDATE`, no
+            // pre-lock at all, or a narrowed row set), which is where this
+            // file's mutations were always aimed.
+            //
+            // The erasure's ordering is now guarded the same way
+            // `withdrawWaitingEntriesForTeacher`'s always has been — by the
+            // shared `ORDER BY c.id … FOR UPDATE OF c` idiom and by
+            // `docs/lock-order.md`'s within-`Class` table — rather than by a
+            // reproduction. That is a real reduction in coverage, traded for a
+            // lock loop whose cost grew with account age until erasure became
+            // impossible; it should not be discovered later as a surprise.
+            if (args.values[0] === studentId) {
               lowLocked();
               await new Promise((r) => setTimeout(r, 300));
             }
-            return rows;
+            return query(args);
           },
         },
       }) as unknown as PrismaClient;

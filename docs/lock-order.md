@@ -94,7 +94,7 @@ returned, not a predicate re-evaluated later.
 
 | Site | How it locks | Order it takes |
 |---|---|---|
-| `deleteStudentAccount` (`gdpr.ts`) | `lockClassRow` in a loop | ascending — `[...ids].sort()` in JS, before the loop |
+| `deleteStudentAccount` (`gdpr.ts`) | one `SELECT … FOR UPDATE OF c` joined through `WaitlistEntry` | ascending — `ORDER BY c.id` in SQL |
 | `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) | one `SELECT … FOR UPDATE OF c` | ascending — `ORDER BY c.id` in SQL |
 | `deleteTeacherAccount` (`gdpr.ts`) | the per-class cancel CAS `UPDATE`, one per iteration | ascending — `orderBy: { id: 'asc' }` on the read the loop walks |
 | `syncTemplateInstances` (`template-sync.ts`) | `class.deleteMany` (wrong-day) then `class.updateMany` (same-day), each multi-row | ascending — an ordered `SELECT … FOR UPDATE OF c … ORDER BY c.id` pre-lock (issue 180) taken before either write; the delete/update statements themselves still visit in whatever order the planner picks, but every row either could touch is already held by the pre-lock |
@@ -633,10 +633,11 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   entry claimed no reproduction was possible at all; that was wrong, and
   wrong because it generalised from a counterparty that upserted
   `TeacherStudent` first — which is not where the registration route puts it.
-- **`deleteStudentAccount`** (`src/services/gdpr.ts`) — `Class`, looped via
-  `lockClassRow` over every class the student holds a `WaitlistEntry` in, of
-  **any** status (sorted ascending; see "Ordering WITHIN `Class`"), hoisted
-  ahead of every row write by #174 task 5. Then `Registration`,
+- **`deleteStudentAccount`** (`src/services/gdpr.ts`) — `Class`, via a single
+  ordered `SELECT … FOR UPDATE OF c` joined through `WaitlistEntry`, covering
+  every class the student holds an entry in of **any** status, ahead of every
+  row write (#174 task 5 hoisted it; #216/#182's review made it one statement).
+  Then `Registration`,
   `StudentPrivacy`, `TeacherStudent`, `WaitlistEntry`, `Invitation`
   (anonymized in place, not deleted). Was already `StudentPrivacy` before
   `TeacherStudent`; not the outlier on that pair.
@@ -654,13 +655,31 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   theoretical.
 
   It is deliberately not narrowed to "statuses another writer can still
-  touch". `addToWaitlist` revives an existing entry of any status on a rejoin
-  (it updates back to `waiting` rather than creating), so no status here is
-  provably nobody else's to write. Write set equals lock set is the only form
-  of this that does not rest on such a claim staying true. Pinned by
-  "waits for a class row another transaction holds even when the erased entry
-  is closed" (`gdpr.test.ts`), which returns immediately rather than parking if
-  the lock set narrows again.
+  touch". The load-bearing writer is the walk-in resolver in
+  `POST /api/registrations`, which matches `CLAIMABLE_WAITLIST_STATUSES`
+  (`waiting` ∪ `expired`) and writes under this same class row lock;
+  `removeFromWaitlist` also carries no class-status guard of its own. (An
+  earlier version of this paragraph reached for `addToWaitlist` instead, which
+  does revive an entry of any status on a rejoin — but only on an `open` class,
+  and `expired` rows exist only on classes that have started and can never
+  return to `open`. It could not have been the example.) Write set equals lock
+  set is the form that does not rest on any such enumeration staying true.
+
+  **One statement, not a loop, and that is a correctness property rather than a
+  speed one.** `lockClassRow` is two round trips, so a loop cost 2N of them and
+  the transaction's `timeout` had to grow with N to pay for it — while nothing
+  in production deletes a `WaitlistEntry` except this very transaction, making
+  an all-status count monotone for the life of the account. Past the ceiling the
+  erasure failed and the retry re-read the same count and failed identically: an
+  account that could never be erased. The single statement makes the lock cost
+  O(1) statements, so the budget is sized by the reorder loop's `waiting` count,
+  which drains on its own. It also closes the read-then-lock window, since the
+  lock is taken BY the statement that chooses the rows.
+
+  Pinned by "waits for a class row another transaction holds even when the
+  erased entry is closed" (`gdpr.test.ts`), which resolves the erasure to the
+  holder's own release flag — a causal assertion rather than a wall-clock
+  threshold — and reads `false` if the lock set narrows again.
 
   It is the outlier on `WaitlistEntry`, though, and in **three** ways, not the
   one this entry used to name: it writes `Registration`, `StudentPrivacy` AND
