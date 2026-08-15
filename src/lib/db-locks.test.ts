@@ -9,7 +9,7 @@ import {
 } from './db-locks';
 import { claimTemplateForGeneration } from '@/services/class-generator';
 import { claimStudioTemplateForGeneration } from '@/services/studio-class-generator';
-import { withdrawWaitingEntriesForTeacher } from '@/services/waitlist';
+import { closeQueueOnStart, withdrawWaitingEntriesForTeacher } from '@/services/waitlist';
 import { readSeatCount } from '@/services/capacity';
 
 const prisma = new PrismaClient();
@@ -63,6 +63,13 @@ async function _theBrandRejectsABareClient(client: PrismaClient): Promise<void> 
   // @ts-expect-error `pg_advisory_xact_lock` — taken and released by its own
   // autocommit transaction on a bare client, protecting nothing.
   await lockAnnouncementSlot(client, { teacherId: 'x', classId: null, message: 'never-called' });
+  // @ts-expect-error Takes NO lock of its own — the strongest case on this
+  // list, not the weakest. It is a write that relies entirely on its caller
+  // already holding the `Class` row lock, so off a bare client it would close
+  // a queue in its own autocommit transaction, unserialized against every
+  // other `WaitlistEntry` writer and un-rolled-back if the status flip it is
+  // supposed to be atomic with then fails.
+  await closeQueueOnStart(client, 'never-called');
 }
 
 describe('the shared lock timeout', () => {

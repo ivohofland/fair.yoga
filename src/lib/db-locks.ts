@@ -34,6 +34,13 @@ import type { Prisma } from '@prisma/client';
  *          because its whole purpose is counting UNDER the caller's lock, and
  *          on a bare client it would count outside it — the "reading around
  *          its caller's uncommitted writes" case this register names.
+ *   adopt  `closeQueueOnStart` (`waitlist.ts`) — issues no `SET LOCAL` and
+ *          takes no row lock of its own, which is exactly why it is branded:
+ *          it is a WRITE that trusts its caller to be holding the `Class` row
+ *          lock already (`lockClassRow`, or the CAS `UPDATE` in
+ *          `transitionClass`). On a bare client that trust is silently void —
+ *          the close would commit in its own autocommit transaction, separate
+ *          from the status flip it must be atomic with.
  *   skip   `activateRegistration`, `hasActiveRegistration` and
  *          `reorderWaitingEntries` (`waitlist.ts`), and
  *          `resolveInvitationOnLink` (`link-consent.ts`) — none issues a

@@ -720,6 +720,11 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   `lockClassRow`, not an inline `SELECT ... FOR UPDATE`, but a bare CAS
   `class.updateMany` on the outer client, opened as an interactive
   transaction since #216/#182 (it was a single autocommit `UPDATE` before).
+  It calls `setLockTimeout` as its first statement, so its CAS gets the same
+  bounded 2s `55P03` every `lockClassRow` site gets rather than Prisma's 5s
+  `P2028` — added in the same review, because an interactive transaction with
+  no per-statement bound is a worse failure mode than the autocommit statement
+  it replaced.
   When the CAS succeeds and the target is `in_progress`, it writes
   `WaitlistEntry` next, via `closeQueueOnStart` — `Class → WaitlistEntry`,
   conformant with the order above, and the whole write set is the two

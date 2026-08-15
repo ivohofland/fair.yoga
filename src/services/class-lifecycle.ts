@@ -14,7 +14,7 @@ import type { updateClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { ECONOMIC_FIELDS, type EconomicField } from '@/lib/class-fields';
 import { toIncomeTierOrThrow } from '@/lib/tiers.server';
-import { lockClassRow } from '@/lib/db-locks';
+import { lockClassRow, setLockTimeout } from '@/lib/db-locks';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
@@ -165,6 +165,17 @@ export async function transitionClass(
   // stay outside it, because they decide nothing that gets persisted and would
   // only hold the transaction open on the failure path.
   const moved = await db.$transaction(async (tx) => {
+    // Bounded, like every other transaction in this codebase that ends up
+    // holding a `Class` row lock. This one takes its lock through the CAS
+    // rather than through `lockClassRow`, so it used to inherit no bound at
+    // all — and once the CAS moved inside an interactive transaction, an
+    // unbounded wait became Prisma's 5s budget expiring mid-transaction
+    // (`P2028`, a 503 the caller cannot act on) instead of the 2s `55P03` its
+    // siblings get, which `classifyApiError` answers with a retry. Still no
+    // `FOR UPDATE` — the argument above is unchanged; this bounds the wait,
+    // it does not add a lock.
+    await setLockTimeout(tx);
+
     const updated = await tx.class.updateMany({
       where: { id: classId, status: { in: sourceStatesFor(targetStatus) } },
       data: { status: targetStatus },
