@@ -47,6 +47,7 @@ export interface SchedulerSweeps {
   processPaymentReminders: (db: PrismaClient) => Promise<unknown>;
   cleanupExpiredAuth: (db: PrismaClient) => Promise<unknown>;
   reconcileWaitlists: (db: PrismaClient) => Promise<unknown>;
+  reapClosedWaitlistEntries: (db: PrismaClient) => Promise<unknown>;
 }
 
 const MINUTE = 60 * 1000;
@@ -112,6 +113,7 @@ export async function startScheduler(): Promise<void> {
   const { processPaymentReminders } = await import('@/services/payment-reminders');
   const { cleanupExpiredAuth } = await import('@/services/auth-cleanup');
   const { reconcileWaitlists } = await import('@/services/waitlist-reconciliation');
+  const { reapClosedWaitlistEntries } = await import('@/services/waitlist-retention');
 
   const jobs = buildJobs({
     autoTransitionToInProgress,
@@ -123,6 +125,7 @@ export async function startScheduler(): Promise<void> {
     processPaymentReminders,
     cleanupExpiredAuth,
     reconcileWaitlists,
+    reapClosedWaitlistEntries,
   });
 
   const health = (globalThis.__fairYogaJobHealth ??= {});
@@ -192,6 +195,7 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     processPaymentReminders,
     cleanupExpiredAuth,
     reconcileWaitlists,
+    reapClosedWaitlistEntries,
   } = sweeps;
 
   return [
@@ -220,9 +224,20 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
       run: (db) => processPaymentReminders(db),
     },
     {
-      name: 'auth-cleanup',
+      // Renamed from `auth-cleanup` when waitlist retention joined it (#238):
+      // the job is the daily retention slot now, not the auth one. Two sweeps
+      // through `isolatedSweeps` rather than a seventh job, so there is one
+      // daily timer and one obvious slot for the next retention policy (#223
+      // poses the same question for `Notification`).
+      //
+      // The cost, recorded rather than glossed: `/api/health` reports one
+      // `lastRunAt` for both sweeps instead of one each. Acceptable here and
+      // not for `waitlist-reconciliation`, which took its own job name
+      // deliberately — a 60-second correctness sweep needs its own health
+      // signal in a way a daily retention sweep does not.
+      name: 'daily-cleanup',
       intervalMs: 24 * 60 * MINUTE,
-      run: (db) => cleanupExpiredAuth(db),
+      run: isolatedSweeps('daily-cleanup', [cleanupExpiredAuth, reapClosedWaitlistEntries]),
     },
     {
       // 1 minute, and the cadence is load-bearing rather than conventional: the

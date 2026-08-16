@@ -31,12 +31,13 @@ const SWEEP_NAMES = [
   'processPaymentReminders',
   'cleanupExpiredAuth',
   'reconcileWaitlists',
+  'reapClosedWaitlistEntries',
 ] as const;
 
 type StubbedName = (typeof SWEEP_NAMES)[number];
 
 /**
- * The stub list and `SchedulerSweeps` must name the same nine.
+ * The stub list and `SchedulerSweeps` must name the same ten.
  *
  * `buildStubs` below ends in `as unknown as SchedulerSweeps`, and that cast is
  * not gratuitous — `Object.fromEntries` yields `{[k: string]: T}`, which a
@@ -115,7 +116,7 @@ describe('buildJobs', () => {
       ['email-fallback', 5 * MINUTE],
       ['class-generation', 60 * MINUTE],
       ['payment-reminders', 60 * MINUTE],
-      ['auth-cleanup', 24 * 60 * MINUTE],
+      ['daily-cleanup', 24 * 60 * MINUTE],
       ['waitlist-reconciliation', 1 * MINUTE],
     ]);
   });
@@ -152,7 +153,13 @@ describe('buildJobs', () => {
       'email-fallback': ['processEmailFallback'],
       'class-generation': ['generateClassInstances', 'generateStudioClassInstances'],
       'payment-reminders': ['processPaymentReminders'],
-      'auth-cleanup': ['cleanupExpiredAuth'],
+      // Two sweeps, and the ORDER here is pinned without being load-bearing.
+      // `isolatedSweeps` order is meaningful for `class-transitions` — a class
+      // must transition to in-progress before it can be completed — and this
+      // assertion is a whole-map equality, so it pins order everywhere. Nothing
+      // couples auth cleanup to waitlist retention; do not read a dependency
+      // into this line.
+      'daily-cleanup': ['cleanupExpiredAuth', 'reapClosedWaitlistEntries'],
       'waitlist-reconciliation': ['reconcileWaitlists'],
     });
   });

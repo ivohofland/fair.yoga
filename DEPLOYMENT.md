@@ -70,7 +70,7 @@ To drive it externally instead (e.g. from systemd timers), set
 
 ```bash
 curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://yourdomain.example/api/cron/transition-classes
-# also: /api/cron/generate-classes  /api/cron/email-fallback  /api/cron/payment-reminders  /api/cron/auth-cleanup
+# also: /api/cron/generate-classes  /api/cron/email-fallback  /api/cron/payment-reminders  /api/cron/daily-cleanup
 ```
 
 ## 6. Updates
