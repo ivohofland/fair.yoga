@@ -61,56 +61,53 @@ sites lock more than one `Class` row inside a single transaction, and two of
 them taking the same pair in opposite sequences is an AB-BA cycle exactly like
 any cross-table one.
 
-**The rule: ascending by `id`. All five take an order now — but one of the
-five is not total, and that exception is load-bearing.** See "The slot key is
-a wait edge" below before assuming `id` is the only thing that orders two
-`Class` rows: since #196 a unique index on `(teacherId, date, startTime)`
-makes plain INSERTs take part too, which is a case the five-site enumeration
-is built not to find. An earlier version of this section said "three sites"
-and "all three take it that way"; both were false, and an enumeration
-asserted as complete is exactly what stops the next reader looking for the
-ones it missed. A later version said two of the five disagreed, live and
-unfixed; that too is stale — `syncTemplateInstances` and
-`archiveOrUnarchiveTemplate` each gained an ordered pre-lock ahead of their
-respective multi-row write (issue 180, atomic-template-update).
+**The rule: ascending by `id`, taken by `lockClassRowsOrdered`
+(`src/lib/db-locks.ts`).** Every site that locks more than one `Class` row goes
+through it, and it is the only production `SELECT … FOR UPDATE OF c` in `src/`
+— so the check is a grep, not a list:
 
-**A third version said "all five follow it now", flatly, and that is the one
-this paragraph exists to correct.** `archiveOrUnarchiveTemplate`'s pre-lock
-covers `date > today`, so a same-day instance rescheduled into the future by
+    grep -rn 'FOR UPDATE OF' --include="*.ts" src/ | grep -v '\.test\.ts'
+
+Anything that returns beyond `db-locks.ts` is a site that has left the
+convention, and that is the whole enforcement. The helper owns the order, the
+`FOR UPDATE OF c` lock mode, the shared 2s bound and the dedupe; a sixth site
+inherits all four by calling it.
+
+**Before #237 this section was a five-row table**, and it was corrected about
+its own membership four times — the last of them by the round that filed the
+issue, which added `deleteStudentAccount`'s statement to the table and not to
+the derivation below it. The table is gone rather than corrected a fifth time.
+
+**One exception survives, and it is about a predicate rather than an order.**
+`archiveOrUnarchiveTemplate`'s (`class-template-lifecycle.ts`) call covers
+`date > today`, so a same-day instance rescheduled into the future by
 `updateClass` (`class-lifecycle.ts`) — a bare `db.class.updateMany` holding
-neither the template lock nor any `Class` lock — between that pre-lock and
-the `deleteMany` is deleted without ever having been held in order. The
-AB-BA cycle against `deleteStudentAccount` can still form through that
-window. It is narrow (it needs a concurrent reschedule *and* an erasure of a
-student waitlisted across both classes, timed into the same gap), it is
-measured rather than theorised, and it is no worse than the pre-branch state,
-which had no ordering at all — but it is not closed, and the deleted "two
-that do not" section warned in as many words that shipping a cycle under a
-comment saying it was closed is the failure mode this whole document exists
-to prevent. Tracked as a residual in the atomic-template-update spec's risk
-list. `syncTemplateInstances` does not share it: its write set is
-`id: { in: lockedIds }`, a structural subset of what its own pre-lock
-returned, not a predicate re-evaluated later.
+neither the template lock nor any `Class` lock — between that call and the
+`deleteMany` is deleted without ever having been held. The AB-BA cycle against
+`deleteStudentAccount` can still form through that window. It is narrow (it
+needs a concurrent reschedule *and* an erasure of a student waitlisted across
+both classes, timed into the same gap), it is measured rather than theorised,
+and it is no worse than the pre-#180 state, which had no ordering at all — but
+it is not closed. Widening the call past `today` would lock history for no
+gain, and #86/#112 require the delete's live predicate re-evaluation regardless.
+`syncTemplateInstances` does not share it: its write set is
+`id: { in: lockedIds }`, a structural subset of what its own call returned.
 
-| Site | How it locks | Order it takes |
-|---|---|---|
-| `deleteStudentAccount` (`gdpr.ts`) | one `SELECT … FOR UPDATE OF c` joined through `WaitlistEntry` | ascending — `ORDER BY c.id` in SQL |
-| `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) | one `SELECT … FOR UPDATE OF c` | ascending — `ORDER BY c.id` in SQL |
-| `deleteTeacherAccount` (`gdpr.ts`) | the per-class cancel CAS `UPDATE`, one per iteration | ascending — `orderBy: { id: 'asc' }` on the read the loop walks |
-| `syncTemplateInstances` (`template-sync.ts`) | `class.deleteMany` (wrong-day) then `class.updateMany` (same-day), each multi-row | ascending — an ordered `SELECT … FOR UPDATE OF c … ORDER BY c.id` pre-lock (issue 180) taken before either write; the delete/update statements themselves still visit in whatever order the planner picks, but every row either could touch is already held by the pre-lock |
-| `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | one multi-row `class.deleteMany` | ascending, **but not total** — an ordered `SELECT … FOR UPDATE OF c … ORDER BY c.id` pre-lock over the full `scheduledWhere` candidate set, taken before the `deleteMany`; both statements bounded at 2s by `SET LOCAL lock_timeout`. The pre-lock covers `date > today`, so an instance rescheduled out of today by `updateClass` after it runs is deleted unheld — see the paragraph above the table |
-
-`syncTemplateInstances`'s pre-lock carries no `status`/`settingsLocked`
+`syncTemplateInstances`'s predicate carries no `status`/`settingsLocked`
 narrowing beyond `templateId`/`teacherId`/`date >` the current UTC calendar
 date, so it briefly locks every future instance of the template — including
 ones already `settingsLocked` by a registration, which its own writes will
 never touch. That is the safe direction for lock ordering, but it means a
-booking on one of those instances can now contend with a template edit, where
-before this branch it could not — **for the rest of the edit transaction, not
-merely for the pre-lock statement**. `SELECT … FOR UPDATE` holds until the
-transaction ends, so in production the exposure is bounded by
-`updateClassTemplate`'s `{ timeout: 15_000 }`, not by how long the `SELECT`
-itself takes.
+booking on one of those instances can contend with a template edit, where
+before #180 it could not — **for the rest of the edit transaction, not merely
+for the statement**. `SELECT … FOR UPDATE` holds until the transaction ends, so
+in production the exposure is bounded by `updateClassTemplate`'s
+`{ timeout: 15_000 }`, not by how long the `SELECT` itself takes.
+
+See "The slot key is a wait edge" below before assuming `id` is the only thing
+that orders two `Class` rows: since #196 a unique index on
+`(teacherId, date, startTime)` makes plain INSERTs take part too, which is a
+case a site enumeration is built not to find.
 
 ### How that enumeration was derived
 
@@ -142,33 +139,20 @@ a call):
    `(teacherId, date, startTime)`, which is why this check alone no longer
    bounds the candidate set for `Class`, and neither does the multiplicity
    filter below;
-2. `'"Class"'` — the raw statements: **8** in total, re-counted for this
-   branch rather than trusted (grep it yourself before relying on this
-   number — that is this whole subsection's point). **5** are single-id
-   `FOR UPDATE`: four written inline, plus `lockClassRow`'s body (itself
-   called from exactly five places, grep 3 — re-derived on the
-   waitlist-reconciliation branch, where the previous count of four turned
-   out to be already stale). The reconciliation sweep
-   (`services/waitlist-reconciliation.ts`) adds no call site of either kind,
-   but it reaches **both** kinds through `handleSpotFreed`: the broadcast
-   branch's bounded `lockClassRow` in `handleSpotFreed` (`waitlist.ts`),
-   and — via the
-   auto-promote branch and `promoteNext` — one of the four inline
-   `FOR UPDATE`s, which is unbounded (#104). Stating only the first would
-   understate what a contended tick can wait on. Its multiplicity is
-   `autoCancelClasses`': a loop over classes, each in its own
-   `db.$transaction`, so it holds one row lock at a time and never two. **The
-   other 3 are multi-row, not one**: `withdrawWaitingEntriesForTeacher`'s join
-   (`waitlist.ts:904`), and the atomic-template-update branch's two ordered
-   pre-locks — `syncTemplateInstances` (`template-sync.ts:77`) and
-   `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`, the
-   `$queryRaw` immediately above its `waitlistEntry.findMany` candidate
-   read), each an
-   `ORDER BY c.id … FOR UPDATE OF c` ahead of its own multi-row write (issue
-   180, "Ordering WITHIN `Class`" above). An earlier version of this passage
-   said "all but one … the exception is `withdrawWaitingEntriesForTeacher`'s
-   join" — true before those two pre-locks existed, stale now that the table
-   above them already reflects both;
+2. `'"Class"'` — the raw statements. **Do not carry a number here; grep it.**
+   An earlier version of this check said "8 in total … the other 3 are
+   multi-row"; re-derivation on 2026-08-16 found 9 and 4, because
+   `deleteStudentAccount`'s ordered statement had been added to the table above
+   without being added here. That is the fourth time this document was wrong
+   about its own list, and #237 is the response. What holds now, and is
+   checkable rather than remembered: **every multi-row lock is
+   `lockClassRowsOrdered` (`db-locks.ts`), and it is the only production
+   `FOR UPDATE OF c` in `src/`.** The single-id `FOR UPDATE`s remain plural and
+   inline — four in `waitlist.ts` (`addToWaitlist`, `promoteNext`, `claimSpot`,
+   `removeFromWaitlist` via `lockClassRow`), one in `POST /api/registrations`,
+   plus `lockClassRow`'s own body — and they carry no ordering obligation
+   individually, which is why they were never the subject here. Their unbounded
+   wait is #104's subject;
 3. `lockClassRow(` — the helper's callers;
 4. **parent deletes that cascade onto `Class` without naming it** — the
    category a grep for `class.` misses. `Class` holds three FKs pointing *out*
@@ -182,15 +166,17 @@ a call):
 
 Each candidate was then classified by multiplicity — can this transaction end
 up holding more than one `Class` row lock? Single-`id` writes and single-`id`
-`FOR UPDATE`s cannot; a loop or a multi-row predicate can. That leaves the five
-above for lock-ordering *within* `Class`, the concern this section derives.
+`FOR UPDATE`s cannot; a loop or a multi-row predicate can. The multi-row ones
+are all handled by `lockClassRowsOrdered`, which is the whole of the
+within-`Class` concern this section derives. That leaves the single-`id`
+`FOR UPDATE`s out, individually — they carry no ordering obligation.
 **It is not the right bound for `Class` as a whole any more.** Since #196 a
 single-row write can be half of a slot-key deadlock without ever holding a
 second `Class` row lock — see "The slot key is a wait edge" below, where
 `updateClass` joins the candidate set on exactly that basis despite locking
-only one row. Note `autoCancelClasses` is *not* one of the five multi-lock
-sites: it opens a separate `db.$transaction` per class, so it holds one row
-lock at a time.
+only one row. Note `autoCancelClasses` is *not* one of the multi-row sites
+covered by `lockClassRowsOrdered`: it opens a separate `db.$transaction` per
+class, so it holds one row lock at a time.
 
 **The fourth path, which none of those checks would find: an FK lock taken
 from a CHILD table, by an `INSERT` that never mentions `Class` at all.**

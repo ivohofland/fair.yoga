@@ -320,7 +320,8 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
   const freedClassIds = await db.$transaction(async (tx) => {
     // FIRST statement, unconditionally — not left to a lock helper further down.
     //
-    // The bound used to arrive only as a side effect of the lock loop, which
+    // The bound used to arrive only as a side effect of the old `lockClassRow`
+    // loop, which
     // runs only when `waitingClassIds` is non-empty. A student waiting
     // in zero classes — the common case — therefore got an UNBOUNDED wait on
     // every statement in this transaction, including a `registration
@@ -335,14 +336,14 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // which it was not — nothing in the GDPR-clock rationale for bounding
     // this transaction depends on the subject being on a waitlist.
     //
-    // Idempotent with the lock loop's own `SET LOCAL`: a later one overwrites
-    // the earlier rather than stacking (`db-locks.ts`, and `db-locks.test.ts`
-    // checks it).
+    // Idempotent with the ordered pre-lock's own `SET LOCAL`: a later one
+    // overwrites the earlier rather than stacking (`db-locks.ts`, and
+    // `db-locks.test.ts` checks it).
     await setLockTimeout(tx);
 
     // Record which open classes free a spot — the waitlist hook runs on
     // them after the erasure commits. A read, so it carries no lock-ordering
-    // obligation — see the lock loop below for what does.
+    // obligation — see the ordered pre-lock below for what does.
     const upcoming = await tx.registration.findMany({
       where: {
         studentId,
@@ -372,9 +373,9 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // this that does not depend on such a claim staying true.
     //
     // Read here, before this transaction's first write — not where this used to
-    // sit, immediately before the reorder loop — so the lock loop below can run
-    // before any write. See that loop for why the order matters, not just the
-    // fact of locking.
+    // sit, immediately before the reorder loop — so the ordered pre-lock below
+    // can run before any write. See that statement for why the order matters,
+    // not just the fact of locking.
     //
     // ONE statement, not a `lockClassRow` loop, and the difference is not
     // stylistic. `lockClassRow` is two round trips (`setLockTimeout`, then the
@@ -447,20 +448,15 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // (`addToWaitlist`, `removeFromWaitlist`, `promoteNext`, `claimSpot`,
     // `withdrawWaitingEntriesForTeacher`, `POST /api/registrations`).
     //
-    // Sorted, not "in the order the read above returned them" — that read
-    // has no `orderBy`, so trusting return order would let two concurrent
-    // erasures lock the same pair of classes in opposite sequences,
-    // recreating the exact inversion this sort exists to prevent.
-    //
     // Ascending by id is this project's intended order for taking more than
-    // one `Class` row. Five sites do, and all five now TAKE an order — this
-    // sort, `withdrawWaitingEntriesForTeacher`'s ordered `FOR UPDATE OF c`
-    // (`waitlist.ts`), `deleteTeacherAccount`'s cancel loop below, and
-    // `syncTemplateInstances` (`template-sync.ts`) and
-    // `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`), which
-    // used to lock in heap order and cycled against THIS function for real
-    // until each gained an ordered pre-lock ahead of its multi-row write
-    // (issue 180, atomic-template-update).
+    // one `Class` row. All five such sites take it, through the shared helper
+    // `lockClassRowsOrdered` (`db-locks.ts`) — this function's pre-lock above,
+    // `withdrawWaitingEntriesForTeacher` (`waitlist.ts`),
+    // `deleteTeacherAccount` below, and `syncTemplateInstances`
+    // (`template-sync.ts`) and `archiveOrUnarchiveTemplate`
+    // (`class-template-lifecycle.ts`), which used to lock in heap order and
+    // cycled against THIS function for real until each gained an ordered
+    // pre-lock ahead of its multi-row write (issue 180, atomic-template-update).
     //
     // "Takes an order", deliberately, not "agree" — one of the five is not
     // total, and the exception is a pairing with THIS function, so it must
@@ -477,19 +473,15 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // share the exposure: its write set is `id: { in: lockedIds }`, a
     // structural subset of what its pre-lock returned.
     //
-    // See `docs/lock-order.md`'s within-`Class` table for how each site
-    // takes its order.
-    //
-    // `deleteTeacherAccount` did NOT sort until the whole-branch review of
-    // #174 — an earlier version of this very comment asserted it did, which
-    // was false for the one pairing it named, and the cycle was real:
-    // reproduced as `40P01`, now pinned by the test "does not deadlock when
-    // a teacher erasure and a student erasure overlap on two classes"
-    // (`gdpr.test.ts`). A later version of it then asserted all three sites
-    // that take multiple `Class` rows now agree — false the same way, and it
-    // missed the two above. JS `[...].sort()` and SQL `ORDER BY id` agree here
-    // because these ids are uuid-shaped `text`; see `docs/lock-order.md`,
-    // "Ordering WITHIN `Class`", for that check and for the rule itself.
+    // The order lives in ONE place now — the helper's `ORDER BY c.id` — so
+    // the two tables' disagreement that used to make this comment a three-way
+    // audit is closed: two callers that share the helper cannot take a pair in
+    // opposite sequences, whatever their reads return. That it stays true is
+    // pinned by `db-locks-lock-order.test.ts` (the helper's own order) and by
+    // the deadlock test this file's sibling suite runs, which races the two
+    // erasures' pre-locks directly (`gdpr.test.ts`, "does not deadlock when a
+    // teacher erasure and a student erasure overlap on two classes") and fails
+    // with `40P01` if the clause is removed.
     // Cancel upcoming registrations so open classes free the spots.
     await tx.registration.updateMany({
       where: {
@@ -660,10 +652,14 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // other transactions (that contention is exactly what the class-lock
     // ordering above resolves) — the claim is narrower, that this specific
     // set of statements already fit inside 5s before this task added
-    // anything. `waitingCount * 2_000` covers the lock loop's own worst
-    // case: `lockClassRow`'s `SET LOCAL lock_timeout` bounds each class's
-    // `FOR UPDATE` wait to 2s, and N contended classes can burn that in
-    // sequence.
+    // anything. `waitingCount * 2_000` no longer prices a lock LOOP's wait —
+    // #237 replaced `deleteStudentAccount`'s per-class `lockClassRow` loop
+    // with the ONE ordered pre-lock statement above, which takes at most a
+    // single 2s `lock_timeout`, whatever N is. The term now covers the reorder
+    // loop's per-class cost instead: `reorderWaitingEntries`' own `findMany`
+    // plus up to M `UPDATE`s per class, each under the same 2s bound (round 1
+    // review, I2). That is **over-generous rather than wrong** — resizing the
+    // formula is deliberately not this branch's change.
     //
     // That term does not cover everything the 2s bound applies to, though —
     // in two different directions. First, `SET LOCAL lock_timeout` governs
@@ -695,7 +691,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // and retry advice rather than a bare 500. Second, in the other
     // direction,
     // `reorderWaitingEntries`'s (`waitlist.ts`) own `findMany` plus up to M
-    // individual `UPDATE`s per class, run after the lock loop above, also
+    // individual `UPDATE`s per class, run after the pre-lock above, also
     // inherit the same 2s bound — adding real, uncounted time on top of
     // `waitingCount * 2_000` regardless of how often any single one of them
     // actually waits (round 1 review, I2 — also names two writers elsewhere

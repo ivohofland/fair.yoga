@@ -14,18 +14,21 @@ import { Prisma } from '@prisma/client';
  * reads can still be wrong on a bare client, by reading around its caller's
  * uncommitted writes. Decided per site, not uniformly:
  *
- *   adopt  `lockClassRow`, `setLockTimeout` and `lockAnnouncementSlot` below.
+ *   adopt  `lockClassRow`, `lockClassRowsOrdered`, `setLockTimeout` and
+ *          `lockAnnouncementSlot` below.
  *   adopt  `claimTemplateForGeneration` (`class-generator.ts`) and
  *          `claimStudioTemplateForGeneration` (`studio-class-generator.ts`) —
  *          each issues `LOCK_TIMEOUT_SQL` and then a `FOR UPDATE`.
- *   adopt  `syncTemplateInstances` (`template-sync.ts`) — issues
- *          `LOCK_TIMEOUT_SQL` via `setLockTimeout` and then its own ordered
- *          `FOR UPDATE OF c` pre-lock (issue 180) before its re-read. Composed
+ *   adopt  `syncTemplateInstances` (`template-sync.ts`) — calls
+ *          `lockClassRowsOrdered` below, which issues `LOCK_TIMEOUT_SQL` via
+ *          `setLockTimeout` and then the ordered `FOR UPDATE OF c` pre-lock
+ *          (issue 180) before its re-read. Composed
  *          into `updateClassTemplate`'s transaction (`class-template-
  *          lifecycle.ts`) rather than opening its own — task 6 of the
  *          atomic-template-update work removed the inner `$transaction` this
  *          function used to wrap that pre-lock and the propagation in.
- *   adopt  `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) — `FOR UPDATE
+ *   adopt  `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) — calls
+ *          `lockClassRowsOrdered` below, `FOR UPDATE
  *          OF c` inside the statement that selects the rows, with the
  *          `updateMany` and reorder that lock exists to protect after it.
  *   adopt  `readSeatCount` (`services/capacity.ts`) — the exception to the
@@ -175,17 +178,16 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * caller that will end up sharing it can afford an unbounded one:
  * `deleteStudentAccount`'s erasure transaction is time-bound by GDPR's own
  * clock, and an unbounded block there on a row the 60-second transitions
- * sweep can hold would hang a legally time-bound operation. That caller
- * landed in #174 Task 5. The three call sites this issue's plan intended for
- * this helper all exist: `completeClass` below was the first,
- * `removeFromWaitlist` (`waitlist.ts`) picked it up next, and
- * `deleteStudentAccount` (`gdpr.ts`) — called once per class it is about to
- * renumber — was the last of the three. A fourth arrived afterward, outside
- * the plan: `autoCancelClasses` (`class-transitions.ts`), added by #174 Task
- * 6's round 1 review once moving its registration count inside the
- * transaction turned a CAS-only decision into one that reads more state
- * under the lock. Not the only callers this helper exists to serve, either:
- * nothing about it restricts it to these four.
+ * sweep can hold would hang a legally time-bound operation.
+ *
+ * Its callers are not listed here any more, and the reason is the point of
+ * #237. They were, and the list went stale the way every list in this
+ * codebase's lock documentation has: `deleteStudentAccount` was named as a
+ * caller long after #216/#182 replaced its `lockClassRow` loop with a single
+ * ordered statement, and `autoTransitionToInProgress` was never named at all.
+ * The COUNT stayed five throughout — five names, five call sites — so nothing
+ * that counted could catch it; only re-deriving the names could. Grep for
+ * `lockClassRow(` when you need them.
  *
  * Must be given a transaction client for the lock to have anywhere to live —
  * see the brand paragraph above for what enforces that at compile time.

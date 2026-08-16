@@ -13,11 +13,11 @@ import { log } from '@/lib/log';
  * in: [...] } } })` is one statement, and Postgres visits the matching rows
  * in whatever order the planner picks, never the array's
  * (`docs/lock-order.md`, "Sorting the id array does NOT order a multi-row
- * write"). `deleteStudentAccount` (`gdpr.ts`) takes them ASCENDING by id —
- * `[...ids].sort()` in JS, before the `lockClassRow` loop. Two rows, opposite
- * orders, one AB-BA cycle: reproduced against the real functions and
+ * write"). `deleteStudentAccount` (`gdpr.ts`) also used to disagree, via a
+ * JS `[...ids].sort()` feeding a per-class `lockClassRow` loop. Two rows,
+ * opposite orders, one AB-BA cycle: reproduced against the real functions and
  * recorded in issue 180, before either site had the ordered pre-lock this
- * file now pins. `docs/lock-order.md`'s within-`Class` table records the fix,
+ * file now pins. `docs/lock-order.md`'s within-`Class` rule records the fix,
  * not the original reproduction — the section that used to hold that
  * transcript was deleted rather than narrowed once both sites closed (issue
  * 180 acceptance 3), per this project's own convention against leaving a
@@ -354,21 +354,18 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
             // BE HONEST ABOUT THE COST. With both sides taking every class lock
             // in a single ordered statement, the AB-BA cycle cannot form — but
             // it also cannot be CONSTRUCTED, so this test no longer detects a
-            // missing `ORDER BY` on the erasure side. Verified: deleting that
-            // clause leaves all three tests green. What still fails here is a
-            // reverted pre-lock on the sync/archive side (no `FOR UPDATE`, no
-            // pre-lock at all, or a narrowed row set), which is where this
-            // file's mutations were always aimed.
-            //
-            // The erasure's ordering is now guarded the same way
-            // `withdrawWaitingEntriesForTeacher`'s always has been — by the
-            // shared `ORDER BY c.id … FOR UPDATE OF c` idiom and by
-            // `docs/lock-order.md`'s within-`Class` table — rather than by a
-            // reproduction. That is a real reduction in coverage, traded for a
-            // lock loop whose cost grew with account age until erasure became
-            // impossible. Filed as #237: one tested helper for ordered
-            // multi-row `Class` locking repays it for all five sites at once,
-            // which a per-pairing reproduction cannot.
+            // missing `ORDER BY` on the erasure side. That reduction is not
+            // real: deleting the clause FAILS `gdpr.test.ts`'s deadlock test
+            // ("does not deadlock when a teacher erasure and a student erasure
+            // overlap on two classes"), measured 5/5 with `40P01` on
+            // 2026-08-16 — the erasure's ordering is guarded by a
+            // reproduction the whole time, in that file. What still fails in
+            // THIS file is a reverted pre-lock on the sync/archive side (no
+            // `FOR UPDATE`, no pre-lock at all, or a narrowed row set), which
+            // is where this file's mutations were always aimed. The general
+            // guard both files' tests are specific instances of is
+            // `db-locks-lock-order.test.ts`, which pins the helper's own
+            // `ORDER BY c.id`.
             if (args.values[0] === studentId) {
               lowLocked();
               await new Promise((r) => setTimeout(r, 300));
@@ -609,21 +606,18 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
             // BE HONEST ABOUT THE COST. With both sides taking every class lock
             // in a single ordered statement, the AB-BA cycle cannot form — but
             // it also cannot be CONSTRUCTED, so this test no longer detects a
-            // missing `ORDER BY` on the erasure side. Verified: deleting that
-            // clause leaves all three tests green. What still fails here is a
-            // reverted pre-lock on the sync/archive side (no `FOR UPDATE`, no
-            // pre-lock at all, or a narrowed row set), which is where this
-            // file's mutations were always aimed.
-            //
-            // The erasure's ordering is now guarded the same way
-            // `withdrawWaitingEntriesForTeacher`'s always has been — by the
-            // shared `ORDER BY c.id … FOR UPDATE OF c` idiom and by
-            // `docs/lock-order.md`'s within-`Class` table — rather than by a
-            // reproduction. That is a real reduction in coverage, traded for a
-            // lock loop whose cost grew with account age until erasure became
-            // impossible. Filed as #237: one tested helper for ordered
-            // multi-row `Class` locking repays it for all five sites at once,
-            // which a per-pairing reproduction cannot.
+            // missing `ORDER BY` on the erasure side. That reduction is not
+            // real: deleting the clause FAILS `gdpr.test.ts`'s deadlock test
+            // ("does not deadlock when a teacher erasure and a student erasure
+            // overlap on two classes"), measured 5/5 with `40P01` on
+            // 2026-08-16 — the erasure's ordering is guarded by a
+            // reproduction the whole time, in that file. What still fails in
+            // THIS file is a reverted pre-lock on the sync/archive side (no
+            // `FOR UPDATE`, no pre-lock at all, or a narrowed row set), which
+            // is where this file's mutations were always aimed. The general
+            // guard both files' tests are specific instances of is
+            // `db-locks-lock-order.test.ts`, which pins the helper's own
+            // `ORDER BY c.id`.
             if (args.values[0] === studentId) {
               lowLocked();
               await new Promise((r) => setTimeout(r, 300));
@@ -798,21 +792,18 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
             // BE HONEST ABOUT THE COST. With both sides taking every class lock
             // in a single ordered statement, the AB-BA cycle cannot form — but
             // it also cannot be CONSTRUCTED, so this test no longer detects a
-            // missing `ORDER BY` on the erasure side. Verified: deleting that
-            // clause leaves all three tests green. What still fails here is a
-            // reverted pre-lock on the sync/archive side (no `FOR UPDATE`, no
-            // pre-lock at all, or a narrowed row set), which is where this
-            // file's mutations were always aimed.
-            //
-            // The erasure's ordering is now guarded the same way
-            // `withdrawWaitingEntriesForTeacher`'s always has been — by the
-            // shared `ORDER BY c.id … FOR UPDATE OF c` idiom and by
-            // `docs/lock-order.md`'s within-`Class` table — rather than by a
-            // reproduction. That is a real reduction in coverage, traded for a
-            // lock loop whose cost grew with account age until erasure became
-            // impossible. Filed as #237: one tested helper for ordered
-            // multi-row `Class` locking repays it for all five sites at once,
-            // which a per-pairing reproduction cannot.
+            // missing `ORDER BY` on the erasure side. That reduction is not
+            // real: deleting the clause FAILS `gdpr.test.ts`'s deadlock test
+            // ("does not deadlock when a teacher erasure and a student erasure
+            // overlap on two classes"), measured 5/5 with `40P01` on
+            // 2026-08-16 — the erasure's ordering is guarded by a
+            // reproduction the whole time, in that file. What still fails in
+            // THIS file is a reverted pre-lock on the sync/archive side (no
+            // `FOR UPDATE`, no pre-lock at all, or a narrowed row set), which
+            // is where this file's mutations were always aimed. The general
+            // guard both files' tests are specific instances of is
+            // `db-locks-lock-order.test.ts`, which pins the helper's own
+            // `ORDER BY c.id`.
             if (args.values[0] === studentId) {
               lowLocked();
               await new Promise((r) => setTimeout(r, 300));
