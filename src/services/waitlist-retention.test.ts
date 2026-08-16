@@ -2,8 +2,10 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import type { ClassStatus, WaitlistStatus } from '@prisma/client';
 import { log } from '@/lib/log';
+import { FULFILLED_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 import {
   reapClosedWaitlistEntries,
+  RetentionFailedError,
   retentionCutoff,
   WAITLIST_RETENTION_DAYS,
 } from './waitlist-retention';
@@ -49,12 +51,27 @@ function daysBeforeCutoff(days: number): Date {
   return d;
 }
 
-let teacherId: string;
-let accountId: string;
-let roomId: string;
-let teacherRoomId: string;
-let studentId: string;
-let studentId2: string;
+/**
+ * Fixture ids, initialised to `''` rather than left `undefined` — and that is a
+ * safety property, not tidiness.
+ *
+ * `afterAll` runs even when `beforeAll` throws, and Prisma DROPS an `undefined`
+ * field filter rather than rejecting it, so `deleteMany({ where: { id: undefined } })`
+ * is `deleteMany({ where: {} })` — a whole-table wipe. Four of the statements
+ * below are of exactly that shape (`TeacherRoom`, `Room`, `Teacher`, `Account`),
+ * and the path that gets there is this file's OWN guard: it refuses a
+ * non-`_test` database — i.e. dev — and the teardown then asks that same
+ * database to empty those tables.
+ *
+ * `''` matches nothing, so every statement below is a no-op before assignment.
+ * `afterAll`'s own early return is the second half; see there for why both.
+ */
+let teacherId = '';
+let accountId = '';
+let roomId = '';
+let teacherRoomId = '';
+let studentId = '';
+let studentId2 = '';
 const classIds: string[] = [];
 
 /**
@@ -253,6 +270,24 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // FAIL CLOSED, on the same principle as the `beforeAll` guard: if setup did
+  // not get far enough to create a teacher, there are no fixtures to clean and
+  // this function has no business issuing DELETEs at all.
+  //
+  // Belt and braces with the `''` initialisers above, deliberately. Either one
+  // alone is sufficient today; each covers the other's failure mode. The
+  // initialisers stop a whole-table wipe if a future edit adds a statement
+  // ABOVE this return or reorders the teardown; this return stops one if a
+  // future id is added without an initialiser. What made the wipe merely
+  // latent before was neither — it was that `student.deleteMany` happened to
+  // sit above the four unguarded statements and threw `PrismaClientValidationError`
+  // on `in: [undefined, undefined]` first. That is an accident of ordering,
+  // and "fixing" it with a `.filter(Boolean)` would have removed the shield.
+  if (!teacherId) {
+    await prisma.$disconnect();
+    return;
+  }
+
   // Ordered children-first. #177 is about test databases accumulating rows
   // nothing prunes; a retention suite that leaks its own fixtures would be a
   // poor joke.
@@ -278,22 +313,65 @@ describe('retentionCutoff', () => {
 
     expect(morning.toISOString()).toBe('2025-08-16T00:00:00.000Z');
     expect(evening.toISOString()).toBe(morning.toISOString());
+  });
+
+  /**
+   * The policy number itself, pinned in its own named test.
+   *
+   * It was buried inside the UTC-normalisation test above, where a failure
+   * would have reported "the cutoff is not UTC-normalised" for what is actually
+   * "someone changed the retention period". This is a product/legal decision
+   * (#238 parked it as one) and an irreversible one in the shortening
+   * direction — it deserves a line that says so when it goes red.
+   */
+  it('keeps the retention window at the decided 365 days', () => {
     expect(WAITLIST_RETENTION_DAYS).toBe(365);
   });
 });
 
 describe('reapClosedWaitlistEntries', () => {
-  it('deletes an unfulfilled entry on a terminal class past the window', async () => {
-    const { entryId } = await makeClassWithEntry({
+  /**
+   * `summary.deleted` counted against reality, not against a floor.
+   *
+   * `toBeGreaterThanOrEqual(1)` left `deleted += count` mutable to
+   * `deleted += 1` — per CLASS instead of per ENTRY — with the entire suite
+   * still green, including the mixed-population test below, which deletes one
+   * of two entries on one class and so agrees with both readings.
+   *
+   * Bracketing the call with a whole-table `count()` is what makes the number
+   * mean something, and it is true regardless of what else is in the shared
+   * test database: the sweep is not scoped to this suite's fixtures, so the
+   * DIFFERENCE across the call is exactly what the sweep deleted, whoever
+   * created the rows. A count of this suite's own fixtures would not be —
+   * it would silently ignore anything the sweep removed from elsewhere.
+   *
+   * TWO reapable entries on ONE class, which is what actually kills the
+   * mutation. The bracket alone does not: with one entry on one class, per-class
+   * and per-entry counting agree at 1. Two entries under one `deleteMany` make
+   * them disagree — 2 against 1 — and the fixture is realistic besides, since a
+   * real closed queue holds several people, not one.
+   */
+  it('deletes every unfulfilled entry on a terminal class past the window', async () => {
+    const { classId, entryId } = await makeClassWithEntry({
       classStatus: 'completed',
       date: daysBeforeCutoff(1),
       entryStatus: 'expired',
     });
+    const secondEntryId = await addEntry(classId, {
+      studentId: studentId2,
+      status: 'expired',
+    });
 
+    const before = await prisma.waitlistEntry.count();
     const summary = await reapClosedWaitlistEntries(prisma, { now: NOW });
+    const after = await prisma.waitlistEntry.count();
 
-    expect(summary.deleted).toBeGreaterThanOrEqual(1);
+    // Two entries, one class: the figure below distinguishes counting entries
+    // from counting classes.
+    expect(summary.deleted).toBeGreaterThanOrEqual(2);
+    expect(before - after).toBe(summary.deleted);
     expect(await entryExists(entryId)).toBe(false);
+    expect(await entryExists(secondEntryId)).toBe(false);
   });
 
   /**
@@ -362,20 +440,40 @@ describe('reapClosedWaitlistEntries', () => {
    * that is enough — the clause exists because deleting is irreversible and the
    * two discriminators are derived independently, so their intersection is the
    * conservative one. Drop `status: { notIn: FULFILLED }` from the predicate
-   * and this test goes red, which is the whole point: a guard that cannot fail
+   * and this goes red, which is the whole point: a guard that cannot fail
    * certifies nothing.
+   *
+   * PARAMETRISED OVER THE SET, not written once for `promoted`, and that is
+   * what pins MEMBERSHIP rather than just the clause. With a single `promoted`
+   * case, moving `claimed` out of `FULFILLED_WAITLIST_STATUSES` — say to
+   * `withdrawn` in `QUEUE_ROLE` — left the whole suite green: `CLAIMABLE` is
+   * unchanged either way, and the only other `claimed` fixture in this file
+   * carries a registration, so `registrationId: null` covered for it.
+   *
+   * That is not hypothetical belt-and-braces. `WaitlistEntry.registration`
+   * declares no `onDelete`, so Prisma's default is `SetNull` — a future hard
+   * delete of a `Registration` produces exactly a `claimed` row with
+   * `registrationId: null`, and the status clause would be the only thing
+   * standing between it and permanent deletion.
+   *
+   * `it.each` over the constant is self-extending: a sixth fulfilled status
+   * gets a case for free, and one removed from the set stops being asserted
+   * here at the same moment it stops being protected there.
    */
-  it('keeps a promoted entry whose registrationId is somehow null', async () => {
-    const { entryId } = await makeClassWithEntry({
-      classStatus: 'completed',
-      date: daysBeforeCutoff(400),
-      entryStatus: 'promoted',
-    });
+  it.each([...FULFILLED_WAITLIST_STATUSES])(
+    'keeps a %s entry whose registrationId is somehow null',
+    async (entryStatus) => {
+      const { entryId } = await makeClassWithEntry({
+        classStatus: 'completed',
+        date: daysBeforeCutoff(400),
+        entryStatus,
+      });
 
-    await reapClosedWaitlistEntries(prisma, { now: NOW });
+      await reapClosedWaitlistEntries(prisma, { now: NOW });
 
-    expect(await entryExists(entryId)).toBe(true);
-  });
+      expect(await entryExists(entryId)).toBe(true);
+    },
+  );
 
   it.each<ClassStatus>(['draft', 'open', 'in_progress'])(
     'keeps an entry on a %s class, which is not terminal',
@@ -445,15 +543,38 @@ describe('reapClosedWaitlistEntries', () => {
    * sweep's own transaction fails with `55P03` — the realistic failure for this
    * code, and the one `classifyApiError` already models as transient.
    *
-   * The two class ids are FIXED and ordered, because the candidate read is
-   * `orderBy: { classId: 'asc' }`. With the held class sorting SECOND, removing
+   * THE TWO CLASS IDS ARE ORDERED, because the candidate read is
+   * `orderBy: { classId: 'asc' }` (pinned by its own test below), and the held
+   * class must sort FIRST. What that buys is NOT what an earlier version of
+   * this docblock claimed. It said that with the held class second, "removing
    * the try/catch would still leave the first class reaped and the test would
-   * pass against the bug. Held class first is what makes the assertion mean
-   * "the sweep continued past a failure".
+   * pass against the bug" — false: with no try/catch the `55P03` propagates out
+   * of `reapClosedWaitlistEntries`, the `await` below rejects, and the test
+   * fails in EITHER order.
+   *
+   * Two real things follow from held-first. The assertion `free` was reaped
+   * DEMONSTRATES continuation past a failure rather than holding vacuously —
+   * with the held class last, "the ones after it" is the empty set and the test
+   * asserts nothing about continuation. And it is what catches a catch that
+   * STOPS the loop (`break`, or an early `return summary`), which propagating
+   * would not: that mutation leaves the sweep returning normally, having reaped
+   * nothing after the failure.
+   *
+   * The ids are derived from `uniqueSuffix` rather than hard-coded. They must
+   * still sort below every `@default(uuid())` id — hence the all-zero prefix —
+   * but `unit-db.ts` never truncates, so a fixed id left behind by an
+   * interrupted run would fail every later run with a P2002 until someone
+   * cleaned it out by hand.
    */
   it('skips a class whose lock it cannot take, and reaps the ones after it', async () => {
-    const HELD = '00000000-0000-4000-8000-000000000001';
-    const FREE = '00000000-0000-4000-8000-000000000002';
+    // The sort-first property lives in the leading groups — `00000000-0000-…`
+    // is below any random uuid at the first character that differs — so the
+    // final group is free to carry `uniqueSuffix` for uniqueness. `n` is the
+    // last character, which is what orders HELD before FREE.
+    const lowId = (n: number): string =>
+      `00000000-0000-4000-8000-${String(uniqueSuffix).slice(-11).padStart(11, '0')}${n}`;
+    const HELD = lowId(1);
+    const FREE = lowId(2);
 
     const held = await makeClassWithEntry({
       id: HELD,
@@ -469,6 +590,13 @@ describe('reapClosedWaitlistEntries', () => {
     });
 
     const holderDb = new PrismaClient();
+    // `warn`, not `error`, and that is the assertion. A lock timeout is
+    // `isTransientDbError`, and the sweep classifies its per-class failures on
+    // exactly that — `error` is reserved for what should page someone, and this
+    // failure is the system doing what `lockClassRow` configured it to do.
+    // Spying on `error` too proves the split bites rather than just that
+    // something was logged.
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     try {
       const holder = holderDb.$transaction(
@@ -491,10 +619,22 @@ describe('reapClosedWaitlistEntries', () => {
       expect(summary.failed).toBe(1);
       expect(await entryExists(held.entryId)).toBe(true);
       expect(await entryExists(free.entryId)).toBe(false);
-      expect(error).toHaveBeenCalled();
+
+      // Named, not merely "something was logged". A bare
+      // `expect(warn).toHaveBeenCalled()` is satisfied by any `log.warn` in the
+      // run — the cap warning, for instance — so it would survive the per-class
+      // line being deleted outright.
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ classId: HELD, transient: true }),
+        expect.stringContaining('lost a lock race'),
+      );
+      // A transient failure must NOT page: `error` is the all-failed branch's
+      // level, and this run had a success in it.
+      expect(error).not.toHaveBeenCalled();
 
       await holder;
     } finally {
+      warn.mockRestore();
       error.mockRestore();
       await holderDb.$disconnect();
     }
@@ -508,18 +648,40 @@ describe('reapClosedWaitlistEntries', () => {
    * `cappedOut` AND the log line, because `isolatedSweeps` discards sweep
    * return values — the log is the only channel an operator has, so a flag
    * nobody reads is not a report.
+   *
+   * `eligibleAtLeast` is asserted against a count this test takes ITSELF, which
+   * is what distinguishes a measurement from a constant. The reported figure
+   * used to be `candidates.length`, and because the candidate read is
+   * `take: maxClasses + 1` that is always exactly `maxClasses + 1` whenever
+   * `cappedOut` — it would print 2 here however many classes were really
+   * waiting. Restoring that mutation makes the equality below fail as long as
+   * more than two classes are eligible, which the fixtures guarantee.
    */
-  it('reports being capped, and says so in the log', async () => {
-    await makeClassWithEntry({
-      classStatus: 'completed',
-      date: daysBeforeCutoff(1),
-      entryStatus: 'expired',
-    });
-    await makeClassWithEntry({
-      classStatus: 'completed',
-      date: daysBeforeCutoff(1),
-      entryStatus: 'expired',
-    });
+  it('reports being capped, with the real eligible count, and says so in the log', async () => {
+    // THREE of its own, not two: the assertion below needs the real eligible
+    // count to exceed `maxClasses + 1` (= 2) for the difference between a
+    // measurement and that constant to be visible at all. Built here rather
+    // than relying on what earlier tests happened to leave behind.
+    for (let i = 0; i < 3; i += 1) {
+      await makeClassWithEntry({
+        classStatus: 'completed',
+        date: daysBeforeCutoff(1),
+        entryStatus: 'expired',
+      });
+    }
+
+    // Independently of the sweep, and before it runs.
+    const eligibleBefore = (
+      await prisma.waitlistEntry.groupBy({
+        by: ['classId'],
+        where: {
+          registrationId: null,
+          status: { notIn: ['promoted', 'claimed'] },
+          class: { status: { in: ['completed', 'cancelled'] }, date: { lt: CUTOFF } },
+        },
+      })
+    ).length;
+    expect(eligibleBefore).toBeGreaterThan(2);
 
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     try {
@@ -527,35 +689,50 @@ describe('reapClosedWaitlistEntries', () => {
 
       expect(summary.cappedOut).toBe(true);
       expect(summary.classes).toBe(1);
-      expect(warn).toHaveBeenCalled();
+      expect(summary.eligibleAtLeast).toBe(eligibleBefore);
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ cap: 1, eligible: eligibleBefore, drainDays: eligibleBefore }),
+        expect.stringContaining('per-run class cap'),
+      );
     } finally {
       warn.mockRestore();
     }
   });
 
   /**
-   * Not isolated from the suite above, and that is worth recording rather
-   * than fixing quietly. The sweep's `groupBy` is not scoped to this suite's
-   * fixtures — it sees every reapable row in the shared test database. The
-   * isolation test above deliberately leaves its held class un-reaped (its
-   * lock times out), and that class uses the fixed id
-   * `00000000-0000-4000-8000-000000000001`, which sorts below every
-   * `@default(uuid())` id under the candidate read's
-   * `orderBy: { classId: 'asc' }`. So it is that stale class — not either of
-   * the cap test's own two fixtures, immediately above — that fills the
-   * `maxClasses: 1` batch there, leaving both of the cap test's fixtures
-   * unprocessed and still eligible when this test runs. This test's own
-   * `maxClasses: 50` sweep picks up all of them alongside its own single
-   * fixture; the cap's behaviour is still asserted correctly, this test is
-   * simply not isolated, and it passes today because the total stays well
-   * under 50. `afterAll` cleans everything, so nothing leaks across runs —
-   * this is an instance of issue #177 (test databases accumulate rows nothing
-   * prunes), not a bug in the sweep itself. A future author adding more
-   * reapable fixtures to this file should expect this test to become
-   * fragile.
+   * TWO successful per-class transactions in one run, and the only test that
+   * observes them.
+   *
+   * That is what kills `break` (or an early `return`) after the first
+   * successful delete — a mutation that survived the entire rest of the suite.
+   * Every other test here reaps its own single fixture, so by the time the next
+   * one runs exactly one class is eligible and one iteration is
+   * indistinguishable from all of them. The isolation test above does have two
+   * classes, but its first one FAILS, so it constrains the catch rather than the
+   * loop's continuation after a success.
+   *
+   * ORDER-INDEPENDENT BY CONSTRUCTION, which also retires the fragility an
+   * earlier version of this docblock recorded at length. It no longer asserts
+   * anything about how many classes the world contains — it asserts that the
+   * queue was DRAINED: sweep, then sweep again and find nothing left. Whatever
+   * else the shared test database holds is swept up by the first call and
+   * absent from the second, so a future author adding reapable fixtures to this
+   * file cannot break it. (The un-isolated version asserted `cappedOut === false`
+   * under `maxClasses: 50` and depended on the total staying under 50, with the
+   * previous test's stale held class filling its batch — an accident, and #177
+   * territory rather than a bug in the sweep.)
+   *
+   * The second sweep is also the only idempotency assertion in the file: a
+   * permanent delete that finds work on a second pass over the same data would
+   * mean the first pass did not do what it reported.
    */
-  it('does not report being capped when it processed everything eligible', async () => {
-    await makeClassWithEntry({
+  it('reaps every eligible class in one run, and finds nothing left on the next', async () => {
+    const first = await makeClassWithEntry({
+      classStatus: 'completed',
+      date: daysBeforeCutoff(1),
+      entryStatus: 'expired',
+    });
+    const second = await makeClassWithEntry({
       classStatus: 'completed',
       date: daysBeforeCutoff(1),
       entryStatus: 'expired',
@@ -564,5 +741,114 @@ describe('reapClosedWaitlistEntries', () => {
     const summary = await reapClosedWaitlistEntries(prisma, { now: NOW, maxClasses: 50 });
 
     expect(summary.cappedOut).toBe(false);
+    expect(summary.classes).toBeGreaterThanOrEqual(2);
+    expect(summary.failed).toBe(0);
+    expect(await entryExists(first.entryId)).toBe(false);
+    expect(await entryExists(second.entryId)).toBe(false);
+
+    // Drained, not merely "small". Nothing eligible remains, so a loop that
+    // stopped after one class has nowhere to hide.
+    const again = await reapClosedWaitlistEntries(prisma, { now: NOW, maxClasses: 50 });
+    expect(again.classes).toBe(0);
+    expect(again.deleted).toBe(0);
+    expect(again.cappedOut).toBe(false);
+  });
+
+  /**
+   * The all-failed run throws rather than returning a clean-looking summary.
+   *
+   * Without this, `{classes: N, failed: N, deleted: 0}` returns normally,
+   * `makeTick` stamps `lastSuccessAt` and nulls `lastError`, and `/api/health`
+   * reports the job healthy — the field `DEPLOYMENT.md` tells operators to
+   * monitor. `isolatedSweeps` cannot cover for it: it only ever sees errors that
+   * ESCAPE the sweep, and the per-class catch guarantees none do.
+   *
+   * The failure is provoked the same way the isolation test provokes it — a real
+   * held lock — but with only ONE eligible class, so every class fails and the
+   * `failed === classes` branch is the one under test. `maxClasses: 1` keeps the
+   * batch to that class whatever else the database holds.
+   */
+  it('throws when it attempted classes and every one failed', async () => {
+    const HELD = `00000000-0000-4000-8000-${String(uniqueSuffix).slice(-11).padStart(11, '0')}9`;
+    await makeClassWithEntry({
+      id: HELD,
+      classStatus: 'completed',
+      date: daysBeforeCutoff(1),
+      entryStatus: 'expired',
+    });
+
+    const holderDb = new PrismaClient();
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    try {
+      const holder = holderDb.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${HELD} FOR UPDATE`;
+          await tx.$queryRaw`SELECT pg_sleep(4)::text`;
+        },
+        { timeout: 30_000, maxWait: 10_000 },
+      );
+      await new Promise((r) => setTimeout(r, 300));
+
+      await expect(
+        reapClosedWaitlistEntries(prisma, { now: NOW, maxClasses: 1 }),
+      ).rejects.toBeInstanceOf(RetentionFailedError);
+
+      // The run-level line, at `error` — distinct from the per-class line,
+      // which is at `warn` because a lock timeout is transient. A run that
+      // accomplished nothing is a different statement at any N.
+      expect(error).toHaveBeenCalledWith(
+        expect.objectContaining({ classes: 1, failed: 1, deleted: 0 }),
+        expect.stringContaining('every class it tried failed'),
+      );
+
+      await holder;
+    } finally {
+      error.mockRestore();
+      warn.mockRestore();
+      await holderDb.$disconnect();
+    }
+  }, 30_000);
+
+  /**
+   * The candidate read's sort direction, pinned.
+   *
+   * `orderBy: { classId: 'asc' }` → `'desc'` passed the entire suite while
+   * inverting the property the isolation test's validity rests on: its held
+   * class is built to sort FIRST, and under `desc` it would sort last, quietly
+   * making that test's continuation assertion vacuous. A guard whose premise is
+   * unpinned degrades unnoticed.
+   *
+   * Asserted through `maxClasses: 1`, which is the only externally visible
+   * consequence of the direction: with two eligible classes and a batch of one,
+   * the sweep reaps the LOWER id under `asc` and the higher under `desc`.
+   */
+  it('takes candidate classes in ascending id order', async () => {
+    const lowId = `00000000-0000-4000-8000-${String(uniqueSuffix).slice(-11).padStart(11, '0')}3`;
+    const highId = `ffffffff-ffff-4fff-8fff-${String(uniqueSuffix).slice(-11).padStart(11, '0')}4`;
+
+    const low = await makeClassWithEntry({
+      id: lowId,
+      classStatus: 'completed',
+      date: daysBeforeCutoff(1),
+      entryStatus: 'expired',
+    });
+    const high = await makeClassWithEntry({
+      id: highId,
+      classStatus: 'completed',
+      date: daysBeforeCutoff(1),
+      entryStatus: 'expired',
+    });
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    try {
+      await reapClosedWaitlistEntries(prisma, { now: NOW, maxClasses: 1 });
+    } finally {
+      warn.mockRestore();
+    }
+
+    // `asc` reaps the low id and leaves the high one for the next run.
+    expect(await entryExists(low.entryId)).toBe(false);
+    expect(await entryExists(high.entryId)).toBe(true);
   });
 });

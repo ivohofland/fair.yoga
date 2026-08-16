@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CLAIMABLE_WAITLIST_STATUSES } from './waitlist-status';
+import { CLAIMABLE_WAITLIST_STATUSES, FULFILLED_WAITLIST_STATUSES } from './waitlist-status';
 
 /**
  * These assertions exist because the set they describe was, until #216's
@@ -34,5 +34,30 @@ describe('CLAIMABLE_WAITLIST_STATUSES', () => {
 
   it('is frozen, so no call site can widen what a walk-in may consume', () => {
     expect(Object.isFrozen(CLAIMABLE_WAITLIST_STATUSES)).toBe(true);
+  });
+});
+
+/**
+ * The same two assertions its sibling above has, for the set that gates a
+ * PERMANENT DELETE.
+ *
+ * `waitlist-retention.ts` (#238) uses this as one of its two discriminators for
+ * "this entry never became a booking", so a member silently leaving this set
+ * makes rows reapable that must not be. That is the direction with no undo, and
+ * until now nothing here asserted membership at all — both members are derived
+ * from `QUEUE_ROLE`, and moving one to a different role changed the reaper's
+ * behaviour with no test in this file to notice.
+ *
+ * `waitlist-retention.test.ts` iterates this constant to prove each member is
+ * actually protected; these two say WHICH members that iteration should cover,
+ * so a set that quietly emptied could not make the iteration pass vacuously.
+ */
+describe('FULFILLED_WAITLIST_STATUSES', () => {
+  it('is exactly the two statuses that mean the student got a seat', () => {
+    expect([...FULFILLED_WAITLIST_STATUSES].sort()).toEqual(['claimed', 'promoted']);
+  });
+
+  it('is frozen, so no call site can narrow what the reaper must keep', () => {
+    expect(Object.isFrozen(FULFILLED_WAITLIST_STATUSES)).toBe(true);
   });
 });

@@ -1,3 +1,4 @@
+import { readFileSync } from 'fs';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import type { ClassStatus } from '@prisma/client';
@@ -399,9 +400,13 @@ describe('class terminal status trigger', () => {
    * class whose immutability nothing enforces.
    *
    * So this iterates the derived set rather than restating it. The two tests
-   * above stay as they are: they assert the trigger's error SHAPE end to end
-   * (the Prisma error class, `classifyApiError`'s 409). This one asserts only
-   * membership, which is the property that can drift.
+   * that assert `classifyApiError(...).status === 409` — 'refuses to change the
+   * status of a cancelled class, and says so with a matchable code' and
+   * 'refuses to cancel a completed class, leaving its payments attached' — stay
+   * as they are: they assert the trigger's error SHAPE end to end, including
+   * the HTTP status a caller sees. This one adds the per-status sweep, and
+   * asserts the Prisma error class, `23514` and `/which is terminal/` for each
+   * member as well as the status surviving.
    */
   it.each(TERMINAL_CLASS_STATUSES)(
     'has a DB-enforced terminal %s, so the reaper may treat it as unwritable',
@@ -423,4 +428,48 @@ describe('class terminal status trigger', () => {
       expect(after.status).toBe(status);
     },
   );
+
+  /**
+   * The same pin in the NARROWING direction, which nothing above catches.
+   *
+   * The `it.each` above only iterates what is IN `TERMINAL_CLASS_STATUSES`, so
+   * it can only ever catch the set growing past what the trigger enforces. Give
+   * `cancelled` an outgoing transition in `VALID_TRANSITIONS` and the set
+   * shrinks to `['completed']` — the reaper silently stops reaping cancelled
+   * classes, and every pin above passes VACUOUSLY, because a case that is no
+   * longer generated cannot fail. An empty set is the same hole at its limit,
+   * hence the length assertion.
+   *
+   * Read out of the migration's own SQL rather than restated as a literal here,
+   * so there is exactly one place the enforced set is written down and this
+   * cannot drift from it by being edited in only one of two files.
+   *
+   * Regex over SQL is normally fragile; here it inverts. The file is an APPLIED
+   * migration, which `CLAUDE.md` forbids editing, so the text this reads is
+   * frozen by policy — and the `if (!m)` guard turns a shape change into a
+   * named failure rather than a silent pass. No database is touched.
+   */
+  it('matches the exact status set the trigger SQL enforces', () => {
+    const sql = readFileSync(
+      new URL(
+        '../../prisma/migrations/20260805120000_class_terminal_status_trigger/migration.sql',
+        import.meta.url,
+      ),
+      'utf8',
+    );
+    // `noUncheckedIndexedAccess` makes both capture groups possibly-undefined,
+    // and the narrowing is kept rather than cast away: a `!` here would turn a
+    // shape change into a runtime `undefined` inside the comparison, which is
+    // the failure mode this pin exists to make loud.
+    const inList = sql.match(/OLD\.status IN \(([^)]+)\)/)?.[1];
+    if (!inList) throw new Error('trigger SQL no longer has the shape this pin reads');
+    const enforced = [...inList.matchAll(/'([a-z_]+)'/g)]
+      .map((x) => x[1])
+      .filter((s): s is string => s !== undefined)
+      .sort();
+
+    expect(enforced.length).toBeGreaterThan(0);
+    expect(TERMINAL_CLASS_STATUSES.length).toBeGreaterThan(0);
+    expect([...TERMINAL_CLASS_STATUSES].sort()).toEqual(enforced);
+  });
 });
