@@ -492,6 +492,27 @@ describe('reapClosedWaitlistEntries', () => {
     }
   });
 
+  /**
+   * Not isolated from the suite above, and that is worth recording rather
+   * than fixing quietly. The sweep's `groupBy` is not scoped to this suite's
+   * fixtures — it sees every reapable row in the shared test database. The
+   * isolation test above deliberately leaves its held class un-reaped (its
+   * lock times out), and that class uses the fixed id
+   * `00000000-0000-4000-8000-000000000001`, which sorts below every
+   * `@default(uuid())` id under the candidate read's
+   * `orderBy: { classId: 'asc' }`. So it is that stale class — not either of
+   * the cap test's own two fixtures, immediately above — that fills the
+   * `maxClasses: 1` batch there, leaving both of the cap test's fixtures
+   * unprocessed and still eligible when this test runs. This test's own
+   * `maxClasses: 50` sweep picks up all of them alongside its own single
+   * fixture; the cap's behaviour is still asserted correctly, this test is
+   * simply not isolated, and it passes today because the total stays well
+   * under 50. `afterAll` cleans everything, so nothing leaks across runs —
+   * this is an instance of issue #177 (test databases accumulate rows nothing
+   * prunes), not a bug in the sweep itself. A future author adding more
+   * reapable fixtures to this file should expect this test to become
+   * fragile.
+   */
   it('does not report being capped when it processed everything eligible', async () => {
     await makeClassWithEntry({
       classStatus: 'completed',

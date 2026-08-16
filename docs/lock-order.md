@@ -846,6 +846,18 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   `TeacherBlock`/`Invitation` via `resolveInvitationOnLink` — the same
   `TeacherBlock`-before-`Invitation` disagreement as `addToWaitlist`, not
   conformant on that sub-order for the same reason.
+- **`reapClosedWaitlistEntries`** (`src/services/waitlist-retention.ts`) —
+  `Class`, then `WaitlistEntry`, one class per `db.$transaction` via
+  `lockClassRow`. **Deliberately a single-row-lock site**, like
+  `autoCancelClasses` and unlike the five above: it never holds a second
+  `Class` row lock, so it carries no ordering obligation and cannot be half of
+  an AB-BA cycle. That matters because its write set overlaps
+  `deleteStudentAccount`'s — that function's `waitlistEntry.deleteMany` is
+  keyed on `studentId` with no class-status scope, so it deletes entries on
+  terminal classes too, which is exactly what this sweep deletes. Two multi-row
+  `WaitlistEntry` deletes taking rows in different plan orders is a cycle whose
+  victim Postgres chooses, and it can choose the erasure. One class at a time
+  removes the cycle rather than ordering it away.
 
 ## Known safe by accident, not by order — not fixed here
 

@@ -643,12 +643,14 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // to read "no plausible legitimate student waiting in more than a handful
     // of classes at once", sizing the budget on the very axis the paragraphs
     // above spend twenty lines discrediting.) On a single-teacher CRM tool
-    // that lock set is a handful of classes — but it is a handful that only
-    // grows, because nothing reaps a closed, unfulfilled `WaitlistEntry`. #238
-    // is the root fix for that, and it is the reason a ceiling exists at all
-    // rather than an aside: the realistic axis is unbounded over an account's
-    // lifetime, so the number has to be a ceiling on damage rather than a
-    // forecast of need.
+    // that lock set is a handful of classes — and since #238 it is a handful
+    // bounded by the retention window rather than by account age:
+    // `reapClosedWaitlistEntries` (`waitlist-retention.ts`) deletes closed,
+    // unfulfilled entries once their class is more than
+    // `WAITLIST_RETENTION_DAYS` old. That bounds the axis; it does not make it
+    // small, and the number below is still a ceiling on damage rather than a
+    // forecast of need — a student queuing weekly for classes they never get
+    // into still accumulates ~52 of them inside the window.
     //
     // NOT sized from statement cost, and the measurement is what says so. Not
     // all of this transaction's work is indexed on the column it filters by,

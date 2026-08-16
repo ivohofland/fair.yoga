@@ -181,8 +181,14 @@ export async function reconcileWaitlists(
   // a `waiting` entry out of contention WITHOUT fulfilling it — a
   // cancellation, a withdrawal, an erasure, or the class starting — either
   // writes a terminal status (`removed` or `expired`) or deletes the row
-  // outright (`deleteStudentAccount`, `gdpr.ts`, is a hard delete rather than
-  // a status write). FULFILMENT — `promoteNext`'s own promotion, `claimSpot`,
+  // outright — `deleteStudentAccount` (`gdpr.ts`) and, since #238,
+  // `reapClosedWaitlistEntries` (`waitlist-retention.ts`) are both hard
+  // deletes rather than status writes. The reaper cannot affect THIS query's
+  // candidate set: it only touches classes in a terminal status, and this
+  // reads `status: 'waiting'` on `open` ones. It does drain the pre-#216
+  // legacy `waiting` rows on terminal classes, which are the last rows that
+  // could still make the join below do any work. FULFILMENT —
+  // `promoteNext`'s own promotion, `claimSpot`,
   // or a queued student booking directly through `POST /api/registrations`
   // (all of which write `promoted`/`claimed`) — is a different, self-limiting
   // category this paragraph is not about: a fulfilled entry leaves `waiting`
@@ -190,7 +196,8 @@ export async function reconcileWaitlists(
   // To re-derive either roster:
   // `grep -rnE 'waitlistEntry\.(create|update|delete|upsert)' src`,
   // excluding tests, then read each hit for which status it writes, or
-  // whether it deletes the row. The join above is kept anyway — it still
+  // whether it deletes the row — this now returns two production deleters,
+  // not one. The join above is kept anyway — it still
   // narrows the scan to classes whose queue could still matter, which is
   // worth avoiding even though nothing downstream depends on it for
   // correctness any more.

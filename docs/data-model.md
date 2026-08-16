@@ -300,6 +300,12 @@ No pricing engine. No individual registration. No link to Room or Student. This 
 
 Hybrid waitlist promotion: before the cancel deadline cutoff, students are auto-promoted in queue order. In the final hour before class, it switches to first-come-first-claimed for any remaining spots.
 
+**Retention (#238):** an entry that never became a registration
+(`registration_id IS NULL`) is deleted once its class is terminal
+(`completed`/`cancelled`) and more than 365 days past its `date`. An entry that
+did become a registration is joined to a financial record and is kept.
+Swept daily by `reapClosedWaitlistEntries` (`services/waitlist-retention.ts`).
+
 ---
 
 ## Payments
