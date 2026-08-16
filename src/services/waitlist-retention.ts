@@ -157,6 +157,16 @@ export async function reapClosedWaitlistEntries(
   const cappedOut = candidates.length > maxClasses;
   const batch = candidates.slice(0, maxClasses);
 
+  if (cappedOut) {
+    // Logged, not merely returned. A sweep that silently processes 500 of 900
+    // eligible classes reads as "covered everything" in every downstream
+    // report, and `isolatedSweeps` throws the return value away.
+    log.warn(
+      { cap: maxClasses, eligibleAtLeast: candidates.length },
+      'waitlist retention hit its per-run class cap; the remainder waits for the next run',
+    );
+  }
+
   let deleted = 0;
   const summary: ReapSummary = {
     deleted: 0,
@@ -168,17 +178,30 @@ export async function reapClosedWaitlistEntries(
   for (const { classId } of batch) {
     // One transaction per class — see this module's header for why that is
     // the whole deadlock argument and not a style choice.
-    const count = await db.$transaction(async (tx) => {
-      await lockClassRow(tx, classId);
-      // The predicate is re-applied under the lock rather than trusting the
-      // candidate read: that read took no lock, and a delete scoped only by
-      // `classId` would widen the write set past what was actually selected.
-      const result = await tx.waitlistEntry.deleteMany({
-        where: { classId, ...reapable },
+    //
+    // Swallowed PER CLASS, and rethrown by nobody: one contended class must
+    // not abandon the classes behind it, which is the same trade
+    // `reconcileWaitlists` makes. Unlike that sweep this does NOT rethrow when
+    // every class failed, because `isolatedSweeps` (`scheduler.ts`) is the
+    // caller and it already logs and rethrows the first error it sees — and
+    // because a retention sweep repairing nothing for one day is not the
+    // affirmative false statement a reconciliation sweep repairing nothing is.
+    try {
+      const count = await db.$transaction(async (tx) => {
+        await lockClassRow(tx, classId);
+        // The predicate is re-applied under the lock rather than trusting the
+        // candidate read: that read took no lock, and a delete scoped only by
+        // `classId` would widen the write set past what was actually selected.
+        const result = await tx.waitlistEntry.deleteMany({
+          where: { classId, ...reapable },
+        });
+        return result.count;
       });
-      return result.count;
-    });
-    deleted += count;
+      deleted += count;
+    } catch (err) {
+      log.error({ err, classId }, 'waitlist retention could not reap a class');
+      summary.failed += 1;
+    }
   }
 
   summary.deleted = deleted;

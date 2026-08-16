@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import type { ClassStatus, WaitlistStatus } from '@prisma/client';
+import { log } from '@/lib/log';
 import {
   reapClosedWaitlistEntries,
   retentionCutoff,
@@ -393,5 +394,113 @@ describe('reapClosedWaitlistEntries', () => {
     await reapClosedWaitlistEntries(prisma, { now: NOW });
 
     expect(await entryExists(entryId)).toBe(false);
+  });
+
+  /**
+   * Per-class isolation, broken the way it actually breaks.
+   *
+   * Not a stubbed throw: a second connection holds the class row's `FOR UPDATE`
+   * lock for longer than `lockClassRow`'s 2s `SET LOCAL lock_timeout`, so the
+   * sweep's own transaction fails with `55P03` — the realistic failure for this
+   * code, and the one `classifyApiError` already models as transient.
+   *
+   * The two class ids are FIXED and ordered, because the candidate read is
+   * `orderBy: { classId: 'asc' }`. With the held class sorting SECOND, removing
+   * the try/catch would still leave the first class reaped and the test would
+   * pass against the bug. Held class first is what makes the assertion mean
+   * "the sweep continued past a failure".
+   */
+  it('skips a class whose lock it cannot take, and reaps the ones after it', async () => {
+    const HELD = '00000000-0000-4000-8000-000000000001';
+    const FREE = '00000000-0000-4000-8000-000000000002';
+
+    const held = await makeClassWithEntry({
+      id: HELD,
+      classStatus: 'completed',
+      date: daysBeforeCutoff(1),
+      entryStatus: 'expired',
+    });
+    const free = await makeClassWithEntry({
+      id: FREE,
+      classStatus: 'completed',
+      date: daysBeforeCutoff(1),
+      entryStatus: 'expired',
+    });
+
+    const holderDb = new PrismaClient();
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    try {
+      const holder = holderDb.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${HELD} FOR UPDATE`;
+          // Longer than lockClassRow's 2s bound. Cast to ::text so the result
+          // shape does not reject with P2010 — the same fix f25a1ad applied to
+          // the erasure's holder transactions.
+          await tx.$queryRaw`SELECT pg_sleep(4)::text`;
+        },
+        { timeout: 30_000, maxWait: 10_000 },
+      );
+
+      // The holder must be sitting on the row before the sweep asks for it, or
+      // the sweep sails through and this test reports nothing.
+      await new Promise((r) => setTimeout(r, 300));
+
+      const summary = await reapClosedWaitlistEntries(prisma, { now: NOW });
+
+      expect(summary.failed).toBe(1);
+      expect(await entryExists(held.entryId)).toBe(true);
+      expect(await entryExists(free.entryId)).toBe(false);
+      expect(error).toHaveBeenCalled();
+
+      await holder;
+    } finally {
+      error.mockRestore();
+      await holderDb.$disconnect();
+    }
+  }, 30_000);
+
+  /**
+   * The cap, exercised through the injected `maxClasses` rather than by
+   * creating 501 classes. The seam exists for this reason and mirrors
+   * `reconcileWaitlists(db, { now })`.
+   *
+   * `cappedOut` AND the log line, because `isolatedSweeps` discards sweep
+   * return values — the log is the only channel an operator has, so a flag
+   * nobody reads is not a report.
+   */
+  it('reports being capped, and says so in the log', async () => {
+    await makeClassWithEntry({
+      classStatus: 'completed',
+      date: daysBeforeCutoff(1),
+      entryStatus: 'expired',
+    });
+    await makeClassWithEntry({
+      classStatus: 'completed',
+      date: daysBeforeCutoff(1),
+      entryStatus: 'expired',
+    });
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    try {
+      const summary = await reapClosedWaitlistEntries(prisma, { now: NOW, maxClasses: 1 });
+
+      expect(summary.cappedOut).toBe(true);
+      expect(summary.classes).toBe(1);
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('does not report being capped when it processed everything eligible', async () => {
+    await makeClassWithEntry({
+      classStatus: 'completed',
+      date: daysBeforeCutoff(1),
+      entryStatus: 'expired',
+    });
+
+    const summary = await reapClosedWaitlistEntries(prisma, { now: NOW, maxClasses: 50 });
+
+    expect(summary.cappedOut).toBe(false);
   });
 });
