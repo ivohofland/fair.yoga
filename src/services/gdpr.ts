@@ -11,7 +11,7 @@
 
 import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
 import { Prisma } from '@prisma/client';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient, ClassStatus } from '@prisma/client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { formatDayHeader } from '@/lib/format';
 import { completeClass } from './class-lifecycle';
@@ -761,6 +761,25 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
  * notifications, personal/business data wiped; completed classes and
  * payments remain so students keep their payment records.
  */
+
+/**
+ * The statuses a teacher erasure cancels — and the ONE list they are read
+ * from.
+ *
+ * This was hand-typed twice in `deleteTeacherAccount` (the `upcoming` read's
+ * filter and the per-class CAS `where` it must agree with), and the ordered
+ * pre-lock would have made three. `class-template-lifecycle.ts:641-651`
+ * records what that costs, measured rather than argued: dropping a status
+ * from one of two hand-written lists "left every test covering this function
+ * green, silently re-opening the deadlock the pre-lock exists to close".
+ * There is one list to edit now, not three to keep in sync.
+ */
+const CANCELLABLE_STATUSES: readonly ClassStatus[] = Object.freeze([
+  'draft',
+  'open',
+  'in_progress',
+]);
+
 export async function deleteTeacherAccount(db: PrismaClient, teacherId: string): Promise<void> {
   const teacher = await db.teacher.findUniqueOrThrow({
     where: { id: teacherId },
@@ -856,7 +875,7 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // No `include` of registrations any more: the recipient list is read
       // inside the loop, under the lock the CAS takes — see there.
       const upcoming = await tx.class.findMany({
-        where: { teacherId, status: { in: ['draft', 'open', 'in_progress'] } },
+        where: { teacherId, status: { in: [...CANCELLABLE_STATUSES] } },
         orderBy: { id: 'asc' },
         // `date`/`startTime` for the notification bodies below: a waitlist-only
         // student can place the class by nothing else (the entry closes to
@@ -888,7 +907,7 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
         // sets for its own second check. `warn`, not `error`: the two
         // expected causes are races this CAS exists to lose gracefully.
         const cancelled = await tx.class.updateMany({
-          where: { id: cls.id, status: { in: ['draft', 'open', 'in_progress'] } },
+          where: { id: cls.id, status: { in: [...CANCELLABLE_STATUSES] } },
           data: { status: 'cancelled' },
         });
 
