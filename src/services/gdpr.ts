@@ -651,13 +651,18 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // in, while `reapClosedWaitlistEntries` (`waitlist-retention.ts`) deletes
     // only entries with `registrationId IS NULL` and a status outside
     // `FULFILLED_WAITLIST_STATUSES`, on a terminal class more than
-    // `WAITLIST_RETENTION_DAYS` old. FULFILLED ENTRIES ARE REAPED BY NOTHING,
-    // here or anywhere. So a student who waitlists weekly and gets promoted
-    // accumulates ~52 permanent entries a year, each holding its class in this
-    // lock set for the life of the account. What #238 bounds is the UNFULFILLED
-    // share; the set still grows with account age, just more slowly. Stated at
-    // this length because "bounded by the retention window" is the natural
-    // shorthand and it is wrong.
+    // `WAITLIST_RETENTION_DAYS` old. NO BACKGROUND SWEEP EVER REAPS A FULFILLED
+    // ENTRY. The one thing that deletes them is the `deleteMany` below, in this
+    // very function — which is not a counter-example but the point: it runs
+    // once per account, at that account's own request, so it cannot bound a set
+    // that grows while the account is alive. (An earlier version of this clause
+    // said fulfilled entries are reaped "by nothing, here or anywhere", which
+    // was false in the file it was written in.) So a student who waitlists
+    // weekly and gets promoted accumulates ~52 permanent entries a year, each
+    // holding its class in this lock set for the life of the account. What #238
+    // bounds is the UNFULFILLED share; the set still grows with account age,
+    // just more slowly. Stated at this length because "bounded by the retention
+    // window" is the natural shorthand and it is wrong.
     //
     // Which is why the number below is a ceiling on damage rather than a
     // forecast of need.
