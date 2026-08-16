@@ -1529,6 +1529,27 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
 
     const [teacherOutcome, studentOutcome] = await Promise.all([teacherErasure, studentErasure]);
 
+    // SQLSTATE first, THEN the outcome — the same order and the same reason as
+    // `db-locks-lock-order.test.ts`: a bare `toBe('teacher-ok')` reports
+    // "expected { error: … } to be 'teacher-ok'" and makes two different
+    // failures look alike. A `40P01` is the lock-order regression this test
+    // exists to catch. A `55P03` is this choreography outrunning the 2s bound
+    // #237 brought to the teacher's transaction — the fixed sleeps below the
+    // handshakes (200 + 400 + 150ms) plus `deleteStudentAccount`'s startup all
+    // burn against it while the teacher's pre-lock sits blocked on a holder, so
+    // a cold pool can spend it. One of those is a finding and the other is a
+    // retune, and the failure output has to say which.
+    for (const [label, outcome] of [
+      ['teacher erasure', teacherOutcome],
+      ['student erasure', studentOutcome],
+    ] as const) {
+      if (typeof outcome !== 'string') {
+        expect(`${label}: ${outcome.error}`).not.toMatch(/40P01|deadlock detected/);
+        expect(`${label}: ${outcome.error}`).not.toMatch(/55P03|lock timeout/);
+        throw new Error(`${label} rejected unexpectedly: ${outcome.error}`);
+      }
+    }
+
     // Pre-fix one of these is `{ error: '... 40P01 ...' }` — Postgres picks
     // the victim, not this code, so both are asserted rather than one.
     expect(teacherOutcome).toBe('teacher-ok');

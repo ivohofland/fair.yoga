@@ -753,12 +753,6 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
 }
 
 /**
- * Deletes a teacher account: upcoming classes are cancelled with student
- * notifications, personal/business data wiped; completed classes and
- * payments remain so students keep their payment records.
- */
-
-/**
  * The statuses a teacher erasure cancels — and the ONE list they are read
  * from.
  *
@@ -792,6 +786,19 @@ const CANCELLABLE_STATUSES: readonly ClassStatus[] = Object.freeze([
  */
 const CANCELLABLE_STATUSES_SQL = Prisma.raw(CANCELLABLE_STATUSES.map((s) => `'${s}'`).join(', '));
 
+/**
+ * Deletes a teacher account: upcoming classes are cancelled with student
+ * notifications, personal/business data wiped; completed classes and
+ * payments remain so students keep their payment records.
+ *
+ * The two constants above sit between this and `deleteStudentAccount` rather
+ * than beside their first use for a lint reason recorded in #237 task 7 —
+ * declaring them next to the student erasure tripped `no-unused-vars` until
+ * the pre-lock below consumed them. They belong ABOVE this docblock, not
+ * between it and the function: a docblock binds to whatever declaration
+ * follows it, so parking them in that gap silently reassigned this summary to
+ * `CANCELLABLE_STATUSES` and left this function undocumented on hover.
+ */
 export async function deleteTeacherAccount(db: PrismaClient, teacherId: string): Promise<void> {
   const teacher = await db.teacher.findUniqueOrThrow({
     where: { id: teacherId },
@@ -918,13 +925,31 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // writer queues behind it until commit.
       //
       // Additive, not a replacement for the CAS. The read stays WIDE and the
-      // per-class compare-and-swap below stays exactly as it was: a class
-      // inserted after this statement is not held here, and the CAS is what
-      // handles it. Scoping the read to these ids — the
-      // `syncTemplateInstances` shape — would make the write set a structural
-      // subset of the lock set and let such a class escape the erasure
-      // altogether, which is a worse trade on an Article 17 path than the one
-      // the CAS already makes.
+      // per-class compare-and-swap below stays exactly as it was.
+      //
+      // Because this statement runs AFTER that read, every class in `upcoming`
+      // the CAS will actually update is already held HERE, so the loop takes
+      // no lock this statement did not take, and none out of this order. That
+      // turns on the statuses being one-way: a class in `upcoming` that is not
+      // in this lock set had left `draft|open|in_progress` by the time this
+      // ran, and nothing puts it back. Checked rather than assumed — the enum
+      // has five members, the two outside `CANCELLABLE_STATUSES` are
+      // `completed` and `cancelled`, and the only writes that SET a cancellable
+      // status are `class-transitions.ts`'s `open → in_progress` and the two
+      // row CREATES (`api/classes/route.ts`, `class-generator.ts`). There is no
+      // un-cancel and no re-open. (The plan put this statement BEFORE the read.
+      // That placement could not promise this: a class created in the gap would
+      // be read but not held, and the CAS would take a fresh lock on it out of
+      // order. It was moved because it also self-deadlocked two existing tests
+      // whose hooks interleave in the read->CAS window.)
+      //
+      // What still escapes, stated plainly: a class created AFTER the read is
+      // in neither this lock set nor `upcoming`, so this erasure does not
+      // cancel it. Unchanged from before #237 — the read was equally the last
+      // word on what the loop visits — and not closed by scoping the read to
+      // these ids, the `syncTemplateInstances` shape, which would additionally
+      // drop classes created between the read and this statement. A worse
+      // trade on an Article 17 path.
       //
       // This also brings the shared 2s `lock_timeout` into a transaction that
       // had none, so every statement in it is now bounded rather than waiting

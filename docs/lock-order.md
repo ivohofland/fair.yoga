@@ -148,11 +148,20 @@ a call):
    checkable rather than remembered: **every multi-row lock is
    `lockClassRowsOrdered` (`db-locks.ts`), and it is the only production
    `FOR UPDATE OF c` in `src/`.** The single-id `FOR UPDATE`s remain plural and
-   inline — four in `waitlist.ts` (`addToWaitlist`, `promoteNext`, `claimSpot`,
-   `removeFromWaitlist` via `lockClassRow`), one in `POST /api/registrations`,
-   plus `lockClassRow`'s own body — and they carry no ordering obligation
-   individually, which is why they were never the subject here. Their unbounded
-   wait is #104's subject;
+   inline — three in `waitlist.ts` (`addToWaitlist`, `promoteNext`,
+   `claimSpot`) and one in `POST /api/registrations` — plus `lockClassRow`'s
+   own body, which is bounded and is what `removeFromWaitlist` and
+   `handleSpotFreed` reach the lock through rather than inlining it. Those four
+   inline ones carry no ordering obligation individually, which is why they
+   were never the subject here; their unbounded wait is #104's subject. It was
+   four in `waitlist.ts` until #237, when `withdrawWaitingEntriesForTeacher`
+   adopted the helper — that took its statement off the inline list and its
+   wait off #104's at the same time. Do not substitute another name into the
+   vacated slot to keep the count at four: a count that stays right while the
+   membership changes is the one error nothing that counts can catch, and this
+   document has already made it once (`db-locks.ts`'s register named
+   `deleteStudentAccount` as a `lockClassRow` caller long after it stopped
+   being one, and the total never moved);
 3. `lockClassRow(` — the helper's callers;
 4. **parent deletes that cascade onto `Class` without naming it** — the
    category a grep for `class.` misses. `Class` holds three FKs pointing *out*
