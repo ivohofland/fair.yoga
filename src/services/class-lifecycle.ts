@@ -30,8 +30,20 @@ export { ECONOMIC_FIELDS, type EconomicField };
 /**
  * All valid state transitions. Terminal states (completed, cancelled)
  * have empty arrays — no transitions out.
+ *
+ * The arrays are `readonly`. `VALID_TRANSITIONS.completed.push('open')`
+ * compiled before, which would have desynchronised this table at runtime from
+ * both `TERMINAL_CLASS_STATUSES` (frozen at module load, so it would NOT have
+ * followed) and the DB trigger that enforces the same thing — the exact drift
+ * the derivation below exists to make impossible. All four read sites
+ * (`.length`, `.includes` ×2, `.join`) are readonly-safe, so this costs nothing.
+ *
+ * `readonly ClassStatus[]` rather than `as const satisfies`: the latter would
+ * narrow the values to literal unions and force `as readonly ClassStatus[]`
+ * casts into `canTransition` and `sourceStatesFor`, which are the two functions
+ * that most need to stay honest about their argument types.
  */
-export const VALID_TRANSITIONS: Record<ClassStatus, ClassStatus[]> = {
+export const VALID_TRANSITIONS: Record<ClassStatus, readonly ClassStatus[]> = {
   draft: ['open', 'cancelled'],
   open: ['in_progress', 'cancelled'],
   in_progress: ['completed'],

@@ -30,21 +30,28 @@
  *    trigger `class_terminal_status_guard` makes a terminal class's status
  *    physically unchangeable from any client, raw SQL included.
  *    `class-terminal-status.test.ts` pins the derived set against that trigger.
- *  - Ten of the fifteen `WaitlistEntry` write sites require the class to be
- *    `open` (or `open`/`in_progress` for the walk-in resolver), or run inside
- *    the CAS that makes the class terminal. Three more — `removeFromWaitlist`,
- *    `withdrawWaitingEntriesForTeacher` and `reorderWaitingEntries` — are
- *    scoped to `status: 'waiting'`, which on a terminal class exists only as
- *    pre-#216 legacy. Reaping is what removes that legacy population. The
- *    fourteenth, `deleteStudentAccount`'s unscoped `deleteMany` (`gdpr.ts`),
- *    is neither: it is a DELETE, so it needs no status guard of its own —
- *    it is the population this sweep exists to shrink, not a writer this
- *    argument has to account for. The FIFTEENTH is this sweep's own
- *    `deleteMany` below, which did not exist when this census was first
- *    written and turned its arithmetic stale on the same commit that added it.
- *    To re-derive the roster:
+ *  - Every `WaitlistEntry` write site falls into one of three buckets, and none
+ *    of them can write a row this sweep would then wrongly reap. To re-derive
+ *    the roster:
  *    `grep -rnE 'waitlistEntry\.(create|update|delete|upsert)' src`, excluding
- *    tests — eighteen lines today, three of them comments.
+ *    tests and the comment lines among the hits. Classify each:
+ *
+ *      1. GUARDED BY CLASS STATUS — requires the class to be `open` (or
+ *         `open`/`in_progress` for the walk-in resolver), or runs inside the
+ *         CAS that makes the class terminal. A terminal class is out of reach.
+ *      2. SCOPED TO `status: 'waiting'` — `removeFromWaitlist`,
+ *         `withdrawWaitingEntriesForTeacher`, `reorderWaitingEntries`. On a
+ *         terminal class a `waiting` row exists only as pre-#216 legacy, and
+ *         reaping is what removes that legacy population.
+ *      3. DELETERS — `deleteStudentAccount` (`gdpr.ts`) and this sweep's own
+ *         `deleteMany` below. A DELETE needs no status guard of its own: it is
+ *         the population this sweep exists to shrink, not a writer this
+ *         argument has to account for.
+ *
+ *    The classification is what makes the argument; a headcount of each bucket
+ *    is not. An earlier revision hand-maintained one and it went stale on the
+ *    very commit that added this sweep — the grep is self-updating, the
+ *    arithmetic was not.
  *
  * THE SECOND HALF OF THE PREDICATE IS NOT ENFORCED. This sweep filters on
  * `class.status` AND `class.date`, and the paragraph above argues only the
@@ -57,32 +64,42 @@
  * stopping the edit is a page-level redirect in the teacher edit page, which is
  * UI. So a teacher can set any date on their own `completed` class and the next
  * run of this sweep will permanently delete that class's queue. Known residual,
- * tracked as its own issue (which fields freeze at which lifecycle stage is a
- * product decision, not this module's); recorded here so nobody reads the
- * safety argument as stronger than it is. It is the one way a row this sweep
- * should keep can be made to look reapable.
+ * tracked as #247 (which fields freeze at which lifecycle stage is a product
+ * decision, not this module's); recorded here so nobody reads the safety
+ * argument as stronger than it is. It is the one way a row this sweep should
+ * keep can be made to look reapable.
  *
- * ONE CLASS PER TRANSACTION, and that is structural rather than stylistic.
- * `deleteStudentAccount` deletes waitlist entries with an UNSCOPED
- * `deleteMany({ where: { studentId } })` — every status, terminal classes
- * included — so its write set and this one overlap. Two multi-row deletes
- * taking row locks in different plan orders is an AB-BA cycle, and Postgres
- * picks the victim: it can be the erasure, which means a student's Art. 17
- * request failing because a background sweep raced it. Holding one class at a
- * time removes that cycle instead of ordering around it, and it keeps
+ * WHY IT CANNOT DEADLOCK AGAINST THE ERASURE. `deleteStudentAccount` deletes
+ * waitlist entries with an UNSCOPED `deleteMany({ where: { studentId } })` —
+ * every status, terminal classes included — so its write set and this one
+ * overlap, and Postgres picks the victim of any cycle: it can be the erasure,
+ * which means a student's Art. 17 request failing because a background sweep
+ * raced it.
+ *
+ * What removes that cycle is the `Class` ROW LOCK, not the batch size. The
+ * erasure PRE-LOCKS every `Class` it will delete entries from before its first
+ * write (`gdpr.ts`, joined on `w."studentId"` with no status predicate), and
+ * this sweep takes `lockClassRow(tx, classId)` before its `deleteMany`. So
+ * every `WaitlistEntry` row in either write set sits under a `Class` row lock
+ * that both transactions must hold first — the two can never contend on the
+ * same `WaitlistEntry` row at all, and that holds regardless of how many
+ * classes this sweep batched. Do not read one-class-at-a-time as the deadlock
+ * argument; it is not, and a future site copying it as one would be misled.
+ *
+ * WHAT ONE CLASS PER TRANSACTION ACTUALLY BUYS is two smaller things: it keeps
  * `docs/lock-order.md`'s "five sites lock more than one `Class` row" count
- * true.
+ * true, and it bounds how long this sweep holds locks against live traffic.
  *
- * ARGUED ON THE MECHANISM, NOT ON MULTIPLICITY. An earlier version of this
- * paragraph said `docs/lock-order.md` "classifies lock sites by MULTIPLICITY —
- * a transaction that can hold two `Class` row locks carries an ordering
- * obligation, one that holds a single row lock carries none". That document
- * says exactly that and then withdraws it in the next breath: since #196 a
- * single-row write can be half of a slot-key deadlock without ever holding a
- * second `Class` row lock, `updateClass` being the example. Taking one row lock
- * is therefore NOT on its own a safety argument, and a future site that copies
- * this precedent on that basis would be misled. What actually makes this sweep
- * edge-free is three mechanical facts:
+ * ARGUED ON THE MECHANISM, NOT ON MULTIPLICITY. `docs/lock-order.md`
+ * classifies lock sites by MULTIPLICITY — a transaction holding two `Class` row
+ * locks carries an ordering obligation, one holding a single row lock carries
+ * none — and then withdraws that in the next breath: since #196 a single-row
+ * write can be half of a slot-key deadlock without ever holding a second
+ * `Class` row lock, `updateClass` being the example. Taking one row lock is
+ * therefore NOT on its own a safety argument. This is worth stating rather than
+ * passing over, because the multiplicity reading is the one a future author is
+ * most likely to copy from this file. What actually makes this sweep edge-free
+ * is three mechanical facts:
  *
  *  - it never `INSERT`s or `UPDATE`s a `Class` row, so it takes no
  *    `Class_teacher_slot_unique` index-entry lock and cannot join a slot-key
@@ -94,16 +111,16 @@
  *    `Class` lock, so there is no reverse edge for this one to close a cycle
  *    against.
  *
- * The shape is `autoCancelClasses`'
- * (`class-transitions.ts`), whose own docblock argues it on the axis that
- * matters here: a slow lock wait on one class costs only that class's
- * transaction.
+ * The shape is `autoCancelClasses`' (`class-transitions.ts`), whose own docblock
+ * argues it on the axis that matters here: a slow lock wait on one class costs
+ * only that class's transaction.
  */
 
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
 import { FULFILLED_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 import { lockClassRow } from '@/lib/db-locks';
+import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 
 /**
@@ -124,23 +141,109 @@ export const WAITLIST_RETENTION_DAYS = 365;
  * How many classes one run will process.
  *
  * At steady state the daily volume is "classes that turned 366 days old today",
- * a handful, so this is unreachable in normal operation. It exists so a first
- * run against accumulated history cannot wedge the daily job: `scheduler.ts`'s
- * `running` guard drops every tick while one is in flight, so an unbounded loop
- * here would stop the job for ever rather than merely take a while. A backlog
- * drains at this rate per day.
+ * a handful, so this is unreachable in normal operation. It exists for the FIRST
+ * run against accumulated history, to bound how long that run spends taking
+ * `Class` row locks against live traffic on the single 2 GB VPS this project is
+ * pinned to. Five hundred short transactions in a row is already a lot of
+ * contention to hand a one-vCPU box; unbounded, a first run over years of
+ * history would be worse, and every lock it holds is one a teacher's own request
+ * may be waiting behind.
+ *
+ * Not, as an earlier revision claimed, because an unbounded run would "stop the
+ * job for ever" through `scheduler.ts`'s `running` guard. That guard drops ticks
+ * while a run is in flight, but the interval is 24 h, so a run would have to
+ * exceed a full day to cost even one tick — and the loop is over a finite
+ * `groupBy` result, so it terminates regardless. A backlog drains at this rate
+ * per day.
  */
 export const MAX_CLASSES_PER_RUN = 500;
 
+/**
+ * All `readonly`, and constructed exactly once at the end of the run.
+ *
+ * The sibling `ReconcileSummary` (`waitlist-reconciliation.ts`) argues the same
+ * point and it is sharper here: an earlier revision built this object early,
+ * mutated `failed` inside the loop, and carried a SECOND accumulator for
+ * `deleted` in a local `let` that was reconciled onto the field only after the
+ * loop. Any future early return inside that loop would have reported
+ * `deleted: 0` while having permanently deleted rows — a summary that
+ * under-reports an irreversible operation, which is the one direction this
+ * value must never be wrong in. Accumulating into locals and constructing once
+ * makes that unrepresentable rather than merely absent.
+ */
 export interface ReapSummary {
   /** Entries actually deleted. */
-  deleted: number;
+  readonly deleted: number;
   /** Classes this run attempted, after the cap. */
-  classes: number;
+  readonly classes: number;
   /** Classes whose own transaction threw and were skipped. */
-  failed: number;
+  readonly failed: number;
   /** True when more classes were eligible than the cap allowed. */
-  cappedOut: boolean;
+  readonly cappedOut: boolean;
+  /**
+   * How many classes were eligible in total.
+   *
+   * Equal to `classes` on the uncapped path. On the capped path it is a real
+   * `COUNT`, taken only there — the candidate read stops at `maxClasses + 1`, so
+   * `candidates.length` cannot answer this, and an earlier revision logged that
+   * length as if it could: it is always exactly `maxClasses + 1` whenever
+   * `cappedOut`, i.e. a constant dressed as a measurement. An operator needs the
+   * real figure to tell a backlog that drains tomorrow from one that takes a
+   * hundred days.
+   */
+  readonly eligibleAtLeast: number;
+  /**
+   * The cutoff this run used, ISO-8601.
+   *
+   * For an irreversible policy-driven deletion, the window applied belongs in
+   * the only durable record of the run. Neither this nor `now` reached the log
+   * line or the route's JSON before.
+   */
+  readonly cutoff: string;
+}
+
+/** Options for {@link reapClosedWaitlistEntries}. */
+export interface ReapOptions {
+  /**
+   * Clock injection. Production passes nothing; `retentionCutoff` is
+   * UTC-boundary-sensitive, so tests pin it rather than letting the hour the
+   * suite happens to run at decide the answer.
+   */
+  readonly now?: Date;
+  /**
+   * Override `MAX_CLASSES_PER_RUN`. Exists so the cap can be exercised without
+   * 501 fixtures; no production caller sets it. Must be >= 1 — a smaller value
+   * reaps nothing rather than reaping too much.
+   *
+   * Deliberately NOT range-checked at runtime: every out-of-range value fails
+   * toward under-deletion, which is the safe direction for a permanent delete,
+   * and there is no production caller to protect from itself.
+   */
+  readonly maxClasses?: number;
+}
+
+/**
+ * Thrown when a run attempted at least one class and every single one failed.
+ *
+ * Mirrors `ReconciliationFailedError` (`waitlist-reconciliation.ts`) and exists
+ * for the same reason. Per-class failures are swallowed by design — that is what
+ * stops one contended class abandoning the classes behind it — but swallowing
+ * ALL of them means `scheduler.ts` stamps `lastSuccessAt`, leaves `lastError`
+ * null, and `/api/health` reports this job `healthy: true`. That is the field
+ * `DEPLOYMENT.md` tells operators to monitor, so `{classes: 500, failed: 500,
+ * deleted: 0}` returning normally is an affirmative false statement rather than
+ * a missing signal.
+ *
+ * `classes > 0` is what keeps this cheap: "nothing was eligible" and "found work
+ * and accomplished none" are different states the summary can already tell
+ * apart, and only the second is a failure. In the routine case — one contended
+ * class among several — nothing throws.
+ */
+export class RetentionFailedError extends Error {
+  constructor(public readonly classes: number) {
+    super(`waitlist retention attempted ${classes} class(es) and every one failed`);
+    this.name = 'RetentionFailedError';
+  }
 }
 
 /**
@@ -168,7 +271,7 @@ export function retentionCutoff(now: Date): Date {
 
 export async function reapClosedWaitlistEntries(
   db: PrismaClient,
-  opts: { now?: Date; maxClasses?: number } = {},
+  opts: ReapOptions = {},
 ): Promise<ReapSummary> {
   const now = opts.now ?? new Date();
   const maxClasses = opts.maxClasses ?? MAX_CLASSES_PER_RUN;
@@ -201,35 +304,43 @@ export async function reapClosedWaitlistEntries(
   const cappedOut = candidates.length > maxClasses;
   const batch = candidates.slice(0, maxClasses);
 
+  // The real eligible count, taken ONLY on the capped path.
+  //
+  // `candidates.length` cannot answer this: `take: maxClasses + 1` pins it to
+  // exactly `maxClasses + 1` whenever `cappedOut`, so reporting it says only
+  // "more than the cap" in a shape that looks like a measurement. A second
+  // `COUNT(DISTINCT ...)` over the same predicate is a real scan, which is why
+  // it is not taken on the steady-state path — by design the cap is never hit
+  // there, so this costs nothing in normal operation and buys an operator the
+  // one number `MAX_CLASSES_PER_RUN` exists to make them think about.
+  let eligibleAtLeast = batch.length;
   if (cappedOut) {
+    const eligible = await db.waitlistEntry.groupBy({ by: ['classId'], where: reapable });
+    eligibleAtLeast = eligible.length;
+    const drainDays = Math.ceil(eligibleAtLeast / maxClasses);
     // Logged, not merely returned. A sweep that silently processes 500 of 900
     // eligible classes reads as "covered everything" in every downstream
     // report, and `isolatedSweeps` throws the return value away.
     log.warn(
-      { cap: maxClasses, eligibleAtLeast: candidates.length },
+      { cap: maxClasses, eligible: eligibleAtLeast, drainDays },
       'waitlist retention hit its per-run class cap; the remainder waits for the next run',
     );
   }
 
   let deleted = 0;
-  const summary: ReapSummary = {
-    deleted: 0,
-    classes: batch.length,
-    failed: 0,
-    cappedOut,
-  };
+  let failed = 0;
 
   for (const { classId } of batch) {
-    // One transaction per class — see this module's header for why that is
-    // the whole deadlock argument and not a style choice.
+    // One transaction per class. NOT the deadlock argument — see the header:
+    // the `Class` row lock is what removes the cycle, and it does so at any
+    // batch size. This bounds lock-holding against live traffic.
     //
-    // Swallowed PER CLASS, and rethrown by nobody: one contended class must
-    // not abandon the classes behind it, which is the same trade
-    // `reconcileWaitlists` makes. Unlike that sweep this does NOT rethrow when
-    // every class failed, because `isolatedSweeps` (`scheduler.ts`) is the
-    // caller and it already logs and rethrows the first error it sees — and
-    // because a retention sweep repairing nothing for one day is not the
-    // affirmative false statement a reconciliation sweep repairing nothing is.
+    // Swallowed PER CLASS: one contended class must not abandon the classes
+    // behind it, which is the same trade `reconcileWaitlists` makes. Unlike an
+    // earlier revision, an all-failed run IS rethrown after the loop — see
+    // `RetentionFailedError` for why `isolatedSweeps` cannot substitute for
+    // that (it only ever sees errors that ESCAPE the sweep, and this catch
+    // guarantees none do).
     try {
       const count = await db.$transaction(async (tx) => {
         await lockClassRow(tx, classId);
@@ -243,12 +354,59 @@ export async function reapClosedWaitlistEntries(
       });
       deleted += count;
     } catch (err) {
-      log.error({ err, classId }, 'waitlist retention could not reap a class');
-      summary.failed += 1;
+      // Classified, not blanket-`error`, for the reason `reconcileOne` sets out
+      // at length: `api-errors.ts` reserves `error` for what should page
+      // someone, and a lock timeout on a contended row is the system doing what
+      // it was configured to do — retried on the next run. That matters here
+      // specifically because this module's OWN isolation test provokes `55P03`
+      // and calls it "the realistic failure for this code", so the routine
+      // failure was logging at paging level.
+      //
+      // `failed` and `classes` ride along so a line reads as one of N rather
+      // than as an isolated incident.
+      const transient = isTransientDbError(err);
+      failed += 1;
+      log[transient ? 'warn' : 'error'](
+        { err, classId, transient, failed, classes: batch.length },
+        transient
+          ? 'waitlist retention lost a lock race for one class — retrying next run'
+          : 'waitlist retention failed for one class and will not recover by retrying',
+      );
     }
   }
 
-  summary.deleted = deleted;
-  log.info(summary, 'waitlist retention swept');
+  const summary: ReapSummary = {
+    deleted,
+    classes: batch.length,
+    failed,
+    cappedOut,
+    eligibleAtLeast,
+    cutoff: cutoff.toISOString(),
+  };
+  report(summary);
   return summary;
+}
+
+/**
+ * Three branches, mirroring `report()` in `waitlist-reconciliation.ts`.
+ *
+ * An unconditional `log.info` said "swept" whatever happened, which is the
+ * wrong statement for two of the three outcomes below.
+ */
+function report(summary: ReapSummary): void {
+  if (summary.classes > 0 && summary.failed === summary.classes) {
+    // `error`, whatever each individual failure was classified as above.
+    // Individually each may be a routine lock race; a run that attempted N
+    // classes and failed all N is a different statement at any N, and the one
+    // that must not be swallowed.
+    log.error(summary, 'waitlist retention reaped nothing — every class it tried failed');
+    throw new RetentionFailedError(summary.classes);
+  }
+
+  if (summary.failed > 0) {
+    log.warn(summary, 'waitlist retention swept, but some classes could not be reaped');
+    return;
+  }
+
+  log.info(summary, 'waitlist retention swept');
 }
