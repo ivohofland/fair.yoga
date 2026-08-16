@@ -146,6 +146,121 @@ async function cleanupStudentWaitingInClass(
   await prisma.account.deleteMany({ where: { id: fixture.accountId } });
 }
 
+/**
+ * A student with a CLOSED waitlist entry in each of `classCount` classes, and
+ * none `waiting`. The shape the old sized budget was worst at.
+ *
+ * `waitingCount` counted `waiting` entries only, so this student scored zero
+ * and got the 5_000ms floor — against a pre-lock whose join carries no status
+ * predicate and therefore asks for `classCount` row locks. That mismatch is
+ * #240's first axis, and this fixture is the only thing in the suite that can
+ * express it: `makeStudentWaitingInClass` builds exactly one class.
+ *
+ * `status: 'open'` on the classes and `'expired'` on the entries, matching
+ * `makeStudentWaitingInClass({ entryStatus: 'expired' })` rather than being
+ * more realistic than it. A closed entry in production sits on a class that
+ * has started, but nothing in this erasure reads class status for the
+ * pre-lock, and consistency with the fixture already in this file is worth
+ * more than the realism.
+ *
+ * `classIds` comes back SORTED. The pre-lock is `ORDER BY c.id` and ids are
+ * UUIDs, so creation order is not lock order — a caller staggering holders by
+ * creation order would have the erasure block once on whichever row is
+ * released last, and that single wait would blow the 2s `lock_timeout`.
+ *
+ * Distinct `startTime` per class so nothing trips a same-slot constraint.
+ */
+async function makeStudentWithClosedEntriesInClasses(classCount: number) {
+  const suffix = `gdpr-budget-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  const teacher = await prisma.teacher.create({
+    data: {
+      firstName: 'Budget',
+      lastName: 'Teacher',
+      email: `${suffix}@test.local`,
+      account: { create: { email: `${suffix}@test.local` } },
+      bio: 'Budget fixture',
+      pageSlug: suffix,
+    },
+    select: { id: true, accountId: true },
+  });
+  const room = await prisma.room.create({
+    data: {
+      venueName: 'Budget Studio',
+      address: `${suffix} St`,
+      city: 'Amsterdam',
+      postcode: '1234BG',
+      floor: '1',
+      roomName: 'Main',
+      maxCapacity: 20,
+      createdById: teacher.id,
+    },
+    select: { id: true },
+  });
+  const teacherRoom = await prisma.teacherRoom.create({
+    data: { teacherId: teacher.id, roomId: room.id, capacityOverride: 15, rentalRate: 30 },
+    select: { id: true },
+  });
+  const student = await prisma.student.create({
+    data: {
+      firstName: 'Budget',
+      lastName: 'Student',
+      email: `${suffix}-student@test.local`,
+      incomeTier: 2,
+    },
+    select: { id: true },
+  });
+  const classIds: string[] = [];
+  for (let i = 0; i < classCount; i++) {
+    const cls = await prisma.class.create({
+      data: {
+        teacherId: teacher.id,
+        teacherRoomId: teacherRoom.id,
+        classType: `Budget class ${i}`,
+        date: new Date('2099-06-01'),
+        startTime: `${String(9 + i).padStart(2, '0')}:00`,
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 1,
+        maxStudents: 10,
+        status: 'open',
+      },
+      select: { id: true },
+    });
+    await prisma.waitlistEntry.create({
+      data: { classId: cls.id, studentId: student.id, position: 1, status: 'expired' },
+    });
+    classIds.push(cls.id);
+  }
+  return {
+    studentId: student.id,
+    classIds: [...classIds].sort(),
+    teacherId: teacher.id,
+    roomId: room.id,
+    accountId: teacher.accountId,
+  };
+}
+
+/**
+ * Tears down everything `makeStudentWithClosedEntriesInClasses` created.
+ * Called from a `finally`, for the reason `cleanupStudentWaitingInClass`
+ * above gives: an assertion failure mid-test must still reap the rows.
+ *
+ * `WaitlistEntry.class` is `onDelete: Cascade`, so surviving entries go with
+ * their classes.
+ */
+async function cleanupStudentWithClosedEntries(
+  fixture: Awaited<ReturnType<typeof makeStudentWithClosedEntriesInClasses>>,
+): Promise<void> {
+  await prisma.class.deleteMany({ where: { id: { in: fixture.classIds } } });
+  await prisma.teacherRoom.deleteMany({ where: { teacherId: fixture.teacherId } });
+  await prisma.room.deleteMany({ where: { id: fixture.roomId } });
+  await prisma.student.deleteMany({ where: { id: fixture.studentId } });
+  await prisma.teacher.deleteMany({ where: { id: fixture.teacherId } });
+  await prisma.account.deleteMany({ where: { id: fixture.accountId } });
+}
+
 describe('GDPR (DB)', () => {
   let teacherId: string;
   let roomId: string;
@@ -505,6 +620,86 @@ let studentAccountId: string;
       await cleanupStudentWaitingInClass(fixture);
     }
   }, 30_000);
+
+  /**
+   * #240. The erasure's transaction budget used to be sized from a count of
+   * `waiting` entries only, so a student with none scored zero and got the
+   * 5_000ms floor — against a pre-lock that still asks for one row lock per
+   * class the student holds an entry in, of any status.
+   *
+   * The construction is fiddly for reasons worth stating, because a simpler
+   * version of it proves nothing:
+   *
+   * - Six holders releasing 1.5s apart, NOT all at once. Simultaneous
+   *   releases produce one ~1.5s wait, not six; the statement then finishes
+   *   inside 5s and the old budget passes.
+   * - Staggered by SORTED class id, because the pre-lock is `ORDER BY c.id`.
+   *   Stagger by creation order and the erasure blocks once on whatever is
+   *   released last, that single wait exceeds the 2s `lock_timeout`, and the
+   *   FIXED code fails with `55P03`.
+   * - `pg_sleep` inside the holding transaction, on an ABSOLUTE schedule
+   *   computed from `t0`, rather than a JS timer per holder. The two margins
+   *   pull against each other — total elapsed must clear 5_000ms or the old
+   *   budget survives, and no single wait may reach 2_000ms or the new one
+   *   dies — and a JS timer firing late spends the second margin directly.
+   *   1.5s steps leave 500ms of headroom under the bound and ≈3.7s over the
+   *   old budget.
+   * - A DEDICATED client with an explicit `connection_limit`. Prisma's
+   *   default pool is `physical_cores * 2 + 1`; on a two-core CI runner that
+   *   is five, and six holders plus the erasure would deadlock waiting for
+   *   connections rather than for locks — a failure that looks nothing like
+   *   what this test is about.
+   *
+   * What it proves, precisely: an erasure whose lock waits total more than
+   * the old floor now completes. Restore
+   * `Math.min(5_000 + waitingCount * 2_000, 20_000)` and it fails with
+   * `P2028`, which is #240 reproduced.
+   */
+  it('completes when its lock waits total more than the old 5s budget', async () => {
+    const CLASSES = 6;
+    const HOLD_STEP_MS = 1_500;
+    const fixture = await makeStudentWithClosedEntriesInClasses(CLASSES);
+    const baseUrl = process.env.DATABASE_URL ?? '';
+    const holderDb = new PrismaClient({
+      datasources: {
+        db: { url: `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}connection_limit=10` },
+      },
+    });
+    try {
+      const t0 = Date.now();
+      const holders = fixture.classIds.map((classId, i) =>
+        holderDb.$transaction(
+          async (tx) => {
+            await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
+            const seconds = Math.max(0, (t0 + (i + 1) * HOLD_STEP_MS - Date.now()) / 1000);
+            // Computed, never input — `$queryRawUnsafe` because a bound
+            // parameter into `pg_sleep` needs an explicit cast to resolve.
+            await tx.$queryRawUnsafe(`SELECT pg_sleep(${seconds.toFixed(3)})`);
+          },
+          { timeout: 30_000, maxWait: 10_000 },
+        ),
+      );
+
+      // Every holder must be sitting on its row before the erasure asks for
+      // any of them, or the pre-lock sails through the ones not yet taken.
+      await new Promise((r) => setTimeout(r, 300));
+
+      await deleteStudentAccount(prisma, fixture.studentId);
+      await Promise.all(holders);
+
+      expect(
+        await prisma.waitlistEntry.count({ where: { studentId: fixture.studentId } }),
+      ).toBe(0);
+      const erased = await prisma.student.findUniqueOrThrow({
+        where: { id: fixture.studentId },
+        select: { deletedAt: true },
+      });
+      expect(erased.deletedAt).not.toBeNull();
+    } finally {
+      await holderDb.$disconnect();
+      await cleanupStudentWithClosedEntries(fixture);
+    }
+  }, 40_000);
 
   it('does not deadlock against a transaction that locks the class first and then writes the erased student\'s waiting entry', async () => {
     // Round 1 review, C1: the previous version of this fix took the row
