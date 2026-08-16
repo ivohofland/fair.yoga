@@ -66,12 +66,22 @@ any cross-table one.
 through it, and it is the only production `SELECT … FOR UPDATE OF c` in `src/`
 — so the check is a grep, not a list:
 
-    grep -rn 'FOR UPDATE OF' --include="*.ts" src/ | grep -v '\.test\.ts'
+    grep -rn 'FOR UPDATE OF' --include="*.ts" src/ \
+      | grep -v '\.test\.ts' \
+      | grep -vE ':[0-9]+: *(//|\*|/\*)'
 
-Anything that returns beyond `db-locks.ts` is a site that has left the
-convention, and that is the whole enforcement. The helper owns the order, the
-`FOR UPDATE OF c` lock mode, the shared 2s bound and the dedupe; a sixth site
+**That returns exactly one line today** — `src/lib/db-locks.ts`, inside
+`lockClassRowsOrdered`. A second line is a site that has left the convention,
+and that is the whole enforcement. The helper owns the order, the
+`FOR UPDATE OF c` lock mode, the shared 2s bound and the dedupe; a new site
 inherits all four by calling it.
+
+The third filter is not optional, and leaving it off is how this check shipped
+broken. Without it the grep returns **11** lines across four files, ten of them
+prose *about* the convention rather than uses of it — this codebase discusses
+`FOR UPDATE OF c` far more often than it issues it, so a reader running the
+unfiltered version concludes on first use that the convention is already
+abandoned. Caught by #239's review, which is to say: after it shipped.
 
 **Before #237 this section was a five-row table**, and it was corrected about
 its own membership four times — the last of them by the round that filed the
@@ -195,8 +205,8 @@ Inserting a row that references a class — `Registration`, `WaitlistEntry`,
 That is not a weak advisory lock: measured here, an uncommitted
 `notification.create` carrying `relatedClassId` made a third connection's
 `SELECT … FOR UPDATE NOWAIT` on that class fail with `55P03`, and blocked a
-`DELETE` of it. So it conflicts with `lockClassRow` and with every site in the
-table above.
+`DELETE` of it. So it conflicts with `lockClassRow`, with `lockClassRowsOrdered`,
+and with every site named in "Known conformance" below.
 
 It changes the answer nowhere, and that was checked rather than assumed: a
 transaction only acquires a *second* `Class` lock this way if it inserts
@@ -279,23 +289,33 @@ document depends on.
 
 Three things about that table are easy to get wrong and are the reason it exists:
 
-**The lock order of a loop is the order of the read it walks.** `deleteTeacherAccount`
-takes no explicit lock at all — its `UPDATE` is the lock — so there is no line
-of code that "takes the locks" to inspect. Its `findMany` had no `orderBy` until
-the whole-branch review of #174, which meant its lock order was whatever the
-heap returned: for freshly inserted rows, physical (insertion) order, which is
-uncorrelated with id. Against `deleteStudentAccount`, which sorts, that is a
-live cycle and it was reproduced — Postgres `40P01 deadlock detected`, either
-side the victim. Pinned by `gdpr.test.ts`, "does not deadlock when a teacher
-erasure and a student erasure overlap on two classes"; that test fails with
-that error if the `orderBy` is removed. The same fix closes the inherited
-disagreement with `withdrawWaitingEntriesForTeacher`, which has sorted since
-#166.
+**The lock order of a loop is the order of the read it walks — unless something
+locks first.** `deleteTeacherAccount` used to be the pure case: no explicit lock
+at all, its CAS `UPDATE` was the lock, and there was no line of code that "takes
+the locks" to inspect. Its `findMany` had no `orderBy` until the whole-branch
+review of #174, which meant its lock order was whatever the heap returned: for
+freshly inserted rows, physical (insertion) order, which is uncorrelated with
+id. Against `deleteStudentAccount`, which sorted, that is a live cycle and it
+was reproduced — Postgres `40P01 deadlock detected`, either side the victim.
 
-**JS and SQL have to agree, and that was checked, not assumed.** One of the
-three ordered sites sorts in JavaScript and two sort in Postgres, so
-`[...].sort()` and `ORDER BY id` producing different sequences would
-reintroduce the cycle with every site looking individually correct. Verified
+Since #237 an ordered `lockClassRowsOrdered` pre-lock runs ahead of that loop,
+so the rule no longer describes this site: the pre-lock is the transaction's
+first lock acquisition, and the read's `orderBy: { id: 'asc' }` is now
+presentation only (it fixes the notification order). The rule still applies to
+any future loop that CASes without pre-locking, which is why it is kept.
+Pinned by `gdpr.test.ts`, "does not deadlock when a teacher erasure and a
+student erasure overlap on two classes"; that test fails with `40P01` if the
+pre-lock is removed. The same fix closes the inherited disagreement with
+`withdrawWaitingEntriesForTeacher`, which has sorted since #166.
+
+**JS and SQL had to agree while one site sorted in JavaScript, and that was
+checked, not assumed.** Since #237 every ordered site takes its order from
+`lockClassRowsOrdered`'s `ORDER BY c.id`, so nothing sorts in JS and the
+question is closed by construction — `grep -n '\.sort(' src/services/gdpr.ts`
+returns nothing. Kept because the verification is expensive to redo and a
+future site that sorts an id array in JS reopens it: `[...].sort()` and
+`ORDER BY id` producing different sequences would reintroduce the cycle with
+every site looking individually correct. Verified
 directly against this project's database: `Class.id` is `text` with the default
 collation, the database is `en_US.utf8`, and over 4000 random uuids the
 JS-sorted and SQL-sorted sequences were identical element for element. The
@@ -304,8 +324,8 @@ ever holds — and should be re-run rather than assumed if that ever stops being
 true.
 
 **Sorting the id array does NOT order a multi-row write.** This is the trap the
-two unordered sites sit in, and it is why neither was "fixed" with a one-line
-sort. `class.deleteMany({ where: { id: { in: ids } } })` compiles to
+two then-unordered template sites sat in, and it is why neither was "fixed"
+with a one-line sort. `class.deleteMany({ where: { id: { in: ids } } })` compiles to
 `… WHERE id = ANY($1)`, and the row-visit order — which *is* the lock order —
 is chosen by the planner, never by the array. Measured directly: one
 transaction holding a row, the multi-row `UPDATE` blocked on it, and a third
@@ -319,17 +339,34 @@ table may take a bitmap scan (also heap order) or a btree `ScalarArrayOp` index
 scan (index order, which for `id` would *coincidentally* be ascending). Do not
 build on that coincidence: it can change under you with no code change at all,
 which is worse than a plainly wrong order because it will test green.
+
+That warning came due against this document's own test suite in #239. Both
+ordering reproductions asserted a *premise* about the natural order of a
+`Class`/`WaitlistEntry` join, forced with `enable_hashjoin = off` — which
+removes a join ALGORITHM but not a join DIRECTION. The planner can still drive
+that join from `Class`, and then the two callers agree and the cycle cannot be
+built. Which side it picks is a cost knife-edge on `w."studentId"`, a column no
+index leads with, and it is NON-MONOTONIC in table size: measured on
+2026-08-16, background-row counts of 0, 2, 50 and 200 drive from `Class` while
+10, 1 000 and 50 000 drive from `WaitlistEntry`. No amount of seeding makes a
+cost-chosen plan safe. The fix is to leave the planner no choice —
+`enable_mergejoin` and `enable_seqscan` off as well, which leaves an
+index-driven nested loop whose order comes from index structure rather than
+from a cost comparison. If you write another lock-order reproduction, force the
+plan; do not hope for it.
 `archiveOrUnarchiveTemplate` does not even pass ids — its `deleteMany` takes a
 predicate, so it has no array to sort in the first place.
 
 Ordering a multi-row write means locking the rows first, explicitly: an
-`ORDER BY … FOR UPDATE` ahead of the write itself — what
-`withdrawWaitingEntriesForTeacher` does, and what `syncTemplateInstances` and
-`archiveOrUnarchiveTemplate` now do too, as an ordered pre-lock ahead of their
-`updateMany`/`deleteMany` (issue 180) — or a `lockClassRow` loop over a sorted
-read (what `deleteStudentAccount` does).
+`ORDER BY … FOR UPDATE` ahead of the write itself. In `src/` that is always
+`lockClassRowsOrdered` (`db-locks.ts`) — `withdrawWaitingEntriesForTeacher`,
+`syncTemplateInstances` and `archiveOrUnarchiveTemplate` take theirs as a
+pre-lock ahead of their `updateMany`/`deleteMany` (issue 180), and both
+erasures reach the same helper (#237). A per-row `lockClassRow` loop over a
+sorted read also works and is what `deleteStudentAccount` used before
+#216/#182; it costs 2N round trips, which is why it was replaced.
 
-### The slot key is a wait edge, and the table above cannot see it (#196)
+### The slot key is a wait edge, and the ascending-by-`id` rule cannot see it (#196)
 
 `Class_teacher_slot_unique` — `(teacherId, date, startTime) WHERE status <>
 'cancelled'` — is a lock in every sense that matters here. Two transactions
@@ -337,7 +374,8 @@ writing the same key make the second wait on the first's uncommitted index
 entry, as a `ShareLock` on the first's transaction id, which the deadlock
 detector reads exactly like a row lock. The upsert-quirk section below already
 says this in one line about `TeacherStudent`. On `Class` it has two
-consequences the five-site table above is shaped to miss.
+consequences a site enumeration over `FOR UPDATE`/`UPDATE`/`DELETE` is shaped
+to miss.
 
 **It falsifies a stated premise of "How that enumeration was derived".** Check 1
 excuses `create`/`createMany`/`createManyAndReturn` — "a freshly inserted row's
@@ -716,12 +754,13 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   waitlist-resolution step actively prevents in the normal booking flow — but
   "no counterparty found" is not the same claim as "safe," and none is made
   here. All three left open, not resolved: no code changed for any of them.
-- **`deleteTeacherAccount`** (`src/services/gdpr.ts`) — `Class`, via a
-  per-class compare-and-swap `class.updateMany` inside a loop over upcoming
-  classes (not `lockClassRow`, but still a lock-taking `UPDATE`, and still
-  first), the loop walking an `orderBy: { id: 'asc' }` read — see "Ordering
-  WITHIN `Class`" for why that `orderBy` is a lock and not a presentation
-  choice. Then, per class, `WaitlistEntry` and the `Registration` read that
+- **`deleteTeacherAccount`** (`src/services/gdpr.ts`) — `Class`, via an ordered
+  `lockClassRowsOrdered` pre-lock over every class in `CANCELLABLE_STATUSES`,
+  taken before the cancel loop and first in the transaction (#237). The loop's
+  per-class compare-and-swap `class.updateMany` re-takes rows that pre-lock
+  already holds, so the read's `orderBy: { id: 'asc' }` is presentation only
+  now (notification order) — see "Ordering WITHIN `Class`" for what it used to
+  be and why it stopped. Then, per class, `WaitlistEntry` and the `Registration` read that
   chooses who gets the cancellation notice — that read moved inside the lock
   in the whole-branch review of #174, having been an eager-load on the
   pre-lock `findMany` until then, which meant a student registering in the gap

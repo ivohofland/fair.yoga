@@ -249,6 +249,16 @@ export async function lockClassRow(tx: TransactionClientOnly, classId: string): 
  *     themselves are safe — a later `SET LOCAL lock_timeout` overwrites the
  *     earlier one rather than stacking.
  *
+ *     PER ACQUISITION, NOT PER STATEMENT, and a caller sizing a transaction
+ *     budget around this needs the difference. Postgres arms `lock_timeout`
+ *     separately for each lock this statement waits on, so locking N contended
+ *     rows here can spend up to N × 2s in total while no single wait ever
+ *     exceeds the bound. Measured on 2026-08-16: two rows held by sessions
+ *     releasing at 1.5s and 3.0s, one waiter at `lock_timeout='2s'` taking
+ *     both in one statement, succeeded after 2.67s. "Bounded" here means no
+ *     wait is unbounded — it does NOT mean the statement is O(1) in N. What
+ *     this helper collapses to O(1) is ROUND TRIPS, not waiting.
+ *
  *   the dedupe — Postgres refuses `DISTINCT` alongside `FOR UPDATE`, so a
  *     join matching one class twice hands back two ids for one locked row.
  *     Order is preserved: `Set` iterates in insertion order and the rows
@@ -265,8 +275,13 @@ export async function lockClassRow(tx: TransactionClientOnly, classId: string): 
  * Parameters are bound — `Prisma.sql` tagged templates merge their values into
  * this statement in source order, verified against Postgres — so nothing here
  * is interpolated unless a caller reaches for `Prisma.raw`, which in `src/` is
- * used once, for a frozen constant (`SCHEDULED_STATUSES_SQL`,
- * `class-template-lifecycle.ts`).
+ * used only to render frozen, hard-coded status lists — never input. Grep
+ * `Prisma.raw` rather than trusting a count here: an earlier version of this
+ * sentence said "used once, for a frozen constant
+ * (`SCHEDULED_STATUSES_SQL`)", and #237 added the second one
+ * (`CANCELLABLE_STATUSES_SQL`, `gdpr.ts`) in the same commit that wrote the
+ * sentence. The membership changed while the shape of the claim held, which is
+ * the one error nothing that counts can catch.
  *
  * Returning the ids is not a convenience. It lets a caller scope its write to
  * `id: { in: … }` so the write set is a structural SUBSET of the lock set,

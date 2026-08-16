@@ -652,14 +652,26 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // other transactions (that contention is exactly what the class-lock
     // ordering above resolves) — the claim is narrower, that this specific
     // set of statements already fit inside 5s before this task added
-    // anything. `waitingCount * 2_000` no longer prices a lock LOOP's wait —
-    // #237 replaced `deleteStudentAccount`'s per-class `lockClassRow` loop
-    // with the ONE ordered pre-lock statement above, which takes at most a
-    // single 2s `lock_timeout`, whatever N is. The term now covers the reorder
-    // loop's per-class cost instead: `reorderWaitingEntries`' own `findMany`
-    // plus up to M `UPDATE`s per class, each under the same 2s bound (round 1
-    // review, I2). That is **over-generous rather than wrong** — resizing the
-    // formula is deliberately not this branch's change.
+    // anything. `waitingCount * 2_000` still prices a lock wait, and #237's
+    // review corrected an earlier version of this paragraph that said it did
+    // not. That version claimed the ONE ordered pre-lock statement "takes at
+    // most a single 2s `lock_timeout`, whatever N is". It does not.
+    // `lock_timeout` applies separately to EACH lock acquisition attempt, not
+    // to the statement — so a `SELECT … FOR UPDATE` over N contended rows can
+    // spend up to N × 2s, which is what the `lockClassRow` loop cost too.
+    // Measured rather than read off the docs: two `Class` rows held by two
+    // sessions releasing at 1.5s and 3.0s, one waiter at `lock_timeout='2s'`
+    // taking both in a single statement, SUCCEEDED after 2.67s. What #237
+    // actually bought here is round trips — 2N down to one — which is the real
+    // win and is argued at `docs/lock-order.md`'s derivation.
+    //
+    // So the term is not over-generous. It allots 2s per `waiting` class
+    // against a lock set that spans EVERY status (the pre-lock's join carries
+    // no status predicate, deliberately — see there), plus the reorder loop's
+    // own per-class cost described in the second direction below. It
+    // UNDER-counts on both axes, and the `Math.min` ceiling is what actually
+    // bounds this transaction. Resizing the formula is deliberately still not
+    // this branch's change; it is filed rather than left implied.
     //
     // That term does not cover everything the 2s bound applies to, though —
     // in two different directions. First, `SET LOCAL lock_timeout` governs
@@ -932,12 +944,22 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // no lock this statement did not take, and none out of this order. That
       // turns on the statuses being one-way: a class in `upcoming` that is not
       // in this lock set had left `draft|open|in_progress` by the time this
-      // ran, and nothing puts it back. Checked rather than assumed — the enum
-      // has five members, the two outside `CANCELLABLE_STATUSES` are
-      // `completed` and `cancelled`, and the only writes that SET a cancellable
-      // status are `class-transitions.ts`'s `open → in_progress` and the two
-      // row CREATES (`api/classes/route.ts`, `class-generator.ts`). There is no
-      // un-cancel and no re-open. (The plan put this statement BEFORE the read.
+      // ran, and nothing puts it back. Enforced by the DATABASE rather than by
+      // an enumeration of writers: `class_terminal_status_guard`
+      // (`prisma/migrations/20260805120000_class_terminal_status_trigger`) is a
+      // `BEFORE UPDATE OF status ON "Class"` trigger that raises `23514`
+      // whenever the OLD status is `completed` or `cancelled`. No application
+      // path, test helper, seed or future feature can put a row back into a
+      // cancellable status without hitting it, so there is no un-cancel and no
+      // re-open — and no list here to go stale.
+      //
+      // An earlier version of this passage DID enumerate the writers, and
+      // #239's review found it had missed two of them (`transitionClass` and
+      // `completeClass`, both `class-lifecycle.ts`). The conclusion survived —
+      // both are moves WITHIN the cancellable set — but the evidence offered
+      // for it was wrong, which is the failure mode this file spends
+      // paragraphs on elsewhere. The trigger was always the better citation.
+      // (The plan put this statement BEFORE the read.
       // That placement could not promise this: a class created in the gap would
       // be read but not held, and the CAS would take a fresh lock on it out of
       // order. It was moved because it also self-deadlocked two existing tests
@@ -955,7 +977,13 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // had none, so every statement in it is now bounded rather than waiting
       // out Prisma's `{ timeout: 10_000 }` — which cannot roll back a
       // statement already blocked inside Postgres, only refuse to start a new
-      // one (`gdpr.ts:692`). The `upcoming` read above runs before this bound
+      // one — the `Math.min` ceiling paragraph in `deleteStudentAccount`'s
+      // `timeout` option above states this at length, and states why the
+      // ceiling is the real bound. (That paragraph was cited here by line
+      // number until #239's review, which found the number pointing at a
+      // dangling continuation word: this branch's own edits above had shifted
+      // it. Anchor text greps; a line number rots on the next edit.)
+      // The `upcoming` read above runs before this bound
       // takes effect, but it takes no row locks, so nothing waits on it.
       // Deliberate: the same argument `deleteStudentAccount` makes for its own
       // bound applies here, since Article 17 does not distinguish which

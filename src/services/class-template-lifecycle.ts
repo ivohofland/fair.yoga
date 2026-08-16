@@ -219,8 +219,11 @@ export type UpdateClassTemplateResult =
    *    `syncTemplateInstances` (`template-sync.ts`) is composed into this
    *    transaction now and takes an ordered `FOR UPDATE OF c` over every
    *    future instance, while `POST /api/registrations` holds its `Class` row
-   *    `FOR UPDATE` for the length of its own transaction — one of the five
-   *    deliberately UNBOUNDED sites `db-locks.ts` lists. So a student booking
+   *    `FOR UPDATE` for the length of its own transaction — one of the
+   *    deliberately UNBOUNDED sites `db-locks.ts` names (#104). It said "one
+   *    of the five" until #237 converted `withdrawWaitingEntriesForTeacher`
+   *    and left this cross-reference behind; the count is not repeated here
+   *    any more, because nothing enforces it. So a student booking
    *    one instance can now time a teacher's edit out at 2s.
    *    `archiveOrUnarchiveTemplate` documents the same exposure for its own
    *    pre-lock ("that one can lose to an ordinary booking holding a `Class`

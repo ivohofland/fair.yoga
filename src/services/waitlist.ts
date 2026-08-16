@@ -912,8 +912,12 @@ async function hasActiveRegistration(
  * way, none of the three can race a `lockClassRow` holder into corrupting
  * anything. The first two still do not bound their own wait the way
  * `lockClassRow` does, and `deleteStudentAccount`'s `reorderWaitingEntries`
- * loop inherits `lockClassRow`'s 2s bound for every statement it runs, these
- * two mutators' rows included. Named here so the next reader of that
+ * loop runs under the 2s bound its own transaction sets unconditionally
+ * (`setLockTimeout` as that transaction's first statement, `gdpr.ts`) for
+ * every statement it runs, these two mutators' rows included. That used to
+ * say the loop inherited `lockClassRow`'s bound, which stopped being the
+ * mechanism when #237 replaced the erasure's lock loop — `gdpr.ts` calls
+ * `lockClassRow` nowhere now. Named here so the next reader of that
  * budget's arithmetic (`gdpr.ts`, the erasure transaction's `timeout`) does
  * not have to rediscover them.
  *
