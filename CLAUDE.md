@@ -56,8 +56,8 @@ Classes move through states: `draft → open → full → in_progress → comple
 - Before cancel deadline: auto-promote next in queue
 - Final hour before the *cancel deadline* (not before the class): switch to first-come-first-claimed broadcast
 - Frozen after deadline — no more promotions
-- Retention: an entry that never became a registration is reaped 365 days after
-  its class ran, once that class is terminal — a daily sweep, no migration
+- Retention: an entry that never became a registration is reaped once its class
+  is terminal and *more than* 365 days past its date — a daily sweep, no migration
 
 ### Payment Model
 

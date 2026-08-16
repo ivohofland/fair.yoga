@@ -196,8 +196,11 @@ export async function reconcileWaitlists(
   // To re-derive either roster:
   // `grep -rnE 'waitlistEntry\.(create|update|delete|upsert)' src`,
   // excluding tests, then read each hit for which status it writes, or
-  // whether it deletes the row — this now returns two production deleters,
-  // not one. The join above is kept anyway — it still
+  // whether it deletes the row — eighteen lines today, three of them
+  // comments, so fifteen write sites, of which two are production DELETERS
+  // rather than one. (`waitlist-retention.ts`'s header classifies the same
+  // fifteen by whether they can reach a terminal class; the two counts are
+  // the same grep and must move together.) The join above is kept anyway — it still
   // narrows the scan to classes whose queue could still matter, which is
   // worth avoiding even though nothing downstream depends on it for
   // correctness any more.

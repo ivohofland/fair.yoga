@@ -2149,7 +2149,9 @@ reason to open them. Enumerated so a fifth round does not rediscover them. The
 count rose from five to eight *while the list was being written*, which is the
 branch's own lesson happening again.
 
-**#238 — nothing ever reaps a closed, unfulfilled `WaitlistEntry`**, and that
+**#238 — nothing ever reaped a closed, unfulfilled `WaitlistEntry`** (past
+tense as of the open branch that closes it; this entry keeps its triage
+treatment until the post-merge pass), and that
 single fact is upstream of almost everything above. Classes are never deleted;
 `onDelete: Cascade` from `Student` never fires because erasure anonymises rather
 than deletes. So the population grows for the life of each account, which is what

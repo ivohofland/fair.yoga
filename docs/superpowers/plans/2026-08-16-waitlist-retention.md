@@ -548,13 +548,16 @@ Create `src/services/waitlist-retention.ts`:
  *    trigger `class_terminal_status_guard` makes a terminal class's status
  *    physically unchangeable from any client, raw SQL included.
  *    `class-terminal-status.test.ts` pins the derived set against that trigger.
- *  - Eleven of the fourteen `WaitlistEntry` write sites require the class to be
+ *  - Ten of the fourteen `WaitlistEntry` write sites require the class to be
  *    `open` (or `open`/`in_progress` for the walk-in resolver), or run inside
  *    the CAS that makes the class terminal. The three that do not —
  *    `removeFromWaitlist`, `withdrawWaitingEntriesForTeacher` and
  *    `reorderWaitingEntries` — are all scoped to `status: 'waiting'`, which on
  *    a terminal class exists only as pre-#216 legacy. Reaping is what removes
- *    that legacy population.
+ *    that legacy population. (10 + 3 = 13; the fourteenth is
+ *    `deleteStudentAccount`'s unscoped `deleteMany`, which the shipped docblock
+ *    accounts for and this sketch omitted. This sketch also predates the
+ *    sweep's own `deleteMany`, which makes the grep return fifteen.)
  *    To re-derive the roster:
  *    `grep -rnE 'waitlistEntry\.(create|update|delete|upsert)' src`, excluding
  *    tests.

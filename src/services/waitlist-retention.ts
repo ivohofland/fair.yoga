@@ -12,20 +12,25 @@
  * never fires at all, because erasure anonymises rather than deletes. So
  * without this sweep the population grows for the life of each account.
  *
- * That growth is what made the erasure's `Class` lock set unbounded — see the
- * budget rationale in `deleteStudentAccount` — and it is a storage-limitation
- * problem in its own right (GDPR Art. 5(1)(e)): an entry for a class that ran
- * two years ago, which never became a booking, has no remaining purpose, and
- * the Article 15 export publishes every one of them verbatim.
+ * That growth is most of what makes the erasure's `Class` lock set grow with
+ * account age — see the budget rationale in `deleteStudentAccount`. Only most:
+ * that pre-lock joins `WaitlistEntry` with no status predicate, while this
+ * sweep reaps only UNFULFILLED entries, so the lock set is shrunk rather than
+ * bounded and still grows for a student who queues and gets promoted week
+ * after week. This is also a storage-limitation problem in its own right
+ * (GDPR Art. 5(1)(e)): an entry for a class that ran two years ago, which never
+ * became a booking, has no remaining purpose, and the Article 15 export
+ * publishes every one of them verbatim.
  *
- * WHY IT IS SAFE. Two independent arguments, and both are enforced rather than
- * asserted:
+ * WHY IT IS SAFE. Two arguments — and read the SECOND HALF OF THE PREDICATE
+ * below before treating either as fully DB-enforced, because only one of the
+ * two columns this sweep filters on is:
  *
  *  - `TERMINAL_CLASS_STATUSES` is derived from `VALID_TRANSITIONS`, and the DB
  *    trigger `class_terminal_status_guard` makes a terminal class's status
  *    physically unchangeable from any client, raw SQL included.
  *    `class-terminal-status.test.ts` pins the derived set against that trigger.
- *  - Ten of the fourteen `WaitlistEntry` write sites require the class to be
+ *  - Ten of the fifteen `WaitlistEntry` write sites require the class to be
  *    `open` (or `open`/`in_progress` for the walk-in resolver), or run inside
  *    the CAS that makes the class terminal. Three more — `removeFromWaitlist`,
  *    `withdrawWaitingEntriesForTeacher` and `reorderWaitingEntries` — are
@@ -34,10 +39,28 @@
  *    fourteenth, `deleteStudentAccount`'s unscoped `deleteMany` (`gdpr.ts`),
  *    is neither: it is a DELETE, so it needs no status guard of its own —
  *    it is the population this sweep exists to shrink, not a writer this
- *    argument has to account for.
+ *    argument has to account for. The FIFTEENTH is this sweep's own
+ *    `deleteMany` below, which did not exist when this census was first
+ *    written and turned its arithmetic stale on the same commit that added it.
  *    To re-derive the roster:
  *    `grep -rnE 'waitlistEntry\.(create|update|delete|upsert)' src`, excluding
- *    tests.
+ *    tests — eighteen lines today, three of them comments.
+ *
+ * THE SECOND HALF OF THE PREDICATE IS NOT ENFORCED. This sweep filters on
+ * `class.status` AND `class.date`, and the paragraph above argues only the
+ * first. `class_terminal_status_guard` is a `BEFORE UPDATE OF status` trigger —
+ * its own SQL says updates to other columns of a completed class are
+ * unaffected — and `date` has no equivalent: `updateClass`
+ * (`class-lifecycle.ts`) carries no class-status guard, only the
+ * `settingsLocked` check over the ECONOMIC fields, and `date` is not one of
+ * them; `PUT /api/classes/[id]` checks no status either. The only thing
+ * stopping the edit is a page-level redirect in the teacher edit page, which is
+ * UI. So a teacher can set any date on their own `completed` class and the next
+ * run of this sweep will permanently delete that class's queue. Known residual,
+ * tracked as its own issue (which fields freeze at which lifecycle stage is a
+ * product decision, not this module's); recorded here so nobody reads the
+ * safety argument as stronger than it is. It is the one way a row this sweep
+ * should keep can be made to look reapable.
  *
  * ONE CLASS PER TRANSACTION, and that is structural rather than stylistic.
  * `deleteStudentAccount` deletes waitlist entries with an UNSCOPED
@@ -45,12 +68,33 @@
  * included — so its write set and this one overlap. Two multi-row deletes
  * taking row locks in different plan orders is an AB-BA cycle, and Postgres
  * picks the victim: it can be the erasure, which means a student's Art. 17
- * request failing because a background sweep raced it. `docs/lock-order.md`
- * classifies lock sites by MULTIPLICITY — a transaction that can hold two
- * `Class` row locks carries an ordering obligation, one that holds a single row
- * lock carries none. Holding one at a time removes the cycle instead of
- * ordering around it, and it keeps that document's "five sites lock more than
- * one `Class` row" count true. The shape is `autoCancelClasses`'
+ * request failing because a background sweep raced it. Holding one class at a
+ * time removes that cycle instead of ordering around it, and it keeps
+ * `docs/lock-order.md`'s "five sites lock more than one `Class` row" count
+ * true.
+ *
+ * ARGUED ON THE MECHANISM, NOT ON MULTIPLICITY. An earlier version of this
+ * paragraph said `docs/lock-order.md` "classifies lock sites by MULTIPLICITY —
+ * a transaction that can hold two `Class` row locks carries an ordering
+ * obligation, one that holds a single row lock carries none". That document
+ * says exactly that and then withdraws it in the next breath: since #196 a
+ * single-row write can be half of a slot-key deadlock without ever holding a
+ * second `Class` row lock, `updateClass` being the example. Taking one row lock
+ * is therefore NOT on its own a safety argument, and a future site that copies
+ * this precedent on that basis would be misled. What actually makes this sweep
+ * edge-free is three mechanical facts:
+ *
+ *  - it never `INSERT`s or `UPDATE`s a `Class` row, so it takes no
+ *    `Class_teacher_slot_unique` index-entry lock and cannot join a slot-key
+ *    wait chain;
+ *  - deleting a CHILD row takes no FK lock on the parent (only inserting or
+ *    updating one takes `FOR KEY SHARE`), so the `deleteMany` adds no `Class`
+ *    edge beyond the `lockClassRow` this transaction took deliberately;
+ *  - no production writer holds a `WaitlistEntry` row lock while requesting a
+ *    `Class` lock, so there is no reverse edge for this one to close a cycle
+ *    against.
+ *
+ * The shape is `autoCancelClasses`'
  * (`class-transitions.ts`), whose own docblock argues it on the axis that
  * matters here: a slow lock wait on one class costs only that class's
  * transaction.

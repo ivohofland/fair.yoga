@@ -849,9 +849,22 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
 - **`reapClosedWaitlistEntries`** (`src/services/waitlist-retention.ts`) —
   `Class`, then `WaitlistEntry`, one class per `db.$transaction` via
   `lockClassRow`. **Deliberately a single-row-lock site**, like
-  `autoCancelClasses` and unlike the five above: it never holds a second
-  `Class` row lock, so it carries no ordering obligation and cannot be half of
-  an AB-BA cycle. That matters because its write set overlaps
+  `autoCancelClasses` and unlike the five `lockClassRowsOrdered` sites.
+  **But holding one row lock is not by itself why it is safe** — an earlier
+  version of this bullet said it was ("it never holds a second `Class` row
+  lock, so it carries no ordering obligation"), which is the multiplicity bound
+  this document retires at "Ordering WITHIN `Class`" above: since #196 a
+  single-row write can be half of a slot-key deadlock while holding exactly one
+  `Class` row lock, and `updateClass` is that case. The conclusion survives on
+  the mechanism instead: this sweep never `INSERT`s or `UPDATE`s a `Class` row,
+  so it takes no `Class_teacher_slot_unique` index-entry lock and joins no
+  slot-key wait chain; deleting a CHILD row takes no FK lock on the parent (only
+  an `INSERT`/`UPDATE` of one takes `FOR KEY SHARE`), so its `deleteMany` adds no
+  `Class` edge past the `lockClassRow` it took on purpose; and no production
+  writer holds a `WaitlistEntry` row lock while requesting a `Class` lock, so
+  there is no reverse edge to close a cycle against. Read it that way before
+  citing it as precedent. Holding one class at a time still matters, because its
+  write set overlaps
   `deleteStudentAccount`'s — that function's `waitlistEntry.deleteMany` is
   keyed on `studentId` with no class-status scope, so it deletes entries on
   terminal classes too, which is exactly what this sweep deletes. Two multi-row

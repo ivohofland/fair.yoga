@@ -643,14 +643,24 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // to read "no plausible legitimate student waiting in more than a handful
     // of classes at once", sizing the budget on the very axis the paragraphs
     // above spend twenty lines discrediting.) On a single-teacher CRM tool
-    // that lock set is a handful of classes — and since #238 it is a handful
-    // bounded by the retention window rather than by account age:
-    // `reapClosedWaitlistEntries` (`waitlist-retention.ts`) deletes closed,
-    // unfulfilled entries once their class is more than
-    // `WAITLIST_RETENTION_DAYS` old. That bounds the axis; it does not make it
-    // small, and the number below is still a ceiling on damage rather than a
-    // forecast of need — a student queuing weekly for classes they never get
-    // into still accumulates ~52 of them inside the window.
+    // that lock set is a handful of classes.
+    //
+    // #238 SHRINKS THAT AXIS; IT DOES NOT BOUND IT, and an earlier version of
+    // this comment said it did — "a handful bounded by the retention window
+    // rather than by account age". That is false, and the mismatch is between
+    // two predicates: the pre-lock above joins `WaitlistEntry` with NO status
+    // predicate, so its lock set is every class this student holds ANY entry
+    // in, while `reapClosedWaitlistEntries` (`waitlist-retention.ts`) deletes
+    // only entries with `registrationId IS NULL` and a status outside
+    // `FULFILLED_WAITLIST_STATUSES`, on a terminal class more than
+    // `WAITLIST_RETENTION_DAYS` old. FULFILLED ENTRIES ARE REAPED BY NOTHING,
+    // here or anywhere. So a student who waitlists weekly and gets promoted
+    // accumulates ~52 permanent entries a year, each holding its class in this
+    // lock set for the life of the account. What #238 bounds is the UNFULFILLED
+    // share; the set still grows with account age, just more slowly.
+    //
+    // Which is why the number below is a ceiling on damage rather than a
+    // forecast of need.
     //
     // NOT sized from statement cost, and the measurement is what says so. Not
     // all of this transaction's work is indexed on the column it filters by,

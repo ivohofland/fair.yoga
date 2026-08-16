@@ -86,9 +86,16 @@ already-terminal class:
 | `waitlist.ts:995` (`reorderWaitingEntries`) | Only a `waiting` row |
 | `gdpr.ts:471` (`deleteStudentAccount`) | **Yes — unscoped by class status** |
 
-Eleven of fourteen cannot reach one at all. Three can, and only for a `waiting`
-row — which, since `closeQueueOnStart` (#216), exists on a terminal class only
-as **pre-#216 legacy**. The fourteenth is the erasure, which §2.3 is about.
+**Ten** of fourteen cannot reach one at all — count the "No" sites in the table,
+not its rows: the first six rows name ten sites between them. Three can, and
+only for a `waiting` row — which, since `closeQueueOnStart` (#216), exists on a
+terminal class only as **pre-#216 legacy**. The fourteenth is the erasure, which
+§2.3 is about. (An earlier version said "Eleven of fourteen … The fourteenth",
+which sums to fifteen and disagreed with its own table.)
+
+Re-running the grep above now returns **fifteen** sites, because the sweep this
+spec designs added its own `deleteMany` to the roster. The fourteen classified
+here are the ones that predate it.
 
 So: **the reap set is provably writer-free, and its sole exception is exactly
 the legacy population reaping removes.** That is the argument, and it is
@@ -286,9 +293,29 @@ one row per matching *entry* to produce one id per *class*.
 **365 days**, on `Class.date`.
 
 `Class.date` is `DateTime @db.Date` (`schema.prisma:391`) — day-granular, which
-is the right resolution for a retention policy, and immutable in practice. It
-means "the class this queue was for ran N days ago", which is when the record's
-purpose ended.
+is the right resolution for a retention policy. It means "the class this queue
+was for ran N days ago", which is when the record's purpose ended.
+
+**`date` is NOT protected the way `status` is, and an earlier version of this
+section said it was "immutable in practice".** That is false, and it is the one
+half of this design's predicate that nothing enforces:
+
+- `class_terminal_status_guard` guards **`status` only** — its own SQL says
+  "updates to other columns of a completed class … are unaffected".
+- `updateClass` (`class-lifecycle.ts`) carries no class-status guard at all.
+  Its only lock is `settingsLocked`, which covers the ECONOMIC fields, and
+  `date` is not one of them — `date` is explicitly teacher-editable.
+- `PUT /api/classes/[id]` checks no status either (`grep -n "status"` over that
+  route returns nothing).
+- The only thing stopping the edit is a page-level redirect in
+  `src/app/(teacher)/class/[id]/edit/page.tsx`, which is UI, not an API guard.
+
+So a teacher can set any date on their own `completed` class through the API,
+and the next daily sweep then permanently deletes that class's queue. Before
+this feature a wrong date on a finished class was inert; it is not any more.
+**This is a known residual, tracked as its own issue** — deciding which fields
+freeze at which lifecycle stage is a product call this spec does not make — and
+it is the one way a row this sweep should keep can be made to look reapable.
 
 It is conservative in the safe direction: a class **cancelled** well before its
 scheduled date retains its entries until that *scheduled* date plus the window,
