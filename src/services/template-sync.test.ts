@@ -193,7 +193,7 @@ describe('syncTemplateInstances', () => {
 
     // Occupy every candidate slot on the new day with classes of no template.
     const targets = getNextOccurrences(newDay, new Date(), 5)
-      .filter((d) => classStartInstant(d, template.startTime, 'UTC') > new Date())
+      .filter((d) => classStartInstant(d, template.startTime, seed.teacher.defaultTimezone) > new Date())
       .slice(0, 4);
     for (const date of targets) {
       await prisma.class.create({
