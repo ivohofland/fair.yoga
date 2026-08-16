@@ -711,8 +711,9 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   acquisition, so one statement over N contended rows can still spend N × 2s
   (measured 2026-08-16: two rows, releases at 1.5s and 3.0s, one waiter at 2s,
   succeeded after 2.67s). #240 removed the sizing term for that reason; the
-  budget is a flat `{ timeout: 20_000 }`. It also closes the read-then-lock window, since the
-  lock is taken BY the statement that chooses the rows.
+  budget is a flat `{ timeout: 20_000 }`. The single statement also closes
+  the read-then-lock window, since the lock is taken BY the statement that
+  chooses the rows.
 
   Pinned by "waits for a class row another transaction holds even when the
   erased entry is closed" (`gdpr.test.ts`), which resolves the erasure to the

@@ -105,14 +105,15 @@ export const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '2s'";
  * also issues it once up front.
  *
  * Split out from `lockClassRow` for `deleteStudentAccount` (`gdpr.ts`),
- * which needs the bound whether or not it ends up locking anything: its
- * lock loop runs only when the erased student is waiting in at least one
- * class, so before this existed, a student waiting in zero classes got an
- * UNBOUNDED wait on a contended `registration.updateMany` — and that
- * asymmetry made the transaction's own `Math.min` ceiling a wish rather than
- * a guarantee, since Prisma's interactive-transaction timeout cannot roll
- * back a statement already blocked inside Postgres, only refuse to start a
- * new one.
+ * which needs the bound whether or not it ends up locking anything: before
+ * #216/#182 replaced its per-class `lockClassRow` loop with the ordered
+ * statement `lockClassRowsOrdered` issues below, that loop's body ran only
+ * when the erased student was waiting in at least one class, so a student
+ * waiting in zero classes got an UNBOUNDED wait on a contended
+ * `registration.updateMany` — and that asymmetry made the transaction's
+ * own budget a wish rather than a guarantee, since Prisma's
+ * interactive-transaction timeout cannot roll back a statement already
+ * blocked inside Postgres, only refuse to start a new one.
  */
 export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
   await tx.$executeRawUnsafe(LOCK_TIMEOUT_SQL);

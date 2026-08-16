@@ -188,11 +188,17 @@ export async function autoTransitionToInProgress(
  * Each class gets its own `db.$transaction`, so each also gets its own
  * `lockClassRow` wait and its own Prisma-default transaction budget — not a
  * budget shared across the sweep. This differs from `deleteStudentAccount`
- * (`gdpr.ts`), which calls `lockClassRow` in a loop *inside one*
- * transaction and sizes that transaction's timeout to the number of classes
- * it is about to lock: nothing here accumulates that way, so a slow lock
- * wait on one class costs only that class's own transaction, not the ones
- * before or after it in this loop.
+ * (`gdpr.ts`), which takes every `Class` lock it needs inside ONE
+ * transaction — one ordered statement through `lockClassRowsOrdered` rather
+ * than a loop (#216/#182 made it one statement, #237 moved it into the shared
+ * helper), under a flat `{ timeout: 20_000 }` rather than a budget sized from
+ * a count (#240 removed the sizing term). An earlier version of this sentence
+ * described both the loop and the sizing, and outlived both. The contrast is
+ * what survives them and is the reason for this paragraph: `lock_timeout` is
+ * armed per lock ACQUISITION, so that single statement's waits still
+ * accumulate across N contended rows inside one budget. Nothing here
+ * accumulates that way, so a slow lock wait on one class costs only that
+ * class's own transaction, not the ones before or after it in this loop.
  */
 export async function autoCancelClasses(
   db: PrismaClient,
