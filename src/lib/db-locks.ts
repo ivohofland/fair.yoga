@@ -155,17 +155,21 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * in psql that a second `SET LOCAL lock_timeout` later in the same
  * transaction simply overwrites the first rather than erroring or stacking,
  * so calling this helper more than once per transaction is safe on that
- * axis. It is not free on every axis: a caller that calls it in a loop puts
- * each iteration's own lock wait under the same 2s cap inside a transaction
- * Prisma itself caps at 5s by default, so a handful of contended iterations
- * can exhaust the transaction's whole budget well before any single one of
- * them hits its own timeout. `deleteStudentAccount` (`gdpr.ts`) is exactly
- * this caller, added in #174 Task 5 — its transaction carries a flat
- * `{ timeout: 20_000 }` rather than the 5s default. It used to SIZE that
- * budget from the number of classes it was about to lock; #240 removed the
- * term, because it counted `waiting` entries while the lock set spans every
- * status, and priced none of the reorder loop. The reasoning lives there,
- * not here.
+ * axis. It is not free on every axis: a caller that called it in a loop
+ * would put each iteration's own lock wait under the same 2s cap inside one
+ * transaction, so a handful of contended iterations could exhaust that
+ * transaction's whole budget well before any single one of them hit its own
+ * timeout. No caller does that today, and the near-miss is worth naming:
+ * `autoCancelClasses` and its sibling sweep (`class-transitions.ts`) walk
+ * many classes, but give each its OWN transaction, so nothing accumulates —
+ * see that file's docblock, which argues the same point from the other
+ * side. `deleteStudentAccount` (`gdpr.ts`) WAS this caller, from #174 Task 5
+ * until #216/#182 replaced the loop with one ordered statement; it now
+ * takes its locks through `lockClassRowsOrdered` below and carries a flat
+ * `{ timeout: 20_000 }` rather than a budget sized from a count (#240
+ * removed the sizing term, because it counted `waiting` entries while the
+ * lock set spans every status, and priced none of the reorder loop). The
+ * reasoning lives there, not here.
  *
  * The bound itself is `LOCK_TIMEOUT_SQL` above, shared with the two
  * template-claim sites (`claimTemplateForGeneration`,
