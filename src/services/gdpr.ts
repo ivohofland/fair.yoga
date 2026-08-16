@@ -780,6 +780,22 @@ const CANCELLABLE_STATUSES: readonly ClassStatus[] = Object.freeze([
   'in_progress',
 ]);
 
+/**
+ * `CANCELLABLE_STATUSES`, pre-rendered as a raw SQL `IN (…)` list for the
+ * ordered pre-lock's predicate — the one reader of it that cannot go through a
+ * Prisma `{ in: [...] }` filter, because `FOR UPDATE OF c` and `ORDER BY` have
+ * no query-builder equivalent.
+ *
+ * `Prisma.raw`, not `Prisma.join`, following `SCHEDULED_STATUSES_SQL`
+ * (`class-template-lifecycle.ts:653`) and for the reason measured there:
+ * `Prisma.join` binds each status as a separate parameter, and a bound text
+ * parameter compared against the `status` column's enum type needs an explicit
+ * `::text` cast to resolve, which costs the index. Safe here for the same one
+ * precondition as there — `CANCELLABLE_STATUSES` is a frozen, hard-coded
+ * constant, never input.
+ */
+const CANCELLABLE_STATUSES_SQL = Prisma.raw(CANCELLABLE_STATUSES.map((s) => `'${s}'`).join(', '));
+
 export async function deleteTeacherAccount(db: PrismaClient, teacherId: string): Promise<void> {
   const teacher = await db.teacher.findUniqueOrThrow({
     where: { id: teacherId },
@@ -852,24 +868,24 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
     async (tx) => {
       // Cancel every upcoming class and tell the people in them.
       //
-      // `orderBy` is load-bearing, not tidiness: the loop below takes one
-      // `Class` row lock per iteration (the CAS `UPDATE`), so the order this
-      // read returns IS this transaction's lock acquisition order. Ascending
-      // by id is what `deleteStudentAccount` above and
-      // `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) also take. The two
+      // `orderBy` is no longer load-bearing — the pre-lock below orders the
+      // locks now; this stays for the determinism of the notification order.
+      // (Until #237 this order WAS this transaction's lock acquisition order:
+      // the loop below takes one `Class` row lock per iteration, the CAS
+      // `UPDATE`, and the read was not itself under any lock.) The two
       // template sites named in `deleteStudentAccount`'s comment used to take
       // no order at all, and this function's disagreement with those two was
       // inherited from the same place `deleteStudentAccount`'s was — closed
       // the same way, by an ordered pre-lock at both sites (issue 180,
       // atomic-template-update). See `docs/lock-order.md`'s within-`Class`
-      // table. Without this `orderBy` this read fell back to whatever the
+      // table. Without an ordered pre-lock this read fell back to whatever the
       // heap returned, which for a fresh pair of classes is insertion order —
       // and when that disagreed with ascending, a teacher erasure and a
       // student erasure overlapping on two classes formed an AB-BA cycle and
       // Postgres killed one of them with `40P01`. Reproduced by the test
       // "does not deadlock when a teacher erasure and a student erasure
       // overlap on two classes" (`gdpr.test.ts`), which fails with exactly
-      // that error if this `orderBy` is removed. See `docs/lock-order.md`,
+      // that error if the pre-lock below is removed. See `docs/lock-order.md`,
       // "Ordering WITHIN `Class`".
       //
       // No `include` of registrations any more: the recipient list is read
@@ -883,13 +899,62 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
         select: { id: true, classType: true, date: true, startTime: true },
       });
 
+      // Every class this erasure may cancel, locked ascending in ONE statement
+      // before the cancel loop below — #237.
+      //
+      // This is the transaction's FIRST lock acquisition: the read above takes
+      // no locks, so the order of this statement — not the read's `orderBy` —
+      // is what orders the locks the loop's CAS re-takes.
+      //
+      // What this replaces: the `orderBy: { id: 'asc' }` on that read, which
+      // WAS this transaction's lock acquisition order, because the loop below
+      // takes one `Class` row lock per iteration (the CAS `UPDATE`) and the
+      // read is not itself under any lock. That worked, and it depended on a
+      // reader noticing that an `orderBy` on an unlocked read was load-bearing.
+      // The `orderBy` stays for determinism of the notification order; it is no
+      // longer what orders the locks.
+      //
+      // The lock set is taken from a fresh status snapshot AFTER the read, not
+      // from the read's rows: a class that completed between the two is no
+      // longer in the cancellable statuses, so it is not locked here and the
+      // CAS refuses it — the `completed` skip. A class that completed after
+      // the pre-lock could not have: this statement holds its row, and any
+      // writer queues behind it until commit.
+      //
+      // Additive, not a replacement for the CAS. The read stays WIDE and the
+      // per-class compare-and-swap below stays exactly as it was: a class
+      // inserted after this statement is not held here, and the CAS is what
+      // handles it. Scoping the read to these ids — the
+      // `syncTemplateInstances` shape — would make the write set a structural
+      // subset of the lock set and let such a class escape the erasure
+      // altogether, which is a worse trade on an Article 17 path than the one
+      // the CAS already makes.
+      //
+      // This also brings the shared 2s `lock_timeout` into a transaction that
+      // had none, so every statement in it is now bounded rather than waiting
+      // out Prisma's `{ timeout: 10_000 }` — which cannot roll back a
+      // statement already blocked inside Postgres, only refuse to start a new
+      // one (`gdpr.ts:692`). The `upcoming` read above runs before this bound
+      // takes effect, but it takes no row locks, so nothing waits on it.
+      // Deliberate: the same argument `deleteStudentAccount` makes for its own
+      // bound applies here, since Article 17 does not distinguish which
+      // subject is being erased, and `api/account/route.ts` already answers
+      // the resulting `55P03` with a retryable 503.
+      await lockClassRowsOrdered(tx, {
+        where: Prisma.sql`c."teacherId" = ${teacherId}
+          AND c.status IN (${CANCELLABLE_STATUSES_SQL})`,
+      });
+
       for (const cls of upcoming) {
         // Compare-and-swap against the same statuses the read above filtered
-        // on. The read is not under the row lock, so a class can reach
-        // `completed` between it and here — a sweep's `completeClass` doing
-        // exactly that is the window `email-fallback.ts` describes. Cancelling
-        // it anyway would strip a class that already has Payment rows and
-        // students who have been asked to pay.
+        // on. A class can still reach `completed` between the read and the
+        // pre-lock above — a sweep's `completeClass` doing exactly that is the
+        // window `email-fallback.ts` describes, and the pre-lock's lock set is
+        // a fresh status snapshot taken after the read, so such a class is not
+        // held here. Cancelling it anyway would strip a class that already has
+        // Payment rows and students who have been asked to pay. (Between the
+        // pre-lock and here nothing can reach it: this loop's rows are all
+        // held.)
         //
         // Skipping the CANCEL is the right handling: a completed class is one
         // erasure deliberately leaves standing (see this function's

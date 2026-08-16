@@ -8,7 +8,7 @@ import {
   deleteStudentAccount,
   deleteTeacherAccount,
 } from './gdpr';
-import { lockClassRow } from '@/lib/db-locks';
+import { lockClassRow, LOCK_TIMEOUT_SQL } from '@/lib/db-locks';
 import { log } from '@/lib/log';
 
 const prisma = new PrismaClient();
@@ -1217,20 +1217,18 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
 });
 
 /**
- * Whole-branch review of #174, Critical. This branch gave
- * `deleteStudentAccount` a `Class` row lock it never used to take (Task 5),
- * and sorted the class ids before taking it. `deleteTeacherAccount` takes one
- * `Class` row lock per iteration too — via its per-class compare-and-swap
- * `class.updateMany`, which is a lock-taking `UPDATE` — over a `findMany`
- * that had no `orderBy` at all, so it walked the classes in whatever order
- * the heap returned them. Two orders that disagree over the same pair of
- * classes is an AB-BA cycle, and Postgres answers it with `40P01`.
+ * Whole-branch review of #174, Critical. Since #237 both erasures take their
+ * `Class` locks through `lockClassRowsOrdered` — one ascending statement each.
+ * Before #237 this branch gave `deleteStudentAccount` a `Class` row lock it
+ * never used to take and sorted the ids before it, while `deleteTeacherAccount`
+ * took one lock per iteration via its per-class cancel CAS, in the order a
+ * `findMany` (no `orderBy`) returned. Two orders that disagree over the same
+ * pair of classes is an AB-BA cycle, and Postgres answers it with `40P01`.
  *
- * Both erasures are real here — no transaction shaped "like" either one.
- * The only synthetic part is a pause inside `deleteTeacherAccount`'s first
- * CAS, because the two locks it takes are otherwise one round trip apart and
- * nothing could reliably interleave between them. The pause widens that
- * window; it does not create the inversion, which is in the read order.
+ * The pre-lock closed the teacher side's read->CAS window (#237 Task 8), which
+ * is why this test no longer hooks the CAS and instead races the two ordered
+ * pre-lock statements directly. Both erasures are real here — no transaction
+ * shaped "like" either one.
  */
 describe('the two erasures take multiple Class rows in one order (#174)', () => {
   const prisma = new PrismaClient();
@@ -1321,11 +1319,19 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
 
     // Waiting in BOTH classes: that is what makes `deleteStudentAccount`
     // lock two `Class` rows, which is the only way the orders can disagree.
-    await prisma.waitlistEntry.create({
-      data: { classId: HIGH_CLASS_ID, studentId, position: 1, status: 'waiting' },
-    });
+    //
+    // LOW first — the OPPOSITE order to the classes above, and since #237 that
+    // opposition is what the test turns on. Both erasures take their locks
+    // through `lockClassRowsOrdered`, so one `ORDER BY` orders both sides;
+    // the only way its removal can still produce a cycle is if the two
+    // callers' NATURAL orders differ, and they differ only because these two
+    // tables are seeded in opposite orders. Insert these HIGH-first and the
+    // mutation below stops reproducing anything.
     await prisma.waitlistEntry.create({
       data: { classId: LOW_CLASS_ID, studentId, position: 1, status: 'waiting' },
+    });
+    await prisma.waitlistEntry.create({
+      data: { classId: HIGH_CLASS_ID, studentId, position: 1, status: 'waiting' },
     });
   });
 
@@ -1354,46 +1360,95 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     expect(heapOrder.map((r) => r.id)).toEqual([HIGH_CLASS_ID, LOW_CLASS_ID]);
 
     // The same premise on the OTHER side of the pairing, which the assertion
-    // above does not cover. `deleteTeacherAccount` walks a `Class` read;
-    // `deleteStudentAccount` walks a `WaitlistEntry` read and sorts the
-    // `classId`s it returns, and that `[...].sort()` is the load-bearing
-    // line — inert if the read already hands them back ascending. Asserting
-    // the heap order on the `Class` side proves nothing about it: they are
-    // different tables with different physical layouts. The entries are
-    // inserted HIGH-then-LOW in `beforeAll`, so an unordered scan returns the
-    // reverse of sorted here too, which is what makes the sort observable.
-    const waitlistHeapOrder = await prisma.$queryRaw<Array<{ classId: string }>>`
-      SELECT "classId" FROM "WaitlistEntry"
-      WHERE "studentId" = ${studentId} AND status = 'waiting'
-    `;
-    expect(waitlistHeapOrder.map((r) => r.classId)).toEqual([HIGH_CLASS_ID, LOW_CLASS_ID]);
+    // above does not cover. `deleteTeacherAccount` pre-locks via a `Class`
+    // scan; `deleteStudentAccount` pre-locks via a `WaitlistEntry` join. The
+    // classes are seeded HIGH-first and the entries LOW-first in `beforeAll`,
+    // so the scan's natural order is [HIGH, LOW] and the join's (driven by
+    // `WaitlistEntry`) is the REVERSE — the disagreement this test turns on.
+    //
+    // The join's order is asserted under the SAME forced plan the student side
+    // gets below. On this two-row fixture the default plan is a hash join that
+    // probes `Class`, so it agrees with the scan and the reproduction could
+    // not be built — measured in `db-locks-lock-order.test.ts`, not assumed.
+    // Asserting the `Class` side proves nothing about the join's: different
+    // tables, different physical layouts.
+    const joinOrder = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
+      return tx.$queryRaw<Array<{ id: string }>>`
+        SELECT c.id FROM "Class" c
+        JOIN "WaitlistEntry" w ON w."classId" = c.id
+        WHERE w."studentId" = ${studentId}
+      `;
+    });
+    expect(joinOrder.map((r) => r.id)).toEqual([LOW_CLASS_ID, HIGH_CLASS_ID]);
 
-    let casCalls = 0;
-    const racing = prisma.$extends({
+    // TWO third-party holder transactions, one per row — so each can be
+    // released separately, which is what makes the collision deterministic.
+    // Postgres grants a lock to queued waiters in FIFO order, so whichever
+    // erasure queued on a row first is guaranteed to get it on release. The
+    // choreography below exploits that to force the exact AB-BA state:
+    //
+    //   the teacher's scan asks [HIGH, LOW], the student's join [LOW, HIGH],
+    //   so the two park on DIFFERENT rows — the teacher on HIGH, the student
+    //   on LOW. Release LOW first: the student takes it and re-queues on HIGH,
+    //   BEHIND the teacher parked there. Release HIGH: the teacher takes it,
+    //   reaches for LOW — held by the student — and the two form the cycle.
+    //   With the shared `ORDER BY` both ask [LOW, HIGH], park on the same row,
+    //   and serialise instead. Same technique as `db-locks-lock-order.test.ts`,
+    //   made deterministic where that test accepts the release race because
+    //   its callers hand their lock order back to assert on.
+    let releaseHigh!: () => void;
+    const highReleased = new Promise<void>((resolve) => {
+      releaseHigh = resolve;
+    });
+    let releaseLow!: () => void;
+    const lowReleased = new Promise<void>((resolve) => {
+      releaseLow = resolve;
+    });
+    let holderHighReady!: () => void;
+    const holderHighHasRows = new Promise<void>((resolve) => {
+      holderHighReady = resolve;
+    });
+    let holderLowReady!: () => void;
+    const holderLowHasRows = new Promise<void>((resolve) => {
+      holderLowReady = resolve;
+    });
+
+    const holderHigh = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${HIGH_CLASS_ID} FOR UPDATE`;
+        holderHighReady();
+        await highReleased;
+      },
+      { timeout: 10_000 },
+    );
+    const holderLow = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${LOW_CLASS_ID} FOR UPDATE`;
+        holderLowReady();
+        await lowReleased;
+      },
+      { timeout: 10_000 },
+    );
+
+    await Promise.all([holderHighHasRows, holderLowHasRows]);
+
+    let preLockReached!: () => void;
+    const preLockReachedPromise = new Promise<void>((resolve) => {
+      preLockReached = resolve;
+    });
+
+    const teacherRacing = prisma.$extends({
       query: {
-        class: {
-          async updateMany({ args, query }) {
-            // Keyed on args shape, not call order — the house rule for every
-            // hook in this file since #174 task 3's round 1 review. This is
-            // `deleteTeacherAccount`'s per-class cancel CAS: a single `id`
-            // plus the same status set its read filtered on.
-            const where = args.where as { id?: unknown; status?: { in?: unknown } } | undefined;
-            const isCancelCas = typeof where?.id === 'string' && Array.isArray(where?.status?.in);
-            if (!isCancelCas) return query(args);
-
-            casCalls += 1;
-            const result = await query(args);
-            // Only after the FIRST class is locked. Long enough for the
-            // student erasure to take the other class's lock and come back
-            // asking for this one — the state a cycle needs — and comfortably
-            // inside both this transaction's explicit `{ timeout: 10_000 }`
-            // (`deleteTeacherAccount`'s `$transaction` option, NOT Prisma's 5s
-            // default — an earlier version of this comment named the default,
-            // which the comment at that option is specifically about NOT
-            // relying on) and the student erasure's own 2s `lock_timeout`.
-            if (casCalls === 1) await new Promise((r) => setTimeout(r, 400));
-            return result;
-          },
+        async $queryRaw({ args, query }) {
+          // Keyed on the query's own bound value, not on call order — the
+          // house rule (`template-sync.test.ts:308`). `teacherId` is the one
+          // bind `deleteTeacherAccount`'s ordered pre-lock carries since
+          // #237; its other `$queryRaw` calls bind class ids.
+          if (args.values[0] === teacherId) {
+            preLockReached();
+          }
+          return query(args);
         },
       },
       // `$extends` returns a client missing `$on`, so it is not assignable to
@@ -1402,18 +1457,75 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
       // the real database — same cast as the other hooks in this file.
     }) as unknown as PrismaClient;
 
-    const teacherErasure = deleteTeacherAccount(racing, teacherId)
+    let studentPreLockReached!: () => void;
+    const studentPreLockReachedPromise = new Promise<void>((resolve) => {
+      studentPreLockReached = resolve;
+    });
+
+    const studentRacing = prisma.$extends({
+      query: {
+        async $queryRaw({ args, query }) {
+          // Same key as the teacher's hook — `studentId` is the one bind
+          // `deleteStudentAccount`'s pre-lock join carries since #237, and its
+          // other `$queryRaw` call is `setLockTimeout`, an `$executeRawUnsafe`.
+          if (args.values[0] === studentId) {
+            studentPreLockReached();
+          }
+          return query(args);
+        },
+        async $executeRawUnsafe({ args, query }) {
+          // Force `deleteStudentAccount`'s pre-lock join onto the
+          // `WaitlistEntry`-driven plan. The default hash join probes `Class`
+          // and agrees with the scan (see the premise above), which would make
+          // the mutation below reproduce nothing. `setLockTimeout` is the
+          // statement the helper runs immediately before the pre-lock; the
+          // second `SET LOCAL` lands on the SAME transaction session, so the
+          // setting is scoped to `deleteStudentAccount`'s transaction only.
+          // Verified empirically during #237: `args` is an array of statements
+          // (index 0), not a bare string, and two calls on the session work
+          // where one multi-statement string fails with `42601`.
+          if (args[0] === LOCK_TIMEOUT_SQL) {
+            const first = await query(args);
+            await query([`SET LOCAL enable_hashjoin = off`]);
+            return first;
+          }
+          return query(args);
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const teacherErasure = deleteTeacherAccount(teacherRacing, teacherId)
       .then(() => 'teacher-ok' as const)
       .catch((err: unknown) => ({ error: String(err) }) as const);
 
-    // Enough for the teacher erasure's read and first CAS to land, so it is
-    // holding one class row before the student erasure starts asking for
-    // anything.
-    await new Promise((r) => setTimeout(r, 120));
+    // Start the student erasure once the teacher's pre-lock is in flight, so
+    // both statements are running against the holders before either releases.
+    await preLockReachedPromise;
+    // Time for the teacher's pre-lock to reach and block on its first row.
+    await new Promise((r) => setTimeout(r, 200));
 
-    const studentErasure = deleteStudentAccount(prisma, studentId)
+    const studentErasure = deleteStudentAccount(studentRacing, studentId)
       .then(() => 'student-ok' as const)
       .catch((err: unknown) => ({ error: String(err) }) as const);
+
+    // Both pre-locks are now in flight. Wait for the student's to be issued
+    // too, then give it time to reach and block on its first row. Then:
+    //
+    // 1. Release LOW first. The student (parked there under the mutation)
+    //    takes it and re-queues on HIGH, where the teacher is already parked.
+    // 2. Release HIGH. The teacher takes it, reaches for LOW — held by the
+    //    student — and Postgres answers the cycle with `40P01`.
+    //
+    // With the shared `ORDER BY` both erasures ask [LOW, HIGH], park on the
+    // same row, and serialise. All waits sit comfortably inside the helper's
+    // shared 2s `lock_timeout`.
+    await studentPreLockReachedPromise;
+    await new Promise((r) => setTimeout(r, 400));
+    releaseLow();
+    await holderLow;
+    await new Promise((r) => setTimeout(r, 150));
+    releaseHigh();
+    await holderHigh;
 
     const [teacherOutcome, studentOutcome] = await Promise.all([teacherErasure, studentErasure]);
 
@@ -1422,9 +1534,19 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     expect(teacherOutcome).toBe('teacher-ok');
     expect(studentOutcome).toBe('student-ok');
 
-    // Both classes were actually reached, so the hook really did straddle a
-    // two-lock sequence rather than a one-lock one.
-    expect(casCalls).toBe(2);
+    // Both classes were actually reached on both sides: the teacher cancelled
+    // both, and the student's entries on both are gone. A fixture that never
+    // contended satisfies the no-deadlock assertions above perfectly, so this
+    // is what stops it doing that.
+    const statuses = await prisma.class.findMany({
+      where: { teacherId },
+      select: { status: true },
+    });
+    expect(statuses.map((c) => c.status)).toEqual(['cancelled', 'cancelled']);
+    const remainingEntries = await prisma.waitlistEntry.count({
+      where: { studentId, classId: { in: [LOW_CLASS_ID, HIGH_CLASS_ID] } },
+    });
+    expect(remainingEntries).toBe(0);
   }, 30_000);
 
   // The two `Class` lock-order deadlock cycles once tracked here by `it.todo`
