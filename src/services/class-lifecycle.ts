@@ -39,6 +39,36 @@ export const VALID_TRANSITIONS: Record<ClassStatus, ClassStatus[]> = {
   cancelled: [],
 };
 
+/**
+ * The statuses a class can never leave, derived rather than listed.
+ *
+ * Terminal means "no outgoing transition", which is exactly `[]` in the table
+ * above — so this cannot disagree with `VALID_TRANSITIONS` the way a
+ * hand-written pair would. `waitlist-retention.ts` (#238) is the consumer, and
+ * its entire safety argument is that a row on such a class has no possible
+ * writer.
+ *
+ * That argument rests on the DB trigger `class_terminal_status_guard`
+ * (`prisma/migrations/20260805120000_class_terminal_status_trigger/`), whose
+ * SQL hard-codes `('completed','cancelled')` and cannot be edited. Deriving
+ * from a TABLE while depending on a TRIGGER is the one hazard here: widen the
+ * table and this widens silently while the trigger does not.
+ * `class-terminal-status.test.ts` iterates this constant for exactly that
+ * reason — adding a terminal status the trigger does not cover fails there,
+ * not in production.
+ *
+ * Annotated and frozen, NOT `as const satisfies` — the same shape and reason as
+ * `CLAIMABLE_WAITLIST_STATUSES` (`lib/waitlist-status.ts`, which explains it at
+ * length): `as const` narrows `Array.prototype.includes`' parameter to the
+ * literal members, forcing call sites to widen it back with a cast that
+ * accepts any string.
+ */
+export const TERMINAL_CLASS_STATUSES: readonly ClassStatus[] = Object.freeze(
+  (Object.keys(VALID_TRANSITIONS) as ClassStatus[]).filter(
+    (status) => VALID_TRANSITIONS[status].length === 0,
+  ),
+);
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------

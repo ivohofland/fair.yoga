@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import type { ClassStatus } from '@prisma/client';
 import { classifyApiError } from '@/lib/api-errors';
+import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
 
 /**
  * A pure DB-invariant test — no HTTP surface, nothing here calls the app on
@@ -371,4 +372,43 @@ describe('class terminal status trigger', () => {
     expect(after.description).toBe('Edited after');
     expect(after.status).toBe('completed');
   });
+
+  /**
+   * The pin between the reaper's safety predicate and the thing that actually
+   * enforces it (#238).
+   *
+   * `waitlist-retention.ts` deletes rows on a class whose status is in
+   * `TERMINAL_CLASS_STATUSES`, and its whole safety argument is "no writer can
+   * ever touch those rows again". That argument rests on this trigger, whose
+   * SQL hard-codes `('completed','cancelled')` and cannot be edited — it is an
+   * applied migration. The constant, meanwhile, is DERIVED from
+   * `VALID_TRANSITIONS`. Widen that table and the constant widens silently
+   * while the trigger does not, and the reaper would then delete rows on a
+   * class whose immutability nothing enforces.
+   *
+   * So this iterates the derived set rather than restating it. The two tests
+   * above stay as they are: they assert the trigger's error SHAPE end to end
+   * (the Prisma error class, `classifyApiError`'s 409). This one asserts only
+   * membership, which is the property that can drift.
+   */
+  it.each(TERMINAL_CLASS_STATUSES)(
+    'has a DB-enforced terminal %s, so the reaper may treat it as unwritable',
+    async (status) => {
+      const { classId } = await makeClass({ status });
+
+      let caught: unknown;
+      try {
+        await prisma.class.update({ where: { id: classId }, data: { status: 'open' } });
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(Prisma.PrismaClientUnknownRequestError);
+      expect(String(caught)).toMatch(/23514/);
+      expect(String(caught)).toMatch(/which is terminal/);
+
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+      expect(after.status).toBe(status);
+    },
+  );
 });

@@ -92,3 +92,28 @@ export const CLAIMABLE_WAITLIST_STATUSES: readonly WaitlistStatus[] = Object.fre
     (status) => QUEUE_ROLE[status] === 'live' || QUEUE_ROLE[status] === 'lapsed',
   ),
 );
+
+/**
+ * The statuses that mean the student got a seat.
+ *
+ * `fulfilled` from the role table above, so it cannot drift from it — the same
+ * derivation as `CLAIMABLE_WAITLIST_STATUSES`.
+ *
+ * Used by `waitlist-retention.ts` (#238) as the SECOND of two independent
+ * discriminators for "this entry never became a booking". The first, and the
+ * primary one, is `registrationId IS NULL`: a foreign key to a `Registration`
+ * — and through it to a `Payment` — is what actually makes a row bookkeeping,
+ * where a status is only a label. No writer can produce a row where the two
+ * disagree; all three fulfilment sites write `registrationId` in the same
+ * statement as the status (`waitlist.ts`'s `promoteNext` and `claimSpot`, and
+ * the walk-in resolver in `POST /api/registrations`).
+ *
+ * It is there anyway because deleting is irreversible, and two independently
+ * derived discriminators intersected are conservative: if they ever disagree,
+ * the row survives.
+ */
+export const FULFILLED_WAITLIST_STATUSES: readonly WaitlistStatus[] = Object.freeze(
+  (Object.keys(QUEUE_ROLE) as WaitlistStatus[]).filter(
+    (status) => QUEUE_ROLE[status] === 'fulfilled',
+  ),
+);
