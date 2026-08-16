@@ -20,8 +20,15 @@ applied.
 prose.** The complete set of production removers:
 
     grep -rnE 'waitlistEntry\.(delete|deleteMany)' src prisma --include='*.ts' | grep -v '\.test\.ts'
-      → src/services/gdpr.ts:471   deleteStudentAccount, deleteMany({ studentId })
-      → prisma/seed.ts:52          not production
+
+At the base commit `1c8c76d` this returned three lines — `gdpr.ts:395` (a
+comment), `gdpr.ts:471` (`deleteStudentAccount`, `deleteMany({ studentId })`)
+and `prisma/seed.ts:52` (not production) — so exactly one production remover.
+Run at HEAD it returns four, the fourth being this branch's own
+`waitlist-retention.ts` sweep. §1.2 received an explicit correction for this
+same class of staleness and §1.1 did not; it does now. **Line numbers and
+counts throughout §1 are as of `1c8c76d`** — see the note at the top of this
+section.
 
 plus `onDelete: Cascade` from `Class` (`schema.prisma:575`). That cascade has
 exactly two triggers, and **both are scoped to future classes**:
@@ -52,10 +59,16 @@ erasure.**
   (`schema.prisma:564-581`).
 - **`scheduler.ts` has a 24-hour slot** — `auth-cleanup`, `scheduler.ts:222-226`.
 - **"#238 is the root fix for the erasure's lock set growing with account age"**
-  is an inherited claim, and it holds. Independently asserted by
-  `gdpr.ts:646-651` and by #240's spec
-  (`2026-08-16-erasure-budget-design.md:202` and `:301`). Recorded because this
-  project's specs are supposed to say which inherited claims were checked.
+  is an inherited claim, and checking it is what this section is for: it holds
+  only in the weaker form. **#238 SHRINKS the axis; it does not bound it.** The
+  erasure's pre-lock joins `WaitlistEntry` with no status predicate, while this
+  sweep reaps only UNFULFILLED entries — nothing reaps a fulfilled one, ever —
+  so a student who queues and is promoted week after week still accumulates
+  `Class` rows in that lock set for the life of the account. `gdpr.ts` states
+  the corrected version at its own budget rationale. #240's spec
+  (`2026-08-16-erasure-budget-design.md:202` and `:301`) asserts the unbounded
+  reading; it is a dated spec and is left as written (see §4), but a reader
+  arriving from there should take this paragraph as the correction.
 
 ### 1.2 The safety argument is understated, and the real one is DB-enforced
 
@@ -66,9 +79,9 @@ installs `class_terminal_status_guard`, a `BEFORE UPDATE OF status` trigger that
 raises `23514` whenever `OLD.status IN ('completed','cancelled')`. A terminal
 class's status cannot change from *any* client, including raw SQL.
 
-The second half of the argument is the writer census. All **fourteen**
-`WaitlistEntry` write sites, classified by whether they can touch a row on an
-already-terminal class:
+The second half of the argument is the writer census — the CLASSIFICATION below,
+not a headcount. Every `WaitlistEntry` write site, sorted by whether it can touch
+a row on an already-terminal class:
 
     grep -rnE 'waitlistEntry\.(create|createMany|update|updateMany|upsert|delete|deleteMany)' \
       src --include='*.ts' --include='*.tsx' | grep -v '\.test\.ts'
@@ -80,22 +93,24 @@ already-terminal class:
 | `waitlist.ts:634` (`claimSpot`) | No — guards `open` |
 | `registrations/route.ts:195` (walk-in resolver) | No — `allowedStatuses` is `open`/`in_progress` |
 | `waitlist.ts:1043` (`closeQueueOnStart`) | No — runs inside the `open → in_progress` CAS |
-| `transition/route.ts:76`, `class-transitions.ts:446`, `gdpr.ts:1077` (three cancel paths) | No — each runs inside the CAS that *makes* the class terminal |
+| `transition/route.ts:76`, `class-transitions.ts:446`, `deleteTeacherAccount`'s per-class cancel CAS (`gdpr.ts`, `:1077` at the base commit, `:1089` at HEAD) (three cancel paths) | No — each runs inside the CAS that *makes* the class terminal |
 | `waitlist.ts:390` (`removeFromWaitlist`) | Only a `waiting` row |
 | `waitlist.ts:968` (`withdrawWaitingEntriesForTeacher`) | Only a `waiting` row |
 | `waitlist.ts:995` (`reorderWaitingEntries`) | Only a `waiting` row |
 | `gdpr.ts:471` (`deleteStudentAccount`) | **Yes — unscoped by class status** |
 
-**Ten** of fourteen cannot reach one at all — count the "No" sites in the table,
-not its rows: the first six rows name ten sites between them. Three can, and
-only for a `waiting` row — which, since `closeQueueOnStart` (#216), exists on a
-terminal class only as **pre-#216 legacy**. The fourteenth is the erasure, which
-§2.3 is about. (An earlier version said "Eleven of fourteen … The fourteenth",
-which sums to fifteen and disagreed with its own table.)
+Three buckets, and that is the whole argument: sites guarded by class status
+cannot reach a terminal class at all; sites scoped to `status: 'waiting'` can,
+but only for a row that — since `closeQueueOnStart` (#216) — exists on a terminal
+class solely as **pre-#216 legacy**, which is the population reaping removes; and
+the erasure, a DELETE, which §2.3 is about.
 
-Re-running the grep above now returns **fifteen** sites, because the sweep this
-spec designs added its own `deleteMany` to the roster. The fourteen classified
-here are the ones that predate it.
+**Deliberately no arithmetic.** An earlier revision of this section carried a
+four-number partition ("Ten of fourteen … The fourteenth"), which summed wrong
+against its own table on first writing and then went stale again the moment this
+spec's own sweep became the fifteenth site. The grep recipe is self-updating and
+the bucket names explain why each bucket is safe; a count does neither. Re-run
+the grep and classify what it returns.
 
 So: **the reap set is provably writer-free, and its sole exception is exactly
 the legacy population reaping removes.** That is the argument, and it is
@@ -163,6 +178,12 @@ act at design time rather than at scale time.
 ---
 
 ## 2. The design
+
+**Line-number citations below are as of `1c8c76d`, the same base §1 pins itself
+to.** This branch edits several of the files cited here, so a citation that was
+exact when written can be off by the size of an intervening insertion. Where a
+symbol name resolves the reference unambiguously it is used instead of a line
+number, which is the form that does not rot.
 
 ### 2.1 The predicate
 
@@ -242,13 +263,17 @@ then (X, C1). Postgres kills one side with `40P01` and picks the victim itself
 — and **the victim can be the erasure**, a student's Art. 17 request failing
 because a background sweep raced it. The issue does not mention this.
 
-**The fix is structural rather than ordered.** `docs/lock-order.md:185-190`
-classifies lock sites by multiplicity: a transaction that can hold two `Class`
-row locks carries an ordering obligation, and one that holds a single row lock
-carries none. That document names `autoCancelClasses` as the one multi-row
-*predicate* that is deliberately not covered by `lockClassRowsOrdered`, because
-"it opens a separate `db.$transaction` per class, so it holds one row lock at a
-time" (`docs/lock-order.md:196-198`).
+**The fix is structural rather than ordered — but NOT on the multiplicity
+axis.** `docs/lock-order.md` does classify lock sites by multiplicity (a
+transaction that can hold two `Class` row locks carries an ordering obligation,
+one that holds a single row lock carries none) and then withdraws that in the
+very next sentence: since #196 a single-row write can be half of a slot-key
+deadlock while holding exactly one `Class` row lock, `updateClass` being the
+case. So "the reaper holds one row lock" is not on its own a safety argument,
+and this spec does not rest on it. The shape is still worth copying —
+`autoCancelClasses` is the precedent, "it opens a separate `db.$transaction`
+per class, so it holds one row lock at a time" — for the cost reason in the
+docblock quoted below, not for a multiplicity exemption.
 
 So the reaper takes that shape: **one class per transaction** — `db.$transaction`
 at `class-transitions.ts:263`, `lockClassRow` at `:360`, argued for in that
@@ -264,12 +289,16 @@ or after it in this loop"):
 3. A class whose transaction throws is logged by id and skipped; the rest of the
    sweep continues.
 
-Why this closes the cycle rather than ordering around it: the reaper never holds
-a second `Class` lock, so it can never be the "holds A, wants B" half of a
-cycle. Every `WaitlistEntry` row it touches is held under that row's own class
-lock, and the erasure takes every class lock it needs *before* its first write.
-Whichever reaches a shared class first, the other blocks on the `Class` row
-while holding nothing the first one wants.
+Why this closes the cycle rather than ordering around it — and the mechanism is
+the `Class` row lock, not the batch size. Every `WaitlistEntry` row the reaper
+touches sits under that row's own `Class` lock, and the erasure takes every
+`Class` lock it needs *before* its first write. So neither transaction can reach
+a `WaitlistEntry` row without first holding the `Class` row above it, the two
+can never contend on the same entry row at all, and that is true **however many
+classes the reaper batches**. Whichever reaches a shared class first, the other
+blocks on the `Class` row while holding nothing the first one wants. One class
+per transaction buys the "five sites" count in `lock-order.md` staying true and
+a bound on lock-holding against live traffic — not the absence of the cycle.
 
 Three consequences worth stating because they are what makes this the cheap
 option:
@@ -284,8 +313,8 @@ option:
   change (§1.2), and the `deleteMany` re-applies the whole predicate anyway.
 
 The candidate read uses `groupBy({ by: ['classId'] })` rather than
-`findMany({ distinct })`, for the reason `waitlist-reconciliation.ts:198-201`
-already records: Prisma does not compile `distinct` into SQL, so it would fetch
+`findMany({ distinct })`, for the reason `waitlist-reconciliation.ts`'s own
+candidate read already records: Prisma does not compile `distinct` into SQL, so it would fetch
 one row per matching *entry* to produce one id per *class*.
 
 ### 2.4 The retention period, and the axis
@@ -313,7 +342,7 @@ half of this design's predicate that nothing enforces:
 So a teacher can set any date on their own `completed` class through the API,
 and the next daily sweep then permanently deletes that class's queue. Before
 this feature a wrong date on a finished class was inert; it is not any more.
-**This is a known residual, tracked as its own issue** — deciding which fields
+**This is a known residual, tracked as #247** — deciding which fields
 freeze at which lifecycle stage is a product call this spec does not make — and
 it is the one way a row this sweep should keep can be made to look reapable.
 
@@ -414,14 +443,14 @@ rather than in `tests/integration/`):
 
 | # | Assertion | Mutation that must break it |
 |---|---|---|
-| T1 | An entry with a `registrationId`, on a terminal class past the window, survives | drop `registrationId: null` |
+| T1 | An entry with a `registrationId`, on a terminal class past the window, survives | drop `registrationId: null` — **but only in the mixed-population fixture review added later**. On the single-entry fixture this row described, the entry is double-protected (`claimed` status *and* a non-null `registrationId`), so either clause alone keeps it and the mutation survives. |
 | T2 | A `promoted` entry with a **null** `registrationId` survives (the fixture-only state) | drop the `status ∉ FULFILLED` clause |
 | T3 | An entry on an `open` class survives, however old | drop the status clause |
 | T4 | An entry on an `in_progress` class survives | as T3 |
 | T5 | An entry on a `draft` class survives | as T3 |
 | T6 | `expired`, `removed` and legacy `waiting` entries on a terminal class past the window are all deleted | narrow the delete to one status |
 | T7 | `date` exactly 365 days before today's UTC midnight survives | change `lt` to `lte` |
-| T8 | `date` 366 days before is deleted | change the constant |
+| T8 | `date` 366 days before is deleted | change `lt` to `lt` on a shifted cutoff — **not** "change the constant", which cannot break this: `daysBeforeCutoff` is computed from `retentionCutoff(NOW)`, so the fixture moves with `WAITLIST_RETENTION_DAYS`. The constant is pinned by its own named test and by the hard-coded `'2025-08-16T00:00:00.000Z'` in the UTC-normalisation test, not here. |
 | T9 | A class whose transaction throws is skipped and the sweep continues, returning `failed: 1` | remove the per-class `catch` |
 | T10 | Hitting `MAX_CLASSES_PER_RUN` returns `cappedOut: true` and logs | remove the cap's log line |
 
@@ -451,11 +480,12 @@ completed. Nothing couples auth cleanup to waitlist retention. The order is
 pinned because the assertion is a whole-map equality, not because a dependency
 exists, and the test must say so; otherwise a later reader infers one.
 
-**Lock discipline.** No new deadlock reproduction. The reaper holds one `Class`
-row lock at a time, so it carries no ordering obligation and there is no order
-to reproduce — `docs/lock-order.md`'s own classification is the argument, and it
-is recorded there rather than tested. Stated explicitly so a reviewer knows the
-omission is a decision, not a gap.
+**Lock discipline.** No new deadlock reproduction, and the reason is the
+mechanism in §2.3, not multiplicity: the reaper takes exactly one `Class` row
+lock and then only deletes CHILD rows, so it acquires no second `Class` edge to
+order against anything. There is no order to reproduce. Recorded in
+`docs/lock-order.md` rather than tested, and stated explicitly here so a
+reviewer knows the omission is a decision, not a gap.
 
 ---
 
@@ -466,7 +496,7 @@ failure, so the list is enumerated and each entry gets its own verdict:
 
 | Artifact | Claim | Action |
 |---|---|---|
-| `src/services/gdpr.ts:645-650` | "it is a handful that only grows, because **nothing reaps** a closed, unfulfilled `WaitlistEntry`. #238 is the root fix for that" | Rewrite. The axis is now bounded by the retention window; the ceiling's rationale survives but its premise changes. |
+| `src/services/gdpr.ts`, `deleteStudentAccount`'s budget rationale | "it is a handful that only grows, because **nothing reaps** a closed, unfulfilled `WaitlistEntry`. #238 is the root fix for that" | Rewrite. The axis is **shrunk, not bounded**: this sweep reaps only unfulfilled entries, so a repeatedly-promoted student still grows the set. The ceiling's rationale survives; its premise is weakened rather than removed. |
 | `src/services/waitlist-reconciliation.ts:180-190` | every closure "writes a terminal status … or deletes the row outright (`deleteStudentAccount` … is a hard delete)" — with a grep recipe to re-derive the roster | Add the reaper as the second hard deleter. The grep recipe stays; it will now return two. |
 | `docs/lock-order.md`, "Known conformance" | lists every site that takes a `Class` row lock | Add the reaper as a single-row-lock site, alongside `autoCancelClasses`. |
 | `docs/data-model.md`, `### WaitlistEntry (overflow)` | no retention statement | Add one. It is a live reference doc listed in `CLAUDE.md`. |

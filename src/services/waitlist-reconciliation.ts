@@ -186,8 +186,10 @@ export async function reconcileWaitlists(
   // deletes rather than status writes. The reaper cannot affect THIS query's
   // candidate set: it only touches classes in a terminal status, and this
   // reads `status: 'waiting'` on `open` ones. It does drain the pre-#216
-  // legacy `waiting` rows on terminal classes, which are the last rows that
-  // could still make the join below do any work. FULFILMENT —
+  // legacy `waiting` rows on terminal classes. Those are not the last rows that
+  // could make the join below do any work, though — it additionally excludes
+  // `waiting` rows on `in_progress` classes, which the reaper never touches.
+  // FULFILMENT —
   // `promoteNext`'s own promotion, `claimSpot`,
   // or a queued student booking directly through `POST /api/registrations`
   // (all of which write `promoted`/`claimed`) — is a different, self-limiting
@@ -196,14 +198,15 @@ export async function reconcileWaitlists(
   // To re-derive either roster:
   // `grep -rnE 'waitlistEntry\.(create|update|delete|upsert)' src`,
   // excluding tests, then read each hit for which status it writes, or
-  // whether it deletes the row — eighteen lines today, three of them
-  // comments, so fifteen write sites, of which two are production DELETERS
-  // rather than one. (`waitlist-retention.ts`'s header classifies the same
-  // fifteen by whether they can reach a terminal class; the two counts are
-  // the same grep and must move together.) The join above is kept anyway — it still
-  // narrows the scan to classes whose queue could still matter, which is
-  // worth avoiding even though nothing downstream depends on it for
-  // correctness any more.
+  // whether it deletes the row. Two of them are production DELETERS rather
+  // than one. (`waitlist-retention.ts`'s header classifies the same roster by
+  // whether each site can reach a terminal class. Neither place states a
+  // headcount any more: the hand-maintained partition went stale on the very
+  // commit that added the fifteenth site, while the grep recipe and the
+  // classification do not.) The `class: { status: 'open' }` join is kept
+  // anyway — it still narrows the scan to classes whose queue could still
+  // matter, which is worth avoiding even though nothing downstream depends on
+  // it for correctness any more.
   //
   // `groupBy`, not `findMany({ distinct })`: Prisma does not compile `distinct`
   // into SQL. It selects the rows (plus `id`, which it needs to compare) and

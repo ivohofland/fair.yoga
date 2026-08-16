@@ -645,10 +645,8 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // above spend twenty lines discrediting.) On a single-teacher CRM tool
     // that lock set is a handful of classes.
     //
-    // #238 SHRINKS THAT AXIS; IT DOES NOT BOUND IT, and an earlier version of
-    // this comment said it did — "a handful bounded by the retention window
-    // rather than by account age". That is false, and the mismatch is between
-    // two predicates: the pre-lock above joins `WaitlistEntry` with NO status
+    // #238 SHRINKS THAT AXIS; IT DOES NOT BOUND IT. The mismatch is between two
+    // predicates: the pre-lock above joins `WaitlistEntry` with NO status
     // predicate, so its lock set is every class this student holds ANY entry
     // in, while `reapClosedWaitlistEntries` (`waitlist-retention.ts`) deletes
     // only entries with `registrationId IS NULL` and a status outside
@@ -657,7 +655,9 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // here or anywhere. So a student who waitlists weekly and gets promoted
     // accumulates ~52 permanent entries a year, each holding its class in this
     // lock set for the life of the account. What #238 bounds is the UNFULFILLED
-    // share; the set still grows with account age, just more slowly.
+    // share; the set still grows with account age, just more slowly. Stated at
+    // this length because "bounded by the retention window" is the natural
+    // shorthand and it is wrong.
     //
     // Which is why the number below is a ceiling on damage rather than a
     // forecast of need.

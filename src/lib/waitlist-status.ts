@@ -102,11 +102,15 @@ export const CLAIMABLE_WAITLIST_STATUSES: readonly WaitlistStatus[] = Object.fre
  * Used by `waitlist-retention.ts` (#238) as the SECOND of two independent
  * discriminators for "this entry never became a booking". The first, and the
  * primary one, is `registrationId IS NULL`: a foreign key to a `Registration`
- * — and through it to a `Payment` — is what actually makes a row bookkeeping,
- * where a status is only a label. No writer can produce a row where the two
- * disagree; all three fulfilment sites write `registrationId` in the same
- * statement as the status (`waitlist.ts`'s `promoteNext` and `claimSpot`, and
- * the walk-in resolver in `POST /api/registrations`).
+ * is what actually makes a row bookkeeping, where a status is only a label.
+ * That argument stands on the FK by itself — NOT on "and through it to a
+ * `Payment`", which an earlier version added and which is not always true:
+ * `Payment` rows are created only by `completeClass`, so a fulfilled entry on a
+ * CANCELLED class has a `Registration` and no `Payment`. No writer can produce
+ * a row where the status and the FK disagree; all three fulfilment sites write
+ * `registrationId` in the same statement as the status (`waitlist.ts`'s
+ * `promoteNext` and `claimSpot`, and the walk-in resolver in
+ * `POST /api/registrations`).
  *
  * It is there anyway because deleting is irreversible, and two independently
  * derived discriminators intersected are conservative: if they ever disagree,

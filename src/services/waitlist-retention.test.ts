@@ -16,26 +16,30 @@ import {
  * header sets out: an `integration` file would run against the DEV database by
  * design (`docs/test-database.md` §3.4), and this file DELETES rows.
  *
- * BUT THE `unit` PROJECT IS NOT A GUARANTEE, and an earlier version of this
- * paragraph said it was — that `tests/setup/unit-db.ts` "forces it onto
- * `DATABASE_URL_TEST`". It does not force anything. When `DATABASE_URL_TEST`
- * is absent that setup logs "CI mode" and `return`s — it SKIPS — and
- * `vitest.config.ts` then resolves this project's `DATABASE_URL` to
- * `testUrl ?? devUrl`, i.e. the DEV database. Isolation here is a value in
- * `.env`, which is configuration and not a guard.
+ * BUT THE `unit` PROJECT IS NOT A GUARANTEE. `tests/setup/unit-db.ts`
+ * PROVISIONS `DATABASE_URL_TEST`; it does not force this project onto it. When
+ * that variable is absent the setup logs "CI mode" and returns, and
+ * `vitest.config.ts` resolves this project's `DATABASE_URL` to
+ * `testUrl ?? devUrl` — the DEV database. Isolation here is a value in `.env`,
+ * which is configuration and not a guard.
  *
  * THIS IS THE DESTRUCTIVE ONE of the two files that share that wording. Unlike
  * every other unit suite, this one calls `reapClosedWaitlistEntries`, whose
  * `groupBy` and `deleteMany` are deliberately NOT scoped to the fixtures below
  * — that is the function's whole job. Pointed at dev it would permanently
- * delete every unfulfilled entry on every terminal class past the cutoff, and
+ * delete every unfulfilled entry on every terminal class past the cutoff.
  * `unit-db.ts`'s own docblock records that database-wide sweep tests have
- * already caused one real incident (recoverable status writes; these are not).
+ * already caused one real incident: clock-injected sweeps completed the seed's
+ * future classes AND MAILED THEIR PAYMENT REQUESTS — a sent email is no more
+ * recoverable than a deleted row, so the comparison is between two bad
+ * outcomes, not between a recoverable one and this.
  * `class-terminal-status.test.ts` carries the same sentence and none of the
  * blast radius: it only creates and updates rows it made itself.
  *
  * Hence the `beforeAll` guard below, which asks the connected database its own
- * name rather than trusting the environment.
+ * name rather than trusting the environment — and the teardown's own
+ * fail-closed bail, since a guard that throws in `beforeAll` still runs
+ * `afterAll`.
  */
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();

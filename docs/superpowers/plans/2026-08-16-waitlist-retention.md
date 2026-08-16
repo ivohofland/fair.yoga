@@ -47,7 +47,12 @@ mutation table) before Task 2.
   `MAX_CLASSES_PER_RUN = 500`. Both exported constants, both with the rationale
   in their docblock.
 - **Test database only.** Seeding and mutation work goes to `DATABASE_URL_TEST`,
-  never dev. The `unit` project is forced onto it by `tests/setup/unit-db.ts`.
+  never dev. **`tests/setup/unit-db.ts` does NOT force this** — it provisions and
+  migrates that database, and when `DATABASE_URL_TEST` is unset it logs "CI mode"
+  and returns, after which `vitest.config.ts` resolves the unit project's
+  `DATABASE_URL` to the DEV url. The isolation is a value in `.env`, i.e.
+  configuration. The retention suite therefore carries its own runtime guard on
+  the connected database's name, and CI sets `DATABASE_URL_TEST` explicitly.
 
 ## Measured baseline (2026-08-16, at `abca62a`)
 
@@ -72,9 +77,10 @@ Per project, and the arithmetic reconciles:
 **Predicted after: 122 files** (two new: the retention service test, plus no new
 test file for the extended suites) — in fact **121**, since only
 `waitlist-retention.test.ts` is new and Tasks 1/5 extend existing files.
-**Measure it anyway.** #212's handover predicted 1294 tests and the real figure
+**Measure it anyway.** #199's handover predicted 1294 tests and the real figure
 was 1296, because that branch's own review added tests the prediction could not
-have known about.
+have known about. (#212's handover measured 1296 and predicted 1298 — a
+different pair; the anecdote was misattributed here.)
 
 ---
 
@@ -317,8 +323,10 @@ import {
 
 /**
  * A pure DB-invariant suite — nothing here calls the app on `:3000` — so it
- * lives in the `unit` project, where `tests/setup/unit-db.ts` forces it onto
- * `DATABASE_URL_TEST`. The same reasoning `class-terminal-status.test.ts`'s
+ * lives in the `unit` project. NOTE: the shipped version of this docblock is
+ * longer and says the opposite of what the next clause used to — `unit-db.ts`
+ * does NOT force anything, it returns early when `DATABASE_URL_TEST` is unset.
+ * Copy the file, not this block. The same reasoning `class-terminal-status.test.ts`'s
  * header sets out: an `integration` file would run against the DEV database by
  * design (`docs/test-database.md` §3.4), and this file DELETES rows.
  */
@@ -568,12 +576,19 @@ Create `src/services/waitlist-retention.ts`:
  * included — so its write set and this one overlap. Two multi-row deletes
  * taking row locks in different plan orders is an AB-BA cycle, and Postgres
  * picks the victim: it can be the erasure, which means a student's Art. 17
- * request failing because a background sweep raced it. `docs/lock-order.md`
- * classifies lock sites by MULTIPLICITY — a transaction that can hold two
- * `Class` row locks carries an ordering obligation, one that holds a single row
- * lock carries none. Holding one at a time removes the cycle instead of
- * ordering around it, and it keeps that document's "five sites lock more than
- * one `Class` row" count true. The shape is `autoCancelClasses`'
+ * request failing because a background sweep raced it.
+ *
+ * SUPERSEDED — DO NOT COPY THIS PARAGRAPH. It argued safety from MULTIPLICITY
+ * ("a transaction that can hold two `Class` row locks carries an ordering
+ * obligation, one that holds a single row lock carries none") and credited
+ * one-class-at-a-time with removing the cycle. Both were retracted in review:
+ * `lock-order.md` withdraws the multiplicity bound in its own next sentence
+ * (since #196 a single-row write can be half of a slot-key deadlock —
+ * `updateClass`), and what actually removes the cycle is the `Class` ROW LOCK
+ * both transactions must take before reaching any `WaitlistEntry` row, at any
+ * batch size. Take the shipped `waitlist-retention.ts` header verbatim instead.
+ * One class at a time buys the "five sites" count staying true and a bound on
+ * lock-holding — not the absence of the cycle. The shape is `autoCancelClasses`'
  * (`class-transitions.ts`), whose own docblock argues it on the axis that
  * matters here: a slow lock wait on one class costs only that class's
  * transaction.
@@ -820,7 +835,7 @@ Append inside `describe('reapClosedWaitlistEntries', …)`:
 - [ ] **Step 6: Run and verify all pass**
 
 Run: `npx vitest run --project unit src/services/waitlist-retention.test.ts`
-Expected: PASS, 11 tests (1 cutoff + 1 + 1 + 1 + 3 + 3 + 1 + 1).
+Expected: PASS, 12 tests (1 cutoff + 1 + 1 + 1 + 3 + 3 + 1 + 1 — the summands total 12; the headline said 11).
 
 - [ ] **Step 7: Prove all four clauses bite**
 
@@ -879,7 +894,9 @@ const db = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
 db.$on('query', (e) => console.log(e.query, '\n--- params:', e.params, '\n'));
 
 async function main() {
-  const { reapClosedWaitlistEntries } = await import('../../../../Users/ivohofland/Projects/fair.yoga/src/services/waitlist-retention');
+  // Six `..` from a scratchpad directory, not four — count them against the
+  // scratchpad path in your own session before running this.
+  const { reapClosedWaitlistEntries } = await import('../../../../../../Users/ivohofland/Projects/fair.yoga/src/services/waitlist-retention');
   await reapClosedWaitlistEntries(db, { maxClasses: 1 });
   await db.$disconnect();
 }
@@ -965,11 +982,19 @@ Add to `src/services/waitlist-retention.test.ts`. Add
    * sweep's own transaction fails with `55P03` — the realistic failure for this
    * code, and the one `classifyApiError` already models as transient.
    *
-   * The two class ids are FIXED and ordered, because the candidate read is
-   * `orderBy: { classId: 'asc' }`. With the held class sorting SECOND, removing
-   * the try/catch would still leave the first class reaped and the test would
-   * pass against the bug. Held class first is what makes the assertion mean
-   * "the sweep continued past a failure".
+   * The two class ids are ordered, because the candidate read is
+   * `orderBy: { classId: 'asc' }`, and the held class must sort FIRST.
+   *
+   * SUPERSEDED REASONING — this block used to add "with the held class sorting
+   * SECOND, removing the try/catch would still leave the first class reaped and
+   * the test would pass against the bug". That is false: with no try/catch the
+   * `55P03` propagates out of the sweep, the `await` rejects, and the test fails
+   * in EITHER order. Held-first buys two other things — the continuation
+   * assertion demonstrates something rather than holding vacuously over an
+   * empty "ones after it", and it catches a catch that STOPS the loop
+   * (`break`/early return), which propagating would not. The ids are also
+   * derived from `uniqueSuffix` in the shipped file rather than hard-coded, so
+   * an interrupted run cannot leave a permanent P2002. Copy the shipped file.
    */
   it('skips a class whose lock it cannot take, and reaps the ones after it', async () => {
     const HELD = '00000000-0000-4000-8000-000000000001';
@@ -1144,7 +1169,7 @@ Insert immediately after `const batch = candidates.slice(0, maxClasses);`:
 - [ ] **Step 8: Run the whole file**
 
 Run: `npx vitest run --project unit src/services/waitlist-retention.test.ts`
-Expected: PASS, 14 tests.
+Expected: PASS, 15 tests (the earlier count of 14 was one short).
 
 - [ ] **Step 9: Prove both guards bite**
 
@@ -1163,8 +1188,8 @@ git commit -m "feat: per-class isolation and a bounded run for the retention swe
 
 The isolation test holds the first class's row lock from a second connection
 so lockClassRow's 2s bound fires for real, rather than stubbing a throw. Its
-two class ids are fixed and the held one sorts first, because with it second
-the test passes against the bug.
+two class ids sort in a fixed order and the held one sorts first, so the
+assertion that the sweep continued past a failure is not vacuous.
 
 The cap logs as well as returns: isolatedSweeps discards sweep return values,
 so a silently truncated run would read as a complete one everywhere downstream.
@@ -1302,8 +1327,11 @@ import { reapClosedWaitlistEntries } from '@/services/waitlist-retention';
  * `/api/cron/transition-classes` already runs three. Renamed from
  * `auth-cleanup` with the scheduler job it mirrors (#238).
  *
- * NOTHING TESTS THIS ROUTE, OR ANY `/api/cron/*` ROUTE. `grep -rn 'api/cron'
- * tests/` returns nothing. The services below are each covered
+ * NOTHING TESTS THIS ROUTE. `grep -rn 'api/cron' tests/` returns ONE line —
+ * `tests/e2e/recurring.spec.ts:126`, which drives `/api/cron/generate-classes`
+ * — so "or any `/api/cron/*` route" was false. Copy the shipped file, which
+ * carries the corrected version plus the reason an e2e test would be the wrong
+ * instrument here. The services below are each covered
  * (`auth-cleanup.test.ts`, `waitlist-retention.test.ts`) and `requireCronAuth`
  * is covered (`lib/cron-auth.test.ts`); what is uncovered is the WIRING — that
  * this route calls the sweeps it names and returns their results. That is the
@@ -1389,18 +1417,28 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 **Why this is its own task.** A claim fixed in one place while its twin stands is
 this project's most repeated failure. Spec §4 enumerates the artifacts; this
 task discharges them **with one verdict per location**, because "is §4 done?" is
-unanswerable when §4 names five files.
+unanswerable when §4 names six files to change (`gdpr.ts`,
+`waitlist-reconciliation.ts`, `docs/lock-order.md`, `docs/data-model.md`,
+`CLAUDE.md`, `DEPLOYMENT.md:73`) plus two deliberately left alone. Count the
+table rows; do not trust a headline number.
 
 - [ ] **Step 1: `gdpr.ts` — the budget rationale's premise changed**
 
-The sentence at `:646-651` reads "it is a handful that only grows, because
-nothing reaps a closed, unfulfilled `WaitlistEntry`. #238 is the root fix for
-that". Replace the "only grows" clause. The ceiling's *rationale* survives — it
-is still a ceiling on damage rather than a forecast of need — but the axis is now
-bounded by the retention window rather than by account age. Say which, and name
-the window:
+The sentence in `deleteStudentAccount`'s budget rationale reads "it is a handful
+that only grows, because nothing reaps a closed, unfulfilled `WaitlistEntry`.
+#238 is the root fix for that". Replace the "only grows" clause.
+
+**SUPERSEDED — the wording this step originally prescribed was retracted in
+review, and the replacement block below is NOT what shipped.** It said the axis
+is "bounded by the retention window rather than by account age". That is false:
+#238 SHRINKS the axis, it does not bound it, because nothing reaps a FULFILLED
+entry. The erasure's pre-lock joins `WaitlistEntry` with no status predicate, so
+a student promoted off the queue week after week still grows that lock set for
+the life of the account. Read the shipped `gdpr.ts` paragraph and copy that; the
+block below is kept only so a reader can see what was changed and why.
 
 ```
+    // ~~SUPERSEDED, do not paste~~
     // that lock set is a handful of classes — and since #238 it is a handful
     // bounded by the retention window rather than by account age:
     // `reapClosedWaitlistEntries` (`waitlist-retention.ts`) deletes closed,
@@ -1454,6 +1492,17 @@ explicit, because that is the whole safety argument:
   removes the cycle rather than ordering it away.
 ```
 
+**SUPERSEDED — DO NOT PASTE THE BLOCK ABOVE.** Re-running this step verbatim
+would reinstate two claims review retracted: that holding a single `Class` row
+lock is itself an exemption from ordering obligations (`lock-order.md` withdraws
+that bound in its own next sentence — since #196, `updateClass`), and that one
+class at a time is what removes the AB-BA cycle against the erasure (it is not:
+both transactions must hold the `Class` row lock above every `WaitlistEntry` row
+they touch, so they cannot contend on one at any batch size). The block is
+retained only as a record of what was changed. **Copy the bullet as it currently
+stands in `docs/lock-order.md` instead**, and if that file and this block
+disagree, the file wins.
+
 Do **not** change the "**five** sites lock more than one `Class` row" count at
 `:59`, and do not change `gdpr.ts:418`'s "All five such sites" — the reaper is
 not one of them. Confirm the `FOR UPDATE OF` grep at `:64-74` still returns
@@ -1496,8 +1545,10 @@ correction cannot see another's twin. Instead:
 git diff --name-only main...HEAD
 ```
 
-List the files the branch changed. List the five files §4 of the spec says it
-must change. Reconcile the two, and state any difference out loud.
+List the files the branch changed. List the **six** files §4 of the spec says it
+must change — the table has six rows to change plus two left alone, and
+`DEPLOYMENT.md:73` is the one an earlier "five" dropped. Reconcile the two, and
+state any difference out loud.
 
 Then verify the two claims §4 deliberately leaves alone are still there and
 still make sense as dated records:

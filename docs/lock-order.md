@@ -850,27 +850,36 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   `Class`, then `WaitlistEntry`, one class per `db.$transaction` via
   `lockClassRow`. **Deliberately a single-row-lock site**, like
   `autoCancelClasses` and unlike the five `lockClassRowsOrdered` sites.
-  **But holding one row lock is not by itself why it is safe** — an earlier
-  version of this bullet said it was ("it never holds a second `Class` row
-  lock, so it carries no ordering obligation"), which is the multiplicity bound
-  this document retires at "Ordering WITHIN `Class`" above: since #196 a
-  single-row write can be half of a slot-key deadlock while holding exactly one
-  `Class` row lock, and `updateClass` is that case. The conclusion survives on
-  the mechanism instead: this sweep never `INSERT`s or `UPDATE`s a `Class` row,
-  so it takes no `Class_teacher_slot_unique` index-entry lock and joins no
-  slot-key wait chain; deleting a CHILD row takes no FK lock on the parent (only
-  an `INSERT`/`UPDATE` of one takes `FOR KEY SHARE`), so its `deleteMany` adds no
-  `Class` edge past the `lockClassRow` it took on purpose; and no production
-  writer holds a `WaitlistEntry` row lock while requesting a `Class` lock, so
-  there is no reverse edge to close a cycle against. Read it that way before
-  citing it as precedent. Holding one class at a time still matters, because its
-  write set overlaps
-  `deleteStudentAccount`'s — that function's `waitlistEntry.deleteMany` is
-  keyed on `studentId` with no class-status scope, so it deletes entries on
-  terminal classes too, which is exactly what this sweep deletes. Two multi-row
-  `WaitlistEntry` deletes taking rows in different plan orders is a cycle whose
-  victim Postgres chooses, and it can choose the erasure. One class at a time
-  removes the cycle rather than ordering it away.
+  **But holding one row lock is not by itself why it is safe**, and that is the
+  multiplicity bound this document retires at "Ordering WITHIN `Class`" above:
+  since #196 a single-row write can be half of a slot-key deadlock while holding
+  exactly one `Class` row lock, and `updateClass` is that case. Anyone citing
+  this bullet as precedent needs the mechanism, not the count. The conclusion
+  survives on three mechanical facts: this sweep never `INSERT`s or `UPDATE`s a
+  `Class` row, so it takes no `Class_teacher_slot_unique` index-entry lock and
+  joins no slot-key wait chain; deleting a CHILD row takes no FK lock on the
+  parent (only an `INSERT`/`UPDATE` of one takes `FOR KEY SHARE`), so its
+  `deleteMany` adds no `Class` edge past the `lockClassRow` it took on purpose;
+  and no production writer holds a `WaitlistEntry` row lock while requesting a
+  `Class` lock, so there is no reverse edge to close a cycle against.
+
+  **Against `deleteStudentAccount` specifically, the `Class` row lock is what
+  removes the cycle — not the batch size.** The write sets do overlap: that
+  function's `waitlistEntry.deleteMany` is keyed on `studentId` with no
+  class-status scope, so it deletes entries on terminal classes too, which is
+  exactly what this sweep deletes. But `deleteStudentAccount` PRE-LOCKS every
+  `Class` it will delete entries from, before its first write, joined on
+  `w."studentId"` with no status predicate; and this sweep takes
+  `lockClassRow(tx, classId)` before its own `deleteMany`. So every
+  `WaitlistEntry` row in either write set sits beneath a `Class` row lock both
+  transactions must acquire first, and the two can never contend on the same
+  `WaitlistEntry` row at all — **regardless of how many classes the sweep
+  batches**. An earlier version of this bullet credited one-class-at-a-time with
+  removing the cycle; it does not, and a future site copying that reasoning
+  without also pre-locking its parents would inherit a deadlock this sweep does
+  not have. What one class at a time actually buys is the "five sites" count
+  immediately below staying true, and a bound on how long the sweep holds locks
+  against live traffic.
 
 ## Known safe by accident, not by order — not fixed here
 

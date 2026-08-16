@@ -4,11 +4,24 @@
  *
  * The unit tier includes service tests that inject far-future clocks
  * into database-wide sweeps — on a shared database those once completed
- * the seed's future classes and mailed their payment requests. This
- * setup guarantees they run against `DATABASE_URL_TEST` instead.
+ * the seed's future classes and mailed their payment requests. This setup
+ * PROVISIONS `DATABASE_URL_TEST` (creates it, migrates it) so those tests have
+ * somewhere isolated to run.
  *
- * When DATABASE_URL_TEST is not set (CI), everything is skipped: CI's
- * database is already throwaway and migrated by the workflow.
+ * IT DOES NOT GUARANTEE THEY RUN THERE, and an earlier version of this
+ * paragraph said it did. The switch is made by `vitest.config.ts`, which
+ * resolves the unit project's `DATABASE_URL` to `DATABASE_URL_TEST ?? devUrl`.
+ * When `DATABASE_URL_TEST` is unset this function returns early and that
+ * fallback is the DEV database — the isolation is a value in `.env`, i.e.
+ * configuration, not a guard. Two suites correct this in their own headers
+ * (`waitlist-retention.test.ts`, `class-terminal-status.test.ts`); stated here
+ * too, because this is the source the next such file will copy from.
+ *
+ * A suite that takes an UNSCOPED destructive write must therefore carry its own
+ * runtime guard on the connected database's name, as
+ * `waitlist-retention.test.ts` does. CI sets `DATABASE_URL_TEST` explicitly
+ * (`.github/workflows/ci.yml`) precisely so that guard does not skip the suite
+ * on the merge gate; the early return below is what made it do exactly that.
  */
 
 import { execSync } from 'child_process';

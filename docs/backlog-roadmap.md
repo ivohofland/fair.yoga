@@ -2158,7 +2158,7 @@ than deletes. So the population grows for the life of each account, which is wha
 made the erasure's lock set unbounded, `reconcileWaitlists`' join load-bearing
 rather than belt-and-braces, and the Article 15 export a record of years of
 non-events. Also a storage-limitation problem in its own right — the retention
-period is a decision, and "forever" is what ships today.
+period is a decision, and the open branch decides it at 365 days.
 
 ### The finding this round is actually about
 

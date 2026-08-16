@@ -300,10 +300,18 @@ No pricing engine. No individual registration. No link to Room or Student. This 
 
 Hybrid waitlist promotion: before the cancel deadline cutoff, students are auto-promoted in queue order. In the final hour before class, it switches to first-come-first-claimed for any remaining spots.
 
-**Retention (#238):** an entry that never became a registration
-(`registration_id IS NULL`) is deleted once its class is terminal
-(`completed`/`cancelled`) and more than 365 days past its `date`. An entry that
-did become a registration is joined to a financial record and is kept.
+**Retention (#238):** an entry that never became a registration is deleted once
+its class is terminal (`completed`/`cancelled`) and more than 365 days past its
+`date`. "Never became a registration" is TWO clauses the sweep treats as
+co-equal: `registration_id IS NULL` **and** a status outside
+`FULFILLED_WAITLIST_STATUSES` (`promoted`, `claimed`). No writer can make the
+two disagree, but deleting is irreversible, so their intersection is taken —
+if they ever disagree, the row survives.
+
+An entry that did become a registration is kept because the FK to
+`Registration` makes it bookkeeping. That argument stands on the FK alone: a
+`Payment` is created only by `completeClass`, so a fulfilled entry on a
+**cancelled** class has a `Registration` and no `Payment`.
 Swept daily by `reapClosedWaitlistEntries` (`services/waitlist-retention.ts`).
 
 ---
