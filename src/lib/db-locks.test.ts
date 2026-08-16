@@ -438,6 +438,67 @@ describe('lockClassRowsOrdered', () => {
     expect(locked).toEqual([lowClassId, highClassId]);
   });
 
+  it('locks the Class rows and NOT the WaitlistEntry rows the join reaches', async () => {
+    // The `OF c`. It is one of the four things `lockClassRowsOrdered`'s
+    // docblock says it exists to own, and until #239's review it was the only
+    // one nothing could fail on: the whole unit project stayed green with the
+    // clause reduced to a bare `FOR UPDATE`. Every other test in this block
+    // reads the returned `Class` ids, and the extra `WaitlistEntry` locks a
+    // bare `FOR UPDATE` takes are invisible in that return — they show up only
+    // as wait edges `docs/lock-order.md` does not model, which is issue 180.
+    const entry = await prisma.waitlistEntry.findFirstOrThrow({
+      where: { classId: lowClassId, studentId: studentAId },
+      select: { id: true },
+    });
+
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let locked!: () => void;
+    const isLocked = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await lockClassRowsOrdered(tx, {
+          join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id`,
+          where: Prisma.sql`c."teacherId" = ${teacherId}`,
+        });
+        locked();
+        await released;
+      },
+      { timeout: 10_000 },
+    );
+
+    await isLocked;
+
+    // `NOWAIT`, not a bounded wait: this asks whether the row is held right
+    // now and answers in one round trip, instead of spending the helper's own
+    // 2s discovering it.
+    const probe = (sql: Prisma.Sql) =>
+      prisma
+        .$transaction((tx) => tx.$queryRaw(sql))
+        .then(() => 'free' as const)
+        .catch((err: unknown) => String(err));
+
+    const entryProbe = await probe(
+      Prisma.sql`SELECT id FROM "WaitlistEntry" WHERE id = ${entry.id} FOR UPDATE NOWAIT`,
+    );
+    // The counter-probe, and it is what stops this passing vacuously: a helper
+    // that locked NOTHING AT ALL would satisfy the entry assertion perfectly.
+    const classProbe = await probe(
+      Prisma.sql`SELECT id FROM "Class" WHERE id = ${lowClassId} FOR UPDATE NOWAIT`,
+    );
+
+    release();
+    await holder;
+
+    expect(entryProbe).toBe('free');
+    expect(classProbe).toMatch(/55P03|could not obtain lock/);
+  });
+
   it('bounds the rest of the transaction at the shared lock timeout', async () => {
     // Observes the effect rather than re-asserting the string that was sent
     // — the distinction the `SHOW` tests above this describe block make.
