@@ -24,7 +24,7 @@ import {
  * `isTransientDbError` is what separates "safe to retry" from "worth
  * retrying": a lock timeout, a deadlock, an expired transaction budget are
  * all lost races the next attempt can win, and this branch was added for
- * exactly one of them (`P2028` from `deleteStudentAccount`'s sized
+ * exactly one of them (`P2028` from `deleteStudentAccount`'s flat 20s
  * `timeout`). Everything else that can escape those services will fail the
  * same way forever — `P2025` from the opening `findUniqueOrThrow` if the
  * profile is already gone, `P2003` from a foreign key, a `TypeError` from a

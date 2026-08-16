@@ -118,8 +118,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // atomic-template-update branch gave its transaction its own
       // `{ timeout: 15_000 }`), both generator sweeps (`generateClassInstances`,
       // `generateStudioClassInstances`), this route's own studio twin, and
-      // **both GDPR erasures** — `deleteStudentAccount`'s sized
-      // `Math.min(5_000 + waitingCount * 2_000, 20_000)` and
+      // **both GDPR erasures** — `deleteStudentAccount`'s flat
+      // `{ timeout: 20_000 }` (sized until #240) and
       // `deleteTeacherAccount`'s flat `{ timeout: 10_000 }` (`gdpr.ts`), both
       // of which lock `Class` rows and the first of which is the counterparty
       // in the deadlock issue 180 closed. An earlier version of this sentence

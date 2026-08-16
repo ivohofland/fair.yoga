@@ -119,7 +119,7 @@ const TRANSIENT_SQLSTATES = ['40001', '40P01', '55P03'] as const;
 /**
  * Prisma's own codes for the same class of failure — contention, not a bad
  * request. `P2028` is the interactive-transaction budget expiring (which
- * `deleteStudentAccount`'s sized `timeout` can hit under load), `P2024` is
+ * `deleteStudentAccount`'s flat 20s `timeout` can hit under load), `P2024` is
  * the connection pool handing out nothing in time, and `P2034` is Prisma's
  * own wrapper for "write conflict or deadlock, please retry" — the same
  * events as `40P01`/`40001` below, surfaced as a known code rather than

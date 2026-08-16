@@ -705,8 +705,13 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   an all-status count monotone for the life of the account. Past the ceiling the
   erasure failed and the retry re-read the same count and failed identically: an
   account that could never be erased. The single statement makes the lock cost
-  O(1) statements, so the budget is sized by the reorder loop's `waiting` count,
-  which drains on its own. It also closes the read-then-lock window, since the
+  O(1) ROUND TRIPS — not O(1) waiting, which an earlier version of this
+  sentence implied by saying "O(1) statements" and letting the budget be sized
+  by the reorder loop's `waiting` count. `lock_timeout` is armed per lock
+  acquisition, so one statement over N contended rows can still spend N × 2s
+  (measured 2026-08-16: two rows, releases at 1.5s and 3.0s, one waiter at 2s,
+  succeeded after 2.67s). #240 removed the sizing term for that reason; the
+  budget is a flat `{ timeout: 20_000 }`. It also closes the read-then-lock window, since the
   lock is taken BY the statement that chooses the rows.
 
   Pinned by "waits for a class row another transaction holds even when the
@@ -906,11 +911,13 @@ template row before any `Class` row the same way the other four do.
 `deleteTeacherAccount` (`gdpr.ts`) remains the sole site on the inverse side,
 and carries a flat `{ timeout: 10_000 }` **transaction** budget already argued
 to be tight for the per-class cancel loop it walks — which is part of why
-re-ordering it is not free. (Not a *lock* timeout, and not the tuned one: the
-sized budget, `Math.min(5_000 + waitingCount * 2_000, 20_000)`, belongs to
-`deleteStudentAccount`. An earlier version of this sentence conflated the two,
-which matters because the tuned budget is the one that would absorb a
-re-ordering and the flat one is not.) Still filed as a decision, not resolved
+re-ordering it is not free. (Not a *lock* timeout. This distinction used to carry
+weight for #229: `deleteStudentAccount` had a TUNED budget,
+`Math.min(5_000 + waitingCount * 2_000, 20_000)`, which was argued to be the
+one that could absorb a re-ordering where a flat one could not. #240 removed
+the term, so both erasures now carry flat budgets — `20_000` here, `10_000`
+there — and that half of the argument no longer applies. What remains is the
+raw size difference, which is a weaker reason than the one it replaces.) Still filed as a decision, not resolved
 here. See issue #229.
 
 ## Related, but not a lock-order issue — found while fixing the above, not fixed

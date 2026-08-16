@@ -159,10 +159,12 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * Prisma itself caps at 5s by default, so a handful of contended iterations
  * can exhaust the transaction's whole budget well before any single one of
  * them hits its own timeout. `deleteStudentAccount` (`gdpr.ts`) is exactly
- * this caller, added in #174 Task 5 — its call site sizes the erasure
- * transaction's own `timeout` to the number of classes it is about to lock
- * rather than trusting the 5s default; the arithmetic lives there, not
- * here.
+ * this caller, added in #174 Task 5 — its transaction carries a flat
+ * `{ timeout: 20_000 }` rather than the 5s default. It used to SIZE that
+ * budget from the number of classes it was about to lock; #240 removed the
+ * term, because it counted `waiting` entries while the lock set spans every
+ * status, and priced none of the reorder loop. The reasoning lives there,
+ * not here.
  *
  * The bound itself is `LOCK_TIMEOUT_SQL` above, shared with the two
  * template-claim sites (`claimTemplateForGeneration`,
