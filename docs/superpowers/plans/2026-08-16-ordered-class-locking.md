@@ -43,7 +43,7 @@ task report.
 ```bash
 sed -n '2p'        src/lib/db-locks.ts          # import type { Prisma } from '@prisma/client';
 sed -n '193p'      src/lib/db-locks.ts          # export async function lockClassRow(
-sed -n '47p'       src/lib/db-locks.test.ts     # async function _theBrandRejectsABareClient(
+sed -n '48p'       src/lib/db-locks.test.ts     # async function _theBrandRejectsABareClient(
 sed -n '402,409p'  src/services/gdpr.ts         # deleteStudentAccount's FOR UPDATE OF c
 sed -n '860,862p'  src/services/gdpr.ts         # deleteTeacherAccount's `upcoming` read
 sed -n '945,957p'  src/services/waitlist.ts     # withdrawWaitingEntriesForTeacher's statement
@@ -78,7 +78,7 @@ against Postgres without error.
 **Files:**
 - Modify: `src/lib/db-locks.ts:2` (import), `:196` (insert helper after
   `lockClassRow`), `:169-188` (register), `:210-212` (module-safety docblock)
-- Test: `src/lib/db-locks.test.ts` — imports, `_theBrandRejectsABareClient:47`,
+- Test: `src/lib/db-locks.test.ts` — imports, `_theBrandRejectsABareClient:48`,
   plus new behavioural tests
 
 **Interfaces:**
@@ -398,7 +398,7 @@ Expected: PASS, including the four new tests.
 
 - [ ] **Step 6: Add the brand pin**
 
-In `src/lib/db-locks.test.ts`, inside `_theBrandRejectsABareClient` (`:47`),
+In `src/lib/db-locks.test.ts`, inside `_theBrandRejectsABareClient` (`:48`),
 after the `lockClassRow` entry:
 
 ```ts
@@ -1235,7 +1235,7 @@ SCHEDULED_STATUSES_SQL and for the index reason measured there."
 ### Task 8: Fold `deleteTeacherAccount` in, and re-point the test it makes vacuous
 
 **Files:**
-- Modify: `src/services/gdpr.ts` — insert pre-lock before `:861`
+- Modify: `src/services/gdpr.ts` — insert pre-lock before `:860`
 - Modify: `src/services/gdpr.test.ts:~1325-1329` (fixture), `:1344` (the test)
 
 **Interfaces:**
@@ -1260,7 +1260,7 @@ that state. The steps below measure the vacuity rather than assuming it.
 - [ ] **Step 1: Add the pre-lock**
 
 In `src/services/gdpr.ts`, immediately before the `const upcoming =` read
-(`:861`), inside the `db.$transaction` callback:
+(`:860`), inside the `db.$transaction` callback:
 
 ```ts
       // Every class this erasure may cancel, locked ascending in ONE statement
