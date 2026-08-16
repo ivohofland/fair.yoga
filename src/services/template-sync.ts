@@ -14,7 +14,8 @@
 
 import { generateInstancesForTemplate } from './class-generator';
 import { countSkipReasons } from '@/lib/generation';
-import { setLockTimeout, type TransactionClientOnly } from '@/lib/db-locks';
+import { lockClassRowsOrdered, type TransactionClientOnly } from '@/lib/db-locks';
+import { Prisma } from '@prisma/client';
 
 export interface TemplateSyncResult {
   /** Instances updated in place. */
@@ -110,17 +111,11 @@ export async function syncTemplateInstances(
   //
   // `lockBound`, not `now` — see its own comment above for why the raw
   // form needs the truncated date to stay a superset of the re-read.
-  await setLockTimeout(tx);
-  const locked = await tx.$queryRaw<Array<{ id: string }>>`
-    SELECT c.id
-    FROM "Class" c
-    WHERE c."templateId" = ${templateId}
+  const lockedIds = await lockClassRowsOrdered(tx, {
+    where: Prisma.sql`c."templateId" = ${templateId}
       AND c."teacherId" = ${template.teacherId}
-      AND c.date > ${lockBound}
-    ORDER BY c.id
-    FOR UPDATE OF c
-  `;
-  const lockedIds = locked.map((row) => row.id);
+      AND c.date > ${lockBound}`,
+  });
 
   // Future generated instances; `gt: now` deliberately excludes today —
   // a class hours from starting should not shift under its students.
