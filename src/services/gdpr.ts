@@ -10,12 +10,13 @@
  */
 
 import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
+import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { formatDayHeader } from '@/lib/format';
 import { completeClass } from './class-lifecycle';
 import { handleSpotFreed, reorderWaitingEntries } from './waitlist';
-import { setLockTimeout } from '@/lib/db-locks';
+import { lockClassRowsOrdered, setLockTimeout } from '@/lib/db-locks';
 import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 
@@ -320,7 +321,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // FIRST statement, unconditionally — not left to a lock helper further down.
     //
     // The bound used to arrive only as a side effect of the lock loop, which
-    // runs only when `sortedWaitingClassIds` is non-empty. A student waiting
+    // runs only when `waitingClassIds` is non-empty. A student waiting
     // in zero classes — the common case — therefore got an UNBOUNDED wait on
     // every statement in this transaction, including a `registration
     // .updateMany` that can contend with the 60-second transitions sweep, and
@@ -384,14 +385,15 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // was reachable, and reaching it was terminal rather than transient — see
     // `waitingCount` above.
     //
-    // The same shape `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) uses,
-    // for the same reasons: ascending by `c.id` so two concurrent erasures take
-    // any shared classes in one order, `FOR UPDATE OF c` so only the `Class`
-    // rows are locked, and — the part a loop cannot have — the lock is taken BY
-    // the statement that chooses the rows, so there is no window between
-    // choosing them and holding them. No `DISTINCT`: Postgres refuses it
-    // alongside `FOR UPDATE`. `@@unique([classId, studentId])` means one entry
-    // per class per student, so the join cannot duplicate a class anyway.
+    // Through the shared helper (#237), which owns all of that: ascending by
+    // `c.id` so two concurrent erasures take any shared classes in one order,
+    // `FOR UPDATE OF c` so only the `Class` rows are locked, the dedupe
+    // Postgres forces by refusing `DISTINCT` alongside `FOR UPDATE`, and — the
+    // part a loop cannot have — the lock taken BY the statement that chooses
+    // the rows, so there is no window between choosing them and holding them.
+    // `@@unique([classId, studentId])` means one entry per class per student,
+    // so this join could not duplicate a class anyway; the helper's dedupe is
+    // for its other callers.
     //
     // EVERY status, matching the unscoped `deleteMany` below. The lock set has
     // to cover the write set: before #216 a student who never got in stayed
@@ -399,21 +401,17 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // `closeQueueOnStart` flips those rows to `expired`, and the walk-in
     // resolver in `POST /api/registrations` writes `expired` entries under this
     // same class row lock, so the gap was live.
-    await tx.$queryRaw`
-      SELECT c.id
-      FROM "Class" c
-      JOIN "WaitlistEntry" w ON w."classId" = c.id
-      WHERE w."studentId" = ${studentId}
-      ORDER BY c.id
-      FOR UPDATE OF c
-    `;
+    await lockClassRowsOrdered(tx, {
+      join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id`,
+      where: Prisma.sql`w."studentId" = ${studentId}`,
+    });
 
     // Read AFTER the lock rather than before it — under the rows this
     // transaction now holds, so it cannot see a queue another writer is
     // mid-change. The reorder stays `waiting`-only: closed rows keep stale
     // positions by design (#183), so a class where this student held only a
     // closed entry must still be LOCKED but has nothing to renumber.
-    const sortedWaitingClassIds = (
+    const waitingClassIds = (
       await tx.waitlistEntry.findMany({
         where: { studentId, status: 'waiting' },
         select: { classId: true },
@@ -603,7 +601,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // just the fact of locking, matters here. Renumbering here rather than
     // there only changes when the write happens; the lock has been held
     // since before this transaction wrote anything at all.
-    for (const classId of sortedWaitingClassIds) {
+    for (const classId of waitingClassIds) {
       await reorderWaitingEntries(tx, classId);
     }
 
