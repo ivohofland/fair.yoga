@@ -32,7 +32,7 @@ import { startOfLocalDay } from '@/lib/timezone';
 import { formatDayHeader } from '@/lib/format';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isTransientDbError } from '@/lib/api-errors';
-import { setLockTimeout } from '@/lib/db-locks';
+import { lockClassRowsOrdered, setLockTimeout } from '@/lib/db-locks';
 // Server-only (pino). Safe here: this module's sole importer is
 // `api/class-templates/[id]/route.ts`, and it already pulls `@/lib/log`
 // transitively through `class-generator`. No `'use client'` component
@@ -1248,15 +1248,11 @@ export async function archiveOrUnarchiveTemplate(
         // re-evaluation regardless, and widening the pre-lock past `today`
         // would lock history for no gain, since a past-dated row is never a
         // delete candidate.
-        await tx.$queryRaw`
-          SELECT c.id
-          FROM "Class" c
-          WHERE c."templateId" = ${templateId}
+        await lockClassRowsOrdered(tx, {
+          where: Prisma.sql`c."templateId" = ${templateId}
             AND c.date > ${today}
-            AND c.status IN (${SCHEDULED_STATUSES_SQL})
-          ORDER BY c.id
-          FOR UPDATE OF c
-        `;
+            AND c.status IN (${SCHEDULED_STATUSES_SQL})`,
+        });
 
         // #112. Who is waiting on a class this archive might withdraw.
         //
