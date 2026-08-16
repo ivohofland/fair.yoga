@@ -15,7 +15,7 @@ const MINUTE = 60 * 1000;
 const db = {} as unknown as PrismaClient;
 
 /**
- * The nine sweeps, written once.
+ * The ten sweeps, written once.
  *
  * Hoisted because both tests below used to carry their own verbatim copy, so
  * the list existed three times (here and in each test) and nothing made the
