@@ -33,6 +33,7 @@ let accountId: string;
 let roomId: string;
 let teacherRoomId: string;
 let studentId: string;
+let studentId2: string;
 const classIds: string[] = [];
 
 /**
@@ -111,6 +112,45 @@ async function entryExists(entryId: string): Promise<boolean> {
   return (await prisma.waitlistEntry.count({ where: { id: entryId } })) === 1;
 }
 
+/**
+ * Adds a second entry to an EXISTING class, for a different student.
+ *
+ * `makeClassWithEntry` above puts exactly one entry on one class, so for
+ * every fixture built from it alone, a mutation that only weakens the
+ * PER-CLASS delete's own predicate — as opposed to weakening which classes
+ * enter the `groupBy` batch — has nothing to catch it: the one entry present
+ * is always either the thing being proven deleted or the thing being proven
+ * kept, never both at once. A real terminal class realistically holds a MIXED
+ * population — some entries reapable, some not — and this is the fixture
+ * shape that requires: call it beside `makeClassWithEntry` to add a second
+ * entry, for a second student (`@@unique([classId, studentId])` forbids two
+ * for the same one), to a class that already has an entry putting it in the
+ * batch.
+ */
+async function addEntry(
+  classId: string,
+  opts: { studentId: string; status: WaitlistStatus; withRegistration?: boolean },
+): Promise<string> {
+  let registrationId: string | null = null;
+  if (opts.withRegistration) {
+    const reg = await prisma.registration.create({
+      data: { classId, studentId: opts.studentId, tierAtBooking: 3 },
+    });
+    registrationId = reg.id;
+  }
+
+  const entry = await prisma.waitlistEntry.create({
+    data: {
+      classId,
+      studentId: opts.studentId,
+      position: 2,
+      status: opts.status,
+      ...(registrationId ? { registrationId } : {}),
+    },
+  });
+  return entry.id;
+}
+
 beforeAll(async () => {
   await prisma.$connect();
 
@@ -155,6 +195,19 @@ beforeAll(async () => {
     },
   });
   studentId = student.id;
+
+  // A second student, needed only by `addEntry`'s callers: two entries on one
+  // class means two students, since `@@unique([classId, studentId])` forbids
+  // a student holding two entries on the same class.
+  const student2 = await prisma.student.create({
+    data: {
+      firstName: 'Retention',
+      lastName: 'Student2',
+      email: `retention-student2-${uniqueSuffix}@test.local`,
+      incomeTier: 3,
+    },
+  });
+  studentId2 = student2.id;
 });
 
 afterAll(async () => {
@@ -165,7 +218,7 @@ afterAll(async () => {
   await prisma.payment.deleteMany({ where: { registration: { classId: { in: classIds } } } });
   await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
   await prisma.class.deleteMany({ where: { id: { in: classIds } } });
-  await prisma.student.deleteMany({ where: { id: studentId } });
+  await prisma.student.deleteMany({ where: { id: { in: [studentId, studentId2] } } });
   await prisma.teacherRoom.deleteMany({ where: { id: teacherRoomId } });
   await prisma.room.deleteMany({ where: { id: roomId } });
   await prisma.teacher.deleteMany({ where: { id: teacherId } });
@@ -199,6 +252,51 @@ describe('reapClosedWaitlistEntries', () => {
 
     expect(summary.deleted).toBeGreaterThanOrEqual(1);
     expect(await entryExists(entryId)).toBe(false);
+  });
+
+  /**
+   * The two clauses this test isolates that no other test in this file does.
+   *
+   * Every other fixture puts exactly one entry on its class, so for each of
+   * them the per-class delete's own predicate (`{ classId, ...reapable }`)
+   * and a naive `{ classId }` select IDENTICAL rows — a class that enters the
+   * `groupBy` batch has nothing on it BUT what the batch predicate already
+   * found, so nothing distinguishes "the predicate is re-applied under the
+   * lock" from "the write set is just `classId`". This fixture is the shape
+   * that distinguishes them: two entries, two different students
+   * (`@@unique([classId, studentId])` forbids two for one), on ONE class:
+   *
+   *  - the unfulfilled entry is what puts the class in the `groupBy` batch
+   *  - the fulfilled sibling — `registrationId` set, status left at `expired`
+   *    rather than a `FULFILLED_WAITLIST_STATUSES` member, exactly the
+   *    "somehow disagree" case the belt-and-braces clause exists for — must
+   *    survive the SAME class's delete
+   *
+   * Two mutations go red here, and only here:
+   *  - `where: { classId, ...reapable }` → `where: { classId }` in the
+   *    per-class delete: nothing then stops the sibling being swept up by the
+   *    same statement that deletes its neighbour.
+   *  - dropping `registrationId: null` from `reapable`: the sibling's own
+   *    status (`expired`) is not in `FULFILLED_WAITLIST_STATUSES`, so the
+   *    status clause alone does not protect it — only `registrationId: null`
+   *    does.
+   */
+  it('deletes an unfulfilled entry while a fulfilled sibling on the same class survives', async () => {
+    const { classId, entryId: unfulfilledEntryId } = await makeClassWithEntry({
+      classStatus: 'completed',
+      date: daysBeforeCutoff(1),
+      entryStatus: 'expired',
+    });
+    const fulfilledEntryId = await addEntry(classId, {
+      studentId: studentId2,
+      status: 'expired',
+      withRegistration: true,
+    });
+
+    await reapClosedWaitlistEntries(prisma, { now: NOW });
+
+    expect(await entryExists(unfulfilledEntryId)).toBe(false);
+    expect(await entryExists(fulfilledEntryId)).toBe(true);
   });
 
   it('keeps an entry that became a registration, however old the class', async () => {

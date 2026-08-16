@@ -25,13 +25,16 @@
  *    trigger `class_terminal_status_guard` makes a terminal class's status
  *    physically unchangeable from any client, raw SQL included.
  *    `class-terminal-status.test.ts` pins the derived set against that trigger.
- *  - Eleven of the fourteen `WaitlistEntry` write sites require the class to be
+ *  - Ten of the fourteen `WaitlistEntry` write sites require the class to be
  *    `open` (or `open`/`in_progress` for the walk-in resolver), or run inside
- *    the CAS that makes the class terminal. The three that do not —
- *    `removeFromWaitlist`, `withdrawWaitingEntriesForTeacher` and
- *    `reorderWaitingEntries` — are all scoped to `status: 'waiting'`, which on
- *    a terminal class exists only as pre-#216 legacy. Reaping is what removes
- *    that legacy population.
+ *    the CAS that makes the class terminal. Three more — `removeFromWaitlist`,
+ *    `withdrawWaitingEntriesForTeacher` and `reorderWaitingEntries` — are
+ *    scoped to `status: 'waiting'`, which on a terminal class exists only as
+ *    pre-#216 legacy. Reaping is what removes that legacy population. The
+ *    fourteenth, `deleteStudentAccount`'s unscoped `deleteMany` (`gdpr.ts`),
+ *    is neither: it is a DELETE, so it needs no status guard of its own —
+ *    it is the population this sweep exists to shrink, not a writer this
+ *    argument has to account for.
  *    To re-derive the roster:
  *    `grep -rnE 'waitlistEntry\.(create|update|delete|upsert)' src`, excluding
  *    tests.
@@ -53,7 +56,7 @@
  * transaction.
  */
 
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
 import { FULFILLED_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 import { lockClassRow } from '@/lib/db-locks';
@@ -134,7 +137,7 @@ export async function reapClosedWaitlistEntries(
       status: { in: [...TERMINAL_CLASS_STATUSES] },
       date: { lt: cutoff },
     },
-  };
+  } satisfies Prisma.WaitlistEntryWhereInput;
 
   // `groupBy`, not `findMany({ distinct })`, for the reason
   // `waitlist-reconciliation.ts` records at its own opening statement: Prisma
