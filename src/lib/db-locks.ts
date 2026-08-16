@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 /**
  * A Prisma client that must be an interactive transaction client, never the
@@ -196,6 +196,94 @@ export async function lockClassRow(tx: TransactionClientOnly, classId: string): 
 }
 
 /**
+ * Locks many `Class` rows in one statement, ascending by id, with a bounded
+ * wait — and hands back the ids it holds.
+ *
+ * This is the only production `SELECT … FOR UPDATE OF c` in `src/`. Before
+ * #237 there were four, plus a fifth site that took its locks through a
+ * per-class CAS loop, and which sites those were was tracked in prose:
+ * a five-row table in `docs/lock-order.md` and the register above. That table
+ * was corrected about its own membership four times — most recently by the
+ * round that filed this issue, which added `deleteStudentAccount`'s statement
+ * to the table and not to the derivation below it. A convention tracked by
+ * prose goes stale; this function is the convention.
+ *
+ * FOUR things are deliberately here rather than at the call sites, because
+ * each is a thing a call site got wrong at least once in this codebase's
+ * history:
+ *
+ *   `ORDER BY c.id` — two transactions taking the same pair of `Class` rows
+ *     in opposite sequences is an AB-BA cycle, and Postgres resolves it by
+ *     killing one side with `40P01`. Reproduced for real in issue 180 and
+ *     again in #174's whole-branch review. Pinned by
+ *     `db-locks-lock-order.test.ts`, which contends two DIFFERENT query plans
+ *     over the same rows — two callers sharing one predicate produce one plan,
+ *     scan one physical order, and serialise with or without this clause, so
+ *     a same-predicate pairing could never have pinned it.
+ *
+ *   `FOR UPDATE OF c` — never a bare `FOR UPDATE`, which on a joined query
+ *     also locks the `WaitlistEntry` rows and adds wait edges
+ *     `docs/lock-order.md` does not model.
+ *
+ *   `setLockTimeout` — the shared 2s bound, so no adopting transaction can
+ *     block indefinitely on a row the 60-second transitions sweep holds. It
+ *     governs the whole rest of the caller's transaction, not just this
+ *     statement; `SET LOCAL` is transaction-scoped and resets on COMMIT or
+ *     ROLLBACK however the transaction ends. Callers that also issue it
+ *     themselves are safe — a later `SET LOCAL lock_timeout` overwrites the
+ *     earlier one rather than stacking.
+ *
+ *   the dedupe — Postgres refuses `DISTINCT` alongside `FOR UPDATE`, so a
+ *     join matching one class twice hands back two ids for one locked row.
+ *     Order is preserved: `Set` iterates in insertion order and the rows
+ *     arrive ascending.
+ *
+ * The predicate is a composed `Prisma.Sql`, not a typed selector, and that was
+ * the decision this issue existed to make. A union of typed selectors cannot
+ * go stale — the compiler forces a member per site — but it IS the five-row
+ * table re-expressed as a type, and it would make this module know every one
+ * of its callers by name and carry their domain types. The predicate was never
+ * what went stale; the site list was. A fragment is also not a loophole: a
+ * caller that references `w.` without supplying a `join`, or writes its own
+ * `ORDER BY` or `FOR UPDATE`, gets a SQL error, not a silently wrong lock.
+ * Parameters are bound — `Prisma.sql` tagged templates merge their values into
+ * this statement in source order, verified against Postgres — so nothing here
+ * is interpolated unless a caller reaches for `Prisma.raw`, which in `src/` is
+ * used once, for a frozen constant (`SCHEDULED_STATUSES_SQL`,
+ * `class-template-lifecycle.ts`).
+ *
+ * Returning the ids is not a convenience. It lets a caller scope its write to
+ * `id: { in: … }` so the write set is a structural SUBSET of the lock set,
+ * rather than a predicate re-evaluated later against whatever the table looks
+ * like when the write runs — the difference `docs/lock-order.md` draws between
+ * `syncTemplateInstances` and `archiveOrUnarchiveTemplate`. Callers that do
+ * not need them may ignore the return value; the lock is the point.
+ *
+ * NOT for single-row locks — use `lockClassRow` above. One row cannot be
+ * ordered against itself, and that helper's signature says so.
+ *
+ * Branded `TransactionClientOnly` per this module's rule: on a bare client the
+ * `SET LOCAL` and the `FOR UPDATE` would each land in their own autocommit
+ * transaction and protect nothing. See `lockClassRow`'s docblock for why
+ * `Prisma.TransactionClient` alone does not enforce that.
+ */
+export async function lockClassRowsOrdered(
+  tx: TransactionClientOnly,
+  source: { join?: Prisma.Sql; where: Prisma.Sql },
+): Promise<string[]> {
+  await setLockTimeout(tx);
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT c.id
+    FROM "Class" c
+    ${source.join ?? Prisma.empty}
+    WHERE ${source.where}
+    ORDER BY c.id
+    FOR UPDATE OF c
+  `;
+  return [...new Set(rows.map((row) => row.id))];
+}
+
+/**
  * How long an identical announcement suppresses a second send of itself.
  *
  * Two minutes: long enough to absorb a double-click and a retried request from
@@ -208,8 +296,14 @@ export async function lockClassRow(tx: TransactionClientOnly, classId: string): 
  * route: `tests/integration/announcements-api.test.ts` backdates a first send
  * by exactly this to prove a later identical one still goes out, and a test
  * that hard-codes `120000` drifts silently the day the window changes. This
- * module is safe to import from a test because it pulls in only `crypto` and a
- * Prisma type — never `@/lib/log`, which is pino and server-only.
+ * module is safe to import from a test because it pulls in only `crypto`
+ * and `@prisma/client` — never `@/lib/log`, which is pino and server-only. The
+ * `Prisma` import became a VALUE import in #237 (`Prisma.empty`, spliced by
+ * `lockClassRowsOrdered`), so this module now pulls the generated client into
+ * whatever imports it. Checked at that time: no `'use client'` component
+ * imports `@/lib/db-locks` — every importer is a service, an API route or a
+ * test. Re-check before importing this module from a client component; a
+ * bundled Prisma client is the same class of failure as a bundled pino.
  */
 export const ANNOUNCEMENT_DEDUPE_WINDOW_MS = 2 * 60 * 1000;
 

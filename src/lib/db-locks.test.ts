@@ -1,10 +1,12 @@
-import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { PrismaClient, Prisma } from '@prisma/client';
+import crypto from 'crypto';
 import {
   ANNOUNCEMENT_DEDUPE_WINDOW_MS,
   LOCK_TIMEOUT_SQL,
   lockAnnouncementSlot,
   lockClassRow,
+  lockClassRowsOrdered,
   setLockTimeout,
 } from './db-locks';
 import { claimTemplateForGeneration } from '@/services/class-generator';
@@ -49,6 +51,9 @@ async function _theBrandRejectsABareClient(client: PrismaClient): Promise<void> 
   // @ts-expect-error A bare PrismaClient must never satisfy the brand: on it,
   // `SET LOCAL` and `FOR UPDATE` have no transaction to live in.
   await lockClassRow(client, 'never-called');
+  // @ts-expect-error `SET LOCAL` then `FOR UPDATE OF c` — the multi-row twin
+  // of the line above, and the same failure on a bare client.
+  await lockClassRowsOrdered(client, { where: Prisma.sql`c."id" = ${'never-called'}` });
   // @ts-expect-error Same brand, same reason, on the split-out helper.
   await setLockTimeout(client);
   // @ts-expect-error `LOCK_TIMEOUT_SQL` then `FOR UPDATE`, both transaction-scoped.
@@ -271,5 +276,182 @@ describe('the announcement advisory lock', () => {
 
   it('is a two-minute window, the same quantity the manual reminder cooldown uses', () => {
     expect(ANNOUNCEMENT_DEDUPE_WINDOW_MS).toBe(2 * 60 * 1000);
+  });
+});
+
+describe('lockClassRowsOrdered', () => {
+  const suffix = `dblocks-ordered-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let teacherId: string;
+  let roomId: string;
+  let lowClassId: string;
+  let highClassId: string;
+  let studentAId: string;
+  let studentBId: string;
+
+  beforeAll(async () => {
+    // Ids chosen so ascending-by-id is knowable in advance, the convention
+    // `template-lock-order.test.ts:154-155` uses.
+    lowClassId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
+    highClassId = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
+
+    // `bio` and `pageSlug` are both required and unique-constrained — copied
+    // from the working fixture at `gdpr.test.ts:1251`, not invented.
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Lock',
+        lastName: 'Order',
+        email: `${suffix}-teacher@test.local`,
+        bio: 'Ordered-lock fixture',
+        pageSlug: `${suffix}-teacher`,
+        account: { create: { email: `${suffix}-teacher@test.local` } },
+      },
+      select: { id: true },
+    });
+    teacherId = teacher.id;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Venue',
+        address: 'Street 1',
+        city: 'Town',
+        postcode: '1234AB',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacherId,
+      },
+      select: { id: true },
+    });
+    roomId = room.id;
+
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+
+    const base = {
+      teacherId,
+      teacherRoomId: teacherRoom.id,
+      classType: 'Ordered lock class',
+      startTime: '09:00',
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 10,
+      status: 'open' as const,
+    };
+    // HIGH inserted FIRST, so an unordered scan of this small table returns
+    // physical order — the REVERSE of ascending by id. Asserted below, not
+    // assumed.
+    await prisma.class.create({ data: { ...base, id: highClassId, date: new Date('2099-06-01') } });
+    await prisma.class.create({ data: { ...base, id: lowClassId, date: new Date('2099-06-02') } });
+
+    const studentA = await prisma.student.create({
+      data: {
+        firstName: 'A',
+        lastName: 'Student',
+        email: `${suffix}-a@test.local`,
+        incomeTier: 2,
+        claimedAt: new Date(),
+        account: { create: { email: `${suffix}-a@test.local` } },
+      },
+      select: { id: true },
+    });
+    studentAId = studentA.id;
+
+    const studentB = await prisma.student.create({
+      data: {
+        firstName: 'B',
+        lastName: 'Student',
+        email: `${suffix}-b@test.local`,
+        incomeTier: 3,
+        claimedAt: new Date(),
+        account: { create: { email: `${suffix}-b@test.local` } },
+      },
+      select: { id: true },
+    });
+    studentBId = studentB.id;
+
+    // TWO students on the SAME class, so a join that does not filter by
+    // student returns that class twice. `@@unique([classId, studentId])`
+    // means one student can never duplicate a class on their own, so this is
+    // the only way to observe the dedupe.
+    await prisma.waitlistEntry.create({
+      data: { classId: lowClassId, studentId: studentAId, position: 1, status: 'waiting' },
+    });
+    await prisma.waitlistEntry.create({
+      data: { classId: lowClassId, studentId: studentBId, position: 2, status: 'waiting' },
+    });
+    await prisma.waitlistEntry.create({
+      data: { classId: highClassId, studentId: studentAId, position: 1, status: 'waiting' },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.waitlistEntry.deleteMany({ where: { classId: { in: [lowClassId, highClassId] } } });
+    await prisma.class.deleteMany({ where: { teacherId } });
+    await prisma.student.deleteMany({ where: { id: { in: [studentAId, studentBId] } } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+    await prisma.room.deleteMany({ where: { id: roomId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { email: { startsWith: suffix } } });
+  });
+
+  it('returns the locked ids ascending, whatever order the table stores them in', async () => {
+    // The premise, asserted rather than assumed: unordered, this table hands
+    // back insertion order, which is the REVERSE of ascending. If a planner
+    // or storage change makes them agree, the assertion below stops proving
+    // anything and this line fails loudly first.
+    const heapOrder = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT c.id FROM "Class" c WHERE c."teacherId" = ${teacherId}
+    `;
+    expect(heapOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
+
+    const locked = await prisma.$transaction((tx) =>
+      lockClassRowsOrdered(tx, { where: Prisma.sql`c."teacherId" = ${teacherId}` }),
+    );
+
+    expect(locked).toEqual([lowClassId, highClassId]);
+  });
+
+  it('collapses a join that matches one class more than once', async () => {
+    // Two `waiting` entries on `lowClassId`, so the join yields it twice.
+    // Postgres refuses `DISTINCT` alongside `FOR UPDATE`, so the helper has
+    // to collapse them itself — a caller that got two ids for one row would
+    // lock once and iterate twice.
+    const raw = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT c.id FROM "Class" c
+      JOIN "WaitlistEntry" w ON w."classId" = c.id
+      WHERE c."teacherId" = ${teacherId}
+    `;
+    expect(raw.filter((r) => r.id === lowClassId)).toHaveLength(2);
+
+    const locked = await prisma.$transaction((tx) =>
+      lockClassRowsOrdered(tx, {
+        join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id`,
+        where: Prisma.sql`c."teacherId" = ${teacherId}`,
+      }),
+    );
+
+    expect(locked).toEqual([lowClassId, highClassId]);
+  });
+
+  it('bounds the rest of the transaction at the shared lock timeout', async () => {
+    // Observes the effect rather than re-asserting the string that was sent
+    // — the distinction the `SHOW` tests above this describe block make.
+    const seen = await prisma.$transaction(async (tx) => {
+      await lockClassRowsOrdered(tx, { where: Prisma.sql`c."teacherId" = ${teacherId}` });
+      return tx.$queryRaw<Array<{ lock_timeout: string }>>`SHOW lock_timeout`;
+    });
+    expect(seen[0]?.lock_timeout).toBe('2s');
+  });
+
+  it('returns an empty array without erroring when nothing matches', async () => {
+    const locked = await prisma.$transaction((tx) =>
+      lockClassRowsOrdered(tx, { where: Prisma.sql`c."teacherId" = ${'no-such-teacher'}` }),
+    );
+    expect(locked).toEqual([]);
   });
 });
