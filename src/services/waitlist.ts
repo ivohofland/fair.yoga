@@ -7,11 +7,12 @@
  * 3. frozen — after deadline passes, no more promotions
  */
 
-import type { PrismaClient, Prisma, CancelDeadline, WaitlistEntry } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import type { PrismaClient, CancelDeadline, WaitlistEntry } from '@prisma/client';
 import { classStartInstant } from '@/lib/timezone';
 import { createBulkNotifications } from './notifications';
 import { resolveInvitationOnLink } from './link-consent';
-import { lockClassRow, type TransactionClientOnly } from '@/lib/db-locks';
+import { lockClassRow, lockClassRowsOrdered, type TransactionClientOnly } from '@/lib/db-locks';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { readSeatCount } from './capacity';
 // pino, and server-only. Safe here and checked rather than assumed: no
@@ -937,24 +938,18 @@ export async function withdrawWaitingEntriesForTeacher(
   tx: TransactionClientOnly,
   input: { teacherId: string; studentId: string },
 ): Promise<void> {
-  // `FOR UPDATE OF c` — only the Class rows, the same thing `addToWaitlist`,
-  // `promoteNext`, `claimSpot` and `removeFromWaitlist` lock. No `DISTINCT`:
-  // Postgres refuses it alongside `FOR UPDATE`, so duplicates are collapsed
-  // below. Ordered, so two concurrent unlinks take multiple classes in the
-  // same sequence.
-  const locked = await tx.$queryRaw<Array<{ id: string }>>`
-    SELECT c.id
-    FROM "Class" c
-    JOIN "WaitlistEntry" w ON w."classId" = c.id
-    WHERE c."teacherId" = ${input.teacherId}
+  // Through the shared helper (#237), which owns the `ORDER BY c.id`, the
+  // `FOR UPDATE OF c` that keeps this join from also locking the
+  // `WaitlistEntry` rows, the 2s bound and the dedupe this call site used to
+  // do itself. `FOR UPDATE OF c` locks the same rows `addToWaitlist`,
+  // `promoteNext`, `claimSpot` and `removeFromWaitlist` lock singly.
+  const classIds = await lockClassRowsOrdered(tx, {
+    join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id`,
+    where: Prisma.sql`c."teacherId" = ${input.teacherId}
       AND w."studentId" = ${input.studentId}
-      AND w.status = 'waiting'
-    ORDER BY c.id
-    FOR UPDATE OF c
-  `;
-  if (locked.length === 0) return;
-
-  const classIds = [...new Set(locked.map((row) => row.id))];
+      AND w.status = 'waiting'`,
+  });
+  if (classIds.length === 0) return;
 
   // 'removed', matching `removeFromWaitlist` above rather than inventing a
   // state. Re-selected through Prisma under the lock now held, so a
