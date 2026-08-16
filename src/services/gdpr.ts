@@ -276,47 +276,6 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     select: { email: true, firstName: true, accountId: true },
   });
 
-  // Sizes the transaction's own `timeout` below — see that option for the
-  // arithmetic. `WaitlistEntry` only enforces one entry per class per
-  // student (`@@unique([classId, studentId])`); nothing caps how many
-  // distinct classes one student can simultaneously be `waiting` in, so a
-  // fixed transaction budget can't be "sized to the worst case" honestly.
-  //
-  // `waiting` only, and that is deliberate after a round of getting it wrong.
-  //
-  // This sizes the REORDER loop below, which is the only remaining work in the
-  // transaction that scales with the row count — the class locks are now taken
-  // by a single statement, not a loop. Counting every entry instead was a real
-  // defect, not a conservative choice: nothing in production deletes a
-  // `WaitlistEntry` except the `deleteMany` in this very transaction, and
-  // completed classes are never deleted, so an all-status count is monotone
-  // non-decreasing for the life of the account. Past the `Math.min` ceiling the
-  // erasure would fail, and the retry would re-read the same count and fail
-  // identically — an account that can never be erased, which is not a
-  // performance note but an Article 17 failure. `waiting` drains on its own
-  // (`closeQueueOnStart` closes every queue when its class starts), so this
-  // count is self-healing and the ceiling stays the backstop it was written as.
-  //
-  // The lock SET below is still unbounded by account age, even though its
-  // round-trip cost no longer is. #238 is the root fix: nothing ever reaps a
-  // closed, unfulfilled `WaitlistEntry`, so the population only grows.
-  // This count is read outside any lock (cheap: no transaction, no FOR
-  // UPDATE) purely to size that budget, and it can drift low if a waitlist
-  // join for this same student lands in the gap before the transaction
-  // opens below — the account is still live until that transaction commits.
-  // Worst case the transaction's own query for `waitingClassIds` (below)
-  // then finds more rows than this counted, the timeout undershoots, and
-  // Prisma throws P2028. That rolls the whole erasure back atomically — it
-  // was never applied half-way — and is safe to retry: THIS function is one
-  // transaction end to end (its only work outside it is the post-commit
-  // `handleSpotFreed` loop, which swallows its own errors), so a throw means
-  // nothing landed. `api/account/route.ts`'s `erasureFailure` relies on
-  // exactly that to tell this caller "Nothing was changed", and says why the
-  // teacher erasure cannot claim the same. A retryable failure, not a silent
-  // or partial one. See the transaction's `timeout` option below for the
-  // ceiling this count still has to respect.
-  const waitingCount = await db.waitlistEntry.count({ where: { studentId, status: 'waiting' } });
-
   const freedClassIds = await db.$transaction(async (tx) => {
     // FIRST statement, unconditionally — not left to a lock helper further down.
     //
@@ -384,7 +343,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // took 6.0s where this statement takes 13ms for the same class set. On the
     // single 2GB VPS this deployment targets (`CLAUDE.md`) the loop's ceiling
     // was reachable, and reaching it was terminal rather than transient — see
-    // `waitingCount` above.
+    // this transaction's `timeout` option below.
     //
     // Through the shared helper (#237), which owns all of that: ascending by
     // `c.id` so two concurrent erasures take any shared classes in one order,
@@ -628,112 +587,91 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
 
     return upcoming.filter((r) => r.class.status === 'open').map((r) => r.classId);
   }, {
-    // Arithmetic (see `waitingCount` above for why the base term can't be a
-    // flat constant): 5_000ms matches Prisma's own default transaction
-    // timeout, which is the budget every read and write above already ran
-    // inside before this task — reads and writes on `Registration`,
-    // `Student`, `StudentPrivacy`, `Teacher`, `TeacherStudent`,
-    // `WaitlistEntry`, `Invitation`, `Notification`, `Session`,
-    // `PasskeyCredential`, `Account` and `MagicLinkToken`. Not all of that is
-    // indexed on the column it filters by, and this comment used to claim
-    // otherwise: `waitlistEntry.findMany`/`deleteMany` and
-    // `teacherStudent.deleteMany` key on `studentId` alone (`WaitlistEntry`
-    // only has `(classId, studentId)` and `(classId, position)`;
-    // `TeacherStudent` only has `(teacherId, studentId)`),
-    // `magicLinkToken.deleteMany` keys on `email` (only `tokenHash` and the
-    // PK are indexed), and the teacher-notification `updateMany` further
-    // down filters on `body: { startsWith }`. Those four run as sequential
-    // scans, not index scans — verified against
-    // `prisma/migrations/*/migration.sql` directly, not assumed. The 5_000ms
-    // figure is proven headroom empirically (this whole set, unindexed
-    // statements included, already ran inside it before this task), not a
-    // claim that it is indexed, and it is NOT a claim that none of these
-    // writes are lock-contended either: several of them can and do wait on
-    // other transactions (that contention is exactly what the class-lock
-    // ordering above resolves) — the claim is narrower, that this specific
-    // set of statements already fit inside 5s before this task added
-    // anything. `waitingCount * 2_000` still prices a lock wait, and #237's
-    // review corrected an earlier version of this paragraph that said it did
-    // not. That version claimed the ONE ordered pre-lock statement "takes at
-    // most a single 2s `lock_timeout`, whatever N is". It does not.
-    // `lock_timeout` applies separately to EACH lock acquisition attempt, not
-    // to the statement — so a `SELECT … FOR UPDATE` over N contended rows can
-    // spend up to N × 2s, which is what the `lockClassRow` loop cost too.
-    // Measured rather than read off the docs: two `Class` rows held by two
-    // sessions releasing at 1.5s and 3.0s, one waiter at `lock_timeout='2s'`
-    // taking both in a single statement, SUCCEEDED after 2.67s. What #237
-    // actually bought here is round trips — 2N down to one — which is the real
-    // win and is argued at `docs/lock-order.md`'s derivation.
+    // Flat, and that is a decision rather than a default. It used to be
+    // `Math.min(5_000 + waitingCount * 2_000, 20_000)`, sized from a count read
+    // before the transaction opened. The term is gone; the ceiling it rarely
+    // reached is now the whole rule.
     //
-    // So the term is not over-generous. It allots 2s per `waiting` class
-    // against a lock set that spans EVERY status (the pre-lock's join carries
-    // no status predicate, deliberately — see there), plus the reorder loop's
-    // own per-class cost described in the second direction below. It
-    // UNDER-counts on both axes, and the `Math.min` ceiling is what actually
-    // bounds this transaction. Resizing the formula is deliberately still not
-    // this branch's change; it is filed rather than left implied.
+    // WHY THE TERM COULD NOT BE MADE HONEST. It priced neither of the two
+    // things that scale with the size of this erasure:
     //
-    // That term does not cover everything the 2s bound applies to, though —
-    // in two different directions. First, `SET LOCAL lock_timeout` governs
-    // every statement left in this transaction, not just `FOR UPDATE`s — so
-    // `registration.updateMany` and every other write between here and the
-    // reorder loop also waits at most 2s on any row it contends for, whether
-    // or not that row has anything to do with a class this transaction
-    // locked. Round 2 review measured that with a lock on the erased
-    // student's own `Registration` row, unrelated to any waitlist:
-    // `registration.updateMany` failed at ~2086ms with Postgres `55P03
-    // canceling statement due to lock timeout`.
+    //   - It counted `waiting` entries, but the lock set is every class the
+    //     student holds an entry in of ANY status — the pre-lock's join carries
+    //     no status predicate, deliberately, see there. A student with 0
+    //     `waiting` and 30 closed entries got 5_000ms against a statement
+    //     asking for 30 row locks.
+    //   - It did not count `reorderWaitingEntries` (`waitlist.ts`) at all: a
+    //     `findMany` plus up to M individual `UPDATE`s per class, each
+    //     separately bounded by the same 2s.
     //
-    // That measurement had a second half, and the second half was a defect
-    // rather than a design: with the student waiting in NO classes, the lock
-    // loop never ran, so `SET LOCAL` was never issued, and the same
-    // contention waited out the full ~3s hold and succeeded — unbounded. It
-    // was written down as intended, which it was not; nothing in the
-    // GDPR-clock rationale for bounding this transaction depends on the
-    // subject being on a waitlist, and it is the wait-in-zero-classes case
-    // that has the least reason to hang. The `setLockTimeout` call at the
-    // top of this transaction removes the asymmetry, and with it the caveat
-    // on the `Math.min` ceiling: that ceiling is enforceable rather than
-    // nominal only while a per-statement bound is already active, because
-    // Prisma's own interactive-transaction timeout cannot roll back a
-    // statement already blocked inside Postgres, only refuse to start a new
-    // one. Bounded beats unbounded for a time-bound erasure regardless of
-    // which row is contended: the abort is atomic and retryable, and
-    // `api/account/route.ts` now tells the caller exactly that, with a 503
-    // and retry advice rather than a bare 500. Second, in the other
-    // direction,
-    // `reorderWaitingEntries`'s (`waitlist.ts`) own `findMany` plus up to M
-    // individual `UPDATE`s per class, run after the pre-lock above, also
-    // inherit the same 2s bound — adding real, uncounted time on top of
-    // `waitingCount * 2_000` regardless of how often any single one of them
-    // actually waits (round 1 review, I2 — also names two writers elsewhere
-    // that flip `WaitlistEntry.status` from `waiting` to `removed` without
-    // going through `lockClassRow`, `transition/route.ts`'s cancel branch
-    // and `deleteTeacherAccount`'s CAS loop below; both still take a
-    // conflicting lock on the Class row first, via their own
-    // `class.updateMany`, which is what the ordering fix above protects
-    // against — but that leaves the per-row cost of this loop, not the wait
-    // before it starts, as the part this formula still doesn't price in).
+    // A term that prices neither axis, and whose only possible effect is to
+    // grant LESS than the ceiling already permits, is worse than the ceiling
+    // alone. Computing it also cost a round trip before the transaction opened
+    // and a documented stale-read window, because the count ran outside any
+    // transaction and a waitlist join could land in the gap.
     //
-    // The `Math.min` below is the backstop for both gaps at once — the
-    // uncounted per-row time just described, and `waitingCount` itself
-    // having no upper bound (I3: nothing caps how many distinct classes a
-    // student can be `waiting` in, and that count is attacker-influenceable
-    // by joining more waitlists before requesting erasure). 20_000ms:
-    // generous enough that the realistic case — this is a single-teacher
-    // CRM tool with no plausible legitimate student waiting in more than a
-    // handful of classes at once — always gets its full honestly-sized
-    // budget (covers up to 7 fully-contended classes via the formula above
-    // before the cap binds). Bounded enough that a pathological N can no
-    // longer hold this app's single Postgres connection pool — the whole
-    // deployment runs on one 2GB VPS (`CLAUDE.md`: "VPS budget") — for more
-    // than 20s, versus the 105s an uncapped 50-class case would have taken.
-    // When the cap binds, the erasure aborts with P2028 instead of stalling
-    // further: a safe, retryable failure (every write lives inside this same
-    // transaction, so a rollback leaves nothing partially applied and a
-    // retry is byte-identical to a first attempt — verified end to end in
-    // round 1 review), not a correctness problem.
-    timeout: Math.min(5_000 + waitingCount * 2_000, 20_000),
+    // AND THE ARGUMENT THAT KEPT IT `waiting`-ONLY WAS INVERTED, which is the
+    // part worth reading before reviving it. Commit `7298311` reverted an
+    // all-status count on the grounds that such a count is monotone for the
+    // life of the account, so "past the `Math.min` ceiling the erasure would
+    // fail, and the retry would re-read the same count and fail identically —
+    // an account that can never be erased". That does not survive its own
+    // arithmetic: `min(5_000 + N * 2_000, 20_000)` is monotone NON-DECREASING
+    // in N and capped, so an all-status count could only ever grant MORE budget
+    // than a `waiting`-only one for the same account, never less. It could not
+    // have caused a failure the smaller count avoids. What actually made those
+    // accounts un-erasable was the `lockClassRow` LOOP — two round trips per
+    // class, measured at 6.0s against the single statement's 13ms for the same
+    // class set. That commit removed the loop and reverted the count together,
+    // and credited the wrong one.
+    //
+    // 20_000ms. Generous enough that the realistic case always finishes: this
+    // is a single-teacher CRM tool with no plausible legitimate student waiting
+    // in more than a handful of classes at once. Not all of this transaction's
+    // work is indexed on the column it filters by, which is part of why the
+    // ceiling is 20s and not 5 — `waitlistEntry.findMany`/`deleteMany` and
+    // `teacherStudent.deleteMany` key on `studentId` alone, `magicLinkToken
+    // .deleteMany` keys on `email`, and the teacher-notification `updateMany`
+    // filters on `body: { startsWith }`: four sequential scans, verified
+    // against `prisma/migrations/*/migration.sql` rather than assumed. Bounded
+    // enough that a pathological N cannot hold one of this app's Postgres
+    // connections any longer, on a deployment that is a single 2GB VPS
+    // (`CLAUDE.md`: "VPS budget"). #238 is the root fix for the lock set
+    // growing with account age: nothing reaps a closed, unfulfilled
+    // `WaitlistEntry`, so the population only grows.
+    //
+    // WHAT THIS DOES NOT BOUND, and the distinction is why the number above is
+    // not a guarantee. Prisma's interactive-transaction timeout refuses to
+    // START a statement past the budget; it cannot cancel one already blocked
+    // inside Postgres. Two consequences, both measured rather than read off the
+    // docs:
+    //
+    //   - `lock_timeout` is armed PER LOCK ACQUISITION, not per statement, so
+    //     the ordered pre-lock over N contended rows can spend up to N * 2s
+    //     while no single wait exceeds the bound. Measured 2026-08-16: two
+    //     `Class` rows held by sessions releasing at 1.5s and 3.0s, one waiter
+    //     at `lock_timeout='2s'` taking both in ONE statement, SUCCEEDED after
+    //     2.67s. What #237's helper collapses to O(1) is round trips, not
+    //     waiting.
+    //   - `SET LOCAL lock_timeout` governs every statement left in this
+    //     transaction, not just the `FOR UPDATE`s. Measured with a lock on the
+    //     erased student's own `Registration` row, unrelated to any waitlist:
+    //     `registration.updateMany` failed at ~2086ms with `55P03 canceling
+    //     statement due to lock timeout`. That bound arrives from
+    //     `setLockTimeout` at the top of this transaction, unconditionally —
+    //     before it did, a student waiting in zero classes got an UNBOUNDED
+    //     wait, which is what made this ceiling a wish rather than a rule.
+    //
+    // So the honest claim: every WAIT here is bounded at 2s, this budget bounds
+    // how long Prisma will keep STARTING statements, and neither bounds the
+    // transaction's total time in the pathological case. When the budget does
+    // bind, the erasure aborts with P2028 — safe and retryable, because this
+    // function is one transaction end to end (its only work outside it is the
+    // post-commit `handleSpotFreed` loop, which swallows its own errors), so a
+    // throw means nothing landed. `api/account/route.ts`'s `erasureFailure`
+    // relies on exactly that to tell the caller "Nothing was changed", and says
+    // why the teacher erasure cannot claim the same.
+    timeout: 20_000,
   });
 
   // The seats are freed and the erasure is committed — a promotion failure
