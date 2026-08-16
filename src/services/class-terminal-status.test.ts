@@ -7,10 +7,22 @@ import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
 /**
  * A pure DB-invariant test — no HTTP surface, nothing here calls the app on
  * `:3000` — so it lives here, in the `unit` project, rather than
- * `tests/integration/`. `tests/setup/unit-db.ts` forces this project onto
- * the isolated `DATABASE_URL_TEST` automatically; the sibling DB-invariant
- * files it matches for shape (`class-lifecycle.test.ts`, `gdpr.test.ts`) are
- * unit-project files for the same reason. This file used to live in
+ * `tests/integration/`. `vitest.config.ts` resolves the unit project's
+ * `DATABASE_URL` to `DATABASE_URL_TEST` when that variable is set, so this
+ * project reaches the isolated database with no shell override; the sibling
+ * DB-invariant files it matches for shape (`class-lifecycle.test.ts`,
+ * `gdpr.test.ts`) are unit-project files for the same reason.
+ *
+ * That is configuration, not a guard, and an earlier version of this sentence
+ * overstated it — it said `tests/setup/unit-db.ts` "forces this project onto"
+ * the test database. That setup provisions and migrates the database; it does
+ * not force the switch. With `DATABASE_URL_TEST` unset it logs "CI mode" and
+ * returns, and `vitest.config.ts` falls back to `DATABASE_URL` — dev. Stated
+ * accurately rather than left comfortable, because `waitlist-retention.test.ts`
+ * inherited this paragraph verbatim and is the case where it matters: that
+ * suite runs a database-wide `deleteMany`, so it now carries a runtime guard on
+ * the connected database's name. THIS file is the harmless twin — every row it
+ * touches is one it created, and it takes no unscoped write. This file used to live in
  * `tests/integration/`, which by design runs against the **dev** database
  * (`docs/test-database.md` §3.4) — every mutation-prove-the-trigger run
  * therefore needed a manual `DATABASE_URL` shell override to reach the test

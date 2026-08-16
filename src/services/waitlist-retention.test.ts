@@ -10,10 +10,30 @@ import {
 
 /**
  * A pure DB-invariant suite — nothing here calls the app on `:3000` — so it
- * lives in the `unit` project, where `tests/setup/unit-db.ts` forces it onto
- * `DATABASE_URL_TEST`. The same reasoning `class-terminal-status.test.ts`'s
+ * lives in the `unit` project. The same reasoning `class-terminal-status.test.ts`'s
  * header sets out: an `integration` file would run against the DEV database by
  * design (`docs/test-database.md` §3.4), and this file DELETES rows.
+ *
+ * BUT THE `unit` PROJECT IS NOT A GUARANTEE, and an earlier version of this
+ * paragraph said it was — that `tests/setup/unit-db.ts` "forces it onto
+ * `DATABASE_URL_TEST`". It does not force anything. When `DATABASE_URL_TEST`
+ * is absent that setup logs "CI mode" and `return`s — it SKIPS — and
+ * `vitest.config.ts` then resolves this project's `DATABASE_URL` to
+ * `testUrl ?? devUrl`, i.e. the DEV database. Isolation here is a value in
+ * `.env`, which is configuration and not a guard.
+ *
+ * THIS IS THE DESTRUCTIVE ONE of the two files that share that wording. Unlike
+ * every other unit suite, this one calls `reapClosedWaitlistEntries`, whose
+ * `groupBy` and `deleteMany` are deliberately NOT scoped to the fixtures below
+ * — that is the function's whole job. Pointed at dev it would permanently
+ * delete every unfulfilled entry on every terminal class past the cutoff, and
+ * `unit-db.ts`'s own docblock records that database-wide sweep tests have
+ * already caused one real incident (recoverable status writes; these are not).
+ * `class-terminal-status.test.ts` carries the same sentence and none of the
+ * blast radius: it only creates and updates rows it made itself.
+ *
+ * Hence the `beforeAll` guard below, which asks the connected database its own
+ * name rather than trusting the environment.
  */
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -154,6 +174,27 @@ async function addEntry(
 
 beforeAll(async () => {
   await prisma.$connect();
+
+  // BEFORE any fixture is written, and before anything calls the sweep.
+  //
+  // Asked of the connection, not of `process.env.DATABASE_URL_TEST`: that
+  // variable is read from the `.env` FILE by `loadEnv` in `vitest.config.ts`
+  // and need not exist in this process at all, so its absence proves nothing
+  // either way. The only answer that cannot be wrong is the one the server
+  // gives about the database this client is actually connected to.
+  // Fails CLOSED: `noUncheckedIndexedAccess` makes the row possibly-undefined,
+  // and the fallback is the empty string rather than a skip, so a query that
+  // somehow returns nothing throws the refusal below instead of proceeding.
+  const [row] =
+    await prisma.$queryRaw<Array<{ current_database: string }>>`SELECT current_database()`;
+  const dbName = row?.current_database ?? '';
+  if (!/_test$/.test(dbName)) {
+    throw new Error(
+      `[waitlist-retention.test] refusing to run an unscoped DELETE sweep against "${dbName}" — ` +
+        'this suite calls reapClosedWaitlistEntries, which is not scoped to its own fixtures. ' +
+        'Set DATABASE_URL_TEST to a database whose name ends in _test.',
+    );
+  }
 
   const teacher = await prisma.teacher.create({
     data: {
