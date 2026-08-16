@@ -741,10 +741,14 @@ let studentAccountId: string;
       await Promise.all(holders);
       const { elapsedMs, afterLastHolder } = await erasure;
 
-      // CAUSAL, mirroring the sibling `erasedAfterHolder` three tests up: the
-      // erasure returned only after the last hold ended. That is ORDER, which
-      // is the property a lock provides and which a duration on its own — a
-      // loaded runner can spend 6s on anything — does not establish.
+      // CAUSAL, mirroring the `erasedAfterHolder` resolution in "waits for a
+      // class row another transaction holds when the erased entry is %s" —
+      // named rather than counted, because a relative count rots the moment
+      // anyone inserts a test between the two, which is exactly how this
+      // branch's other cross-references died. The erasure returned only after
+      // the last hold ended. That is ORDER, which is the property a lock
+      // provides and which a duration on its own — a loaded runner can spend
+      // 6s on anything — does not establish.
       expect(afterLastHolder).toBe(true);
 
       // ELAPSED, and this is the assertion that is specifically about #240,
