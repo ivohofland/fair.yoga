@@ -1367,13 +1367,23 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // `WaitlistEntry`) is the REVERSE — the disagreement this test turns on.
     //
     // The join's order is asserted under the SAME forced plan the student side
-    // gets below. On this two-row fixture the default plan is a hash join that
-    // probes `Class`, so it agrees with the scan and the reproduction could
-    // not be built — measured in `db-locks-lock-order.test.ts`, not assumed.
+    // gets below. Left to the planner this join is not reliably driven by
+    // `WaitlistEntry`: the choice is a cost knife-edge on `w."studentId"`,
+    // which no index leads with, and it is non-monotonic in table size. CI
+    // proved it — this assertion is what failed on 2026-08-16 with [HIGH, LOW],
+    // because `enable_hashjoin = off` alone removes a join ALGORITHM, not a
+    // join DIRECTION. All three settings are needed; the reasoning and the
+    // measurements live in `db-locks-lock-order.test.ts`'s
+    // `forceWaitlistDrivenPlan`, which this mirrors deliberately rather than
+    // importing — a test helper crossing suites would couple two files whose
+    // fixtures are independent.
+    //
     // Asserting the `Class` side proves nothing about the join's: different
     // tables, different physical layouts.
     const joinOrder = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
+      await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
+      await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
       return tx.$queryRaw<Array<{ id: string }>>`
         SELECT c.id FROM "Class" c
         JOIN "WaitlistEntry" w ON w."classId" = c.id
@@ -1475,18 +1485,31 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
         },
         async $executeRawUnsafe({ args, query }) {
           // Force `deleteStudentAccount`'s pre-lock join onto the
-          // `WaitlistEntry`-driven plan. The default hash join probes `Class`
-          // and agrees with the scan (see the premise above), which would make
-          // the mutation below reproduce nothing. `setLockTimeout` is the
-          // statement the helper runs immediately before the pre-lock; the
-          // second `SET LOCAL` lands on the SAME transaction session, so the
-          // setting is scoped to `deleteStudentAccount`'s transaction only.
+          // `WaitlistEntry`-driven plan, matching the premise above. Without
+          // this the planner can drive the join from `Class` instead, which
+          // agrees with the teacher side's scan and makes the mutation below
+          // reproduce nothing. `setLockTimeout` is the statement the helper
+          // runs immediately before the pre-lock; these `SET LOCAL`s land on
+          // the SAME transaction session, so they are scoped to
+          // `deleteStudentAccount`'s transaction only.
+          //
           // Verified empirically during #237: `args` is an array of statements
-          // (index 0), not a bare string, and two calls on the session work
-          // where one multi-statement string fails with `42601`.
+          // (index 0), not a bare string, and separate calls on the session
+          // work where one multi-statement string fails with `42601`.
+          //
+          // ALL THREE, not just `enable_hashjoin` — that was the #239 CI
+          // failure. Transaction-wide scope is acceptable here because
+          // `enable_seqscan = off` discourages rather than forbids: Postgres
+          // still seq-scans where no index path exists, so the erasure's
+          // remaining statements cannot fail on it, only be planned
+          // differently. `deleteStudentAccount` calls `setLockTimeout` twice
+          // (once itself, once inside the helper), so this fires twice; a
+          // repeated `SET LOCAL` overwrites rather than stacks.
           if (args[0] === LOCK_TIMEOUT_SQL) {
             const first = await query(args);
             await query([`SET LOCAL enable_hashjoin = off`]);
+            await query([`SET LOCAL enable_mergejoin = off`]);
+            await query([`SET LOCAL enable_seqscan = off`]);
             return first;
           }
           return query(args);

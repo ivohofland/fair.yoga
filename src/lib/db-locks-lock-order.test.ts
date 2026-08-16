@@ -6,6 +6,41 @@ import { lockClassRowsOrdered } from './db-locks';
 const prisma = new PrismaClient();
 
 /**
+ * Forces the `WaitlistEntry`-driven nested loop this test's join side needs,
+ * by removing every plan shape that would drive the join from `Class`.
+ *
+ * All three settings are required, and `enable_hashjoin = off` alone is what
+ * CI proved insufficient (#239 review). It removes a join ALGORITHM, not a
+ * join DIRECTION: with hash joins gone the planner can still pick a nested
+ * loop with `Class` as the outer relation and a `Materialize`d `WaitlistEntry`
+ * scan inside, which returns `Class` heap order — the SAME order as the scan
+ * caller, so the two agree and the reproduction cannot be built.
+ *
+ * Which side wins is a cost knife-edge on the selectivity estimate for
+ * `w."studentId"`, and `WaitlistEntry` has no index leading with that column
+ * (`@@unique([classId, studentId])` and `@@index([classId, position])` both
+ * lead with `classId`), so there is no plan the planner naturally prefers.
+ * Measured across background-row counts on 2026-08-16 it is NON-MONOTONIC —
+ * 0 rows and 2 rows and 50 rows pick `Class`-outer, 10 rows picks
+ * `WaitlistEntry`-outer — so no amount of seeding makes a cost-chosen plan
+ * safe. Adding `enable_mergejoin` and `enable_seqscan` leaves an index-driven
+ * nested loop as the only cheap shape, which takes its order from index
+ * structure rather than from a cost comparison; verified stable at 0, 2, 10,
+ * 50, 100, 200, 1_000, 5_000, 10_000 and 50_000 background rows.
+ *
+ * `enable_seqscan = off` discourages rather than forbids — Postgres still
+ * seq-scans when no index path exists — so this cannot make a statement fail,
+ * only bias the planner. `SET LOCAL` is transaction-scoped, so all three live
+ * entirely inside the caller's transaction and reach neither the other caller
+ * nor production.
+ */
+async function forceWaitlistDrivenPlan(tx: Prisma.TransactionClient): Promise<void> {
+  await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
+  await tx.$executeRaw`SET LOCAL enable_mergejoin = off`;
+  await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
+}
+
+/**
  * The guard `lockClassRowsOrdered`'s `ORDER BY c.id` exists to be, and the
  * one this project owed after #216/#182: with both sides of a pairing taking
  * every lock in a single ordered statement, the per-pairing reproductions in
@@ -34,33 +69,38 @@ const prisma = new PrismaClient();
  * test hopes to win. Same technique as `gdpr.test.ts`'s "a third transaction
  * takes the `Student` row `FOR UPDATE` before either".
  *
- * WHY `enable_hashjoin = off` ON THE JOIN SIDE. On this checkout the join
- * over a two-row fixture comes out as a Hash Join that probes `Class`, so its
- * natural order is the `Class` scan's — the two plans AGREE and the
- * reproduction cannot be built. That was measured, not guessed: EXPLAIN on
- * 2026-08-16 showed `Hash Join → Seq Scan on Class` returning [HIGH, LOW],
- * identical to the plain scan. The plan this construction is meant to model
- * is the production one — a `WaitlistEntry` join driven by that table, which
- * is what the planner picks when the filter is selective against a large
- * table. Turning hash joins off for the join side only forces that shape
- * deterministically: the nested loop driven by `WaitlistEntry` (two filtered
- * rows) probing `Class` is measurably cheaper than the reverse. `SET LOCAL`
- * is transaction-scoped, so the setting lives entirely inside this test's
- * transactions and reaches neither the other caller nor production. The
- * premise assertion still guards the shape: if a planner or storage change
- * ever makes the two orders agree, that assertion fails loudly before the
- * race rather than leaving it green for an unrelated reason.
+ * WHY THE JOIN SIDE FORCES ITS PLAN. The plan this construction models is the
+ * production one — a `WaitlistEntry` join driven by that table. Left to the
+ * planner it is not reliably that: see `forceWaitlistDrivenPlan` below, which
+ * owns the three settings and the measurements behind them. The short version
+ * is that the choice is a cost knife-edge on an unindexed column, it is
+ * non-monotonic in table size, and this test shipped green on one setting for
+ * exactly one CI run before the sibling premise in `gdpr.test.ts` failed on
+ * the same commit.
  *
- * WHAT DESC DOES NOT CATCH. Under `ORDER BY c.id DESC` both callers request
- * [HIGH, LOW] — the join's sort and the scan's sort now agree — so they queue
- * on HIGH and serialise, and this test PASSES on DESC. This test pins ASC and
- * ASC only; a maintainer who flips the helper to DESC gets a green helper
- * test. That is accepted: the plans under the two clauses are not different
- * plans anymore, so the deadlock this test guards cannot be constructed for
- * DESC, and the per-pairing reproductions in `gdpr.test.ts:1344` still guard
- * the erasure pairings whichever clause the helper uses. The plan's Step 4
- * "expected 40P01 under DESC" was a prediction that did not hold; recorded
- * here and in the task report, and Step 4 is an observation, not a gate.
+ * THIS TEST PASSED BY LUCK BEFORE #239's REVIEW, and the mechanism is worth
+ * keeping written down. Its premise is character-identical to
+ * `gdpr.test.ts`'s, and it survived only because it runs earlier in the file
+ * order, against a quieter database. Inserting two `ANALYZE` statements after
+ * the fixture — modelling an autoanalyze firing there — reproduced CI's exact
+ * failure signature here. File order is not a guarantee, which is why the
+ * plan is forced rather than hoped for.
+ *
+ * WHAT DESC DOES AND DOES NOT CATCH. Under `ORDER BY c.id DESC` both callers
+ * request [HIGH, LOW], so they queue on the same row and serialise: the
+ * DEADLOCK this test is built around cannot be constructed for DESC. The test
+ * still FAILS on DESC — measured 3/3 — because the closing assertions pin the
+ * returned ids to `[lowClassId, highClassId]`, and both callers hand back
+ * [HIGH, LOW] instead. So the clause's direction is caught, just not by the
+ * mechanism the rest of this docblock describes. An earlier version of this
+ * paragraph said the test PASSES on DESC; that was wrong, and it was wrong in
+ * the generous direction — it under-claimed its own coverage. The plan's Step
+ * 4 predicted `40P01` under DESC, which did not hold either; the failure is an
+ * assertion, not a deadlock. Step 4 is an observation, not a gate.
+ *
+ * The per-pairing reproduction in `gdpr.test.ts` ("does not deadlock when a
+ * teacher erasure and a student erasure overlap on two classes") guards the
+ * erasure pairing whichever clause the helper uses.
  */
 describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
   const suffix = `dblocks-order-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -170,11 +210,11 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
 
     // Premise 2: the join's natural order — the REVERSE. Asserting premise 1
     // proves nothing about this: different tables, different physical layouts.
-    // Runs under `enable_hashjoin = off` so the planner drives it from
-    // `WaitlistEntry` — see the docblock for why the default hash join agrees
-    // with the scan and cannot be used to build the reproduction.
+    // Runs under the forced plan so the planner drives it from `WaitlistEntry`
+    // — see `forceWaitlistDrivenPlan` for why a cost-chosen plan cannot be
+    // relied on here, and why one setting was not enough.
     const joinOrder = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
+      await forceWaitlistDrivenPlan(tx);
       return tx.$queryRaw<Array<{ id: string }>>`
         SELECT c.id FROM "Class" c
         JOIN "WaitlistEntry" w ON w."classId" = c.id
@@ -207,12 +247,12 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
 
     await holderHasRows;
 
-    // Caller A: the JOIN plan. Unordered it wants LOW first. The hash-join
-    // override makes it run under the same plan the premise above asserts —
-    // the production shape, driven by `WaitlistEntry`.
+    // Caller A: the JOIN plan. Unordered it wants LOW first. The plan override
+    // makes it run under the same plan the premise above asserts — the
+    // production shape, driven by `WaitlistEntry`.
     const a = prisma.$transaction(
       async (tx) => {
-        await tx.$executeRaw`SET LOCAL enable_hashjoin = off`;
+        await forceWaitlistDrivenPlan(tx);
         const ids = await lockClassRowsOrdered(tx, {
           join: Prisma.sql`JOIN "WaitlistEntry" w ON w."classId" = c.id`,
           where: Prisma.sql`w."studentId" = ${studentId}`,

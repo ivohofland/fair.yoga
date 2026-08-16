@@ -359,7 +359,12 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
             // ("does not deadlock when a teacher erasure and a student erasure
             // overlap on two classes"), measured 5/5 with `40P01` on
             // 2026-08-16 — the erasure's ordering is guarded by a
-            // reproduction the whole time, in that file. What still fails in
+            // reproduction the whole time, in that file. That measurement was
+            // machine-specific when it was written: the reproduction needs the
+            // student side driven from `WaitlistEntry`, which was left to the
+            // planner, and CI on the same commit could not even establish the
+            // premise. It holds generally only since #239 forced the plan
+            // there. What still fails in
             // THIS file is a reverted pre-lock on the sync/archive side (no
             // `FOR UPDATE`, no pre-lock at all, or a narrowed row set), which
             // is where this file's mutations were always aimed. The general
@@ -611,7 +616,12 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
             // ("does not deadlock when a teacher erasure and a student erasure
             // overlap on two classes"), measured 5/5 with `40P01` on
             // 2026-08-16 — the erasure's ordering is guarded by a
-            // reproduction the whole time, in that file. What still fails in
+            // reproduction the whole time, in that file. That measurement was
+            // machine-specific when it was written: the reproduction needs the
+            // student side driven from `WaitlistEntry`, which was left to the
+            // planner, and CI on the same commit could not even establish the
+            // premise. It holds generally only since #239 forced the plan
+            // there. What still fails in
             // THIS file is a reverted pre-lock on the sync/archive side (no
             // `FOR UPDATE`, no pre-lock at all, or a narrowed row set), which
             // is where this file's mutations were always aimed. The general
@@ -797,7 +807,12 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
             // ("does not deadlock when a teacher erasure and a student erasure
             // overlap on two classes"), measured 5/5 with `40P01` on
             // 2026-08-16 — the erasure's ordering is guarded by a
-            // reproduction the whole time, in that file. What still fails in
+            // reproduction the whole time, in that file. That measurement was
+            // machine-specific when it was written: the reproduction needs the
+            // student side driven from `WaitlistEntry`, which was left to the
+            // planner, and CI on the same commit could not even establish the
+            // premise. It holds generally only since #239 forced the plan
+            // there. What still fails in
             // THIS file is a reverted pre-lock on the sync/archive side (no
             // `FOR UPDATE`, no pre-lock at all, or a narrowed row set), which
             // is where this file's mutations were always aimed. The general
