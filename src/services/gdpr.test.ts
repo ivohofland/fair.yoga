@@ -674,7 +674,16 @@ let studentAccountId: string;
             const seconds = Math.max(0, (t0 + (i + 1) * HOLD_STEP_MS - Date.now()) / 1000);
             // Computed, never input — `$queryRawUnsafe` because a bound
             // parameter into `pg_sleep` needs an explicit cast to resolve.
-            await tx.$queryRawUnsafe(`SELECT pg_sleep(${seconds.toFixed(3)})`);
+            // The trailing `::text` is load-bearing, not decorative:
+            // `pg_sleep` returns `void`, which Prisma cannot deserialize.
+            // Without the cast every holder's `$transaction` REJECTS with
+            // P2010 right after its sleep completes — invisible today,
+            // because the erasure throws P2028 first and `Promise.all`
+            // below is never reached, but fatal once the budget is fixed:
+            // the erasure would then succeed, execution would reach
+            // `Promise.all(holders)`, and it would reject with P2010,
+            // failing this test against the very fix it exists to confirm.
+            await tx.$queryRawUnsafe(`SELECT pg_sleep(${seconds.toFixed(3)})::text`);
           },
           { timeout: 30_000, maxWait: 10_000 },
         ),
