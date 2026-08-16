@@ -94,6 +94,21 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://yoga:test_password@localhost:5432/ethical_yoga
+      # The unit project runs against a SEPARATE database, exactly as it does
+      # locally. Without this the vitest `unit` project falls back to
+      # `DATABASE_URL` (vitest.config.ts:20), `tests/setup/unit-db.ts` takes its
+      # unset-variable early return, and any suite that refuses a database not
+      # named `*_test` skips itself — silently, on the one run that gates main.
+      # `unit-db.ts` creates and migrates this database through the maintenance
+      # connection, so no extra step is needed here.
+      #
+      # Job-scoped is correct even though the integration tier shares this job:
+      # only the `unit` project overrides `DATABASE_URL` with this value
+      # (vitest.config.ts:71). The integration project deliberately does not —
+      # it drives the HTTP app on :3000, whose fixtures must live in the
+      # database that app process reads, i.e. `DATABASE_URL` above. Build,
+      # `migrate deploy` and `npm run start` are likewise unaffected.
+      DATABASE_URL_TEST: postgresql://yoga:test_password@localhost:5432/ethical_yoga_test
       PASSKEY_RP_ID: localhost
       PASSKEY_RP_NAME: fair.yoga
       CRON_SECRET: ci-cron-secret
