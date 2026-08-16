@@ -280,20 +280,27 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // FIRST statement, unconditionally — not left to a lock helper further down.
     //
     // The bound used to arrive only as a side effect of the old `lockClassRow`
-    // loop, which
-    // runs only when `waitingClassIds` is non-empty. A student waiting
-    // in zero classes — the common case — therefore got an UNBOUNDED wait on
-    // every statement in this transaction, including a `registration
-    // .updateMany` that can contend with the 60-second transitions sweep, and
-    // the erasure hung with no feedback until Prisma's own transaction
-    // timeout eventually refused to start the NEXT statement. That timeout
-    // cannot roll back a statement already blocked inside Postgres, only
-    // decline to begin another one, which is what made the `Math.min` ceiling
-    // below a wish rather than a guarantee for exactly those erasures. Round 2
-    // review measured both halves of that asymmetry directly (see the
-    // `timeout` option's own comment); it was recorded there as intended,
-    // which it was not — nothing in the GDPR-clock rationale for bounding
-    // this transaction depends on the subject being on a waitlist.
+    // loop, which ran only when the list it iterated came back non-empty. That
+    // list was `waiting`-only when this paragraph was first written (#174 Task
+    // 5, `sortedWaitingClassIds`) and every status by the time the loop was
+    // removed (#216/#182, `sortedEntryClassIds`) — NOT the `waitingClassIds`
+    // reorder list below, which is a live identifier this paragraph drifted
+    // onto during a partial edit and never described. Under either version a
+    // student the loop's own read returned nothing for — waiting in zero
+    // classes then, holding no entry at all later, the common case either way
+    // — got an UNBOUNDED wait on every statement in this transaction,
+    // including a `registration.updateMany` that can contend with the
+    // 60-second transitions sweep, and the erasure hung with no feedback until
+    // Prisma's own transaction timeout eventually refused to start the NEXT
+    // statement. That timeout cannot roll back a statement already blocked
+    // inside Postgres, only decline to begin another one, which is what made
+    // this transaction's budget — the flat `{ timeout: 20_000 }` below, a
+    // `Math.min` of a pre-transaction count until #240 — a wish rather than a
+    // guarantee for exactly those erasures. Round 2 review measured both
+    // halves of that asymmetry directly (see the `timeout` option's own
+    // comment); it was recorded there as intended, which it was not — nothing
+    // in the GDPR-clock rationale for bounding this transaction depends on the
+    // subject being on a waitlist.
     //
     // Idempotent with the ordered pre-lock's own `SET LOCAL`: a later one
     // overwrites the earlier rather than stacking (`db-locks.ts`, and
@@ -622,23 +629,64 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // have caused a failure the smaller count avoids. What actually made those
     // accounts un-erasable was the `lockClassRow` LOOP — two round trips per
     // class, measured at 6.0s against the single statement's 13ms for the same
-    // class set. That commit removed the loop and reverted the count together,
-    // and credited the wrong one.
+    // class set. That commit removed the loop and reverted the count in one
+    // change, and its subject line — "the erasure's lock loop grew with
+    // account age until erasure was impossible" — credits the loop, so this is
+    // not a claim that it missed the cause. The narrower and defensible one:
+    // the comment it left on the count attributed the fix to the revert, and
+    // the revert is the half that provably cannot have helped.
     //
-    // 20_000ms. Generous enough that the realistic case always finishes: this
-    // is a single-teacher CRM tool with no plausible legitimate student waiting
-    // in more than a handful of classes at once. Not all of this transaction's
-    // work is indexed on the column it filters by, which is part of why the
-    // ceiling is 20s and not 5 — `waitlistEntry.findMany`/`deleteMany` and
-    // `teacherStudent.deleteMany` key on `studentId` alone, `magicLinkToken
-    // .deleteMany` keys on `email`, and the teacher-notification `updateMany`
-    // filters on `body: { startsWith }`: four sequential scans, verified
-    // against `prisma/migrations/*/migration.sql` rather than assumed. Bounded
-    // enough that a pathological N cannot hold one of this app's Postgres
-    // connections any longer, on a deployment that is a single 2GB VPS
-    // (`CLAUDE.md`: "VPS budget"). #238 is the root fix for the lock set
-    // growing with account age: nothing reaps a closed, unfulfilled
-    // `WaitlistEntry`, so the population only grows.
+    // 20_000ms. Generous enough that the realistic case always finishes — and
+    // "realistic case" is measured on the axis that governs the cost, which is
+    // the number of classes the student holds a `WaitlistEntry` in of ANY
+    // status, because that set IS the pre-lock's lock set. (This sentence used
+    // to read "no plausible legitimate student waiting in more than a handful
+    // of classes at once", sizing the budget on the very axis the paragraphs
+    // above spend twenty lines discrediting.) On a single-teacher CRM tool
+    // that lock set is a handful of classes — but it is a handful that only
+    // grows, because nothing reaps a closed, unfulfilled `WaitlistEntry`. #238
+    // is the root fix for that, and it is the reason a ceiling exists at all
+    // rather than an aside: the realistic axis is unbounded over an account's
+    // lifetime, so the number has to be a ceiling on damage rather than a
+    // forecast of need.
+    //
+    // NOT sized from statement cost, and the measurement is what says so. Not
+    // all of this transaction's work is indexed on the column it filters by,
+    // and an older version of this comment claimed otherwise:
+    // `waitlistEntry.findMany`/`deleteMany` and `teacherStudent.deleteMany`
+    // key on `studentId` alone (`WaitlistEntry` carries only
+    // `(classId, studentId)` and `(classId, position)`; `TeacherStudent` only
+    // `(teacherId, studentId)`), `magicLinkToken.deleteMany` keys on `email`
+    // (only `tokenHash` and the PK are indexed), and the teacher-notification
+    // `updateMany` filters on `body: { startsWith }`. Those four run as
+    // sequential scans, verified against `prisma/migrations/*/migration.sql`
+    // rather than assumed. That inventory is recorded to correct the
+    // "it is all indexed" claim, NOT as a reason more budget was needed — the
+    // measured fact points the other way: this whole statement set, the four
+    // sequential scans included, already ran inside 5_000ms, which is Prisma's
+    // default transaction timeout and the only budget this function had before
+    // #174 gave it an explicit one. So the 20s buys nothing for statement time.
+    // It is headroom for the pathological LOCK-WAIT case below, where
+    // `lock_timeout` is armed per acquisition and N contended rows can cost up
+    // to N * 2s inside one budget.
+    //
+    // Bounded enough that a pathological N cannot hold one of this app's
+    // Postgres connections for more than 20s, against the 105s an uncapped
+    // 50-class case would have taken (50 * 2s of lock waits on top of the 5s
+    // base), on a deployment that is a single 2GB VPS (`CLAUDE.md`: "VPS
+    // budget"). One cost of that number, recorded as a cost rather than
+    // argued away: 20s is twice Prisma's default `pool_timeout` of 10s, and
+    // `src/lib/db.ts` is a bare `new PrismaClient()` — `connection_limit` is
+    // set nowhere in `src/`, `docker-compose*.yml`, the `Dockerfile` or
+    // `DEPLOYMENT.md`, only on one test's dedicated client — so the pool is
+    // `physical_cores * 2 + 1`, three connections on the 1-vCPU VPS above. One erasure occupying one of
+    // them for the full budget means a concurrent request that cannot get a
+    // connection gives up at 10s with `P2024` while the erasure is still
+    // running: the pool gives up before the transaction does. Survivable
+    // rather than fine — `api-errors.ts` classifies `P2024` transient and
+    // answers it with retry advice — and reachable at the old ceiling too,
+    // since `waitingCount >= 8` already bought the same 20s. New here is only
+    // that every erasure gets it, and that anyone has written it down.
     //
     // WHAT THIS DOES NOT BOUND, and the distinction is why the number above is
     // not a guarantee. Prisma's interactive-transaction timeout refuses to
@@ -915,12 +963,20 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // had none, so every statement in it is now bounded rather than waiting
       // out Prisma's `{ timeout: 10_000 }` — which cannot roll back a
       // statement already blocked inside Postgres, only refuse to start a new
-      // one — the `Math.min` ceiling paragraph in `deleteStudentAccount`'s
-      // `timeout` option above states this at length, and states why the
-      // ceiling is the real bound. (That paragraph was cited here by line
-      // number until #239's review, which found the number pointing at a
-      // dangling continuation word: this branch's own edits above had shifted
-      // it. Anchor text greps; a line number rots on the next edit.)
+      // one — the "WHAT THIS DOES NOT BOUND" paragraph in
+      // `deleteStudentAccount`'s `timeout` option above states this at length,
+      // and states the conclusion it reaches: every WAIT is bounded at 2s, the
+      // budget bounds only how long Prisma keeps STARTING statements, and
+      // neither bounds the transaction's total time in the pathological case.
+      // (That paragraph was cited here by line number until #239's review,
+      // which found the number pointing at a dangling continuation word: this
+      // branch's own edits above had shifted it. It was then re-cited as "the
+      // `Math.min` ceiling paragraph", and #240 deleted the `Math.min` out of
+      // the thing it named — so the anchor did survive the line shift and
+      // rotted anyway, on the first rewrite of the text it pointed at, in the
+      // same sentence that claimed it would not. Anchor text greps where a
+      // line number does not; neither survives its target being rewritten, and
+      // only re-reading the target catches that.)
       // The `upcoming` read above runs before this bound
       // takes effect, but it takes no row locks, so nothing waits on it.
       // Deliberate: the same argument `deleteStudentAccount` makes for its own

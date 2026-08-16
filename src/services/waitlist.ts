@@ -740,8 +740,10 @@ export async function handleSpotFreed(
   // /api/registrations/[id]` (cancel) — and its enumeration is short by one:
   // `deleteStudentAccount` (`gdpr.ts`) cancels registrations in every
   // draft/open class of the erased student while locking only the classes
-  // they were WAITING in, so a class they were registered in but not queued
-  // in is written unlocked too.
+  // they were QUEUED in, so a class they were registered in but not queued
+  // in is written unlocked too. QUEUED, not WAITING: that lock set spans
+  // every `WaitlistEntry` status (#216/#182), and the capitalised literal
+  // would name the one enum value it is not scoped to.
   //
   // Only attendance could ever move a row INTO the counted set — from
   // `late_cancel` to either `attended` or `no_show`, both of which are in it.
@@ -916,10 +918,14 @@ async function hasActiveRegistration(
  * (`setLockTimeout` as that transaction's first statement, `gdpr.ts`) for
  * every statement it runs, these two mutators' rows included. That used to
  * say the loop inherited `lockClassRow`'s bound, which stopped being the
- * mechanism when #237 replaced the erasure's lock loop — `gdpr.ts` calls
+ * mechanism when #216/#182 replaced the erasure's lock loop with one ordered
+ * `FOR UPDATE` statement — #237 then moved that statement into the shared
+ * `lockClassRowsOrdered` helper, which is a different change and is why the
+ * attribution is two issues rather than one — and `gdpr.ts` calls
  * `lockClassRow` nowhere now. Named here so the next reader of that
- * budget's arithmetic (`gdpr.ts`, the erasure transaction's `timeout`) does
- * not have to rediscover them.
+ * transaction's budget (`gdpr.ts`, the erasure's flat `{ timeout: 20_000 }`,
+ * sized from a pre-transaction count until #240 removed the term) does not
+ * have to rediscover them.
  *
  * The lock is taken BY the statement that chooses the classes, so there is
  * no window between choosing them and holding them.

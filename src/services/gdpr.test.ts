@@ -654,6 +654,15 @@ let studentAccountId: string;
    * the old floor now completes. Restore
    * `Math.min(5_000 + waitingCount * 2_000, 20_000)` and it fails with
    * `P2028`, which is #240 reproduced.
+   *
+   * And it proves that by asserting it, not by finishing. Two assertions
+   * carry the whole test — elapsed above the old floor, and the erasure
+   * returning after the last hold ended — because the outcome assertions
+   * (entries gone, `deletedAt` set) are equally true of an erasure that
+   * contended for nothing. See their comments in the body for the two
+   * realistic paths to that vacuous pass; the point of both assertions is
+   * that this test fails loudly on the day it stops exercising #240 instead
+   * of quietly continuing to pass.
    */
   it('completes when its lock waits total more than the old 5s budget', async () => {
     const CLASSES = 6;
@@ -666,6 +675,7 @@ let studentAccountId: string;
       },
     });
     try {
+      let lastHolderReleased = false;
       const t0 = Date.now();
       const holders = fixture.classIds.map((classId, i) =>
         holderDb.$transaction(
@@ -684,6 +694,16 @@ let studentAccountId: string;
             // `Promise.all(holders)`, and it would reject with P2010,
             // failing this test against the very fix it exists to confirm.
             await tx.$queryRawUnsafe(`SELECT pg_sleep(${seconds.toFixed(3)})::text`);
+            // `fixture.classIds` is sorted and the pre-lock is `ORDER BY c.id`,
+            // so the highest index is both the last row the erasure can reach
+            // and the last hold to end — the one whose release the erasure's
+            // return has to follow. Set inside the callback, i.e. just before
+            // the COMMIT that actually drops the lock, exactly as the sibling
+            // test's `holderReleased` is; that is conservative in the right
+            // direction, because the flag turns true slightly BEFORE the lock
+            // is free, so a false reading below cannot be an artefact of the
+            // flag arriving late.
+            if (i === CLASSES - 1) lastHolderReleased = true;
           },
           { timeout: 30_000, maxWait: 10_000 },
         ),
@@ -693,8 +713,56 @@ let studentAccountId: string;
       // any of them, or the pre-lock sails through the ones not yet taken.
       await new Promise((r) => setTimeout(r, 300));
 
-      await deleteStudentAccount(prisma, fixture.studentId);
+      // The two assertions after this call are the test. Everything else it
+      // checks — entries gone, `deletedAt` set — is equally true of an erasure
+      // that contended for NOTHING and returned in 40ms, so "it passed" is
+      // worthless evidence here: such a run would also have passed against the
+      // 5_000ms budget this test exists to bury, and would have reported
+      // nothing about it. Two realistic paths lead there. `holderDb` is a
+      // freshly constructed `PrismaClient`, so its first six queries pay
+      // engine start plus connect; if that ever outruns the 300ms settle, the
+      // pre-lock reaches rows nobody is holding yet. And `Math.max(0, …)`
+      // above collapses a hold to zero whenever its `FOR UPDATE` came back
+      // late, degrading the stagger from the front. Both fail green unless the
+      // properties that distinguish a real run are asserted outright.
+      const tStart = Date.now();
+      const erasure = deleteStudentAccount(prisma, fixture.studentId).then(() => ({
+        elapsedMs: Date.now() - tStart,
+        afterLastHolder: lastHolderReleased,
+      }));
+      // Marks a rejection handled at the moment it can occur, nine seconds
+      // before `await erasure` below gets to it. A regression of #240 makes
+      // this call reject with `P2028`, and without this line that rejection
+      // sits unhandled across the `Promise.all` and surfaces as an unhandled
+      // rejection — attributable to any file — instead of as this test failing
+      // on the await. The await still throws it; only the reporting changes.
+      void erasure.catch(() => undefined);
+
       await Promise.all(holders);
+      const { elapsedMs, afterLastHolder } = await erasure;
+
+      // CAUSAL, mirroring the sibling `erasedAfterHolder` three tests up: the
+      // erasure returned only after the last hold ended. That is ORDER, which
+      // is the property a lock provides and which a duration on its own — a
+      // loaded runner can spend 6s on anything — does not establish.
+      expect(afterLastHolder).toBe(true);
+
+      // ELAPSED, and this is the assertion that is specifically about #240,
+      // because it is the literal claim "this run would have failed under the
+      // old budget". The threshold is that old floor, 5_000ms, and the margin
+      // is stated rather than hoped for: six holds 1.5s apart end at
+      // t0 + 9_000ms while the erasure starts at t0 + ~300ms, so observed
+      // elapsed has been 8666-8821ms across runs — 3.7-3.8s of headroom over
+      // the threshold, matching the ≈3.7s the construction notes above
+      // predict. The window measured here is a superset of the transaction's
+      // own (it includes the pre-transaction `student.findUniqueOrThrow` and
+      // the post-commit `handleSpotFreed` loop), which is milliseconds against
+      // that margin and errs toward passing; the causal assertion above is
+      // what rules out an elapsed figure earned by anything other than waiting
+      // for locks. Mutation-checked rather than assumed: `HOLD_STEP_MS = 500`
+      // makes the whole run finish in 2780ms and this line fails with
+      // "expected 2780 to be greater than 5000" instead of passing green.
+      expect(elapsedMs).toBeGreaterThan(5_000);
 
       expect(
         await prisma.waitlistEntry.count({ where: { studentId: fixture.studentId } }),
