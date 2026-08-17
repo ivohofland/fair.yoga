@@ -803,7 +803,28 @@ git commit -m "test: the PUT freeze over HTTP, and the pin that makes it unskipp
 - Produces: trigger `class_terminal_date_guard`, function
   `class_reject_terminal_date_change()`, raising `SQLSTATE 23514`.
 
-- [ ] **Step 1: Write the migration**
+**Step order here is test-first, per CLAUDE.md.** The trigger test is written
+and run to red *before* the migration exists — with no trigger, nothing raises,
+`caught` stays `undefined`, and the two rejection cases fail cleanly. That is a
+real red-green cycle, so there is no reason to take the weaker "write it, then
+characterise it" route.
+
+- [ ] **Step 1: Write the trigger test (T11) and run it to red**
+
+Create `src/services/class-terminal-date.test.ts` with the full contents given
+in Step 4 below. Then:
+
+```bash
+npx vitest run --project unit src/services/class-terminal-date.test.ts
+```
+
+Expected: **2 of 4 cases FAIL** — both `it.each` rejection cases, at
+`expect(caught).toBeInstanceOf(Prisma.PrismaClientUnknownRequestError)` with
+`caught` still `undefined`, because no trigger exists to raise. The two
+allow-cases pass, correctly and uninterestingly: with no trigger, everything is
+allowed. Record the failure output.
+
+- [ ] **Step 2: Write the migration**
 
 `prisma/schema.prisma` is **not** changed — the column and its type already
 exist, so there is no drift for CI's migration-drift check to find. Create the
@@ -860,7 +881,7 @@ CREATE TRIGGER class_terminal_date_guard
 
 `23514` matches the sibling so `classifyApiError` maps both to 409.
 
-- [ ] **Step 2: Apply it to dev and to the test database**
+- [ ] **Step 3: Apply it to dev and to the test database**
 
 ```bash
 npx prisma migrate deploy
@@ -879,7 +900,7 @@ docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
 Expected: one row each. If `DATABASE_URL_TEST` is unset, find it in `.env`
 rather than guessing the database name.
 
-- [ ] **Step 3: Write the trigger test (T11)**
+- [ ] **Step 4: The trigger test in full (written in Step 1)**
 
 Create `src/services/class-terminal-date.test.ts`. The fixture scaffold mirrors
 `class-terminal-status.test.ts:136-192` with the student dropped (nothing here
@@ -1100,17 +1121,17 @@ describe('class_terminal_date_guard', () => {
 });
 ```
 
-- [ ] **Step 4: Run it**
+- [ ] **Step 5: Run it green**
 
 ```bash
 npx vitest run --project unit src/services/class-terminal-date.test.ts
 ```
 
-Expected: four cases pass (two from the `it.each`, plus two allow-cases). If the
+Expected: all four cases now pass (two from the `it.each`, plus two allow-cases). If the
 last case fails with `23514`, the `IS DISTINCT FROM` half of the `WHEN` clause
 is missing from the migration.
 
-- [ ] **Step 5: Mutation M10 — drop the trigger**
+- [ ] **Step 6: Mutation M10 — drop the trigger**
 
 ```bash
 docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
@@ -1129,7 +1150,7 @@ docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
 npx vitest run --project unit src/services/class-terminal-date.test.ts
 ```
 
-- [ ] **Step 6: Mutation M11 — drop the `IS DISTINCT FROM` half**
+- [ ] **Step 7: Mutation M11 — drop the `IS DISTINCT FROM` half**
 
 Recreate the trigger in the test DB with only `OLD.status IN (...)` in the
 `WHEN`. Run the file.
@@ -1139,7 +1160,7 @@ unchanged date alongside another column'` with `23514`. Record it. Restore from
 the migration file. **Do not edit the migration** — this mutation is applied
 directly to the test database and reverted the same way.
 
-- [ ] **Step 7: Re-run Task 1's M1 with the trigger present**
+- [ ] **Step 8: Re-run Task 1's M1 with the trigger present**
 
 Re-apply Task 1 Step 12's mutation (remove the early return and both `...live`
 spreads) and run:
@@ -1154,7 +1175,7 @@ outcomes side by side. Two different failures from one mutation is the evidence
 that the service guard and the trigger are independent layers rather than one
 guard counted twice. Restore.
 
-- [ ] **Step 8: Narrow the sibling test's title (spec §5.2)**
+- [ ] **Step 9: Narrow the sibling test's title (spec §5.2)**
 
 In `src/services/class-terminal-status.test.ts:370`, the title `'leaves
 non-status updates to a completed class alone'` now over-claims. The test stays
@@ -1174,7 +1195,7 @@ Its two neighbours were checked and need nothing: `'allows a completeClass-shape
 write…'` writes status plus three totals, and `'allows a no-op status write on a
 cancelled class'` writes status alone. Neither names `date`.
 
-- [ ] **Step 9: Run both trigger files together**
+- [ ] **Step 10: Run both trigger files together**
 
 ```bash
 npx vitest run --project unit src/services/class-terminal-status.test.ts src/services/class-terminal-date.test.ts
@@ -1182,7 +1203,7 @@ npx vitest run --project unit src/services/class-terminal-status.test.ts src/ser
 
 Expected: both green.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add prisma/migrations/20260817120000_class_terminal_date_trigger/migration.sql \
