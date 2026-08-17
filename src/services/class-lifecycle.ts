@@ -60,14 +60,25 @@ export const VALID_TRANSITIONS: Record<ClassStatus, readonly ClassStatus[]> = {
  * its entire safety argument is that a row on such a class has no possible
  * writer.
  *
- * That argument rests on the DB trigger `class_terminal_status_guard`
- * (`prisma/migrations/20260805120000_class_terminal_status_trigger/`), whose
- * SQL hard-codes `('completed','cancelled')` and cannot be edited. Deriving
- * from a TABLE while depending on a TRIGGER is the one hazard here: widen the
- * table and this widens silently while the trigger does not.
- * `class-terminal-status.test.ts` iterates this constant for exactly that
- * reason — adding a terminal status the trigger does not cover fails there,
- * not in production.
+ * That argument rests on TWO DB triggers, each hard-coding
+ * `('completed','cancelled')` in an applied migration that cannot be edited,
+ * because the reaper's predicate has two halves and a deletion needs both:
+ *
+ * - `class_terminal_status_guard`
+ *   (`prisma/migrations/20260805120000_class_terminal_status_trigger/`) — the
+ *   class cannot leave a terminal status.
+ * - `class_terminal_date_guard` (#247,
+ *   `prisma/migrations/20260817120000_class_terminal_date_trigger/`) — a
+ *   terminal class's `date` cannot move, which is what makes "more than 365
+ *   days past" a fact rather than a snapshot.
+ *
+ * Deriving from a TABLE while depending on TRIGGERS is the one hazard here:
+ * widen the table and this widens silently while neither trigger does.
+ * `class-terminal-status.test.ts` and `class-terminal-date.test.ts` each
+ * iterate this constant and each compare it against their OWN migration's SQL,
+ * for exactly that reason — adding a terminal status a trigger does not cover
+ * fails there, not in production. Two pins rather than one because the two
+ * migrations are independent texts that nothing else forces to agree.
  *
  * Annotated and frozen, NOT `as const satisfies` — the same shape and reason as
  * `CLAIMABLE_WAITLIST_STATUSES` (`lib/waitlist-status.ts`, which explains it at

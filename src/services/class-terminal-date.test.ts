@@ -1,7 +1,8 @@
+import { readFileSync } from 'fs';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
-import type { ClassStatus } from '@prisma/client';
+import { PrismaClient, Prisma, ClassStatus } from '@prisma/client';
 import { classifyApiError } from '@/lib/api-errors';
+import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
 
 /**
  * A pure DB-invariant test for `class_terminal_date_guard` (#247) — no HTTP
@@ -74,6 +75,21 @@ let teacherRoomId: string;
 const classIds: string[] = [];
 
 const ORIGINAL_DATE = '2099-06-01';
+
+/**
+ * Derived, not listed. Every `ClassStatus` the trigger must NOT fire on is
+ * whatever is left once the terminal set is removed — so adding a sixth
+ * status to the enum extends the allow-case below automatically, and widening
+ * `TERMINAL_CLASS_STATUSES` removes it from here and adds it to the rejection
+ * cases in the same edit. Mirrors the intent of `class-lifecycle.test.ts`'s
+ * `['draft', 'open', 'in_progress']` control, which exists so that a mutation
+ * freezing a non-terminal status is caught by design rather than by accident;
+ * this version cannot fall behind the enum the way that literal can.
+ */
+const NON_TERMINAL_STATUSES = Object.values(ClassStatus).filter(
+  (s) => !TERMINAL_CLASS_STATUSES.includes(s),
+);
+
 let makeClassCounter = 0;
 
 async function makeClass(opts: { status: ClassStatus }): Promise<{ classId: string }> {
@@ -144,7 +160,12 @@ afterAll(async () => {
 });
 
 describe('class_terminal_date_guard', () => {
-  it.each(['completed', 'cancelled'] as const)(
+  // Driven by `TERMINAL_CLASS_STATUSES`, not by a `['completed', 'cancelled']`
+  // literal. Widen the derived set and these rejection cases widen with it, so
+  // a status that the reaper starts treating as unwritable is proved
+  // unwritable HERE too, in the same edit. The literal could not: it would go
+  // on testing the old two while the reaper deleted rows on the new third.
+  it.each(TERMINAL_CLASS_STATUSES)(
     'refuses to move a %s class to a past date, from raw SQL',
     async (status) => {
       const { classId } = await makeClass({ status: 'open' });
@@ -209,10 +230,18 @@ describe('class_terminal_date_guard', () => {
     },
   );
 
-  it('allows a date change on a live class', async () => {
-    // The test that proves the trigger CAN pass. Without it, a WHEN clause
-    // mutated to fire unconditionally would still satisfy both cases above.
-    const { classId } = await makeClass({ status: 'open' });
+  // The cases that prove the trigger CAN pass. Without them, a WHEN clause
+  // mutated to fire unconditionally would still satisfy every case above.
+  //
+  // Every non-terminal status, not just `open`. `in_progress` is the one that
+  // earns the sweep: the teacher edit page redirects away from it, so it is
+  // easy to assume a freeze there is harmless — but the API allows that edit
+  // and should, and a guard widened from `IN ('completed','cancelled')` to
+  // "anything past draft" would pass a single-status `open` control while
+  // breaking a real write. `draft` covers the same mutation from the other
+  // end.
+  it.each(NON_TERMINAL_STATUSES)('allows a date change on a %s class', async (status) => {
+    const { classId } = await makeClass({ status });
 
     await prisma.$executeRaw`UPDATE "Class" SET date = '2099-07-01' WHERE id = ${classId}`;
 
@@ -233,12 +262,77 @@ describe('class_terminal_date_guard', () => {
       data: { status: 'completed' },
     });
 
+    // `${ORIGINAL_DATE}::date`, NOT `${new Date(ORIGINAL_DATE)}`. Binding a JS
+    // Date sends a timestamptz, which Postgres narrows to `date` using the
+    // SESSION time zone — so the "unchanged" date silently becomes the
+    // previous day under any westward session, the WHEN clause's
+    // `IS DISTINCT FROM` then holds, and this case fails claiming the trigger
+    // is wrong when only the clock was. It round-trips here because the
+    // session is UTC, which is exactly the kind of accident this repo has
+    // shipped before (see the warning comment in `prisma/seed.ts`). A plain
+    // date string has no zone to misread.
     await prisma.$executeRaw`
-      UPDATE "Class" SET date = ${new Date(ORIGINAL_DATE)}, description = 'Unchanged date'
+      UPDATE "Class" SET date = ${ORIGINAL_DATE}::date, description = 'Unchanged date'
       WHERE id = ${classId}`;
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
     expect(after.description).toBe('Unchanged date');
     expect(after.date.toISOString().slice(0, 10)).toBe(ORIGINAL_DATE);
+  });
+
+  /**
+   * The same drift pin `class-terminal-status.test.ts` ends with, applied to
+   * the other half of the same predicate — and it has to be a SECOND pin, not
+   * a reuse of that one, because the two triggers hard-code
+   * `('completed','cancelled')` in two different applied migrations that
+   * nothing forces to agree.
+   *
+   * `reapClosedWaitlistEntries` permanently deletes rows on a class that is
+   * terminal AND more than 365 days past its `date`. Its safety argument is
+   * "no writer can ever touch those rows again", and that argument now rests
+   * on two triggers: the sibling freezes `status`, this one freezes `date`.
+   * `TERMINAL_CLASS_STATUSES` is DERIVED from `VALID_TRANSITIONS`, while both
+   * triggers restate the set as frozen SQL. Widen the transition table and the
+   * constant widens silently, the reaper starts reaping a third status — and
+   * without this pin the DATE half would go unenforced for it with nothing
+   * red. The sibling's pin would still pass: it only reads its own migration.
+   *
+   * The `it.each` above catches the set GROWING (a new terminal status gets a
+   * rejection case that fails, because the SQL does not cover it). This
+   * catches the set SHRINKING, which nothing above can: give `cancelled` an
+   * outgoing transition and the set becomes `['completed']`, every generated
+   * case still passes because a case that is no longer generated cannot fail,
+   * and the reaper quietly stops reaping cancelled classes. The length
+   * assertions are the same hole at its limit — an empty set.
+   *
+   * Read out of the migration's own SQL rather than restated here, so the
+   * enforced set is written down in exactly one place. Regex over SQL is
+   * normally fragile; here it inverts, because the file is an APPLIED
+   * migration that `CLAUDE.md` forbids editing, so the text is frozen by
+   * policy — and the `if (!inList)` guard turns a shape change into a named
+   * failure rather than a silent pass. Reads a file; touches no database.
+   */
+  it('matches the exact status set the trigger SQL enforces', () => {
+    const sql = readFileSync(
+      new URL(
+        '../../prisma/migrations/20260817120000_class_terminal_date_trigger/migration.sql',
+        import.meta.url,
+      ),
+      'utf8',
+    );
+    // `noUncheckedIndexedAccess` makes the capture groups possibly-undefined,
+    // and the narrowing is kept rather than cast away: a `!` here would turn a
+    // shape change into a runtime `undefined` inside the comparison, which is
+    // the failure mode this pin exists to make loud.
+    const inList = sql.match(/OLD\.status IN \(([^)]+)\)/)?.[1];
+    if (!inList) throw new Error('trigger SQL no longer has the shape this pin reads');
+    const enforced = [...inList.matchAll(/'([a-z_]+)'/g)]
+      .map((x) => x[1])
+      .filter((s): s is string => s !== undefined)
+      .sort();
+
+    expect(enforced.length).toBeGreaterThan(0);
+    expect(TERMINAL_CLASS_STATUSES.length).toBeGreaterThan(0);
+    expect([...TERMINAL_CLASS_STATUSES].sort()).toEqual(enforced);
   });
 });

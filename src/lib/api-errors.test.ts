@@ -28,6 +28,25 @@ const terminalStatusErrorFixture = new Prisma.PrismaClientUnknownRequestError(
   { clientVersion: 'test' },
 );
 
+/**
+ * The SECOND trigger to reach the same branch (#247,
+ * `20260817120000_class_terminal_date_trigger`). Transcribed from a real fire
+ * observed through `db.class.updateMany` in `src/services/class-lifecycle.ts`,
+ * not hand-written: same SQLSTATE, same `which is terminal` clause, different
+ * tail.
+ *
+ * It exists because the 409 mapping is now SHARED, and a shared mapping pinned
+ * by only the fixture that happened to come first is pinned for one caller and
+ * assumed for the other. Anyone narrowing the matcher back to status-only
+ * wording — the obvious "fix" once `which is terminal` stops being unique to
+ * one migration — turns date violations into 500s, and this is the test that
+ * refuses to let that happen quietly.
+ */
+const terminalDateErrorFixture = new Prisma.PrismaClientUnknownRequestError(
+  `Invalid \`prisma.class.updateMany()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "Class 30cb2d25-dd22-4bd3-8baf-e99f4f9c8219 is completed, which is terminal; cannot change its date from 2026-06-01 to 2020-01-01", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
+  { clientVersion: 'test' },
+);
+
 describe('classifyApiError', () => {
   it('maps P2002 to a 409 logged at warn, naming the constraint that fired', () => {
     const failure = classifyApiError(prismaError('P2002', { target: ['teacherId', 'roomId'] }));
@@ -50,25 +69,48 @@ describe('classifyApiError', () => {
     expect(failure.logMessage.length).toBeGreaterThan(0);
   });
 
-  it('maps the terminal-status trigger to a 409, not a 500', () => {
-    const failure = classifyApiError(terminalStatusErrorFixture);
+  it.each([
+    ['status', terminalStatusErrorFixture],
+    ['date', terminalDateErrorFixture],
+  ] as const)('maps the terminal-%s trigger to a 409, not a 500', (_column, fixture) => {
+    const failure = classifyApiError(fixture);
 
     expect(failure.status).toBe(409);
     expect(failure.level).toBe('warn');
-    expect(failure.message).toBe('That class can no longer change status');
+    expect(failure.message).toBe('That class can no longer be changed');
   });
 
   /**
-   * `23514` (check_violation) is not unique to the trigger — every plain
-   * `CHECK` constraint in this schema defaults to the same SQLSTATE with no
-   * `USING ERRCODE` override (`Student_income_tier_check`, for one). A
-   * classifier that matched on the code alone would relabel any of those as
-   * "that class can no longer change status." This fixture has the same
-   * code and the same error class, and deliberately not the trigger's own
-   * wording, so it pins that the message text — not just the SQLSTATE — is
-   * what discriminates.
+   * The message must stay true for BOTH triggers, which means naming neither
+   * column. An assertion on the exact string above would pass just as happily
+   * if someone reverted it to "can no longer change status" — correct for one
+   * fixture, a lie to the caller for the other — so this pins the property
+   * rather than the wording, and leaves the wording free to be reworded.
    */
-  it('does not classify an unrelated check_violation as the terminal-status trigger', () => {
+  it('does not name a single column in the message shared by both terminality triggers', () => {
+    const message = classifyApiError(terminalDateErrorFixture).message;
+
+    expect(message).not.toMatch(/status/i);
+    expect(message).not.toMatch(/date/i);
+    expect(classifyApiError(terminalStatusErrorFixture).message).toBe(message);
+  });
+
+  /**
+   * `23514` (check_violation) is not unique to the terminality triggers —
+   * every plain `CHECK` constraint in this schema defaults to the same
+   * SQLSTATE with no `USING ERRCODE` override (`Student_income_tier_check`,
+   * for one). A classifier that matched on the code alone would relabel any of
+   * those as "that class can no longer be changed." This fixture has the same
+   * code and the same error class, and deliberately not the `which is
+   * terminal` wording, so it pins that the message text — not just the
+   * SQLSTATE — is what discriminates.
+   *
+   * Note what this does NOT say: that the wording belongs to one trigger. Two
+   * migrations emit it since #247 and both are meant to land on the 409. The
+   * boundary being drawn here is terminality-vs-everything-else, not one
+   * trigger vs another.
+   */
+  it('does not classify an unrelated check_violation as a terminality trigger', () => {
     const otherCheckViolation = new Prisma.PrismaClientUnknownRequestError(
       `Invalid \`prisma.student.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "new row for relation \\"Student\\" violates check constraint \\"Student_income_tier_check\\"", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
       { clientVersion: 'test' },

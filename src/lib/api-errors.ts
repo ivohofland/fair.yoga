@@ -54,9 +54,25 @@ export type ApiFailure = {
 };
 
 /**
- * Matches the terminality trigger from migration
- * `20260805120000_class_terminal_status_trigger` (`class_terminal_status_
- * guard`, `RAISE EXCEPTION ... USING ERRCODE = '23514'`).
+ * Matches the terminality triggers — plural since #247. Both raise
+ * `RAISE EXCEPTION ... USING ERRCODE = '23514'` with the same
+ * `which is terminal` wording, and both mean the same thing to a caller
+ * ("that class is frozen"), so both route through this one branch:
+ *
+ * - `20260805120000_class_terminal_status_trigger` — `class_terminal_status_
+ *   guard`, BEFORE UPDATE OF status, refuses to change a terminal class's
+ *   status.
+ * - `20260817120000_class_terminal_date_trigger` — `class_terminal_date_
+ *   guard`, BEFORE UPDATE OF date, refuses to move a terminal class's date.
+ *   Added because `reapClosedWaitlistEntries` DELETES on a predicate of
+ *   terminal AND `date` more than 365 days past, and only the first half was
+ *   enforced.
+ *
+ * THE NAME OF THIS FUNCTION PREDATES THE SECOND TRIGGER and is now narrower
+ * than what it matches: a date violation is classified here too. Left as-is
+ * deliberately — renaming touches five call sites for no behavioural gain —
+ * but said out loud because a future reader greps `isTerminalStatusViolation`
+ * and must not conclude that date violations go unhandled and fall to a 500.
  *
  * Measured directly rather than assumed (`src/services/class-terminal-
  * status.test.ts`, which also pins `classifyApiError(caught).status === 409`
@@ -71,6 +87,12 @@ export type ApiFailure = {
  *     is terminal; cannot change status to <status>", severity: "ERROR",
  *     detail: None, column: None, hint: None }), transient: false })
  *
+ * The date trigger's message differs only after the shared clause, so the
+ * same match covers it (observed via `db.class.updateMany`, #247):
+ *
+ *     PostgresError { code: "23514", message: "Class <id> is completed, which
+ *     is terminal; cannot change its date from <old> to <new>", ... }
+ *
  * Not `PrismaClientKnownRequestError` — there is no P-code for "a trigger
  * fired", so the engine falls back to Unknown, and Unknown carries no
  * `.code`/`.meta` the way P2002 does below; the SQLSTATE only exists inside
@@ -82,8 +104,18 @@ export type ApiFailure = {
  * `Student_claim_link_check`, the `Invitation` checks in
  * `20260805074500_invitation_check_constraints`) that raise it with no
  * `USING ERRCODE` override. Matching on the code by itself would relabel any
- * of those as "that class can no longer change status." The trigger's own
- * message text — unique to it — is what actually discriminates.
+ * of those as "that class can no longer be changed." The `which is terminal`
+ * wording is what actually discriminates.
+ *
+ * That wording is no longer unique to ONE trigger — since #247 two migrations
+ * emit it — but it does not need to be, and the matcher must not be narrowed
+ * to restore uniqueness. What it needs is to be unique to *this class of
+ * failure*, and it is: no other `23514` in this schema uses the phrase, and
+ * every writer that does means the identical thing to a caller. Matching a set
+ * of triggers deliberately is the design; the two are kept in step by
+ * `class-terminal-status.test.ts` and `class-terminal-date.test.ts`, each of
+ * which pins `classifyApiError(...).status === 409` against its own real
+ * thrown error.
  */
 function isTerminalStatusViolation(error: unknown): boolean {
   return (
@@ -208,20 +240,29 @@ export function isRecordNotFound(error: unknown): boolean {
  * since it can say something more specific than this can.
  */
 export function classifyApiError(error: unknown): ApiFailure {
-  // The terminality trigger (migration 20260805120000) raises with SQLSTATE
-  // 23514. Reaching here means a status write lost a race that its own CAS or
-  // row lock should have caught — every writer has one since #174 — so this
-  // is a 409 and a `warn`, the same reading as the P2002 branch below: not an
-  // outage, but worth knowing a guard was bypassed.
+  // The terminality triggers (migrations 20260805120000 and 20260817120000)
+  // raise with SQLSTATE 23514. Reaching here means a write to a frozen class
+  // — its status, or since #247 its date — got past the guard that should
+  // have refused it first: a CAS or row lock for the status trigger, every
+  // writer has had one since #174, and `updateClass`'s terminal check for the
+  // date trigger. Either way this is a 409 and a `warn`, the same reading as
+  // the P2002 branch below: not an outage, but worth knowing a guard was
+  // bypassed.
   if (isTerminalStatusViolation(error)) {
+    // Deliberately says neither "status" nor "date". Two triggers reach this
+    // branch and the shared matcher cannot tell them apart — the discriminator
+    // is the `which is terminal` clause they have in common, not the tail that
+    // differs — so any wording that names one column is simply wrong half the
+    // time. The one thing true of both is that the class is frozen.
+    //
     // No `detail`: `withErrorHandler` always logs `err: error`, and the
-    // trigger's own message already names the class id and both statuses —
-    // there is nothing this branch could add that isn't in one of those two
-    // places already.
+    // trigger's own message already names the class id, the terminal status
+    // and the attempted change — there is nothing this branch could add that
+    // isn't in one of those two places already.
     return {
       status: 409,
-      message: 'That class can no longer change status',
-      logMessage: 'terminal class status change reached the DB trigger',
+      message: 'That class can no longer be changed',
+      logMessage: 'terminal class write reached a DB trigger',
       level: 'warn',
     };
   }
