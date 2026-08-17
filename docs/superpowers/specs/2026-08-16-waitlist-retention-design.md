@@ -346,6 +346,32 @@ this feature a wrong date on a finished class was inert; it is not any more.
 freeze at which lifecycle stage is a product call this spec does not make — and
 it is the one way a row this sweep should keep can be made to look reapable.
 
+> **Amendment, 2026-08-17 — #247 is closed; the four bullets above are history,
+> not the current tree.** Each was true of the tree this spec described, so they
+> stand as that record rather than being rewritten. What replaced them:
+>
+> - **Bullet 2** — `updateClass` (`class-lifecycle.ts`) now refuses **every**
+>   edit to a class in `TERMINAL_CLASS_STATUSES`: the whole class, not a field
+>   list, and it never lifts. The refusal that survives a completion landing
+>   mid-request is the compare-and-swap — `status: { notIn: [...] }` in the
+>   `updateMany` filter, since this function takes no lock.
+> - **Bullet 3** — `PUT /api/classes/[id]` maps that refusal
+>   (`reason: 'terminal'`) to **409**.
+> - **Bullet 1** — `class_terminal_date_guard`
+>   (`prisma/migrations/20260817120000_class_terminal_date_trigger/`), a
+>   `BEFORE UPDATE OF date` raising `23514`, is the equivalent the status
+>   trigger's `OF status` scope left missing.
+> - **Bullet 4** — the page-level redirect is no longer the only thing stopping
+>   the edit; it is now the cosmetic layer over two that refuse.
+>
+> The two layers are deliberately different widths — the service freezes the
+> class, the trigger freezes the one column this sweep reads before it deletes —
+> so the database still permits, say, a `description` write on a completed
+> class. The product call this section declined to make was made in
+> `docs/superpowers/specs/2026-08-17-terminal-class-freeze-design.md`, which
+> also records what stayed out of scope (moving a *live* class into the past is
+> filed, not fixed).
+
 It is conservative in the safe direction: a class **cancelled** well before its
 scheduled date retains its entries until that *scheduled* date plus the window,
 so the clock over-retains rather than under-retains. Accepted, and recorded as a

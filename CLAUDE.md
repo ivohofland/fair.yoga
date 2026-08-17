@@ -46,6 +46,7 @@ The heart of the app. Income-based pricing with compressed tier spread and scali
 Classes move through states: `draft → open → full → in_progress → completed → cancelled`
 
 - `settings_locked` flips true on first registration — economic fields become immutable
+- Terminal status (`completed`/`cancelled`) freezes the whole class — `updateClass` refuses every field, 409; `date` alone is additionally frozen by a DB trigger the retention sweep depends on
 - Recurring classes: template generates instances on rolling 4-week basis, runs indefinitely
 - Auto-cancel: system checks at configured time, cancels if below min_students
 - Walk-ins can exceed max_students — teacher rate stays capped at target, extra students lower everyone's price

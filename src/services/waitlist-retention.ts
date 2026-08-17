@@ -22,9 +22,9 @@
  * became a booking, has no remaining purpose, and the Article 15 export
  * publishes every one of them verbatim.
  *
- * WHY IT IS SAFE. Two arguments — and read the SECOND HALF OF THE PREDICATE
- * below before treating either as fully DB-enforced, because only one of the
- * two columns this sweep filters on is:
+ * WHY IT IS SAFE. Two arguments — neither of which covers `date`, the sweep's
+ * other filter column. That half has its own section, BOTH HALVES OF THE
+ * PREDICATE ARE ENFORCED, below; it was the open residual until #247:
  *
  *  - `TERMINAL_CLASS_STATUSES` is derived from `VALID_TRANSITIONS`, and the DB
  *    trigger `class_terminal_status_guard` makes a terminal class's status
@@ -53,21 +53,37 @@
  *    very commit that added this sweep — the grep is self-updating, the
  *    arithmetic was not.
  *
- * THE SECOND HALF OF THE PREDICATE IS NOT ENFORCED. This sweep filters on
- * `class.status` AND `class.date`, and the paragraph above argues only the
- * first. `class_terminal_status_guard` is a `BEFORE UPDATE OF status` trigger —
- * its own SQL says updates to other columns of a completed class are
- * unaffected — and `date` has no equivalent: `updateClass`
- * (`class-lifecycle.ts`) carries no class-status guard, only the
- * `settingsLocked` check over the ECONOMIC fields, and `date` is not one of
- * them; `PUT /api/classes/[id]` checks no status either. The only thing
- * stopping the edit is a page-level redirect in the teacher edit page, which is
- * UI. So a teacher can set any date on their own `completed` class and the next
- * run of this sweep will permanently delete that class's queue. Known residual,
- * tracked as #247 (which fields freeze at which lifecycle stage is a product
- * decision, not this module's); recorded here so nobody reads the safety
- * argument as stronger than it is. It is the one way a row this sweep should
- * keep can be made to look reapable.
+ * BOTH HALVES OF THE PREDICATE ARE ENFORCED. This sweep filters on
+ * `class.status` AND `class.date`. The status half is the trigger named above,
+ * `class_terminal_status_guard` — a `BEFORE UPDATE OF status`, whose own SQL
+ * says updates to other columns of a completed class are unaffected, so `date`
+ * needed enforcement of its own. #247 gave it two layers, deliberately
+ * different in width:
+ *
+ *  - `updateClass` (`class-lifecycle.ts`) refuses EVERY edit to a class in
+ *    `TERMINAL_CLASS_STATUSES` — the class is frozen, not a list of columns —
+ *    and returns `{ ok: false, reason: 'terminal' }`, which
+ *    `PUT /api/classes/[id]` answers as 409. The layer that holds against a
+ *    race is the compare-and-swap: `status: { notIn: [...] }` sits in the
+ *    `updateMany` filter, so a completion committing between that function's
+ *    opening read and its write is still refused.
+ *  - `class_terminal_date_guard` (#247,
+ *    `prisma/migrations/20260817120000_class_terminal_date_trigger/`) is a
+ *    `BEFORE UPDATE OF date` raising `23514` when a terminal class's `date`
+ *    would move — from any client, raw SQL included, the same reach the status
+ *    trigger has. `class-terminal-date.test.ts` pins it, and pins
+ *    `TERMINAL_CLASS_STATUSES` against the statuses its SQL hard-codes.
+ *
+ * The asymmetry is the design, not an oversight, and it is worth keeping
+ * straight: the SERVICE holds the POLICY (which fields a teacher may edit at
+ * which lifecycle stage — a product question, and its answer here is "none"),
+ * the DATABASE holds the one INVARIANT this deleting sweep depends on. So the
+ * trigger covers `date` and nothing else: the database still permits other
+ * column writes on a terminal class, which `class-terminal-status.test.ts`
+ * asserts on purpose. Do not read the two as the same rule stated twice.
+ *
+ * What this buys the sweep is that "more than 365 days past" is a property of
+ * the row rather than a snapshot a client can move underneath it.
  *
  * WHY IT CANNOT DEADLOCK AGAINST THE ERASURE. `deleteStudentAccount` deletes
  * waitlist entries with an UNSCOPED `deleteMany({ where: { studentId } })` —
