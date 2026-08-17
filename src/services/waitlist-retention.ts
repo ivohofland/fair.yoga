@@ -78,12 +78,30 @@
  * straight: the SERVICE holds the POLICY (which fields a teacher may edit at
  * which lifecycle stage — a product question, and its answer here is "none"),
  * the DATABASE holds the one INVARIANT this deleting sweep depends on. So the
- * trigger covers `date` and nothing else: the database still permits other
- * column writes on a terminal class, which `class-terminal-status.test.ts`
- * asserts on purpose. Do not read the two as the same rule stated twice.
+ * trigger covers `date` and nothing else: the database still permits column
+ * writes other than `status` and `date` on a terminal class — those two have
+ * a trigger each — which `class-terminal-status.test.ts` asserts on purpose,
+ * in a case whose name carries the exclusion ('leaves a non-status, non-date
+ * update to a completed class alone'). Do not read the two guards as the same
+ * rule stated twice.
  *
  * What this buys the sweep is that "more than 365 days past" is a property of
- * the row rather than a snapshot a client can move underneath it.
+ * the row rather than a snapshot a client can move underneath it — ONCE THE
+ * CLASS IS TERMINAL, and only then.
+ *
+ * WHAT IT DOES NOT BUY, said plainly because this docblock is the only place
+ * the delete-safety argument lives: the PRE-terminal path is still open, and
+ * deliberately so. A teacher edits a still-live class's `date` into the past
+ * — nothing bounds that input, the edit form's date field carries no `min` —
+ * and `autoTransitionToInProgress` then `autoCompleteClasses`
+ * (`class-transitions.ts`) walk it to `completed` legitimately, on a date
+ * older than the window. This sweep then reaps a queue nobody meant to lose.
+ * Both guards above are innocent: the class was not terminal when the date
+ * moved. That is the one remaining way a row this sweep should keep can be
+ * made to look reapable. It is filed rather than fixed — bounding the date
+ * needs a product call about whether backfilling a past class is ever legal —
+ * and the reasoning is in
+ * `docs/superpowers/specs/2026-08-17-terminal-class-freeze-design.md` §7.
  *
  * WHY IT CANNOT DEADLOCK AGAINST THE ERASURE. `deleteStudentAccount` deletes
  * waitlist entries with an UNSCOPED `deleteMany({ where: { studentId } })` —

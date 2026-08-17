@@ -124,9 +124,14 @@ if (TERMINAL_CLASS_STATUSES.includes(cls.status)) {
 }
 ```
 
-Ordering is deliberate. A class can be both terminal and locked; `terminal` is
-the truer answer, because `locked` reads as a state the teacher could undo by
-removing a registration, and this freeze is permanent.
+Ordering is deliberate. A class can be both terminal and locked, and `terminal`
+is the truer answer — but **not** because the other freeze lifts. It does not:
+`settingsLocked` is only ever written `true`, from `POST /api/registrations`,
+and nothing writes it back. Both are permanent, so permanence cannot be the
+tiebreak. SCOPE is. `locked` names the narrower policy and misleads, reporting
+the refusal as being about economic fields when in fact every field is refused,
+which invites a retry — a `description` edit — that will also fail. `terminal`
+does not.
 
 `TERMINAL_CLASS_STATUSES` already exists and is already exported from this
 module (`class-lifecycle.ts:78`, derived from `VALID_TRANSITIONS`, frozen at
@@ -365,26 +370,42 @@ is additive; no existing assertion moves.
 
 ## 6. Artifacts to correct
 
-`grep -rn "247" docs/ src/ prisma/ .github/`, discounting the roadmap and
-coincidental digit matches, returns **two live pointers**. Both currently
-describe this as an open residual and both must flip to describing it as closed,
-naming which layer closes which half:
+**Three locations assert the residual. Two of them cite the issue number and one
+does not** — so `grep -rn "247"` finds only two, and an earlier draft of this
+section reported that grep's answer as the count. Searching for the issue
+reference finds the artifacts that *link to* the issue; it cannot find the
+artifacts that *assert the falsehood*. Those are different sets, and the second
+is the one that matters here. Sweep for restatements of the claim, in several
+phrasings, and sweep prose and fenced blocks separately.
 
-1. `src/services/waitlist-retention.ts:57-70` — the "THE SECOND HALF OF THE
-   PREDICATE IS NOT ENFORCED" section. Its heading becomes false on this branch.
+All three describe this as an open residual and all three must flip to
+describing it as closed, naming which layer closes which half:
+
+1. `src/services/waitlist-retention.ts` — the section headed "THE SECOND HALF OF
+   THE PREDICATE IS NOT ENFORCED". Its heading becomes false on this branch.
    The rewrite says both halves are now enforced, and by what: `status` by
    `class_terminal_status_guard`, `date` by `class_terminal_date_guard` plus the
-   `updateClass` CAS.
-2. `docs/superpowers/specs/2026-08-16-waitlist-retention-design.md:328-345` —
-   §2.4, whose four bullets are each individually still true about the *old*
-   tree and collectively wrong about the new one. Amended in place with a dated
-   note rather than rewritten, since it is a historical design record.
+   `updateClass` CAS. Keep the heading's shape and invert its claim, so a reader
+   grepping the old wording still lands on it.
+2. The same file's `WHY IT IS SAFE` lead-in, which says "only one of the two
+   columns this sweep filters on is" DB-enforced. **This is the one with no
+   `247` in it.** It restates (1)'s claim in different words about thirty lines
+   above it, which is why a keyword sweep for the heading misses it.
+3. `docs/superpowers/specs/2026-08-16-waitlist-retention-design.md` — §2.4,
+   whose four bullets are each individually still true about the *old* tree and
+   collectively wrong about the new one. Amended in place with a dated note
+   rather than rewritten, since it is a historical design record.
+
+Cited by section and file rather than by line number, deliberately: an earlier
+draft cited `waitlist-retention.ts:57-70` and the spec's `:328-345`, and the
+commit that corrected them moved both. That would have been this project's fifth
+broken line-number citation. Name the heading, not its address.
 
 Plus, on this branch: `updateClass`'s summary docblock and `UpdateClassResult`'s
 (§3.5), the PR body, issue #247 itself, and `docs/backlog-roadmap.md` in its own
 final commit.
 
-**Each of those six locations gets its own verdict at re-review**, not one
+**Every location listed above gets its own verdict at re-review**, not one
 verdict for "the docs finding" — the #41 failure mode was a three-location
 finding verdicted ADDRESSED on the strength of the two locations the reviewer
 happened to open.

@@ -1479,9 +1479,14 @@ describe('updateClass (DB)', () => {
   });
 
   it('reports terminal, not locked, when the class is both', async () => {
-    // Pins the ORDER of the two early checks. `locked` reads as a state the
-    // teacher could undo by removing a registration; the terminal freeze never
-    // lifts, so it is the truer answer when both apply.
+    // Pins the ORDER of the two early checks. Both freezes are permanent —
+    // `settingsLocked` is only ever written `true` — so "which one lifts"
+    // cannot be the tiebreak, and an earlier version of this comment claimed
+    // it was. SCOPE is the tiebreak: `locked` names the narrower policy and
+    // misleads, reporting the refusal as being about economic fields when
+    // every field is refused. A teacher told "locked: roomCost" would
+    // reasonably retry with a `description` edit, which also fails.
+    // `terminal` is the answer that does not invite a wrong retry.
     const cls = await makeClass(true, 'completed');
 
     const result = await updateClass(prisma, cls.id, { roomCost: 999 });

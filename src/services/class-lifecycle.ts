@@ -688,10 +688,17 @@ export type UpdateClassResult =
  *
  * They gate on different events and cover different things. The ECONOMIC
  * freeze (`settingsLocked`) starts at the first registration and covers
- * `ECONOMIC_FIELDS`; a teacher could in principle undo it by removing the
- * registration. The TERMINAL freeze (#247) starts when the class reaches
+ * `ECONOMIC_FIELDS`. The TERMINAL freeze (#247) starts when the class reaches
  * `completed` or `cancelled` and covers EVERY field — it is the class that is
- * frozen, not a list of columns — and it never lifts.
+ * frozen, not a list of columns.
+ *
+ * NEITHER LIFTS. They differ in SCOPE, not in permanence. An earlier revision
+ * of this docblock said a teacher could undo the economic freeze by removing
+ * the registration; that was never true. `settingsLocked` is only ever written
+ * `true`, from one site (`POST /api/registrations`), and nothing anywhere
+ * writes it back to `false` — `template-sync.ts` leans on exactly that,
+ * calling it a one-way latch. A terminal status, in turn, has no outgoing
+ * transition.
  *
  * Both are checked twice, for the same reason. The first check, against the
  * row we just read, is an optimisation: it answers the common case in one
@@ -702,8 +709,10 @@ export type UpdateClassResult =
  * round trips, not correctness, for exactly that reason. Deleting the TERMINAL
  * check is not as free: for a class that is BOTH terminal and settings-locked
  * with an economic field sent, control then reaches the `settingsLocked` check
- * next and answers `locked` — the wrong one of the two true refusals — before
- * the CAS ever runs. Everywhere else it too costs only round trips.
+ * next and answers `locked` — the narrower and the misleading one of the two
+ * true refusals, since it reports the refusal as being about economic fields
+ * when in fact every field is refused — before the CAS ever runs. Everywhere
+ * else it too costs only round trips.
  *
  * The terminal freeze additionally has a database backstop for `date` alone
  * (`class_terminal_date_guard`), because that is the column
