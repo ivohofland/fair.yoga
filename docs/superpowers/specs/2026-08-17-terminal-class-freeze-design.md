@@ -49,7 +49,7 @@ and the `requireEndedBy` comparison at `:349-360`, both in the same file as
 option in, at `:535`) — so it can commit between `updateClass`'s read and its
 write. The existing
 `settingsLocked` handling already solves the identical race the identical way,
-and says so at `class-lifecycle.ts:672`: *"The compare-and-swap inside the
+and says so in `updateClass`'s own docblock: *"The compare-and-swap inside the
 write is the one that matters."* The terminal guard gets the same construction
 for the same reason.
 
@@ -202,8 +202,10 @@ one. **There is no predicted-survivor mutation for this early return.**
 Deleting it reddens T5 today, on the DB-backed suite alone, and will
 additionally redden T9 once Task 2 lands.
 
-Everywhere else — any class that is terminal but not locked, or locked but not
-terminal — deleting the early return costs round trips only: the CAS
+Everywhere else — any class that is terminal but not locked, locked but not
+terminal, or terminal AND locked with no economic field sent (`sentEconomic`
+is null there, so the `settingsLocked` check cannot fire regardless of this
+early return) — deleting the early return costs round trips only: the CAS
 re-derives `terminal` (or `locked`) identically, via §3.2 and §3.3, and the
 existing suite already covers those paths (T1–T4).
 

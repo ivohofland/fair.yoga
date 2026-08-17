@@ -688,10 +688,13 @@ Leave `updateMany` and `findUniqueOrThrow` untouched.
     expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
 
     // The point of this case, and the mirror of its `locked` sibling above:
-    // the pre-check answered it. Deleting that check leaves the result
-    // identical (the compare-and-swap re-derives it), so only the absence of a
-    // write attempt distinguishes the two. This is the ONLY test in the branch
-    // that can see the early return at all.
+    // the pre-check answered it WITHOUT attempting a write. That is the
+    // query-count half of the evidence, and this test owns it. It is not the
+    // only test that can see the early return, and deleting it does not leave
+    // the result identical: Task 1's `'reports terminal, not locked, when the
+    // class is both'` (T5) owns the correctness half — a class that is both
+    // terminal and settings-locked with an economic field sent falls through
+    // to `locked` once this check is gone, before the CAS ever runs.
     expect(updateManyCalls).toHaveLength(0);
   });
 ```
