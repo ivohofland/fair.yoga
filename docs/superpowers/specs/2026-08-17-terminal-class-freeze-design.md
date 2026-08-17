@@ -287,29 +287,50 @@ also be caught by a different guard proves nothing about the one it targets.
 
 | # | Test | Home | Mutation |
 |---|---|---|---|
-| T1 | `updateClass` on a `completed` class returns `{reason:'terminal', status:'completed'}` | `class-lifecycle.test.ts`, `updateClass (DB)` | Remove **both** the early return and the CAS conjunct → the DB trigger throws, so the typed refusal is gone and the test reddens on a raw throw |
-| T2 | The same for `cancelled` | same | as T1 |
-| T3 | A `description` edit on a `completed` class is refused | same | Narrow the guard to `date` only |
-| T4 | `draft`, `open` **and `in_progress`** classes still update normally | same | Add the status under test to the guard's frozen set. This is the test that proves the guard *can* pass, and the only one that pins the boundary — a mutation freezing `in_progress` would otherwise pass every other test in this table |
-| T5 | Stub `db`: count 0 + terminal on the re-read → `terminal`, not a throw | `class-lifecycle.test.ts` stub block | Delete §3.3's branch → `UpdateClassInvariantError` |
-| T6 | Stub `db`: both `where` shapes carry the `notIn` conjunct, asserted on `updateManyCalls[0].where` | same | Drop the conjunct from either shape |
-| T7 | The early return answers without attempting a write (`updateManyCalls).toHaveLength(0)`) | same | Delete the early return — the **only** test that distinguishes it, per §3.4 |
-| T8 | Raw SQL `UPDATE "Class" SET date = …` on a completed class is rejected with `23514` | **new** `src/services/class-terminal-date.test.ts` | `DROP TRIGGER class_terminal_date_guard` against `DATABASE_URL_TEST` |
-| T9 | `PUT /api/classes/[id]` on a completed class answers **409**, not 500 | `tests/integration/classes-api.test.ts` | Change the mapped status code |
+| T1 | `updateClass` on a `completed` class refuses a `date` edit, and the row is unchanged | `class-lifecycle.test.ts`, `updateClass (DB)` | Remove **both** the early return and the CAS conjunct. Before the trigger lands the edit simply succeeds; after it lands the same mutation reddens on a raw throw instead. Both runs are recorded — that the outcome differs is what shows the two layers are independent |
+| T2 | The same on a `cancelled` class | same | as T1 |
+| T3 | A `description` edit is refused — the freeze is whole-class, not a field list | same | Narrow the guard to `date` only |
+| T4 | An economic edit is refused on a completed class nobody booked, where `settingsLocked` is still `false` | same | Narrow the guard to `date` only. This is the §1.1(c) hole, and the only test that covers it |
+| T5 | A class that is **both** terminal and locked reports `terminal`, not `locked` | same | Swap the two early checks → reports `locked`, per §3.2's ordering decision |
+| T6 | `draft`, `open` **and `in_progress`** classes still update normally | same | Add the status under test to the guard's frozen set. This is the test that proves the guard *can* pass, and the only one that pins the boundary — a mutation freezing `in_progress` would otherwise pass every other test in this table |
+| T7 | Stub `db`: count 0 + terminal on the re-read → `terminal`, not a throw | `class-lifecycle.test.ts` stub block | Delete §3.3's branch → `UpdateClassInvariantError` |
+| T8 | Stub `db`: both `where` shapes carry the `notIn` conjunct, asserted on `updateManyCalls[0].where` | same | Drop the conjunct from either shape |
+| T9 | The early return answers without attempting a write (`updateManyCalls).toHaveLength(0)`) | same | Delete the early return — the **only** test that distinguishes it, per §3.4 |
+| T10 | `PUT /api/classes/[id]` on a completed class answers **409**, not 500, and the stored date is unchanged | `tests/integration/classes-api.test.ts` | Change the mapped status code |
+| T11 | Raw SQL `UPDATE "Class" SET date = …` on a completed class is rejected with `23514` | **new** `src/services/class-terminal-date.test.ts` | `DROP TRIGGER class_terminal_date_guard` against `DATABASE_URL_TEST` |
 
-**T8 goes in the `unit` project, beside `class-terminal-status.test.ts`, not in
+**T11 gets its own file rather than joining `class-terminal-status.test.ts`,**
+even though that file already has the fixtures. The two triggers must be
+droppable independently: a `DROP TRIGGER class_terminal_date_guard` run that
+reddens tests about the *status* trigger tells you less than one that reddens
+only its own file, and that independence is the whole point of having two
+layers. The duplicated fixture is the price.
+
+**It goes in the `unit` project, beside `class-terminal-status.test.ts`, not in
 `tests/integration/`.** That file's docblock records why, and the reason is a
 foot-gun rather than a preference: the integration project runs against the
 **dev** database (`docs/test-database.md` §3.4), so proving a trigger by
 dropping it there needs a manual `DATABASE_URL` override, and getting the
 override wrong drops the trigger on dev. `vitest.config.ts` resolves the unit
-project's `DATABASE_URL` to `DATABASE_URL_TEST` with no shell override. T8 also
+project's `DATABASE_URL` to `DATABASE_URL_TEST` with no shell override. T11 also
 carries the manual mutation recipe in its docblock, in the same shape as its
 sibling.
 
 Every mutation is run, its exact error text recorded, then restored and
 re-verified. §3.4's predicted survivor is the one exception, and it is covered
-by T7 instead.
+by T9 instead.
+
+### 5.2 One existing test's title stops being true
+
+`class-terminal-status.test.ts:370`, `'leaves non-status updates to a completed
+class alone'`, writes `description` and asserts it lands. The test stays green —
+the new trigger is `BEFORE UPDATE OF date` and that write does not name `date` —
+but its title will over-claim, because after this branch some non-status updates
+to a completed class are precisely *not* left alone. Narrowed to name the column
+it actually exercises, with a pointer to the sibling trigger. Its two
+neighbours were checked as well: `'allows a completeClass-shaped write…'` writes
+status plus three totals and `'allows a no-op status write on a cancelled
+class'` writes status alone, so neither names `date` and neither is affected.
 
 ### 5.1 Existing tests are unaffected
 
@@ -375,8 +396,9 @@ belongs to that decision, not to this one.
 - The refusal survives the read-to-write race, because the CAS re-derives it.
 - `class_terminal_date_guard` rejects a raw-SQL `date` change on a terminal
   class with `23514`.
-- Nine tests, nine mutations, each recorded with its exact error text; the one
-  predicted survivor (§3.4) is named in advance and covered by T7.
-- Both artifacts in §6 state that the residual is closed.
+- Eleven tests, eleven mutations, each recorded with its exact error text; the
+  one predicted survivor (§3.4) is named in advance and covered by T9.
+- Both artifacts in §6 state that the residual is closed, and §5.2's test title
+  no longer over-claims.
 - `npm run verify` green — all three vitest projects, with the arithmetic in the
   PR body.

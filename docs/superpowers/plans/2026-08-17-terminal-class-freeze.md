@@ -1,0 +1,1338 @@
+# Terminal Class Freeze (#247) Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Make `updateClass` refuse every edit to a `completed` or `cancelled`
+class with a typed reason the route answers 409, and back the one column a
+deleting sweep reads with a database trigger.
+
+**Architecture:** Two layers of different widths, deliberately. The service
+holds the *policy* — the whole class freezes, checked three times (early
+return, compare-and-swap in the write, disambiguation of a zero count). The
+database holds the *invariant* the retention sweep depends on — `date` alone,
+via a `BEFORE UPDATE OF date` trigger following the existing
+`class_terminal_status_guard`.
+
+**Tech Stack:** TypeScript strict, Next.js App Router, Prisma + PostgreSQL,
+Vitest (three projects: `unit`, `components`, `integration`), hand-authored SQL
+migration.
+
+**Spec:** `docs/superpowers/specs/2026-08-17-terminal-class-freeze-design.md`
+
+---
+
+## Global Constraints
+
+- **TypeScript `strict: true`, no `any`, no implicit types.** The compiler is
+  the first gate.
+- **`noUncheckedIndexedAccess` is on.** `arr[i]` is `T | undefined`. Iterate
+  rather than index where possible.
+- **Never edit an applied migration.** Task 4 creates a new one.
+- **Never start or restart the dev server on `:3000`.** The user runs it, and
+  the `integration` project talks to it over HTTP.
+- **Stage exact paths.** Never `git add -A` or `git add .`.
+- **One commit per task** — the PR is rebase-merged, so the per-task history is
+  the record.
+- **Every guard gets a mutation that reddens a test**, with the exact error text
+  recorded in the task's report. §3.4 of the spec predicts one legitimate
+  survivor; that one is covered by T9 instead.
+- **`npm run verify` must be green before pushing.** It needs the app running on
+  `:3000`.
+
+---
+
+## Verify Before You Assume
+
+Every line reference below was checked against `b550823` on branch
+`terminal-class-freeze`. Run this block first. If a reference has drifted, fix
+the plan's reference and **report the drift** — do not silently work around it.
+
+```bash
+# 1. The function under change, and the three edit sites.
+grep -n "export async function updateClass" src/services/class-lifecycle.ts     # expect 677
+grep -n "if (cls.settingsLocked && sentEconomic !== null)" src/services/class-lifecycle.ts  # expect 693
+grep -n "result = await db.class.updateMany" src/services/class-lifecycle.ts    # expect 730
+grep -n "const stillExists = await db.class.findUnique" src/services/class-lifecycle.ts     # expect 756
+
+# 2. The constant the guard reuses — already exported, do not redeclare it.
+grep -n "export const TERMINAL_CLASS_STATUSES" src/services/class-lifecycle.ts  # expect 78
+
+# 3. The route's exhaustiveness pin — adding a variant breaks the build here.
+grep -n "const unhandled: never = result" src/app/api/classes/\[id\]/route.ts
+
+# 4. The test fixtures this plan extends.
+grep -n "const makeClass = (settingsLocked: boolean)" src/services/class-lifecycle.test.ts  # expect 1233
+grep -n "function stubDb" src/services/class-lifecycle.test.ts                  # expect 1429
+grep -n "function makeClass(classType: string, status:" tests/integration/classes-api.test.ts  # expect 95
+
+# 5. The sibling trigger Task 4 mirrors, and the test whose title Task 4 narrows.
+ls prisma/migrations/20260805120000_class_terminal_status_trigger/
+grep -n "leaves non-status updates to a completed class alone" src/services/class-terminal-status.test.ts  # expect 370
+
+# 6. The database container and the app.
+docker ps --format '{{.Names}}' | grep fairyoga-db-1
+# Expect 307 (the unauthenticated redirect to sign-in). Any HTTP status means
+# the server is up; what you are ruling out is a connection failure. Do NOT
+# start or restart it yourself — the user runs it, and it serves this checkout.
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3000/
+```
+
+**Measured baseline.** Measured on this branch at `b550823`, not inherited —
+`npm run verify` green, then each project run separately for the split:
+
+| Project | Test files | Tests |
+|---|---|---|
+| `unit` | 56 | 807 |
+| `components` | 38 | 207 |
+| `integration` | 28 | 410 |
+| **Total** | **122** | **1424** |
+
+`56 + 38 + 28 = 122` and `807 + 207 + 410 = 1424`, both matching what
+`npm run verify` reports in one run — so a reader can re-derive the split rather
+than take it on trust.
+
+**Predicted after this branch: 123 files, 1440 tests.** That is `+1` unit file
+(`class-terminal-date.test.ts`), `+15` unit tests (eleven in
+`class-lifecycle.test.ts` — five terminal cases, a three-case `it.each`, and
+three stub cases — plus four in the new file), and `+1` integration test.
+
+**Measure it anyway at Task 6; do not report this prediction.** The equivalent
+prediction on #212 was 1294 against an actual 1296, because that branch's own
+review added tests the prediction could not have known about.
+
+To re-measure:
+
+```bash
+npm run verify 2>&1 | tail -5
+for p in unit components integration; do
+  echo "=== $p ==="
+  npx vitest run --project $p 2>&1 | grep -E "^ Test Files|^      Tests"
+done
+```
+
+---
+
+## Task Order Is Load-Bearing
+
+**Tasks 1–3 (service + route) land before Task 4 (trigger), and that order is
+chosen, not incidental.**
+
+1. **The route change cannot be deferred.** `const unhandled: never = result`
+   means the moment `UpdateClassResult` gains a variant, `tsc` fails on the
+   route. The variant and the route branch are therefore in the same task.
+2. **Every intermediate commit improves behaviour monotonically.** Today a
+   `date` PUT on a completed class silently succeeds. After Task 1 it is a
+   clean 409. If the trigger landed first there would be a commit answering
+   500 for that request.
+3. **The T1 mutation's outcome differs across Task 4, and that is the point.**
+   Run in Task 1 (no trigger) it makes the edit *succeed*; re-run in Task 4
+   (trigger present) it makes the edit *throw*. Two different reddenings from
+   one mutation is the evidence that the two layers are independent rather
+   than one guard counted twice. Task 4 has an explicit step to re-run it.
+
+---
+
+## File Structure
+
+| File | Change | Responsibility |
+|---|---|---|
+| `src/services/class-lifecycle.ts` | Modify | The `terminal` result variant and the three guard sites |
+| `src/app/api/classes/[id]/route.ts` | Modify | Map `terminal` → 409 |
+| `src/services/class-lifecycle.test.ts` | Modify | T1–T9 |
+| `tests/integration/classes-api.test.ts` | Modify | T10 |
+| `prisma/migrations/<ts>_class_terminal_date_trigger/migration.sql` | Create | `class_terminal_date_guard` |
+| `src/services/class-terminal-date.test.ts` | Create | T11 and the trigger's mutation recipe |
+| `src/services/class-terminal-status.test.ts` | Modify | Narrow one test title (spec §5.2) |
+| `src/services/waitlist-retention.ts` | Modify | The residual is closed (spec §6.1) |
+| `docs/superpowers/specs/2026-08-16-waitlist-retention-design.md` | Modify | §2.4 dated note (spec §6.2) |
+| `docs/data-model.md`, `CLAUDE.md` | Modify | The second freeze point exists |
+
+---
+
+## Task 1: The service guard and the route's 409
+
+**Files:**
+- Modify: `src/services/class-lifecycle.ts` (docblocks at `:646-676`; body at `:682-777`)
+- Modify: `src/app/api/classes/[id]/route.ts` (after the `locked` branch)
+- Test: `src/services/class-lifecycle.test.ts` (`describe('updateClass (DB)')`, from `:1214`)
+
+**Interfaces:**
+- Produces: `UpdateClassResult` gains `{ ok: false; reason: 'terminal'; status: ClassStatus }`.
+  Tasks 2 and 3 both construct and assert this exact shape.
+- Consumes: `TERMINAL_CLASS_STATUSES: readonly ClassStatus[]` — **already exported**
+  from `src/services/class-lifecycle.ts:78`. Do not declare a new constant.
+
+- [ ] **Step 1: Extend the test fixture to take a status**
+
+In `src/services/class-lifecycle.test.ts`, replace the counter comment and the
+`makeClass` signature. The old comment asserts a call count that this task
+falsifies:
+
+```ts
+  // Counter-derived startTime: every test in this block shares one teacher and
+  // one date, and none of them reads or asserts the created row's literal
+  // startTime (the one test that changes it does so via an updateClass() call,
+  // asserted against its new value, not this one) — so a distinct minute per
+  // call is enough to keep every create legal under Class_teacher_slot_unique
+  // without touching any assertion. Deliberately stated without a call count:
+  // the previous wording named one ("8 times"), and #247 adding tests here
+  // falsified it silently. Routed through the module-level `slotTime` rather
+  // than a raw `09:${counter}` literal.
+  let makeClassCounter = 0;
+  const makeClass = (settingsLocked: boolean, status: ClassStatus = 'draft') => {
+    makeClassCounter += 1;
+    return prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Hatha',
+        date: new Date('2026-06-01'),
+        startTime: slotTime(makeClassCounter),
+        durationMinutes: 60,
+        roomCost: 35,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 4,
+        maxStudents: 12,
+        status,
+        settingsLocked,
+      },
+    });
+  };
+```
+
+`ClassStatus` is already imported at `:2`. A `cancelled` fixture is free of the
+slot key (`Class_teacher_slot_unique` is partial on `status <> 'cancelled'`), and
+a `completed` one keeps its distinct minute, so no create collides.
+
+- [ ] **Step 2: Write the failing tests (T1–T6)**
+
+Append inside `describe('updateClass (DB)')`:
+
+```ts
+  it('refuses a date edit on a completed class, and writes nothing (#247)', async () => {
+    const cls = await makeClass(false, 'completed');
+
+    const result = await updateClass(prisma, cls.id, { date: new Date('2020-01-01') });
+    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+
+    // "Refused" has to mean "did not write". #247 is a data-loss issue: the
+    // wrong date is what makes waitlist-retention's sweep delete this class's
+    // unfulfilled queue, so a refusal that still moved the column would close
+    // nothing.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.date.toISOString().slice(0, 10)).toBe('2026-06-01');
+  });
+
+  it('refuses a date edit on a cancelled class too', async () => {
+    const cls = await makeClass(false, 'cancelled');
+
+    const result = await updateClass(prisma, cls.id, { date: new Date('2020-01-01') });
+    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'cancelled' });
+  });
+
+  it('freezes the whole class, not a field list — a description edit is refused', async () => {
+    const cls = await makeClass(false, 'completed');
+
+    const result = await updateClass(prisma, cls.id, { description: 'Annotated afterwards' });
+    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.description).toBeNull();
+  });
+
+  it('refuses an economic edit on a completed class nobody booked', async () => {
+    // settingsLocked is written by the FIRST REGISTRATION, so a class that
+    // reached `completed` with no bookings still carries `false` and would
+    // otherwise accept this edit — on a row whose totals completeClass has
+    // already written. The economic lock and the terminal freeze gate on
+    // different events; this is the gap between them.
+    const cls = await makeClass(false, 'completed');
+
+    const result = await updateClass(prisma, cls.id, { roomCost: 999 });
+    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+  });
+
+  it('reports terminal, not locked, when the class is both', async () => {
+    // Pins the ORDER of the two early checks. `locked` reads as a state the
+    // teacher could undo by removing a registration; the terminal freeze never
+    // lifts, so it is the truer answer when both apply.
+    const cls = await makeClass(true, 'completed');
+
+    const result = await updateClass(prisma, cls.id, { roomCost: 999 });
+    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+  });
+
+  it.each(['draft', 'open', 'in_progress'] as const)(
+    'still updates a %s class — the freeze starts at terminality, not at "not editable in the UI"',
+    async (status) => {
+      // `in_progress` is here deliberately. The teacher edit page redirects
+      // away from it, but the API allows it and should: the retention sweep
+      // reads only terminal classes, and completeClass's `requireEndedBy`
+      // already handles a class rescheduled out from under a completion.
+      // Without this case a mutation that froze `in_progress` too would pass
+      // every other test in this file.
+      const cls = await makeClass(false, status);
+
+      const result = await updateClass(prisma, cls.id, { description: `Edited while ${status}` });
+      expect(result.ok).toBe(true);
+
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(after.description).toBe(`Edited while ${status}`);
+    },
+  );
+```
+
+- [ ] **Step 3: Run them and confirm they fail for the right reason**
+
+```bash
+npx vitest run --project unit src/services/class-lifecycle.test.ts -t 'updateClass (DB)'
+```
+
+Expected: the five terminal cases fail because `updateClass` returned
+`{ ok: true, cls: {...} }` — **not** because of a type error. The three
+`it.each` cases pass already (they are the control).
+
+If a terminal case fails with a *compile* error instead, the `terminal` variant
+was added out of order; back the change out and redo Step 2 first.
+
+- [ ] **Step 4: Add the result variant and its docblock sentence**
+
+In `src/services/class-lifecycle.ts`, insert into `UpdateClassResult` directly
+after the `locked` member:
+
+```ts
+  | { ok: false; reason: 'terminal'; status: ClassStatus }
+```
+
+and append to that type's docblock, after the paragraph about `locked`:
+
+```
+ * `terminal` carries the status for the same reason `locked` carries fields:
+ * the caller owns the wording and needs to name what happened. It is plain
+ * `ClassStatus` rather than a narrowed terminal union — the value is only ever
+ * read into a message, and narrowing it would cost a type guard at each of the
+ * three construction sites for nothing.
+```
+
+- [ ] **Step 5: Rewrite `updateClass`'s summary docblock**
+
+Replace the whole docblock above `export async function updateClass` (`:667-676`):
+
+```ts
+/**
+ * Apply a partial update to a class, enforcing two independent freezes.
+ *
+ * They gate on different events and cover different things. The ECONOMIC
+ * freeze (`settingsLocked`) starts at the first registration and covers
+ * `ECONOMIC_FIELDS`; a teacher could in principle undo it by removing the
+ * registration. The TERMINAL freeze (#247) starts when the class reaches
+ * `completed` or `cancelled` and covers EVERY field — it is the class that is
+ * frozen, not a list of columns — and it never lifts.
+ *
+ * Both are checked twice, for the same reason. The first check, against the
+ * row we just read, is an optimisation: it answers the common case in one
+ * query instead of three. The compare-and-swap inside the write is the one
+ * that matters — it catches a first registration, or a completion, landing
+ * between that read and this write, and on its own it produces the identical
+ * result, list of offending fields included. Deleting either first check would
+ * cost round trips, not correctness.
+ *
+ * The terminal freeze additionally has a database backstop for `date` alone
+ * (`class_terminal_date_guard`), because that is the column
+ * `waitlist-retention.ts` reads before it deletes.
+ */
+```
+
+- [ ] **Step 6: Add the early return**
+
+Immediately after `if (!cls) return { ok: false, reason: 'not_found' };`:
+
+```ts
+  // Checked BEFORE the economic lock, and the order is the answer to "which
+  // refusal is true when both are". See the compare-and-swap below: this early
+  // return is the optimisation, that is the guard.
+  if (TERMINAL_CLASS_STATUSES.includes(cls.status)) {
+    return { ok: false, reason: 'terminal', status: cls.status };
+  }
+```
+
+- [ ] **Step 7: Add the compare-and-swap conjunct**
+
+Directly above `let result: Prisma.BatchPayload;`:
+
+```ts
+  // Terminality re-checked in the filter for exactly the reason
+  // `settingsLocked` is: `completeClass` takes a `Class` row lock and re-reads
+  // under it (`class-transitions.ts`, `requireEndedBy`), so a completion can
+  // commit between this function's opening read and this write. This function
+  // takes no lock at all.
+  //
+  // Spread copy because `TERMINAL_CLASS_STATUSES` is `readonly` and Prisma's
+  // `notIn` wants a mutable array — the same reason `gdpr.ts` spreads
+  // `CANCELLABLE_STATUSES` into its own status CAS.
+  const live = { status: { notIn: [...TERMINAL_CLASS_STATUSES] } };
+```
+
+and change the `where` to:
+
+```ts
+      where: sentEconomic !== null
+        ? { id: classId, settingsLocked: false, ...live }
+        : { id: classId, ...live },
+```
+
+- [ ] **Step 8: Add the disambiguation branch and correct the throw's reasoning**
+
+Change the re-read's `select` and insert the branch after the not-found return:
+
+```ts
+    const stillExists = await db.class.findUnique({
+      where: { id: classId },
+      select: { id: true, status: true },
+    });
+    if (!stillExists) return { ok: false, reason: 'not_found' };
+
+    // The class went terminal between the opening read and the write — the
+    // race the CAS above exists to lose. This branch is NOT optional cleanup:
+    // without it a `date`-only edit on a completed class reaches the throw
+    // below (the row exists, and `date` is not economic, so `sentEconomic` is
+    // null) and `withErrorHandler` answers 500 — for the single most likely
+    // request #247 is about. Adding the conjunct without adding this branch
+    // is strictly worse than adding neither.
+    if (TERMINAL_CLASS_STATUSES.includes(stillExists.status)) {
+      return { ok: false, reason: 'terminal', status: stillExists.status };
+    }
+```
+
+Then replace the comment above the `throw` — its old wording reasons about a
+bare `{ id }` filter that no longer exists:
+
+```ts
+    // Unreachable, and still actually so now that a third conjunct is in the
+    // filter: `hasEdit` above guarantees Prisma issues a real UPDATE, and
+    // every conjunct that UPDATE can fail on has just been re-read — the row
+    // exists, it is not terminal, and `settingsLocked: false` is only ever in
+    // the filter when economic fields were sent. Loud rather than silently
+    // returning a plausible-but-wrong reason.
+```
+
+- [ ] **Step 9: Add the route's 409 branch**
+
+In `src/app/api/classes/[id]/route.ts`, after the `locked` branch and before
+`slot_conflict`:
+
+```ts
+  // #247. A terminal class is frozen whole, not by field list, so this is not
+  // a `locked` variant with a different set — the two have different trigger
+  // points and only one of them can be undone. 409 rather than 403: the
+  // request is well-formed and the teacher does own the class; it conflicts
+  // with a state the class has already reached.
+  if (result.reason === 'terminal') {
+    return respondError(`Cannot edit a class that is ${result.status}`, 409);
+  }
+```
+
+No error code. The shipped edit form cannot reach a terminal class — the page
+redirects (`src/app/(teacher)/class/[id]/edit/page.tsx:21`) — so nothing needs
+to branch on it, matching `locked`, which also has none.
+
+- [ ] **Step 10: Fix the two existing stub assertions the CAS just changed**
+
+In `describe('updateClass — the count === 0 branches')`, two tests assert the
+`where` shape verbatim and will now fail. Add `TERMINAL_CLASS_STATUSES` to the
+`./class-lifecycle` import list at the top of the file, then update both:
+
+```ts
+    expect(updateManyCalls[0]?.where).toEqual({
+      id: 'stub-class',
+      settingsLocked: false,
+      status: { notIn: [...TERMINAL_CLASS_STATUSES] },
+    });
+```
+
+```ts
+    expect(updateManyCalls[0]?.where).toEqual({
+      id: 'stub-class',
+      status: { notIn: [...TERMINAL_CLASS_STATUSES] },
+    });
+```
+
+These stubs return no `status` from the re-read, so `stillExists.status` is
+`undefined`, `.includes(undefined)` is `false`, and both tests keep their
+original outcomes. Task 2 extends the stub properly.
+
+- [ ] **Step 11: Run the full unit file and typecheck**
+
+```bash
+npx tsc --noEmit
+npx vitest run --project unit src/services/class-lifecycle.test.ts
+```
+
+Expected: all green, including the two updated stub tests.
+
+- [ ] **Step 12: Mutation M1 — remove both service guards**
+
+Delete the early return (Step 6) **and** the `...live` spread from both `where`
+arms (Step 7). Run:
+
+```bash
+npx vitest run --project unit src/services/class-lifecycle.test.ts -t 'refuses a date edit on a completed class'
+```
+
+Expected: **FAIL.** Record the exact output. At this point in the branch there
+is no trigger, so the edit succeeds and the assertion reddens on a value
+mismatch (`{ ok: true, cls: … }` vs the expected refusal). Task 4 re-runs this
+same mutation with the trigger present and gets a different failure; both are
+recorded.
+
+Restore both, re-run, confirm green.
+
+- [ ] **Step 13: Mutation M2 — delete the disambiguation branch**
+
+Delete only the Step 8 branch. Run the whole file. Expected: the five terminal
+cases still pass (the early return answers them), which is itself the finding —
+**this mutation is invisible to every DB-backed test in the file.** Record that,
+and note it is why Task 2's T7 exists. Restore.
+
+- [ ] **Step 14: Mutation M3 — swap the two early checks**
+
+Move the terminal early return to *after* the `settingsLocked` check. Run:
+
+```bash
+npx vitest run --project unit src/services/class-lifecycle.test.ts -t 'reports terminal, not locked'
+```
+
+Expected: **FAIL** with the received value being
+`{ ok: false, reason: 'locked', fields: ['roomCost'] }`. Record it. Restore.
+
+- [ ] **Step 15: Mutation M4 — freeze `in_progress` too**
+
+Change the early return's condition to
+`[...TERMINAL_CLASS_STATUSES, 'in_progress'].includes(cls.status)`. Run:
+
+```bash
+npx vitest run --project unit src/services/class-lifecycle.test.ts -t 'still updates a in_progress class'
+```
+
+Expected: **FAIL** — `result.ok` is `false`. Record it. Restore and re-run the
+whole file green.
+
+- [ ] **Step 16: Commit**
+
+```bash
+git add src/services/class-lifecycle.ts src/services/class-lifecycle.test.ts "src/app/api/classes/[id]/route.ts"
+git commit -m "feat: a terminal class refuses every edit, and the route says 409 not 500"
+```
+
+---
+
+## Task 2: Pin the construction, not just the outcome
+
+Task 1's DB tests pass whether or not the CAS and the disambiguation branch
+exist — the early return alone satisfies them (Task 1 Step 13 measured exactly
+that). This task adds the three tests that can tell the difference. Against a
+real database the zero-count path is a genuine race with no deterministic
+trigger, which is why the stub exists.
+
+**Files:**
+- Test: `src/services/class-lifecycle.test.ts` (`describe('updateClass — the count === 0 branches')`, from `:1416`)
+
+**Interfaces:**
+- Consumes: the `terminal` variant and all three guard sites from Task 1.
+
+- [ ] **Step 1: Extend `stubDb` to report a status**
+
+Replace the signature and the `findUnique` stub:
+
+```ts
+  function stubDb(opts: {
+    settingsLocked: boolean;
+    rowSurvives: boolean;
+    // Reported by updateClass's opening read. Defaults to a non-terminal value
+    // so every pre-#247 case in this block behaves exactly as it did.
+    status?: ClassStatus;
+    // Reported by the re-read inside the `count === 0` branch. Defaults to
+    // `status`; set it different to stage the completion race.
+    statusAfter?: ClassStatus;
+  }) {
+    const updateManyCalls: UpdateManyArgs[] = [];
+    let reads = 0;
+    const db = {
+      class: {
+        findUnique: async () => {
+          reads += 1;
+          if (reads === 1) {
+            return {
+              id: 'stub-class',
+              settingsLocked: opts.settingsLocked,
+              status: opts.status ?? 'open',
+            };
+          }
+          return opts.rowSurvives
+            ? { id: 'stub-class', status: opts.statusAfter ?? opts.status ?? 'open' }
+            : null;
+        },
+```
+
+Leave `updateMany` and `findUniqueOrThrow` untouched.
+
+- [ ] **Step 2: Write the failing tests (T7–T9)**
+
+```ts
+  it('reports terminal when the class completed between the read and the write', async () => {
+    const stub = stubDb({
+      settingsLocked: false,
+      rowSurvives: true,
+      status: 'open',
+      statusAfter: 'completed',
+    });
+    const { db, updateManyCalls } = stub;
+
+    // A date-only edit, so `sentEconomic` is null. Before #247's
+    // disambiguation branch this combination fell through to
+    // UpdateClassInvariantError — a 500 for precisely the request the issue
+    // was filed about.
+    const result = await updateClass(db, 'stub-class', { date: new Date('2020-01-01') });
+    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+
+    // Proves the CAS path ran rather than the early return, which is
+    // otherwise indistinguishable — it returns the same shape.
+    expect(updateManyCalls).toHaveLength(1);
+    expect(stub.reads).toBe(2);
+  });
+
+  it('constrains the write to non-terminal rows under both filter shapes', async () => {
+    // Asserted against the constant, not a `['completed','cancelled']`
+    // literal: what this test owns is "the conjunct is present and derived",
+    // while the constant's own VALUES are pinned against the trigger SQL by
+    // class-terminal-status.test.ts. Restating them here would duplicate that
+    // pin badly — it would go stale independently.
+    const live = { status: { notIn: [...TERMINAL_CLASS_STATUSES] } };
+
+    const economic = stubDb({ settingsLocked: false, rowSurvives: true, statusAfter: 'completed' });
+    await updateClass(economic.db, 'stub-class', { roomCost: 42 });
+    expect(economic.updateManyCalls[0]?.where).toEqual({
+      id: 'stub-class',
+      settingsLocked: false,
+      ...live,
+    });
+
+    const plain = stubDb({ settingsLocked: false, rowSurvives: true, statusAfter: 'completed' });
+    await updateClass(plain.db, 'stub-class', { description: 'x' });
+    expect(plain.updateManyCalls[0]?.where).toEqual({ id: 'stub-class', ...live });
+  });
+
+  it('answers a visibly-terminal row from the read, without attempting the write', async () => {
+    const { db, updateManyCalls } = stubDb({
+      settingsLocked: false,
+      rowSurvives: true,
+      status: 'completed',
+    });
+
+    const result = await updateClass(db, 'stub-class', { date: new Date('2020-01-01') });
+    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+
+    // The point of this case, and the mirror of its `locked` sibling above:
+    // the pre-check answered it. Deleting that check leaves the result
+    // identical (the compare-and-swap re-derives it), so only the absence of a
+    // write attempt distinguishes the two. This is the ONLY test in the branch
+    // that can see the early return at all.
+    expect(updateManyCalls).toHaveLength(0);
+  });
+```
+
+- [ ] **Step 3: Run them**
+
+```bash
+npx vitest run --project unit src/services/class-lifecycle.test.ts -t 'count === 0'
+```
+
+Expected: all pass — Task 1 already implemented what they pin. That is fine and
+expected; these are characterisation tests for construction, and their value is
+established by the mutations below, not by a red-then-green cycle.
+
+- [ ] **Step 4: Mutation M5 — delete the disambiguation branch**
+
+Delete Task 1 Step 8's branch. Run the file.
+
+Expected: **FAIL** on `'reports terminal when the class completed between the
+read and the write'` with `UpdateClassInvariantError: updateClass: class
+stub-class matched no rows but still exists`. Record the exact text. This is
+the mutation Task 1 Step 13 showed nothing else can catch. Restore.
+
+- [ ] **Step 5: Mutation M6 — drop the conjunct from one arm only**
+
+Remove `...live` from the **non-economic** arm only. Run the file.
+
+Expected: **FAIL** on `'constrains the write to non-terminal rows under both
+filter shapes'`. Record it. Restore, then repeat for the economic arm and
+record that too — one arm at a time, because dropping both at once would not
+show that each is independently pinned.
+
+- [ ] **Step 6: Mutation M7 — delete the early return**
+
+Delete Task 1 Step 6's early return. Run the file.
+
+Expected: **FAIL** on `'answers a visibly-terminal row from the read, without
+attempting the write'` — `updateManyCalls` has length 1. Every other test in
+the branch still passes, which is spec §3.4's predicted survivor made concrete.
+Record both halves of that. Restore and re-run green.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/services/class-lifecycle.test.ts
+git commit -m "test: three mutations the DB-backed suite could not see"
+```
+
+---
+
+## Task 3: The route answers 409 over HTTP
+
+**Files:**
+- Test: `tests/integration/classes-api.test.ts`
+
+**Interfaces:**
+- Consumes: the route branch from Task 1 Step 9.
+
+**Requires the app running on `:3000`.** Do not start it — confirm it with the
+`curl` from the verify block and stop if it is not up.
+
+- [ ] **Step 1: Widen the fixture helper and add a completed fixture**
+
+`makeClass` is declared *inside* `beforeAll` (`:95`), so tests cannot call it;
+the file's pattern is a module-level `let` assigned in `beforeAll`. Follow it.
+
+Widen the status parameter at `:95`:
+
+```ts
+  function makeClass(classType: string, status: 'draft' | 'open' | 'completed', startTime: string) {
+```
+
+Add a module-level declaration beside `economicsClassId` / `lockedClassId`:
+
+```ts
+// #247: a terminal fixture for the PUT freeze. `completed` is written directly
+// because it is an INPUT precondition, not the behaviour under test — driving
+// it through POST …/complete would need registrations and pricing fixtures to
+// prove something this test does not claim.
+let completedClassId: string;
+```
+
+Create it in `beforeAll`, after the `lockedCls` block. `10:15` is the first free
+slot — `09:00`, `09:15`, `09:30`, `09:45` and `10:00` are taken:
+
+```ts
+  const completedCls = await makeClass('Classes API Terminal (#247)', 'completed', '10:15');
+  completedClassId = completedCls.id;
+```
+
+Add `completedClassId` to the `allClassIds` array in `afterAll` (`:212-218`).
+
+- [ ] **Step 2: Write the failing test (T10)**
+
+Append inside `describe('PUT /api/classes/[id]')`:
+
+```ts
+  it('completed class: the edit is refused with 409 and the stored date does not move (#247)', async () => {
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId } });
+    expect(before.status).toBe('completed'); // sanity: the fixture is the state under test
+
+    // The exact payload from the issue. `isoDate` has no range bound, so this
+    // passes schema validation and reaches the service — the refusal has to
+    // come from the guard, not from parsing.
+    const res = await put(ownerToken, completedClassId, { date: '2020-01-01' });
+    expect(res.status).toBe(409);
+
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toContain('completed');
+
+    // The whole point: a refusal that still wrote the column would leave
+    // waitlist-retention's sweep with a class dated 2020 to reap.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId } });
+    expect(after.date.toISOString().slice(0, 10)).toBe('2099-06-01');
+  });
+```
+
+- [ ] **Step 3: Run it**
+
+```bash
+npx vitest run --project integration tests/integration/classes-api.test.ts
+```
+
+Expected: PASS (Task 1 shipped the route branch). Confirm the whole file is
+green, not just the new case — Step 1 touched a shared helper and the shared
+`afterAll`.
+
+- [ ] **Step 4: Mutation M8 — change the mapped status code**
+
+In the route, change the `terminal` branch's `409` to `200`. Run the file.
+
+Expected: **FAIL** — `expected 200 to be 409`. Record it. Restore.
+
+- [ ] **Step 5: Mutation M9 — delete the route branch entirely**
+
+Delete the whole `if (result.reason === 'terminal')` block. Run:
+
+```bash
+npx tsc --noEmit
+```
+
+Expected: **FAIL** at `const unhandled: never = result` — the exhaustiveness pin
+names the unhandled variant. Record the exact compiler error. This shows the
+branch cannot be dropped by accident. Restore.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add tests/integration/classes-api.test.ts
+git commit -m "test: the PUT freeze over HTTP, and the pin that makes it unskippable"
+```
+
+---
+
+## Task 4: The database backstop
+
+**Files:**
+- Create: `prisma/migrations/20260817120000_class_terminal_date_trigger/migration.sql`
+- Create: `src/services/class-terminal-date.test.ts`
+- Modify: `src/services/class-terminal-status.test.ts` (one test title)
+
+**Interfaces:**
+- Produces: trigger `class_terminal_date_guard`, function
+  `class_reject_terminal_date_change()`, raising `SQLSTATE 23514`.
+
+- [ ] **Step 1: Write the migration**
+
+`prisma/schema.prisma` is **not** changed — the column and its type already
+exist, so there is no drift for CI's migration-drift check to find. Create the
+directory and file by hand; Prisma cannot express a trigger.
+
+```bash
+mkdir -p prisma/migrations/20260817120000_class_terminal_date_trigger
+```
+
+`migration.sql`:
+
+```sql
+-- Invariant, DB-enforced: a terminal class's `date` never changes.
+--
+-- The sibling trigger `class_terminal_status_guard`
+-- (20260805120000_class_terminal_status_trigger) is BEFORE UPDATE OF status,
+-- and says in its own comment that "updates to other columns of a completed
+-- class ... are unaffected". That was correct and harmless until #238 shipped
+-- `waitlist-retention.ts`, which reads `Class.date` on a terminal class and
+-- then DELETES the unfulfilled queue entries it finds. Half that sweep's
+-- predicate was trigger-enforced and half was not. This is the other half.
+--
+-- `date` ONLY, not every column, and the narrowness is deliberate. The service
+-- (`updateClass`) freezes the whole class; this freezes the one column a
+-- deleting sweep reads. Measured before choosing: of the 13 real
+-- `class.update`/`updateMany` sites in `src/`, exactly one writes `date`, and
+-- it is `updateClass`. `template-sync.ts` rewrites twelve instance columns and
+-- pointedly not this one; `completeClass` writes its totals in the same
+-- statement as the status flip, so OLD.status is `in_progress` there and this
+-- never fires. A wider trigger would gain nothing and would put
+-- `spotBroadcastAt` and the completion write at risk.
+--
+-- The WHEN clause needs both halves. `UPDATE OF date` fires whenever `date` is
+-- in the SET list even if the value is identical, so without the IS DISTINCT
+-- FROM a future writer that carries the current date alongside the columns it
+-- means to change would be rejected by a guard aimed at something else — the
+-- same reasoning the sibling trigger records for its own WHEN.
+CREATE OR REPLACE FUNCTION class_reject_terminal_date_change()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION
+    'Class % is %, which is terminal; cannot change its date from % to %',
+    OLD.id, OLD.status, OLD.date, NEW.date
+    USING ERRCODE = '23514';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER class_terminal_date_guard
+  BEFORE UPDATE OF date ON "Class"
+  FOR EACH ROW
+  WHEN (OLD.status IN ('completed', 'cancelled') AND OLD.date IS DISTINCT FROM NEW.date)
+  EXECUTE FUNCTION class_reject_terminal_date_change();
+```
+
+`23514` matches the sibling so `classifyApiError` maps both to 409.
+
+- [ ] **Step 2: Apply it to dev and to the test database**
+
+```bash
+npx prisma migrate deploy
+DATABASE_URL="$DATABASE_URL_TEST" npx prisma migrate deploy
+```
+
+Verify it exists in both:
+
+```bash
+docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga \
+  -c "SELECT tgname FROM pg_trigger WHERE tgname = 'class_terminal_date_guard';"
+docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
+  -c "SELECT tgname FROM pg_trigger WHERE tgname = 'class_terminal_date_guard';"
+```
+
+Expected: one row each. If `DATABASE_URL_TEST` is unset, find it in `.env`
+rather than guessing the database name.
+
+- [ ] **Step 3: Write the trigger test (T11)**
+
+Create `src/services/class-terminal-date.test.ts`. The fixture scaffold mirrors
+`class-terminal-status.test.ts:136-192` with the student dropped (nothing here
+registers). Copy the `slotTime` helper from that file verbatim — it exists
+because `startTime` is a plain `String` with no CHECK constraint, so a raw
+`09:${counter}` literal would emit `09:60` once the counter crosses 60.
+
+```ts
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { PrismaClient, Prisma } from '@prisma/client';
+import type { ClassStatus } from '@prisma/client';
+import { classifyApiError } from '@/lib/api-errors';
+
+/**
+ * A pure DB-invariant test for `class_terminal_date_guard` (#247) — no HTTP
+ * surface, nothing here calls the app on `:3000` — so it lives in the `unit`
+ * project rather than `tests/integration/`. `vitest.config.ts` resolves the
+ * unit project's `DATABASE_URL` to `DATABASE_URL_TEST` when that variable is
+ * set, so this file reaches the isolated database with no shell override.
+ * That matters here specifically: the integration project runs against the
+ * DEV database (`docs/test-database.md` §3.4), so proving this trigger by
+ * dropping it from there would need a manual override, and getting the
+ * override wrong drops the trigger on dev.
+ *
+ * SEPARATE FROM `class-terminal-status.test.ts`, which already has these
+ * fixtures. The duplication is bought deliberately: the two triggers have to
+ * be droppable independently. A `DROP TRIGGER class_terminal_date_guard` that
+ * reddens tests about the STATUS trigger would prove less than one that
+ * reddens only this file, and that independence is the entire argument for
+ * having two layers instead of one.
+ *
+ * WHY A DATABASE TRIGGER AND NOT ONLY `updateClass`. `waitlist-retention.ts`
+ * permanently deletes unfulfilled queue entries on classes that are terminal
+ * AND more than 365 days past their `date`. `class_terminal_status_guard`
+ * enforces the first half; nothing enforced the second until this. The service
+ * guard in `updateClass` covers every field and gives the teacher a 409, but
+ * it covers one call site — this covers the column.
+ *
+ * Manual mutation-proof recipe, if this trigger is ever touched again —
+ * against `DATABASE_URL_TEST`, never dev:
+ *
+ *   docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
+ *     -c 'DROP TRIGGER class_terminal_date_guard ON "Class";'
+ *   npx vitest run --project unit src/services/class-terminal-date.test.ts
+ *   # first two tests fail: `caught` stays undefined, no exception to catch
+ *
+ * To restore: `CREATE OR REPLACE FUNCTION` is idempotent but `CREATE TRIGGER`
+ * is not, so replaying the migration file only works while the trigger is
+ * actually gone. Confirm it is, then:
+ *
+ *   docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
+ *     < prisma/migrations/20260817120000_class_terminal_date_trigger/migration.sql
+ *
+ * or reset from scratch: `DATABASE_URL_TEST=... npx prisma migrate reset`.
+ */
+const prisma = new PrismaClient();
+const uniqueSuffix = Date.now();
+
+/**
+ * Turns a running total-minutes-from-9am into a valid `HH:MM`, wrapping into
+ * the next hour rather than ever emitting an invalid minute like `'09:60'`.
+ * `startTime` is a plain `String` with no CHECK constraint and
+ * `Class_teacher_slot_unique` compares strings, so a raw `09:${counter}`
+ * literal would accept an out-of-range value silently instead of exercising
+ * the constraint this counter exists to dodge. Mirrors the helper of the same
+ * name in `class-terminal-status.test.ts`.
+ */
+function slotTime(totalMinutesFrom9am: number): string {
+  const hour = 9 + Math.floor(totalMinutesFrom9am / 60);
+  const minute = totalMinutesFrom9am % 60;
+  const startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  if (!/^\d{2}:[0-5]\d$/.test(startTime)) {
+    throw new Error(`slotTime produced an invalid startTime: ${startTime}`);
+  }
+  return startTime;
+}
+
+let teacherId: string;
+let accountId: string;
+let roomId: string;
+let teacherRoomId: string;
+const classIds: string[] = [];
+
+const ORIGINAL_DATE = '2099-06-01';
+let makeClassCounter = 0;
+
+async function makeClass(opts: { status: ClassStatus }): Promise<{ classId: string }> {
+  makeClassCounter += 1;
+  const cls = await prisma.class.create({
+    data: {
+      teacherId,
+      teacherRoomId,
+      classType: 'Terminal Date Test',
+      date: new Date(ORIGINAL_DATE),
+      startTime: slotTime(makeClassCounter),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 8,
+      status: opts.status,
+    },
+  });
+  classIds.push(cls.id);
+  return { classId: cls.id };
+}
+
+beforeAll(async () => {
+  await prisma.$connect();
+
+  const teacher = await prisma.teacher.create({
+    data: {
+      firstName: 'Terminal',
+      lastName: 'Date',
+      email: `terminal-date-${uniqueSuffix}@test.local`,
+      account: { create: { email: `terminal-date-${uniqueSuffix}@test.local` } },
+      bio: 'Terminal date trigger tests',
+      pageSlug: `terminal-date-${uniqueSuffix}`,
+    },
+  });
+  teacherId = teacher.id;
+  accountId = teacher.accountId;
+
+  const room = await prisma.room.create({
+    data: {
+      venueName: 'Terminal Date Studio',
+      address: `${uniqueSuffix} Trigger St`,
+      city: 'Amsterdam',
+      postcode: '1234RA',
+      floor: '1',
+      roomName: 'Main',
+      maxCapacity: 20,
+      createdById: teacherId,
+    },
+  });
+  roomId = room.id;
+
+  const teacherRoom = await prisma.teacherRoom.create({
+    data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+  });
+  teacherRoomId = teacherRoom.id;
+});
+
+afterAll(async () => {
+  await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+  await prisma.teacherRoom.deleteMany({ where: { id: teacherRoomId } });
+  await prisma.room.deleteMany({ where: { id: roomId } });
+  await prisma.teacher.deleteMany({ where: { id: teacherId } });
+  await prisma.account.deleteMany({ where: { id: accountId } });
+  await prisma.$disconnect();
+});
+
+describe('class_terminal_date_guard', () => {
+  it.each(['completed', 'cancelled'] as const)(
+    'refuses to move a %s class to a past date, from raw SQL',
+    async (status) => {
+      const { classId } = await makeClass({ status: 'open' });
+      await prisma.class.updateMany({ where: { id: classId, status: 'open' }, data: { status } });
+
+      // Raw SQL, not `updateClass` — the point is that this holds with the
+      // service layer entirely out of the picture. `2020-01-01` is the exact
+      // date from issue #247: more than 365 days past, so
+      // `reapClosedWaitlistEntries` would treat this class as reapable.
+      let caught: unknown;
+      try {
+        await prisma.$executeRaw`UPDATE "Class" SET date = '2020-01-01' WHERE id = ${classId}::uuid`;
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(Prisma.PrismaClientUnknownRequestError);
+      expect(String(caught)).toMatch(/23514/);
+      expect(String(caught)).toMatch(/which is terminal/);
+      expect(String(caught)).toMatch(new RegExp(`is ${status}`));
+
+      // The route's own mapping, not a second copy of it: whatever
+      // classifyApiError does with this shape is what a caller would see.
+      expect(classifyApiError(caught).status).toBe(409);
+
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+      expect(after.date.toISOString().slice(0, 10)).toBe(ORIGINAL_DATE);
+    },
+  );
+
+  it('allows a date change on a live class', async () => {
+    // The test that proves the trigger CAN pass. Without it, a WHEN clause
+    // mutated to fire unconditionally would still satisfy both cases above.
+    const { classId } = await makeClass({ status: 'open' });
+
+    await prisma.$executeRaw`UPDATE "Class" SET date = '2099-07-01' WHERE id = ${classId}::uuid`;
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    expect(after.date.toISOString().slice(0, 10)).toBe('2099-07-01');
+  });
+
+  it('allows a write that carries a terminal class\'s unchanged date alongside another column', async () => {
+    // The IS DISTINCT FROM half of the WHEN clause, and the reason it is
+    // there: `UPDATE OF date` fires whenever `date` is in the SET list, value
+    // unchanged or not. Without this half, any future writer that carries the
+    // current date along with the columns it means to change is rejected by a
+    // guard aimed at something else — the same failure the sibling trigger
+    // records for its own WHEN.
+    const { classId } = await makeClass({ status: 'open' });
+    await prisma.class.updateMany({
+      where: { id: classId, status: 'open' },
+      data: { status: 'completed' },
+    });
+
+    await prisma.$executeRaw`
+      UPDATE "Class" SET date = ${new Date(ORIGINAL_DATE)}, description = 'Unchanged date'
+      WHERE id = ${classId}::uuid`;
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+    expect(after.description).toBe('Unchanged date');
+    expect(after.date.toISOString().slice(0, 10)).toBe(ORIGINAL_DATE);
+  });
+});
+```
+
+- [ ] **Step 4: Run it**
+
+```bash
+npx vitest run --project unit src/services/class-terminal-date.test.ts
+```
+
+Expected: four cases pass (two from the `it.each`, plus two allow-cases). If the
+last case fails with `23514`, the `IS DISTINCT FROM` half of the `WHEN` clause
+is missing from the migration.
+
+- [ ] **Step 5: Mutation M10 — drop the trigger**
+
+```bash
+docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
+  -c 'DROP TRIGGER class_terminal_date_guard ON "Class";'
+npx vitest run --project unit src/services/class-terminal-date.test.ts
+```
+
+Expected: **FAIL** on both `it.each` cases — `caught` is `undefined`, so
+`expect(caught).toBeInstanceOf(...)` reddens. Record the exact output.
+
+Restore with the recipe in the file's docblock and confirm green:
+
+```bash
+docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
+  < prisma/migrations/20260817120000_class_terminal_date_trigger/migration.sql
+npx vitest run --project unit src/services/class-terminal-date.test.ts
+```
+
+- [ ] **Step 6: Mutation M11 — drop the `IS DISTINCT FROM` half**
+
+Recreate the trigger in the test DB with only `OLD.status IN (...)` in the
+`WHEN`. Run the file.
+
+Expected: **FAIL** on `'allows a write that carries a terminal class's
+unchanged date alongside another column'` with `23514`. Record it. Restore from
+the migration file. **Do not edit the migration** — this mutation is applied
+directly to the test database and reverted the same way.
+
+- [ ] **Step 7: Re-run Task 1's M1 with the trigger present**
+
+Re-apply Task 1 Step 12's mutation (remove the early return and both `...live`
+spreads) and run:
+
+```bash
+npx vitest run --project unit src/services/class-lifecycle.test.ts -t 'refuses a date edit on a completed class'
+```
+
+Expected: **FAIL again, but differently** — now the write reaches the database
+and the trigger throws `23514` instead of the edit succeeding. Record both
+outcomes side by side. Two different failures from one mutation is the evidence
+that the service guard and the trigger are independent layers rather than one
+guard counted twice. Restore.
+
+- [ ] **Step 8: Narrow the sibling test's title (spec §5.2)**
+
+In `src/services/class-terminal-status.test.ts:370`, the title `'leaves
+non-status updates to a completed class alone'` now over-claims. The test stays
+green — it writes `description`, and this branch's trigger is `BEFORE UPDATE OF
+date` — but some non-status updates are no longer left alone. Replace the title
+and add the pointer:
+
+```ts
+  it('leaves a non-status, non-date update to a completed class alone', async () => {
+    // Narrowed by #247. `date` is now guarded on a terminal class by a SECOND
+    // trigger, `class_terminal_date_guard`, pinned in the sibling file
+    // `class-terminal-date.test.ts`. This case is about THIS trigger's `OF
+    // status` scope, so it deliberately writes neither column.
+```
+
+Its two neighbours were checked and need nothing: `'allows a completeClass-shaped
+write…'` writes status plus three totals, and `'allows a no-op status write on a
+cancelled class'` writes status alone. Neither names `date`.
+
+- [ ] **Step 9: Run both trigger files together**
+
+```bash
+npx vitest run --project unit src/services/class-terminal-status.test.ts src/services/class-terminal-date.test.ts
+```
+
+Expected: both green.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add prisma/migrations/20260817120000_class_terminal_date_trigger/migration.sql \
+        src/services/class-terminal-date.test.ts \
+        src/services/class-terminal-status.test.ts
+git commit -m "feat: the database refuses to move a terminal class's date"
+```
+
+---
+
+## Task 5: Retire the residual everywhere it is claimed
+
+Six locations. **Each gets its own verdict at review, not one verdict for "the
+docs".** The #41 failure mode was a three-location finding marked ADDRESSED on
+the strength of the two files the reviewer happened to open.
+
+**Files:**
+- Modify: `src/services/waitlist-retention.ts` (the `THE SECOND HALF OF THE PREDICATE IS NOT ENFORCED` section, ~`:56-70`)
+- Modify: `docs/superpowers/specs/2026-08-16-waitlist-retention-design.md` (§2.4, ~`:328-345`)
+- Modify: `docs/data-model.md` (~`:405`)
+- Modify: `CLAUDE.md` (Class Lifecycle section)
+
+- [ ] **Step 1: Rewrite the retention header's residual section**
+
+Locate it and read the current text before replacing — do not paste over a
+range by line number alone:
+
+```bash
+grep -n "THE SECOND HALF OF THE PREDICATE IS NOT ENFORCED" src/services/waitlist-retention.ts
+```
+
+Replace that section with one that says both halves are now enforced and by
+what. It must name: `class_terminal_status_guard` for `status`,
+`class_terminal_date_guard` plus `updateClass`'s compare-and-swap for `date`,
+and that the service freeze is wider than the trigger (whole class vs one
+column) on purpose. Keep the section heading's shape but invert its claim —
+a future reader greps for the old heading, so leaving a same-shaped heading
+that now reads `BOTH HALVES OF THE PREDICATE ARE ENFORCED` is what makes the
+change findable.
+
+- [ ] **Step 2: Amend the retention spec's §2.4**
+
+```bash
+grep -n "This is a known residual, tracked as #247" docs/superpowers/specs/2026-08-16-waitlist-retention-design.md
+```
+
+That spec is a historical design record, so **amend rather than rewrite**: leave
+the four bullets (each was true of the tree it described) and append a dated
+note saying the residual was closed on 2026-08-17, by what, and pointing at
+`2026-08-17-terminal-class-freeze-design.md`.
+
+- [ ] **Step 3: Add the second freeze point to the live reference docs**
+
+`docs/data-model.md:405` currently documents only the economic lock:
+
+> **settings_locked** on Class flips to true when the first Registration is
+> created. After that, economic fields (room_cost, min_rate, target_rate,
+> min_students, max_students) are immutable.
+
+That statement stays true; it is incomplete. Add a sibling bullet for the second
+freeze point — terminal status freezes every field, enforced in `updateClass`
+and, for `date`, by `class_terminal_date_guard`.
+
+Do the same in `CLAUDE.md`'s **Class Lifecycle** section, which today says only
+`settings_locked` flips true on first registration. One line, matching the
+surrounding density.
+
+- [ ] **Step 4: Reconcile against the diff, not against a keyword**
+
+Do not grep for one phrase and call it done — that is how #41's twin survived.
+List what changed and compare it to what should have changed:
+
+```bash
+git diff --stat HEAD
+grep -rn "247" docs/ src/ prisma/ CLAUDE.md | grep -v backlog-roadmap | grep -v "2026-08-17-terminal"
+```
+
+Every surviving hit must now *describe the fix*, not an open residual. Four
+files should appear in the diff: `waitlist-retention.ts`, the retention spec,
+`docs/data-model.md`, `CLAUDE.md`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/services/waitlist-retention.ts \
+        docs/superpowers/specs/2026-08-16-waitlist-retention-design.md \
+        docs/data-model.md CLAUDE.md
+git commit -m "docs: the retention sweep's predicate is enforced on both halves now"
+```
+
+---
+
+## Task 6: Whole-branch verification
+
+- [ ] **Step 1: Run everything**
+
+```bash
+npm run verify
+```
+
+Expected: typecheck, lint and all three vitest projects green. It needs the app
+on `:3000`; a wall of `ECONNREFUSED` means the server is down — ask, do not
+start it.
+
+- [ ] **Step 2: Record the arithmetic**
+
+Capture files and tests per project, with totals that reconcile
+(`a + b + c = total`), and compare against the baseline taken before Task 1.
+The delta must be explainable by the eleven tests this branch adds — if it is
+not, find out why before writing the PR body. Do not predict the number and
+report the prediction.
+
+- [ ] **Step 3: Confirm no migration drift**
+
+```bash
+npx prisma validate
+npx prisma migrate status
+```
+
+Expected: valid, and no pending migrations. `schema.prisma` was not modified, so
+there is nothing for CI's drift check to catch — confirm rather than assume.
+
+- [ ] **Step 4: Confirm the mutation ledger is complete**
+
+Eleven tests, eleven mutations (M1–M11, with M6 run twice, once per filter arm).
+Each needs its exact recorded error text. The one predicted survivor — deleting
+the early return, which no DB-backed test can see — is covered by T9 and
+recorded as *designed*, not as a gap.
+
+---
+
+## Self-Review Notes
+
+Checked against the spec:
+
+- §3.1 variant → Task 1 Step 4. §3.2 three sites → Steps 6–8. The `in_progress`
+  boundary → Task 1 Step 2's `it.each`. §3.3 mandatory branch → Step 8, proved
+  by Task 2 M5. §3.4 predicted survivor → Task 2 M7. §3.5 docblocks → Steps 4–5.
+- §4 trigger → Task 4 Steps 1–2. §4.1 narrowness → argued in the migration
+  comment. §4.2 measurement → carried into that comment so it survives where a
+  future reader will look.
+- §5 T1–T11 → Tasks 1–4. §5.2 title → Task 4 Step 8.
+- §6 artifacts → Task 5, with the diff reconciliation at Step 4.
+- §7 the UI path is filed after merge, not built here.
+
+Two things this plan adds that the spec did not anticipate:
+
+1. **Task 1 Step 10.** The CAS changes the `where` shape that two *existing*
+   stub tests assert verbatim. They break the moment the conjunct lands, and
+   they break in Task 1, not Task 2 — so the fix belongs in Task 1.
+2. **Task 1 Step 13 and Task 2.** Measuring that the disambiguation branch is
+   invisible to every DB-backed test is what justifies Task 2 existing at all,
+   rather than folding its three cases in as extra coverage.
