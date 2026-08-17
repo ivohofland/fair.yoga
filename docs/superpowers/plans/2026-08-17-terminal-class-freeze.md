@@ -286,7 +286,9 @@ Append inside `describe('updateClass (DB)')`:
 - [ ] **Step 3: Run them and confirm they fail for the right reason**
 
 ```bash
-npx vitest run --project unit src/services/class-lifecycle.test.ts -t 'updateClass (DB)'
+# `-t` is a REGEX, not a substring: 'updateClass (DB)' makes (DB) a capture
+# group and matches zero tests, silently reporting success. Escape the parens.
+npx vitest run --project unit src/services/class-lifecycle.test.ts -t 'updateClass \(DB\)'
 ```
 
 Expected: the five terminal cases fail because `updateClass` returned
@@ -512,7 +514,7 @@ Change the early return's condition to
 `[...TERMINAL_CLASS_STATUSES, 'in_progress'].includes(cls.status)`. Run:
 
 ```bash
-npx vitest run --project unit src/services/class-lifecycle.test.ts -t 'still updates a in_progress class'
+npx vitest run --project unit src/services/class-lifecycle.test.ts -t 'in_progress class'
 ```
 
 Expected: **FAIL** — `result.ok` is `false`. Record it. Restore and re-run the
