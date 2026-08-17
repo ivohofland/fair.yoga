@@ -662,9 +662,14 @@ Leave `updateMany` and `findUniqueOrThrow` untouched.
     // while the constant's own VALUES are pinned against the trigger SQL by
     // class-terminal-status.test.ts. Restating them here would duplicate that
     // pin badly — it would go stale independently.
+    //
+    // Task 1's two pre-existing stub tests already pin these same two `where`
+    // shapes individually; kept anyway as the only test whose name states the
+    // property and the only one showing both arms side by side under the
+    // derived constant.
     const live = { status: { notIn: [...TERMINAL_CLASS_STATUSES] } };
 
-    const economic = stubDb({ settingsLocked: false, rowSurvives: true, statusAfter: 'completed' });
+    const economic = stubDb({ settingsLocked: false, rowSurvives: false });
     await updateClass(economic.db, 'stub-class', { roomCost: 42 });
     expect(economic.updateManyCalls[0]?.where).toEqual({
       id: 'stub-class',
@@ -672,7 +677,7 @@ Leave `updateMany` and `findUniqueOrThrow` untouched.
       ...live,
     });
 
-    const plain = stubDb({ settingsLocked: false, rowSurvives: true, statusAfter: 'completed' });
+    const plain = stubDb({ settingsLocked: false, rowSurvives: false });
     await updateClass(plain.db, 'stub-class', { description: 'x' });
     expect(plain.updateManyCalls[0]?.where).toEqual({ id: 'stub-class', ...live });
   });
@@ -691,10 +696,11 @@ Leave `updateMany` and `findUniqueOrThrow` untouched.
     // the pre-check answered it WITHOUT attempting a write. That is the
     // query-count half of the evidence, and this test owns it. It is not the
     // only test that can see the early return, and deleting it does not leave
-    // the result identical: Task 1's `'reports terminal, not locked, when the
-    // class is both'` (T5) owns the correctness half — a class that is both
-    // terminal and settings-locked with an economic field sent falls through
-    // to `locked` once this check is gone, before the CAS ever runs.
+    // the result identical everywhere: Task 1's `'reports terminal, not
+    // locked, when the class is both'` (T5) owns the correctness half — a
+    // class that is both terminal and settings-locked with an economic field
+    // sent falls through to `locked` once this check is gone, before the CAS
+    // ever runs.
     expect(updateManyCalls).toHaveLength(0);
   });
 ```
@@ -722,10 +728,17 @@ the mutation Task 1 Step 13 showed nothing else can catch. Restore.
 
 Remove `...live` from the **non-economic** arm only. Run the file.
 
-Expected: **FAIL** on `'constrains the write to non-terminal rows under both
-filter shapes'`. Record it. Restore, then repeat for the economic arm and
-record that too — one arm at a time, because dropping both at once would not
-show that each is independently pinned.
+Expected: **FAIL in two places.** `'constrains the write to non-terminal rows
+under both filter shapes'` (T8) fails on its non-economic assertion, and so
+does Task 1's pre-existing `'reports not_found when no economic field was
+sent — the row was deleted (#72)'` (test-file `:1605`, assertion `:1616`) —
+Task 1 already added the same `notIn` conjunct to that test's own `where`
+expectation, so it is independently sensitive to this same arm. Record both.
+Restore, then repeat for the economic arm: **FAIL in two places** again —
+T8's economic assertion, and Task 1's pre-existing `'reports locked when the
+row survives — the compare-and-swap lost its race'` (test-file `:1570`,
+assertion `:1581`) — record that pair too. One arm at a time, because
+dropping both at once would not show that each is independently pinned.
 
 - [ ] **Step 6: Mutation M7 — delete the early return**
 
@@ -1396,7 +1409,14 @@ Eleven tests, eleven mutations (M1–M11, with M6 run twice, once per filter arm
 Each needs its exact recorded error text, and none of them survive the suite —
 deleting the early return (M7) reddens both T5 (DB-backed, on the wrong
 refusal reason) and T9 (stub, on the write-count assertion); see spec §3.4 for
-why an earlier draft claimed otherwise.
+why an earlier draft claimed otherwise. M6 also reddens two tests per arm, not
+one: the non-economic arm reddens T8 alongside Task 1's pre-existing `'reports
+not_found when no economic field was sent — the row was deleted (#72)'`, and
+the economic arm reddens T8 alongside Task 1's pre-existing `'reports locked
+when the row survives — the compare-and-swap lost its race'` — both
+pre-existing tests already assert the same `notIn` conjunct T8 does, so each
+is independently sensitive to the arm T8 is checking. M5 reddens exactly one
+test, T7, matching the original prediction.
 
 ---
 

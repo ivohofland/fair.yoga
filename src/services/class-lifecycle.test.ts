@@ -1675,9 +1675,14 @@ describe('updateClass — the count === 0 branches', () => {
     // while the constant's own VALUES are pinned against the trigger SQL by
     // class-terminal-status.test.ts. Restating them here would duplicate that
     // pin badly — it would go stale independently.
+    //
+    // Task 1's two pre-existing stub tests already pin these same two `where`
+    // shapes individually; kept anyway as the only test whose name states the
+    // property and the only one showing both arms side by side under the
+    // derived constant.
     const live = { status: { notIn: [...TERMINAL_CLASS_STATUSES] } };
 
-    const economic = stubDb({ settingsLocked: false, rowSurvives: true, statusAfter: 'completed' });
+    const economic = stubDb({ settingsLocked: false, rowSurvives: false });
     await updateClass(economic.db, 'stub-class', { roomCost: 42 });
     expect(economic.updateManyCalls[0]?.where).toEqual({
       id: 'stub-class',
@@ -1685,7 +1690,7 @@ describe('updateClass — the count === 0 branches', () => {
       ...live,
     });
 
-    const plain = stubDb({ settingsLocked: false, rowSurvives: true, statusAfter: 'completed' });
+    const plain = stubDb({ settingsLocked: false, rowSurvives: false });
     await updateClass(plain.db, 'stub-class', { description: 'x' });
     expect(plain.updateManyCalls[0]?.where).toEqual({ id: 'stub-class', ...live });
   });
@@ -1704,10 +1709,11 @@ describe('updateClass — the count === 0 branches', () => {
     // the pre-check answered it WITHOUT attempting a write. That is the
     // query-count half of the evidence, and this test owns it. It is not the
     // only test that can see the early return, and deleting it does not leave
-    // the result identical: Task 1's `'reports terminal, not locked, when the
-    // class is both'` (T5) owns the correctness half — a class that is both
-    // terminal and settings-locked with an economic field sent falls through
-    // to `locked` once this check is gone, before the CAS ever runs.
+    // the result identical everywhere: Task 1's `'reports terminal, not
+    // locked, when the class is both'` (T5) owns the correctness half — a
+    // class that is both terminal and settings-locked with an economic field
+    // sent falls through to `locked` once this check is gone, before the CAS
+    // ever runs.
     expect(updateManyCalls).toHaveLength(0);
   });
 });
