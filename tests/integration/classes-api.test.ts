@@ -32,6 +32,12 @@ let lockedClassId: string;
 let lockStudentId: string;
 let lockStudentAccountId: string | null;
 
+// #247: a terminal fixture for the PUT freeze. `completed` is written directly
+// because it is an INPUT precondition, not the behaviour under test — driving
+// it through POST …/complete would need registrations and pricing fixtures to
+// prove something this test does not claim.
+let completedClassId: string;
+
 const UNKNOWN_CLASS_ID = '00000000-0000-4000-8000-000000000000';
 
 async function makeTeacher(tag: string): Promise<{ id: string; token: string }> {
@@ -92,7 +98,7 @@ beforeAll(async () => {
   // sibling helpers in this directory (`templateBody` in
   // class-templates-api.test.ts, `makeTemplate` in studio-api.test.ts)
   // dropped their own defaults for the same reason.
-  function makeClass(classType: string, status: 'draft' | 'open', startTime: string) {
+  function makeClass(classType: string, status: 'draft' | 'open' | 'completed', startTime: string) {
     return prisma.class.create({
       data: {
         teacherId: ownerId,
@@ -138,6 +144,9 @@ beforeAll(async () => {
 
   const lockedCls = await makeClass('Classes API Lock (locked)', 'open', '09:45');
   lockedClassId = lockedCls.id;
+
+  const completedCls = await makeClass('Classes API Terminal (#247)', 'completed', '10:15');
+  completedClassId = completedCls.id;
 
   // A student who books lockedClassId over HTTP — the same trigger path
   // registrations-api.test.ts uses (POST /api/registrations) — so the lock
@@ -215,6 +224,7 @@ afterAll(async () => {
     economicsClassId,
     lockedClassId,
     noticeClassId,
+    completedClassId,
   ].filter(Boolean);
   if (allClassIds.length > 0) {
     await prisma.notification.deleteMany({ where: { relatedClassId: { in: allClassIds } } });
@@ -957,6 +967,25 @@ describe('PUT /api/classes/[id]', () => {
       const stillThere = await prisma.class.findUniqueOrThrow({ where: { id: sibling.id } });
       expect(stillThere.date.toISOString().slice(0, 10)).toBe('2099-09-02');
     });
+  });
+
+  it('completed class: the edit is refused with 409 and the stored date does not move (#247)', async () => {
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId } });
+    expect(before.status).toBe('completed'); // sanity: the fixture is the state under test
+
+    // The exact payload from the issue. `isoDate` has no range bound, so this
+    // passes schema validation and reaches the service — the refusal has to
+    // come from the guard, not from parsing.
+    const res = await put(ownerToken, completedClassId, { date: '2020-01-01' });
+    expect(res.status).toBe(409);
+
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toContain('completed');
+
+    // The whole point: a refusal that still wrote the column would leave
+    // waitlist-retention's sweep with a class dated 2020 to reap.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId } });
+    expect(after.date.toISOString().slice(0, 10)).toBe('2099-06-01');
   });
 });
 
