@@ -34,8 +34,9 @@ migration.
 - **One commit per task** — the PR is rebase-merged, so the per-task history is
   the record.
 - **Every guard gets a mutation that reddens a test**, with the exact error text
-  recorded in the task's report. §3.4 of the spec predicts one legitimate
-  survivor; that one is covered by T9 instead.
+  recorded in the task's report. There is no legitimate survivor: deleting the
+  early terminal return (§3.4 of the spec) reddens T5 on the DB-backed suite
+  alone, and additionally reddens T9 once Task 2 lands.
 - **`npm run verify` must be green before pushing.** It needs the app running on
   `:3000`.
 
@@ -166,9 +167,28 @@ chosen, not incidental.**
 
 In `src/services/class-lifecycle.test.ts`, replace the counter comment and the
 `makeClass` signature. The old comment asserts a call count that this task
-falsifies:
+falsifies. Also extend the pre-existing `settingsLocked`-is-an-input-shortcut
+comment immediately above it — `status` (#247) is now the identical shortcut
+for the identical reason, and needs the identical caveat, or a test that later
+claims to cover a class actually *reaching* a terminal status (as opposed to
+what `updateClass` does once it is already sitting in one) could be written
+against this fixture without anyone noticing it proves nothing of the kind:
 
 ```ts
+  // `settingsLocked` is written directly here because it is an INPUT
+  // precondition for this function, not the behaviour under test. The genuine
+  // flip — a real registration setting it — is covered by
+  // registrations-api's `locks settings atomically with the first
+  // registration`. Do not copy this shortcut into a test that claims to cover
+  // the flip itself.
+  //
+  // `status` (#247) is the same shortcut for the same reason: writing a
+  // terminal status directly is an INPUT precondition for updateClass's own
+  // guard, not the behaviour under test, and it bypasses `completeClass` /
+  // `transitionClass` and the state machine's own transition guards entirely.
+  // A test that claims to cover a class actually REACHING a terminal status —
+  // as opposed to what updateClass does once it is already sitting in one —
+  // needs to drive it through those, not through this fixture.
   // Counter-derived startTime: every test in this block shares one teacher and
   // one date, and none of them reads or asserts the created row's literal
   // startTime (the one test that changes it does so via an updateClass() call,
@@ -229,6 +249,13 @@ Append inside `describe('updateClass (DB)')`:
 
     const result = await updateClass(prisma, cls.id, { date: new Date('2020-01-01') });
     expect(result).toEqual({ ok: false, reason: 'terminal', status: 'cancelled' });
+
+    // Same "did not write" check as the completed case above, and not
+    // optional here either: `reapClosedWaitlistEntries` reaps a `cancelled`
+    // class's queue too, not only a `completed` one, so a refuse-but-write bug
+    // on this path is the identical data-loss shape as T1's.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.date.toISOString().slice(0, 10)).toBe('2026-06-01');
   });
 
   it('freezes the whole class, not a field list — a description edit is refused', async () => {
@@ -251,6 +278,10 @@ Append inside `describe('updateClass (DB)')`:
 
     const result = await updateClass(prisma, cls.id, { roomCost: 999 });
     expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+
+    // Cheap and consistent with T1/T2: assert the economic column did not move.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(Number(after.roomCost)).toBe(35);
   });
 
   it('reports terminal, not locked, when the class is both', async () => {
@@ -261,6 +292,12 @@ Append inside `describe('updateClass (DB)')`:
 
     const result = await updateClass(prisma, cls.id, { roomCost: 999 });
     expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+
+    // Cheap and consistent with T1/T2/T4: assert the economic column did not
+    // move — under either refusal reason this class would refuse the write,
+    // but only `terminal` is the true one here.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(Number(after.roomCost)).toBe(35);
   });
 
   it.each(['draft', 'open', 'in_progress'] as const)(
@@ -314,7 +351,8 @@ and append to that type's docblock, after the paragraph about `locked`:
  * the caller owns the wording and needs to name what happened. It is plain
  * `ClassStatus` rather than a narrowed terminal union — the value is only ever
  * read into a message, and narrowing it would cost a type guard at each of the
- * three construction sites for nothing.
+ * two construction sites (the early return and the disambiguation branch,
+ * below) for nothing.
 ```
 
 - [ ] **Step 5: Rewrite `updateClass`'s summary docblock**
@@ -337,8 +375,12 @@ Replace the whole docblock above `export async function updateClass` (`:667-676`
  * query instead of three. The compare-and-swap inside the write is the one
  * that matters — it catches a first registration, or a completion, landing
  * between that read and this write, and on its own it produces the identical
- * result, list of offending fields included. Deleting either first check would
- * cost round trips, not correctness.
+ * result, list of offending fields included. Deleting the ECONOMIC check costs
+ * round trips, not correctness, for exactly that reason. Deleting the TERMINAL
+ * check is not as free: for a class that is BOTH terminal and settings-locked
+ * with an economic field sent, control then reaches the `settingsLocked` check
+ * next and answers `locked` — the wrong one of the two true refusals — before
+ * the CAS ever runs. Everywhere else it too costs only round trips.
  *
  * The terminal freeze additionally has a database backstop for `date` alone
  * (`class_terminal_date_guard`), because that is the column
@@ -351,9 +393,12 @@ Replace the whole docblock above `export async function updateClass` (`:667-676`
 Immediately after `if (!cls) return { ok: false, reason: 'not_found' };`:
 
 ```ts
-  // Checked BEFORE the economic lock, and the order is the answer to "which
-  // refusal is true when both are". See the compare-and-swap below: this early
-  // return is the optimisation, that is the guard.
+  // Checked BEFORE the economic lock: for every case except one, this is an
+  // optimisation only — the CAS below re-derives the same refusal. The
+  // exception is a class that is BOTH terminal and settings-locked with an
+  // economic field sent: without this early return, `cls.settingsLocked &&
+  // sentEconomic !== null` fires next and answers `locked`, so THIS check is
+  // what makes `terminal` the true answer when both apply, not the CAS.
   if (TERMINAL_CLASS_STATUSES.includes(cls.status)) {
     return { ok: false, reason: 'terminal', status: cls.status };
   }
@@ -361,14 +406,21 @@ Immediately after `if (!cls) return { ok: false, reason: 'not_found' };`:
 
 - [ ] **Step 7: Add the compare-and-swap conjunct**
 
-Directly above `let result: Prisma.BatchPayload;`:
+Directly above `let result: Prisma.BatchPayload;`, with a leading blank `//`
+line — the write's existing comment (the `Class_templateId_date_key`
+paragraph) ends immediately above this insertion point, and without the
+separator the two read as one block, which breaks the catch arm's later
+pointer ("see the comment above the write") since it would then mean 10 lines
+and a different statement than intended:
 
 ```ts
+  //
   // Terminality re-checked in the filter for exactly the reason
-  // `settingsLocked` is: `completeClass` takes a `Class` row lock and re-reads
-  // under it (`class-transitions.ts`, `requireEndedBy`), so a completion can
-  // commit between this function's opening read and this write. This function
-  // takes no lock at all.
+  // `settingsLocked` is: `completeClass` (this same file) takes a `Class` row
+  // lock and re-reads under it — `lockClassRow` at :324, and the
+  // `requireEndedBy` comparison at :349-360 — so a completion can commit
+  // between this function's opening read and this write. This function takes
+  // no lock at all.
   //
   // Spread copy because `TERMINAL_CLASS_STATUSES` is `readonly` and Prisma's
   // `notIn` wants a mutable array — the same reason `gdpr.ts` spreads
@@ -674,12 +726,19 @@ show that each is independently pinned.
 
 - [ ] **Step 6: Mutation M7 — delete the early return**
 
-Delete Task 1 Step 6's early return. Run the file.
+Delete Task 1 Step 6's early return. Run the **whole unit file**, not just this
+block — the failure is not contained to it.
 
-Expected: **FAIL** on `'answers a visibly-terminal row from the read, without
-attempting the write'` — `updateManyCalls` has length 1. Every other test in
-the branch still passes, which is spec §3.4's predicted survivor made concrete.
-Record both halves of that. Restore and re-run green.
+Expected: **FAIL in two places.** This block's own `'answers a visibly-terminal
+row from the read, without attempting the write'` fails on `updateManyCalls`
+having length 1 instead of 0 — the query-count half. Task 1's `'reports
+terminal, not locked, when the class is both'` (T5) fails too, on the
+*correctness* half: without the early return, `cls.settingsLocked &&
+sentEconomic !== null` fires next for a class that is both terminal and locked
+with an economic field sent, and answers `locked` before the CAS ever runs.
+Record both failures' exact text — there is no predicted survivor here (spec
+§3.4 corrects an earlier draft that claimed there was). Restore and re-run
+green.
 
 - [ ] **Step 7: Commit**
 
@@ -1331,9 +1390,10 @@ there is nothing for CI's drift check to catch — confirm rather than assume.
 - [ ] **Step 4: Confirm the mutation ledger is complete**
 
 Eleven tests, eleven mutations (M1–M11, with M6 run twice, once per filter arm).
-Each needs its exact recorded error text. The one predicted survivor — deleting
-the early return, which no DB-backed test can see — is covered by T9 and
-recorded as *designed*, not as a gap.
+Each needs its exact recorded error text, and none of them survive the suite —
+deleting the early return (M7) reddens both T5 (DB-backed, on the wrong
+refusal reason) and T9 (stub, on the write-count assertion); see spec §3.4 for
+why an earlier draft claimed otherwise.
 
 ---
 
@@ -1343,7 +1403,8 @@ Checked against the spec:
 
 - §3.1 variant → Task 1 Step 4. §3.2 three sites → Steps 6–8. The `in_progress`
   boundary → Task 1 Step 2's `it.each`. §3.3 mandatory branch → Step 8, proved
-  by Task 2 M5. §3.4 predicted survivor → Task 2 M7. §3.5 docblocks → Steps 4–5.
+  by Task 2 M5. §3.4 (no predicted survivor; M7 reddens both T5 and T9) →
+  Task 2 M7. §3.5 docblocks → Steps 4–5.
 - §4 trigger → Task 4 Steps 1–2. §4.1 narrowness → argued in the migration
   comment. §4.2 measurement → carried into that comment so it survives where a
   future reader will look.

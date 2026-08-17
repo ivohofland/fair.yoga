@@ -43,8 +43,11 @@ is filed separately (§7), not fixed here.
 
 **(b) A read-then-return guard would not hold.** `updateClass` does
 `findUnique` → `updateMany` and takes no lock. `completeClass` takes a `Class`
-row lock and re-reads under it (`class-transitions.ts:535`, `requireEndedBy`),
-so it can commit between `updateClass`'s read and its write. The existing
+row lock and re-reads under it — `lockClassRow` at `class-lifecycle.ts:324`,
+and the `requireEndedBy` comparison at `:349-360`, both in the same file as
+`updateClass` itself (not `class-transitions.ts`, which only *passes* the
+option in, at `:535`) — so it can commit between `updateClass`'s read and its
+write. The existing
 `settingsLocked` handling already solves the identical race the identical way,
 and says so at `class-lifecycle.ts:672`: *"The compare-and-swap inside the
 write is the one that matters."* The terminal guard gets the same construction
@@ -107,7 +110,8 @@ export type UpdateClassResult =
 `status` rides along so the route can name it back to the teacher — the same
 reason `locked` carries `fields`. It is `ClassStatus` rather than a narrowed
 terminal union: the value is only ever read for a message, and narrowing it
-would need a type guard at each of the three construction sites for no gain.
+would need a type guard at each of the two construction sites (the early
+return and the disambiguation branch, §3.2) for no gain.
 
 ### 3.2 Three sites, mirroring `settingsLocked`
 
@@ -179,19 +183,35 @@ The branch is therefore load-bearing on the *common* path reached through the
 CAS, not only on the racing path. It is the branch with the sharpest mutation in
 the branch (§5).
 
-### 3.4 The early return is an optimisation, not the guard
+### 3.4 The early return is an optimisation for every case but one
 
-Deleting it changes no result: the CAS re-derives `terminal` identically, via
-§3.2 and §3.3. This is the same property the existing docblock claims for the
-first `settingsLocked` check — *"Deleting the first check would cost round
-trips, not correctness"* — and it means **a mutation that removes the early
-return legitimately survives the suite.** Predicted here so that a reviewer
-finding it reads it as designed rather than as a hole.
+Deleting it changes the result in exactly one case: a class that is BOTH
+terminal and settings-locked, edited with an economic field sent. Without the
+early return, control falls straight into `if (cls.settingsLocked &&
+sentEconomic !== null)` and answers `locked` — the wrong one of the two true
+refusals; §3.2's ordering decision says `terminal` is the truer answer when
+both apply, and only the early return delivers it, because that branch runs
+before the CAS ever does. T5 (§5) pins exactly this case.
 
-What distinguishes the two paths is observable, and the existing suite already
-knows how: `'answers a visibly-locked row from the read, without attempting the
-write'` asserts `updateManyCalls).toHaveLength(0)`. The terminal case gets the
-same treatment.
+That corrects an earlier draft of this section, which claimed the deletion was
+invisible to the whole suite by analogy with the `settingsLocked` check's own
+docblock claim — *"Deleting the first check would cost round trips, not
+correctness."* The analogy holds for the ECONOMIC check (the CAS reproduces
+`locked` with the identical field list on its own) but not for the TERMINAL
+one. **There is no predicted-survivor mutation for this early return.**
+Deleting it reddens T5 today, on the DB-backed suite alone, and will
+additionally redden T9 once Task 2 lands.
+
+Everywhere else — any class that is terminal but not locked, or locked but not
+terminal — deleting the early return costs round trips only: the CAS
+re-derives `terminal` (or `locked`) identically, via §3.2 and §3.3, and the
+existing suite already covers those paths (T1–T4).
+
+What distinguishes the two paths for the query-count question is still
+observable, and the existing suite already knows how: `'answers a
+visibly-locked row from the read, without attempting the write'` asserts
+`updateManyCalls).toHaveLength(0)`. The terminal case gets the same
+treatment — that is what T9 is for.
 
 ### 3.5 Docblock corrections in this file
 
@@ -295,7 +315,7 @@ also be caught by a different guard proves nothing about the one it targets.
 | T6 | `draft`, `open` **and `in_progress`** classes still update normally | same | Add the status under test to the guard's frozen set. This is the test that proves the guard *can* pass, and the only one that pins the boundary — a mutation freezing `in_progress` would otherwise pass every other test in this table |
 | T7 | Stub `db`: count 0 + terminal on the re-read → `terminal`, not a throw | `class-lifecycle.test.ts` stub block | Delete §3.3's branch → `UpdateClassInvariantError` |
 | T8 | Stub `db`: both `where` shapes carry the `notIn` conjunct, asserted on `updateManyCalls[0].where` | same | Drop the conjunct from either shape |
-| T9 | The early return answers without attempting a write (`updateManyCalls).toHaveLength(0)`) | same | Delete the early return — the **only** test that distinguishes it, per §3.4 |
+| T9 | The early return answers without attempting a write (`updateManyCalls).toHaveLength(0)`) | same | Delete the early return — reddens T9 on the query-count assertion; T5 (§3.4) reddens too, on the wrong refusal reason, for the terminal-and-locked-with-economic-field case |
 | T10 | `PUT /api/classes/[id]` on a completed class answers **409**, not 500, and the stored date is unchanged | `tests/integration/classes-api.test.ts` | Change the mapped status code |
 | T11 | Raw SQL `UPDATE "Class" SET date = …` on a completed class is rejected with `23514` | **new** `src/services/class-terminal-date.test.ts` | `DROP TRIGGER class_terminal_date_guard` against `DATABASE_URL_TEST` |
 
@@ -317,8 +337,9 @@ carries the manual mutation recipe in its docblock, in the same shape as its
 sibling.
 
 Every mutation is run, its exact error text recorded, then restored and
-re-verified. §3.4's predicted survivor is the one exception, and it is covered
-by T9 instead.
+re-verified — including the early-return deletion: it reddens T5 on its own,
+on the DB-backed suite, and additionally reddens T9 once Task 2 lands (§3.4).
+No mutation in this table survives the suite.
 
 ### 5.2 One existing test's title stops being true
 
@@ -396,8 +417,9 @@ belongs to that decision, not to this one.
 - The refusal survives the read-to-write race, because the CAS re-derives it.
 - `class_terminal_date_guard` rejects a raw-SQL `date` change on a terminal
   class with `23514`.
-- Eleven tests, eleven mutations, each recorded with its exact error text; the
-  one predicted survivor (§3.4) is named in advance and covered by T9.
+- Eleven tests, eleven mutations, each recorded with its exact error text; none
+  survives the suite — §3.4 corrects an earlier draft's claim that the
+  early-return deletion was one legitimate exception.
 - Both artifacts in §6 state that the residual is closed, and §5.2's test title
   no longer over-claims.
 - `npm run verify` green — all three vitest projects, with the arithmetic in the

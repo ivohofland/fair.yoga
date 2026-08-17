@@ -655,7 +655,8 @@ export class UpdateClassInvariantError extends Error {}
  * the caller owns the wording and needs to name what happened. It is plain
  * `ClassStatus` rather than a narrowed terminal union — the value is only ever
  * read into a message, and narrowing it would cost a type guard at each of the
- * three construction sites for nothing.
+ * two construction sites (the early return and the disambiguation branch,
+ * below) for nothing.
  *
  * Every *business* outcome of an update is a variant here. The one non-outcome
  * — an invariant violation, where the function's own reasoning about its
@@ -686,8 +687,12 @@ export type UpdateClassResult =
  * query instead of three. The compare-and-swap inside the write is the one
  * that matters — it catches a first registration, or a completion, landing
  * between that read and this write, and on its own it produces the identical
- * result, list of offending fields included. Deleting either first check would
- * cost round trips, not correctness.
+ * result, list of offending fields included. Deleting the ECONOMIC check costs
+ * round trips, not correctness, for exactly that reason. Deleting the TERMINAL
+ * check is not as free: for a class that is BOTH terminal and settings-locked
+ * with an economic field sent, control then reaches the `settingsLocked` check
+ * next and answers `locked` — the wrong one of the two true refusals — before
+ * the CAS ever runs. Everywhere else it too costs only round trips.
  *
  * The terminal freeze additionally has a database backstop for `date` alone
  * (`class_terminal_date_guard`), because that is the column
@@ -701,9 +706,12 @@ export async function updateClass(
   const cls = await db.class.findUnique({ where: { id: classId } });
   if (!cls) return { ok: false, reason: 'not_found' };
 
-  // Checked BEFORE the economic lock, and the order is the answer to "which
-  // refusal is true when both are". See the compare-and-swap below: this early
-  // return is the optimisation, that is the guard.
+  // Checked BEFORE the economic lock: for every case except one, this is an
+  // optimisation only — the CAS below re-derives the same refusal. The
+  // exception is a class that is BOTH terminal and settings-locked with an
+  // economic field sent: without this early return, `cls.settingsLocked &&
+  // sentEconomic !== null` fires next and answers `locked`, so THIS check is
+  // what makes `terminal` the true answer when both apply, not the CAS.
   if (TERMINAL_CLASS_STATUSES.includes(cls.status)) {
     return { ok: false, reason: 'terminal', status: cls.status };
   }
@@ -751,11 +759,13 @@ export async function updateClass(
   // never would. Postgres validates a multi-key violation in the indexes'
   // OID order, and `Class_templateId_date_key` is older than
   // `Class_teacher_slot_unique`, so this is the one Postgres reports first.
+  //
   // Terminality re-checked in the filter for exactly the reason
-  // `settingsLocked` is: `completeClass` takes a `Class` row lock and re-reads
-  // under it (`class-transitions.ts`, `requireEndedBy`), so a completion can
-  // commit between this function's opening read and this write. This function
-  // takes no lock at all.
+  // `settingsLocked` is: `completeClass` (this same file) takes a `Class` row
+  // lock and re-reads under it — `lockClassRow` at :324, and the
+  // `requireEndedBy` comparison at :349-360 — so a completion can commit
+  // between this function's opening read and this write. This function takes
+  // no lock at all.
   //
   // Spread copy because `TERMINAL_CLASS_STATUSES` is `readonly` and Prisma's
   // `notIn` wants a mutable array — the same reason `gdpr.ts` spreads

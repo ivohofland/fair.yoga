@@ -1223,6 +1223,14 @@ describe('updateClass (DB)', () => {
   // registrations-api's `locks settings atomically with the first
   // registration`. Do not copy this shortcut into a test that claims to cover
   // the flip itself.
+  //
+  // `status` (#247) is the same shortcut for the same reason: writing a
+  // terminal status directly is an INPUT precondition for updateClass's own
+  // guard, not the behaviour under test, and it bypasses `completeClass` /
+  // `transitionClass` and the state machine's own transition guards entirely.
+  // A test that claims to cover a class actually REACHING a terminal status —
+  // as opposed to what updateClass does once it is already sitting in one —
+  // needs to drive it through those, not through this fixture.
   // Counter-derived startTime: every test in this block shares one teacher and
   // one date, and none of them reads or asserts the created row's literal
   // startTime (the one test that changes it does so via an updateClass() call,
@@ -1435,6 +1443,13 @@ describe('updateClass (DB)', () => {
 
     const result = await updateClass(prisma, cls.id, { date: new Date('2020-01-01') });
     expect(result).toEqual({ ok: false, reason: 'terminal', status: 'cancelled' });
+
+    // Same "did not write" check as the completed case above, and not
+    // optional here either: `reapClosedWaitlistEntries` reaps a `cancelled`
+    // class's queue too, not only a `completed` one, so a refuse-but-write bug
+    // on this path is the identical data-loss shape as T1's.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.date.toISOString().slice(0, 10)).toBe('2026-06-01');
   });
 
   it('freezes the whole class, not a field list — a description edit is refused', async () => {
@@ -1457,6 +1472,10 @@ describe('updateClass (DB)', () => {
 
     const result = await updateClass(prisma, cls.id, { roomCost: 999 });
     expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+
+    // Cheap and consistent with T1/T2: assert the economic column did not move.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(Number(after.roomCost)).toBe(35);
   });
 
   it('reports terminal, not locked, when the class is both', async () => {
@@ -1467,6 +1486,12 @@ describe('updateClass (DB)', () => {
 
     const result = await updateClass(prisma, cls.id, { roomCost: 999 });
     expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+
+    // Cheap and consistent with T1/T2/T4: assert the economic column did not
+    // move — under either refusal reason this class would refuse the write,
+    // but only `terminal` is the true one here.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(Number(after.roomCost)).toBe(35);
   });
 
   it.each(['draft', 'open', 'in_progress'] as const)(
