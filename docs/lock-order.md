@@ -849,7 +849,8 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
 - **`reapClosedWaitlistEntries`** (`src/services/waitlist-retention.ts`) —
   `Class`, then `WaitlistEntry`, one class per `db.$transaction` via
   `lockClassRow`. **Deliberately a single-row-lock site**, like
-  `autoCancelClasses` and unlike the five `lockClassRowsOrdered` sites.
+  `autoCancelClasses` and unlike the five `lockClassRowsOrdered` sites counted
+  under **Ordering WITHIN `Class`**.
   **But holding one row lock is not by itself why it is safe**, and that is the
   multiplicity bound this document retires at "Ordering WITHIN `Class`" above:
   since #196 a single-row write can be half of a slot-key deadlock while holding
@@ -877,8 +878,9 @@ was a live, reproduced deadlock in real production code, not a theoretical one.
   batches**. An earlier version of this bullet credited one-class-at-a-time with
   removing the cycle; it does not, and a future site copying that reasoning
   without also pre-locking its parents would inherit a deadlock this sweep does
-  not have. What one class at a time actually buys is the "five sites" count
-  immediately below staying true, and a bound on how long the sweep holds locks
+  not have. What one class at a time actually buys is the "**five** sites lock
+  more than one `Class` row" count under **Ordering WITHIN `Class`** — above,
+  not below — staying true, and a bound on how long the sweep holds locks
   against live traffic.
 
 ## Known safe by accident, not by order — not fixed here
