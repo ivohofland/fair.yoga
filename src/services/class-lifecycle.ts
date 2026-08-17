@@ -651,6 +651,12 @@ export class UpdateClassInvariantError extends Error {}
  * all, for a request that touched none — the compiler now refuses to construct
  * that. Callers own the user-facing wording; this type owns the distinction.
  *
+ * `terminal` carries the status for the same reason `locked` carries fields:
+ * the caller owns the wording and needs to name what happened. It is plain
+ * `ClassStatus` rather than a narrowed terminal union — the value is only ever
+ * read into a message, and narrowing it would cost a type guard at each of the
+ * three construction sites for nothing.
+ *
  * Every *business* outcome of an update is a variant here. The one non-outcome
  * — an invariant violation, where the function's own reasoning about its
  * inputs turns out to be wrong — is not encoded as a value; it throws
@@ -660,19 +666,32 @@ export type UpdateClassResult =
   | { ok: true; cls: Class }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'locked'; fields: readonly [EconomicField, ...EconomicField[]] }
+  | { ok: false; reason: 'terminal'; status: ClassStatus }
   | { ok: false; reason: 'no_fields' }
   | { ok: false; reason: 'slot_conflict' }
   | { ok: false; reason: 'template_date_conflict' };
 
 /**
- * Apply a partial update to a class, enforcing the economic-field lock.
+ * Apply a partial update to a class, enforcing two independent freezes.
  *
- * The lock is checked twice. The first check, against the row we just read, is
- * an optimisation: it answers the common case in one query instead of three.
- * The compare-and-swap inside the write is the one that matters — it catches a
- * first registration landing between that read and this write, and on its own
- * it produces the identical result, list of offending fields included.
- * Deleting the first check would cost round trips, not correctness.
+ * They gate on different events and cover different things. The ECONOMIC
+ * freeze (`settingsLocked`) starts at the first registration and covers
+ * `ECONOMIC_FIELDS`; a teacher could in principle undo it by removing the
+ * registration. The TERMINAL freeze (#247) starts when the class reaches
+ * `completed` or `cancelled` and covers EVERY field — it is the class that is
+ * frozen, not a list of columns — and it never lifts.
+ *
+ * Both are checked twice, for the same reason. The first check, against the
+ * row we just read, is an optimisation: it answers the common case in one
+ * query instead of three. The compare-and-swap inside the write is the one
+ * that matters — it catches a first registration, or a completion, landing
+ * between that read and this write, and on its own it produces the identical
+ * result, list of offending fields included. Deleting either first check would
+ * cost round trips, not correctness.
+ *
+ * The terminal freeze additionally has a database backstop for `date` alone
+ * (`class_terminal_date_guard`), because that is the column
+ * `waitlist-retention.ts` reads before it deletes.
  */
 export async function updateClass(
   db: PrismaClient,
@@ -681,6 +700,13 @@ export async function updateClass(
 ): Promise<UpdateClassResult> {
   const cls = await db.class.findUnique({ where: { id: classId } });
   if (!cls) return { ok: false, reason: 'not_found' };
+
+  // Checked BEFORE the economic lock, and the order is the answer to "which
+  // refusal is true when both are". See the compare-and-swap below: this early
+  // return is the optimisation, that is the guard.
+  if (TERMINAL_CLASS_STATUSES.includes(cls.status)) {
+    return { ok: false, reason: 'terminal', status: cls.status };
+  }
 
   // Destructured rather than length-checked, so the non-empty tuple below is
   // proven to the compiler (via noUncheckedIndexedAccess) instead of asserted.
@@ -725,10 +751,23 @@ export async function updateClass(
   // never would. Postgres validates a multi-key violation in the indexes'
   // OID order, and `Class_templateId_date_key` is older than
   // `Class_teacher_slot_unique`, so this is the one Postgres reports first.
+  // Terminality re-checked in the filter for exactly the reason
+  // `settingsLocked` is: `completeClass` takes a `Class` row lock and re-reads
+  // under it (`class-transitions.ts`, `requireEndedBy`), so a completion can
+  // commit between this function's opening read and this write. This function
+  // takes no lock at all.
+  //
+  // Spread copy because `TERMINAL_CLASS_STATUSES` is `readonly` and Prisma's
+  // `notIn` wants a mutable array — the same reason `gdpr.ts` spreads
+  // `CANCELLABLE_STATUSES` into its own status CAS.
+  const live = { status: { notIn: [...TERMINAL_CLASS_STATUSES] } };
+
   let result: Prisma.BatchPayload;
   try {
     result = await db.class.updateMany({
-      where: sentEconomic !== null ? { id: classId, settingsLocked: false } : { id: classId },
+      where: sentEconomic !== null
+        ? { id: classId, settingsLocked: false, ...live }
+        : { id: classId, ...live },
       data,
     });
   } catch (err) {
@@ -755,20 +794,32 @@ export async function updateClass(
     // the field name it names looks entirely plausible.
     const stillExists = await db.class.findUnique({
       where: { id: classId },
-      select: { id: true },
+      select: { id: true, status: true },
     });
     if (!stillExists) return { ok: false, reason: 'not_found' };
+
+    // The class went terminal between the opening read and the write — the
+    // race the CAS above exists to lose. This branch is NOT optional cleanup:
+    // without it a `date`-only edit on a completed class reaches the throw
+    // below (the row exists, and `date` is not economic, so `sentEconomic` is
+    // null) and `withErrorHandler` answers 500 — for the single most likely
+    // request #247 is about. Adding the conjunct without adding this branch
+    // is strictly worse than adding neither.
+    if (TERMINAL_CLASS_STATUSES.includes(stillExists.status)) {
+      return { ok: false, reason: 'terminal', status: stillExists.status };
+    }
 
     // The row survives, so the only other conjunct that can have failed is
     // `settingsLocked: false` — which is only ever in the filter when
     // economic fields were sent.
     if (sentEconomic !== null) return { ok: false, reason: 'locked', fields: sentEconomic };
 
-    // Unreachable, and now actually so: `hasEdit` above guarantees at least
-    // one defined value, so Prisma issues a real UPDATE whose `{ id }` filter
-    // can only match zero rows if the row is gone — and the re-read above
-    // would have caught that. Loud rather than silently returning a
-    // plausible-but-wrong reason.
+    // Unreachable, and still actually so now that a third conjunct is in the
+    // filter: `hasEdit` above guarantees Prisma issues a real UPDATE, and
+    // every conjunct that UPDATE can fail on has just been re-read — the row
+    // exists, it is not terminal, and `settingsLocked: false` is only ever in
+    // the filter when economic fields were sent. Loud rather than silently
+    // returning a plausible-but-wrong reason.
     throw new UpdateClassInvariantError(
       `updateClass: class ${classId} matched no rows but still exists`,
     );

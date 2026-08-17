@@ -70,6 +70,14 @@ export const PUT = withErrorHandler(async (
       409,
     );
   }
+  // #247. A terminal class is frozen whole, not by field list, so this is not
+  // a `locked` variant with a different set — the two have different trigger
+  // points and only one of them can be undone. 409 rather than 403: the
+  // request is well-formed and the teacher does own the class; it conflicts
+  // with a state the class has already reached.
+  if (result.reason === 'terminal') {
+    return respondError(`Cannot edit a class that is ${result.status}`, 409);
+  }
   // A reschedule (date/startTime) landed on a slot this teacher already
   // occupies with another live class (#196) — the same clash a `POST` into
   // that slot reports, reached here by a move instead of a create.

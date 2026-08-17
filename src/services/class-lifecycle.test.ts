@@ -3,6 +3,7 @@ import { PrismaClient, type ClassStatus } from '@prisma/client';
 import { classStartInstant } from '@/lib/timezone';
 import {
   VALID_TRANSITIONS,
+  TERMINAL_CLASS_STATUSES,
   ECONOMIC_FIELDS,
   canTransition,
   validateTransition,
@@ -1222,15 +1223,17 @@ describe('updateClass (DB)', () => {
   // registrations-api's `locks settings atomically with the first
   // registration`. Do not copy this shortcut into a test that claims to cover
   // the flip itself.
-  // Counter-derived startTime: this block calls makeClass 8 times for one
-  // shared teacher/date, and no test here reads or asserts the created
-  // row's literal startTime (the one test that changes it does so via an
-  // updateClass() call, asserted against its new value, not this one) — so
-  // a distinct minute per call is enough to keep every create legal under
-  // Class_teacher_slot_unique without touching any assertion. Routed through
-  // the module-level `slotTime` rather than a raw `09:${counter}` literal.
+  // Counter-derived startTime: every test in this block shares one teacher and
+  // one date, and none of them reads or asserts the created row's literal
+  // startTime (the one test that changes it does so via an updateClass() call,
+  // asserted against its new value, not this one) — so a distinct minute per
+  // call is enough to keep every create legal under Class_teacher_slot_unique
+  // without touching any assertion. Deliberately stated without a call count:
+  // the previous wording named one ("8 times"), and #247 adding tests here
+  // falsified it silently. Routed through the module-level `slotTime` rather
+  // than a raw `09:${counter}` literal.
   let makeClassCounter = 0;
-  const makeClass = (settingsLocked: boolean) => {
+  const makeClass = (settingsLocked: boolean, status: ClassStatus = 'draft') => {
     makeClassCounter += 1;
     return prisma.class.create({
       data: {
@@ -1245,7 +1248,7 @@ describe('updateClass (DB)', () => {
         targetRate: 25,
         minStudents: 4,
         maxStudents: 12,
-        status: 'draft',
+        status,
         settingsLocked,
       },
     });
@@ -1412,6 +1415,78 @@ describe('updateClass (DB)', () => {
     const result = await updateClass(prisma, cls.id, { description: undefined });
     expect(result).toEqual({ ok: false, reason: 'no_fields' });
   });
+
+  it('refuses a date edit on a completed class, and writes nothing (#247)', async () => {
+    const cls = await makeClass(false, 'completed');
+
+    const result = await updateClass(prisma, cls.id, { date: new Date('2020-01-01') });
+    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+
+    // "Refused" has to mean "did not write". #247 is a data-loss issue: the
+    // wrong date is what makes waitlist-retention's sweep delete this class's
+    // unfulfilled queue, so a refusal that still moved the column would close
+    // nothing.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.date.toISOString().slice(0, 10)).toBe('2026-06-01');
+  });
+
+  it('refuses a date edit on a cancelled class too', async () => {
+    const cls = await makeClass(false, 'cancelled');
+
+    const result = await updateClass(prisma, cls.id, { date: new Date('2020-01-01') });
+    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'cancelled' });
+  });
+
+  it('freezes the whole class, not a field list — a description edit is refused', async () => {
+    const cls = await makeClass(false, 'completed');
+
+    const result = await updateClass(prisma, cls.id, { description: 'Annotated afterwards' });
+    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.description).toBeNull();
+  });
+
+  it('refuses an economic edit on a completed class nobody booked', async () => {
+    // settingsLocked is written by the FIRST REGISTRATION, so a class that
+    // reached `completed` with no bookings still carries `false` and would
+    // otherwise accept this edit — on a row whose totals completeClass has
+    // already written. The economic lock and the terminal freeze gate on
+    // different events; this is the gap between them.
+    const cls = await makeClass(false, 'completed');
+
+    const result = await updateClass(prisma, cls.id, { roomCost: 999 });
+    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+  });
+
+  it('reports terminal, not locked, when the class is both', async () => {
+    // Pins the ORDER of the two early checks. `locked` reads as a state the
+    // teacher could undo by removing a registration; the terminal freeze never
+    // lifts, so it is the truer answer when both apply.
+    const cls = await makeClass(true, 'completed');
+
+    const result = await updateClass(prisma, cls.id, { roomCost: 999 });
+    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+  });
+
+  it.each(['draft', 'open', 'in_progress'] as const)(
+    'still updates a %s class — the freeze starts at terminality, not at "not editable in the UI"',
+    async (status) => {
+      // `in_progress` is here deliberately. The teacher edit page redirects
+      // away from it, but the API allows it and should: the retention sweep
+      // reads only terminal classes, and completeClass's `requireEndedBy`
+      // already handles a class rescheduled out from under a completion.
+      // Without this case a mutation that froze `in_progress` too would pass
+      // every other test in this file.
+      const cls = await makeClass(false, status);
+
+      const result = await updateClass(prisma, cls.id, { description: `Edited while ${status}` });
+      expect(result.ok).toBe(true);
+
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(after.description).toBe(`Edited while ${status}`);
+    },
+  );
 });
 
 describe('updateClass — the count === 0 branches', () => {
@@ -1465,7 +1540,11 @@ describe('updateClass — the count === 0 branches', () => {
     // returns an identical value and would otherwise be indistinguishable —
     // and pins the guard whose removal this suite previously did not notice.
     expect(updateManyCalls).toHaveLength(1);
-    expect(updateManyCalls[0]?.where).toEqual({ id: 'stub-class', settingsLocked: false });
+    expect(updateManyCalls[0]?.where).toEqual({
+      id: 'stub-class',
+      settingsLocked: false,
+      status: { notIn: [...TERMINAL_CLASS_STATUSES] },
+    });
 
     // Exactly the opening read plus one re-check — a spurious third
     // `findUnique` would be invisible to every other assertion here. Read via
@@ -1496,7 +1575,10 @@ describe('updateClass — the count === 0 branches', () => {
     expect(result).toEqual({ ok: false, reason: 'not_found' });
 
     // No economic fields sent, so the filter must NOT constrain settingsLocked.
-    expect(updateManyCalls[0]?.where).toEqual({ id: 'stub-class' });
+    expect(updateManyCalls[0]?.where).toEqual({
+      id: 'stub-class',
+      status: { notIn: [...TERMINAL_CLASS_STATUSES] },
+    });
 
     // Exactly the opening read plus one re-check — a spurious third
     // `findUnique` would be invisible to every other assertion here. Read via
