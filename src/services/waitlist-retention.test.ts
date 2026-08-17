@@ -653,13 +653,20 @@ describe('reapClosedWaitlistEntries', () => {
    * return values — the log is the only channel an operator has, so a flag
    * nobody reads is not a report.
    *
-   * `eligibleAtLeast` is asserted against a count this test takes ITSELF, which
-   * is what distinguishes a measurement from a constant. The reported figure
-   * used to be `candidates.length`, and because the candidate read is
-   * `take: maxClasses + 1` that is always exactly `maxClasses + 1` whenever
-   * `cappedOut` — it would print 2 here however many classes were really
-   * waiting. Restoring that mutation makes the equality below fail as long as
-   * more than two classes are eligible, which the fixtures guarantee.
+   * `eligible` is asserted against a count this test takes ITSELF, which is what
+   * distinguishes a measurement from a constant. The reported figure used to be
+   * `candidates.length`, and because the candidate read is `take: maxClasses + 1`
+   * that is always exactly `maxClasses + 1` whenever `cappedOut` — it would print
+   * 2 here however many classes were really waiting. Restoring that mutation
+   * makes the equality below fail as long as more than two classes are eligible,
+   * which the fixtures guarantee.
+   *
+   * The count below restates the predicate as LITERALS — `['promoted','claimed']`,
+   * `['completed','cancelled']` — rather than importing the two derived
+   * constants. That is what makes it independent: a test that rebuilt the
+   * predicate from the same constants the sweep uses would agree with it under
+   * any mistake in either constant, which is the failure
+   * `waitlist-status.test.ts`'s membership assertions exist to catch.
    */
   it('reports being capped, with the real eligible count, and says so in the log', async () => {
     // THREE of its own, not two: the assertion below needs the real eligible
@@ -693,7 +700,7 @@ describe('reapClosedWaitlistEntries', () => {
 
       expect(summary.cappedOut).toBe(true);
       expect(summary.classes).toBe(1);
-      expect(summary.eligibleAtLeast).toBe(eligibleBefore);
+      expect(summary.eligible).toBe(eligibleBefore);
       expect(warn).toHaveBeenCalledWith(
         expect.objectContaining({ cap: 1, eligible: eligibleBefore, drainDays: eligibleBefore }),
         expect.stringContaining('per-run class cap'),
@@ -747,6 +754,14 @@ describe('reapClosedWaitlistEntries', () => {
     expect(summary.cappedOut).toBe(false);
     expect(summary.classes).toBeGreaterThanOrEqual(2);
     expect(summary.failed).toBe(0);
+    // The two summary fields nothing else pins. Both survived mutation before
+    // this: `cutoff: 'MUTANT'` and an `eligible` initialised to `-999` left the
+    // whole suite green, because the cap test overwrites `eligible` on its own
+    // path and no test read `cutoff` at all. `cutoff` is the run's only durable
+    // record of WHICH window an irreversible delete applied, which makes it the
+    // last field that should be assertion-free.
+    expect(summary.cutoff).toBe(CUTOFF.toISOString());
+    expect(summary.eligible).toBe(summary.classes);
     expect(await entryExists(first.entryId)).toBe(false);
     expect(await entryExists(second.entryId)).toBe(false);
 

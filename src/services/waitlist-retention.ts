@@ -181,17 +181,24 @@ export interface ReapSummary {
   /** True when more classes were eligible than the cap allowed. */
   readonly cappedOut: boolean;
   /**
-   * How many classes were eligible in total.
+   * How many classes were eligible in total. Exact on both paths.
    *
-   * Equal to `classes` on the uncapped path. On the capped path it is a real
-   * `COUNT`, taken only there — the candidate read stops at `maxClasses + 1`, so
-   * `candidates.length` cannot answer this, and an earlier revision logged that
-   * length as if it could: it is always exactly `maxClasses + 1` whenever
-   * `cappedOut`, i.e. a constant dressed as a measurement. An operator needs the
-   * real figure to tell a backlog that drains tomorrow from one that takes a
-   * hundred days.
+   * On the uncapped path it is `classes`, and that is the whole eligible set
+   * rather than a floor: `take: maxClasses + 1` means a batch below the cap
+   * cannot have left anything behind. On the capped path it is a real `COUNT`,
+   * taken only there — `candidates.length` cannot answer this, and an earlier
+   * revision logged that length as if it could: it is always exactly
+   * `maxClasses + 1` whenever `cappedOut`, i.e. a constant dressed as a
+   * measurement. An operator needs the real figure to tell a backlog that drains
+   * tomorrow from one that takes a hundred days.
+   *
+   * Named `eligible` and not `eligibleAtLeast` for that reason. The hedge
+   * described no path this code has, and the log line below already emitted the
+   * value under the honest key — one number under two names, one of them weaker
+   * than the truth, is a smaller version of the same defect the paragraph above
+   * records.
    */
-  readonly eligibleAtLeast: number;
+  readonly eligible: number;
   /**
    * The cutoff this run used, ISO-8601.
    *
@@ -308,21 +315,40 @@ export async function reapClosedWaitlistEntries(
   //
   // `candidates.length` cannot answer this: `take: maxClasses + 1` pins it to
   // exactly `maxClasses + 1` whenever `cappedOut`, so reporting it says only
-  // "more than the cap" in a shape that looks like a measurement. A second
-  // `COUNT(DISTINCT ...)` over the same predicate is a real scan, which is why
-  // it is not taken on the steady-state path — by design the cap is never hit
-  // there, so this costs nothing in normal operation and buys an operator the
-  // one number `MAX_CLASSES_PER_RUN` exists to make them think about.
-  let eligibleAtLeast = batch.length;
+  // "more than the cap" in a shape that looks like a measurement.
+  //
+  // A SECOND `groupBy` and not a scalar `count`, which is the opposite of what
+  // it looks like it should be. MEASURED, at 5,000 terminal classes / 50,000
+  // entries on postgres:16-alpine, warm, `EXPLAIN (ANALYZE, BUFFERS)`:
+  //
+  //   this `groupBy`                          21.5 ms   926 buffers
+  //   db.class.count({ waitlistEntries:
+  //     { some: reapable } })                 46.0 ms  35137 buffers
+  //   raw COUNT(DISTINCT w."classId")         60.2 ms   929 buffers
+  //
+  // Review proposed the scalar `count` to avoid materialising one row per
+  // eligible class in the Node heap on the one path where the set is large by
+  // definition. The reasoning was sound and the measurement contradicted it:
+  // Prisma compiles a nested relation filter under `some` into a semi-join whose
+  // inner side re-joins `Class` to itself, so it runs a nested loop over every
+  // `Class` row — 2.1x the time and 38x the buffer traffic to save a list that
+  // is 5,000 short strings here. `COUNT(DISTINCT)` is worse again: it sorts all
+  // 50,000 matching rows where this hash-aggregates them.
+  //
+  // So the row list stays, and the thing that bounds it is `MAX_CLASSES_PER_RUN`
+  // being small enough that the eligible set behind it is too. If a backlog ever
+  // makes this list itself the problem, the answer is a smaller cap or a bounded
+  // "at least N" report — not a different shape of count, both of which were
+  // tried here and are slower.
+  let eligible = batch.length;
   if (cappedOut) {
-    const eligible = await db.waitlistEntry.groupBy({ by: ['classId'], where: reapable });
-    eligibleAtLeast = eligible.length;
-    const drainDays = Math.ceil(eligibleAtLeast / maxClasses);
+    eligible = (await db.waitlistEntry.groupBy({ by: ['classId'], where: reapable })).length;
+    const drainDays = Math.ceil(eligible / maxClasses);
     // Logged, not merely returned. A sweep that silently processes 500 of 900
     // eligible classes reads as "covered everything" in every downstream
     // report, and `isolatedSweeps` throws the return value away.
     log.warn(
-      { cap: maxClasses, eligible: eligibleAtLeast, drainDays },
+      { cap: maxClasses, eligible, drainDays },
       'waitlist retention hit its per-run class cap; the remainder waits for the next run',
     );
   }
@@ -380,7 +406,7 @@ export async function reapClosedWaitlistEntries(
     classes: batch.length,
     failed,
     cappedOut,
-    eligibleAtLeast,
+    eligible,
     cutoff: cutoff.toISOString(),
   };
   report(summary);
