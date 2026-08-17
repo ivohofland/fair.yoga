@@ -1526,19 +1526,32 @@ describe('updateClass — the count === 0 branches', () => {
   // passing.
   type UpdateManyArgs = { where: Record<string, unknown>; data: Record<string, unknown> };
 
-  function stubDb(opts: { settingsLocked: boolean; rowSurvives: boolean }) {
+  function stubDb(opts: {
+    settingsLocked: boolean;
+    rowSurvives: boolean;
+    // Reported by updateClass's opening read. Defaults to a non-terminal value
+    // so every pre-#247 case in this block behaves exactly as it did.
+    status?: ClassStatus;
+    // Reported by the re-read inside the `count === 0` branch. Defaults to
+    // `status`; set it different to stage the completion race.
+    statusAfter?: ClassStatus;
+  }) {
     const updateManyCalls: UpdateManyArgs[] = [];
     let reads = 0;
     const db = {
       class: {
         findUnique: async () => {
           reads += 1;
-          // Read 1 (updateClass's opening read) always reports the locked
-          // flag; every read after that reports current existence. The stub
-          // only distinguishes first from rest — it does not itself enforce
-          // that there are exactly two; `reads` below lets a test pin that.
-          if (reads === 1) return { id: 'stub-class', settingsLocked: opts.settingsLocked };
-          return opts.rowSurvives ? { id: 'stub-class' } : null;
+          if (reads === 1) {
+            return {
+              id: 'stub-class',
+              settingsLocked: opts.settingsLocked,
+              status: opts.status ?? 'open',
+            };
+          }
+          return opts.rowSurvives
+            ? { id: 'stub-class', status: opts.statusAfter ?? opts.status ?? 'open' }
+            : null;
         },
         updateMany: async (args: UpdateManyArgs) => {
           updateManyCalls.push(args);
@@ -1632,6 +1645,70 @@ describe('updateClass — the count === 0 branches', () => {
     // defect #72 was filed for.
     await expect(updateClass(db, 'stub-class', { description: 'x' }))
       .rejects.toThrow(UpdateClassInvariantError);
+  });
+
+  it('reports terminal when the class completed between the read and the write', async () => {
+    const stub = stubDb({
+      settingsLocked: false,
+      rowSurvives: true,
+      status: 'open',
+      statusAfter: 'completed',
+    });
+    const { db, updateManyCalls } = stub;
+
+    // A date-only edit, so `sentEconomic` is null. Before #247's
+    // disambiguation branch this combination fell through to
+    // UpdateClassInvariantError — a 500 for precisely the request the issue
+    // was filed about.
+    const result = await updateClass(db, 'stub-class', { date: new Date('2020-01-01') });
+    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+
+    // Proves the CAS path ran rather than the early return, which is
+    // otherwise indistinguishable — it returns the same shape.
+    expect(updateManyCalls).toHaveLength(1);
+    expect(stub.reads).toBe(2);
+  });
+
+  it('constrains the write to non-terminal rows under both filter shapes', async () => {
+    // Asserted against the constant, not a `['completed','cancelled']`
+    // literal: what this test owns is "the conjunct is present and derived",
+    // while the constant's own VALUES are pinned against the trigger SQL by
+    // class-terminal-status.test.ts. Restating them here would duplicate that
+    // pin badly — it would go stale independently.
+    const live = { status: { notIn: [...TERMINAL_CLASS_STATUSES] } };
+
+    const economic = stubDb({ settingsLocked: false, rowSurvives: true, statusAfter: 'completed' });
+    await updateClass(economic.db, 'stub-class', { roomCost: 42 });
+    expect(economic.updateManyCalls[0]?.where).toEqual({
+      id: 'stub-class',
+      settingsLocked: false,
+      ...live,
+    });
+
+    const plain = stubDb({ settingsLocked: false, rowSurvives: true, statusAfter: 'completed' });
+    await updateClass(plain.db, 'stub-class', { description: 'x' });
+    expect(plain.updateManyCalls[0]?.where).toEqual({ id: 'stub-class', ...live });
+  });
+
+  it('answers a visibly-terminal row from the read, without attempting the write', async () => {
+    const { db, updateManyCalls } = stubDb({
+      settingsLocked: false,
+      rowSurvives: true,
+      status: 'completed',
+    });
+
+    const result = await updateClass(db, 'stub-class', { date: new Date('2020-01-01') });
+    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+
+    // The point of this case, and the mirror of its `locked` sibling above:
+    // the pre-check answered it WITHOUT attempting a write. That is the
+    // query-count half of the evidence, and this test owns it. It is not the
+    // only test that can see the early return, and deleting it does not leave
+    // the result identical: Task 1's `'reports terminal, not locked, when the
+    // class is both'` (T5) owns the correctness half — a class that is both
+    // terminal and settings-locked with an economic field sent falls through
+    // to `locked` once this check is gone, before the CAS ever runs.
+    expect(updateManyCalls).toHaveLength(0);
   });
 });
 
