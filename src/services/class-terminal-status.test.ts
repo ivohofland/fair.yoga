@@ -367,7 +367,11 @@ describe('class terminal status trigger', () => {
     expect(after.status).toBe('cancelled');
   });
 
-  it('leaves non-status updates to a completed class alone', async () => {
+  it('leaves a non-status, non-date update to a completed class alone', async () => {
+    // Narrowed by #247. `date` is now guarded on a terminal class by a SECOND
+    // trigger, `class_terminal_date_guard`, pinned in the sibling file
+    // `class-terminal-date.test.ts`. This case is about THIS trigger's `OF
+    // status` scope, so it deliberately writes neither column.
     const { classId } = await makeClass({ status: 'open' });
     await prisma.class.updateMany({
       where: { id: classId, status: 'open' },
