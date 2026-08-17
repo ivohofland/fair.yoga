@@ -35,7 +35,9 @@ import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
  *   docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
  *     -c 'DROP TRIGGER class_terminal_date_guard ON "Class";'
  *   npx vitest run --project unit src/services/class-terminal-date.test.ts
- *   # first two tests fail: `caught` stays undefined, no exception to catch
+ *   # the two rejection cases fail: `caughtRaw` stays undefined, no exception
+ *   # to catch. The allow-cases and the drift pin stay green — with no trigger
+ *   # everything is allowed, and the pin reads a file, not the database.
  *
  * To restore: `CREATE OR REPLACE FUNCTION` is idempotent but `CREATE TRIGGER`
  * is not, so replaying the migration file only works while the trigger is
@@ -297,13 +299,28 @@ describe('class_terminal_date_guard', () => {
    * without this pin the DATE half would go unenforced for it with nothing
    * red. The sibling's pin would still pass: it only reads its own migration.
    *
-   * The `it.each` above catches the set GROWING (a new terminal status gets a
-   * rejection case that fails, because the SQL does not cover it). This
-   * catches the set SHRINKING, which nothing above can: give `cancelled` an
-   * outgoing transition and the set becomes `['completed']`, every generated
-   * case still passes because a case that is no longer generated cannot fail,
-   * and the reaper quietly stops reaping cancelled classes. The length
-   * assertions are the same hole at its limit — an empty set.
+   * The rejection `it.each` catches the set GROWING (a new terminal status
+   * gets a rejection case that fails, because the SQL does not cover it). It
+   * cannot catch the set SHRINKING: give `cancelled` an outgoing transition
+   * and the set becomes `['completed']`, and every case it still generates
+   * passes, because a case that is no longer generated cannot fail.
+   *
+   * Not the only thing that notices a shrink, and the honest version of this
+   * paragraph says so: `NON_TERMINAL_STATUSES` is the enum minus the terminal
+   * set, so a status leaving that set arrives in the allow-`it.each` directly
+   * above, where the raw date update meets SQL that still names it and throws
+   * `23514`. That case reddens too.
+   *
+   * This pin earns its place on two other grounds. It fails with a NAMED
+   * diagnostic — the two sets printed side by side — where the allow-case
+   * fails with a bare `23514` that reads as "the trigger is broken" rather
+   * than "the constant and the SQL have drifted apart", and misreading that
+   * points the next person at the migration instead of at
+   * `VALID_TRANSITIONS`. And it covers the limit neither `it.each` reaches:
+   * empty the terminal set and BOTH families generate vacuously — no
+   * rejection cases at all, and allow-cases that pass honestly — while the
+   * reaper stops reaping entirely. That is what the two length assertions are
+   * for.
    *
    * Read out of the migration's own SQL rather than restated here, so the
    * enforced set is written down in exactly one place. Regex over SQL is

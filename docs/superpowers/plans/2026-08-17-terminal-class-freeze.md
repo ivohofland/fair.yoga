@@ -881,10 +881,9 @@ git commit -m "test: the PUT freeze over HTTP, and the pin that makes it unskipp
   `class_reject_terminal_date_change()`, raising `SQLSTATE 23514`.
 
 **Step order here is test-first, per CLAUDE.md.** The trigger test is written
-and run to red *before* the migration exists — with no trigger, nothing raises,
-`caught` stays `undefined`, and the two rejection cases fail cleanly. That is a
-real red-green cycle, so there is no reason to take the weaker "write it, then
-characterise it" route.
+and run to red *before* the migration exists — with no trigger, nothing raises
+and the rejection cases fail cleanly. That is a real red-green cycle, so there
+is no reason to take the weaker "write it, then characterise it" route.
 
 - [ ] **Step 1: Write the trigger test (T11) and run it to red**
 
@@ -895,11 +894,33 @@ in Step 4 below. Then:
 npx vitest run --project unit src/services/class-terminal-date.test.ts
 ```
 
-Expected: **2 of 4 cases FAIL** — both `it.each` rejection cases, at
-`expect(caught).toBeInstanceOf(Prisma.PrismaClientUnknownRequestError)` with
-`caught` still `undefined`, because no trigger exists to raise. The two
-allow-cases pass, correctly and uninterestingly: with no trigger, everything is
-allowed. Record the failure output.
+Expected: **3 of the 7 cases FAIL**, for two different reasons, and the count
+depends on running this before Step 2 as written:
+
+1. Both rejection cases (`it.each(TERMINAL_CLASS_STATUSES)`), at
+   `expect(caughtRaw).toBeInstanceOf(Prisma.PrismaClientKnownRequestError)`
+   with `caughtRaw` still `undefined`, because no trigger exists to raise.
+   This is the red that matters.
+2. `'matches the exact status set the trigger SQL enforces'`, which
+   `readFileSync`s the migration — a file Step 2 has not written yet — and so
+   dies with `ENOENT`. Expected and uninteresting; it goes green the moment
+   Step 2 creates the file, which is BEFORE the trigger is applied in Step 3.
+   The two rejection cases stay red until Step 3.
+
+The remaining four (three allow-cases over the non-terminal statuses, and the
+unchanged-date case) pass correctly and uninterestingly: with no trigger,
+everything is allowed. Record the failure output.
+
+Two things an earlier draft of this step predicted wrongly, both measured
+rather than assumed. `Class.id` is Prisma `String @default(uuid())`, which is a
+**`text`** column — a `${classId}::uuid` cast makes the comparison `text = uuid`
+and the statement dies with `42883` before the trigger is ever consulted, so
+the test can never pass with the cast in place. And a `$executeRaw` failure
+arrives as `PrismaClientKnownRequestError` (P2010), **not** the
+`PrismaClientUnknownRequestError` the typed path produces — the same two-shape
+split `src/lib/api-errors.ts` already documents for `55P03`. Only the Unknown
+shape is matched by `isTerminalStatusViolation`, so the `409` claim is pinned
+against a typed `class.update`, which is also the path production takes.
 
 - [ ] **Step 2: Write the migration**
 
@@ -986,10 +1007,11 @@ because `startTime` is a plain `String` with no CHECK constraint, so a raw
 `09:${counter}` literal would emit `09:60` once the counter crosses 60.
 
 ```ts
+import { readFileSync } from 'fs';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
-import type { ClassStatus } from '@prisma/client';
+import { PrismaClient, Prisma, ClassStatus } from '@prisma/client';
 import { classifyApiError } from '@/lib/api-errors';
+import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
 
 /**
  * A pure DB-invariant test for `class_terminal_date_guard` (#247) — no HTTP
@@ -1022,7 +1044,9 @@ import { classifyApiError } from '@/lib/api-errors';
  *   docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
  *     -c 'DROP TRIGGER class_terminal_date_guard ON "Class";'
  *   npx vitest run --project unit src/services/class-terminal-date.test.ts
- *   # first two tests fail: `caught` stays undefined, no exception to catch
+ *   # the two rejection cases fail: `caughtRaw` stays undefined, no exception
+ *   # to catch. The allow-cases and the drift pin stay green — with no trigger
+ *   # everything is allowed, and the pin reads a file, not the database.
  *
  * To restore: `CREATE OR REPLACE FUNCTION` is idempotent but `CREATE TRIGGER`
  * is not, so replaying the migration file only works while the trigger is
@@ -1062,6 +1086,21 @@ let teacherRoomId: string;
 const classIds: string[] = [];
 
 const ORIGINAL_DATE = '2099-06-01';
+
+/**
+ * Derived, not listed. Every `ClassStatus` the trigger must NOT fire on is
+ * whatever is left once the terminal set is removed — so adding a sixth
+ * status to the enum extends the allow-case below automatically, and widening
+ * `TERMINAL_CLASS_STATUSES` removes it from here and adds it to the rejection
+ * cases in the same edit. Mirrors the intent of `class-lifecycle.test.ts`'s
+ * `['draft', 'open', 'in_progress']` control, which exists so that a mutation
+ * freezing a non-terminal status is caught by design rather than by accident;
+ * this version cannot fall behind the enum the way that literal can.
+ */
+const NON_TERMINAL_STATUSES = Object.values(ClassStatus).filter(
+  (s) => !TERMINAL_CLASS_STATUSES.includes(s),
+);
+
 let makeClassCounter = 0;
 
 async function makeClass(opts: { status: ClassStatus }): Promise<{ classId: string }> {
@@ -1132,19 +1171,58 @@ afterAll(async () => {
 });
 
 describe('class_terminal_date_guard', () => {
-  it.each(['completed', 'cancelled'] as const)(
+  // Driven by `TERMINAL_CLASS_STATUSES`, not by a `['completed', 'cancelled']`
+  // literal. Widen the derived set and these rejection cases widen with it, so
+  // a status that the reaper starts treating as unwritable is proved
+  // unwritable HERE too, in the same edit. The literal could not: it would go
+  // on testing the old two while the reaper deleted rows on the new third.
+  it.each(TERMINAL_CLASS_STATUSES)(
     'refuses to move a %s class to a past date, from raw SQL',
     async (status) => {
       const { classId } = await makeClass({ status: 'open' });
       await prisma.class.updateMany({ where: { id: classId, status: 'open' }, data: { status } });
 
       // Raw SQL, not `updateClass` — the point is that this holds with the
-      // service layer entirely out of the picture. `2020-01-01` is the exact
-      // date from issue #247: more than 365 days past, so
-      // `reapClosedWaitlistEntries` would treat this class as reapable.
+      // service layer, and Prisma's typed layer, entirely out of the picture.
+      // `2020-01-01` is the exact date from issue #247: more than 365 days
+      // past, so `reapClosedWaitlistEntries` would treat this class as
+      // reapable.
+      //
+      // No `::uuid` cast on the id parameter, here or in the two cases below.
+      // `Class.id` is Prisma `String @default(uuid())`, which is a `text`
+      // column, not Postgres `uuid` — casting the bound parameter makes the
+      // comparison `text = uuid` and the statement dies with `42883` before
+      // the trigger is ever consulted.
+      let caughtRaw: unknown;
+      try {
+        await prisma.$executeRaw`UPDATE "Class" SET date = '2020-01-01' WHERE id = ${classId}`;
+      } catch (err) {
+        caughtRaw = err;
+      }
+
+      // A `$executeRaw` failure is a PrismaClientKnownRequestError (P2010)
+      // carrying the SQLSTATE in ``Code: `23514` `` framing — NOT the
+      // PrismaClientUnknownRequestError the typed path below produces.
+      // `src/lib/api-errors.ts` documents both shapes for `55P03` and the
+      // split is the same here: the engine has a P-code for "raw query
+      // failed" and none for "a trigger fired".
+      expect(caughtRaw).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+      expect(String(caughtRaw)).toMatch(/23514/);
+      expect(String(caughtRaw)).toMatch(/which is terminal/);
+      expect(String(caughtRaw)).toMatch(new RegExp(`is ${status}`));
+
+      // The typed path, which is the one production actually takes: of the
+      // `class.update`/`updateMany` sites in `src/`, the only one that writes
+      // `date` is `updateClass`. It is also the only shape
+      // `isTerminalStatusViolation` matches, so the 409 claim has to be
+      // pinned against this write rather than the raw one above — asserting
+      // it on the raw error would assert something no caller can observe.
       let caught: unknown;
       try {
-        await prisma.$executeRaw`UPDATE "Class" SET date = '2020-01-01' WHERE id = ${classId}::uuid`;
+        await prisma.class.update({
+          where: { id: classId },
+          data: { date: new Date('2020-01-01') },
+        });
       } catch (err) {
         caught = err;
       }
@@ -1163,12 +1241,20 @@ describe('class_terminal_date_guard', () => {
     },
   );
 
-  it('allows a date change on a live class', async () => {
-    // The test that proves the trigger CAN pass. Without it, a WHEN clause
-    // mutated to fire unconditionally would still satisfy both cases above.
-    const { classId } = await makeClass({ status: 'open' });
+  // The cases that prove the trigger CAN pass. Without them, a WHEN clause
+  // mutated to fire unconditionally would still satisfy every case above.
+  //
+  // Every non-terminal status, not just `open`. `in_progress` is the one that
+  // earns the sweep: the teacher edit page redirects away from it, so it is
+  // easy to assume a freeze there is harmless — but the API allows that edit
+  // and should, and a guard widened from `IN ('completed','cancelled')` to
+  // "anything past draft" would pass a single-status `open` control while
+  // breaking a real write. `draft` covers the same mutation from the other
+  // end.
+  it.each(NON_TERMINAL_STATUSES)('allows a date change on a %s class', async (status) => {
+    const { classId } = await makeClass({ status });
 
-    await prisma.$executeRaw`UPDATE "Class" SET date = '2099-07-01' WHERE id = ${classId}::uuid`;
+    await prisma.$executeRaw`UPDATE "Class" SET date = '2099-07-01' WHERE id = ${classId}`;
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
     expect(after.date.toISOString().slice(0, 10)).toBe('2099-07-01');
@@ -1187,13 +1273,93 @@ describe('class_terminal_date_guard', () => {
       data: { status: 'completed' },
     });
 
+    // `${ORIGINAL_DATE}::date`, NOT `${new Date(ORIGINAL_DATE)}`. Binding a JS
+    // Date sends a timestamptz, which Postgres narrows to `date` using the
+    // SESSION time zone — so the "unchanged" date silently becomes the
+    // previous day under any westward session, the WHEN clause's
+    // `IS DISTINCT FROM` then holds, and this case fails claiming the trigger
+    // is wrong when only the clock was. It round-trips here because the
+    // session is UTC, which is exactly the kind of accident this repo has
+    // shipped before (see the warning comment in `prisma/seed.ts`). A plain
+    // date string has no zone to misread.
     await prisma.$executeRaw`
-      UPDATE "Class" SET date = ${new Date(ORIGINAL_DATE)}, description = 'Unchanged date'
-      WHERE id = ${classId}::uuid`;
+      UPDATE "Class" SET date = ${ORIGINAL_DATE}::date, description = 'Unchanged date'
+      WHERE id = ${classId}`;
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
     expect(after.description).toBe('Unchanged date');
     expect(after.date.toISOString().slice(0, 10)).toBe(ORIGINAL_DATE);
+  });
+
+  /**
+   * The same drift pin `class-terminal-status.test.ts` ends with, applied to
+   * the other half of the same predicate — and it has to be a SECOND pin, not
+   * a reuse of that one, because the two triggers hard-code
+   * `('completed','cancelled')` in two different applied migrations that
+   * nothing forces to agree.
+   *
+   * `reapClosedWaitlistEntries` permanently deletes rows on a class that is
+   * terminal AND more than 365 days past its `date`. Its safety argument is
+   * "no writer can ever touch those rows again", and that argument now rests
+   * on two triggers: the sibling freezes `status`, this one freezes `date`.
+   * `TERMINAL_CLASS_STATUSES` is DERIVED from `VALID_TRANSITIONS`, while both
+   * triggers restate the set as frozen SQL. Widen the transition table and the
+   * constant widens silently, the reaper starts reaping a third status — and
+   * without this pin the DATE half would go unenforced for it with nothing
+   * red. The sibling's pin would still pass: it only reads its own migration.
+   *
+   * The rejection `it.each` catches the set GROWING (a new terminal status
+   * gets a rejection case that fails, because the SQL does not cover it). It
+   * cannot catch the set SHRINKING: give `cancelled` an outgoing transition
+   * and the set becomes `['completed']`, and every case it still generates
+   * passes, because a case that is no longer generated cannot fail.
+   *
+   * Not the only thing that notices a shrink, and the honest version of this
+   * paragraph says so: `NON_TERMINAL_STATUSES` is the enum minus the terminal
+   * set, so a status leaving that set arrives in the allow-`it.each` directly
+   * above, where the raw date update meets SQL that still names it and throws
+   * `23514`. That case reddens too.
+   *
+   * This pin earns its place on two other grounds. It fails with a NAMED
+   * diagnostic — the two sets printed side by side — where the allow-case
+   * fails with a bare `23514` that reads as "the trigger is broken" rather
+   * than "the constant and the SQL have drifted apart", and misreading that
+   * points the next person at the migration instead of at
+   * `VALID_TRANSITIONS`. And it covers the limit neither `it.each` reaches:
+   * empty the terminal set and BOTH families generate vacuously — no
+   * rejection cases at all, and allow-cases that pass honestly — while the
+   * reaper stops reaping entirely. That is what the two length assertions are
+   * for.
+   *
+   * Read out of the migration's own SQL rather than restated here, so the
+   * enforced set is written down in exactly one place. Regex over SQL is
+   * normally fragile; here it inverts, because the file is an APPLIED
+   * migration that `CLAUDE.md` forbids editing, so the text is frozen by
+   * policy — and the `if (!inList)` guard turns a shape change into a named
+   * failure rather than a silent pass. Reads a file; touches no database.
+   */
+  it('matches the exact status set the trigger SQL enforces', () => {
+    const sql = readFileSync(
+      new URL(
+        '../../prisma/migrations/20260817120000_class_terminal_date_trigger/migration.sql',
+        import.meta.url,
+      ),
+      'utf8',
+    );
+    // `noUncheckedIndexedAccess` makes the capture groups possibly-undefined,
+    // and the narrowing is kept rather than cast away: a `!` here would turn a
+    // shape change into a runtime `undefined` inside the comparison, which is
+    // the failure mode this pin exists to make loud.
+    const inList = sql.match(/OLD\.status IN \(([^)]+)\)/)?.[1];
+    if (!inList) throw new Error('trigger SQL no longer has the shape this pin reads');
+    const enforced = [...inList.matchAll(/'([a-z_]+)'/g)]
+      .map((x) => x[1])
+      .filter((s): s is string => s !== undefined)
+      .sort();
+
+    expect(enforced.length).toBeGreaterThan(0);
+    expect(TERMINAL_CLASS_STATUSES.length).toBeGreaterThan(0);
+    expect([...TERMINAL_CLASS_STATUSES].sort()).toEqual(enforced);
   });
 });
 ```
@@ -1204,9 +1370,13 @@ describe('class_terminal_date_guard', () => {
 npx vitest run --project unit src/services/class-terminal-date.test.ts
 ```
 
-Expected: all four cases now pass (two from the `it.each`, plus two allow-cases). If the
-last case fails with `23514`, the `IS DISTINCT FROM` half of the `WHEN` clause
-is missing from the migration.
+Expected: all **7** cases now pass — two rejection cases (driven by
+`TERMINAL_CLASS_STATUSES`, not by a literal), three allow-cases over the
+non-terminal statuses, the unchanged-date case, and the SQL drift pin. If the
+unchanged-date case fails with `23514`, the `IS DISTINCT FROM` half of the
+`WHEN` clause is missing from the migration. If the drift pin fails, the
+constant and the trigger's hard-coded status list have drifted apart — look at
+`VALID_TRANSITIONS`, not at the migration.
 
 - [ ] **Step 6: Mutation M10 — drop the trigger**
 
@@ -1216,8 +1386,19 @@ docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
 npx vitest run --project unit src/services/class-terminal-date.test.ts
 ```
 
-Expected: **FAIL** on both `it.each` cases — `caught` is `undefined`, so
-`expect(caught).toBeInstanceOf(...)` reddens. Record the exact output.
+Expected: **FAIL on the two rejection cases only** — the
+`it.each(TERMINAL_CLASS_STATUSES)` family, not the allow-`it.each` below it,
+which keeps passing because with no trigger everything is allowed. `caughtRaw`
+is `undefined` (the raw write is the first of the two writes in that case, so
+it reddens before the typed one is reached), so
+`expect(caughtRaw).toBeInstanceOf(Prisma.PrismaClientKnownRequestError)` is the
+assertion that fires. The drift pin also keeps passing: it reads the migration
+file, which this mutation does not touch. Record the exact output.
+
+Worth running the sibling file too while the trigger is gone —
+`class-terminal-status.test.ts` should stay fully green. That is the
+independence claim its docblock makes: dropping one trigger must redden only
+its own file.
 
 Restore with the recipe in the file's docblock and confirm green:
 
@@ -1232,10 +1413,15 @@ npx vitest run --project unit src/services/class-terminal-date.test.ts
 Recreate the trigger in the test DB with only `OLD.status IN (...)` in the
 `WHEN`. Run the file.
 
-Expected: **FAIL** on `'allows a write that carries a terminal class's
-unchanged date alongside another column'` with `23514`. Record it. Restore from
-the migration file. **Do not edit the migration** — this mutation is applied
-directly to the test database and reverted the same way.
+Expected: **FAIL on exactly one case** — `'allows a write that carries a
+terminal class's unchanged date alongside another column'` — with `23514`, and
+the error message is the mutation's own confession: `cannot change its date
+from <d> to <d>`, the same value on both sides. The other six pass, including
+the drift pin, which reads the migration file this mutation deliberately does
+not touch. Record it. Restore from the migration file. **Do not edit the
+migration** — this mutation is applied directly to the test database and
+reverted the same way, and the file is applied, which `CLAUDE.md` forbids
+editing.
 
 - [ ] **Step 8: Re-run Task 1's M1 with the trigger present**
 

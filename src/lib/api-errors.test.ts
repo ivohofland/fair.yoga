@@ -81,17 +81,33 @@ describe('classifyApiError', () => {
   });
 
   /**
-   * The message must stay true for BOTH triggers, which means naming neither
-   * column. An assertion on the exact string above would pass just as happily
-   * if someone reverted it to "can no longer change status" — correct for one
-   * fixture, a lie to the caller for the other — so this pins the property
-   * rather than the wording, and leaves the wording free to be reworded.
+   * This test adds no detection power, and that is not the argument for it.
+   * The `it.each` above already asserts the exact string for both fixtures, so
+   * naming a column reddens twice there before this ever runs. Under strict
+   * mutation testing its marginal value is zero.
+   *
+   * What it buys is that IT SURVIVES THE REPAIR. When an exact-string
+   * assertion goes red, the obvious fix is to edit the expected string to
+   * match the source — a one-token diff that reads as noise and waves through
+   * review, and the caller quietly starts being told the wrong thing about
+   * half the failures that reach this branch. This test cannot be repaired
+   * that way. Making it green after naming a column requires DELETING it, and
+   * a deletion of a named test with a docblock attached is a thing a reviewer
+   * sees. Its value is temporal, not detection-theoretic: it is here for the
+   * moment someone is fixing a different test in a hurry.
+   *
+   * Word-anchored on purpose. A bare `/date/i` also matches the "date" inside
+   * "up-dated", so it would reject `'That class can no longer be updated'` —
+   * a perfectly good generalisation, and one someone may well reach for —
+   * while claiming only to forbid naming a column. "validated" and
+   * "candidate" are the same trap. `\b` makes the test forbid what it says it
+   * forbids.
    */
   it('does not name a single column in the message shared by both terminality triggers', () => {
     const message = classifyApiError(terminalDateErrorFixture).message;
 
-    expect(message).not.toMatch(/status/i);
-    expect(message).not.toMatch(/date/i);
+    expect(message).not.toMatch(/\bstatus\b/i);
+    expect(message).not.toMatch(/\bdate\b/i);
     expect(classifyApiError(terminalStatusErrorFixture).message).toBe(message);
   });
 

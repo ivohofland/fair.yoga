@@ -70,9 +70,11 @@ export type ApiFailure = {
  *
  * THE NAME OF THIS FUNCTION PREDATES THE SECOND TRIGGER and is now narrower
  * than what it matches: a date violation is classified here too. Left as-is
- * deliberately — renaming touches five call sites for no behavioural gain —
- * but said out loud because a future reader greps `isTerminalStatusViolation`
- * and must not conclude that date violations go unhandled and fall to a 500.
+ * deliberately — the rename would be a pure churn edit, changing no behaviour
+ * while touching this file and every comment across the services and docs that
+ * cites the name — but said out loud, because a future reader greps
+ * `isTerminalStatusViolation`, finds nothing about dates, and must not
+ * conclude that a date violation goes unhandled and falls to a 500.
  *
  * Measured directly rather than assumed (`src/services/class-terminal-
  * status.test.ts`, which also pins `classifyApiError(caught).status === 409`
