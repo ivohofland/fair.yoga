@@ -167,6 +167,13 @@ to sit on both sides of a single instant.
 
 ## 5. The two doors
 
+> **Two doors, not every door.** This section names the two writers a teacher
+> reaches directly, and the four artifacts that cite it were written as though
+> that were the same as closure. It is not: `template-sync.ts` writes
+> `startTime` past no guard of its own. See §11 for the measurement and for why
+> it is left open rather than fixed here. Read "the two doors" below as the
+> scope of this branch, never as an inventory of the writers that exist.
+
 ### 5.1 `updateClass` — the data-loss path
 
 **Result variant.** A new member of `UpdateClassResult`:
@@ -545,3 +552,45 @@ verdict.
   Intended (§3).
 - **A class already `open` when its start passes stays `open`** for up to one
   sweep tick. Unchanged by this branch, and not a defect.
+- **`template-sync.ts` is a third writer of a class's start instant, and it is
+  not guarded.** Found in the #249 PR review, after §5's "two doors" framing
+  had already been copied into four artifacts as though it were closure.
+
+  `syncFutureInstances` rewrites `startTime` on a template's instances with a
+  bare `updateMany`, selecting them with `date: { gt: now }` — a `@db.Date`
+  column, which is a calendar date at UTC midnight, compared against an
+  instant. That is rule two of `lib/timezone.ts`, and it is not the same
+  predicate as "this class has not started". Measured: for a `Pacific/Auckland`
+  teacher at `2026-08-18T20:00Z`, a class dated `2026-08-19` at `00:30` local
+  started at `2026-08-18T12:30Z`, eight hours earlier, and still satisfies
+  `date > now`. The window is roughly the zone's UTC offset, so it is empty at
+  UTC and widest far east of it.
+
+  **Deliberately not fixed on this branch.** Not because it is small — it is
+  the same class of defect §5 exists to close — but because closing it is a
+  product decision rather than a guard. `updateClass` and `transitionClass`
+  each refuse a request a teacher made; here the teacher edited a TEMPLATE, and
+  what should happen to an instance that has already started is a question
+  about recurring-class semantics with at least three defensible answers (skip
+  it and report it under `kept`; sync it anyway since the teacher meant the
+  series; sync every field except `startTime`). That is the same shape of
+  question that kept #249 itself open — "bounding the date needs a product call
+  about whether backfilling a past class is ever legal" — and it deserves its
+  own issue rather than a decision taken silently inside a review fix.
+
+  **What it does not endanger**, checked rather than assumed:
+  - `waitlist-retention.ts`'s delete-safety argument needs `date` immovable on
+    a TERMINAL class. `template-sync` writes `startTime`, never `date`, and
+    filters to `draft`/`open`. Untouched.
+  - The publish guard's pre-CAS read (§5.2) and `updateClass`'s single
+    enforcement point can both in principle lose a race to it. Both degrade to
+    a wrong answer inside a millisecond window rather than a broken invariant,
+    because nothing downstream treats "no live class starts in the past" as a
+    fact — §3 makes it a policy precisely so that it is not one. Both comments
+    now say this instead of claiming the race cannot happen.
+
+  Adjacent and also out of scope: `POST /api/teachers` hardcodes
+  `defaultTimezone: 'Europe/Amsterdam'` with no inference at signup, so BOTH
+  guards decide in the wrong zone for every teacher outside CET. Around forty
+  pre-existing call sites already depend on that field and this branch changes
+  none of them. Its own issue too.

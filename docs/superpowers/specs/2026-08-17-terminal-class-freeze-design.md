@@ -470,6 +470,12 @@ timezone and the stored `startTime`, neither of which a Zod schema can see. It
 lives in the services instead. See
 `docs/superpowers/specs/2026-08-18-past-start-guard-design.md`.
 
+"Closed" above means §7's floor is cleared — the path this section identified
+no longer exists. It does not mean every writer of a class's start is guarded:
+`template-sync.ts` is not, and that residual is recorded in #249's spec §11
+rather than here, since it is a question about recurring-class semantics rather
+than about the terminal freeze.
+
 **Unaffected:** `settingsLocked` and `ECONOMIC_FIELDS`. They gate on first
 registration, not on terminality, and they already work. This is a second,
 later freeze point that did not exist.

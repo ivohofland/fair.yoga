@@ -115,14 +115,36 @@
  * defence designed against the two sweeps would have left the one-request route
  * open while looking complete.
  *
- * #249 guards at the two doors where a past start can be WRITTEN rather than at
- * the routes out of them, which covers all four equally: `updateClass` refuses
- * a `date`/`startTime` edit whose resulting start instant has already passed,
- * and `transitionClass` refuses a `draft -> open` publish of a class whose
- * start has passed. Both are service policy, deliberately not a trigger — an
- * `open` class whose start has passed is a state `generateClassInstances`
+ * #249 guards at the doors where a past start can be WRITTEN rather than at the
+ * routes out of them, which covers all four routes equally: `updateClass`
+ * refuses a `date`/`startTime` edit whose resulting start instant has already
+ * passed, and `transitionClass` refuses a `draft -> open` publish of a class
+ * whose start has passed. Both are service policy, deliberately not a trigger —
+ * an `open` class whose start has passed is a state `generateClassInstances`
  * legitimately produces, so there is no invariant for the database to hold.
  * See `docs/superpowers/specs/2026-08-18-past-start-guard-design.md` §3.
+ *
+ * TWO DOORS, NOT ALL OF THEM, and this paragraph is the honest version of a
+ * claim that first went in as "the two doors where a past start can be
+ * written". `template-sync.ts` is a third: it rewrites `startTime` on every
+ * instance of a template with a bare `updateMany`, past no such guard, and it
+ * selects those instances with `date: { gt: now }` — a `@db.Date` column
+ * compared against an instant, which is the UTC-calendar mistake `timezone.ts`
+ * exists to name. That filter is not the same predicate as "the start is still
+ * ahead". Measured: for a `Pacific/Auckland` teacher at 2026-08-18T20:00Z, a
+ * class dated 2026-08-19 at 00:30 local started at 12:30Z — eight hours
+ * earlier — and still satisfies `date > now`.
+ *
+ * WHAT THAT COSTS THIS SWEEP IS NOTHING, which is why it is recorded here
+ * rather than fixed here. This delete-safety argument needs the class's `date`
+ * to be immovable once TERMINAL, and it gets that from
+ * `class_terminal_date_guard`, a trigger. `template-sync` writes `startTime`,
+ * never `date`, and filters to `draft`/`open` besides — so it cannot move the
+ * column this sweep reads, on a class this sweep would consider. The gap is in
+ * the #249 rule's coverage, not in this one's. Filed under
+ * `2026-08-18-past-start-guard-design.md` §11; closing it means deciding what
+ * a template edit should do to an instance that has already started, which is
+ * a product call and not a guard.
  *
  * WHY IT CANNOT DEADLOCK AGAINST THE ERASURE. `deleteStudentAccount` deletes
  * waitlist entries with an UNSCOPED `deleteMany({ where: { studentId } })` —
