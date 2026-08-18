@@ -236,8 +236,16 @@ functions, documented as such by that existing member; this mirrors it exactly.
 in_progress` is a teacher starting a class early — where a past start is not
 only normal but expected.
 
-**Placement: before the transaction**, reading `{ date, startTime, teacher:
-{ select: { defaultTimezone: true } } }`.
+**Placement: before the transaction**, reading `{ status, date, startTime,
+teacher: { select: { defaultTimezone: true } } }`.
+
+**It falls through rather than refusing** when the row is missing or when its
+status is one the CAS would reject anyway — decided with `sourceStatesFor`
+(`:159-163`), the same helper the CAS uses at `:233`, so the guard can never
+disagree with the write it precedes. §7.3 has the mechanics and the two
+existing tests that pin it. An illegal transition must keep reporting
+`ILLEGAL_TRANSITION` and a missing class `NOT_FOUND`: the older, stronger reason
+wins, exactly as `terminal` wins over `past_start` in §5.1.
 
 The pre-CAS read can go stale, and only in the safe direction. Once §5.1 is in
 place a class's stored start instant can never move into the past, so the read
@@ -290,10 +298,32 @@ different rule at a different moment.
 
 ## 7. Blast radius on the existing suite
 
-Measured, not estimated. `FIXTURE_DATE` in `class-lifecycle.test.ts:1259` is
-`'2099-06-01'` — the fixtures are in the future — and exactly four `updateClass`
-calls in the suite send a `date`, all of them `2020-01-01`. None sends a
-`startTime`. Of the four:
+Measured, not estimated — and measured **per door**, because the two doors have
+very different radii and an earlier revision of this section reported only the
+first one's and called it the total.
+
+### 7.1 Why the publish door has a radius at all: fixtures age
+
+The guard reads the clock. A test fixture dated in what was the future when it
+was written silently becomes past-dated as time passes, and a clock-reading
+guard turns that aging into a failure. Several transition fixtures were written
+as `2026-06-0X` and today (2026-08-18) sit in the past.
+
+This is worth naming rather than just fixing, because it is the same shape as
+the defect this branch exists to close — a date that was fine when written and
+is not fine now — and because it predicts the failure for whoever adds the next
+publish test. The `updateClass` block already solved it: its `FIXTURE_DATE` is
+`'2099-06-01'` with a comment at `class-lifecycle.test.ts:1249-1258` explaining
+that a 2099 date is outside every sweep window, so a leftover row is inert.
+This branch extends that convention to the transition fixtures rather than
+patching each call site.
+
+### 7.2 Door one — `updateClass`: one test
+
+`FIXTURE_DATE` (`class-lifecycle.test.ts:1259`) is `'2099-06-01'`, so that
+block's fixtures are already in the future. Exactly four `updateClass` calls in
+the suite send a `date`, all of them `2020-01-01`; none sends a `startTime`. Of
+the four:
 
 | Site | Class status | Effect |
 |---|---|---|
@@ -325,6 +355,52 @@ a judgement call for whoever sees the red test.
 includes them. Future-dated defaults, so every existing stub case behaves as it
 did.
 
+### 7.3 Door two — the publish guard: three tests, and an ordering constraint
+
+Every site in the suite that publishes through `transitionClass`, with the
+fixture date each uses:
+
+| Site | Fixture date | Status | Legal publish? | Effect |
+|---|---|---|---|---|
+| `class-lifecycle.test.ts:370` | `2026-06-01` | `draft` | yes | **breaks** — re-date to 2099 |
+| `class-lifecycle.test.ts:410` | none (unknown id) | — | — | unaffected — falls through to `NOT_FOUND` |
+| `class-lifecycle.test.ts:514` | `2026-06-04` | `completed` | **no** | unaffected — falls through to `ILLEGAL_TRANSITION` |
+| `class-lifecycle.test.ts:518` | none (unknown id) | — | — | unaffected |
+| `class-lifecycle.test.ts:545` | `2026-06-05` via `makeClass` (`:261-279`) | `draft` | yes | **breaks** — re-date the shared helper |
+| `tests/integration/full-flow.test.ts:192` | `2026-07-01` | `draft` | yes | **breaks** — re-date to 2099 |
+
+The two "unaffected" categories are not accidents; they are **the ordering
+constraint this door imposes**, and getting it wrong is how `:514` would break:
+
+> The publish guard must fall through — not refuse — when the class is missing
+> or when the transition is illegal on status grounds alone.
+
+A `completed` class targeted at `open` is illegal whatever its date, and
+answering `STARTS_IN_PAST` there would be both misleading and a regression on
+`:514`'s assertion. It is the same precedence decision as §5.1's: the older,
+stronger reason wins.
+
+Mechanically, the pre-CAS read decides with `sourceStatesFor(targetStatus)` —
+**the same helper the CAS itself uses** — rather than a hand-written status
+list, so the guard can never disagree with the write it precedes:
+
+```ts
+if (targetStatus === 'open') {
+  const cls = await db.class.findUnique({ /* status, date, startTime, teacher.defaultTimezone */ });
+  // Missing row, or a status the CAS would refuse anyway: say nothing here and
+  // let the existing path produce NOT_FOUND / ILLEGAL_TRANSITION.
+  if (cls && sourceStatesFor('open').includes(cls.status) && startsInPast(...)) {
+    return { ok: false, reason: 'STARTS_IN_PAST', error: ... };
+  }
+}
+```
+
+### 7.4 Total
+
+**Four tests change, across two files plus one integration file.** One
+re-pointed payload (§7.2), three re-dated fixtures (§7.3). No test is deleted,
+and no assertion is weakened.
+
 ---
 
 ## 8. Tests, and the mutation that proves each
@@ -353,6 +429,14 @@ fixture changes, and record the derivation.
 **T2 and T5 are the conjunct tests**, and they matter more than they look. Each
 proves that a narrowing condition is load-bearing rather than decorative — the
 class of defect #247's review found three times.
+
+**Two existing tests become the proof of §5.2's fall-through**, and no new
+test duplicates them. `class-lifecycle.test.ts:514` publishes a `completed`
+class and asserts `/Invalid transition/`; `:410` and `:518` publish an unknown
+id and assert `/Class not found/`. A guard that refused instead of falling
+through turns all three red. They were written for #182 and now carry a second
+duty — the plan must say so where they live, or a future author will "simplify"
+the fall-through and be told nothing.
 
 The route mapping needs no separate existence test: `route.ts:112`'s
 `const unhandled: never` makes an unhandled variant a build failure.
