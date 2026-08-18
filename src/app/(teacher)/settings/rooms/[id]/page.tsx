@@ -8,6 +8,7 @@ import { EditRoomForm } from '@/components/settings/edit-room-form';
 import { ArchiveRoomButton } from '@/components/settings/archive-room-button';
 import { UnlinkRoomButton } from '@/components/settings/unlink-room-button';
 import { DeleteRoomButton } from '@/components/settings/delete-room-button';
+import { ShareRoomButton } from '@/components/settings/share-room-button';
 
 export default async function EditRoomPage({
   params,
@@ -118,6 +119,13 @@ export default async function EditRoomPage({
 
       {/* Archive / Remove */}
       <section className="pt-6 border-t border-border flex flex-col gap-4">
+        {canEditRoom && (
+          <ShareRoomButton
+            roomId={room.id}
+            identity={{ address: room.address, floor: room.floor, roomName: room.roomName }}
+            postcode={room.postcode}
+          />
+        )}
         <ArchiveRoomButton teacherRoomId={teacherRoom.id} isArchived={isArchived} />
         {classCount === 0 && !canEditRoom && (
           <UnlinkRoomButton
