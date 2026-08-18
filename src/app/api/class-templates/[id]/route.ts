@@ -245,6 +245,16 @@ export const PATCH = withErrorHandler(async (
   if (result.reason === 'archived') {
     return respondError('Unarchive the template before activating it', 409);
   }
+  // Door 3 of the room archive lifecycle (issue 76): the template's own room
+  // has been archived. Symmetric with the `archived` branch above — a paused
+  // template may sit on an archived room, but resuming it is refused.
+  if (result.reason === 'room_archived') {
+    return respondError(
+      'This room is archived. Unarchive it to resume this recurring class.',
+      409,
+      'ROOM_ARCHIVED',
+    );
+  }
   if (result.reason === 'busy') {
     return respondError(
       'The system was busy and could not update this recurring class. Nothing was changed. Wait a moment, then try again.',

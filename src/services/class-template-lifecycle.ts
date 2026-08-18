@@ -568,6 +568,13 @@ export type PauseTemplateResult =
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'archived' }
   /**
+   * Door 3 of the room archive lifecycle (issue 76): the template's own room
+   * has been archived. A paused template may still sit on an archived room —
+   * only resuming it is refused, since that is the moment new classes would
+   * start being manufactured there. See the guard site for the full note.
+   */
+  | { ok: false; reason: 'room_archived' }
+  /**
    * See `ArchiveTemplateResult`'s `busy` arm for what it guarantees and the
    * range of causes behind it.
    *
@@ -702,17 +709,21 @@ export async function pauseOrResumeTemplate(
 ): Promise<PauseTemplateResult> {
   const template = await db.classTemplate.findUnique({
     where: { id: templateId },
-    include: { teacher: { select: { defaultTimezone: true } } },
+    include: {
+      teacher: { select: { defaultTimezone: true } },
+      teacherRoom: { select: { isArchived: true } },
+    },
   });
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
   // Same reason as the drop further down: `PauseTemplateResult` carries a
-  // plain `ClassTemplate`, so the joined `teacher` this include added is
-  // dropped rather than leaked back to the caller — including on this
-  // early-return path, before any write happens.
-  const { teacher: _t, ...bare } = template;
+  // plain `ClassTemplate`, so the joined `teacher` and `teacherRoom` this
+  // include added are dropped rather than leaked back to the caller —
+  // including on this early-return path, before any write happens.
+  const { teacher: _t, teacherRoom: _tr, ...bare } = template;
   void _t;
+  void _tr;
 
   const desiredActive = target === 'active';
 
@@ -725,6 +736,26 @@ export async function pauseOrResumeTemplate(
   }
 
   if (template.isArchived) return { ok: false, reason: 'archived' };
+
+  // Door 3 of the room archive lifecycle (issue 76). Symmetric with door 2:
+  // a paused template may SIT on an archived room, but resuming it is the
+  // moment new classes start being manufactured there. Without this, resume
+  // succeeded silently and generated instances into the archived room inside
+  // the transaction below.
+  //
+  // After the already-in-state check above, for the same reason that check
+  // precedes the template-archived guard: `?state=paused` on a template that
+  // is already paused is a no-op with nothing to refuse.
+  //
+  // Gated on `desiredActive`, not on `template.teacherRoom.isArchived` alone
+  // — pausing is a real `isActive` transition too (active room-archived
+  // template -> paused) and does not hit the already-in-state short-circuit
+  // above, so an ungated check here would also refuse the one direction the
+  // brief and the test below require to keep working: a teacher must still
+  // be able to stop a template whose room was archived out from under it.
+  if (desiredActive && template.teacherRoom.isArchived) {
+    return { ok: false, reason: 'room_archived' };
+  }
 
   const updated = await db
     .$transaction(
