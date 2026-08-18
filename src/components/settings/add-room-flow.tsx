@@ -8,17 +8,8 @@ import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { formatRoomLocation } from '@/lib/format';
-
-interface RoomResult {
-  id: string;
-  venueName: string;
-  roomName: string;
-  address: string;
-  city: string;
-  postcode: string;
-  floor: string;
-  maxCapacity: number;
-}
+import { searchPublicRooms, type RoomResult } from '@/lib/room-search';
+import { RoomMatchList } from './room-match-list';
 
 type Step = 'search' | 'create' | 'settings';
 
@@ -115,17 +106,7 @@ export function AddRoomFlow() {
     setResults(null);
     setSearchError('');
     try {
-      const params = new URLSearchParams({
-        postcode: postcode.trim(),
-        street: street.trim(),
-      });
-      const res = await fetch(`/api/rooms?${params}`);
-      if (!res.ok) {
-        setSearchError('Search failed. Please try again.');
-        return;
-      }
-      const json: { data: RoomResult[] } = await res.json();
-      setResults(json.data);
+      setResults(await searchPublicRooms(postcode, street));
     } catch {
       setSearchError('Network error. Please try again.');
     } finally {
@@ -286,21 +267,7 @@ export function AddRoomFlow() {
               {results.length > 0 ? (
                 <>
                   <p className="text-sm text-brown mb-3">Existing rooms found:</p>
-                  <div className="mb-4">
-                    {results.map((room) => (
-                      <button
-                        key={room.id}
-                        type="button"
-                        onClick={() => handleSelectRoom(room)}
-                        className="w-full text-left flex flex-col gap-1 py-3 border-b border-border"
-                      >
-                        <span className="text-base text-ink">
-                          {formatRoomLocation(room.roomName, room.venueName)}
-                        </span>
-                        <span className="type-caption">{room.address}, {room.city}</span>
-                      </button>
-                    ))}
-                  </div>
+                  <RoomMatchList rooms={results} onSelect={handleSelectRoom} />
                   <button
                     type="button"
                     onClick={handleCreateNew}
