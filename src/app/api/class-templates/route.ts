@@ -41,6 +41,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return respondError('Invalid teacher room', 400);
   }
 
+  // Door 4 of the room archive lifecycle (issue 76). Unlike a class — always
+  // born `draft` and caught at the publish door — a template is born
+  // `isActive: true` (schema.prisma:336) and starts generating immediately,
+  // so creation is itself the commitment and there is no later door to catch.
+  if (teacherRoom.isArchived) {
+    return respondError(
+      'This room is archived. Unarchive it to add a recurring class here.',
+      409,
+      'ROOM_ARCHIVED',
+    );
+  }
+
   // Atomic: a generation failure rolls the template create back rather than
   // leaving a template that produces no classes. Failure propagates (500).
   //

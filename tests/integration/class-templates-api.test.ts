@@ -286,6 +286,60 @@ describe('POST /api/class-templates', () => {
       expect(generated).toHaveLength(4);
     });
   });
+
+  // Door 4 of the room archive lifecycle (issue 76). `ClassTemplate.isActive`
+  // defaults true, so a template created on an archived room would start
+  // generating instances immediately — unlike a class, which is always born
+  // `draft` and is caught later at the publish door. A dedicated
+  // `seedTeacher` fixture rather than the shared `teacherRoomId`/
+  // `sessionToken` above: archiving the shared room here would affect every
+  // other test in this file that reuses it.
+  it('refuses to create a template on an archived room, and writes nothing', async () => {
+    const owner = await seedTeacher('archived-room');
+    try {
+      await prisma.teacherRoom.update({
+        where: { id: owner.teacherRoomId },
+        data: { isArchived: true },
+      });
+
+      const res = await fetch(`${BASE_URL}/api/class-templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(owner.sessionToken) },
+        body: JSON.stringify({
+          teacherRoomId: owner.teacherRoomId,
+          classType: 'Yin',
+          dayOfWeek: DAY_OF_WEEK,
+          startTime: '09:30',
+          durationMinutes: 60,
+          roomCost: 20,
+          minRate: 15,
+          targetRate: 25,
+          minStudents: 2,
+          maxStudents: 10,
+        }),
+      });
+
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error: { message: string; code?: string } };
+      expect(body.error.code).toBe('ROOM_ARCHIVED');
+
+      // A template born active on an archived room would generate into it at
+      // once — nothing must have been written.
+      expect(
+        await prisma.classTemplate.count({ where: { teacherRoomId: owner.teacherRoomId } }),
+      ).toBe(0);
+    } finally {
+      // Same FK-safe order as the file's own afterAll: class → classTemplate
+      // → teacherRoom → room → session → teacher → account.
+      await prisma.class.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.classTemplate.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.room.delete({ where: { id: owner.roomId } });
+      await prisma.session.deleteMany({ where: { accountId: owner.accountId } });
+      await prisma.teacher.delete({ where: { id: owner.teacherId } });
+      await prisma.account.delete({ where: { id: owner.accountId } });
+    }
+  });
 });
 
 describe('PATCH /api/class-templates/[id]', () => {
