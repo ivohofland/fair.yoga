@@ -19,7 +19,7 @@ import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { closeQueueOnStart } from './waitlist';
-import { classStartInstant } from '@/lib/timezone';
+import { classStartInstant, startsInPast } from '@/lib/timezone';
 
 export { ECONOMIC_FIELDS, type EconomicField };
 
@@ -669,6 +669,14 @@ export class UpdateClassInvariantError extends Error {}
  * two construction sites (the early return and the disambiguation branch,
  * below) for nothing.
  *
+ * `past_start` carries NOTHING, and the asymmetry with its two neighbours is
+ * deliberate. `locked` and `terminal` carry data because their callers' MESSAGE
+ * VARIES with it — `terminal`'s 409 renders "completed" or "cancelled" from one
+ * branch, and an integration test exists to pin that variance. This refusal has
+ * one sentence for every past start, whether the offending value arrived as
+ * `date`, as `startTime`, or as both. A carried instant would be a payload
+ * nothing reads.
+ *
  * Every *business* outcome of an update is a variant here. The one non-outcome
  * — an invariant violation, where the function's own reasoning about its
  * inputs turns out to be wrong — is not encoded as a value; it throws
@@ -681,7 +689,8 @@ export type UpdateClassResult =
   | { ok: false; reason: 'terminal'; status: ClassStatus }
   | { ok: false; reason: 'no_fields' }
   | { ok: false; reason: 'slot_conflict' }
-  | { ok: false; reason: 'template_date_conflict' };
+  | { ok: false; reason: 'template_date_conflict' }
+  | { ok: false; reason: 'past_start' };
 
 /**
  * Apply a partial update to a class, enforcing two independent freezes.
@@ -738,7 +747,10 @@ export async function updateClass(
   classId: string,
   data: ClassUpdateData,
 ): Promise<UpdateClassResult> {
-  const cls = await db.class.findUnique({ where: { id: classId } });
+  const cls = await db.class.findUnique({
+    where: { id: classId },
+    include: { teacher: { select: { defaultTimezone: true } } },
+  });
   if (!cls) return { ok: false, reason: 'not_found' };
 
   // Checked BEFORE the economic lock AND before `hasEdit`, and the position is
@@ -753,6 +765,39 @@ export async function updateClass(
   // docblock enumerates both, each with the test that pins it.
   if (TERMINAL_CLASS_STATUSES.includes(cls.status)) {
     return { ok: false, reason: 'terminal', status: cls.status };
+  }
+
+  // #249. A write may not newly place this class's start in the past.
+  //
+  // AFTER the terminal check, not before. A completed class edited with a 2020
+  // date is refused because it is frozen, which is the older and stronger
+  // reason; answering "that date has passed" there would be true, unhelpful,
+  // and a regression on #247's two tests. Before the economic check because
+  // this is a whole-request refusal like `terminal`, where `locked` is a
+  // field-level one.
+  //
+  // GATED ON THE FIELDS SENT, and the conjunct is load-bearing rather than an
+  // optimisation. An `open` class whose start has already passed is a state the
+  // system produces legitimately — `generateClassInstances` creates one every
+  // time it runs later in the day than its template's own start time, and every
+  // class is in it for up to the 60 seconds before the transition sweep. Its
+  // description must stay editable. Only a write that MOVES the start is
+  // refused.
+  //
+  // ONE ENFORCEMENT POINT, not two, and the contrast with the terminal freeze
+  // above is the reason to say so: that one needs a CAS conjunct as well
+  // because a completion can commit between this read and the write. This one
+  // cannot lose that race. The incoming `date`/`startTime` are fixed by the
+  // request, and the stored values they fall back to can only be moved by a
+  // writer that is itself this guard.
+  if (data.date !== undefined || data.startTime !== undefined) {
+    const effectiveDate = data.date ?? cls.date;
+    const effectiveStartTime = data.startTime ?? cls.startTime;
+    if (
+      startsInPast(effectiveDate, effectiveStartTime, cls.teacher.defaultTimezone, new Date())
+    ) {
+      return { ok: false, reason: 'past_start' };
+    }
   }
 
   // Destructured rather than length-checked, so the non-empty tuple below is

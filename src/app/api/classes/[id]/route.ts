@@ -109,6 +109,13 @@ export const PUT = withErrorHandler(async (
   }
   // Exhaustiveness: a new UpdateClassResult variant becomes a compile error
   // here rather than being silently answered as though it were `locked`.
+  if (result.reason === 'past_start') {
+    return respondError(
+      'Cannot move a class to a date and time that has already passed.',
+      409,
+      'CLASS_STARTS_IN_PAST',
+    );
+  }
   const unhandled: never = result;
   return unhandled;
 });

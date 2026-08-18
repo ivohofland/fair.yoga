@@ -1257,14 +1257,25 @@ describe('updateClass (DB)', () => {
    * A 2099 date is outside every sweep window, so a leftover is inert.
    */
   const FIXTURE_DATE = '2099-06-01';
-  const makeClass = (settingsLocked: boolean, status: ClassStatus = 'draft') => {
+  /**
+   * #249 needs fixtures on both sides of "now". `FIXTURE_DATE` (2099) is the
+   * default and stays the default; `PAST_FIXTURE_DATE` is unambiguously behind
+   * every clock this suite will ever run under, so no test here needs an
+   * injected `now`.
+   */
+  const PAST_FIXTURE_DATE = '2020-01-01';
+  const makeClass = (
+    settingsLocked: boolean,
+    status: ClassStatus = 'draft',
+    date: string = FIXTURE_DATE,
+  ) => {
     makeClassCounter += 1;
     return prisma.class.create({
       data: {
         teacherId,
         teacherRoomId,
         classType: 'Hatha',
-        date: new Date(FIXTURE_DATE),
+        date: new Date(date),
         startTime: slotTime(makeClassCounter),
         durationMinutes: 60,
         roomCost: 35,
@@ -1516,6 +1527,45 @@ describe('updateClass (DB)', () => {
     expect(Number(after.roomCost)).toBe(35);
   });
 
+  it('refuses a date edit that moves a live class into the past (#249)', async () => {
+    const cls = await makeClass(false, 'open');
+
+    const result = await updateClass(prisma, cls.id, { date: new Date('2020-01-01') });
+    expect(result).toEqual({ ok: false, reason: 'past_start' });
+
+    // "Refused" has to mean "did not write" — the same assertion #247's tests
+    // make, for the same reason. A refusal that still moved the column is what
+    // leaves `waitlist-retention`'s sweep a class dated 2020 to reap, and the
+    // sweep is a `deleteMany`.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.date.toISOString().slice(0, 10)).toBe(FIXTURE_DATE);
+  });
+
+  it('leaves a non-scheduling edit alone on a class that has already started (#249)', async () => {
+    // The conjunct test. An `open` class whose start has passed is a state the
+    // system legitimately produces — the generator makes one every time it runs
+    // after a template's own weekday start time, and every class is in it for
+    // up to the 60 seconds before the transition sweep. Editing its description
+    // must stay legal; only a write that MOVES the start is refused.
+    const cls = await makeClass(false, 'open', PAST_FIXTURE_DATE);
+
+    const result = await updateClass(prisma, cls.id, { description: 'Updated' });
+    expect(result.ok).toBe(true);
+  });
+
+  it('checks a startTime-only edit against the stored date (#249)', async () => {
+    // The other conjunct. The obvious wrong guard fires only when `date` is
+    // sent; this class's date is already past, so moving only its startTime
+    // still lands in the past and must still be refused.
+    const cls = await makeClass(false, 'open', PAST_FIXTURE_DATE);
+
+    const result = await updateClass(prisma, cls.id, { startTime: '10:00' });
+    expect(result).toEqual({ ok: false, reason: 'past_start' });
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.startTime).not.toBe('10:00');
+  });
+
   /**
    * Derived, not listed. `class-terminal-date.test.ts` builds the same control
    * set as the enum minus the terminal constant and says in its own docblock
@@ -1682,6 +1732,12 @@ describe('updateClass — the count === 0 branches', () => {
               id: 'stub-class',
               settingsLocked: opts.settingsLocked,
               status: statusOnRead,
+              // #249's guard reads these. Future-dated and UTC so every
+              // existing case in this block behaves exactly as it did: no stub
+              // test sends a past date, so the guard never fires here.
+              date: new Date('2099-06-01T00:00:00.000Z'),
+              startTime: '09:00',
+              teacher: { defaultTimezone: 'UTC' },
             };
           }
           return opts.rowSurvives ? { id: 'stub-class', status: statusOnReRead } : null;
@@ -1786,11 +1842,10 @@ describe('updateClass — the count === 0 branches', () => {
     });
     const { db, updateManyCalls } = stub;
 
-    // A date-only edit, so `sentEconomic` is null. Before #247's
-    // disambiguation branch this combination fell through to
-    // UpdateClassInvariantError — a 500 for precisely the request the issue
-    // was filed about.
-    const result = await updateClass(db, 'stub-class', { date: new Date('2020-01-01') });
+    // A date-only edit, so `sentEconomic` is null. FUTURE-dated deliberately:
+    // #249's guard sits above this path and would answer a past date first,
+    // which would leave this branch untested while the test still looked green.
+    const result = await updateClass(db, 'stub-class', { date: new Date('2099-07-01') });
     expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
 
     // Proves the CAS path ran rather than the early return, which is
