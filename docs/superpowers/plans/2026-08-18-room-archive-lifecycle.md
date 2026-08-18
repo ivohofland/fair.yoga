@@ -29,6 +29,9 @@
 
 | File | Responsibility | Task |
 |---|---|---|
+| `src/lib/template-selection.ts` | **Create.** Import-free. Owns `ACTIVE_TEMPLATE_WHERE`, shared by the generator and the archive guard. | 1 |
+| `src/services/class-generator.ts` | **Modify.** `:355` spreads the shared constant instead of inlining the literal. | 1 |
+| `tests/room-fixtures.ts` | **Create.** Shared unit-test fixtures for both room test files. | 1 |
 | `src/services/room-archive.ts` | **Create.** Owns the in-use predicate and the archive write. | 1 |
 | `src/services/room-archive.test.ts` | **Create.** `unit` project. Door 1's full matrix + mutation records. | 1 |
 | `src/app/api/teacher-rooms/[id]/route.ts` | **Modify.** PATCH becomes a thin wrapper (`:66-103`). | 2 |
@@ -50,7 +53,10 @@
 ### Task 1: The `room-archive` service and door 1
 
 **Files:**
+- Create: `src/lib/template-selection.ts` (import-free, shared constant)
+- Create: `tests/room-fixtures.ts` (shared unit-test fixtures)
 - Create: `src/services/room-archive.ts`
+- Modify: `src/services/class-generator.ts:355` (consume the shared constant)
 - Test: `src/services/room-archive.test.ts`
 
 **Interfaces:**
@@ -61,9 +67,187 @@
   - `export async function setTeacherRoomArchived(db: PrismaClient, teacherRoomId: string, teacherId: string, target: 'archived' | 'unarchived'): Promise<ArchiveRoomResult>`
   - `export function describeRoomBlockers(blockers: RoomBlockers): string`
   - `export const BLOCKING_CLASS_STATUSES: readonly ClassStatus[]`
-  - `export const ACTIVE_TEMPLATE_WHERE: { isActive: true; isArchived: false }`
+  - **`ACTIVE_TEMPLATE_WHERE` is NOT defined here.** It lives in the new import-free `src/lib/template-selection.ts` and is imported by BOTH `room-archive.ts` and `class-generator.ts`, so the two predicates cannot diverge — agreement is structural, not asserted.
 
-Task 2 calls `setTeacherRoomArchived` and `describeRoomBlockers`. Task 8 imports `ACTIVE_TEMPLATE_WHERE` for the predicate-agreement test.
+Task 2 calls `setTeacherRoomArchived` and `describeRoomBlockers`. Task 3's test file imports the fixtures from `tests/room-fixtures.ts`. Task 8 pins `ACTIVE_TEMPLATE_WHERE`'s value.
+
+- [ ] **Step 0: Create the two shared modules first**
+
+Both exist so that agreement between the archive guard and the generator is
+**structural rather than asserted**, and so the two room test files share one
+fixture definition.
+
+Create `src/lib/template-selection.ts` — **no imports of any kind**, matching
+`src/lib/tiers.ts` and `src/lib/class-fields.ts`:
+
+```ts
+/**
+ * Which recurring templates are live — i.e. which ones will actually put
+ * classes on the calendar.
+ *
+ * Shared by `class-generator.ts` (which selects templates to run) and
+ * `services/room-archive.ts` (which blocks archiving a room a template would
+ * still generate into). Those two ask the SAME question, so they must not be
+ * able to answer it differently: this constant is what makes divergence
+ * impossible rather than merely detectable.
+ *
+ * IMPORT-FREE ON PURPOSE, like `lib/tiers.ts` and `lib/class-fields.ts`.
+ * `class-generator.ts` value-imports `@/lib/log` (pino, server-only), so a
+ * constant living there and imported by other modules would drag pino into
+ * their graphs. Nothing here imports anything, so either side can take it.
+ */
+export const ACTIVE_TEMPLATE_WHERE = {
+  isActive: true,
+  isArchived: false,
+} as const;
+```
+
+Then rewire `src/services/class-generator.ts:355` to consume it. Add the import
+beside the existing ones at the top of that file, then replace the literal:
+
+```ts
+import { ACTIVE_TEMPLATE_WHERE } from '@/lib/template-selection';
+```
+
+```ts
+  // The `isArchived: false` half is defense in depth — the routes keep
+  // archived templates inactive — and it now comes from the shared constant
+  // so `services/room-archive.ts` cannot block on a different set than this
+  // query selects. See `lib/template-selection.ts`.
+  const templates = await db.classTemplate.findMany({
+    where: { ...ACTIVE_TEMPLATE_WHERE, ...(teacherId ? { teacherId } : {}) },
+```
+
+Preserve the existing explanatory comment above that query (`:350-353`) — do
+not delete it; extend it as shown.
+
+Run `npx vitest run --project unit src/services/class-generator.test.ts` and
+`npx vitest run --project unit src/services/template-sync.test.ts`.
+Expected: PASS, unchanged. This step is a pure refactor — if anything goes
+red, the spread is not equivalent to the literal and must be fixed before
+continuing.
+
+Create `tests/room-fixtures.ts`. `src/**/*.test.ts` importing from `tests/` is
+an established pattern here — `src/services/class-terminal-date.test.ts:5`
+imports `'../../tests/migration-sql'`.
+
+```ts
+/**
+ * Shared fixtures for the room-archive unit tests (issue 76).
+ *
+ * A FRESH teacher, room and link per case. Two partial unique indexes make
+ * shared-teacher fixtures collide: `ClassTemplate_teacher_slot_unique` on
+ * (teacherId, dayOfWeek, startTime) WHERE isArchived = false, and
+ * `Class_teacher_slot_unique` on (teacherId, date, startTime) WHERE
+ * status <> 'cancelled'. A fresh teacher per case sidesteps both.
+ *
+ * Each test file passes its own `prefix` so its afterAll sweep cannot delete
+ * another file's rows.
+ */
+import type { PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import crypto from 'crypto';
+
+export type RoomFixture = { teacherId: string; roomId: string; linkId: string };
+export type ClassFixtureStatus = 'draft' | 'open' | 'in_progress' | 'completed' | 'cancelled';
+
+export function fixtureRun(prefix: string) {
+  const suffix = `${prefix}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let seq = 0;
+
+  async function makeFixture(db: PrismaClient): Promise<RoomFixture> {
+    const tag = `${suffix}-${seq++}`;
+    const teacher = await db.teacher.create({
+      data: {
+        firstName: 'Room',
+        lastName: 'Fixture',
+        email: `${tag}@test.local`,
+        account: { create: { email: `${tag}@test.local` } },
+        bio: 'room archive fixtures',
+        pageSlug: tag,
+      },
+    });
+    const room = await db.room.create({
+      data: {
+        venueName: `Venue ${tag}`,
+        address: `${seq} Fixture Street`,
+        city: 'Amsterdam',
+        postcode: '1011AB',
+        maxCapacity: 20,
+        createdById: teacher.id,
+      },
+    });
+    const link = await db.teacherRoom.create({
+      data: {
+        teacherId: teacher.id,
+        roomId: room.id,
+        capacityOverride: 15,
+        rentalRate: new Prisma.Decimal(30),
+      },
+    });
+    return { teacherId: teacher.id, roomId: room.id, linkId: link.id };
+  }
+
+  /** Always future-dated: a past date trips the STARTS_IN_PAST guard first. */
+  async function addClass(db: PrismaClient, f: RoomFixture, status: ClassFixtureStatus) {
+    const date = new Date();
+    date.setUTCHours(0, 0, 0, 0);
+    date.setUTCDate(date.getUTCDate() + 14);
+    return db.class.create({
+      data: {
+        teacherId: f.teacherId,
+        teacherRoomId: f.linkId,
+        classType: 'Vinyasa',
+        date,
+        startTime: `0${seq % 8}:30`,
+        durationMinutes: 60,
+        roomCost: new Prisma.Decimal(20),
+        minRate: new Prisma.Decimal(15),
+        targetRate: new Prisma.Decimal(25),
+        minStudents: 2,
+        maxStudents: 10,
+        status,
+      },
+    });
+  }
+
+  async function addTemplate(
+    db: PrismaClient,
+    f: RoomFixture,
+    opts: { isActive: boolean; isArchived: boolean },
+  ) {
+    return db.classTemplate.create({
+      data: {
+        teacherId: f.teacherId,
+        teacherRoomId: f.linkId,
+        classType: 'Hatha',
+        dayOfWeek: 2,
+        startTime: '18:00',
+        durationMinutes: 60,
+        roomCost: new Prisma.Decimal(20),
+        minRate: new Prisma.Decimal(15),
+        targetRate: new Prisma.Decimal(25),
+        minStudents: 2,
+        maxStudents: 10,
+        isActive: opts.isActive,
+        isArchived: opts.isArchived,
+      },
+    });
+  }
+
+  /** Sweeps only rows created by THIS run's prefix. */
+  async function cleanup(db: PrismaClient) {
+    const mine = { teacher: { pageSlug: { startsWith: suffix } } };
+    await db.class.deleteMany({ where: mine });
+    await db.classTemplate.deleteMany({ where: mine });
+    await db.teacherRoom.deleteMany({ where: mine });
+    await db.room.deleteMany({ where: { createdBy: { pageSlug: { startsWith: suffix } } } });
+    await db.teacher.deleteMany({ where: { pageSlug: { startsWith: suffix } } });
+  }
+
+  return { suffix, makeFixture, addClass, addTemplate, cleanup };
+}
+```
 
 - [ ] **Step 1: Write the failing test file**
 
@@ -80,100 +264,22 @@ Create `src/services/room-archive.test.ts`. A **fresh teacher, room and link per
  * clause and leaves the other empty. See the mutation record at the foot.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
-import crypto from 'crypto';
+import { PrismaClient } from '@prisma/client';
+import { fixtureRun, type RoomFixture, type ClassFixtureStatus } from '../../tests/room-fixtures';
 import { setTeacherRoomArchived, describeRoomBlockers } from './room-archive';
 
 const prisma = new PrismaClient();
-const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-let seq = 0;
-
-/** A fresh teacher + private room + link. Fresh per case, to sidestep both partial unique indexes. */
-async function makeFixture() {
-  const tag = `ra-${suffix}-${seq++}`;
-  const teacher = await prisma.teacher.create({
-    data: {
-      firstName: 'Room',
-      lastName: 'Archive',
-      email: `${tag}@test.local`,
-      account: { create: { email: `${tag}@test.local` } },
-      bio: 'room-archive service tests',
-      pageSlug: tag,
-    },
-  });
-  const room = await prisma.room.create({
-    data: {
-      venueName: `Venue ${tag}`,
-      address: `${seq} Test Street`,
-      city: 'Amsterdam',
-      postcode: '1011AB',
-      maxCapacity: 20,
-      createdById: teacher.id,
-    },
-  });
-  const link = await prisma.teacherRoom.create({
-    data: {
-      teacherId: teacher.id,
-      roomId: room.id,
-      capacityOverride: 15,
-      rentalRate: new Prisma.Decimal(30),
-    },
-  });
-  return { teacherId: teacher.id, roomId: room.id, linkId: link.id };
-}
-
-type Fixture = Awaited<ReturnType<typeof makeFixture>>;
-
-async function addClass(f: Fixture, status: 'draft' | 'open' | 'in_progress' | 'completed' | 'cancelled') {
-  const date = new Date();
-  date.setUTCHours(0, 0, 0, 0);
-  date.setUTCDate(date.getUTCDate() + 14);
-  return prisma.class.create({
-    data: {
-      teacherId: f.teacherId,
-      teacherRoomId: f.linkId,
-      classType: 'Vinyasa',
-      date,
-      // Distinct per row so Class_teacher_slot_unique cannot collide within a fixture.
-      startTime: `0${seq % 8}:30`,
-      durationMinutes: 60,
-      roomCost: new Prisma.Decimal(20),
-      minRate: new Prisma.Decimal(15),
-      targetRate: new Prisma.Decimal(25),
-      minStudents: 2,
-      maxStudents: 10,
-      status,
-    },
-  });
-}
-
-async function addTemplate(f: Fixture, opts: { isActive: boolean; isArchived: boolean }) {
-  return prisma.classTemplate.create({
-    data: {
-      teacherId: f.teacherId,
-      teacherRoomId: f.linkId,
-      classType: 'Hatha',
-      dayOfWeek: 2,
-      startTime: '18:00',
-      durationMinutes: 60,
-      roomCost: new Prisma.Decimal(20),
-      minRate: new Prisma.Decimal(15),
-      targetRate: new Prisma.Decimal(25),
-      minStudents: 2,
-      maxStudents: 10,
-      isActive: opts.isActive,
-      isArchived: opts.isArchived,
-    },
-  });
-}
+// `ra-` distinguishes this file's rows from `room-archive-doors.test.ts`'s,
+// so each file's cleanup sweeps only its own.
+const fx = fixtureRun('ra');
+const makeFixture = () => fx.makeFixture(prisma);
+const addClass = (f: RoomFixture, status: ClassFixtureStatus) => fx.addClass(prisma, f, status);
+const addTemplate = (f: RoomFixture, opts: { isActive: boolean; isArchived: boolean }) =>
+  fx.addTemplate(prisma, f, opts);
 
 beforeAll(async () => { await prisma.$connect(); });
 afterAll(async () => {
-  await prisma.class.deleteMany({ where: { teacher: { pageSlug: { startsWith: `ra-${suffix}` } } } });
-  await prisma.classTemplate.deleteMany({ where: { teacher: { pageSlug: { startsWith: `ra-${suffix}` } } } });
-  await prisma.teacherRoom.deleteMany({ where: { teacher: { pageSlug: { startsWith: `ra-${suffix}` } } } });
-  await prisma.room.deleteMany({ where: { createdBy: { pageSlug: { startsWith: `ra-${suffix}` } } } });
-  await prisma.teacher.deleteMany({ where: { pageSlug: { startsWith: `ra-${suffix}` } } });
+  await fx.cleanup(prisma);
   await prisma.$disconnect();
 });
 
@@ -336,6 +442,7 @@ Create `src/services/room-archive.ts`:
 
 ```ts
 import type { PrismaClient, ClassStatus } from '@prisma/client';
+import { ACTIVE_TEMPLATE_WHERE } from '@/lib/template-selection';
 
 /**
  * Whether a teacher's room link may be archived (issue 76).
@@ -362,19 +469,12 @@ export const BLOCKING_CLASS_STATUSES: readonly ClassStatus[] = Object.freeze(
   ['open', 'in_progress'] as ClassStatus[],
 );
 
-/**
- * Templates that block archiving.
- *
- * BYTE-IDENTICAL TO THE GENERATOR'S OWN SELECTION PREDICATE
- * (`class-generator.ts:355`), and that is the point rather than a coincidence:
- * "would this template put classes into this room?" is precisely the question
- * the generator asks, so any divergence between the two is a bug by
- * construction. `room-archive-predicate.test.ts` pins them in agreement.
- */
-export const ACTIVE_TEMPLATE_WHERE = Object.freeze({
-  isActive: true as const,
-  isArchived: false as const,
-});
+// Templates that block archiving come from `ACTIVE_TEMPLATE_WHERE`
+// (`lib/template-selection.ts`), imported above and shared with
+// `class-generator.ts`. "Would this template put classes into this room?" is
+// precisely the question the generator asks when selecting what to run, so
+// the two must not be able to answer differently — sharing the constant makes
+// divergence impossible rather than merely detectable.
 
 export type RoomBlockers = { classes: number; templates: number };
 
@@ -630,103 +730,23 @@ Create `src/services/room-archive-doors.test.ts`. Reuse the fixture helpers from
  * is an HTTP-level guard and is pinned in `tests/integration/`.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
-import crypto from 'crypto';
+import { PrismaClient } from '@prisma/client';
+import { fixtureRun, type RoomFixture, type ClassFixtureStatus } from '../../tests/room-fixtures';
 import { transitionClass } from './class-lifecycle';
 import { pauseOrResumeTemplate } from './class-template-lifecycle';
 
 const prisma = new PrismaClient();
-const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-let seq = 0;
-
-// Fixtures are per-file in this repo — `template-sync.test.ts` defines its own
-// `mkInstance` rather than importing one. The `rad-` prefix (not `ra-`) is what
-// keeps this file's afterAll from sweeping `room-archive.test.ts`'s rows.
-async function makeFixture() {
-  const tag = `rad-${suffix}-${seq++}`;
-  const teacher = await prisma.teacher.create({
-    data: {
-      firstName: 'Room',
-      lastName: 'Doors',
-      email: `${tag}@test.local`,
-      account: { create: { email: `${tag}@test.local` } },
-      bio: 'room-archive doors tests',
-      pageSlug: tag,
-    },
-  });
-  const room = await prisma.room.create({
-    data: {
-      venueName: `Venue ${tag}`,
-      address: `${seq} Door Street`,
-      city: 'Amsterdam',
-      postcode: '1011AB',
-      maxCapacity: 20,
-      createdById: teacher.id,
-    },
-  });
-  const link = await prisma.teacherRoom.create({
-    data: {
-      teacherId: teacher.id,
-      roomId: room.id,
-      capacityOverride: 15,
-      rentalRate: new Prisma.Decimal(30),
-    },
-  });
-  return { teacherId: teacher.id, roomId: room.id, linkId: link.id };
-}
-
-type Fixture = Awaited<ReturnType<typeof makeFixture>>;
-
-/** Always future-dated: a past date would trip the STARTS_IN_PAST guard first. */
-async function addClass(f: Fixture, status: 'draft' | 'open' | 'in_progress' | 'completed' | 'cancelled') {
-  const date = new Date();
-  date.setUTCHours(0, 0, 0, 0);
-  date.setUTCDate(date.getUTCDate() + 14);
-  return prisma.class.create({
-    data: {
-      teacherId: f.teacherId,
-      teacherRoomId: f.linkId,
-      classType: 'Vinyasa',
-      date,
-      startTime: `0${seq % 8}:30`,
-      durationMinutes: 60,
-      roomCost: new Prisma.Decimal(20),
-      minRate: new Prisma.Decimal(15),
-      targetRate: new Prisma.Decimal(25),
-      minStudents: 2,
-      maxStudents: 10,
-      status,
-    },
-  });
-}
-
-async function addTemplate(f: Fixture, opts: { isActive: boolean; isArchived: boolean }) {
-  return prisma.classTemplate.create({
-    data: {
-      teacherId: f.teacherId,
-      teacherRoomId: f.linkId,
-      classType: 'Hatha',
-      dayOfWeek: 2,
-      startTime: '18:00',
-      durationMinutes: 60,
-      roomCost: new Prisma.Decimal(20),
-      minRate: new Prisma.Decimal(15),
-      targetRate: new Prisma.Decimal(25),
-      minStudents: 2,
-      maxStudents: 10,
-      isActive: opts.isActive,
-      isArchived: opts.isArchived,
-    },
-  });
-}
+// `rad-` distinguishes this file's rows from `room-archive.test.ts`'s,
+// so each file's cleanup sweeps only its own.
+const fx = fixtureRun('rad');
+const makeFixture = () => fx.makeFixture(prisma);
+const addClass = (f: RoomFixture, status: ClassFixtureStatus) => fx.addClass(prisma, f, status);
+const addTemplate = (f: RoomFixture, opts: { isActive: boolean; isArchived: boolean }) =>
+  fx.addTemplate(prisma, f, opts);
 
 beforeAll(async () => { await prisma.$connect(); });
 afterAll(async () => {
-  await prisma.class.deleteMany({ where: { teacher: { pageSlug: { startsWith: `rad-${suffix}` } } } });
-  await prisma.classTemplate.deleteMany({ where: { teacher: { pageSlug: { startsWith: `rad-${suffix}` } } } });
-  await prisma.teacherRoom.deleteMany({ where: { teacher: { pageSlug: { startsWith: `rad-${suffix}` } } } });
-  await prisma.room.deleteMany({ where: { createdBy: { pageSlug: { startsWith: `rad-${suffix}` } } } });
-  await prisma.teacher.deleteMany({ where: { pageSlug: { startsWith: `rad-${suffix}` } } });
+  await fx.cleanup(prisma);
   await prisma.$disconnect();
 });
 
@@ -1305,73 +1325,93 @@ git commit -m "fix: two room messages stop describing behaviour that cannot happ
 
 ---
 
-### Task 8: Predicate agreement, and the full gate
+### Task 8: Pin the shared constant, then the full gate
 
 **Files:**
-- Test: `src/services/room-archive-predicate.test.ts` (**create**)
+- Test: `src/lib/template-selection.test.ts` (**create**)
 
 **Interfaces:**
-- Consumes: `ACTIVE_TEMPLATE_WHERE` from Task 1.
+- Consumes: `ACTIVE_TEMPLATE_WHERE` from `src/lib/template-selection.ts` (Task 1).
 - Produces: nothing.
 
-- [ ] **Step 1: Write the agreement test**
+**What changed from the original plan, and why it matters here.** The first
+draft asserted agreement between the archive guard and the generator by
+reading `class-generator.ts` as text and checking for a literal. Task 1
+instead made both sides *import the same constant*, so divergence is now
+impossible rather than merely detectable — there is no agreement left to
+assert. What remains worth pinning is the constant's own value, so that
+changing it is a deliberate act with a visible blast radius rather than a
+one-word edit.
 
-Door 1's template predicate and the generator's selection predicate answer the same question. This pins them together so they cannot drift silently — the discipline `src/services/class-terminal-date.test.ts:170` follows by driving its cases from `TERMINAL_CLASS_STATUSES` rather than a hand-written list.
+- [ ] **Step 1: Write the test**
 
 ```ts
 /**
- * Door 1 asks "would this template put classes into this room?" — which is
- * precisely the question `generateClassInstances` asks when selecting
- * templates to run. If the two predicates ever diverge, either a room can be
- * archived under a template that still generates into it, or a template that
- * generates nothing blocks archiving forever. Neither is catchable by the
- * behavioural tests, because both modules would be self-consistently wrong.
+ * `ACTIVE_TEMPLATE_WHERE` is imported by two modules that must agree:
+ * `services/class-generator.ts` selects templates to run with it, and
+ * `services/room-archive.ts` blocks archiving a room those templates would
+ * generate into. Sharing the constant is what makes them agree; this test
+ * pins its VALUE, so that widening or narrowing it is a deliberate change
+ * with both call sites in view rather than a one-word edit in passing.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
-import path from 'path';
-import { ACTIVE_TEMPLATE_WHERE } from './room-archive';
+import { ACTIVE_TEMPLATE_WHERE } from './template-selection';
 
-describe('room-archive template predicate', () => {
-  it('matches the generator’s own template selection', () => {
+describe('ACTIVE_TEMPLATE_WHERE', () => {
+  it('selects live templates only — active and not archived', () => {
     expect(ACTIVE_TEMPLATE_WHERE).toEqual({ isActive: true, isArchived: false });
+  });
 
-    // The generator builds its `where` inline, so there is no constant to
-    // import. Read the source and assert the literal is still there: a
-    // brittle-looking check that is the point — it fails loudly the moment
-    // someone edits the generator's predicate without revisiting this one.
-    const generator = readFileSync(
-      path.resolve(__dirname, 'class-generator.ts'), 'utf8',
-    );
-    expect(generator).toContain('isActive: true, isArchived: false');
+  // `isArchived: false` is defense in depth: the routes already keep archived
+  // templates inactive, so dropping it would change nothing observable today
+  // and would silently remove the backstop `class-generator.ts` documents.
+  it('keeps both keys, not just isActive', () => {
+    expect(Object.keys(ACTIVE_TEMPLATE_WHERE).sort()).toEqual(['isActive', 'isArchived']);
   });
 });
 ```
 
 - [ ] **Step 2: Run it**
 
-Run: `npx vitest run --project unit src/services/room-archive-predicate.test.ts`
+Run: `npx vitest run --project unit src/lib/template-selection.test.ts`
 Expected: PASS.
 
-- [ ] **Step 3: Prove it bites**
+- [ ] **Step 3: Prove the sharing is real, not decorative**
 
-In `src/services/class-generator.ts:355`, change `isActive: true, isArchived: false` to `isActive: true`. Run the test. Expected: FAIL on the `toContain`. Restore, re-run green.
+This is the check that replaces the old text-matching test. In
+`src/lib/template-selection.ts`, change `isActive: true` to `isActive: false`.
+
+Run: `npx vitest run --project unit src/lib/template-selection.test.ts src/services/room-archive.test.ts src/services/class-generator.test.ts`
+
+Expected: RED in **all three** — the constant test, the archive guard's
+template cases, and the generator's own tests. That single edit reaching all
+three files is the structural agreement demonstrating itself; if the generator
+tests stay green, the rewire in Task 1 Step 0 did not take and must be fixed.
+
+Restore and re-run green.
 
 - [ ] **Step 4: Run the full gate**
 
 Run: `npm run verify`
 
-This is typecheck + lint + all three vitest projects, including every file in `tests/integration/`. It needs the app live on :3000; a wall of `ECONNREFUSED` means it is not running — **ask the user, do not start it**.
+This is typecheck + lint + all three vitest projects, including every file in
+`tests/integration/`. It needs the app live on :3000; a wall of `ECONNREFUSED`
+means it is not running — **ask the user, do not start it**.
 
-Expected: PASS. Record the per-project file and test counts from the output, with totals that reconcile (e.g. `50 + 37 + 28 = 115` files, `712 + 205 + 396 = 1313` tests). The PR body needs these, and a bare number is not checkable.
+Expected: PASS. Record the per-project file and test counts from the output,
+with totals that reconcile (e.g. `50 + 37 + 28 = 115` files,
+`712 + 205 + 396 = 1313` tests). The PR body needs these, and a bare number is
+not checkable.
 
-Green `verify` is a strong signal but **not** a substitute for CI, which additionally runs `prisma validate`, a migration-drift check, `npm run build`, and Playwright.
+Green `verify` is a strong signal but **not** a substitute for CI, which
+additionally runs `prisma validate`, a migration-drift check, `npm run build`,
+and Playwright.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/services/room-archive-predicate.test.ts
-git commit -m "test: the archive guard and the generator cannot drift apart (issue 76)"
+git add src/lib/template-selection.test.ts
+git commit -m "test: the shared template predicate is pinned, not assumed (issue 76)"
 ```
 
 ---
