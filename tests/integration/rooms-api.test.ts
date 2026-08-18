@@ -138,7 +138,7 @@ beforeAll(async () => {
   const deletePrivateRoom = await makeRoom('Delete Private', false);
   deletePrivateRoomId = deletePrivateRoom.id;
 
-  // Private, with a TeacherRoom that has a class: the hasClasses 400.
+  // Private, with a TeacherRoom that has a class: the hasClasses 409.
   const deleteWithClassRoom = await makeRoom('Delete With Class', false);
   deleteWithClassRoomId = deleteWithClassRoom.id;
   const withClassTeacherRoom = await prisma.teacherRoom.create({
@@ -394,9 +394,9 @@ describe('PUT /api/rooms/[id]', () => {
  *     room creator can delete this room".
  *   - non-creator+private+has-classes pins the createdById <-> hasClasses
  *     order. Current order says "Only the room creator can delete this room";
- *     swapped, it says "Cannot delete a room that has classes" with a 400 —
- *     which would leak to a stranger whether a room they don't own has
- *     classes on it.
+ *     swapped, it says "Cannot delete a room with class history. Archive it
+ *     instead." with a 409 — which would leak to a stranger whether a room
+ *     they don't own has classes on it.
  *
  * Both pairs were verified by mutation, not by argument: swapping each pair
  * in the handler fails exactly the one case named above and nothing else.
@@ -443,12 +443,12 @@ describe('DELETE /api/rooms/[id]', () => {
     expect(await prisma.room.count({ where: { id: deletePrivateRoomId } })).toBe(1);
   });
 
-  it('the creator cannot delete a room that still has classes -> 400, nothing removed', async () => {
+  it('the creator cannot delete a room that still has classes -> 409, nothing removed', async () => {
     const res = await del(creatorToken, deleteWithClassRoomId);
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
 
     const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toContain('Cannot delete a room that has classes');
+    expect(json.error.message).toContain('Cannot delete a room with class history. Archive it instead.');
 
     // Both counts are here for the same reason every non-200 case in this file
     // asserts the DB is unchanged — not because a missing guard could orphan
@@ -470,8 +470,9 @@ describe('DELETE /api/rooms/[id]', () => {
     expect(res.status).toBe(403);
 
     // Ownership loses to nothing here. Swap createdById and hasClasses and
-    // this becomes 400 "Cannot delete a room that has classes" — telling a
-    // stranger something about a private room they have no business knowing.
+    // this becomes 409 "Cannot delete a room with class history. Archive it
+    // instead." — telling a stranger something about a private room they
+    // have no business knowing.
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toContain('Only the room creator can delete this room');
 
@@ -494,9 +495,9 @@ describe('DELETE /api/rooms/[id]', () => {
   it("another teacher's class blocks the creator's delete — the guard is deliberately cross-teacher", async () => {
     const res = await del(creatorToken, deleteCrossTeacherRoomId);
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
     const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toBe('Cannot delete a room that has classes');
+    expect(body.error.message).toBe('Cannot delete a room with class history. Archive it instead.');
 
     // Nothing removed — including the other teacher's link and its class.
     expect(await prisma.room.count({ where: { id: deleteCrossTeacherRoomId } })).toBe(1);

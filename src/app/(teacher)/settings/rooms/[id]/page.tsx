@@ -28,6 +28,11 @@ export default async function EditRoomPage({
   }
 
   const { room } = teacherRoom;
+  // KNOWN-OPEN (issue 76): a server-render snapshot. The buttons below gate on
+  // it, so a class created on this room after render leaves `Delete room`
+  // offered; the click then meets the route's own refusal, which is the
+  // authority. Recorded rather than locked, for the same reason as the archive
+  // race in `services/room-archive.ts` — see spec section 8.
   const classCount = await prisma.class.count({ where: { teacherRoomId: teacherRoom.id } });
   const isArchived = teacherRoom.isArchived;
   const canEditRoom = !room.isPublic && room.createdById === session.teacherId;

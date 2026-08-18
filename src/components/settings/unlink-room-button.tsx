@@ -47,7 +47,7 @@ export function UnlinkRoomButton({ teacherRoomId, roomName }: UnlinkRoomButtonPr
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-sm text-brown">Unlink {roomName}? Classes using this room will also be removed.</p>
+      <p className="text-sm text-brown">Unlink {roomName}? This removes it from your rooms. Only possible while no classes use it.</p>
       {error && <p className="text-sm text-danger">{error}</p>}
       <div className="flex gap-3">
         <Button variant="destructive" onClick={handleUnlink} disabled={removing}>

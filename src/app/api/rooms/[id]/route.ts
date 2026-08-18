@@ -36,7 +36,13 @@ export const DELETE = withErrorHandler(async (
 
   const hasClasses = room.teacherRooms.some((tr) => tr._count.classes > 0);
   if (hasClasses) {
-    return respondError('Cannot delete a room that has classes', 400);
+    // Matches the sibling refusal in `teacher-rooms/[id]:123` in both status
+    // and wording. The 400 this replaces implied a clearable condition and
+    // named no way out; a room with class history is permanently undeletable
+    // BY DESIGN — archiving is the end state (issue 76), and hard deletion is
+    // reserved for rooms that were never used. 409, because it is a conflict
+    // with current state rather than a malformed request.
+    return respondError('Cannot delete a room with class history. Archive it instead.', 409);
   }
 
   // Delete teacher-rooms first, then the room
