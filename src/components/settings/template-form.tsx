@@ -23,6 +23,7 @@ import { resumeMessage } from '@/components/settings/template-action-messages';
 
 interface TeacherRoomOption {
   id: string;
+  isArchived: boolean;
   capacityOverride: number;
   rentalRate: number | string;
   room: { roomName: string; venueName: string };
@@ -140,11 +141,21 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
   const router = useRouter();
   const [form, setForm] = useState(initial ?? INITIAL_VALUES);
   const [teacherRooms, setTeacherRooms] = useState<TeacherRoomOption[]>([]);
+  // Issue 76. Held separately from `teacherRooms.length` (which is the
+  // filtered, offerable count) so the empty state below can tell "no rooms
+  // at all" from "rooms exist, all archived" — the filter collapses both to
+  // zero without this.
+  const [allRoomsCount, setAllRoomsCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState(false);
+  // `form.teacherRoomId` is not in scope at mount — `form` state has not
+  // settled from the initial render when this effect's dependency array is
+  // read — so the filter below reads the prop `edit` mode seeds directly.
+  // It cannot change before the fetch below resolves.
+  const initialTeacherRoomId = initial?.teacherRoomId;
 
   useEffect(() => {
     async function fetchRooms() {
@@ -152,13 +163,23 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         const res = await fetch('/api/teacher-rooms');
         if (!res.ok) return;
         const json: { data: TeacherRoomOption[] } = await res.json();
-        setTeacherRooms(json.data);
+        setAllRoomsCount(json.data.length);
+        // Issue 76: an archived room accepts no new commitments, so it is not
+        // offered here. FEEDBACK, NOT ENFORCEMENT — `POST /api/class-templates`
+        // refuses an archived room regardless, and must keep doing so.
+        //
+        // The current selection survives the filter: in `edit` mode this form
+        // may be editing a paused template that already sits on an archived
+        // room, and dropping its option would silently blank the field.
+        setTeacherRooms(
+          json.data.filter((tr) => !tr.isArchived || tr.id === initialTeacherRoomId),
+        );
       } finally {
         setLoading(false);
       }
     }
     void fetchRooms();
-  }, []);
+  }, [initialTeacherRoomId]);
 
   const selectedRoom = teacherRooms.find((tr) => tr.id === form.teacherRoomId);
   const roomCapacity = selectedRoom?.capacityOverride ?? 30;
@@ -361,6 +382,18 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
   }
 
   if (teacherRooms.length === 0) {
+    // Issue 76: a teacher whose rooms are all archived still has `allRoomsCount
+    // > 0` — the filter above is what emptied `teacherRooms`, not an absence of
+    // rooms. Telling them to add a room they already own would be wrong; the
+    // way out is un-archiving one.
+    if (allRoomsCount > 0) {
+      return (
+        <div className="py-12 text-center">
+          <p className="text-brown mb-4">All your rooms are archived.</p>
+          <p className="text-sm text-brown">Unarchive one in Settings to schedule here.</p>
+        </div>
+      );
+    }
     return (
       <div className="py-12 text-center">
         <p className="text-brown mb-4">No rooms configured.</p>

@@ -253,6 +253,82 @@ describe('TemplateForm', () => {
   });
 
   /**
+   * Issue 76. Archiving refuses while a room is in use, and an archived room
+   * refuses new commitments server-side (publish, resume, create) — but
+   * `GET /api/teacher-rooms` itself stays unfiltered, so without this the
+   * picker would still offer a room the create door will reject.
+   */
+  it('omits archived rooms from the picker', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/teacher-rooms') {
+        return new Response(JSON.stringify({ data: [
+          { id: 'tr-live', isArchived: false, rentalRate: '30', capacityOverride: 15,
+            room: { venueName: 'Live Venue', roomName: 'Studio A' } },
+          { id: 'tr-archived', isArchived: true, rentalRate: '30', capacityOverride: 15,
+            room: { venueName: 'Archived Venue', roomName: 'Studio B' } },
+        ] }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    }));
+
+    render(<TemplateForm mode="create" />);
+
+    expect(await screen.findByRole('option', { name: /Live Venue/ })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /Archived Venue/ })).not.toBeInTheDocument();
+  });
+
+  // Editing a paused template on an archived room must not lose its room.
+  it('keeps an archived room in the picker when it is the current selection', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/teacher-rooms') {
+        return new Response(JSON.stringify({ data: [
+          { id: 'tr-live', isArchived: false, rentalRate: '30', capacityOverride: 15,
+            room: { venueName: 'Live Venue', roomName: 'Studio A' } },
+          { id: 'tr-archived', isArchived: true, rentalRate: '30', capacityOverride: 15,
+            room: { venueName: 'Archived Venue', roomName: 'Studio B' } },
+        ] }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    }));
+
+    render(
+      <TemplateForm
+        mode="edit"
+        templateId="tpl-1"
+        initial={{ ...initial, teacherRoomId: 'tr-archived' }}
+      />,
+    );
+
+    expect(await screen.findByRole('option', { name: /Archived Venue/ })).toBeInTheDocument();
+  });
+
+  /**
+   * Issue 76, step 5. The filter above collapses "no rooms at all" and
+   * "rooms exist, all archived" to the same `teacherRooms.length === 0` —
+   * without distinguishing them a teacher whose only rooms are archived is
+   * told to add a room they already have, with no hint that un-archiving is
+   * the way out. This is the branch a teacher actually lands in; nothing
+   * else in this file covers it.
+   */
+  it('tells a teacher whose rooms are all archived to unarchive one, not to add a room', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/teacher-rooms') {
+        return new Response(JSON.stringify({ data: [
+          { id: 'tr-archived', isArchived: true, rentalRate: '30', capacityOverride: 15,
+            room: { venueName: 'Archived Venue', roomName: 'Studio B' } },
+        ] }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    }));
+
+    render(<TemplateForm mode="create" />);
+
+    expect(await screen.findByText(/all your rooms are archived/i)).toBeInTheDocument();
+    expect(screen.getByText(/unarchive one in settings/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no rooms configured/i)).not.toBeInTheDocument();
+  });
+
+  /**
    * PR #208 review, C3. #196 made `slotTaken` reachable on create for the
    * first time: a teacher creating a template onto a day/time they already
    * occupy gets a live template whose window came back short. Before this,

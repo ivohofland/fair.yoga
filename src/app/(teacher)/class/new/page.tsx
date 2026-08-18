@@ -29,6 +29,7 @@ interface RoomData {
 interface TeacherRoomData {
   id: string;
   roomId: string;
+  isArchived: boolean;
   capacityOverride: number;
   rentalRate: number | string;
   room: RoomData;
@@ -148,6 +149,10 @@ export default function CreateClassPage() {
   const [form, setForm] = useState<FormData>(INITIAL_FORM);
   const [errors, setErrors] = useState<StepErrors>({});
   const [teacherRooms, setTeacherRooms] = useState<TeacherRoomData[]>([]);
+  // Issue 76. Kept separately from `teacherRooms.length` (the filtered,
+  // offerable count) so the empty state below can tell "no rooms at all"
+  // from "rooms exist, all archived" — the filter collapses both to zero.
+  const [allRoomsCount, setAllRoomsCount] = useState(0);
   const [loading, setLoading] = useState(true);
   // Client-only, so `undefined` for the server render and the hydration pass.
   const minDate = useTodayLocal();
@@ -172,7 +177,12 @@ export default function CreateClassPage() {
           return;
         }
         const json: { data: TeacherRoomData[] } = await res.json();
-        setTeacherRooms(json.data);
+        setAllRoomsCount(json.data.length);
+        // Issue 76: archived rooms are not offered for new classes. Feedback
+        // only — a class created here is born `draft`, and door 2
+        // (`transitionClass`) is what actually refuses publishing into an
+        // archived room.
+        setTeacherRooms(json.data.filter((tr) => !tr.isArchived));
       } catch {
         // Silently fail — empty room list will show message
       } finally {
@@ -324,6 +334,18 @@ export default function CreateClassPage() {
   }
 
   if (teacherRooms.length === 0) {
+    // Issue 76: a teacher whose rooms are all archived still has
+    // `allRoomsCount > 0` — the filter above is what emptied `teacherRooms`,
+    // not an absence of rooms. Telling them to add a room they already own
+    // would be wrong; the way out is un-archiving one.
+    if (allRoomsCount > 0) {
+      return (
+        <EmptyState
+          title="All your rooms are archived"
+          body="Unarchive one in Settings to schedule here."
+        />
+      );
+    }
     return (
       <EmptyState
         title="No rooms configured"
