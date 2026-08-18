@@ -9,6 +9,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { updateTeacherRoomSchema, archiveStateQuerySchema } from '@/lib/schemas';
+import { setTeacherRoomArchived, describeRoomBlockers } from '@/services/room-archive';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -77,29 +78,39 @@ export const PATCH = withErrorHandler(async (
   if (!parsed.success) {
     return respondError('A state of archived or unarchived is required', 400);
   }
-  const archiving = parsed.data.state === 'archived';
 
-  const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id } });
-  if (!teacherRoom) return respondError('Teacher-room not found', 404);
-  if (teacherRoom.teacherId !== session.teacherId) {
-    return respondError('Access denied', 403);
+  const result = await setTeacherRoomArchived(
+    prisma, id, session.teacherId, parsed.data.state,
+  );
+
+  if (result.ok) {
+    return respondOk({ isArchived: result.isArchived, action: result.action });
   }
 
-  // Already there: no write. The point of #98 — a retry after a lost response
-  // must not undo what the first attempt did.
-  if (teacherRoom.isArchived === archiving) {
-    return respondOk({ isArchived: teacherRoom.isArchived, action: 'unchanged' });
+  // A switch, not an if-chain: `ArchiveRoomResult`'s failure arm packs
+  // 'not_found' and 'forbidden' into ONE union member's `reason` field
+  // (rather than one member per reason, as `class-template-lifecycle.ts`
+  // does), and TS's control-flow narrowing does not collapse that field to
+  // `never` across a chain of sequential `if (result.reason === …) return`
+  // statements — the `unhandled: never` guard below fails to compile with
+  // `{ reason: 'not_found' | 'forbidden' }` left over even though every case
+  // is handled. A `switch` on the same discriminant narrows correctly.
+  switch (result.reason) {
+    case 'not_found':
+      return respondError('Teacher-room not found', 404);
+    case 'forbidden':
+      return respondError('Access denied', 403);
+    case 'in_use':
+      // 409, matching the sibling DELETE below: a conflict with current
+      // state, not a malformed request.
+      return respondError(describeRoomBlockers(result.blockers), 409, 'ROOM_IN_USE');
   }
 
-  const updated = await prisma.teacherRoom.update({
-    where: { id },
-    data: { isArchived: archiving },
-  });
-
-  return respondOk({
-    isArchived: updated.isArchived,
-    action: archiving ? 'archived' : 'unarchived',
-  });
+  // Exhaustiveness: a new ArchiveRoomResult reason becomes a compile error
+  // here rather than being silently answered with the wrong status. Same
+  // discipline as `class-templates/[id]/route.ts`.
+  const unhandled: never = result;
+  return unhandled;
 });
 
 export const DELETE = withErrorHandler(async (

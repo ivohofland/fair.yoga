@@ -37,6 +37,12 @@ let linkId: string;
 /** A second link, with a class on it, for the delete guard. */
 let linkWithClassId: string;
 let blockingClassId: string;
+/**
+ * A third link, with an `open` class — `blockingClassId`'s class is `draft`,
+ * which does not block archiving (see `BLOCKING_CLASS_STATUSES`), so it can't
+ * stand in for the archive-guard tests.
+ */
+let linkWithOpenClassId: string;
 /** Free PRIVATE room owned by `owner`, with no link yet — the create cases claim it. */
 let freeRoomId: string;
 /** Public room: usable by anyone, which is the whole point of public. */
@@ -171,6 +177,33 @@ beforeAll(async () => {
       },
     })
   ).id;
+
+  const roomWithOpenClass = await makeRoom('With Open Class');
+  const linkWithOpenClass = await prisma.teacherRoom.create({
+    data: {
+      teacherId: ownerId,
+      roomId: roomWithOpenClass.id,
+      capacityOverride: 8,
+      rentalRate: 15,
+    },
+  });
+  linkWithOpenClassId = linkWithOpenClass.id;
+  await prisma.class.create({
+    data: {
+      teacherId: ownerId,
+      teacherRoomId: linkWithOpenClass.id,
+      classType: 'Teacher Rooms API Archive Guard',
+      date: new Date('2099-06-01'),
+      startTime: '11:00',
+      durationMinutes: 60,
+      roomCost: 15,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 1,
+      maxStudents: 8,
+      status: 'open',
+    },
+  });
 });
 
 afterAll(async () => {
@@ -378,6 +411,33 @@ describe('PATCH /api/teacher-rooms/[id]', () => {
     expect(secondBody.data.action).toBe('unchanged');
 
     const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: linkId } });
+    expect(after.isArchived).toBe(false);
+  });
+
+  // Issue 76. The room-archive lifecycle: a room in use cannot be shelved.
+  it('refuses to archive a link that still carries an open class, and names what blocks it', async () => {
+    const res = await send('PATCH', ownerToken, `${linkWithOpenClassId}?state=archived`);
+    expect(res.status).toBe(409);
+
+    const body = (await res.json()) as { error: { message: string; code?: string } };
+    expect(body.error.code).toBe('ROOM_IN_USE');
+    expect(body.error.message).toBe('1 upcoming class still uses this room.');
+
+    const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: linkWithOpenClassId } });
+    expect(after.isArchived).toBe(false);
+  });
+
+  // The release valve, over HTTP. Un-archiving must never acquire a guard.
+  it('un-archives a link that is in use', async () => {
+    await prisma.teacherRoom.update({
+      where: { id: linkWithOpenClassId },
+      data: { isArchived: true },
+    });
+
+    const res = await send('PATCH', ownerToken, `${linkWithOpenClassId}?state=unarchived`);
+    expect(res.status).toBe(200);
+
+    const after = await prisma.teacherRoom.findUniqueOrThrow({ where: { id: linkWithOpenClassId } });
     expect(after.isArchived).toBe(false);
   });
 });
