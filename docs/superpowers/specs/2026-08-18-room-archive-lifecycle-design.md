@@ -151,12 +151,22 @@ hazard it guards against is a real one in this codebase.
 
 `src/services/room-archive.ts` — framework-agnostic, no HTTP concerns, no
 framework imports, per CLAUDE.md's services rule. It mirrors the discriminated
-shape `pauseOrResumeTemplate` already returns:
+shape `pauseOrResumeTemplate` already returns — specifically **one union member
+per reason**, not one member carrying a multi-literal `reason` field.
+
+That distinction is load-bearing, not cosmetic. TypeScript narrows *which
+member* a discriminant check selects, not the property type inside a member, so
+a packed member can never be exhausted by the `if (result.reason === …) return`
+chain every route in this codebase uses — the closing `const unhandled: never`
+guard fails to compile with every case already handled. The first draft of this
+service packed them, and the route had to work around it with a `switch`; the
+type was split instead.
 
 ```ts
 export type ArchiveRoomResult =
   | { ok: true; action: 'archived' | 'unarchived' | 'unchanged'; isArchived: boolean }
-  | { ok: false; reason: 'not_found' | 'forbidden' }
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'in_use'; blockers: { classes: number; templates: number } };
 
 export async function setTeacherRoomArchived(
