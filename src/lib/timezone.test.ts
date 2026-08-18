@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { classStartInstant, startOfLocalDay, startOfLocalWeek } from './timezone';
+import { classStartInstant, startsInPast, startOfLocalDay, startOfLocalWeek } from './timezone';
 import { log } from '@/lib/log';
 
 /**
@@ -122,6 +122,57 @@ describe('classStartInstant', () => {
       expect.objectContaining({ timeZone: 'Not/AZone' }),
       expect.stringContaining('falling back to UTC'),
     );
+  });
+});
+
+/**
+ * #249. The predicate both past-start guards share.
+ *
+ * The Auckland case is the one that matters and the one that can be written so
+ * it cannot fail. `Class.date` is stored at UTC midnight, so a guard that
+ * compared the stored column against `now` — the obvious wrong implementation —
+ * agrees with the correct answer at most hours of most days. These numbers are
+ * chosen so the two disagree: 2026-06-15 23:00 NZST is 2026-06-15T11:00Z, which
+ * is AFTER the `now` below, while the stored column reads 2026-06-15T00:00Z,
+ * which is BEFORE it. Re-derive them if the fixture changes; do not adjust them
+ * until a test passes.
+ */
+describe('startsInPast', () => {
+  const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+
+  it('is false for a class still to come in a zone far ahead of UTC', () => {
+    expect(
+      startsInPast(
+        day('2026-06-15'),
+        '23:00',
+        'Pacific/Auckland',
+        new Date('2026-06-15T06:00:00.000Z'),
+      ),
+    ).toBe(false);
+  });
+
+  it('is true once the start instant has passed', () => {
+    // 09:00 CEST = 07:00Z, and `now` is five hours later.
+    expect(
+      startsInPast(
+        day('2026-06-15'),
+        '09:00',
+        'Europe/Amsterdam',
+        new Date('2026-06-15T12:00:00.000Z'),
+      ),
+    ).toBe(true);
+  });
+
+  it('is false at exactly the start instant', () => {
+    // Strictly `<`: a class starting this instant has not started in the past.
+    expect(
+      startsInPast(
+        day('2026-06-15'),
+        '09:00',
+        'Europe/Amsterdam',
+        new Date('2026-06-15T07:00:00.000Z'),
+      ),
+    ).toBe(false);
   });
 });
 
