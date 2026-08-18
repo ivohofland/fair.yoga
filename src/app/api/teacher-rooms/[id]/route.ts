@@ -87,23 +87,12 @@ export const PATCH = withErrorHandler(async (
     return respondOk({ isArchived: result.isArchived, action: result.action });
   }
 
-  // A switch, not an if-chain: `ArchiveRoomResult`'s failure arm packs
-  // 'not_found' and 'forbidden' into ONE union member's `reason` field
-  // (rather than one member per reason, as `class-template-lifecycle.ts`
-  // does), and TS's control-flow narrowing does not collapse that field to
-  // `never` across a chain of sequential `if (result.reason === …) return`
-  // statements — the `unhandled: never` guard below fails to compile with
-  // `{ reason: 'not_found' | 'forbidden' }` left over even though every case
-  // is handled. A `switch` on the same discriminant narrows correctly.
-  switch (result.reason) {
-    case 'not_found':
-      return respondError('Teacher-room not found', 404);
-    case 'forbidden':
-      return respondError('Access denied', 403);
-    case 'in_use':
-      // 409, matching the sibling DELETE below: a conflict with current
-      // state, not a malformed request.
-      return respondError(describeRoomBlockers(result.blockers), 409, 'ROOM_IN_USE');
+  if (result.reason === 'not_found') return respondError('Teacher-room not found', 404);
+  if (result.reason === 'forbidden') return respondError('Access denied', 403);
+  if (result.reason === 'in_use') {
+    // 409, matching the sibling DELETE below: a conflict with current state,
+    // not a malformed request.
+    return respondError(describeRoomBlockers(result.blockers), 409, 'ROOM_IN_USE');
   }
 
   // Exhaustiveness: a new ArchiveRoomResult reason becomes a compile error

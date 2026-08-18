@@ -37,7 +37,8 @@ export type RoomBlockers = { classes: number; templates: number };
 
 export type ArchiveRoomResult =
   | { ok: true; action: 'archived' | 'unarchived' | 'unchanged'; isArchived: boolean }
-  | { ok: false; reason: 'not_found' | 'forbidden' }
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'in_use'; blockers: RoomBlockers };
 
 function plural(n: number, one: string, many: string): string {
