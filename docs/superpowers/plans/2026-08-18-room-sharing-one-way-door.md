@@ -33,7 +33,18 @@ Recorded before any change so the after-figures are checkable. **Re-measure rath
 | `add-room-flow.tsx` | **441 lines**, **22** `useState` (23 lines mention it; one is the import) | `wc -l`, `grep -c` |
 | Tests exercising `GET /api/rooms` search params | **0** | `grep -rn "postcode=\|street=" tests/` returns nothing |
 
-Run `npm test` once before Task 1 and record files and tests per project. You will need the before-figure for the PR body.
+**Suite baseline, measured on `main` at `0adb293` before any change on this branch** — `npm test`, all green in 234s:
+
+| Project | Files | Tests |
+|---|---|---|
+| `unit` (`src/**/*.test.ts`) | 57 | 871 |
+| `components` (`src/{components,app}/**/*.test.tsx`) | 38 | 211 |
+| `integration` (`tests/integration/**/*.test.ts`) | 28 | 414 |
+| **Total** | **123** | **1496** |
+
+Both columns reconcile: `57 + 38 + 28 = 123` and `871 + 211 + 414 = 1496`, and 123/1496 is what vitest reported for the whole run. The `integration` test count is derived by subtraction (`1496 − 871 − 211`); its file count was measured directly, which is the independent check on that subtraction.
+
+**Re-measure at Task 10 rather than predicting from this table.** A branch's own review adds tests no prediction can know about — #212 predicted 1294 and measured 1296 for exactly that reason.
 
 ## File structure
 
@@ -99,16 +110,24 @@ const suffix = uniqueSuffix();
 describe('Room.isPublic column default', () => {
   afterAll(async () => {
     await prisma.room.deleteMany({ where: { address: `${suffix} Default St` } });
-    await prisma.teacher.deleteMany({ where: { bio: `${suffix} default-privacy` } });
+    await prisma.teacher.deleteMany({ where: { pageSlug: `roomdefault-${suffix}` } });
     await prisma.$disconnect();
   });
 
   it('creates a private room when isPublic is omitted', async () => {
-    const account = await prisma.account.create({
-      data: { email: `${suffix}-default@example.com` },
-    });
+    // Fixture shape copied verbatim from rooms-api.test.ts's makeTeacher
+    // (tests/integration/rooms-api.test.ts:65-81). Teacher owns the email and
+    // nests its Account; there is no top-level `accountId` on create.
+    const email = `roomdefault-${suffix}@test.local`;
     const teacher = await prisma.teacher.create({
-      data: { accountId: account.id, name: 'Default Privacy', bio: `${suffix} default-privacy` },
+      data: {
+        firstName: 'Room',
+        lastName: 'Default',
+        email,
+        account: { create: { email } },
+        bio: 'Room default privacy test',
+        pageSlug: `roomdefault-${suffix}`,
+      },
     });
 
     const room = await prisma.room.create({
@@ -391,18 +410,24 @@ function shared(addr: string, floor: string, roomName: string) {
 }
 
 beforeAll(async () => {
-  const account = await prisma.account.create({
-    data: { email: `${suffix}-agreement@example.com` },
-  });
+  // Fixture shape copied verbatim from rooms-api.test.ts:65-81.
+  const email = `roomagree-${suffix}@test.local`;
   const teacher = await prisma.teacher.create({
-    data: { accountId: account.id, name: 'Agreement', bio: `${suffix} agreement` },
+    data: {
+      firstName: 'Room',
+      lastName: 'Agreement',
+      email,
+      account: { create: { email } },
+      bio: 'Room identity agreement test',
+      pageSlug: `roomagree-${suffix}`,
+    },
   });
   teacherId = teacher.id;
 });
 
 afterAll(async () => {
   await prisma.room.deleteMany({ where: { address: { in: [address, variantAddress] } } });
-  await prisma.teacher.deleteMany({ where: { bio: `${suffix} agreement` } });
+  await prisma.teacher.deleteMany({ where: { pageSlug: `roomagree-${suffix}` } });
   await prisma.$disconnect();
 });
 
@@ -504,10 +529,12 @@ let creatorId: string;
 let creatorToken: string;
 let otherToken: string;
 
+// `cookie(token)` returns `{ Cookie: string }` — an object to spread or pass
+// as `headers` directly, NOT a string. See tests/helpers.ts:75.
 function publish(token: string, id: string) {
   return fetch(`${BASE_URL}/api/rooms/${id}/publish`, {
     method: 'POST',
-    headers: { cookie: cookie(token) },
+    headers: cookie(token),
   });
 }
 
@@ -527,16 +554,35 @@ function makeRoom(roomName: string, isPublic: boolean, createdById = creatorId) 
   });
 }
 
+// `seedSession(db, accountId)` takes an ACCOUNT ID and returns the raw token
+// STRING (tests/helpers.ts:170). The caller creates the Teacher and its nested
+// Account itself — this helper is the same shape as rooms-api.test.ts:65-81.
+async function makeTeacher(tag: string): Promise<{ id: string; token: string }> {
+  const email = `roompublish-${tag}-${suffix}@test.local`;
+  const teacher = await prisma.teacher.create({
+    data: {
+      firstName: 'Room',
+      lastName: tag,
+      email,
+      account: { create: { email } },
+      bio: 'Rooms publish API tests',
+      pageSlug: `roompublish-${tag}-${suffix}`,
+    },
+  });
+  return { id: teacher.id, token: await seedSession(prisma, teacher.accountId) };
+}
+
 beforeAll(async () => {
-  const creator = await seedSession(prisma, `${suffix}-creator`, { teacher: true });
-  creatorId = creator.teacherId;
+  await prisma.$connect();
+  const creator = await makeTeacher('creator');
+  creatorId = creator.id;
   creatorToken = creator.token;
-  const other = await seedSession(prisma, `${suffix}-other`, { teacher: true });
-  otherToken = other.token;
+  otherToken = (await makeTeacher('other')).token;
 });
 
 afterAll(async () => {
   await prisma.room.deleteMany({ where: { address } });
+  await prisma.teacher.deleteMany({ where: { bio: 'Rooms publish API tests' } });
   await prisma.$disconnect();
 });
 
@@ -614,7 +660,7 @@ describe('POST /api/rooms/[id]/publish', () => {
 });
 ```
 
-> **Verify before writing:** open `tests/helpers.ts` and confirm the signature of `seedSession` and `cookie`. The call above assumes `seedSession(prisma, label, { teacher: true })` returning `{ teacherId, token }`. **Copy the real signature** from an existing caller — `tests/integration/rooms-api.test.ts` is the closest neighbour — and fix this test to match. Report the correction.
+> **Already verified** against `tests/helpers.ts` and `tests/integration/rooms-api.test.ts:65-81` while writing the handover. An earlier draft of this task assumed `seedSession(prisma, label, { teacher: true })` returning `{ teacherId, token }` and `headers: { cookie: cookie(token) }` — **all three assumptions were wrong**, and the code above is corrected. Re-confirm the line references still point where this says, but the shapes are right.
 
 - [ ] **Step 2: Run it and watch it fail**
 
@@ -750,7 +796,7 @@ git commit -m "feat: sharing a room gets its own door, guarded creator-first (#7
 
 **Files:**
 - Modify: `src/lib/schemas.ts` (`updateRoomSchema`, currently `:288-299`)
-- Modify: `src/lib/schemas.test.ts` (delete the `updateRoomSchema` entry, `:420-424`)
+- Modify: `src/lib/schemas.test.ts` (delete the `updateRoomSchema` entry, `:422-425`)
 - Modify: `src/app/api/rooms/[id]/route.ts` (comment `:99-106`, catch `:113-116`, ternary `:119`)
 - Modify: `tests/integration/rooms-api.test.ts` (move one test out, add one, correct two comments)
 
@@ -792,7 +838,7 @@ In `src/lib/schemas.ts`, delete the `isPublic: z.boolean().optional(),` line fro
 
 - [ ] **Step 4: Delete the KNOWN GAP entry it was blocking**
 
-In `src/lib/schemas.test.ts`, delete these five lines (`:420-424`) entirely — comment and entry:
+In `src/lib/schemas.test.ts`, delete these four lines (`:422-425`) entirely — comment and entry:
 
 ```ts
   // KNOWN GAP: no form sends it, and flipping it true is a one-way door — the
@@ -845,7 +891,7 @@ The `parsed.data.isPublic === true` ternary is gone with it — `parsed.data` ha
 
 - [ ] **Step 6: Move the relocated collision test**
 
-`tests/integration/rooms-api.test.ts:628` — *"refuses flipping a private room public onto a slot a public room already holds"* — is **re-pointed, not deleted.** It exists to pin that the catch matches the public index shape; that property now belongs to the publish route, where Task 3's last test already covers it.
+`tests/integration/rooms-api.test.ts:630` — *"refuses flipping a private room public onto a slot a public room already holds"* — is **re-pointed, not deleted.** It exists to pin that the catch matches the public index shape; that property now belongs to the publish route, where Task 3's last test already covers it.
 
 Delete that `it(...)` block from `rooms-api.test.ts`, and replace the describe-block docblock above it (`:563-570`) with:
 
@@ -1204,7 +1250,7 @@ export function RoomMatchList({ rooms, onSelect }: RoomMatchListProps) {
 }
 ```
 
-> **Verify before writing:** confirm `rounded-card` and `type-caption` exist in `src/app/globals.css`. The caption class is copied from `add-room-flow.tsx`'s existing rows; `rounded-card` is an assumption. If it is not a real token, use the radius class the neighbouring cards use and report the correction.
+> **Already verified.** `--radius-card: 16px` is declared inside the `@theme` block in `src/app/globals.css:34` (the block opens at `:3`), so Tailwind v4 generates `rounded-card`. `type-caption` is copied from `add-room-flow.tsx`'s existing rows. Both are real.
 
 - [ ] **Step 4: Run it and watch it pass**
 
@@ -1737,4 +1783,10 @@ The PR body must record: which of #73's claims were checked and which held (§1 
 
 **Type consistency.** `RoomIdentity` is defined once (T2) and consumed by `ShareRoomButton`'s props (T7). `RoomResult` is defined once in `room-search.ts` (T6), consumed by `RoomMatchList` (T6), `ShareRoomButton` (T7) and all three step components (T9) — and the local duplicate in `add-room-flow.tsx:12-21` is explicitly deleted in T6 S5. `searchPublicRooms` is called with `(postcode, street)` in T6 and `(postcode, identity.address)` in T7 — same positional order, both times.
 
-**Known soft spots, flagged rather than hidden.** Three code blocks depend on details a fresh reader must confirm rather than trust, and each carries a *verify before writing* note at its site: `seedSession`/`cookie` signatures (T3 S1), the `rounded-card` token (T6 S3), and `add-room-flow.test.tsx`'s existing setup idiom (T8 S1). Task 1 Step 6 is the other genuine unknown — 2 of 31 defaulted fixtures were spot-checked, so a fixture wave there is possible and is meant to be discovered at Task 1 rather than Task 8.
+**Known soft spots.** Two of the three original ones were resolved while writing the handover, and the corrections are in the code above rather than left as homework:
+
+- **`seedSession` / `cookie` (T3) — was wrong, now fixed.** The first draft assumed `seedSession(prisma, label, { teacher: true }) → { teacherId, token }` and `headers: { cookie: cookie(token) }`. Reality: `seedSession(db, accountId) → Promise<string>` (`tests/helpers.ts:170`), and `cookie(token)` returns `{ Cookie: string }` to spread (`:75`). Teacher fixtures nest their Account and have no top-level `accountId`. All three fixtures in this plan were rewritten against `rooms-api.test.ts:65-81`.
+- **`rounded-card` (T6) — confirmed real.** `--radius-card` is inside `@theme` (`globals.css:3`, token at `:34`).
+- **`add-room-flow.test.tsx`'s setup idiom (T8) — still open by design.** The file is 125 lines and the implementer should copy its existing navigation and fetch-mocking rather than have it transcribed here; a second mocking style in one file is worse than a placeholder.
+
+Task 1 Step 6 remains the one genuine unknown: 2 of 31 defaulted fixtures were spot-checked, so a fixture wave is possible. It is meant to surface at Task 1 rather than Task 8, which is why that task is first.

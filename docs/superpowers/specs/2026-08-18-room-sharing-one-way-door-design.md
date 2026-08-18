@@ -16,7 +16,7 @@
 | PUT and DELETE both check `isPublic` before `createdById` | **True** — `src/app/api/rooms/[id]/route.ts:78` (PUT), `:29` (DELETE) |
 | The creator is permanently locked out of editing and deleting their own room | **True for the `Room` row**, with one softening below |
 | *"It isn't reachable from the UI … so this is API-only today. That makes it lower urgency."* | **False, and it is the load-bearing claim.** See below. |
-| *"nothing pins the transition into it"* | **Half false** — #196 added `tests/integration/rooms-api.test.ts:628`, which pins one flip. It is refused by a unique index, not by policy; an uncontested flip still succeeds, unpinned. |
+| *"nothing pins the transition into it"* | **Half false** — #196 added `tests/integration/rooms-api.test.ts:630`, which pins one flip. It is refused by a unique index, not by policy; an uncontested flip still succeeds, unpinned. |
 
 ### The claim that fails
 
@@ -283,12 +283,12 @@ Measured by grep, not assumed. **Eight locations to change, three verified clean
 
 | Location | Claim | Fate |
 |---|---|---|
-| `src/lib/schemas.test.ts:420-424` | *"KNOWN GAP … Blocked on #73's isPublic product decision"* | Entry **and** comment deleted. The guard reads `Object.keys(shape)`, so removing the field from the schema makes this existing test the regression test for the removal — no new test needed. |
+| `src/lib/schemas.test.ts:422-425` | *"KNOWN GAP … Blocked on #73's isPublic product decision"* | Entry **and** comment deleted. The guard reads `Object.keys(shape)`, so removing the field from the schema makes this existing test the regression test for the removal — no new test needed. |
 | `tests/integration/rooms-api.test.ts:115` | *"Room.isPublic defaults to true"* | **Becomes false** |
 | `tests/integration/rooms-api.test.ts:563-570` | *"`updateRoomSchema` still accepts `isPublic`"* | **Becomes false** |
 | `src/app/api/rooms/[id]/route.ts:99-106` | *"this PUT can flip a private room to public"* | **Becomes false** — rewritten |
 | `tests/integration/rooms-api.test.ts:1-13`, `:236`, `:240` | header and message pins | Extended for the new door, reworded for vocabulary |
-| `tests/integration/rooms-api.test.ts:628` | *"refuses flipping a private room public onto a slot a public room already holds"* | **Re-pointed, not deleted.** It pins that the catch matches both index shapes; that property moves to the publish route, so the test moves with it. A new test pins PUT's 400. |
+| `tests/integration/rooms-api.test.ts:630` | *"refuses flipping a private room public onto a slot a public room already holds"* | **Re-pointed, not deleted.** It pins that the catch matches both index shapes; that property moves to the publish route, so the test moves with it. A new test pins PUT's 400. |
 | `docs/backlog-roadmap.md:424`, `:1433`, `:1797`, `:3055` | #73 open / blocked | At close |
 | Issue #73, PR body | | At close |
 | `tests/integration/rooms-api.test.ts:244` | *"the isPublic flip is one-way"* | **Still true** — that fixture flips via raw Prisma (`:274`), which this branch does not touch |
