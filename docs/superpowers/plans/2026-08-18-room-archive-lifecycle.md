@@ -351,9 +351,17 @@ describe('setTeacherRoomArchived — door 1, template clause (no blocking class 
     expect(result).toMatchObject({ ok: true, action: 'archived' });
   });
 
+  // `isActive: true` here, deliberately, not `false` like the paused case
+  // above. Every real write pairs `isArchived: true` with `isActive: false`
+  // (`class-template-lifecycle.ts:1053-1054`, `gdpr.ts:1139-1140`), so an
+  // `isActive: false` fixture would already be excluded by the `isActive`
+  // half of `ACTIVE_TEMPLATE_WHERE` and could never isolate the `isArchived`
+  // half — dropping it from the constant would leave this case green. This
+  // combination is the defense-in-depth state that clause exists to catch if
+  // the pairing invariant ever slips (`class-generator.ts:351`).
   it('archives a room whose only template is archived', async () => {
     const f = await makeFixture();
-    await addTemplate(f, { isActive: false, isArchived: true });
+    await addTemplate(f, { isActive: true, isArchived: true });
 
     const result = await setTeacherRoomArchived(prisma, f.linkId, f.teacherId, 'archived');
 
@@ -583,7 +591,7 @@ Record each mutation's exact error text in the commit message body.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/services/room-archive.ts src/services/room-archive.test.ts
+git add src/lib/template-selection.ts tests/room-fixtures.ts src/services/room-archive.ts src/services/class-generator.ts src/services/room-archive.test.ts
 git commit -m "feat: archiving a room refuses while the room is in use (issue 76)"
 ```
 

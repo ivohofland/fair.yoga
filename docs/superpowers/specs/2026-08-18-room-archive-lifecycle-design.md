@@ -263,7 +263,7 @@ fixture that isolates it.**
 |---|---|
 | active template (`isActive: true, isArchived: false`) | refused |
 | paused template (`isActive: false`) | archives |
-| archived template (`isArchived: true`) | archives |
+| archived template (`isActive: true, isArchived: true` — **not** `isActive: false`; see mutation 3) | archives |
 
 The paused case is what stops the clause being written as "any template
 exists", which would re-block the room permanently and reintroduce issue 76's
@@ -278,7 +278,7 @@ restore, re-verify. A guard that compiles but cannot fail certifies nothing.
 |---|---|---|---|
 | 1 | Delete the template clause from door 1 | active-template test | every class test |
 | 2 | Delete the class clause from door 1 | open-class test | every template test |
-| 3 | Narrow the template predicate to `{ isActive: true }` | archived-template test | — |
+| 3 | Narrow the template predicate to `{ isActive: true }` | archived-template test — **only if its fixture is `isActive: true`**. An `isActive: false` fixture is excluded by the `isActive` half regardless, so it cannot isolate the `isArchived` half and leaves this mutation undetected. | — |
 | 4 | Widen the class predicate to include `draft` | draft-only test | — |
 | 5 | Invert door 2's `isArchived` check | publish-into-archived test | — |
 | 6 | Invert door 3's `isArchived` check | resume-into-archived test | — |
