@@ -1385,9 +1385,18 @@ Expected: PASS.
 Then confirm no stale references survive anywhere:
 
 ```bash
-grep -rn "Cannot delete a room that has classes" src tests docs
+grep -rn "Cannot delete a room that has classes" src tests docs/*.md
 ```
-Expected: **no output.** Any hit is an unfixed twin.
+Expected: **no output.**
+
+Scoped to `src`, `tests` and the live reference docs at `docs/*.md` — **not**
+`docs/superpowers/`. That directory holds dated spec and plan snapshots,
+including this plan, whose sweep table above necessarily quotes the old string
+as the text being replaced. A check that flags its own instructions can never
+pass. Hits under `docs/superpowers/` from *other, merged* issues are historical
+record and are left alone.
+
+Any hit in the scoped paths is an unfixed twin.
 
 - [ ] **Step 6: Commit**
 

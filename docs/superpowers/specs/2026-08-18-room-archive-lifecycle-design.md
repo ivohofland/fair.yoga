@@ -40,7 +40,9 @@ rooms that were never used."
    room with class history. Archive it instead."** That is option 1's reword,
    already applied, pointing at option 3's mechanism. The unfiltered
    **400 "Cannot delete a room that has classes"** the issue quotes is on the
-   *other* route (`src/app/api/rooms/[id]/route.ts:37-39`), and
+   *other* route (`src/app/api/rooms/[id]/route.ts:37-39`) — **that quoted
+   wording describes the pre-branch state; §7 aligns it to the sibling's 409**
+   — and
    `settings/rooms/[id]/page.tsx:130,136` gates both destructive buttons on
    `classCount === 0`, so a teacher barely reaches it.
 
