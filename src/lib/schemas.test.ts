@@ -419,10 +419,6 @@ const EXPECTED: Record<string, readonly string[]> = {
   updatePrivacySchema: ['teacherId'],
   // Attendance status on the teacher's own class.
   updateRegistrationSchema: ['status'],
-  // KNOWN GAP: no form sends it, and flipping it true is a one-way door — the
-  // room can then no longer be edited or deleted, and any teacher may attach.
-  // Blocked on #73's isPublic product decision.
-  updateRoomSchema: ['isPublic'],
   // KNOWN GAP: a client can backdate, forward-date or null a cancellation
   // timestamp. Ownership is checked, so the blast radius is the teacher's own
   // bookkeeping.

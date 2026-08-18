@@ -26,6 +26,7 @@ let otherTeacherId: string;
 let otherAccountId: string;
 let otherToken: string;
 let roomId: string;
+let strictRoomId: string;
 
 // DELETE fixtures — one room per case. A successful delete destroys its room,
 // so these cannot share one room the way the PUT cases do; dedicated rooms
@@ -112,8 +113,9 @@ beforeAll(async () => {
     });
   }
 
-  // Room.isPublic defaults to true (the `isPublic` field in prisma/schema.prisma)
-  // — passed explicitly throughout, since these fixtures depend on the value.
+  // Room.isPublic defaults to FALSE since #73 (prisma/schema.prisma) — passed
+  // explicitly throughout anyway, since these fixtures depend on the value
+  // rather than on the default.
   const room = await makeRoom('Main', false);
   roomId = room.id;
 
@@ -200,6 +202,7 @@ afterAll(async () => {
   }
   const roomIds = [
     roomId,
+    strictRoomId,
     deletePublicRoomId,
     deletePrivateRoomId,
     deleteWithClassRoomId,
@@ -312,6 +315,33 @@ describe('PUT /api/rooms/[id]', () => {
 
     const after = await prisma.room.findUniqueOrThrow({ where: { id: roomId } });
     expect(after.venueName).toBe(before.venueName);
+  });
+
+  // #73. `updateRoomSchema` is `.strict()`, so dropping `isPublic` from it
+  // does not make this request silently ignore the field — it makes the
+  // request invalid. An old client is told, not quietly given different
+  // behaviour. Sharing has its own route now; see
+  // tests/integration/rooms-publish-api.test.ts.
+  it('rejects isPublic in the body outright, and leaves the room private', async () => {
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Rooms API Studio',
+        address: `${suffix} Strict St`,
+        city: 'Testville',
+        postcode: '1234RS',
+        floor: '',
+        roomName: 'Strict',
+        maxCapacity: 5,
+        createdById: creatorId,
+        isPublic: false,
+      },
+    });
+    strictRoomId = room.id;
+    const res = await put(creatorToken, room.id, { isPublic: true });
+    expect(res.status).toBe(400);
+
+    const after = await prisma.room.findUniqueOrThrow({ where: { id: room.id } });
+    expect(after.isPublic).toBe(false);
   });
 });
 
@@ -561,12 +591,14 @@ describe('POST /api/rooms dedupes both branches (#196)', () => {
 });
 
 /**
- * Task 6b (#196). The six indexes constrain every write, not just creates:
- * `PUT /api/rooms/[id]` never touches a currently-public room (the guard
- * above already refuses it), but `updateRoomSchema` still accepts `isPublic`,
- * so a private room's own edit can collide on either identity index —
- * `Room_private_identity_unique` if it stays private, or
- * `Room_public_identity_unique` if the same edit flips it public.
+ * Task 6b (#196), narrowed by #73. The six indexes constrain every write, not
+ * just creates. `PUT /api/rooms/[id]` never touches a currently-shared room —
+ * the guard in the route refuses it — and since #73 it cannot make a room
+ * shared either, so the only identity index it can collide on is
+ * `Room_private_identity_unique`.
+ *
+ * The public-shape case that used to live here moved with the capability, to
+ * tests/integration/rooms-publish-api.test.ts.
  */
 describe('PUT /api/rooms/[id] collides on the slot key (#196)', () => {
   const slotAddress = `${suffix} PUT Slot Street`;
@@ -621,54 +653,5 @@ describe('PUT /api/rooms/[id] collides on the slot key (#196)', () => {
     // clobbered the wrong row would fail this test.
     const stillOccupied = await prisma.room.findUniqueOrThrow({ where: { id: occupied.id } });
     expect(stillOccupied.roomName).toBe('Occupied');
-  });
-
-  // The two rows coexist fine at creation: `Room_private_identity_unique`
-  // scopes on `createdById`, so a different creator's private room and a
-  // public room can share an identity — it is only the flip to `isPublic:
-  // true` that puts the private room in the same index as the public one.
-  it('refuses flipping a private room public onto a slot a public room already holds', async () => {
-    const publicRoom = await prisma.room.create({
-      data: {
-        venueName: 'PUT Slot Venue',
-        address: slotAddress,
-        city: 'Amsterdam',
-        postcode: '1011 AB',
-        floor: '4',
-        roomName: 'PublicHolder',
-        maxCapacity: 10,
-        createdById: otherTeacherId,
-        isPublic: true,
-      },
-    });
-    const privateRoom = await prisma.room.create({
-      data: {
-        venueName: 'PUT Slot Venue',
-        address: slotAddress,
-        city: 'Amsterdam',
-        postcode: '1011 AB',
-        floor: '4',
-        roomName: 'PublicHolder',
-        maxCapacity: 10,
-        createdById: creatorId,
-        isPublic: false,
-      },
-    });
-
-    const res = await put(creatorToken, privateRoom.id, { isPublic: true });
-    expect(res.status).toBe(409);
-    const json = (await res.json()) as { error: { code: string; message: string } };
-    expect(json.error.code).toBe('DUPLICATE_ROOM');
-    expect(json.error.message).toBe('A public room at this address already exists');
-
-    const after = await prisma.room.findUniqueOrThrow({ where: { id: privateRoom.id } });
-    expect(after.isPublic).toBe(false);
-
-    // The test's premise is that this row is the public room occupying the
-    // slot the flip collided on, and that it is untouched by the failed
-    // flip — assert that rather than discarding the reference, so a route
-    // that clobbered the wrong row would fail this test.
-    const stillPublic = await prisma.room.findUniqueOrThrow({ where: { id: publicRoom.id } });
-    expect(stillPublic.isPublic).toBe(true);
   });
 });

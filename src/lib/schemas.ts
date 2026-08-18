@@ -295,7 +295,6 @@ export const updateRoomSchema = z.object({
   maxCapacity: z.number().int().positive().optional(),
   equipment: z.array(z.string()).optional(),
   notes: z.string().nullable().optional(),
-  isPublic: z.boolean().optional(),
 }).strict();
 
 export const roomSearchQuerySchema = z.object({

@@ -96,14 +96,16 @@ export const PUT = withErrorHandler(async (
     return respondError('No valid fields to update', 400);
   }
 
-  // `room.isPublic` is `false` here unconditionally — the guard above already
-  // refused a currently-public room — but `updateRoomSchema` still accepts
-  // `isPublic`, so this PUT can flip a private room to public in the very
-  // write that also edits its address/floor/roomName. That means either
-  // identity index can be the one this write collides with (#196):
-  // `Room_private_identity_unique` if it stays private,
-  // `Room_public_identity_unique` if `isPublic: true` rides along — the same
-  // two-shape catch `POST /api/rooms` already carries, for the same reason.
+  // `room.isPublic` is `false` here unconditionally — the guard above refused
+  // a currently-shared room — and `updateRoomSchema` no longer accepts
+  // `isPublic` at all (#73), so this write cannot change it. The row is
+  // private going in and private coming out, which leaves exactly one index
+  // it can collide on: `Room_private_identity_unique`.
+  //
+  // `Room_public_identity_unique` was reachable here until #73, because the
+  // same PUT that edited an address could flip the room shared. That flip now
+  // lives in `POST /api/rooms/[id]/publish`, and the public-shape catch went
+  // with it — the catch follows the capability.
   try {
     const updated = await prisma.room.update({
       where: { id },
@@ -111,18 +113,12 @@ export const PUT = withErrorHandler(async (
     });
     return respondOk(updated);
   } catch (err) {
-    if (
-      isUniqueConflictOn(err, ['address', 'floor', 'roomName']) ||
-      isUniqueConflictOn(err, ['createdById', 'address', 'floor', 'roomName'])
-    ) {
+    if (isUniqueConflictOn(err, ['createdById', 'address', 'floor', 'roomName'])) {
       return respondError(
-        parsed.data.isPublic === true
-          ? 'A public room at this address already exists'
-          // `floor`/`roomName` both default to `""` and are optional
-          // free-text, so two genuinely different private rooms at one
-          // address, both left blank, collide here too — names the way out,
-          // not just the collision.
-          : 'You already have a room at this address. Add a floor or room name to tell them apart.',
+        // `floor`/`roomName` both default to `""` and are optional free-text,
+        // so two genuinely different private rooms at one address, both left
+        // blank, collide here too — names the way out, not just the collision.
+        'You already have a room at this address. Add a floor or room name to tell them apart.',
         409,
         'DUPLICATE_ROOM',
       );
