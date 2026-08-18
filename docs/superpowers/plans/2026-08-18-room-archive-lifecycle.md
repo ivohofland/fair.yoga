@@ -1315,7 +1315,19 @@ git commit -m "feat: archived rooms are no longer offered when scheduling (issue
 | `:497` | assertion | `expect(res.status).toBe(400)` |
 | `:499` | assertion | `expect(body.error.message).toBe('Cannot delete a room that has classes')` |
 
-**Two decoys — do NOT change these.** `:346` and `:371` are a *different* 400, from the `PUT` handler's guard, and `:262` discusses that one too. They are unrelated to `hasClasses`.
+**Three decoys — do NOT change any of them.** All three belong to a *different*
+400: the `PUT` handler refusing `isPublic` in the request body, unrelated to
+`hasClasses`.
+
+| Line | Kind | Leave alone because |
+|---|---|---|
+| `:262` | comment | discusses the inherited-public-room case for the PUT guard |
+| `:346` | comment | cites `rooms/[id]/route.ts:95` — the PUT guard, not the delete guard |
+| `:371` | assertion | `expect(res.status).toBe(400)` on a `put(...)` with `isPublic: true` |
+
+Verify by reading each line's surrounding context before touching it. Of the
+three `toBe(400)` assertions in this file, exactly two (`:448`, `:497`) are
+yours; the third is `:371` and must survive unchanged.
 
 - [ ] **Step 1: Correct the unlink copy**
 
