@@ -149,21 +149,35 @@ export function formatDateShort(date: Date): string {
  * Today as `YYYY-MM-DD` in the BROWSER's calendar, for the `min` on a date
  * input (#249).
  *
- * LOCAL accessors, and the contrast with every formatter above is the whole
- * point rather than an inconsistency to tidy away. Those take a value already
- * pinned to a calendar day at UTC midnight (a `@db.Date` column, `startOfLocalDay`
- * output) and must read it back in UTC or they shift it a day west. This one
- * takes `new Date()` — a raw instant with no pinning — so a UTC read gives the
- * wrong calendar day for anyone west of UTC whenever it is past their evening
- * rollover. `toISOString().slice(0, 10)` was that bug: an LA teacher at 17:00
- * got tomorrow, which on a mobile date picker makes tonight's class
- * unselectable.
+ * LOCAL accessors, and the contrast with the DATE formatters above is the
+ * whole point rather than an inconsistency to tidy away. Those take a value
+ * already pinned to a calendar day at UTC midnight (a `@db.Date` column,
+ * `startOfLocalDay` output) and must read it back in UTC or they shift it a
+ * day west. This one takes `new Date()` — a raw instant with no pinning — so a
+ * UTC read gives the wrong calendar day for anyone west of UTC whenever it is
+ * past their evening rollover. `toISOString().slice(0, 10)` was that bug: an
+ * LA teacher at 17:00 got tomorrow, which on a mobile date picker makes
+ * tonight's class unselectable.
+ *
+ * "The date formatters", not "every formatter above", which an earlier
+ * revision said and which `timeAgo` disproves: it also takes a raw instant,
+ * also reads no UTC accessor, and is correct for the same reason this is. The
+ * rule is about what the ARGUMENT is — a pinned calendar day or a live instant
+ * — not about position in the file.
  *
  * A HINT, never a guard. `updateClass` and `transitionClass` refuse a past
  * start on their own and answer 409; #247 is the standing reminder that a
  * page-level control is not a service guard. It is also only an approximation
  * of the rule those guards apply: they read `Teacher.defaultTimezone`, this
- * reads the device's zone. Those agree unless the teacher is travelling.
+ * reads the device's zone. Those agree unless the teacher is travelling — or
+ * unless `defaultTimezone` was never inferred at all, which today it is not
+ * (`POST /api/teachers` hardcodes `Europe/Amsterdam`), making the device the
+ * better of the two guesses for a picker.
+ *
+ * CALL IT FROM `useTodayLocal`, NOT FROM A RENDER. "The device's zone" is only
+ * true where a device exists, and a `'use client'` component is server-rendered
+ * first — in the container's zone, which is UTC. That hook is where the rule
+ * for reaching this function safely is written down.
  */
 export function todayLocal(): string {
   const d = new Date();

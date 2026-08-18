@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { ClassEditForm, type ClassEditInitial } from './class-edit-form';
 
 /**
@@ -123,6 +124,39 @@ describe('ClassEditForm', () => {
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     expect(fetchMock).not.toHaveBeenCalled();
     expect(await screen.findByText(/min rate cannot exceed target rate/i)).toBeInTheDocument();
+  });
+
+  it('emits no date bound from a server render (#249)', () => {
+    // THE HALF THAT jsdom CANNOT SEE, and the reason the client test below is
+    // not enough on its own. This form is a `'use client'` component under a
+    // dynamically-rendered server layout, so Next.js server-renders it on
+    // every request and React 19 keeps the server's attribute through
+    // hydration rather than correcting it. Whatever `min` the server computes
+    // is therefore the `min` the teacher gets — and the server's "local" is
+    // the container's zone, which no Dockerfile or compose file in this repo
+    // sets, so it is UTC and belongs to no teacher. Measured before this
+    // assertion existed: a server render under TZ=UTC at 2026-08-19T01:00Z
+    // emitted `min="2026-08-19"`, which is tomorrow for the Los Angeles
+    // teacher reading it at 18:00 and makes tonight's class unpickable.
+    //
+    // Asserting ABSENCE rather than a value is deliberate: there is no value
+    // the server can correctly emit, because it does not know the teacher's
+    // zone at render time. The only correct server render is one that says
+    // nothing and lets the browser fill it in. That makes this assertion
+    // zone-independent — it holds under this file's pinned America/New_York
+    // as it would under UTC — while still reddening the instant anyone calls
+    // a clock-reading formatter during render.
+    const html = renderToStaticMarkup(
+      <ClassEditForm classId="cls-1" settingsLocked={false} initial={initial} />,
+    );
+    // Scoped to the date field's own tag rather than run over the whole
+    // document, because this form legitimately server-renders another `min`:
+    // the class-size `<input type="range" min="4">` in the pricing preview.
+    // A document-wide `not.toMatch(/min="/)` reads like a stricter assertion
+    // and is in fact one that can never pass.
+    const dateInput = html.match(/<input[^>]*type="date"[^>]*>/);
+    expect(dateInput).not.toBeNull();
+    expect(dateInput?.[0]).not.toContain('min=');
   });
 
   it('bounds the date picker at today in the local calendar, not UTC (#249)', () => {

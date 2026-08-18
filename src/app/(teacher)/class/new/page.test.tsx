@@ -236,4 +236,44 @@ describe('NewClassPage', () => {
 
     expect(await screen.findByText(/^Created/)).toBeInTheDocument();
   });
+
+  /**
+   * #249. The create wizard's own date bound, which had none of its own until
+   * this test — the edit form's twin was covered from the day it landed and
+   * this one was not, so "both pickers are bounded" rested on reading the two
+   * diffs side by side.
+   *
+   * The clock is PINNED and the expected day is written out, rather than
+   * recomputed from `new Date()`. Deriving the expectation with the same
+   * expression the component uses is the failure mode the edit form's version
+   * of this test already carries a warning about: both sides move together and
+   * nothing can ever be red. 2026-08-19T00:00Z is 18 August 20:00 in
+   * America/New_York, the zone `vitest.config.ts` pins; a UTC-derived bound
+   * answers 2026-08-19 and makes tonight's class unpickable.
+   *
+   * Awaited, because the bound arrives from an effect rather than from the
+   * first render — see `useTodayLocal`. A synchronous `getByLabelText(...)`
+   * assertion here would be testing the render, which by design has no answer.
+   *
+   * `toFake: ['Date']` and not the whole timer suite, which the edit form's
+   * twin can afford and this one cannot. That test renders a component with no
+   * async work and reads the attribute straight out of `render`'s own `act`.
+   * This wizard fetches its rooms on mount, so the field does not exist until a
+   * promise settles and the assertions have to go through `findBy`/`waitFor` —
+   * both of which poll on `setTimeout`. Freezing that too deadlocks them
+   * against a clock nothing advances: the first version of this test failed on
+   * the 5s timeout rather than on the attribute.
+   */
+  it('bounds the date picker at today in the local calendar, not UTC (#249)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-08-19T00:00:00.000Z'));
+    try {
+      stubFetch();
+      render(<CreateClassPage />);
+      const date = await screen.findByLabelText('Date');
+      await waitFor(() => expect(date).toHaveAttribute('min', '2026-08-18'));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

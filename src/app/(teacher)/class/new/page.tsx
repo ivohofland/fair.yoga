@@ -12,7 +12,8 @@ import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SettledNotice } from '@/components/ui/settled-notice';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
-import { formatRoomLocation, formatDateWithYear, todayLocal } from '@/lib/format';
+import { formatRoomLocation, formatDateWithYear } from '@/lib/format';
+import { useTodayLocal } from '@/lib/use-today-local';
 import { CANCEL_DEADLINE_OPTIONS, AUTO_CANCEL_OPTIONS } from '@/lib/class-options';
 
 // ---------------------------------------------------------------------------
@@ -148,6 +149,8 @@ export default function CreateClassPage() {
   const [errors, setErrors] = useState<StepErrors>({});
   const [teacherRooms, setTeacherRooms] = useState<TeacherRoomData[]>([]);
   const [loading, setLoading] = useState(true);
+  // Client-only, so `undefined` for the server render and the hydration pass.
+  const minDate = useTodayLocal();
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   /**
@@ -386,10 +389,19 @@ export default function CreateClassPage() {
             // A hint only, and unlike the edit form there is no service guard
             // behind it (#249, spec §6): a past-dated class is created `draft`,
             // which no sweep selects and no registration can attach to. What is
-            // guarded is publishing it. Local calendar, not a UTC render —
-            // bounding at UTC's day made tonight unpickable west of UTC, which
-            // matters most on exactly this form.
-            min={todayLocal()}
+            // guarded is publishing it.
+            //
+            // Through the hook for the same reason the edit form uses it, even
+            // though THIS page would survive without it and it is worth saying
+            // why the belt is worn anyway. The `if (loading)` early return
+            // above means the server render of this wizard is the string
+            // "Loading rooms..." — the date field does not exist in it, so no
+            // server-computed bound has ever reached a browser here. That is an
+            // accident of an unrelated fetch gate, not a property of this
+            // field: delete the gate, or server-render the room list, and the
+            // UTC bound arrives silently. The hook makes the guarantee local to
+            // the control that needs it.
+            min={minDate}
             value={form.date}
             onChange={(e) => updateField('date', e.target.value)}
             error={errors.date}

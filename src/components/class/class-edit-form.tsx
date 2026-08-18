@@ -6,7 +6,7 @@ import type { z } from 'zod';
 import type { updateClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { ECONOMIC_FIELDS } from '@/lib/class-fields';
-import { todayLocal } from '@/lib/format';
+import { useTodayLocal } from '@/lib/use-today-local';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -59,6 +59,8 @@ interface ClassEditFormProps {
 // Policies aren't part of the update schema, so they aren't part of this form.
 export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFormProps) {
   const router = useRouter();
+  // Client-only, so `undefined` for the server render and the hydration pass.
+  const minDate = useTodayLocal();
   const [form, setForm] = useState(initial);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -165,12 +167,16 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
             label="Date"
             type="date"
             // A hint, not a guard (#249). `updateClass` refuses a past start
-            // independently and answers 409; #247 is the standing reminder that
-            // a page-level control is not a service guard. Computed per render
-            // rather than hoisted, so a form left open across midnight bounds
-            // to the right day. `todayLocal` rather than a UTC render — see its
-            // docblock for why that distinction has teeth here.
-            min={todayLocal()}
+            // independently and answers 409; #247 is the standing reminder
+            // that a page-level control is not a service guard.
+            //
+            // Through the hook rather than calling `todayLocal()` here, and
+            // that indirection is the whole point: this form is server-rendered
+            // before it is hydrated, and the server's zone is the container's —
+            // UTC — not the teacher's. `useTodayLocal` withholds the bound
+            // until the browser can supply it. Its docblock has the
+            // measurement.
+            min={minDate}
             value={form.date}
             onChange={(e) => set('date', e.target.value)}
           />
