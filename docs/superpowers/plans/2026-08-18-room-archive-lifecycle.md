@@ -20,7 +20,7 @@
 - **Never `git add -A` or `git add .`** — stage exact paths. Quote paths containing parentheses: `'src/app/(teacher)/...'`.
 - **Commit per task.** The PR is rebase-merged; the commit-per-task history is the record.
 - **Every task must leave the build green.** A type-union change and its exhaustive consumers land in the *same* commit.
-- **Blocking predicate for classes:** status `open` or `in_progress`. **For templates:** `{ isActive: true, isArchived: false }` — byte-identical to `src/services/class-generator.ts:355`.
+- **Blocking predicate for classes:** status `open` or `in_progress`. **For templates:** `ACTIVE_TEMPLATE_WHERE` from `src/lib/template-selection.ts`, imported by both `room-archive.ts` and `class-generator.ts` so the two cannot diverge.
 - **Test commands:** single file `npx vitest run --project <unit|integration|components> <path>`. Full gate `npm run verify` (typecheck + lint + all three projects). `verify` needs the app live on :3000.
 
 ---

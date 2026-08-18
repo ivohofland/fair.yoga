@@ -56,7 +56,7 @@ Measured consequences, all live today:
   idempotency check (`route.ts:90`, from issue 98), flip the boolean. No class
   count, no template lookup.
 - **A live template keeps generating into an archived room, indefinitely.**
-  `src/services/class-generator.ts:355` selects
+  `src/services/class-generator.ts:359` selects
   `{ isActive: true, isArchived: false }` on the *template*; it uses
   `template.teacherRoomId` at `:185` and never joins `TeacherRoom`. The room's
   archive state is invisible to the generator.
@@ -80,7 +80,7 @@ arrived undefined, so it came to mean exactly what the one page using it
 needed. Contrast `ClassTemplate.isArchived`, which is engineered: archiving
 forces `isActive: false`, withdraws future unbooked classes, records
 `archivedAt` and `withdrawnCount`, and appears in the generator's `where` as
-documented defense-in-depth (`class-generator.ts:351`). Two columns of the same
+documented defense-in-depth (`class-generator.ts:352-357`). Two columns of the same
 name, one load-bearing and one cosmetic.
 
 ## 3. The rule
@@ -125,14 +125,27 @@ permitted.
 
 ### The template predicate must not be invented
 
-Door 1's template clause uses `{ isActive: true, isArchived: false }` —
-**byte-identical to the generator's own selection predicate**
-(`class-generator.ts:355`). "Would this template put classes into this room?"
-is precisely the question the generator asks, so any divergence is a bug by
-construction. A test pins the two in agreement, following the precedent in
-`src/services/class-terminal-date.test.ts:170`, which drives its cases from
-`TERMINAL_CLASS_STATUSES` itself with `it.each` rather than from a hand-written
-list that could silently fall behind.
+Door 1's template clause and the generator's own template selection ask the
+same question — "would this template put classes into this room?" — so they
+must not be able to answer it differently.
+
+**Agreement is structural, not asserted.** Both import `ACTIVE_TEMPLATE_WHERE`
+from a new import-free `src/lib/template-selection.ts`: `room-archive.ts` for
+the blocking count, `class-generator.ts:359` for its `findMany`. Divergence is
+therefore impossible rather than merely detectable, and no test is needed to
+police it.
+
+*(An earlier draft of this section had the two predicates written out
+separately, with a test asserting they matched by reading the generator's
+source text. That is superseded: sharing the constant is strictly stronger and
+retires the source-matching test. Changed during the pre-flight scan, before
+implementation.)*
+
+The constant lives in `lib/` rather than in `class-generator.ts` because the
+generator value-imports `@/lib/log` (pino, server-only); a constant sourced
+from there would drag pino into every importer's graph. This is the
+`lib/tiers.ts` / `lib/class-fields.ts` pattern CLAUDE.md documents, and the
+hazard it guards against is a real one in this codebase.
 
 ## 5. The service
 
@@ -287,10 +300,17 @@ restore, re-verify. A guard that compiles but cannot fail certifies nothing.
 **Mutations 1 and 2 are the ones that matter.** If either can be applied with
 the suite staying green, the isolation failed and the fixtures are wrong.
 
-### Predicate-agreement test
+### Pinning the shared constant
 
-A test pinning door 1's template `where` against `class-generator.ts:355`, so
-the two cannot drift apart silently.
+No agreement test is needed — sharing `ACTIVE_TEMPLATE_WHERE` makes divergence
+impossible (§4). What is pinned instead is the constant's own **value**, so
+that widening or narrowing it is a deliberate act with both call sites in view
+rather than a one-word edit in passing.
+
+The sharing itself is proved structurally: changing one key in
+`lib/template-selection.ts` must redden three separate files — the constant's
+own test, the archive guard's template cases, and the generator's tests. If the
+generator's tests stay green, the two sides are not actually sharing.
 
 ### Also covered
 
