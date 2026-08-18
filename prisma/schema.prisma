@@ -277,7 +277,7 @@ model Room {
   maxCapacity Int
   equipment   Json     @default("[]")
   notes       String?  @db.Text
-  isPublic    Boolean  @default(true)
+  isPublic    Boolean  @default(false)
   createdById String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
