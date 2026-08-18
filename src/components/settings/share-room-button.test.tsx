@@ -61,6 +61,29 @@ describe('ShareRoomButton', () => {
     expect(screen.getByRole('button', { name: /^Share room$/ })).toBeDefined();
   });
 
+  // Pins WHAT is asked, not merely that something was asked.
+  // `searchPublicRooms(postcode, street)` is called here with
+  // `(postcode, identity.address)` — two strings of the same type, adjacent,
+  // trivially swappable. Swapping them leaves every other test in this file
+  // green, because the fetch mock matches on `startsWith('/api/rooms?')` and
+  // discards the query string.
+  //
+  // In production the swap returns nothing for every address: `matches` is
+  // always `[]`, `findIdentityMatch` never fires, and the "Already shared"
+  // branch — spec §3's whole point, and acceptance criterion 4 — becomes
+  // permanently unreachable. It fails OPEN: the teacher sees a clean confirm
+  // and shares the duplicate the pre-check existed to stop.
+  it('asks the search endpoint for this room\'s own postcode and address', async () => {
+    mockSearch([]);
+    render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
+
+    openConfirm();
+    await screen.findByText(/Sharing a room is permanent/);
+
+    const [url] = calls().find(([u]) => String(u).startsWith('/api/rooms?')) ?? [];
+    expect(String(url)).toBe('/api/rooms?postcode=1015DX&street=Prinsengracht+42');
+  });
+
   // The fixture below carries BOTH a neighbour and an exact match on purpose.
   // A fixture with only the exact match would pass equally against code that
   // blocks on ANY search result, and could not tell the two behaviours apart.
@@ -88,21 +111,39 @@ describe('ShareRoomButton', () => {
     expect(screen.queryByRole('button', { name: /^Share room$/ })).toBeNull();
   });
 
-  // A failed pre-check must not read as an all-clear. `matches: []` renders
-  // the same screen as a genuinely empty address, so without this line the
-  // teacher cannot tell "nothing here" from "could not look". The action
+  // A failed pre-check must not read as an all-clear. Rendering it as "no
+  // matches" is the same screen a genuinely empty address produces, so the
+  // teacher could not tell "nothing here" from "could not look". The action
   // stays available either way — the route is the authority, not this check.
-  it('says so when the duplicate check could not run, and still offers the confirm', async () => {
+  //
+  // The two reasons get different sentences, and the distinction is the
+  // point: 'network' means the request never landed, so the write may still
+  // succeed. 'http' from this endpoint is realistically a 401 or a 5xx, and
+  // the write is about to hit the same wall — promising "sharing still works"
+  // there is a false statement about the next action, made without knowing
+  // anything about why the current one failed.
+  it('says the duplicate check could not run, and still offers the confirm', async () => {
+    global.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch')) as unknown as typeof fetch;
+    render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
+
+    openConfirm();
+
+    expect(await screen.findByText(/Sharing still\s+works/)).toBeDefined();
+    expect(screen.getByRole('button', { name: /^Share room$/ })).toBeDefined();
+  });
+
+  it('does not promise sharing works when the server refused the check', async () => {
     global.fetch = vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) }) as unknown as typeof fetch;
     render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
 
     openConfirm();
 
-    expect(await screen.findByText(/Could not check for rooms already shared/)).toBeDefined();
+    expect(await screen.findByText(/You may need to\s+sign in again/)).toBeDefined();
+    expect(screen.queryByText(/Sharing still\s+works/)).toBeNull();
     expect(screen.getByRole('button', { name: /^Share room$/ })).toBeDefined();
   });
 
-  // The three cases above all stop at the pre-check. These two run the
+  // Everything above stops at the pre-check. The cases below run the
   // mutation the component exists to perform.
   it('posts to the publish route and refreshes on success', async () => {
     mockSearchThenPublish([], { ok: true });
@@ -138,5 +179,51 @@ describe('ShareRoomButton', () => {
       await screen.findByText('A shared room at this address already exists'),
     ).toBeDefined();
     expect(refreshMock).not.toHaveBeenCalled();
+  });
+
+  // ALREADY_SHARED is the server saying the room is already in the state we
+  // asked for, which is not a failure. It is reachable without a second
+  // device: a first attempt commits, its response is lost, the teacher sees
+  // "Network error", the page never refreshed (refresh is on the success path
+  // only), so the button is still there and they press it again.
+  //
+  // Painting that red tells someone their successful share failed — twice,
+  // about a one-way door. Reconcile with the server instead.
+  it('treats ALREADY_SHARED as reconcile, not as a red failure', async () => {
+    mockSearchThenPublish([], {
+      ok: false,
+      body: { error: { code: 'ALREADY_SHARED', message: 'This room is already shared' } },
+    });
+    render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
+
+    openConfirm();
+    fireEvent.click(await screen.findByRole('button', { name: /^Share room$/ }));
+
+    await waitFor(() => expect(refreshMock).toHaveBeenCalled());
+    expect(screen.queryByText('This room is already shared')).toBeNull();
+  });
+
+  // A cancelled search is still in flight. Without a request token it lands
+  // in the reopened panel, showing an all-clear computed for a session the
+  // teacher already abandoned.
+  it('discards a search belonging to a cancelled open', async () => {
+    let release: (v: unknown) => void = () => {};
+    const pending = new Promise((r) => { release = r; });
+    global.fetch = vi.fn(async () => {
+      await pending;
+      return { ok: true, json: async () => ({ data: [room({ id: 'exact' })] }) };
+    }) as unknown as typeof fetch;
+
+    render(<ShareRoomButton roomId="mine" identity={identity} postcode="1015DX" />);
+    openConfirm();
+    fireEvent.click(screen.getByRole('button', { name: /^Cancel$/ }));
+
+    release(null);
+    await waitFor(() => expect(
+      screen.getByRole('button', { name: /Share with other teachers/ }),
+    ).toBeDefined());
+
+    // The abandoned search must not have written "Already shared" anywhere.
+    expect(screen.queryByText(/Already shared/)).toBeNull();
   });
 });

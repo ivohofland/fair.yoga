@@ -106,12 +106,24 @@ export const PUT = withErrorHandler(async (
   // same PUT that edited an address could flip the room shared. That flip now
   // lives in `POST /api/rooms/[id]/publish`, and the public-shape catch went
   // with it — the catch follows the capability.
+  //
+  // THE GUARDS ABOVE ARE REPEATED IN THIS WRITE'S `where`, AND THAT IS NOT
+  // BELT-AND-BRACES — it closes a race #73 itself opened. The guards ran
+  // against a row read at :75; `POST /api/rooms/[id]/publish` can commit
+  // `isPublic: true` between that read and this write. It needs no second
+  // device: the room detail page renders `EditRoomForm` and `ShareRoomButton`
+  // on the same screen. Without the predicate here, the edit lands on a
+  // now-shared row and answers 200 — silently falsifying the notice the
+  // teacher just accepted, for every other teacher using that room.
+  //
+  // `count` rather than the row, so the same statement both guards and
+  // writes. Following `updateClass` (src/services/class-lifecycle.ts:1132).
+  let result: Prisma.BatchPayload;
   try {
-    const updated = await prisma.room.update({
-      where: { id },
+    result = await prisma.room.updateMany({
+      where: { id, isPublic: false, createdById: session.teacherId },
       data: updateData,
     });
-    return respondOk(updated);
   } catch (err) {
     if (isUniqueConflictOn(err, ['createdById', 'address', 'floor', 'roomName'])) {
       return respondError(
@@ -125,4 +137,24 @@ export const PUT = withErrorHandler(async (
     }
     throw err;
   }
+
+  if (result.count === 0) {
+    // Find out which of the three predicates stopped it rather than asserting
+    // one — #72 was exactly this branch naming a cause it had not checked.
+    // Reaching here means the row changed under us, since all three held at
+    // :75-84.
+    const current = await prisma.room.findUnique({
+      where: { id },
+      select: { isPublic: true, createdById: true },
+    });
+    if (!current) return respondError('Room not found', 404);
+    if (current.isPublic) {
+      return respondError('This room has just been shared and can no longer be edited', 409, 'NOW_SHARED');
+    }
+    return respondError('Only the room creator can update this room', 403);
+  }
+
+  const updated = await prisma.room.findUnique({ where: { id } });
+  if (!updated) return respondError('Room not found', 404);
+  return respondOk(updated);
 });

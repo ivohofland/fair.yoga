@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { PublicRoomNotice } from './public-room-notice';
@@ -13,6 +13,22 @@ interface ShareRoomButtonProps {
   identity: RoomIdentity;
   postcode: string;
 }
+
+/**
+ * The duplicate pre-check, as one value rather than two flags.
+ *
+ * An earlier version held `matches: RoomResult[] | null` beside
+ * `checkFailed: boolean`, which is three real states in two fields: it admits
+ * the meaningless `(null, true)`, and it encoded "the check failed" by
+ * writing an empty array the code had not observed, purely so the confirm
+ * button's `matches === null` test would stay false. Two readers then
+ * depended on `matches === null` for two different reasons. One value with a
+ * discriminant removes both hazards.
+ */
+type CheckState =
+  | { phase: 'searching' }
+  | { phase: 'done'; rooms: RoomResult[] }
+  | { phase: 'failed'; reason: 'http' | 'network' };
 
 /**
  * Sharing a room, as a two-step inline confirm — the same shape as
@@ -30,30 +46,34 @@ interface ShareRoomButtonProps {
 export function ShareRoomButton({ roomId, identity, postcode }: ShareRoomButtonProps) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
-  const [matches, setMatches] = useState<RoomResult[] | null>(null);
-  const [checkFailed, setCheckFailed] = useState(false);
+  const [check, setCheck] = useState<CheckState>({ phase: 'searching' });
   const [sharing, setSharing] = useState(false);
   const [error, setError] = useState('');
 
+  // Which open a resolving search belongs to. Cancel-then-reopen leaves the
+  // first search in flight; without this it lands in the second panel and
+  // shows the teacher an all-clear that was computed for a session they
+  // already abandoned.
+  const openId = useRef(0);
+
   async function handleOpen() {
+    const id = ++openId.current;
     setConfirming(true);
     setError('');
-    setCheckFailed(false);
+    setCheck({ phase: 'searching' });
 
     const outcome = await searchPublicRooms(postcode, identity.address);
-    if (outcome.ok) {
-      setMatches(outcome.rooms);
-      return;
-    }
+    if (id !== openId.current) return;
 
-    // A failed lookup must not block the action — the route refuses a real
-    // collision regardless. But it must not be silent either: an empty
-    // `matches` renders exactly what a genuinely empty address renders, so
-    // without `checkFailed` the teacher reads a failed check as an all-clear.
-    // Both reasons say the same thing here, because the remedy is the same:
-    // proceed, and let the route decide.
-    setMatches([]);
-    setCheckFailed(true);
+    setCheck(
+      outcome.ok
+        // A failed lookup must not block the action — the route refuses a real
+        // collision regardless. But it must not be silent either: rendering it
+        // as "no matches" is indistinguishable from a genuinely empty address,
+        // so the teacher would read a failed check as an all-clear.
+        ? { phase: 'done', rooms: outcome.rooms }
+        : { phase: 'failed', reason: outcome.reason },
+    );
   }
 
   async function handleShare() {
@@ -65,8 +85,30 @@ export function ShareRoomButton({ roomId, identity, postcode }: ShareRoomButtonP
         router.refresh();
         return;
       }
-      const json: { error?: { message?: string } } = await res.json();
+
+      const json: { error?: { code?: string; message?: string } } = await res.json();
+
+      // ALREADY_SHARED is not a failure — it is the server reporting that the
+      // room is already in the state we asked for. The realistic way to reach
+      // it is a first attempt that committed and whose response was lost: the
+      // teacher saw "Network error", the page never refreshed because
+      // `router.refresh()` is on the success path only, so the button is still
+      // there and they press it again. Painting this red would tell them their
+      // (successful) share failed twice, about a one-way door. Reconcile with
+      // the server instead — the same principle use-payment-actions.ts states
+      // for a committed undo.
+      if (json.error?.code === 'ALREADY_SHARED') {
+        router.refresh();
+        return;
+      }
+
+      // NOT_ROOM_CREATOR and NOT_FOUND both mean this page is describing a row
+      // that no longer looks the way it was rendered. Show the reason, and
+      // refresh so the controls stop offering an action that cannot succeed.
       setError(json.error?.message ?? 'Failed to share this room.');
+      if (json.error?.code === 'NOT_ROOM_CREATOR' || json.error?.code === 'NOT_FOUND') {
+        router.refresh();
+      }
     } catch {
       setError('Network error. Please try again.');
     } finally {
@@ -82,7 +124,8 @@ export function ShareRoomButton({ roomId, identity, postcode }: ShareRoomButtonP
     );
   }
 
-  const exact = matches ? findIdentityMatch(matches, identity) : undefined;
+  const rooms = check.phase === 'done' ? check.rooms : [];
+  const exact = findIdentityMatch(rooms, identity);
 
   return (
     <div className="flex flex-col gap-3">
@@ -97,16 +140,30 @@ export function ShareRoomButton({ roomId, identity, postcode }: ShareRoomButtonP
         </>
       ) : (
         <>
-          {checkFailed && (
+          {/*
+            The two reasons need different sentences. 'network' is a lost
+            request, so the write may well succeed — "sharing still works" is
+            true. 'http' from this endpoint is realistically a 401 (the
+            session expired) or a 5xx, and in both the write is about to hit
+            the same wall, so promising it works would be a false statement
+            about the very next action.
+          */}
+          {check.phase === 'failed' && check.reason === 'network' && (
             <p className="text-brown text-sm">
               Could not check for rooms already shared at this address. Sharing still
               works — a duplicate is refused when you confirm.
             </p>
           )}
-          {matches && matches.length > 0 && (
+          {check.phase === 'failed' && check.reason === 'http' && (
+            <p className="text-brown text-sm">
+              Could not check for rooms already shared at this address. You may need to
+              sign in again.
+            </p>
+          )}
+          {rooms.length > 0 && (
             <>
               <p className="text-ink text-sm font-semibold">Rooms already shared at this address</p>
-              <RoomMatchList rooms={matches} />
+              <RoomMatchList rooms={rooms} />
               <p className="text-brown text-sm">
                 If one of these is the same room, there&apos;s no need to share yours.
               </p>
@@ -120,13 +177,13 @@ export function ShareRoomButton({ roomId, identity, postcode }: ShareRoomButtonP
 
       <div className="flex gap-3">
         {!exact && (
-          <Button onClick={handleShare} disabled={sharing || matches === null}>
+          <Button onClick={handleShare} disabled={sharing || check.phase === 'searching'}>
             {sharing ? 'Sharing...' : 'Share room'}
           </Button>
         )}
         <Button
           variant="secondary"
-          onClick={() => { setConfirming(false); setMatches(null); setCheckFailed(false); }}
+          onClick={() => { openId.current++; setConfirming(false); setCheck({ phase: 'searching' }); }}
         >
           Cancel
         </Button>
