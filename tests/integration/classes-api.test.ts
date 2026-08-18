@@ -425,13 +425,19 @@ describe('POST /api/classes/[id]/transition', () => {
     const res = await transition(ownerToken, pastDraftClassId, { status: 'open' });
     expect(res.status).toBe(409);
 
-    // The MESSAGE, not just the status. This route collapses every reason but
-    // NOT_FOUND into a bare 409 with no code (`transition/route.ts`), so the
-    // status alone cannot tell STARTS_IN_PAST from an illegal transition or a
-    // concurrent modification — the test would stay green if the publish were
-    // refused for an unrelated reason. Its sibling on the PUT door pins
-    // `CLASS_STARTS_IN_PAST`; this is the closest equivalent available here.
-    const json = (await res.json()) as { error: { message: string } };
+    // The CODE, not just the status. A bare 409 cannot tell STARTS_IN_PAST
+    // from an illegal transition or a concurrent modification, so this test
+    // would have stayed green if the publish were refused for an unrelated
+    // reason — which it nearly was, since a past-dated draft is exactly the
+    // kind of fixture other guards also dislike. This route used to answer
+    // every reason but NOT_FOUND with a bare 409 and no code at all, and the
+    // earlier version of this comment recorded that as a limitation to live
+    // with; #249's review made the case for fixing it instead.
+    //
+    // The same code the PUT door answers with, deliberately — one condition,
+    // one code, whichever door refuses it.
+    const json = (await res.json()) as { error: { message: string; code?: string } };
+    expect(json.error.code).toBe('CLASS_STARTS_IN_PAST');
     expect(json.error.message).toMatch(/already passed/i);
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: pastDraftClassId } });

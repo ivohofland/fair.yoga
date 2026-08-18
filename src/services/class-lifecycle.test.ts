@@ -37,6 +37,87 @@ async function _completionTimingIsRequired(db: PrismaClient): Promise<void> {
   await completeClass(db, 'never-called');
 }
 
+/**
+ * A `date` + `startTime` pair whose start instant is `minutesAgo` behind now IN
+ * THE TEACHER'S ZONE, while reading as still-to-come if the same wall clock is
+ * taken for UTC (#249 review, S1).
+ *
+ * The two guards read `Teacher.defaultTimezone`, and until this existed nothing
+ * checked that they did: replacing `cls.teacher.defaultTimezone` with a literal
+ * `'UTC'` in either one left the whole suite green, because every fixture was
+ * either far enough from now that both readings agreed or was already stated in
+ * UTC. A guard that decides in the wrong zone is off by the offset — up to
+ * fourteen hours — which is more than enough to refuse an edit a teacher is
+ * entitled to make, or to permit one they are not.
+ *
+ * The fixture zone is `Europe/Amsterdam` (the schema default, UTC+1/+2), which
+ * is EAST of UTC — so the naive reading lands LATER than the truth, and the
+ * discriminating window is "already started locally, not yet started if you
+ * misread it as UTC". 30 minutes clears the narrower winter offset (+1) without
+ * assuming the summer one.
+ *
+ * Derived from the clock at call time rather than written out, because a
+ * literal would be a scheduled failure — exactly what the 2027-03-09 fixture
+ * further down this file turned out to be. Callers assert the premise itself
+ * (`utcMisreading > now`), so a fixture that stops discriminating fails loudly
+ * instead of passing vacuously.
+ */
+function localWallClockMinutesAgo(minutes: number, timeZone: string) {
+  const target = new Date(Date.now() - minutes * 60_000);
+  const parts: Partial<Record<Intl.DateTimeFormatPartTypes, number>> = {};
+  for (const { type, value } of new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).formatToParts(target)) {
+    if (type !== 'literal') parts[type] = Number(value);
+  }
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return {
+    date: new Date(Date.UTC(parts.year!, parts.month! - 1, parts.day!)),
+    startTime: `${pad(parts.hour!)}:${pad(parts.minute!)}`,
+    // What a guard that hardcoded UTC would compute for the same pair.
+    utcMisreading: new Date(
+      Date.UTC(parts.year!, parts.month! - 1, parts.day!, parts.hour!, parts.minute!),
+    ),
+  };
+}
+
+/**
+ * `TransitionDbResult`'s type parameter is what makes each function's real
+ * range a compiler fact rather than a docblock claim, and this is what enforces
+ * it (#249 review, S6).
+ *
+ * Never called. `tsconfig.json` includes every `.ts` in the repo, so widening
+ * either signature back to the bare five-member union turns these
+ * `@ts-expect-error` directives into unused-directive errors and fails the
+ * build — the same instrument as `_completionTimingIsRequired` above.
+ *
+ * Each line names a reason the OTHER function returns, which is the confusion
+ * worth catching: the two share a result type and differ only in which
+ * refusals they can reach.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _transitionRangesAreNarrow(db: PrismaClient): Promise<void> {
+  const transitioned = await transitionClass(db, 'never-called', 'open');
+  if (!transitioned.ok) {
+    // @ts-expect-error `NOT_ENDED_YET` is completeClass's, never transitionClass's.
+    void (transitioned.reason === 'NOT_ENDED_YET');
+  }
+
+  const completed = await completeClass(db, 'never-called', { finishedEarly: true });
+  if (!completed.ok) {
+    // @ts-expect-error `STARTS_IN_PAST` is transitionClass's, never completeClass's.
+    void (completed.reason === 'STARTS_IN_PAST');
+    // @ts-expect-error `CONCURRENT_MODIFICATION` likewise — only the CAS reports it.
+    void (completed.reason === 'CONCURRENT_MODIFICATION');
+  }
+}
+
 describe('VALID_TRANSITIONS', () => {
   it('defines transitions for every ClassStatus value', () => {
     const allStatuses = [
@@ -588,6 +669,46 @@ describe('transitionClass (DB)', () => {
     expect(after.status).toBe('draft');
   });
 
+  it('reads the start in the teacher\'s zone, not UTC, when publishing (#249)', async () => {
+    // The zone conjunct. Publishing is refused because the class started half
+    // an hour ago IN AMSTERDAM — and the same wall clock read as UTC is still
+    // ahead of now, so a guard that hardcoded `'UTC'` would publish it. Nothing
+    // else in this file separates those two readings.
+    const { date, startTime, utcMisreading } = localWallClockMinutesAgo(30, 'Europe/Amsterdam');
+
+    // The premise, asserted rather than assumed. If the offset ever stopped
+    // exceeding 30 minutes this fixture would silently stop discriminating and
+    // the test below would pass for the wrong reason.
+    expect(utcMisreading.getTime()).toBeGreaterThan(Date.now());
+    expect(classStartInstant(date, startTime, 'Europe/Amsterdam').getTime()).toBeLessThan(
+      Date.now(),
+    );
+
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Zoned',
+        date,
+        startTime,
+        durationMinutes: 60,
+        roomCost: 35,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 4,
+        maxStudents: 12,
+        status: 'draft',
+      },
+    });
+
+    const result = await transitionClass(prisma, cls.id, 'open');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('STARTS_IN_PAST');
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.status).toBe('draft');
+  });
+
   it('still starts an open class whose time has come (#249)', async () => {
     // The target conjunct. `open -> in_progress` is a class starting, so its
     // start instant being in the past is not merely allowed, it is the whole
@@ -612,6 +733,13 @@ describe('transitionClass (DB)', () => {
 
     const result = await transitionClass(prisma, cls.id, 'in_progress');
     expect(result.ok).toBe(true);
+
+    // The row, not just the return value. Every refusal test on this branch
+    // asserts the stored state because "refused" has to mean "did not write";
+    // the permit case owes the same evidence in the other direction, or it
+    // passes against an implementation that returns `ok` and writes nothing.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.status).toBe('in_progress');
   });
 });
 
@@ -1442,12 +1570,20 @@ describe('updateClass (DB)', () => {
     const cls = await makeClass(false);
     await prisma.class.update({ where: { id: cls.id }, data: { description: 'Set first' } });
 
+    // 2099, AND IT HAS TO STAY OUT THERE. This is the only test in the file
+    // that sends `date` and `startTime` together and expects the write to
+    // land, which since #249 makes it the one DB-level test that reddens if
+    // the `startsInPast` conjunct is dropped and `movesStart` left to decide
+    // alone. That is also what makes its fixture date load-bearing rather
+    // than arbitrary: the guard reads `new Date()`, so a merely-plausible
+    // future date is a failure with a due date. It was 2027-03-09 and would
+    // have gone red that afternoon.
     const result = await updateClass(prisma, cls.id, {
       classType: 'Vinyasa',
       startTime: '18:30',
       durationMinutes: 75,
       description: null,
-      date: new Date('2027-03-09'),
+      date: new Date('2099-03-09'),
     });
     expect(result.ok).toBe(true);
 
@@ -1458,7 +1594,7 @@ describe('updateClass (DB)', () => {
     expect(stored.description).toBeNull();
     // Compared as a date string, not with toEqual, so timezone handling on
     // this @db.Date column can't produce a false pass or fail around midnight.
-    expect(stored.date.toISOString().slice(0, 10)).toBe('2027-03-09');
+    expect(stored.date.toISOString().slice(0, 10)).toBe('2099-03-09');
   });
 
   it('rejects an economic edit to a locked class, naming the fields sent', async () => {
@@ -1602,6 +1738,51 @@ describe('updateClass (DB)', () => {
     // make, for the same reason. A refusal that still moved the column is what
     // leaves `waitlist-retention`'s sweep a class dated 2020 to reap, and the
     // sweep is a `deleteMany`.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.date.toISOString().slice(0, 10)).toBe(FIXTURE_DATE);
+  });
+
+  it('answers past_start, not locked, when the class is both (#249)', async () => {
+    // THE PRECEDENCE, which the guard's placement asserts and nothing checked.
+    // `past_start` is checked BEFORE the economic lock, and the ordering is a
+    // decision rather than an accident: a past-start refusal is about the whole
+    // request, where `locked` is about a subset of its fields. Reporting
+    // "roomCost is locked" to someone whose real problem is that the class
+    // started yesterday sends them to change the wrong thing.
+    //
+    // The mirror of `'reports terminal, not locked, when the class is both'`
+    // one door up, and it fails if the two checks are ever swapped — which
+    // costs nothing to do and passes `tsc`.
+    const cls = await makeClass(true, 'open');
+
+    const result = await updateClass(prisma, cls.id, {
+      date: new Date(PAST_FIXTURE_DATE),
+      roomCost: 999,
+    });
+    expect(result).toEqual({ ok: false, reason: 'past_start' });
+
+    // Under either refusal this class refuses the write, so the returned reason
+    // is the only thing that distinguishes them — assert the column too, since
+    // "refused" has meant "did not write" everywhere else on this branch.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(Number(after.roomCost)).toBe(35);
+    expect(after.date.toISOString().slice(0, 10)).toBe(FIXTURE_DATE);
+  });
+
+  it("reads the start in the teacher's zone, not UTC, when rescheduling (#249)", async () => {
+    // `transitionClass`'s twin, on the other door. The edit moves this class to
+    // a slot that passed half an hour ago in Amsterdam and is still ahead of
+    // now if the same wall clock is misread as UTC — so `'UTC'` hardcoded here
+    // would accept the write instead of refusing it.
+    const cls = await makeClass(false, 'open');
+    const { date, startTime, utcMisreading } = localWallClockMinutesAgo(30, 'Europe/Amsterdam');
+
+    expect(utcMisreading.getTime()).toBeGreaterThan(Date.now());
+
+    const result = await updateClass(prisma, cls.id, { date, startTime });
+    expect(result).toEqual({ ok: false, reason: 'past_start' });
+
+    // Refused means not written, as everywhere else on this branch.
     const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
     expect(after.date.toISOString().slice(0, 10)).toBe(FIXTURE_DATE);
   });
@@ -1833,6 +2014,12 @@ describe('updateClass — the count === 0 branches', () => {
     // Reported by the re-read inside the `count === 0` branch. Defaults to
     // `status`; set it different to stage the completion race.
     statusAfter?: ClassStatus;
+    // The stored `startTime` the opening read reports. Defaults to a readable
+    // one; the only caller that overrides it is the field-gate case below,
+    // which needs a value `classStartInstant` cannot parse. Unreachable from
+    // validated input — no schema accepts it — so a stub is the only way to
+    // stand it up at all.
+    startTime?: string;
   }) {
     const updateManyCalls: UpdateManyArgs[] = [];
     // Resolved once rather than as a `??` chain at each use, so "statusAfter
@@ -1850,11 +2037,18 @@ describe('updateClass — the count === 0 branches', () => {
               id: 'stub-class',
               settingsLocked: opts.settingsLocked,
               status: statusOnRead,
-              // #249's guard reads these. Future-dated and UTC so every
-              // existing case in this block behaves exactly as it did: no stub
-              // test sends a past date, so the guard never fires here.
+              // #249's guard reads these. Future-dated and UTC so the cases
+              // in this block that predate the guard behave exactly as they
+              // did.
+              //
+              // NOT because "no stub test sends a past date" — one does, and
+              // an earlier version of this comment said otherwise. `'answers a
+              // visibly-terminal row from the read'` sends 2020-01-01. What
+              // spares it is the terminal check returning first, which is that
+              // test's whole point; the guard's own precedence is what makes
+              // the claim true, not the fixtures.
               date: new Date('2099-06-01T00:00:00.000Z'),
-              startTime: '09:00',
+              startTime: opts.startTime ?? '09:00',
               teacher: { defaultTimezone: 'UTC' },
             };
           }
@@ -1996,6 +2190,46 @@ describe('updateClass — the count === 0 branches', () => {
     const plain = stubDb({ settingsLocked: false, rowSurvives: false });
     await updateClass(plain.db, 'stub-class', { description: 'x' });
     expect(plain.updateManyCalls[0]?.where).toEqual({ id: 'stub-class', ...live });
+  });
+
+  /**
+   * #249 review, I1. THE FIELD GATE, and the only case in which it decides
+   * anything.
+   *
+   * `if (data.date !== undefined || data.startTime !== undefined)` reads like
+   * an optimisation in front of `movesStart`, and for every readable row it is
+   * one: with neither field sent, both `classStartInstant` calls get identical
+   * arguments and `movesStart` is false on its own. The review that found this
+   * deleted the gate and watched all 77 tests stay green, which was true when
+   * it was measured.
+   *
+   * Failing closed changed that. An unparseable stored `startTime` makes both
+   * instants `NaN`, and `NaN !== NaN` is TRUE — so without this gate a
+   * description-only edit reads as a start-moving one, `startsInPast` refuses
+   * it, and a teacher fixing a typo is told their class has already started.
+   * That is precisely the over-refusal commit 089736e already had to undo
+   * once: the rule is that a write may not NEWLY PLACE the start in the past,
+   * and a payload carrying no scheduling field places nothing.
+   *
+   * So the gate is load-bearing, and this is the test that says so — delete
+   * either and this reddens. It has to be a stub: `startTime` is `HH:mm` by
+   * schema on every write, so no DB row can be stood up in this state.
+   */
+  it('lets a non-scheduling edit through even when the stored startTime is unreadable', async () => {
+    const { db, updateManyCalls } = stubDb({
+      settingsLocked: false,
+      rowSurvives: false,
+      startTime: 'garbage',
+    });
+
+    const result = await updateClass(db, 'stub-class', { description: 'x' });
+
+    // Reaches the compare-and-swap rather than being refused above it. The
+    // stub's `updateMany` always reports `count: 0`, so `CONCURRENT_MODIFICATION`
+    // with the row gone is the far side of the guard — `past_start` would be
+    // the near side.
+    expect(result).not.toEqual({ ok: false, reason: 'past_start' });
+    expect(updateManyCalls).toHaveLength(1);
   });
 
   it('answers a visibly-terminal row from the read, without attempting the write', async () => {

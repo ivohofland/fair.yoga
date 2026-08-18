@@ -50,7 +50,15 @@ describe('PublishClassButton', () => {
     fireEvent.click(screen.getByRole('button'));
 
     expect(await screen.findByText('Set a room before publishing.')).toBeInTheDocument();
-    expect(routerRefresh).not.toHaveBeenCalled();
+    // Refreshes on refusal as well as on success (#249), which is the reverse
+    // of what this line asserted until the past-start guard landed. A 409 here
+    // means the server knows something the rendered page does not, and since
+    // one of the reasons is now "this draft's start has already passed" — a
+    // fact a clock can make true with no write at all — the page that decided
+    // to show a Publish button is stale by definition. `ClassEditForm` has
+    // refreshed on refusal since #247 for the same reason; this button is the
+    // one that did not.
+    await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
   });
 
   it('says something when the request never reaches the server', async () => {

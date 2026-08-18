@@ -31,6 +31,16 @@ export function PublishClassButton({ classId }: PublishClassButtonProps) {
         // failure repaints nothing and the class stays a draft — visually
         // identical to a click that never registered.
         setError(await readErrorMessage(res, 'Could not publish. Please try again.'));
+        // Refresh on refusal too, matching `ClassEditForm`'s save — which had
+        // this and this button did not, for no reason either could state.
+        // #249 is what made the gap cost something: a refusal now also means
+        // "this draft's start has passed", and the page that rendered this
+        // button decided to render it from a server snapshot taken before that
+        // became true. Leaving the page as-is leaves a Publish button that
+        // will fail identically on every click. Let the server refuse, then
+        // re-read — the standing rule that a control must never be gated on
+        // server state a sweep or a clock can move underneath it.
+        router.refresh();
       }
     } catch {
       setError('Network error. Please try again.');

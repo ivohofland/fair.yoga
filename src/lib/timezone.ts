@@ -132,6 +132,20 @@ export function classStartInstant(classDate: Date, startTime: string, timeZone: 
   const [hours, minutes] = startTime.split(':').map(Number) as [number, number];
   const wallUtc = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hours, minutes, 0, 0);
 
+  // Checked BEFORE the `try`, and separately from the timezone, because
+  // otherwise it is reported as a timezone fault. `Date.UTC` with a NaN hour
+  // returns NaN; `new Date(NaN)` handed to `Intl.DateTimeFormat.formatToParts`
+  // throws a RangeError; the catch below then logs "invalid timezone" naming a
+  // zone that was never the problem. Measured with a valid `Europe/Amsterdam`
+  // and `startTime: 'garbage'`. Returning early keeps the same Invalid Date
+  // this has always returned — callers that compare it are unchanged — but
+  // makes the cause greppable, and lets `startsInPast` below tell the two
+  // apart so it can fail closed on one and not the other.
+  if (Number.isNaN(wallUtc)) {
+    log.warn({ startTime }, 'unparseable startTime, cannot compute class start instant');
+    return new Date(NaN);
+  }
+
   try {
     // Guess, then correct once — two passes converge across DST boundaries.
     let ts = wallUtc - timeZoneOffsetMs(new Date(wallUtc), timeZone);
@@ -158,12 +172,58 @@ export function classStartInstant(classDate: Date, startTime: string, timeZone: 
  * `class-lifecycle.ts` for why skipping a timing check cannot be silent.
  *
  * Strictly `<`: a class starting this instant has not started in the past.
+ *
+ * FAILS CLOSED. Both callers use a `true` to refuse a write, so the only safe
+ * answer to "I cannot read this class's start" is the refusing one. The naive
+ * body — `classStartInstant(...) < now` — did the opposite without looking
+ * like it: an unparseable `startTime` yields an Invalid Date, every relational
+ * comparison against one is `false`, and the guard waved the write through
+ * while appearing to have checked it. That is the same silent-`false` shape
+ * `completeClass` guards `requireEndedBy` against with `Number.isNaN`.
+ *
+ * Unparseable is not reachable from validated input — `startTime` is `HH:mm`
+ * by schema on every write — so this branch means the column has been
+ * corrupted outside the app, and a loud refusal is the correct response to
+ * that. Note the asymmetry with an unknown TIMEZONE one function up, which
+ * falls back to UTC and proceeds: that yields a wrong-but-bounded answer for
+ * a value the guard can still reason about, where this one has no start
+ * instant at all.
+ *
+ * THE SCHEDULING TRIPLE IS ONE OBJECT, not three positional arguments, because
+ * `startTime` and `timeZone` are adjacent `string`s and swapping them compiles
+ * silently. Feeding `'Europe/Amsterdam'` to the `HH:mm` parser yields NaN,
+ * which since the fail-closed rule above means the guard refuses everything —
+ * a caller-side typo turned into a total outage of class editing, with the
+ * only clue a log line blaming a `startTime` nobody passed. Naming the fields
+ * removes the whole failure mode at the type level.
+ *
+ * `classStartInstant` above keeps its positional signature. The same swap is
+ * possible there, but it has twenty call sites against this one's two, and it
+ * does not gate a write — so the churn buys much less. Worth revisiting on its
+ * own rather than as a rider here.
  */
 export function startsInPast(
-  classDate: Date,
-  startTime: string,
-  timeZone: string,
+  cls: { date: Date; startTime: string; timeZone: string },
   now: Date,
 ): boolean {
-  return classStartInstant(classDate, startTime, timeZone) < now;
+  const { date: classDate, startTime, timeZone } = cls;
+  const start = classStartInstant(classDate, startTime, timeZone);
+  if (Number.isNaN(start.getTime())) {
+    log.warn(
+      {
+        startTime,
+        timeZone,
+        // `toISOString` THROWS a RangeError on an Invalid Date, and this is the
+        // one branch reached by inputs already known to be broken — so
+        // serialising it unguarded would turn the clean 409 this refusal exists
+        // to produce into a 500, from the log line rather than the logic. The
+        // callers NaN-check their own instants before serialising for the same
+        // reason.
+        classDate: Number.isNaN(classDate.getTime()) ? null : classDate.toISOString(),
+      },
+      'refusing write: startTime is unreadable, so a past start cannot be ruled out',
+    );
+    return true;
+  }
+  return start < now;
 }

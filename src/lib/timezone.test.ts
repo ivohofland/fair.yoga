@@ -143,9 +143,7 @@ describe('startsInPast', () => {
   it('is false for a class still to come in a zone far ahead of UTC', () => {
     expect(
       startsInPast(
-        day('2026-06-15'),
-        '23:00',
-        'Pacific/Auckland',
+        { date: day('2026-06-15'), startTime: '23:00', timeZone: 'Pacific/Auckland' },
         new Date('2026-06-15T06:00:00.000Z'),
       ),
     ).toBe(false);
@@ -155,9 +153,7 @@ describe('startsInPast', () => {
     // 09:00 CEST = 07:00Z, and `now` is five hours later.
     expect(
       startsInPast(
-        day('2026-06-15'),
-        '09:00',
-        'Europe/Amsterdam',
+        { date: day('2026-06-15'), startTime: '09:00', timeZone: 'Europe/Amsterdam' },
         new Date('2026-06-15T12:00:00.000Z'),
       ),
     ).toBe(true);
@@ -167,12 +163,125 @@ describe('startsInPast', () => {
     // Strictly `<`: a class starting this instant has not started in the past.
     expect(
       startsInPast(
-        day('2026-06-15'),
-        '09:00',
-        'Europe/Amsterdam',
+        { date: day('2026-06-15'), startTime: '09:00', timeZone: 'Europe/Amsterdam' },
         new Date('2026-06-15T07:00:00.000Z'),
       ),
     ).toBe(false);
+  });
+
+  /**
+   * THE CASE THAT KILLS "READ THE WALL CLOCK AS UTC", which none of the three
+   * above do — checked, not assumed. Replace `classStartInstant`'s body with a
+   * bare `new Date(wallUtc)` and every one of them stays green: Auckland 23:00
+   * reads as `11:00Z` correctly and `23:00Z` mutated, and both are after that
+   * test's `06:00Z` `now`, so both answer `false`. Same for the two Amsterdam
+   * cases. A whole describe block that agrees with the bug it was written
+   * against.
+   *
+   * Killing it needs the two readings to STRADDLE `now`, which needs a zone
+   * WEST of UTC: a negative offset puts the true instant LATER than the naive
+   * one, where Auckland's positive offset puts it earlier and merely widens an
+   * answer both readings already agree on.
+   *
+   * 02:00 on 15 June in Los Angeles is PDT, UTC-7, so `2026-06-15T09:00Z`.
+   * `now` sits between the two readings: after `02:00Z` (what the mutation
+   * sees) and before `09:00Z` (the truth). Correct answer `false`, mutated
+   * answer `true` — a guard that would refuse a Los Angeles teacher's edit at
+   * a quarter to seven in the morning for a class they have not taught yet.
+   * Re-derive the trio if the fixture changes; do not adjust it until a test
+   * passes.
+   */
+  it('reads the wall clock in the zone, not as UTC — the west-of-UTC case', () => {
+    expect(
+      startsInPast(
+        { date: day('2026-06-15'), startTime: '02:00', timeZone: 'America/Los_Angeles' },
+        new Date('2026-06-15T05:00:00.000Z'),
+      ),
+    ).toBe(false);
+
+    // The other side of the same instant, so the case cannot pass by always
+    // answering `false`: one hour past the true start, it is `true`.
+    expect(
+      startsInPast(
+        { date: day('2026-06-15'), startTime: '02:00', timeZone: 'America/Los_Angeles' },
+        new Date('2026-06-15T10:00:00.000Z'),
+      ),
+    ).toBe(true);
+  });
+
+  /**
+   * FAILING CLOSED, and the direction is the entire point.
+   *
+   * An unparseable `startTime` makes `classStartInstant` return an Invalid
+   * Date, and every comparison against one is `false` — so the obvious
+   * implementation (`classStartInstant(...) < now`) answered "no, it has not
+   * started" for a value it could not read at all, in a predicate whose only
+   * two callers use a `true` to REFUSE a write. Measured before this test
+   * existed: `startsInPast(2020-01-01, 'garbage', 'Europe/Amsterdam', now)`
+   * returned `false`, letting a 2020 date through both guards.
+   *
+   * `completeClass` (`class-lifecycle.ts`) already `Number.isNaN`-guards this
+   * exact shape on `requireEndedBy`; this is the same defence one file over.
+   *
+   * A stored `startTime` can only be `HH:mm` — the schema validates it on
+   * every write — so reaching this branch means the column has been corrupted
+   * by something outside the app. Refusing the edit and logging is the right
+   * answer to that; silently permitting it is not.
+   */
+  it('fails closed on an unparseable startTime rather than permitting the write', () => {
+    vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    expect(
+      startsInPast(
+        { date: day('2026-06-15'), startTime: 'garbage', timeZone: 'Europe/Amsterdam' },
+        new Date(),
+      ),
+    ).toBe(true);
+    // Not only the obviously-broken shape: an hour that parses as a number but
+    // is not a time reaches `Date.UTC` and comes back NaN just the same.
+    expect(
+      startsInPast(
+        { date: day('2026-06-15'), startTime: '', timeZone: 'Europe/Amsterdam' },
+        new Date(),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not throw while logging a class whose date is also unreadable', () => {
+    // The refusal branch serialises `classDate`, and `toISOString` throws a
+    // RangeError on an Invalid Date — which is reachable exactly here, since
+    // this branch is the one for inputs already known to be broken. Unguarded
+    // it would convert the 409 this guard exists to produce into a 500 raised
+    // by the log line. Both halves corrupt at once is the shape that finds it.
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    expect(
+      startsInPast(
+        { date: new Date(NaN), startTime: 'garbage', timeZone: 'Europe/Amsterdam' },
+        new Date(),
+      ),
+    ).toBe(true);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ classDate: null }),
+      expect.any(String),
+    );
+  });
+
+  it('names the startTime, not the timezone, when the startTime is what broke', () => {
+    // The log line this replaces said "invalid timezone" for a perfectly valid
+    // `Europe/Amsterdam`, because the NaN from the unparseable time reached
+    // `Intl` and threw there. On a VPS whose observability is grep over pino,
+    // that sends whoever is on call to the wrong column.
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    startsInPast(
+        { date: day('2026-06-15'), startTime: 'garbage', timeZone: 'Europe/Amsterdam' },
+        new Date(),
+      );
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ startTime: 'garbage' }),
+      expect.stringContaining('startTime'),
+    );
+    for (const [, msg] of warn.mock.calls) {
+      expect(msg).not.toContain('invalid timezone');
+    }
   });
 });
 

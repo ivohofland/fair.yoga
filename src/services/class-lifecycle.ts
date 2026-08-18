@@ -20,6 +20,7 @@ import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { closeQueueOnStart } from './waitlist';
 import { classStartInstant, startsInPast } from '@/lib/timezone';
+import { log } from '@/lib/log';
 
 export { ECONOMIC_FIELDS, type EconomicField };
 
@@ -111,12 +112,24 @@ export const TERMINAL_CLASS_STATUSES: readonly ClassStatus[] = Object.freeze(
  * logging at `error` on every tick.
  *
  * A SUPERSET over two functions, not a contract either one satisfies alone.
- * `NOT_ENDED_YET` is returned only by `completeClass` and never by
- * `transitionClass`; `STARTS_IN_PAST` (#249) is the mirror — only
- * `transitionClass` returns it, and only for a `draft -> open` publish.
- * Both functions declare `TransitionDbResult`, so each type is wider than its
- * function's real range. That was already true before #249; this member does
- * not introduce the looseness, it follows it.
+ * Both `transitionClass` and `completeClass` declare `TransitionDbResult`, so
+ * each sees a type wider than its own range. Enumerated in full, because an
+ * earlier revision named only `NOT_ENDED_YET` and `STARTS_IN_PAST` and called
+ * them "the mirror" — a tidy symmetry that miscounts. The split is 2/2/1, not
+ * 1/1:
+ *
+ * - SHARED: `NOT_FOUND`, and `ILLEGAL_TRANSITION` — both functions call
+ *   `validateTransition`, `transitionClass` in the diagnostic read after a
+ *   failed CAS.
+ * - `completeClass` only: `NOT_ENDED_YET`.
+ * - `transitionClass` only: `CONCURRENT_MODIFICATION` (its CAS is the only one
+ *   that reports losing a race this way) and `STARTS_IN_PAST` (#249, and only
+ *   for a `draft -> open` publish).
+ *
+ * The looseness predates #249 and neither member added since introduces it.
+ * `POST /api/classes/[id]/transition` handles the full union anyway via an
+ * exhaustive `Record`, so the widening costs a table row rather than a wrong
+ * answer.
  */
 export type TransitionFailureReason =
   | 'NOT_FOUND'
@@ -187,9 +200,30 @@ export function isEconomicFieldLocked(settingsLocked: boolean): boolean {
 // DB operations
 // ---------------------------------------------------------------------------
 
-export type TransitionDbResult =
+/**
+ * The shape both DB-level transition functions return, parameterised by the
+ * reasons the specific function can actually produce.
+ *
+ * The default keeps every existing annotation and consumer working unchanged —
+ * `TransitionDbResult` on its own still means "any of the five". What the
+ * parameter buys is that each function can now DECLARE its real range instead
+ * of describing it in prose: `transitionClass` cannot return `NOT_ENDED_YET`
+ * and `completeClass` cannot return `STARTS_IN_PAST`, and until this existed
+ * the only record of that was a paragraph in `TransitionFailureReason`'s
+ * docblock which had already miscounted once.
+ *
+ * A caller that switches on `reason` now gets the narrow union, so a branch for
+ * a reason its callee never returns is a compile error rather than dead code.
+ * `POST /api/classes/[id]/transition` deliberately keeps handling the full
+ * union in one exhaustive `Record`: a route table that narrowed with its callee
+ * would need editing every time a service's range changed, which is churn for
+ * no safety.
+ */
+export type TransitionDbResult<
+  R extends TransitionFailureReason = TransitionFailureReason,
+> =
   | { ok: true; newStatus: ClassStatus }
-  | { ok: false; reason: TransitionFailureReason; error: string };
+  | { ok: false; reason: R; error: string };
 
 /**
  * Transition a class to a new status in the database.
@@ -222,7 +256,11 @@ export async function transitionClass(
   db: PrismaClient,
   classId: string,
   targetStatus: ClassStatus,
-): Promise<TransitionDbResult> {
+): Promise<
+  TransitionDbResult<
+    'NOT_FOUND' | 'ILLEGAL_TRANSITION' | 'CONCURRENT_MODIFICATION' | 'STARTS_IN_PAST'
+  >
+> {
   // #249. A draft whose start has already passed cannot be published. This
   // needs no typo to reach: a draft written for Friday and published the
   // following week is enough.
@@ -240,11 +278,28 @@ export async function transitionClass(
   // in sync.
   //
   // Read before the transaction rather than inside it. The stale window is
-  // milliseconds and runs only in the safe direction: since #249's other guard
-  // a class's stored start can never be moved into the past, so this read
-  // cannot understate it. It can be overtaken by the clock — read at 08:59:59.9
+  // milliseconds, and what could go wrong in it is bounded by who else writes
+  // this class's start. It can be overtaken by the clock — read at 08:59:59.9
   // for a 09:00 class, CAS at 09:00:00.1 — which publishes a class whose start
   // has just passed, exactly as publishing it a second earlier legally would.
+  //
+  // THE OTHER WRITER IS NOT `updateClass`, and an earlier revision of this
+  // comment rested the whole argument on it: "since #249's other guard a
+  // class's stored start can never be moved into the past, so this read cannot
+  // understate it". `updateClass` is indeed guarded. `template-sync.ts` is
+  // not — it rewrites `startTime` on a template's instances with a bare
+  // `updateMany` (see `waitlist-retention.ts`'s docblock for the measurement)
+  // and could in principle land in this window.
+  //
+  // It stays safe anyway, for a narrower reason than the one claimed. Losing
+  // that race means publishing a `draft` whose start had just been moved into
+  // the past by a template edit — the same outcome the clock produces on its
+  // own a moment later, and the same outcome as publishing one second earlier.
+  // Nothing downstream depends on a published class's start being ahead: the
+  // sweeps read the stored values fresh, and the retention argument this feeds
+  // needs `date` on a TERMINAL class, which a trigger holds and neither writer
+  // can touch. The refusal is a policy about intent, not an invariant, so a
+  // millisecond of staleness costs a wrong answer rather than a broken one.
   if (targetStatus === 'open') {
     const cls = await db.class.findUnique({
       where: { id: classId },
@@ -258,8 +313,26 @@ export async function transitionClass(
     if (
       cls &&
       sourceStatesFor(targetStatus).includes(cls.status) &&
-      startsInPast(cls.date, cls.startTime, cls.teacher.defaultTimezone, new Date())
+      startsInPast(
+        { date: cls.date, startTime: cls.startTime, timeZone: cls.teacher.defaultTimezone },
+        new Date(),
+      )
     ) {
+      // Same three-way ambiguity `updateClass`'s refusal has, and the same
+      // fields to tell them apart — see the longer note there. This route logs
+      // nothing of its own, so without this the only record of a publish
+      // refusal is a 409 body the teacher reads and no one keeps.
+      const start = classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone);
+      log.info(
+        {
+          classId,
+          timeZone: cls.teacher.defaultTimezone,
+          date: cls.date.toISOString().slice(0, 10),
+          startTime: cls.startTime,
+          startInstant: Number.isNaN(start.getTime()) ? null : start.toISOString(),
+        },
+        'transitionClass refused: this draft start has already passed',
+      );
       return {
         ok: false,
         reason: 'STARTS_IN_PAST',
@@ -385,7 +458,7 @@ export async function completeClass(
   db: PrismaClient,
   classId: string,
   timing: CompletionTiming,
-): Promise<TransitionDbResult> {
+): Promise<TransitionDbResult<'NOT_FOUND' | 'ILLEGAL_TRANSITION' | 'NOT_ENDED_YET'>> {
   return db.$transaction(async (tx) => {
     // Before the read, not with the first write. Everything below decides
     // from this row — the status gate, the registration set the pricing
@@ -753,13 +826,25 @@ export type UpdateClassResult =
   | { ok: false; reason: 'past_start' };
 
 /**
- * Apply a partial update to a class, enforcing two independent freezes.
+ * Apply a partial update to a class, enforcing two independent freezes and one
+ * scheduling rule.
  *
- * They gate on different events and cover different things. The ECONOMIC
- * freeze (`settingsLocked`) starts at the first registration and covers
- * `ECONOMIC_FIELDS`. The TERMINAL freeze (#247) starts when the class reaches
- * `completed` or `cancelled` and covers EVERY field — it is the class that is
- * frozen, not a list of columns.
+ * The FREEZES gate on different events and cover different things. The
+ * ECONOMIC freeze (`settingsLocked`) starts at the first registration and
+ * covers `ECONOMIC_FIELDS`. The TERMINAL freeze (#247) starts when the class
+ * reaches `completed` or `cancelled` and covers EVERY field — it is the class
+ * that is frozen, not a list of columns.
+ *
+ * THE SCHEDULING RULE (#249) IS NOT A THIRD FREEZE, and the distinction is why
+ * this sentence used to say "two" and stop. A freeze is a property of the
+ * CLASS: once it holds, some set of columns is shut for good. The past-start
+ * rule is a property of the WRITE — it refuses a `date`/`startTime` edit whose
+ * resulting start instant has already passed, and refuses nothing else. The
+ * same class, in the same state, accepts a description edit, and accepts a
+ * reschedule to next week. Counting it among the freezes would predict a
+ * permanence it does not have; leaving it out of the docblock entirely, which
+ * is what happened, left the function's inventory one refusal short of what it
+ * enforces.
  *
  * NEITHER LIFTS. They differ in SCOPE, not in permanence. An earlier revision
  * of this docblock said a teacher could undo the economic freeze by removing
@@ -778,9 +863,11 @@ export type UpdateClassResult =
  * round trips, not correctness, for exactly that reason.
  *
  * DELETING THE TERMINAL CHECK IS NOT AS FREE, AND IT CHANGES THE ANSWER IN
- * TWO CASES, NOT ONE. An earlier revision of this docblock said one, and the
- * branch that wrote it had already shipped the test that disproves it. Both
- * are questions of ORDER — the terminal check sits above two other early
+ * THREE CASES. This count has now been wrong twice — it said one, then two,
+ * and each revision was written on a branch that had already shipped the test
+ * disproving it. Measured rather than reasoned this time: stubbing the check
+ * out reddens exactly five tests, covering the three cases below. All three
+ * are questions of ORDER — the terminal check sits above three other early
  * returns, and each would answer first without it:
  *
  *  1. A class that is BOTH terminal and settings-locked with an economic
@@ -794,6 +881,17 @@ export type UpdateClassResult =
  *     frozen (a 409) — and here the CAS re-derives nothing at all, because
  *     control returns before any write is attempted. Pinned by `'answers
  *     terminal, not no_fields, for a body that asks for nothing'`.
+ *  3. A terminal class sent a `date` or `startTime` that has already passed —
+ *     which is EVERY terminal class a real reschedule reaches, since a
+ *     completed class's start is in the past by definition. #249's guard
+ *     fires next and answers `past_start`: still a 409, still a refusal, but
+ *     it reports the weaker and more temporary of two reasons, as though a
+ *     different date would help. Nothing would; the class is frozen. This is
+ *     the case that made the count three, and it is pinned three times over —
+ *     `'refuses a date edit on a completed class, and writes nothing (#247)'`,
+ *     its `cancelled` sibling, and the stub `'answers a visibly-terminal row
+ *     from the read'`. That #247's own tests are what catch it is the point:
+ *     the guard added after them silently took over their refusal.
  *
  * Everywhere else deleting it costs only round trips, and the CAS does
  * re-derive the same refusal.
@@ -813,16 +911,18 @@ export async function updateClass(
   });
   if (!cls) return { ok: false, reason: 'not_found' };
 
-  // Checked BEFORE the economic lock AND before `hasEdit`, and the position is
-  // load-bearing in both directions. For most inputs this is an optimisation
-  // only — the CAS below re-derives the same refusal — but for TWO it is what
-  // produces the right answer at all, because each of the two early returns
-  // downstream would otherwise answer first: `locked` for a class that is also
-  // settings-locked with an economic field sent, and `no_fields` for an empty
-  // or all-undefined payload. The second is the one that gets forgotten,
-  // because the CAS cannot cover it: `hasEdit` returns before any write is
-  // attempted, so there is no compare-and-swap to fall back on. `updateClass`'s
-  // docblock enumerates both, each with the test that pins it.
+  // Checked BEFORE #249's past-start guard, before the economic lock AND
+  // before `hasEdit`, and the position is load-bearing in every direction. For
+  // most inputs this is an optimisation only — the CAS below re-derives the
+  // same refusal — but for THREE it is what produces the right answer at all,
+  // because each of the three early returns downstream would otherwise answer
+  // first: `past_start` for a terminal class sent a date that has passed,
+  // `locked` for a class that is also settings-locked with an economic field
+  // sent, and `no_fields` for an empty or all-undefined payload. The last is
+  // the one that gets forgotten, because the CAS cannot cover it: `hasEdit`
+  // returns before any write is attempted, so there is no compare-and-swap to
+  // fall back on. `updateClass`'s docblock enumerates all three, each with the
+  // test that pins it.
   if (TERMINAL_CLASS_STATUSES.includes(cls.status)) {
     return { ok: false, reason: 'terminal', status: cls.status };
   }
@@ -836,8 +936,24 @@ export async function updateClass(
   // this is a whole-request refusal like `terminal`, where `locked` is a
   // field-level one.
   //
-  // GATED ON THE FIELDS SENT **AND** ON THE START ACTUALLY MOVING, and both
-  // conjuncts are load-bearing rather than optimisations. An `open` class whose
+  // GATED ON THE FIELDS SENT **AND** ON THE START ACTUALLY MOVING. Both
+  // conjuncts are load-bearing, but not equally, and an earlier revision of
+  // this comment claimed a parity that did not exist: for every row with a
+  // READABLE `startTime` the field gate decides nothing at all, because with
+  // neither field sent both `classStartInstant` calls receive identical
+  // arguments and `movesStart` is already false. Delete it and 77 of the 78
+  // tests in `class-lifecycle.test.ts` stay green.
+  //
+  // The 78th is what it is for. An unparseable stored `startTime` makes both
+  // instants `NaN`, `NaN !== NaN` is true, and `movesStart` alone would then
+  // read a description-only edit as a start-moving one — refusing, since
+  // `startsInPast` fails closed on exactly that input. The field gate is what
+  // stops the scheduling guard from refusing a write that schedules nothing.
+  // Pinned by `'lets a non-scheduling edit through even when the stored
+  // startTime is unreadable'`, which is a stub test because no validated row
+  // can reach this state.
+  //
+  // An `open` class whose
   // start has already passed is a state the system produces legitimately —
   // `generateClassInstances` creates one every time it runs later in the day
   // than its template's own start time, and every class is in it for up to the
@@ -857,19 +973,68 @@ export async function updateClass(
   // ONE ENFORCEMENT POINT, not two, and the contrast with the terminal freeze
   // above is the reason to say so: that one needs a CAS conjunct as well
   // because a completion can commit between this read and the write. This one
-  // cannot lose that race. The incoming `date`/`startTime` are fixed by the
-  // request, and the stored values they fall back to can only be moved by a
-  // writer that is itself this guard.
+  // does not need the same treatment. The incoming `date`/`startTime` are
+  // fixed by the request, so the only movable input is the stored pair the
+  // `??` falls back to.
+  //
+  // "AND THOSE CAN ONLY BE MOVED BY A WRITER THAT IS ITSELF THIS GUARD" is
+  // what this comment used to say, and it is false. `template-sync.ts` writes
+  // `startTime` on a template's `draft`/`open` instances through a bare
+  // `updateMany` with no past-start check (measured in `waitlist-retention.ts`'s
+  // docblock). It can commit between this read and the write below.
+  //
+  // The conclusion survives the correction, on a smaller argument. The
+  // fallback only matters for a field the request did NOT send, and losing
+  // this race there means the guard judged an edit against a `startTime` a
+  // template sync replaced a millisecond later — leaving a start in the past
+  // that this request did not put there and the next `updateClass` will refuse
+  // to move further. A wrong answer in a millisecond window, not a broken
+  // invariant: nothing downstream treats "no live class starts in the past" as
+  // a fact, precisely because the generator produces such classes routinely.
   if (data.date !== undefined || data.startTime !== undefined) {
     const timeZone = cls.teacher.defaultTimezone;
     const effectiveDate = data.date ?? cls.date;
     const effectiveStartTime = data.startTime ?? cls.startTime;
     // Compared as instants through the same function, so a resend of the stored
     // values can never read as a move however it was serialised.
+    const effectiveStart = classStartInstant(effectiveDate, effectiveStartTime, timeZone);
     const movesStart =
-      classStartInstant(effectiveDate, effectiveStartTime, timeZone).getTime() !==
+      effectiveStart.getTime() !==
       classStartInstant(cls.date, cls.startTime, timeZone).getTime();
-    if (movesStart && startsInPast(effectiveDate, effectiveStartTime, timeZone, new Date())) {
+    if (movesStart && startsInPast(
+        { date: effectiveDate, startTime: effectiveStartTime, timeZone },
+        new Date(),
+      )) {
+      // Logged, because a 409 with prose in it is all the teacher gets and
+      // nothing else records why. The refusal has three causes that look
+      // identical from outside — the start really has passed, the teacher's
+      // `defaultTimezone` is wrong (it is hardcoded to `Europe/Amsterdam` at
+      // signup, so it is wrong for most of the world), or `startTime` is
+      // unreadable and `startsInPast` failed closed. `timeZone` and
+      // `startInstant` together separate all three by grep, which is the whole
+      // of this VPS's observability.
+      //
+      // `info`, not `warn`: a teacher picking yesterday is ordinary use, not an
+      // anomaly. The unreadable-`startTime` case warns on its own account
+      // inside `startsInPast`, where it can say what it actually saw.
+      //
+      // NaN-checked before `toISOString`, which throws a RangeError on an
+      // Invalid Date. That combination is reachable now precisely because
+      // `startsInPast` fails closed: it answers `true` for exactly the input
+      // whose instant cannot be serialised, so a naive log line here would
+      // turn every corrupt row from a clean 409 into a 500.
+      log.info(
+        {
+          classId,
+          timeZone,
+          date: effectiveDate.toISOString().slice(0, 10),
+          startTime: effectiveStartTime,
+          startInstant: Number.isNaN(effectiveStart.getTime())
+            ? null
+            : effectiveStart.toISOString(),
+        },
+        'updateClass refused: the edit would move this class start into the past',
+      );
       return { ok: false, reason: 'past_start' };
     }
   }
