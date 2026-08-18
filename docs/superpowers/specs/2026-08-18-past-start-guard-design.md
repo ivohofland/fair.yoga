@@ -576,7 +576,10 @@ verdict.
   series; sync every field except `startTime`). That is the same shape of
   question that kept #249 itself open — "bounding the date needs a product call
   about whether backfilling a past class is ever legal" — and it deserves its
-  own issue rather than a decision taken silently inside a review fix.
+  own issue rather than a decision taken silently inside a review fix. **Filed
+  as #257**, which carries the measurement, the three candidate semantics, and
+  a note that `date: { gt: now }` additionally excludes TODAY's instances from
+  every sync in every zone — possibly deliberate, possibly the same error.
 
   **What it does not endanger**, checked rather than assumed:
   - `waitlist-retention.ts`'s delete-safety argument needs `date` immovable on
@@ -591,6 +594,11 @@ verdict.
 
   Adjacent and also out of scope: `POST /api/teachers` hardcodes
   `defaultTimezone: 'Europe/Amsterdam'` with no inference at signup, so BOTH
-  guards decide in the wrong zone for every teacher outside CET. Around forty
-  pre-existing call sites already depend on that field and this branch changes
-  none of them. Its own issue too.
+  guards decide in the wrong zone for every teacher outside CET. Around a
+  hundred pre-existing call sites depend on that field and this branch changes
+  none of them. **Filed as #258**, which turned out sharper than it looked from
+  here: the value IS recoverable through Settings → Profile, but the picker
+  there is a hand-written 26-zone list with nothing in Asia, Africa, South
+  America or New Zealand — so an Auckland teacher cannot select their own zone
+  at all, and is refused by this branch's guards for up to twelve hours before
+  their class has started, with no way to make the message wrong.
