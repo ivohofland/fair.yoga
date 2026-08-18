@@ -723,7 +723,8 @@ git commit -m "refactor: the archive route becomes a wrapper over room-archive (
 - Test: `src/services/room-archive-doors.test.ts` (**create**)
 
 **Interfaces:**
-- Consumes: nothing from Task 1 (this door reads `isArchived` directly — it asks a different question, "is the room archived", not "is the room in use").
+- Consumes: `fixtureRun` from `tests/room-fixtures.ts` (Task 1). Nothing from `room-archive.ts` — this door reads `isArchived` directly, because it asks a different question ("is the room archived") than door 1 ("is the room in use").
+- **Declare only what this task uses.** `@typescript-eslint/no-unused-vars` is `'error'` in `eslint.config.mjs:13`, so an import or helper staged here for Task 4's benefit fails `npm run lint`. Task 4 adds its own `pauseOrResumeTemplate` import and `addTemplate` helper to this same file.
 - Produces: `TransitionFailureReason` gains `'ROOM_ARCHIVED'`; the route answers 409 with code `ROOM_ARCHIVED`.
 
 **Why the union changes first:** `TRANSITION_FAILURE_RESPONSE` is typed `Record<TransitionFailureReason, …>`, so adding the member makes the build fail at the table until it is mapped. Let the compiler enumerate the call sites rather than searching for them. Both edits land in this one commit so the tree is never red between commits.
@@ -742,7 +743,6 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { fixtureRun, type RoomFixture, type ClassFixtureStatus } from '../../tests/room-fixtures';
 import { transitionClass } from './class-lifecycle';
-import { pauseOrResumeTemplate } from './class-template-lifecycle';
 
 const prisma = new PrismaClient();
 // `rad-` distinguishes this file's rows from `room-archive.test.ts`'s,
@@ -750,8 +750,6 @@ const prisma = new PrismaClient();
 const fx = fixtureRun('rad');
 const makeFixture = () => fx.makeFixture(prisma);
 const addClass = (f: RoomFixture, status: ClassFixtureStatus) => fx.addClass(prisma, f, status);
-const addTemplate = (f: RoomFixture, opts: { isActive: boolean; isArchived: boolean }) =>
-  fx.addTemplate(prisma, f, opts);
 
 beforeAll(async () => { await prisma.$connect(); });
 afterAll(async () => {
@@ -900,8 +898,20 @@ git commit -m "feat: a draft cannot be published into an archived room (issue 76
 
 Append to `src/services/room-archive-doors.test.ts`:
 
-`pauseOrResumeTemplate` is already imported at the top of the file from Task 3;
-do not add a second import.
+Task 3 left this file declaring only what Task 3 used, because unused imports
+are a lint error here. Add both of these now — the import beside the existing
+`transitionClass` one, and the helper beside `addClass`:
+
+```ts
+import { pauseOrResumeTemplate } from './class-template-lifecycle';
+```
+
+```ts
+const addTemplate = (f: RoomFixture, opts: { isActive: boolean; isArchived: boolean }) =>
+  fx.addTemplate(prisma, f, opts);
+```
+
+Then the tests:
 
 ```ts
 describe('pauseOrResumeTemplate — door 3: resuming into an archived room', () => {
