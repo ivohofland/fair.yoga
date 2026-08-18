@@ -126,6 +126,82 @@ describe('classifyApiError', () => {
    * boundary being drawn here is terminality-vs-everything-else, not one
    * trigger vs another.
    */
+  /**
+   * The other half of the same boundary, and the conjunct nothing pinned:
+   * deleting `error.message.includes('23514')` from `isTerminalStatusViolation`
+   * left the whole suite green, because every fixture carrying `which is
+   * terminal` also carried that SQLSTATE. The wording alone was doing all the
+   * work and no test could tell.
+   *
+   * This is the shape that makes the code load-bearing. plpgsql's bare `RAISE
+   * EXCEPTION` defaults to `P0001` (raise_exception); both terminality
+   * migrations override it with `USING ERRCODE = '23514'`, and a third one
+   * copied from either — the likely way this arrives — would produce exactly
+   * this if the override were dropped along the way.
+   *
+   * It classifies 500, and that is the recorded choice rather than an
+   * accident: the matcher requires the SQLSTATE *and* the wording, so a new
+   * trigger joins the 409 by declaring `23514` like its two siblings, not by
+   * happening to phrase its message the same way. A message is prose anyone
+   * can write; the SQLSTATE is a declaration. Widening to the wording alone
+   * would hand the 409 to any future `RAISE EXCEPTION` that reuses the
+   * sentence.
+   */
+  it('does not classify the terminality wording as terminal without the SQLSTATE', () => {
+    const wrongSqlstate = new Prisma.PrismaClientUnknownRequestError(
+      `Invalid \`prisma.class.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "P0001", message: "Class 4f2b1c90-6d1e-4a55-9f0b-2c7e8d3a1b64 is completed, which is terminal; cannot change its date from 2026-06-01 to 2020-01-01", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
+      { clientVersion: 'test' },
+    );
+
+    const failure = classifyApiError(wrongSqlstate);
+
+    expect(failure.status).toBe(500);
+    expect(failure.status).not.toBe(409);
+    expect(failure.message).toBe('Internal server error');
+  });
+
+  /**
+   * The type conjunct, pinned on purpose rather than left to be discovered.
+   *
+   * The same `23514` arrives in TWO error classes depending on how the
+   * statement was issued, not on what failed — `class-terminal-date.test.ts`
+   * catches both from the one trigger. A typed `class.update` produces
+   * `PrismaClientUnknownRequestError` (no P-code exists for "a trigger
+   * fired"); a `$executeRaw` produces `PrismaClientKnownRequestError` P2010,
+   * "raw query failed", with the SQLSTATE in ``Code: `23514` `` framing. The
+   * matcher's `instanceof` admits only the first, so this one is a 500.
+   *
+   * That is today's answer and this test records it as an answer. It is
+   * unreachable in production — `api-errors.ts`'s docblock enumerates the
+   * evidence: the only raw statements in `src/` touching `Class` are `SELECT …
+   * FOR UPDATE` and the lock-timeout `SET`, neither of which can fire a
+   * `BEFORE UPDATE` trigger, and every raw `UPDATE "Class" SET date` in the
+   * repo is inside the date guard's own test. So nothing is broken and nothing
+   * here should be widened.
+   *
+   * What this test is FOR is the day that stops being true. A raw writer of
+   * `Class.date` or `Class.status` in production would turn this row from
+   * "unreachable, therefore moot" into "reachable, and a 500 where the typed
+   * path gives a 409" — and the person who adds that writer should meet a red
+   * test with this explanation attached, not discover the asymmetry from a
+   * production log. Widening the conjunct is the decision to make then.
+   */
+  it('does not classify the raw-query shape of the same violation as terminal (records the current choice)', () => {
+    const rawPath = new Prisma.PrismaClientKnownRequestError(
+      'Raw query failed. Code: `23514`. Message: `ERROR: Class 30cb2d25-dd22-4bd3-8baf-e99f4f9c8219 is completed, which is terminal; cannot change its date from 2026-06-01 to 2020-01-01`',
+      { code: 'P2010', clientVersion: 'test' },
+    );
+
+    const failure = classifyApiError(rawPath);
+
+    expect(failure.status).toBe(500);
+    expect(failure.status).not.toBe(409);
+    expect(failure.message).toBe('Internal server error');
+    // Not transient either: a terminal class is still terminal on the retry,
+    // so this must not slip into the 503 branch on its way past the 409 one.
+    expect(isTransientDbError(rawPath)).toBe(false);
+  });
+
   it('does not classify an unrelated check_violation as a terminality trigger', () => {
     const otherCheckViolation = new Prisma.PrismaClientUnknownRequestError(
       `Invalid \`prisma.student.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "new row for relation \\"Student\\" violates check constraint \\"Student_income_tier_check\\"", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,

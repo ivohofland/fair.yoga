@@ -1517,6 +1517,43 @@ describe('updateClass (DB)', () => {
       expect(after.description).toBe(`Edited while ${status}`);
     },
   );
+
+  it('answers terminal, not no_fields, for a body that asks for nothing', async () => {
+    // Pins the OTHER ordering the early return participates in. #247 put the
+    // terminal check above the `hasEdit` check, so an empty or all-undefined
+    // `PUT` to a terminal class answers 409 `terminal` where it used to answer
+    // 400 `no_fields`. Nothing was wrong with either answer and nothing broke;
+    // what was missing is a record that the order is CHOSEN. The sibling
+    // ordering — `terminal` before `locked` — has such a record in
+    // `'reports terminal, not locked, when the class is both'`, and this one
+    // did not, so moving the early return below `hasEdit` (a plausible
+    // tidy-up, since the cheapest check conventionally goes first) would have
+    // silently changed a status code with no test to notice.
+    //
+    // The choice: `terminal` describes the CLASS, `no_fields` describes the
+    // payload, and only one of them survives the obvious retry. A teacher told
+    // "no fields" adds fields and fails again; a teacher told "that class can
+    // no longer be changed" stops. Same reasoning as the `locked` case, which
+    // is why the two orderings agree.
+    const cls = await makeClass(false, 'completed');
+
+    expect(await updateClass(prisma, cls.id, {})).toEqual({
+      ok: false,
+      reason: 'terminal',
+      status: 'completed',
+    });
+
+    // Both no-op shapes, because they are not the same code path until they
+    // reach `hasEdit`: `'treats an all-undefined payload as no edit, not as a
+    // vanished row'` above exists precisely because `{ description: undefined }`
+    // once reached the write and came back with a zero count. Pinning only `{}`
+    // would leave the shape that actually caused a bug unpinned.
+    expect(await updateClass(prisma, cls.id, { description: undefined })).toEqual({
+      ok: false,
+      reason: 'terminal',
+      status: 'completed',
+    });
+  });
 });
 
 describe('updateClass — the count === 0 branches', () => {

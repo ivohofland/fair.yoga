@@ -391,16 +391,25 @@ describe('class terminal status trigger', () => {
 
   /**
    * The pin between the reaper's safety predicate and the thing that actually
-   * enforces it (#238).
+   * enforces it (#238) — the STATUS half of it.
    *
-   * `waitlist-retention.ts` deletes rows on a class whose status is in
-   * `TERMINAL_CLASS_STATUSES`, and its whole safety argument is "no writer can
-   * ever touch those rows again". That argument rests on this trigger, whose
-   * SQL hard-codes `('completed','cancelled')` and cannot be edited — it is an
-   * applied migration. The constant, meanwhile, is DERIVED from
-   * `VALID_TRANSITIONS`. Widen that table and the constant widens silently
-   * while the trigger does not, and the reaper would then delete rows on a
-   * class whose immutability nothing enforces.
+   * `waitlist-retention.ts` deletes rows on a class that is terminal AND more
+   * than 365 days past its `date`, and its whole safety argument is "no writer
+   * can ever touch those rows again". Since #247 that argument rests on TWO
+   * triggers, one per half of the predicate: this one freezes `status`, and
+   * `class_terminal_date_guard` freezes `date`, pinned in the sibling file
+   * `class-terminal-date.test.ts` — which carries its own copy of the drift
+   * pin below, read out of its own migration. This docblock went on saying the
+   * argument "rests on this trigger" after the second one shipped, and #247's
+   * sweep of that claim missed it because it is phrased in different words
+   * from the others; a reader who believed it would conclude the date half is
+   * enforced by nothing.
+   *
+   * Both triggers hard-code `('completed','cancelled')` in SQL that cannot be
+   * edited — they are applied migrations. The constant, meanwhile, is DERIVED
+   * from `VALID_TRANSITIONS`. Widen that table and the constant widens
+   * silently while neither trigger does, and the reaper would then delete rows
+   * on a class whose immutability nothing enforces.
    *
    * So this iterates the derived set rather than restating it. The two tests
    * that assert `classifyApiError(...).status === 409` — 'refuses to change the

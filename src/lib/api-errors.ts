@@ -95,10 +95,31 @@ export type ApiFailure = {
  *     PostgresError { code: "23514", message: "Class <id> is completed, which
  *     is terminal; cannot change its date from <old> to <new>", ... }
  *
- * Not `PrismaClientKnownRequestError` — there is no P-code for "a trigger
- * fired", so the engine falls back to Unknown, and Unknown carries no
- * `.code`/`.meta` the way P2002 does below; the SQLSTATE only exists inside
- * the message string.
+ * Not `PrismaClientKnownRequestError` — FOR A TYPED CALL, which is the only
+ * kind that reaches this in production. There is no P-code for "a trigger
+ * fired", so a `class.update`/`updateMany` that trips one falls back to
+ * Unknown, and Unknown carries no `.code`/`.meta` the way P2002 does below;
+ * the SQLSTATE only exists inside the message string. The qualifier is
+ * load-bearing and an earlier revision of this paragraph omitted it, turning
+ * an observation about typed calls into a false claim about the SQLSTATE
+ * itself: the error CLASS is decided by how the statement was issued, not by
+ * what failed. Raw queries have a P-code of their own — `P2010`, "raw query
+ * failed" — and carry the SQLSTATE in ``Code: `23514` `` framing regardless
+ * of cause, the same split `isTransientDbError` below records for `55P03`.
+ * `class-terminal-date.test.ts` observes both shapes from this one trigger.
+ *
+ * The consequence belongs here, where the matcher is: a terminality `23514`
+ * arriving over RAW SQL classifies 500, not 409, because the `instanceof`
+ * conjunct below admits only the Unknown shape. That is a recorded choice,
+ * not an oversight, and it is unreachable in production — the only raw
+ * statements in `src/` that touch `Class` are `SELECT … FOR UPDATE` and the
+ * lock-timeout `SET` (`lib/db-locks.ts`, `services/waitlist.ts`,
+ * `api/registrations/route.ts`), none of which can fire either trigger, and
+ * every raw `UPDATE "Class" SET date` in the repo lives inside the date
+ * guard's own test. `api-errors.test.ts` pins the 500 with a fixture in that
+ * exact shape. Should a production raw writer of `Class.date` or
+ * `Class.status` ever appear, widening this conjunct is the decision to make
+ * then; do not widen it speculatively.
  *
  * `23514` (check_violation) alone is not a safe match: it is Postgres's
  * default SQLSTATE for a plain `CHECK` constraint too, and this schema

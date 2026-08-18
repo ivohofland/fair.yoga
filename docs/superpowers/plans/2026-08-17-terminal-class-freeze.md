@@ -325,6 +325,49 @@ Append inside `describe('updateClass (DB)')`:
   );
 ```
 
+Added after the fact by the whole-branch review, and NOT one of T1–T6 — it
+pins a precedence the branch changed without pinning, so it is written against
+code that already exists rather than to red. Appended at the end of the same
+`describe`, mirrored here so this plan stays a faithful copy of the file:
+
+```ts
+  it('answers terminal, not no_fields, for a body that asks for nothing', async () => {
+    // Pins the OTHER ordering the early return participates in. #247 put the
+    // terminal check above the `hasEdit` check, so an empty or all-undefined
+    // `PUT` to a terminal class answers 409 `terminal` where it used to answer
+    // 400 `no_fields`. Nothing was wrong with either answer and nothing broke;
+    // what was missing is a record that the order is CHOSEN. The sibling
+    // ordering — `terminal` before `locked` — has such a record in
+    // `'reports terminal, not locked, when the class is both'`, and this one
+    // did not, so moving the early return below `hasEdit` (a plausible
+    // tidy-up, since the cheapest check conventionally goes first) would have
+    // silently changed a status code with no test to notice.
+    //
+    // The choice: `terminal` describes the CLASS, `no_fields` describes the
+    // payload, and only one of them survives the obvious retry. A teacher told
+    // "no fields" adds fields and fails again; a teacher told "that class can
+    // no longer be changed" stops. Same reasoning as the `locked` case, which
+    // is why the two orderings agree.
+    const cls = await makeClass(false, 'completed');
+
+    expect(await updateClass(prisma, cls.id, {})).toEqual({
+      ok: false,
+      reason: 'terminal',
+      status: 'completed',
+    });
+
+    // Both no-op shapes, because they are not the same code path until they
+    // reach `hasEdit`: `'treats an all-undefined payload as no edit, not as a
+    // vanished row'` above exists precisely because `{ description: undefined }`
+    // once reached the write and came back with a zero count. Pinning only `{}`
+    // would leave the shape that actually caused a bug unpinned.
+    expect(await updateClass(prisma, cls.id, { description: undefined })).toEqual({
+      ok: false,
+      reason: 'terminal',
+      status: 'completed',
+    });
+```
+
 - [ ] **Step 3: Run them and confirm they fail for the right reason**
 
 ```bash
@@ -431,10 +474,20 @@ and a different statement than intended:
   //
   // Terminality re-checked in the filter for exactly the reason
   // `settingsLocked` is: `completeClass` (this same file) takes a `Class` row
-  // lock and re-reads under it — `lockClassRow` at :324, and the
-  // `requireEndedBy` comparison at :349-360 — so a completion can commit
-  // between this function's opening read and this write. This function takes
-  // no lock at all.
+  // lock and re-reads under it — the `lockClassRow` call, and the
+  // `requireEndedBy` comparison that decides against what it read — so a
+  // completion can commit between this function's opening read and this
+  // write. This function takes no lock at all.
+  //
+  // Both cited by name, never by line. This comment shipped with `:324` and
+  // `:349-360`, correct the day they were written and stale before the
+  // branch that wrote them merged: a later commit on the SAME branch grew
+  // `TERMINAL_CLASS_STATUSES`' docblock above, moved everything below it
+  // down, and left the numbers pointing at `completeClass`'s signature and
+  // at the middle of an unrelated comment. `CHARGED_STATUSES`' docblock,
+  // several hundred lines above, states the general rule this violated — a
+  // line-number citation into a file whose docblocks keep growing goes stale
+  // silently. Grep the two identifiers instead.
   //
   // Spread copy because `TERMINAL_CLASS_STATUSES` is `readonly` and Prisma's
   // `notIn` wants a mutable array — the same reason `gdpr.ts` spreads
@@ -1592,9 +1645,18 @@ start it.
 
 Capture files and tests per project, with totals that reconcile
 (`a + b + c = total`), and compare against the baseline taken before Task 1.
-The delta must be explainable by the eleven tests this branch adds — if it is
+The delta must be explainable test-by-test by what this branch adds — if it is
 not, find out why before writing the PR body. Do not predict the number and
 report the prediction.
+
+As finally measured, that delta is **+1 file / +24 tests** (`122 / 1424` →
+`123 / 1448`; unit `56/807 → 57/830`, components `38/207` unchanged,
+integration `28/410 → 28/411`), decomposed as `12 + 7 + 4 + 1` across
+`class-lifecycle.test.ts`, the new `class-terminal-date.test.ts`,
+`api-errors.test.ts` and `classes-api.test.ts` — spec §8 carries the per-file
+breakdown. This paragraph said "the eleven tests this branch adds" until the
+whole-branch review; eleven was Task 1's own figure, correct when the plan was
+written and wrong from Task 2 onwards. Recount, do not quote.
 
 - [ ] **Step 3: Confirm no migration drift**
 
@@ -1608,7 +1670,20 @@ there is nothing for CI's drift check to catch — confirm rather than assume.
 
 - [ ] **Step 4: Confirm the mutation ledger is complete**
 
-Eleven tests, eleven mutations (M1–M11, with M6 run twice, once per filter arm).
+Fifteen mutation subjects against twenty-four tests, not the "eleven and
+eleven" this step claimed while the branch was still Task 1 — the numbered
+M1–M11 (M6 run twice, once per filter arm), plus four supplementary: the
+`TERMINAL_CLASS_STATUSES` drift pin run in both directions (one subject), the
+`\bstatus\b`/`\bdate\b` regex-anchoring check, and the whole-branch review's
+two against `isTerminalStatusViolation` itself — deleting its `23514` conjunct
+(reddens `'does not classify the terminality wording as terminal without the
+SQLSTATE'`) and widening its type conjunct to admit the raw `P2010` shape
+(reddens `'does not classify the raw-query shape of the same violation as
+terminal'`). `11 + 1 + 1 + 2 = 15`; the tests are `12 + 7 + 4 + 1 = 24`, per
+Step 2. Those last two subjects exist because the Task 6 report named their
+absence as this branch's one mutation gap: every mutation up to then moved
+something around that matcher and none moved the matcher.
+
 Each needs its exact recorded error text, and none of them survive the suite —
 deleting the early return (M7) reddens both T5 (DB-backed, on the wrong
 refusal reason) and T9 (stub, on the write-count assertion); see spec §3.4 for

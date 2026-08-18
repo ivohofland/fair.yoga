@@ -761,12 +761,15 @@ export async function updateClass(
   }
 
   // `date`/`startTime` are both teacher-editable (`TeacherEditableClassField`
-  // above), and `status` is not writable through this path — so any class
-  // reaching this write that isn't already `cancelled` stays inside
-  // `Class_teacher_slot_unique`'s partial scope (`WHERE status <>
-  // 'cancelled'`, #196) across the edit. Moving `date`/`startTime` onto a
-  // slot this teacher already occupies collides here exactly as a `POST`
-  // into that slot does.
+  // above), and `status` is not writable through this path — so every class
+  // reaching this write stays inside `Class_teacher_slot_unique`'s partial
+  // scope (`WHERE status <> 'cancelled'`, #196) across the edit. That used
+  // to read "any class ... that isn't already `cancelled`", which #247 made
+  // vacuous: the `notIn` conjunct below refuses a `cancelled` class outright,
+  // so no such class reaches this write to fall outside the scope, and the
+  // qualifier implied a live case there is not. Moving `date`/`startTime`
+  // onto a slot this teacher already occupies collides here exactly as a
+  // `POST` into that slot does.
   //
   // A second, older key is reachable here too, and only here: `date` is
   // teacher-editable but no create route ever sets `templateId` (it is
@@ -782,10 +785,20 @@ export async function updateClass(
   //
   // Terminality re-checked in the filter for exactly the reason
   // `settingsLocked` is: `completeClass` (this same file) takes a `Class` row
-  // lock and re-reads under it — `lockClassRow` at :324, and the
-  // `requireEndedBy` comparison at :349-360 — so a completion can commit
-  // between this function's opening read and this write. This function takes
-  // no lock at all.
+  // lock and re-reads under it — the `lockClassRow` call, and the
+  // `requireEndedBy` comparison that decides against what it read — so a
+  // completion can commit between this function's opening read and this
+  // write. This function takes no lock at all.
+  //
+  // Both cited by name, never by line. This comment shipped with `:324` and
+  // `:349-360`, correct the day they were written and stale before the
+  // branch that wrote them merged: a later commit on the SAME branch grew
+  // `TERMINAL_CLASS_STATUSES`' docblock above, moved everything below it
+  // down, and left the numbers pointing at `completeClass`'s signature and
+  // at the middle of an unrelated comment. `CHARGED_STATUSES`' docblock,
+  // several hundred lines above, states the general rule this violated — a
+  // line-number citation into a file whose docblocks keep growing goes stale
+  // silently. Grep the two identifiers instead.
   //
   // Spread copy because `TERMINAL_CLASS_STATUSES` is `readonly` and Prisma's
   // `notIn` wants a mutable array — the same reason `gdpr.ts` spreads

@@ -442,9 +442,31 @@ belongs to that decision, not to this one.
 - The refusal survives the read-to-write race, because the CAS re-derives it.
 - `class_terminal_date_guard` rejects a raw-SQL `date` change on a terminal
   class with `23514`.
-- Eleven tests, eleven mutations, each recorded with its exact error text; none
-  survives the suite — §3.4 corrects an earlier draft's claim that the
-  early-return deletion was one legitimate exception.
+- Twenty-four tests and fifteen mutation subjects, each mutation recorded with
+  its exact error text; none survives the suite — §3.4 corrects an earlier
+  draft's claim that the early-return deletion was one legitimate exception.
+  Both numbers are written with their decomposition, because a bare count here
+  is precisely what the parenthetical two bullets down warns about, and both
+  of these had already gone stale once: the line said "eleven tests, eleven
+  mutations" — Task 1's brief count — through four commits that added more of
+  each.
+  **Tests, 24:** 12 in `src/services/class-lifecycle.test.ts` (T1–T6, where T6
+  is an `it.each` over three statuses, so 8 cases; T7–T9, 3; and the whole-
+  branch review's `no_fields`-precedence pin, 1) + 7 in the new
+  `src/services/class-terminal-date.test.ts` (2 rejection + 3 allow + 1
+  unchanged-date + 1 drift pin) + 4 in `src/lib/api-errors.test.ts` (the date
+  fixture, which turned one test into a two-case `it.each`; the column-naming
+  property test; and the review's two matcher-conjunct fixtures) + 1 in
+  `tests/integration/classes-api.test.ts` (T10) = `12 + 7 + 4 + 1 = 24`,
+  reconciling the measured `1424 → 1448` (unit `807 → 830`, components
+  `207 → 207`, integration `410 → 411`).
+  **Mutation subjects, 15:** M1–M11, plus four supplementary — the
+  `TERMINAL_CLASS_STATUSES` drift pin (run in both directions, one subject),
+  the `\bstatus\b`/`\bdate\b` regex-anchoring check, and the review's two on
+  `isTerminalStatusViolation` itself (delete the `23514` conjunct; widen the
+  type conjunct to admit the raw `P2010` shape) = `11 + 1 + 1 + 2 = 15`. The
+  last two close the gap the Task 6 report named: before them this branch
+  mutated everything around that matcher and never the matcher.
 - Every location in §6's **numbered** list states that the residual is closed,
   and §5.2's test title no longer over-claims. (Scoped to the numbered list on
   purpose: §6's "Plus, on this branch:" list is a different obligation —
