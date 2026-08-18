@@ -105,19 +105,24 @@
  * the row rather than a snapshot a client can move underneath it — ONCE THE
  * CLASS IS TERMINAL, and only then.
  *
- * WHAT IT DOES NOT BUY, said plainly because this docblock is the only place
- * the delete-safety argument lives: the PRE-terminal path is still open, and
- * deliberately so. A teacher edits a still-live class's `date` into the past
- * — nothing bounds that input, the edit form's date field carries no `min` —
- * and `autoTransitionToInProgress` then `autoCompleteClasses`
- * (`class-transitions.ts`) walk it to `completed` legitimately, on a date
- * older than the window. This sweep then reaps a queue nobody meant to lose.
- * Both guards above are innocent: the class was not terminal when the date
- * moved. That is the one remaining way a row this sweep should keep can be
- * made to look reapable. It is filed as #249, deliberately left open rather
- * than repaired here — bounding the date needs a product call about whether
- * backfilling a past class is ever legal — and the reasoning is in
- * `docs/superpowers/specs/2026-08-17-terminal-class-freeze-design.md` §7.
+ * THE PRE-TERMINAL PATH IS CLOSED TOO, as of #249, and this paragraph used to
+ * say the opposite. A teacher could edit a still-live class's `date` into the
+ * past, and the class would then reach a terminal status legitimately — by
+ * whichever route came first. Naming one route here (the transition sweep, then
+ * the completion sweep) understated it: a manual cancel gets there in a single
+ * request with no sweep involved, `autoCancelClasses` is a third route, and
+ * `POST …/complete` with `finishedEarly` a fourth. That mattered, because a
+ * defence designed against the two sweeps would have left the one-request route
+ * open while looking complete.
+ *
+ * #249 guards at the two doors where a past start can be WRITTEN rather than at
+ * the routes out of them, which covers all four equally: `updateClass` refuses
+ * a `date`/`startTime` edit whose resulting start instant has already passed,
+ * and `transitionClass` refuses a `draft -> open` publish of a class whose
+ * start has passed. Both are service policy, deliberately not a trigger — an
+ * `open` class whose start has passed is a state `generateClassInstances`
+ * legitimately produces, so there is no invariant for the database to hold.
+ * See `docs/superpowers/specs/2026-08-18-past-start-guard-design.md` §3.
  *
  * WHY IT CANNOT DEADLOCK AGAINST THE ERASURE. `deleteStudentAccount` deletes
  * waitlist entries with an UNSCOPED `deleteMany({ where: { studentId } })` —

@@ -46,6 +46,7 @@ The heart of the app. Income-based pricing with compressed tier spread and scali
 Classes move through states: `draft → open → in_progress → completed → cancelled` (the five members of the `ClassStatus` enum). `full` is a DERIVED display state, not a stored status — it means registrations have reached `max_students`
 
 - `settings_locked` flips true on first registration — economic fields become immutable
+- A write may not newly place a class's start instant in the past — `updateClass` refuses a `date`/`startTime` edit that would (409), and `transitionClass` refuses a `draft → open` publish of a class whose start has passed. Service policy, not a constraint: the generator legitimately produces an `open` class whose start has already gone
 - Terminal status (`completed`/`cancelled`) freezes the whole class — `updateClass` refuses every field, 409; `date` alone is additionally frozen by a DB trigger the retention sweep depends on
 - Recurring classes: template generates instances on rolling 4-week basis, runs indefinitely
 - Auto-cancel: system checks at configured time, cancels if below min_students

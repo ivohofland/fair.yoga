@@ -454,6 +454,22 @@ leaves it open.
 It clears §7's floor on its own terms regardless: it is a live path to data a
 user loses, so it is fixed or filed, and it is filed.
 
+**Update (2026-08-18, #249 closed).** The decision came back as the issue's
+option 1: a write may not newly place a class's start in the past, refused at
+`updateClass` and at the `draft -> open` publish. Two things this section got
+wrong are worth carrying forward. The route to terminality is not the two-sweep
+one described above — a manual cancel gets there in one request. And "how far
+back is legal" turned out not to need a number: the backfill capability the
+window was meant to preserve does not exist on `Class` (a past-dated class is
+created `draft`, and drafts are never swept), while the product's real backfill
+surface, `StudioClass`, is deliberately unbounded and structurally out of reach
+of all three harms.
+
+`isoDate` was **not** bounded, and deliberately: the rule needs the teacher's
+timezone and the stored `startTime`, neither of which a Zod schema can see. It
+lives in the services instead. See
+`docs/superpowers/specs/2026-08-18-past-start-guard-design.md`.
+
 **Unaffected:** `settingsLocked` and `ECONOMIC_FIELDS`. They gate on first
 registration, not on terminality, and they already work. This is a second,
 later freeze point that did not exist.
