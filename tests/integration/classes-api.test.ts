@@ -39,6 +39,10 @@ let lockStudentAccountId: string | null;
 let completedClassId: string;
 let cancelledTerminalClassId: string;
 
+// #249. Live, and dated behind every clock this suite will run under. The
+// sibling fixtures are 2099; this is the other side of "now".
+let pastDraftClassId: string;
+
 const UNKNOWN_CLASS_ID = '00000000-0000-4000-8000-000000000000';
 
 async function makeTeacher(tag: string): Promise<{ id: string; token: string }> {
@@ -157,6 +161,25 @@ beforeAll(async () => {
   const cancelledCls = await makeClass('Classes API Terminal cancelled (#247)', 'cancelled', '10:30');
   cancelledTerminalClassId = cancelledCls.id;
 
+  // #249. Past-dated draft for the publish-guard test.
+  const pastLive = await prisma.class.create({
+    data: {
+      teacherId: ownerId,
+      teacherRoomId: teacherRoom.id,
+      classType: 'Past Live',
+      date: new Date('2020-01-01'),
+      startTime: '09:00',
+      durationMinutes: 60,
+      roomCost: 15,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 1,
+      maxStudents: 8,
+      status: 'draft',
+    },
+  });
+  pastDraftClassId = pastLive.id;
+
   // A student who books lockedClassId over HTTP — the same trigger path
   // registrations-api.test.ts uses (POST /api/registrations) — so the lock
   // comes from the app's own behaviour, never a direct `settingsLocked`
@@ -235,6 +258,7 @@ afterAll(async () => {
     noticeClassId,
     completedClassId,
     cancelledTerminalClassId,
+    pastDraftClassId,
   ].filter(Boolean);
   if (allClassIds.length > 0) {
     await prisma.notification.deleteMany({ where: { relatedClassId: { in: allClassIds } } });
@@ -395,6 +419,14 @@ describe('POST /api/classes/[id]/transition', () => {
 
     const unchanged = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
     expect(unchanged.status).toBe('draft');
+  });
+
+  it('publishing a draft whose start has passed is refused with 409 (#249)', async () => {
+    const res = await transition(ownerToken, pastDraftClassId, { status: 'open' });
+    expect(res.status).toBe(409);
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: pastDraftClassId } });
+    expect(after.status).toBe('draft');
   });
 
   it('cancels a class (happy path)', async () => {
@@ -852,6 +884,22 @@ describe('PUT /api/classes/[id]', () => {
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
     expect(Number(after.roomCost)).toBe(Number(before.roomCost));
+  });
+
+  it('open class: a date edit into the past is refused with 409, not 500 (#249)', async () => {
+    const target = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId } });
+    expect(target.status).toBe('open'); // sanity: a LIVE class, so #247's freeze is not what refuses
+
+    const res = await put(ownerToken, economicsClassId, { date: '2020-01-01' });
+    expect(res.status).toBe(409);
+
+    const json = (await res.json()) as { error: { code: string; message: string } };
+    // Coded distinctly from CLASS_TERMINAL: a client has to tell "already
+    // started" from "frozen" without matching on English.
+    expect(json.error.code).toBe('CLASS_STARTS_IN_PAST');
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId } });
+    expect(after.date.toISOString().slice(0, 10)).toBe('2099-06-01');
   });
 
   // Task 6b (#196). `Class_teacher_slot_unique` is (teacherId, date,
