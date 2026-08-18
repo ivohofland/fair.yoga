@@ -1011,6 +1011,39 @@ describe('PUT /api/class-templates/[id]', () => {
     return data.id;
   };
 
+  // Door 5's tests (below) need a *second* room for the same teacher — the
+  // move target — and `seedTeacher` only ever creates one. Local rather than
+  // folded into `seedTeacher` itself: every other case in this file needs
+  // exactly one room, and a second would be dead weight there.
+  const addSecondRoom = async (
+    ownerTeacherId: string,
+    label: string,
+    isArchived: boolean,
+  ): Promise<{ roomId: string; teacherRoomId: string }> => {
+    const room = await prisma.room.create({
+      data: {
+        venueName: `${label} Venue 2`,
+        address: `${suffix} ${label} St 2`,
+        city: 'Testville',
+        postcode: '1234TP',
+        floor: '2',
+        roomName: 'Attic',
+        maxCapacity: 10,
+        createdById: ownerTeacherId,
+      },
+    });
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: {
+        teacherId: ownerTeacherId,
+        roomId: room.id,
+        capacityOverride: 8,
+        rentalRate: 15,
+        isArchived,
+      },
+    });
+    return { roomId: room.id, teacherRoomId: teacherRoom.id };
+  };
+
   it('updates the template and propagates to its still-mutable instances', async () => {
     const id = await createTemplate('Editable Flow', '09:43');
 
@@ -1307,5 +1340,136 @@ describe('PUT /api/class-templates/[id]', () => {
 
     const instance = await prisma.class.findUniqueOrThrow({ where: { id: instances[0]!.id } });
     expect(instance.startTime).toBe('11:17');
+  });
+
+  // Door 5 of the room archive lifecycle (issue 76, fix round 2):
+  // `updateClassTemplate` validated only that the target room belonged to the
+  // teacher, never whether it was archived — so this PUT could relocate every
+  // future non-`settingsLocked` `draft`/`open` instance onto a room the
+  // teacher had shelved, and the generator would keep producing more there.
+  // A dedicated `seedTeacher` fixture rather than the shared `teacherRoomId`
+  // dozens of other tests in this file reuse: archiving it here would affect
+  // them, and door 5 needs a second room besides.
+  it('refuses to move an active template onto an archived room, and relocates nothing', async () => {
+    const owner = await seedTeacher('move-archived');
+    let archivedRoomId = '';
+    try {
+      const archived = await addSecondRoom(owner.teacherId, 'move-archived', true);
+      archivedRoomId = archived.roomId;
+
+      const create = await fetch(`${BASE_URL}/api/class-templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(owner.sessionToken) },
+        body: JSON.stringify({
+          teacherRoomId: owner.teacherRoomId,
+          classType: 'Move Target',
+          dayOfWeek: DAY_OF_WEEK,
+          startTime: '09:52',
+          durationMinutes: 60,
+          roomCost: 15,
+          minRate: 10,
+          targetRate: 20,
+          minStudents: 2,
+          maxStudents: 8,
+        }),
+      });
+      expect(create.status).toBe(201);
+      const { data: template } = (await create.json()) as { data: { id: string } };
+      const before = await prisma.class.findMany({ where: { templateId: template.id } });
+      expect(before.length).toBeGreaterThan(0);
+      expect(before.every((c) => c.teacherRoomId === owner.teacherRoomId)).toBe(true);
+
+      const res = await fetch(`${BASE_URL}/api/class-templates/${template.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...cookie(owner.sessionToken) },
+        body: JSON.stringify({ teacherRoomId: archived.teacherRoomId }),
+      });
+
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error: { code: string; message: string } };
+      expect(body.error.code).toBe('ROOM_ARCHIVED');
+      expect(body.error.message).toBe(
+        'This room is archived. Unarchive it to move this recurring class here.',
+      );
+
+      // Not the 409 alone: the template's own room must be unchanged...
+      const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
+      expect(after.teacherRoomId).toBe(owner.teacherRoomId);
+
+      // ...and — the assertion a guard placed after the transaction, rather
+      // than before it, would not catch — no future instance was relocated
+      // onto the archived room either.
+      const instancesAfter = await prisma.class.findMany({ where: { templateId: template.id } });
+      expect(instancesAfter.every((c) => c.teacherRoomId === owner.teacherRoomId)).toBe(true);
+      expect(instancesAfter.some((c) => c.teacherRoomId === archived.teacherRoomId)).toBe(false);
+    } finally {
+      // Same FK-safe order as this file's own afterAll: class → classTemplate
+      // → teacherRoom → room → session → teacher → account. One
+      // `teacherRoom.deleteMany` clears both this teacher's rooms' links.
+      await prisma.class.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.classTemplate.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.room.delete({ where: { id: owner.roomId } });
+      if (archivedRoomId) await prisma.room.delete({ where: { id: archivedRoomId } });
+      await prisma.session.deleteMany({ where: { accountId: owner.accountId } });
+      await prisma.teacher.delete({ where: { id: owner.teacherId } });
+      await prisma.account.delete({ where: { id: owner.accountId } });
+    }
+  });
+
+  // The gate proven directly: without `&& template.isActive` on the guard
+  // above, this case would also 409 — and stay green there is nothing else in
+  // this file that would catch someone deleting that clause.
+  it('still allows moving a paused template onto an archived room', async () => {
+    const owner = await seedTeacher('move-archived-paused');
+    let archivedRoomId = '';
+    try {
+      const archived = await addSecondRoom(owner.teacherId, 'move-archived-paused', true);
+      archivedRoomId = archived.roomId;
+
+      const create = await fetch(`${BASE_URL}/api/class-templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(owner.sessionToken) },
+        body: JSON.stringify({
+          teacherRoomId: owner.teacherRoomId,
+          classType: 'Paused Move',
+          dayOfWeek: DAY_OF_WEEK,
+          startTime: '09:53',
+          durationMinutes: 60,
+          roomCost: 15,
+          minRate: 10,
+          targetRate: 20,
+          minStudents: 2,
+          maxStudents: 8,
+        }),
+      });
+      expect(create.status).toBe(201);
+      const { data: template } = (await create.json()) as { data: { id: string } };
+
+      const pause = await fetch(`${BASE_URL}/api/class-templates/${template.id}?state=paused`, {
+        method: 'PATCH',
+        headers: cookie(owner.sessionToken),
+      });
+      expect(pause.status).toBe(200);
+
+      const res = await fetch(`${BASE_URL}/api/class-templates/${template.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...cookie(owner.sessionToken) },
+        body: JSON.stringify({ teacherRoomId: archived.teacherRoomId }),
+      });
+
+      expect(res.status).toBe(200);
+      const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
+      expect(after.teacherRoomId).toBe(archived.teacherRoomId);
+    } finally {
+      await prisma.class.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.classTemplate.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.room.delete({ where: { id: owner.roomId } });
+      if (archivedRoomId) await prisma.room.delete({ where: { id: archivedRoomId } });
+      await prisma.session.deleteMany({ where: { accountId: owner.accountId } });
+      await prisma.teacher.delete({ where: { id: owner.teacherId } });
+      await prisma.account.delete({ where: { id: owner.accountId } });
+    }
   });
 });

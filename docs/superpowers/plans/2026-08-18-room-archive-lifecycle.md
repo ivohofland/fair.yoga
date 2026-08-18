@@ -1001,10 +1001,13 @@ Then add the guard immediately after the existing `if (template.isArchived)` lin
   // `isActive` transition too (active -> paused) and does not hit the
   // already-in-state short-circuit above, so an ungated check here refuses the
   // one direction that must keep working: a teacher must still be able to stop
-  // a template whose room was archived out from under it. That state is
-  // reachable only through the accepted race in spec section 8, and the race is
-  // defensible only because it is recoverable — blocking the pause removes the
-  // recovery.
+  // a template whose room was archived out from under it. With the move door
+  // also gated on template.isActive (updateClassTemplate, fix round 2, issue
+  // 76), the doors close every path a teacher can reach through the app; what
+  // remains — the generator, which does not read the room's archive state at
+  // all, and a row already archived before this branch, when isArchived meant
+  // nothing — is outside their reach, not a hole in them, and recoverable the
+  // same way. Blocking the pause removes that recovery.
   if (desiredActive && template.teacherRoom.isArchived) {
     return { ok: false, reason: 'room_archived' };
   }

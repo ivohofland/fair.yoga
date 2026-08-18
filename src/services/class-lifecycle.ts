@@ -127,7 +127,7 @@ export const TERMINAL_CLASS_STATUSES: readonly ClassStatus[] = Object.freeze(
  *   for a `draft -> open` publish), and `ROOM_ARCHIVED` (issue 76, also only
  *   for a `draft -> open` publish).
  *
- * The looseness predates #249 and neither member added since introduces it.
+ * The looseness predates #249 and no member added since introduces it.
  * `POST /api/classes/[id]/transition` handles the full union anyway via an
  * exhaustive `Record`, so the widening costs a table row rather than a wrong
  * answer.

@@ -202,6 +202,22 @@ export type UpdateClassTemplateResult =
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'no_fields' }
   | { ok: false; reason: 'invalid_room' }
+  /**
+   * A fifth door on the room archive lifecycle (issue 76, fix round 2):
+   * relocating an *active* template onto an archived room is refused the same
+   * way creating (door 4) or resuming (door 3) one there is — the doors
+   * reasoned about creating a template and resuming one but never about
+   * moving one, the same commitment by a different verb, and
+   * `syncTemplateInstances` would otherwise relocate every future
+   * non-`settingsLocked` `draft`/`open` instance onto the archived room in
+   * the same transaction.
+   *
+   * Gated on `template.isActive`, deliberately and symmetrically with door 3:
+   * relocating a *paused* template stays free, because its later resume is
+   * already refused there. Blocking the paused move would strand a teacher
+   * exactly as an ungated door 3 would have.
+   */
+  | { ok: false; reason: 'room_archived' }
   | { ok: false; reason: 'slot_conflict' }
   | { ok: false; reason: 'sync_conflict' }
   /**
@@ -322,6 +338,19 @@ export async function updateClassTemplate(
     const teacherRoom = await db.teacherRoom.findUnique({ where: { id: data.teacherRoomId } });
     if (!teacherRoom || teacherRoom.teacherId !== teacherId) {
       return { ok: false, reason: 'invalid_room' };
+    }
+
+    // A fifth door (issue 76, fix round 2): moving an *active* template onto
+    // an archived room is the same commitment as creating (door 4) or
+    // resuming (door 3) one there, and was the only one of the three left
+    // unguarded — `syncTemplateInstances` below would relocate every future
+    // non-`settingsLocked` `draft`/`open` instance onto the archived room in
+    // the same transaction. Gated on `template.isActive`, symmetrically with
+    // door 3: relocating a *paused* template must stay free, since its later
+    // resume is already refused there — blocking the paused move would strand
+    // a teacher exactly as an ungated door 3 would have.
+    if (teacherRoom.isArchived && template.isActive) {
+      return { ok: false, reason: 'room_archived' };
     }
   }
 

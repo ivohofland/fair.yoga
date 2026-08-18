@@ -355,6 +355,16 @@ export async function generateClassInstances(
   // comes from the shared constant so `services/room-archive.ts` cannot
   // block on a different set than this query selects. See
   // `lib/template-selection.ts`.
+  //
+  // KNOWN-OPEN, and deliberate (issue 76, spec §10): both flags on
+  // `ACTIVE_TEMPLATE_WHERE` are the TEMPLATE's own — this selection never
+  // reads `teacherRoom.isArchived`. `room-archive.ts`'s header calls that
+  // module "what gives `isArchived` meaning"; this query is the one reader
+  // that still doesn't consult it. A template already active on a room
+  // archived before this branch — when `isArchived` meant nothing — keeps
+  // generating into it, and every fix here is a product decision (does
+  // archiving pause the template? Refuse the sweep per-instance and log?),
+  // not a bug this file corrects on its own.
   const templates = await db.classTemplate.findMany({
     where: { ...ACTIVE_TEMPLATE_WHERE, ...(teacherId ? { teacherId } : {}) },
     include: { teacher: { select: { defaultTimezone: true } } },

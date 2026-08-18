@@ -74,6 +74,17 @@ export const PUT = withErrorHandler(async (
   if (result.reason === 'forbidden') return respondError('Access denied', 403);
   if (result.reason === 'no_fields') return respondError('No valid fields to update', 400);
   if (result.reason === 'invalid_room') return respondError('Invalid teacher room', 400);
+  // Door 5 of the room archive lifecycle (issue 76, fix round 2): moving an
+  // active template onto an archived room. Symmetric with door 3's
+  // `room_archived` branch on the PATCH handler below — same code, same
+  // register, different verb.
+  if (result.reason === 'room_archived') {
+    return respondError(
+      'This room is archived. Unarchive it to move this recurring class here.',
+      409,
+      'ROOM_ARCHIVED',
+    );
+  }
   // The template's own dayOfWeek/startTime moved into a slot another of this
   // teacher's live templates already holds (#196).
   if (result.reason === 'slot_conflict') {

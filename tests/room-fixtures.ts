@@ -5,7 +5,21 @@
  * shared-teacher fixtures collide: `ClassTemplate_teacher_slot_unique` on
  * (teacherId, dayOfWeek, startTime) WHERE isArchived = false, and
  * `Class_teacher_slot_unique` on (teacherId, date, startTime) WHERE
- * status <> 'cancelled'. A fresh teacher per case sidesteps both.
+ * status <> 'cancelled'. A fresh teacher per case sidesteps both — but only
+ * ACROSS fixtures, not within one.
+ *
+ * `addClass` derives `startTime` from `seq`, and `seq` advances only in
+ * `makeFixture`, never in `addClass` itself; `date` is fixed at today+14. So
+ * two `addClass` calls against the SAME fixture produce the identical
+ * (teacherId, date, startTime) triple `Class_teacher_slot_unique` keys on —
+ * the index still applies, this file just doesn't vary the columns it keys on
+ * per call. The existing `completed` + `cancelled` two-class case
+ * (`room-archive.test.ts`) survives only because the index is partial on
+ * `status <> 'cancelled'`, not because two classes on one fixture are safe in
+ * general. An obvious-looking "two upcoming classes on one fixture" case —
+ * `open` + `open`, or `draft` + `open` — hits the live index and raises
+ * P2002; if you need that, pass distinct fixtures, not distinct `addClass`
+ * calls on the same one.
  *
  * Each test file passes its own `prefix` so its afterAll sweep cannot delete
  * another file's rows.

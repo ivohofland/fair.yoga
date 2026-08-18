@@ -131,12 +131,22 @@ on the room's state alone — `active → paused` is a real transition that does
 not hit the already-in-state short-circuit and would otherwise be refused.
 
 This is load-bearing rather than tidy. An *active* template on an archived room
-is reachable only through the accepted race in §8: door 1 refuses archiving
-while an active template exists, door 4 refuses creating one there, and door 3
-refuses resuming into one. That race is defensible only because it is
-recoverable — and pausing is the recovery. A guard on the room's state alone
-would remove it, leaving a teacher unable to stop a template still generating
-classes into a room they had shelved.
+used to be described as reachable only through the accepted race in §8: door 1
+refuses archiving while an active template exists, door 4 refuses creating one
+there, and door 3 refuses resuming into one. That enumeration missed a fourth,
+fully deterministic route — moving an already-active template's
+`teacherRoomId` onto an archived room, which none of those three doors
+touched — closed only in fix round 2 (`updateClassTemplate`, gated on
+`template.isActive` the same way door 3 is; issue 76). With that guard, the
+doors close every path a teacher can reach through the app. What remains is
+outside their reach, not a hole in them: the generator, which does not read
+the room's archive state at all and keeps producing into a room a template was
+left active on (§10), and a row already archived before this branch, back when
+`isArchived` meant nothing. Both are recoverable the same way — pausing —
+which is why the guard stays on the resume direction and not the room's state
+alone: a guard on the room's state alone would remove it, leaving a teacher
+unable to stop a template still generating classes into a room they had
+shelved.
 
 ### The template predicate must not be invented
 
@@ -358,8 +368,30 @@ generator's tests stay green, the two sides are not actually sharing.
 ## 10. Out of scope
 
 - **Issues 52 and 259 are unaffected.** Neither is touched by this branch.
-- **No migration.** `TeacherRoom.isArchived` already exists
-  (`prisma/schema.prisma:298`); nothing about the schema changes.
+- **No migration — but the column acquires new meaning over existing data.**
+  `TeacherRoom.isArchived` already exists (`prisma/schema.prisma:298`) and
+  nothing about the schema changes, which is true and is the whole of what "no
+  migration" means for the column itself. It is misleading about the
+  *semantics*, though: before this branch `isArchived` was a display flag read
+  by nothing (`room-archive.ts`'s header), so a row already `true` was
+  archived in name only — an active template could already sit on it, and
+  every doorway this branch adds now treats that same row as meaning
+  something. No backfill reconciles the two; a room archived before this
+  branch keeps whatever an active template was already doing on it (see
+  below).
+- **The generator does not read the room's archive state.**
+  `class-generator.ts:352-359` selects templates on `ACTIVE_TEMPLATE_WHERE` —
+  the template's own `isActive`/`isArchived` — and never consults
+  `teacherRoom.isArchived`; generated instances are written directly with
+  `status: 'open'` (`class-generator.ts:200`), bypassing `transitionClass`
+  entirely, so door 2 cannot see them either. A template already active on a
+  room archived before this branch — back when the flag meant nothing — keeps
+  generating into it, indefinitely, through this branch. Closing that is a
+  product decision (auto-pause on archive? refuse the sweep per-instance and
+  log?), not a bug this branch's doors can reach — none of the five checks a
+  room's state at generation time, only at the moment a teacher commits to it.
+  No migration and no backfill. Recorded as `known-open` beside the read,
+  `class-generator.ts:352-359`.
 - **No change to what archiving does to existing drafts or paused templates.**
   They survive on the archived room and are stopped at their own doors.
 - **Studio templates are untouched.** `StudioClass` is disconnected from
