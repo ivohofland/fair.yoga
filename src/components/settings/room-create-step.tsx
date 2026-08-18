@@ -5,6 +5,7 @@ import type { z } from 'zod';
 import type { createRoomSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import type { RoomResult } from '@/lib/room-search';
+import type { NewRoomForm } from './add-room-flow';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { PublicRoomNotice } from './public-room-notice';
@@ -36,6 +37,13 @@ interface NewRoomValues {
 
 type CreateRoomWire = z.infer<typeof createRoomSchema>;
 
+// The two pins above compare key NAMES only — `keyof` cannot see types, so
+// `maxCapacity: '12'` satisfies both and is a 400 at runtime. This third pin
+// adds the direction that matters: the literal must be something the schema
+// would accept.
+const _roomIsWireShaped: CreateRoomWire = null as unknown as NewRoomValues;
+void _roomIsWireShaped;
+
 const _roomCoversCreate: NoneOf<Exclude<keyof CreateRoomWire, keyof NewRoomValues>> = true;
 const _roomHasNoExtras: NoneOf<Exclude<keyof NewRoomValues, keyof CreateRoomWire>> = true;
 void _roomCoversCreate;
@@ -44,28 +52,29 @@ void _roomHasNoExtras;
 interface RoomCreateStepProps {
   postcode: string;
   street: string;
+  /**
+   * Owned by the router, because this step unmounts on every step change and
+   * a half-filled form must survive Back. See `NewRoomForm` in
+   * `add-room-flow.tsx` for why.
+   */
+  form: NewRoomForm;
+  onFormChange: (form: NewRoomForm) => void;
   onPostcodeChange: (v: string) => void;
   onStreetChange: (v: string) => void;
   onCreated: (room: RoomResult) => void;
   onBack: () => void;
 }
 
-export function RoomCreateStep({ postcode, street, onPostcodeChange, onStreetChange, onCreated, onBack }: RoomCreateStepProps) {
-  const [venueName, setVenueName] = useState('');
-  const [roomName, setRoomName] = useState('');
-  const [floor, setFloor] = useState('');
-  const [city, setCity] = useState('');
-  const [maxCapacity, setMaxCapacity] = useState('');
-  const [equipmentChecks, setEquipmentChecks] = useState<Record<string, boolean>>({
-    mats: false,
-    blocks: false,
-    straps: false,
-    bolsters: false,
-    blankets: false,
-    cushions: false,
-  });
-  const [notes, setNotes] = useState('');
-  const [isPublic, setIsPublic] = useState(false);
+export function RoomCreateStep({
+  postcode, street, form, onFormChange,
+  onPostcodeChange, onStreetChange, onCreated, onBack,
+}: RoomCreateStepProps) {
+  const { venueName, roomName, floor, city, maxCapacity, equipmentChecks, notes, isPublic } = form;
+  const set = <K extends keyof NewRoomForm>(key: K, value: NewRoomForm[K]) =>
+    onFormChange({ ...form, [key]: value });
+
+  // Transient: these describe one in-flight submission, so losing them when
+  // the teacher steps Back is correct.
   const [createError, setCreateError] = useState('');
   const [creating, setCreating] = useState(false);
 
@@ -125,13 +134,13 @@ export function RoomCreateStep({ postcode, street, onPostcodeChange, onStreetCha
 
   return (
     <form onSubmit={handleCreateRoom} className="flex flex-col gap-4">
-      <Input label="Venue name" value={venueName} onChange={(e) => setVenueName(e.target.value)} placeholder="e.g. De Yogaschool" />
+      <Input label="Venue name" value={venueName} onChange={(e) => set('venueName', e.target.value)} placeholder="e.g. De Yogaschool" />
       <Input label="Address" value={street} onChange={(e) => onStreetChange(e.target.value)} />
-      <Input label="City" value={city} onChange={(e) => setCity(e.target.value)} />
+      <Input label="City" value={city} onChange={(e) => set('city', e.target.value)} />
       <Input label="Postcode" value={postcode} onChange={(e) => onPostcodeChange(e.target.value)} />
-      <Input label="Floor" value={floor} onChange={(e) => setFloor(e.target.value)} placeholder="e.g. Ground, 1st" />
-      <Input label="Room name" value={roomName} onChange={(e) => setRoomName(e.target.value)} placeholder="e.g. Main Studio" />
-      <Input label="Max capacity" type="number" value={maxCapacity} onChange={(e) => setMaxCapacity(e.target.value)} />
+      <Input label="Floor" value={floor} onChange={(e) => set('floor', e.target.value)} placeholder="e.g. Ground, 1st" />
+      <Input label="Room name" value={roomName} onChange={(e) => set('roomName', e.target.value)} placeholder="e.g. Main Studio" />
+      <Input label="Max capacity" type="number" value={maxCapacity} onChange={(e) => set('maxCapacity', e.target.value)} />
       <fieldset className="flex flex-col gap-1">
         <legend className="text-brown mb-2">Available props</legend>
         {[
@@ -146,7 +155,7 @@ export function RoomCreateStep({ postcode, street, onPostcodeChange, onStreetCha
             <input
               type="checkbox"
               checked={equipmentChecks[key] ?? false}
-              onChange={(e) => setEquipmentChecks((prev) => ({ ...prev, [key]: e.target.checked }))}
+              onChange={(e) => set('equipmentChecks', { ...equipmentChecks, [key]: e.target.checked })}
               className="w-5 h-5 accent-teal"
             />
             <span className="text-base text-ink">{label}</span>
@@ -159,7 +168,7 @@ export function RoomCreateStep({ postcode, street, onPostcodeChange, onStreetCha
         <textarea
           id="room-notes"
           value={notes}
-          onChange={(e) => setNotes(e.target.value)}
+          onChange={(e) => set('notes', e.target.value)}
           rows={3}
           placeholder="e.g. key code for entrance, bring your own mat"
           className="bg-sand-soft border border-border rounded-field px-4 py-3 min-h-24 text-ink text-base focus:outline-none focus:shadow-focus w-full"
@@ -171,7 +180,7 @@ export function RoomCreateStep({ postcode, street, onPostcodeChange, onStreetCha
           <input
             type="checkbox"
             checked={isPublic}
-            onChange={(e) => setIsPublic(e.target.checked)}
+            onChange={(e) => set('isPublic', e.target.checked)}
             className="w-5 h-5 accent-teal"
           />
           <span className="text-brown text-sm">Share this room with other teachers</span>

@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import type { RoomResult } from '@/lib/room-search';
+import type { RoomResult, RoomSearchOutcome } from '@/lib/room-search';
+import type { NoneOf } from '@/lib/type-pins';
 import { searchPublicRooms } from '@/lib/room-search';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -10,14 +11,19 @@ import { RoomMatchList } from './room-match-list';
 interface RoomSearchStepProps {
   postcode: string;
   street: string;
+  /** Owned by the router: this step unmounts on every step change. */
+  results: RoomResult[] | null;
+  onResultsChange: (rooms: RoomResult[] | null) => void;
   onPostcodeChange: (v: string) => void;
   onStreetChange: (v: string) => void;
   onSelect: (room: RoomResult) => void;
   onCreateNew: () => void;
 }
 
-export function RoomSearchStep({ postcode, street, onPostcodeChange, onStreetChange, onSelect, onCreateNew }: RoomSearchStepProps) {
-  const [results, setResults] = useState<RoomResult[] | null>(null);
+export function RoomSearchStep({
+  postcode, street, results, onResultsChange,
+  onPostcodeChange, onStreetChange, onSelect, onCreateNew,
+}: RoomSearchStepProps) {
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
 
@@ -26,7 +32,7 @@ export function RoomSearchStep({ postcode, street, onPostcodeChange, onStreetCha
     if (!postcode.trim() || !street.trim()) return;
 
     setSearching(true);
-    setResults(null);
+    onResultsChange(null);
     setSearchError('');
 
     // `searchPublicRooms` returns its failure rather than throwing it, so the
@@ -34,8 +40,19 @@ export function RoomSearchStep({ postcode, street, onPostcodeChange, onStreetCha
     // when this call was first extracted, and what these strings were before.
     const outcome = await searchPublicRooms(postcode, street);
     if (outcome.ok) {
-      setResults(outcome.rooms);
+      onResultsChange(outcome.rooms);
     } else {
+      // The ternary below handles the union's two members by name, so adding
+      // a third would silently route it to the network message — re-creating
+      // the exact collapse this union was introduced to make impossible. The
+      // pin makes that a compile error instead: it resolves to `true` while
+      // the failure reasons are exactly these two, and to the unhandled
+      // member's own name as soon as one is added.
+      const _reasonsHandled: NoneOf<
+        Exclude<Extract<RoomSearchOutcome, { ok: false }>['reason'], 'http' | 'network'>
+      > = true;
+      void _reasonsHandled;
+
       setSearchError(
         outcome.reason === 'http'
           ? 'Search failed. Please try again.'

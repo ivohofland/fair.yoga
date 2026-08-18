@@ -13,8 +13,11 @@ import { formatRoomLocation } from '@/lib/format';
  * #136. This step's enumeration of the teacher-room link it posts. Beside its
  * literal, and annotating it, for the reason given in `room-create-step.tsx`.
  *
- * This one had lost more than the annotation: the body was inlined straight
- * into `JSON.stringify({ … })`, so there was no literal left to pin at all.
+ * This one had lost more than the annotation: for one commit on this branch
+ * (`7afcb84`) the body was inlined straight into `JSON.stringify({ … })`, so
+ * there was no literal left to pin at all. On `main` it was a proper
+ * annotated literal in `add-room-flow.tsx` — the loss was the extraction's,
+ * not a pre-existing state.
  */
 interface NewTeacherRoomValues {
   roomId: string;
@@ -24,6 +27,10 @@ interface NewTeacherRoomValues {
 }
 
 type CreateTeacherRoomWire = z.infer<typeof createTeacherRoomSchema>;
+
+// Value types as well as key names — see room-create-step.tsx.
+const _linkIsWireShaped: CreateTeacherRoomWire = null as unknown as NewTeacherRoomValues;
+void _linkIsWireShaped;
 
 const _linkCoversCreate: NoneOf<Exclude<keyof CreateTeacherRoomWire, keyof NewTeacherRoomValues>> = true;
 const _linkHasNoExtras: NoneOf<Exclude<keyof NewTeacherRoomValues, keyof CreateTeacherRoomWire>> = true;

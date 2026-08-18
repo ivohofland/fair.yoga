@@ -187,6 +187,103 @@ describe('AddRoomFlow', () => {
     expect(screen.queryByText('Network error. Please try again.')).toBeNull();
   });
 
+  // Same reasoning as the sibling assertion in share-room-button.test.tsx:
+  // the fetch mock matches on `startsWith('/api/rooms?')`, so swapping
+  // `searchPublicRooms(postcode, street)` to `(street, postcode)` keeps every
+  // other test here green while the search matches nothing in production.
+  it('asks the search endpoint for the typed postcode and street', async () => {
+    stubFetch();
+    render(<AddRoomFlow />);
+
+    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
+    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByText(/no rooms found/i);
+
+    const [url] = fetchMock.mock.calls[0] ?? [];
+    expect(String(url)).toBe('/api/rooms?postcode=1018+DT&street=Keizersgracht');
+  });
+
+  // The ticked direction. The neighbouring test pins that an untouched box
+  // posts `false`; without this one, severing the checkbox from the payload
+  // entirely — hardcoding `isPublic: false` in the request body — leaves the
+  // whole file green. Measured: it does. The regression that slips through is
+  // a teacher who reads the notice, deliberately decides to contribute a room
+  // to the commons, ticks the box, and silently gets a private room.
+  it('posts isPublic true when the share checkbox is ticked', async () => {
+    stubFetch();
+    render(<AddRoomFlow />);
+
+    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
+    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByText(/no rooms found/i);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
+
+    fireEvent.change(screen.getByLabelText('Venue name'), { target: { value: 'De Studio' } });
+    fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
+    fireEvent.change(screen.getByLabelText('Max capacity'), { target: { value: '10' } });
+
+    const checkbox = screen.getByRole('checkbox', {
+      name: /Share this room with other teachers/,
+    });
+    fireEvent.click(checkbox);
+    expect(checkbox).toBeChecked();
+
+    fireEvent.click(screen.getByRole('button', { name: /Create room/ }));
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(1));
+
+    const [, roomOptions] = fetchMock.mock.calls[1] ?? [];
+    const body = JSON.parse((roomOptions as { body: string }).body) as { isPublic: boolean };
+    expect(body.isPublic).toBe(true);
+  });
+
+  /**
+   * Stepping BACKWARDS — the direction no other test in this file goes, and
+   * the one the step split silently broke.
+   *
+   * Splitting `add-room-flow` into three components put each step behind
+   * `{step === '…' && <Step />}`, which unmounts it. On `main` all 22 pieces
+   * of state lived in one component that never unmounts, so Back preserved
+   * everything. After the split it discarded the half-filled create form and
+   * the search results — and because the "create a new room" affordance only
+   * renders once `results !== null`, the teacher landed on a bare search form
+   * with no way forward but to re-run the identical search.
+   *
+   * The split's stated proof of neutrality was that this file passed
+   * unedited. It did. Nothing here stepped back.
+   */
+  it('keeps the search results and the half-filled form when stepping back', async () => {
+    stubFetch();
+    render(<AddRoomFlow />);
+
+    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
+    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByText(/no rooms found/i);
+    expect(fetchMock.mock.calls.length).toBe(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
+    fireEvent.change(screen.getByLabelText('Venue name'), { target: { value: 'De Studio' } });
+    fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
+    fireEvent.click(screen.getByLabelText('Mats'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+
+    // The search survived: its result is still on screen and the way forward
+    // is still offered, with no second request.
+    expect(screen.getByText(/no rooms found/i)).toBeDefined();
+    expect(fetchMock.mock.calls.length).toBe(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
+
+    // And so did everything already typed.
+    expect(screen.getByLabelText('Venue name')).toHaveValue('De Studio');
+    expect(screen.getByLabelText('City')).toHaveValue('Amsterdam');
+    expect(screen.getByLabelText('Mats')).toBeChecked();
+  });
+
   it('says the network failed when the request never lands', async () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
     vi.stubGlobal('fetch', fetchMock);
