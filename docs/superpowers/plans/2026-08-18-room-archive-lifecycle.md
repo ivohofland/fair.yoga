@@ -997,7 +997,17 @@ Then add the guard immediately after the existing `if (template.isArchived)` lin
   // After the already-in-state check above, for the same reason that check
   // precedes the template-archived guard: `?state=paused` on a template that
   // is already paused is a no-op with nothing to refuse.
-  if (template.teacherRoom.isArchived) return { ok: false, reason: 'room_archived' };
+  // Gated on `desiredActive`, not on the room's state alone. Pausing is a real
+  // `isActive` transition too (active -> paused) and does not hit the
+  // already-in-state short-circuit above, so an ungated check here refuses the
+  // one direction that must keep working: a teacher must still be able to stop
+  // a template whose room was archived out from under it. That state is
+  // reachable only through the accepted race in spec section 8, and the race is
+  // defensible only because it is recoverable — blocking the pause removes the
+  // recovery.
+  if (desiredActive && template.teacherRoom.isArchived) {
+    return { ok: false, reason: 'room_archived' };
+  }
 ```
 
 - [ ] **Step 6: Map the reason in the route**

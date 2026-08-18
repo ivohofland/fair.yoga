@@ -111,7 +111,7 @@ Archiving is a private act on a private link, never on the `Room`.
 |---|---|---|---|
 | 1 | Archive the room | refuse if in use (§3) | new `src/services/room-archive.ts`, called by `PATCH /api/teacher-rooms/[id]` |
 | 2 | Publish `draft → open` | refuse if room archived | the existing `if (targetStatus === 'open')` block, `src/services/class-lifecycle.ts:303` |
-| 3 | Resume template `paused → active` | refuse if room archived | `pauseOrResumeTemplate`, beside the `reason: 'archived'` return at `class-template-lifecycle.ts:727` |
+| 3 | Resume template `paused → active` | refuse if room archived — **the resume direction only** | `pauseOrResumeTemplate`, beside the `reason: 'archived'` return at `class-template-lifecycle.ts:727` |
 | 4 | Create a template | refuse if room archived | `POST /api/class-templates` |
 
 Door 4 exists because `ClassTemplate.isActive` defaults `true`
@@ -122,6 +122,19 @@ There is no door for creating a *class* on an archived room: a new class is
 always born `draft` (`src/app/api/classes/route.ts:80`), and door 2 catches it
 at publish. A parked draft on an archived room is harmless and deliberately
 permitted.
+
+**Door 3 guards one direction, not the verb.** Pausing a template whose room is
+archived must keep working, so the check is gated on the resume direction, not
+on the room's state alone — `active → paused` is a real transition that does
+not hit the already-in-state short-circuit and would otherwise be refused.
+
+This is load-bearing rather than tidy. An *active* template on an archived room
+is reachable only through the accepted race in §8: door 1 refuses archiving
+while an active template exists, door 4 refuses creating one there, and door 3
+refuses resuming into one. That race is defensible only because it is
+recoverable — and pausing is the recovery. A guard on the room's state alone
+would remove it, leaving a teacher unable to stop a template still generating
+classes into a room they had shelved.
 
 ### The template predicate must not be invented
 
