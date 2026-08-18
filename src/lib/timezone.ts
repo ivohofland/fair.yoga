@@ -132,15 +132,37 @@ export function classStartInstant(classDate: Date, startTime: string, timeZone: 
   const [hours, minutes] = startTime.split(':').map(Number) as [number, number];
   const wallUtc = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hours, minutes, 0, 0);
 
-  // Checked BEFORE the `try`, and separately from the timezone, because
-  // otherwise it is reported as a timezone fault. `Date.UTC` with a NaN hour
-  // returns NaN; `new Date(NaN)` handed to `Intl.DateTimeFormat.formatToParts`
-  // throws a RangeError; the catch below then logs "invalid timezone" naming a
-  // zone that was never the problem. Measured with a valid `Europe/Amsterdam`
-  // and `startTime: 'garbage'`. Returning early keeps the same Invalid Date
-  // this has always returned — callers that compare it are unchanged — but
-  // makes the cause greppable, and lets `startsInPast` below tell the two
-  // apart so it can fail closed on one and not the other.
+  // THREE WAYS TO FAIL, THREE MESSAGES, and the checks are separate for that
+  // reason alone — a single `Number.isNaN(wallUtc)` test would be shorter and
+  // would name the wrong culprit half the time.
+  //
+  // All three are checked BEFORE the `try`, because otherwise they arrive as a
+  // timezone fault: `Date.UTC` with a NaN component returns NaN, `new Date(NaN)`
+  // handed to `Intl.DateTimeFormat.formatToParts` throws a RangeError, and the
+  // catch below logs "invalid timezone" naming a zone that was never the
+  // problem. That was the original defect.
+  //
+  // The date and the time are then checked apart from each other, because
+  // `wallUtc` is NaN if EITHER is bad — `getUTCFullYear()` on an Invalid Date
+  // is NaN just as an unparseable `startTime` gives a NaN hour. Testing only
+  // the combination and blaming `startTime` relocated the misattribution
+  // instead of removing it: measured, `classStartInstant(new Date('nonsense'),
+  // '09:00', …)` logged `startTime: '09:00'` under "unparseable startTime".
+  //
+  // Returning early keeps the same Invalid Date this has always returned —
+  // callers that compare it are unchanged — while making the cause greppable,
+  // and letting `startsInPast` fail closed on these and not on a bad timezone.
+  if (Number.isNaN(d.getTime())) {
+    // `startTime` alongside it, showing it was fine — the point of splitting
+    // these branches is that a reader can tell which half broke.
+    // `isoOrNull` is hoisted; it is declared below only to keep it beside its
+    // other callers.
+    log.warn(
+      { classDate: isoOrNull(d), startTime },
+      'unreadable class date, cannot compute class start instant',
+    );
+    return new Date(NaN);
+  }
   if (Number.isNaN(wallUtc)) {
     log.warn({ startTime }, 'unparseable startTime, cannot compute class start instant');
     return new Date(NaN);
@@ -155,6 +177,28 @@ export function classStartInstant(classDate: Date, startTime: string, timeZone: 
     log.warn({ timeZone }, 'invalid timezone, falling back to UTC interpretation');
     return new Date(wallUtc);
   }
+}
+
+/**
+ * A `Date` as an ISO string, or `null` if it is not a readable one.
+ *
+ * `toISOString()` THROWS a RangeError on an Invalid Date, and the places that
+ * want to serialise one are the refusal paths — whose whole reason for
+ * existing is that some input could not be read. Serialising unguarded there
+ * turns the clean 409 a guard produces into a 500 raised by its own log line,
+ * which is not a hypothetical: it shipped once, in the commit that fixed
+ * `startsInPast`'s fail-open, and `updateClass` answered
+ * `RangeError: Invalid time value` for a payload it had correctly decided to
+ * refuse.
+ *
+ * A function rather than the check written out at each site, because it was
+ * written out at each site and one of the four was missed — while a comment at
+ * a fifth asserted that "the callers NaN-check their own instants". Three call
+ * sites and a name is cheap; a claim that has to stay true by inspection is
+ * not.
+ */
+export function isoOrNull(date: Date): string | null {
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 /**
@@ -210,18 +254,16 @@ export function startsInPast(
   const start = classStartInstant(classDate, startTime, timeZone);
   if (Number.isNaN(start.getTime())) {
     log.warn(
-      {
-        startTime,
-        timeZone,
-        // `toISOString` THROWS a RangeError on an Invalid Date, and this is the
-        // one branch reached by inputs already known to be broken — so
-        // serialising it unguarded would turn the clean 409 this refusal exists
-        // to produce into a 500, from the log line rather than the logic. The
-        // callers NaN-check their own instants before serialising for the same
-        // reason.
-        classDate: Number.isNaN(classDate.getTime()) ? null : classDate.toISOString(),
-      },
-      'refusing write: startTime is unreadable, so a past start cannot be ruled out',
+      // Through `isoOrNull`, because this is the one branch reached by inputs
+      // already known to be broken — a bare `toISOString()` here would raise
+      // the 500 the refusal exists to avoid.
+      { startTime, timeZone, classDate: isoOrNull(classDate) },
+      // NAMES THE START, NOT ONE OF ITS TWO HALVES. Either the date or the
+      // `startTime` can be the unreadable one, and this frame cannot tell them
+      // apart — `classStartInstant` already logged which, immediately above
+      // this line in the same request. Naming `startTime` here, as an earlier
+      // revision did, contradicted that line half the time.
+      'refusing write: this class start is unreadable, so a past start cannot be ruled out',
     );
     return true;
   }

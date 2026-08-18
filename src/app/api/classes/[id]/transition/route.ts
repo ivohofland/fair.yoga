@@ -157,6 +157,15 @@ export const POST = withErrorHandler(async (
       return { ok: true as const, newStatus: 'cancelled' as const };
     });
 
+    // No code here, while the `transitionClass` path below carries one for
+    // every reason — an asymmetry that is deliberate rather than an oversight.
+    // The table below exists because three DISTINCT service reasons arrived as
+    // one indistinguishable 409 and a client had to match English to tell them
+    // apart. This branch has one refusal with one meaning, so a code would
+    // describe nothing the status does not. Its message being written for a
+    // developer (`Cannot cancel a class with status "cancelled"`) is a real
+    // defect, but it is #197's — eighteen endpoints, one convention — and
+    // fixing one of them here would prejudge that convention.
     if (!outcome.ok) return respondError(outcome.error, outcome.httpStatus);
     return respondOk(outcome);
   }

@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { renderToStaticMarkup, renderToString } from 'react-dom/server';
+import { hydrateRoot } from 'react-dom/client';
+import { act } from 'react';
+import { todayLocal } from '@/lib/format';
 import { ClassEditForm, type ClassEditInitial } from './class-edit-form';
 
 /**
@@ -157,6 +160,62 @@ describe('ClassEditForm', () => {
     const dateInput = html.match(/<input[^>]*type="date"[^>]*>/);
     expect(dateInput).not.toBeNull();
     expect(dateInput?.[0]).not.toContain('min=');
+  });
+
+  it('fills the bound in during hydration, not just on a fresh client render (#249)', async () => {
+    // THE ACTUAL PRODUCTION SEQUENCE, which neither test around this one runs.
+    // The server-render test renders only to a string, and the client test
+    // mounts fresh into an empty container — but what happens in the browser is
+    // server HTML, then `hydrateRoot` over it. That distinction is the entire
+    // bug this fix exists for: React 19 KEEPS a server-rendered attribute
+    // through hydration rather than replacing it with the client's, which is
+    // why `min={todayLocal()}` produced a UTC bound that no client render ever
+    // corrected.
+    //
+    // So "the client value wins after hydration" cannot be assumed here — it is
+    // the exact assumption that was false before. `useSyncExternalStore` is
+    // supposed to make it true by declaring the two snapshots separately, and
+    // this asserts that it does.
+    //
+    // Both halves run in one process at one zone, so this is not a
+    // zone-divergence test — the server-render test above owns that. What it
+    // pins is the TRANSITION: absent in the server HTML, present after
+    // hydration, on the same DOM node.
+    const html = renderToString(
+      <ClassEditForm classId="cls-1" settingsLocked={false} initial={initial} />,
+    );
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    document.body.appendChild(container);
+
+    // Torn down by hand. Testing Library's automatic cleanup only unmounts the
+    // containers IT created, so this one survives into the next test — where a
+    // second "Date" label turns `getByLabelText` into "Found multiple
+    // elements". That is how this test first failed, in a neighbour rather
+    // than in itself.
+    let root: ReturnType<typeof hydrateRoot> | undefined;
+    try {
+      const dateInput = container.querySelector('input[type="date"]');
+      expect(dateInput).not.toBeNull();
+      expect(dateInput?.hasAttribute('min')).toBe(false);
+
+      await act(async () => {
+        root = hydrateRoot(
+          container,
+          <ClassEditForm classId="cls-1" settingsLocked={false} initial={initial} />,
+        );
+      });
+
+      // The SAME node, now bounded — identity matters. A different node would
+      // mean React threw the server HTML away and re-rendered from scratch,
+      // which would make the attribute arrive for a reason that does not hold
+      // in production.
+      expect(container.querySelector('input[type="date"]')).toBe(dateInput);
+      expect(dateInput?.getAttribute('min')).toBe(todayLocal());
+    } finally {
+      if (root) await act(async () => root!.unmount());
+      container.remove();
+    }
   });
 
   it('bounds the date picker at today in the local calendar, not UTC (#249)', () => {

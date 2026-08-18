@@ -251,9 +251,15 @@ describe('NewClassPage', () => {
    * America/New_York, the zone `vitest.config.ts` pins; a UTC-derived bound
    * answers 2026-08-19 and makes tonight's class unpickable.
    *
-   * Awaited, because the bound arrives from an effect rather than from the
-   * first render — see `useTodayLocal`. A synchronous `getByLabelText(...)`
-   * assertion here would be testing the render, which by design has no answer.
+   * Awaited because of THIS WIZARD's `if (loading)` gate, not because the bound
+   * is late. An earlier revision of this comment said "the bound arrives from
+   * an effect rather than from the first render", which was true of the hook's
+   * first implementation and false of the one that shipped: `useSyncExternalStore`
+   * calls `getSnapshot` — not `getServerSnapshot` — on a client-only mount, so
+   * `min` is present on the FIRST client render. Its sibling in
+   * `class-edit-form.test.tsx` asserts exactly that, synchronously, which is
+   * the contradiction that outed this. The field simply does not exist here
+   * until the rooms fetch settles.
    *
    * `toFake: ['Date']` and not the whole timer suite, which the edit form's
    * twin can afford and this one cannot. That test renders a component with no

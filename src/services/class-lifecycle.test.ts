@@ -2232,6 +2232,33 @@ describe('updateClass — the count === 0 branches', () => {
     expect(updateManyCalls).toHaveLength(1);
   });
 
+  /**
+   * #249 re-review. The refusal must be a REFUSAL, not a `RangeError`.
+   *
+   * `startsInPast` fails closed, so an unreadable input is refused rather than
+   * waved through — and the refusal path then serialises the very values that
+   * are unreadable into its log line. `toISOString()` throws on an Invalid
+   * Date, so the fix for the fail-open introduced a throw on exactly the input
+   * it was added to catch: `updateClass(db, id, { date: new Date('nonsense') })`
+   * answered `RangeError: Invalid time value` where it should answer
+   * `past_start`. Measured before this test existed.
+   *
+   * Not reachable over HTTP — `isoDate` (`schemas.ts`) refines the string
+   * through a `toISOString()` round-trip, so the route's `new Date(dateString)`
+   * is always valid. It is reachable through the SERVICE, which takes a `Date`
+   * and is framework-agnostic by design (CLAUDE.md), and a service that throws
+   * where its own result type says it refuses is wrong regardless of who can
+   * currently reach it.
+   *
+   * A stub, because `isoDate` means no route and no fixture can produce this.
+   */
+  it('refuses an unreadable date rather than throwing while logging it', async () => {
+    const { db } = stubDb({ settingsLocked: false, rowSurvives: false });
+
+    const result = await updateClass(db, 'stub-class', { date: new Date('nonsense') });
+    expect(result).toEqual({ ok: false, reason: 'past_start' });
+  });
+
   it('answers a visibly-terminal row from the read, without attempting the write', async () => {
     const { db, updateManyCalls } = stubDb({
       settingsLocked: false,

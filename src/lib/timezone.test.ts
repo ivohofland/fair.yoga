@@ -123,6 +123,46 @@ describe('classStartInstant', () => {
       expect.stringContaining('falling back to UTC'),
     );
   });
+
+  /**
+   * THREE WAYS TO FAIL, THREE MESSAGES — and this is the second time that has
+   * had to be said here.
+   *
+   * `Date.UTC` returns NaN if the hour is NaN OR if the year is, and an Invalid
+   * `classDate` makes `getUTCFullYear()` NaN just as an unparseable `startTime`
+   * makes the hour NaN. The first version of the NaN guard tested only the
+   * combined `wallUtc` and blamed `startTime` unconditionally — so
+   * `classStartInstant(new Date('nonsense'), '09:00', 'Europe/Amsterdam')`
+   * logged `startTime: '09:00'` against a message saying it was unparseable.
+   * Measured. That is the same misattribution the guard was added to remove,
+   * moved one level rather than fixed: before it, a bad `startTime` was blamed
+   * on the timezone; after it, a bad date was blamed on the `startTime`.
+   *
+   * On a VPS whose observability is grep over pino, each wrong name sends
+   * whoever is on call to the wrong column.
+   */
+  it('names the date when the date is what broke, not the startTime', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    classStartInstant(new Date('nonsense'), '09:00', 'Europe/Amsterdam');
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [payload, message] = warn.mock.calls[0] as [Record<string, unknown>, string];
+    expect(message).toMatch(/date/i);
+    expect(message).not.toMatch(/startTime/i);
+    expect(message).not.toMatch(/timezone/i);
+    expect(payload).toMatchObject({ classDate: null });
+  });
+
+  it('names the startTime when the startTime is what broke, not the date', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    classStartInstant(day('2026-07-20'), 'garbage', 'Europe/Amsterdam');
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [payload, message] = warn.mock.calls[0] as [Record<string, unknown>, string];
+    expect(message).toMatch(/startTime/i);
+    expect(message).not.toMatch(/timezone/i);
+    expect(payload).toMatchObject({ startTime: 'garbage' });
+  });
 });
 
 /**
@@ -139,6 +179,21 @@ describe('classStartInstant', () => {
  */
 describe('startsInPast', () => {
   const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+
+  // Matching both sibling describes in this file, and it was missing here.
+  // `vi.spyOn` on an already-spied method returns THE SAME mock with its calls
+  // still accumulated — measured: a second test's spy reported
+  // `[{tag:'from-a'},{tag:'from-b'}]`. Four tests below spy on `log.warn`, so
+  // without this the `for (const [, msg] of warn.mock.calls)` sweep in the
+  // attribution test walks a previous test's calls as well as its own, and
+  // `toHaveBeenCalledWith` can be satisfied by a sibling's invocation rather
+  // than the one under test. Neither is masking a real failure today — silencing
+  // both warns still reddens that test — but the assertions are order-coupled
+  // until this line exists. The mock also survives the describe: `log.warn` was
+  // measurably still mocked in a later block that never spied.
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it('is false for a class still to come in a zone far ahead of UTC', () => {
     expect(

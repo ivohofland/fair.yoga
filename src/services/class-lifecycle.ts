@@ -19,7 +19,7 @@ import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { closeQueueOnStart } from './waitlist';
-import { classStartInstant, startsInPast } from '@/lib/timezone';
+import { classStartInstant, startsInPast, isoOrNull } from '@/lib/timezone';
 import { log } from '@/lib/log';
 
 export { ECONOMIC_FIELDS, type EconomicField };
@@ -327,9 +327,14 @@ export async function transitionClass(
         {
           classId,
           timeZone: cls.teacher.defaultTimezone,
-          date: cls.date.toISOString().slice(0, 10),
+          // `cls.date` is Prisma-sourced from a `@db.Date` column and cannot
+          // be an Invalid Date, unlike `updateClass`'s, which arrives as a
+          // service argument. Through `isoOrNull` anyway: the cost is a
+          // function call, and the alternative is a reader having to re-derive
+          // that distinction to know this line is safe.
+          date: isoOrNull(cls.date)?.slice(0, 10) ?? null,
           startTime: cls.startTime,
-          startInstant: Number.isNaN(start.getTime()) ? null : start.toISOString(),
+          startInstant: isoOrNull(start),
         },
         'transitionClass refused: this draft start has already passed',
       );
@@ -1027,11 +1032,14 @@ export async function updateClass(
         {
           classId,
           timeZone,
-          date: effectiveDate.toISOString().slice(0, 10),
+          // BOTH through `isoOrNull`. `effectiveStart` is the obvious one; the
+          // date was missed on the first pass and threw a RangeError for a
+          // payload this guard had correctly decided to refuse. `isoDate`
+          // keeps the route from producing one, but this is a service and
+          // takes a `Date`.
+          date: isoOrNull(effectiveDate)?.slice(0, 10) ?? null,
           startTime: effectiveStartTime,
-          startInstant: Number.isNaN(effectiveStart.getTime())
-            ? null
-            : effectiveStart.toISOString(),
+          startInstant: isoOrNull(effectiveStart),
         },
         'updateClass refused: the edit would move this class start into the past',
       );
