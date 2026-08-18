@@ -383,6 +383,11 @@ export default function CreateClassPage() {
             id="date"
             label="Date"
             type="date"
+            // A hint only, and unlike the edit form there is no service guard
+            // behind it (#249, spec §6): a past-dated class is created `draft`,
+            // which no sweep selects and no registration can attach to. What is
+            // guarded is publishing it.
+            min={new Date().toISOString().slice(0, 10)}
             value={form.date}
             onChange={(e) => updateField('date', e.target.value)}
             error={errors.date}

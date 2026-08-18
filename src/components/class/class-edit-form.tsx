@@ -163,6 +163,12 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
           <Input
             label="Date"
             type="date"
+            // A hint, not a guard (#249). `updateClass` refuses a past start
+            // independently and answers 409; #247 is the standing reminder that
+            // a page-level control is not a service guard. Computed per render
+            // rather than hoisted, so a form left open across midnight bounds
+            // to the right day.
+            min={new Date().toISOString().slice(0, 10)}
             value={form.date}
             onChange={(e) => set('date', e.target.value)}
           />

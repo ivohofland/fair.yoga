@@ -124,4 +124,15 @@ describe('ClassEditForm', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(await screen.findByText(/min rate cannot exceed target rate/i)).toBeInTheDocument();
   });
+
+  it('bounds the date picker at today, so the year-typo needs deliberate effort (#249)', () => {
+    render(<ClassEditForm classId="cls-1" settingsLocked={false} initial={initial} />);
+
+    const dateInput = screen.getByLabelText('Date');
+    // A hint, not the guard — `updateClass` refuses independently, and #247 is
+    // the reason that distinction is worth a comment. Compared against a
+    // freshly computed day rather than a literal, so the assertion cannot rot
+    // the way the fixtures in `class-lifecycle.test.ts` did.
+    expect(dateInput).toHaveAttribute('min', new Date().toISOString().slice(0, 10));
+  });
 });
