@@ -107,8 +107,13 @@ export const PUT = withErrorHandler(async (
       'TEMPLATE_INSTANCE_DATE_CONFLICT',
     );
   }
-  // Exhaustiveness: a new UpdateClassResult variant becomes a compile error
-  // here rather than being silently answered as though it were `locked`.
+  // #249. Not a validation failure: `isoDate` accepted the value and the
+  // calendar has that day. 409 for the same reason `terminal` is 409 and this
+  // handler already argues above — the request is well-formed and the teacher
+  // owns the class, so it conflicts with where the class sits in time rather
+  // than with the shape of the input. Coded like its neighbours so a client can
+  // tell "already started" from "frozen" and from "slot taken" without matching
+  // on English.
   if (result.reason === 'past_start') {
     return respondError(
       'Cannot move a class to a date and time that has already passed.',
@@ -116,6 +121,8 @@ export const PUT = withErrorHandler(async (
       'CLASS_STARTS_IN_PAST',
     );
   }
+  // Exhaustiveness: a new UpdateClassResult variant becomes a compile error
+  // here rather than being silently answered as though it were `locked`.
   const unhandled: never = result;
   return unhandled;
 });

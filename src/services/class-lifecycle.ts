@@ -263,7 +263,13 @@ export async function transitionClass(
       return {
         ok: false,
         reason: 'STARTS_IN_PAST',
-        error: `Class ${classId} cannot be published: it started at ${classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone).toISOString()}`,
+        // Prose, because this string is the whole of what the teacher sees:
+        // `transition/route.ts` returns it as the 409 body and `PublishClassButton`
+        // renders it, and this route logs nothing, so there is no diagnostic use
+        // to preserve. The instant it used to carry was rendered in UTC — a time
+        // the teacher never sees anywhere else in the app, from a guard whose
+        // entire point is reading the start in `Teacher.defaultTimezone`.
+        error: 'Cannot publish a class whose start time has already passed.',
       };
     }
   }
@@ -830,13 +836,23 @@ export async function updateClass(
   // this is a whole-request refusal like `terminal`, where `locked` is a
   // field-level one.
   //
-  // GATED ON THE FIELDS SENT, and the conjunct is load-bearing rather than an
-  // optimisation. An `open` class whose start has already passed is a state the
-  // system produces legitimately — `generateClassInstances` creates one every
-  // time it runs later in the day than its template's own start time, and every
-  // class is in it for up to the 60 seconds before the transition sweep. Its
-  // description must stay editable. Only a write that MOVES the start is
-  // refused.
+  // GATED ON THE FIELDS SENT **AND** ON THE START ACTUALLY MOVING, and both
+  // conjuncts are load-bearing rather than optimisations. An `open` class whose
+  // start has already passed is a state the system produces legitimately —
+  // `generateClassInstances` creates one every time it runs later in the day
+  // than its template's own start time, and every class is in it for up to the
+  // 60 seconds before the transition sweep. A past-dated `draft` is a second
+  // such state, and a permanent one: create is unguarded (spec §6) and no sweep
+  // selects drafts, so it sits there until someone fixes it.
+  //
+  // THE `moved` CONJUNCT IS WHY THE FIELD GATE IS NOT ENOUGH, and it is not
+  // theoretical. `ClassEditForm` PUTs the whole form on every save, so `date`
+  // and `startTime` are present in every request this route ever receives —
+  // the field gate alone never narrows anything in production, and a teacher
+  // editing only the description of a past-dated draft was refused with
+  // "Cannot move a class to a date and time that has already passed" having
+  // moved nothing. The rule is that a write may not NEWLY PLACE the start in
+  // the past; leaving it where it already was is not that.
   //
   // ONE ENFORCEMENT POINT, not two, and the contrast with the terminal freeze
   // above is the reason to say so: that one needs a CAS conjunct as well
@@ -845,11 +861,15 @@ export async function updateClass(
   // request, and the stored values they fall back to can only be moved by a
   // writer that is itself this guard.
   if (data.date !== undefined || data.startTime !== undefined) {
+    const timeZone = cls.teacher.defaultTimezone;
     const effectiveDate = data.date ?? cls.date;
     const effectiveStartTime = data.startTime ?? cls.startTime;
-    if (
-      startsInPast(effectiveDate, effectiveStartTime, cls.teacher.defaultTimezone, new Date())
-    ) {
+    // Compared as instants through the same function, so a resend of the stored
+    // values can never read as a move however it was serialised.
+    const movesStart =
+      classStartInstant(effectiveDate, effectiveStartTime, timeZone).getTime() !==
+      classStartInstant(cls.date, cls.startTime, timeZone).getTime();
+    if (movesStart && startsInPast(effectiveDate, effectiveStartTime, timeZone, new Date())) {
       return { ok: false, reason: 'past_start' };
     }
   }

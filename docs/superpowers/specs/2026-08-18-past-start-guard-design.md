@@ -209,6 +209,38 @@ undefined`, against the merged effective values — `data.date ?? cls.date` and
 two minutes ago and has not yet been swept stays legal, which is the point of
 the conjunct.
 
+**Update (PR review). That condition was necessary but not sufficient, and the
+gap was reachable in normal use.** The field gate assumes a client that sends
+only what it changed; `ClassEditForm` sends the whole form on every save
+(`{ ...form }`, with `date` and `startTime` both on `ClassEditInitial`), so
+`data.date !== undefined` is true for *every* PUT this app makes and the gate
+never narrows anything in production. The refusal therefore fired on writes that
+moved nothing — and a past-dated `draft` is a permanent legitimate state by §6
+and §11, so its description, room cost and duration became unsavable, refused
+with "Cannot move a class to a date and time that has already passed" by a
+teacher who had moved nothing.
+
+The rule this spec states is "may not **newly place**" (§3), so the fix is a
+second conjunct rather than a change of policy: compare the effective start
+instant against the stored one and refuse only when they differ.
+
+```ts
+const movesStart =
+  classStartInstant(effectiveDate, effectiveStartTime, timeZone).getTime() !==
+  classStartInstant(cls.date, cls.startTime, timeZone).getTime();
+if (movesStart && startsInPast(effectiveDate, effectiveStartTime, timeZone, new Date())) …
+```
+
+No threat-model cost: the harms in §1 all require the start to *move*, so
+allowing a write that leaves it in place creates nothing new to reap or to bill.
+Two tests pin the pair (a full-form save that moves nothing is allowed; the same
+payload shape with the date moved back is still refused), and both mutations
+bite — dropping `movesStart` reddens the first, forcing it false reddens three.
+
+The lesson generalises past this guard: **a service-side field gate is only as
+narrow as its narrowest client.** T2 in §8 passed throughout, because it sends
+`{ description }` alone — a payload no client in this repo constructs.
+
 **One enforcement point, not two.** The terminal freeze needs both an early
 return and a CAS conjunct because a completion can commit between the opening
 read and the write. This guard has no such race: the incoming date and time are

@@ -255,15 +255,15 @@ describe('transitionClass (DB)', () => {
   // Per-test classes for the queue-close tests below (#216) — a date none of
   // the four hand-written tests above use, so the counter-derived startTime
   // only has to avoid colliding with itself across the two calls in this
-   // describe, not with those tests' literal '09:00'/'10:00' slots. Mirrors
-   // `completeClass (DB)`'s own `makeClass` below.
+  // describe, not with those tests' literal '09:00'/'10:00' slots. Mirrors
+  // `completeClass (DB)`'s own `makeClass` below.
+  let makeClassCounter = 0;
   /**
    * 2099, not "a couple of months out". #249's publish guard reads the clock,
    * so a fixture dated in what was the future when it was written fails once
    * enough time passes. These were `2026-06-0X` and had already aged into the
    * past by the time that guard was added.
    */
-  let makeClassCounter = 0;
   const makeClass = ({ status }: { status: ClassStatus }) => {
     makeClassCounter += 1;
     return prisma.class.create({
@@ -1618,17 +1618,70 @@ describe('updateClass (DB)', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('allows a full-form save that leaves a past start exactly where it was (#249)', async () => {
+    // The `movesStart` conjunct, and the reason it exists. This models what
+    // `ClassEditForm` actually PUTs — every field, including `date` and
+    // `startTime` unchanged — on a past-dated draft, which is a permanent
+    // legitimate state: create is unguarded (spec §6) and no sweep selects
+    // drafts. Guarding on the fields SENT alone refused this, because the form
+    // always sends them, so a teacher could not edit the description of a stale
+    // draft without also re-dating it. The rule is "may not NEWLY place the
+    // start in the past"; this write places nothing.
+    const cls = await makeClass(false, 'draft', PAST_FIXTURE_DATE);
+
+    const result = await updateClass(prisma, cls.id, {
+      description: 'Updated',
+      date: cls.date,
+      startTime: cls.startTime,
+      classType: cls.classType,
+      durationMinutes: cls.durationMinutes,
+    });
+    expect(result.ok).toBe(true);
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.description).toBe('Updated');
+    expect(after.date.toISOString().slice(0, 10)).toBe(PAST_FIXTURE_DATE);
+  });
+
+  it('still refuses a full-form save that MOVES a live class into the past (#249)', async () => {
+    // The other half of the same conjunct: relaxing to "moved" must not open
+    // the door #249 was filed to close. Same full payload shape as above, but
+    // the date genuinely moves backwards.
+    const cls = await makeClass(false, 'open');
+
+    const result = await updateClass(prisma, cls.id, {
+      description: 'Updated',
+      date: new Date(PAST_FIXTURE_DATE),
+      startTime: cls.startTime,
+    });
+    expect(result).toEqual({ ok: false, reason: 'past_start' });
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.date.toISOString().slice(0, 10)).toBe(FIXTURE_DATE);
+    expect(after.description).toBeNull();
+  });
+
   it('checks a startTime-only edit against the stored date (#249)', async () => {
     // The other conjunct. The obvious wrong guard fires only when `date` is
     // sent; this class's date is already past, so moving only its startTime
     // still lands in the past and must still be refused.
+    //
+    // 23:59 RATHER THAN A ROUND NUMBER, and it is not arbitrary — do not tidy
+    // it. This test's job (spec §8, T3) is to prove the merge falls back to
+    // `cls.date`, and its mutation is a fallback that ignores the stored date
+    // and uses today instead. With a mid-morning time that mutation SURVIVES
+    // whenever the suite runs later in the day than the time chosen: today at
+    // 10:00 is itself past, so the broken guard still answers `past_start` and
+    // the test stays green against it. Measured, not predicted — it survived a
+    // run at 11:35. Against 23:59 the mutated guard sees a start still ahead,
+    // returns ok, and the test goes red as it should.
     const cls = await makeClass(false, 'open', PAST_FIXTURE_DATE);
 
-    const result = await updateClass(prisma, cls.id, { startTime: '10:00' });
+    const result = await updateClass(prisma, cls.id, { startTime: '23:59' });
     expect(result).toEqual({ ok: false, reason: 'past_start' });
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(after.startTime).not.toBe('10:00');
+    expect(after.startTime).not.toBe('23:59');
   });
 
   /**

@@ -425,6 +425,15 @@ describe('POST /api/classes/[id]/transition', () => {
     const res = await transition(ownerToken, pastDraftClassId, { status: 'open' });
     expect(res.status).toBe(409);
 
+    // The MESSAGE, not just the status. This route collapses every reason but
+    // NOT_FOUND into a bare 409 with no code (`transition/route.ts`), so the
+    // status alone cannot tell STARTS_IN_PAST from an illegal transition or a
+    // concurrent modification — the test would stay green if the publish were
+    // refused for an unrelated reason. Its sibling on the PUT door pins
+    // `CLASS_STARTS_IN_PAST`; this is the closest equivalent available here.
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toMatch(/already passed/i);
+
     const after = await prisma.class.findUniqueOrThrow({ where: { id: pastDraftClassId } });
     expect(after.status).toBe('draft');
   });
