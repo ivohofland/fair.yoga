@@ -12,7 +12,7 @@ import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SettledNotice } from '@/components/ui/settled-notice';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
-import { formatRoomLocation, formatDateWithYear } from '@/lib/format';
+import { formatRoomLocation, formatDateWithYear, todayLocal } from '@/lib/format';
 import { CANCEL_DEADLINE_OPTIONS, AUTO_CANCEL_OPTIONS } from '@/lib/class-options';
 
 // ---------------------------------------------------------------------------
@@ -386,8 +386,10 @@ export default function CreateClassPage() {
             // A hint only, and unlike the edit form there is no service guard
             // behind it (#249, spec §6): a past-dated class is created `draft`,
             // which no sweep selects and no registration can attach to. What is
-            // guarded is publishing it.
-            min={new Date().toISOString().slice(0, 10)}
+            // guarded is publishing it. Local calendar, not a UTC render —
+            // bounding at UTC's day made tonight unpickable west of UTC, which
+            // matters most on exactly this form.
+            min={todayLocal()}
             value={form.date}
             onChange={(e) => updateField('date', e.target.value)}
             error={errors.date}

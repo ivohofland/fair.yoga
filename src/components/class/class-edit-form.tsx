@@ -6,6 +6,7 @@ import type { z } from 'zod';
 import type { updateClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { ECONOMIC_FIELDS } from '@/lib/class-fields';
+import { todayLocal } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -167,8 +168,9 @@ export function ClassEditForm({ classId, settingsLocked, initial }: ClassEditFor
             // independently and answers 409; #247 is the standing reminder that
             // a page-level control is not a service guard. Computed per render
             // rather than hoisted, so a form left open across midnight bounds
-            // to the right day.
-            min={new Date().toISOString().slice(0, 10)}
+            // to the right day. `todayLocal` rather than a UTC render — see its
+            // docblock for why that distinction has teeth here.
+            min={todayLocal()}
             value={form.date}
             onChange={(e) => set('date', e.target.value)}
           />

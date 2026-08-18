@@ -8,6 +8,7 @@ import {
   formatRoomLocation,
   formatStudentName,
   timeAgo,
+  todayLocal,
 } from './format';
 
 /**
@@ -283,5 +284,33 @@ describe('timeAgo', () => {
     expect(timeAgo(new Date(NOW.getTime() - 60 * 60_000))).toBe('1h ago');
     expect(timeAgo(new Date(NOW.getTime() - 23 * 3_600_000))).toBe('23h ago');
     expect(timeAgo(new Date(NOW.getTime() - 24 * 3_600_000))).toBe('1d ago');
+  });
+});
+
+/**
+ * #249. The one formatter in this file that must NOT use UTC accessors, so the
+ * one whose test has to sit at an hour where UTC and local disagree.
+ *
+ * `vitest.config.ts` pins TZ=America/New_York precisely so this is observable:
+ * 2026-08-19T00:00Z is 18 August 20:00 there. A `toISOString()` implementation
+ * answers 2026-08-19 and this test goes red — which is the bug it was written
+ * against. Re-derive the pair if the fixture changes; do not adjust it until a
+ * test passes.
+ */
+describe('todayLocal', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('reads the local calendar day, not the UTC one', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-19T00:00:00.000Z'));
+    expect(todayLocal()).toBe('2026-08-18');
+  });
+
+  it('zero-pads month and day', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-05T15:00:00.000Z'));
+    expect(todayLocal()).toBe('2026-03-05');
   });
 });

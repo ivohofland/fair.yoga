@@ -125,14 +125,24 @@ describe('ClassEditForm', () => {
     expect(await screen.findByText(/min rate cannot exceed target rate/i)).toBeInTheDocument();
   });
 
-  it('bounds the date picker at today, so the year-typo needs deliberate effort (#249)', () => {
-    render(<ClassEditForm classId="cls-1" settingsLocked={false} initial={initial} />);
-
-    const dateInput = screen.getByLabelText('Date');
+  it('bounds the date picker at today in the local calendar, not UTC (#249)', () => {
     // A hint, not the guard — `updateClass` refuses independently, and #247 is
-    // the reason that distinction is worth a comment. Compared against a
-    // freshly computed day rather than a literal, so the assertion cannot rot
-    // the way the fixtures in `class-lifecycle.test.ts` did.
-    expect(dateInput).toHaveAttribute('min', new Date().toISOString().slice(0, 10));
+    // the reason that distinction is worth a comment.
+    //
+    // The clock is PINNED rather than recomputed, and that is the whole test.
+    // An earlier version compared the attribute against
+    // `new Date().toISOString().slice(0, 10)` — the same expression the
+    // component used — so both sides moved together and it could not fail.
+    // 2026-08-19T00:00Z is 18 August 20:00 in America/New_York, the zone
+    // `vitest.config.ts` pins; a UTC-derived `min` answers 2026-08-19 and makes
+    // tonight's class unpickable on a mobile date input.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-19T00:00:00.000Z'));
+    try {
+      render(<ClassEditForm classId="cls-1" settingsLocked={false} initial={initial} />);
+      expect(screen.getByLabelText('Date')).toHaveAttribute('min', '2026-08-18');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

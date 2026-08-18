@@ -146,6 +146,32 @@ export function formatDateShort(date: Date): string {
 }
 
 /**
+ * Today as `YYYY-MM-DD` in the BROWSER's calendar, for the `min` on a date
+ * input (#249).
+ *
+ * LOCAL accessors, and the contrast with every formatter above is the whole
+ * point rather than an inconsistency to tidy away. Those take a value already
+ * pinned to a calendar day at UTC midnight (a `@db.Date` column, `startOfLocalDay`
+ * output) and must read it back in UTC or they shift it a day west. This one
+ * takes `new Date()` — a raw instant with no pinning — so a UTC read gives the
+ * wrong calendar day for anyone west of UTC whenever it is past their evening
+ * rollover. `toISOString().slice(0, 10)` was that bug: an LA teacher at 17:00
+ * got tomorrow, which on a mobile date picker makes tonight's class
+ * unselectable.
+ *
+ * A HINT, never a guard. `updateClass` and `transitionClass` refuse a past
+ * start on their own and answer 409; #247 is the standing reminder that a
+ * page-level control is not a service guard. It is also only an approximation
+ * of the rule those guards apply: they read `Teacher.defaultTimezone`, this
+ * reads the device's zone. Those agree unless the teacher is travelling.
+ */
+export function todayLocal(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
  * A heading over a set of months: `June 2026`.
  *
  * Takes year and zero-indexed month rather than a `Date`, because its only
