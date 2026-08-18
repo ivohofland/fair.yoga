@@ -4,6 +4,17 @@
 **Issue:** #247 — `updateClass` has no class-status guard, so a terminal class's
 `date` is editable, and #238 turned that into a path to permanent data loss.
 
+**On the line numbers in this document.** This is a dated design record, and
+every `file.ts:NN` address in it was exact against the tree it was written
+against — `9ecb506`, before the branch existed. The branch then added ~124
+lines to `class-lifecycle.ts` alone, so several of those addresses now land on
+neighbouring prose. They are left as written rather than chased: re-pointing
+them would make the document claim a precision it cannot keep, and this is the
+fifth time on this project a line-number citation has gone stale because code
+moved near it. Where an address matters, the **symbol** is named beside it —
+follow the name, not the number. Live code comments are held to the stricter
+rule and carry no addresses.
+
 ---
 
 ## 1. The premise, re-measured
@@ -43,10 +54,10 @@ is filed separately (§7), not fixed here.
 
 **(b) A read-then-return guard would not hold.** `updateClass` does
 `findUnique` → `updateMany` and takes no lock. `completeClass` takes a `Class`
-row lock and re-reads under it — `lockClassRow` at `class-lifecycle.ts:324`,
-and the `requireEndedBy` comparison at `:349-360`, both in the same file as
+row lock and re-reads under it — the `lockClassRow` call and the
+`requireEndedBy` comparison, both inside `completeClass`, in the same file as
 `updateClass` itself (not `class-transitions.ts`, which only *passes* the
-option in, at `:535`) — so it can commit between `updateClass`'s read and its
+option in) — so it can commit between `updateClass`'s read and its
 write. The existing
 `settingsLocked` handling already solves the identical race the identical way,
 and says so in `updateClass`'s own docblock: *"The compare-and-swap inside the
