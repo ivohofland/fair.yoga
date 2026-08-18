@@ -98,9 +98,9 @@
  * older than the window. This sweep then reaps a queue nobody meant to lose.
  * Both guards above are innocent: the class was not terminal when the date
  * moved. That is the one remaining way a row this sweep should keep can be
- * made to look reapable. It is filed rather than fixed — bounding the date
- * needs a product call about whether backfilling a past class is ever legal —
- * and the reasoning is in
+ * made to look reapable. It is filed as #249, deliberately left open rather
+ * than repaired here — bounding the date needs a product call about whether
+ * backfilling a past class is ever legal — and the reasoning is in
  * `docs/superpowers/specs/2026-08-17-terminal-class-freeze-design.md` §7.
  *
  * WHY IT CANNOT DEADLOCK AGAINST THE ERASURE. `deleteStudentAccount` deletes

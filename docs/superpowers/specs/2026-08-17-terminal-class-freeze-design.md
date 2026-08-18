@@ -414,15 +414,17 @@ happened to open.
 
 ## 7. Out of scope, and what gets filed
 
-**Filed as a decision:** the UI path of §1.1(a). A teacher reschedules a live
-class, typos the year into the past, the sweeps complete it within two ticks,
-and the retention sweep reaps its queue. Nothing in this branch touches it,
-because the fix needs a product call this branch should not pre-empt: is moving
-a class into the past ever legal — backfilling one you forgot to log — and if
-so, how far? The issue lays out the options rather than assuming work.
+**Filed as a decision — issue #249:** the UI path of §1.1(a). A teacher
+reschedules a live class, typos the year into the past, the sweeps complete it
+within two ticks, and the retention sweep reaps its queue. Nothing in this
+branch touches it, because the repair needs a product call this branch should
+not pre-empt: is moving a class into the past ever legal — backfilling one you
+forgot to log — and if so, how far? #249 lays out the options, the five
+measured links and what was ruled out, rather than assuming work. This branch
+leaves it open.
 
 It clears §7's floor on its own terms regardless: it is a live path to data a
-user loses, so it is fixed or filed, and it is filed.
+user loses, so it is repaired or filed, and it is filed.
 
 **Unaffected:** `settingsLocked` and `ECONOMIC_FIELDS`. They gate on first
 registration, not on terminality, and they already work. This is a second,
@@ -443,7 +445,9 @@ belongs to that decision, not to this one.
 - Eleven tests, eleven mutations, each recorded with its exact error text; none
   survives the suite — §3.4 corrects an earlier draft's claim that the
   early-return deletion was one legitimate exception.
-- Both artifacts in §6 state that the residual is closed, and §5.2's test title
-  no longer over-claims.
+- Every artifact §6 lists states that the residual is closed, and §5.2's test
+  title no longer over-claims. (Phrased without a count on purpose: this line
+  said "Both artifacts" until §6's list grew from two entries to three, which
+  is the same way a count goes stale that §6 itself now warns about.)
 - `npm run verify` green — all three vitest projects, with the arithmetic in the
   PR body.

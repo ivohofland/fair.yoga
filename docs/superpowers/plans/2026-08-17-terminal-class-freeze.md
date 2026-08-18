@@ -492,10 +492,13 @@ In `src/app/api/classes/[id]/route.ts`, after the `locked` branch and before
 
 ```ts
   // #247. A terminal class is frozen whole, not by field list, so this is not
-  // a `locked` variant with a different set — the two have different trigger
-  // points and only one of them can be undone. 409 rather than 403: the
-  // request is well-formed and the teacher does own the class; it conflicts
-  // with a state the class has already reached.
+  // a `locked` variant with a different set — the two differ in SCOPE (every
+  // field, versus `ECONOMIC_FIELDS`) and in TRIGGER POINT (terminality, versus
+  // the first registration). They do not differ in permanence: neither can be
+  // undone. `settingsLocked` is only ever written `true`, and a terminal
+  // status has no outgoing transition. 409 rather than 403: the request is
+  // well-formed and the teacher does own the class; it conflicts with a state
+  // the class has already reached.
   if (result.reason === 'terminal') {
     return respondError(`Cannot edit a class that is ${result.status}`, 409);
   }
