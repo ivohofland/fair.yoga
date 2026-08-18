@@ -1,10 +1,45 @@
 'use client';
 
 import { useState } from 'react';
+import type { z } from 'zod';
+import type { createRoomSchema } from '@/lib/schemas';
+import type { NoneOf } from '@/lib/type-pins';
 import type { RoomResult } from '@/lib/room-search';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { PublicRoomNotice } from './public-room-notice';
+
+/**
+ * #136. This step's enumeration of the room it posts.
+ *
+ * The pin lives here, beside the literal it describes, and the literal is
+ * annotated with it — that annotation is the whole mechanism, because it is
+ * TypeScript's excess-property check on an annotated object literal that
+ * makes the pin bite. The pair used to sit in `add-room-flow.tsx`; when the
+ * create step was extracted, the literal moved and the pin did not, so for
+ * one commit the pin still compiled while guarding a body nothing sent. A pin
+ * separated from its literal reports success either way, which is the failure
+ * mode pins exist to remove. Keep them in the same file.
+ */
+interface NewRoomValues {
+  venueName: string;
+  address: string;
+  city: string;
+  postcode: string;
+  floor: string;
+  roomName: string;
+  maxCapacity: number;
+  equipment: string[];
+  notes: string | null;
+  isPublic: boolean;
+}
+
+type CreateRoomWire = z.infer<typeof createRoomSchema>;
+
+const _roomCoversCreate: NoneOf<Exclude<keyof CreateRoomWire, keyof NewRoomValues>> = true;
+const _roomHasNoExtras: NoneOf<Exclude<keyof NewRoomValues, keyof CreateRoomWire>> = true;
+void _roomCoversCreate;
+void _roomHasNoExtras;
 
 interface RoomCreateStepProps {
   postcode: string;
@@ -54,7 +89,7 @@ export function RoomCreateStep({ postcode, street, onPostcodeChange, onStreetCha
         .filter(([, v]) => v)
         .map(([k]) => k);
 
-      const newRoom = {
+      const newRoom: NewRoomValues = {
         venueName: venueName.trim(),
         address: street.trim(),
         city: city.trim(),

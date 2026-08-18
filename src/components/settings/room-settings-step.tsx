@@ -1,8 +1,34 @@
+'use client';
+
 import { useState } from 'react';
+import type { z } from 'zod';
+import type { createTeacherRoomSchema } from '@/lib/schemas';
+import type { NoneOf } from '@/lib/type-pins';
 import type { RoomResult } from '@/lib/room-search';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { formatRoomLocation } from '@/lib/format';
+
+/**
+ * #136. This step's enumeration of the teacher-room link it posts. Beside its
+ * literal, and annotating it, for the reason given in `room-create-step.tsx`.
+ *
+ * This one had lost more than the annotation: the body was inlined straight
+ * into `JSON.stringify({ … })`, so there was no literal left to pin at all.
+ */
+interface NewTeacherRoomValues {
+  roomId: string;
+  capacityOverride: number;
+  rentalRate: number;
+  equipmentNotes: string | null;
+}
+
+type CreateTeacherRoomWire = z.infer<typeof createTeacherRoomSchema>;
+
+const _linkCoversCreate: NoneOf<Exclude<keyof CreateTeacherRoomWire, keyof NewTeacherRoomValues>> = true;
+const _linkHasNoExtras: NoneOf<Exclude<keyof NewTeacherRoomValues, keyof CreateTeacherRoomWire>> = true;
+void _linkCoversCreate;
+void _linkHasNoExtras;
 
 interface RoomSettingsStepProps {
   selectedRoom: RoomResult;
@@ -40,15 +66,17 @@ export function RoomSettingsStep({ selectedRoom, onSaved, onBack }: RoomSettings
     setSettingsError('');
 
     try {
+      const newTeacherRoom: NewTeacherRoomValues = {
+        roomId: selectedRoom.id,
+        capacityOverride: cap,
+        rentalRate: rate,
+        equipmentNotes: equipmentNotes.trim() || null,
+      };
+
       const res = await fetch('/api/teacher-rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          roomId: selectedRoom.id,
-          capacityOverride: cap,
-          rentalRate: rate,
-          equipmentNotes: equipmentNotes.trim() || null,
-        }),
+        body: JSON.stringify(newTeacherRoom),
       });
 
       if (!res.ok) {
