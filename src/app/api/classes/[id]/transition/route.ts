@@ -51,6 +51,7 @@ const TRANSITION_FAILURE_RESPONSE: Record<
   NOT_ENDED_YET: { httpStatus: 409, code: 'CLASS_NOT_ENDED_YET' },
   CONCURRENT_MODIFICATION: { httpStatus: 409, code: 'CONCURRENT_MODIFICATION' },
   STARTS_IN_PAST: { httpStatus: 409, code: 'CLASS_STARTS_IN_PAST' },
+  ROOM_ARCHIVED: { httpStatus: 409, code: 'ROOM_ARCHIVED' },
 };
 
 export const POST = withErrorHandler(async (

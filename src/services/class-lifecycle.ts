@@ -115,7 +115,7 @@ export const TERMINAL_CLASS_STATUSES: readonly ClassStatus[] = Object.freeze(
  * Both `transitionClass` and `completeClass` declare `TransitionDbResult`, so
  * each sees a type wider than its own range. Enumerated in full, because an
  * earlier revision named only `NOT_ENDED_YET` and `STARTS_IN_PAST` and called
- * them "the mirror" — a tidy symmetry that miscounts. The split is 2/2/1, not
+ * them "the mirror" — a tidy symmetry that miscounts. The split is 2/3/1, not
  * 1/1:
  *
  * - SHARED: `NOT_FOUND`, and `ILLEGAL_TRANSITION` — both functions call
@@ -123,7 +123,8 @@ export const TERMINAL_CLASS_STATUSES: readonly ClassStatus[] = Object.freeze(
  *   failed CAS.
  * - `completeClass` only: `NOT_ENDED_YET`.
  * - `transitionClass` only: `CONCURRENT_MODIFICATION` (its CAS is the only one
- *   that reports losing a race this way) and `STARTS_IN_PAST` (#249, and only
+ *   that reports losing a race this way), `STARTS_IN_PAST` (#249, and only
+ *   for a `draft -> open` publish), and `ROOM_ARCHIVED` (issue 76, also only
  *   for a `draft -> open` publish).
  *
  * The looseness predates #249 and neither member added since introduces it.
@@ -136,7 +137,8 @@ export type TransitionFailureReason =
   | 'ILLEGAL_TRANSITION'
   | 'NOT_ENDED_YET'
   | 'CONCURRENT_MODIFICATION'
-  | 'STARTS_IN_PAST';
+  | 'STARTS_IN_PAST'
+  | 'ROOM_ARCHIVED';
 
 export type TransitionResult =
   | { ok: true }
@@ -258,7 +260,7 @@ export async function transitionClass(
   targetStatus: ClassStatus,
 ): Promise<
   TransitionDbResult<
-    'NOT_FOUND' | 'ILLEGAL_TRANSITION' | 'CONCURRENT_MODIFICATION' | 'STARTS_IN_PAST'
+    'NOT_FOUND' | 'ILLEGAL_TRANSITION' | 'CONCURRENT_MODIFICATION' | 'STARTS_IN_PAST' | 'ROOM_ARCHIVED'
   >
 > {
   // #249. A draft whose start has already passed cannot be published. This
@@ -307,9 +309,33 @@ export async function transitionClass(
         status: true,
         date: true,
         startTime: true,
+        teacherRoom: { select: { isArchived: true } },
         teacher: { select: { defaultTimezone: true } },
       },
     });
+
+    // Door 2 of the room archive lifecycle (issue 76). An archived room
+    // accepts no new commitments: a draft may SIT on an archived room —
+    // it is a parked intention with no registrations, which is why door 1
+    // lets a draft-only room be archived — but publishing it is the moment
+    // the room's availability starts to matter.
+    //
+    // Before the past-start check deliberately. A draft that is both
+    // past-dated and in an archived room gets told about the room, because
+    // that is the condition the teacher can clear; `STARTS_IN_PAST` is
+    // permanent and would end the conversation.
+    if (
+      cls &&
+      sourceStatesFor(targetStatus).includes(cls.status) &&
+      cls.teacherRoom.isArchived
+    ) {
+      return {
+        ok: false,
+        reason: 'ROOM_ARCHIVED',
+        error: 'This room is archived. Unarchive it to publish classes here.',
+      };
+    }
+
     if (
       cls &&
       sourceStatesFor(targetStatus).includes(cls.status) &&
