@@ -28,13 +28,21 @@ export function RoomSearchStep({ postcode, street, onPostcodeChange, onStreetCha
     setSearching(true);
     setResults(null);
     setSearchError('');
-    try {
-      setResults(await searchPublicRooms(postcode, street));
-    } catch {
-      setSearchError('Network error. Please try again.');
-    } finally {
-      setSearching(false);
+
+    // `searchPublicRooms` returns its failure rather than throwing it, so the
+    // two cases cannot be collapsed into one `catch` — which is what happened
+    // when this call was first extracted, and what these strings were before.
+    const outcome = await searchPublicRooms(postcode, street);
+    if (outcome.ok) {
+      setResults(outcome.rooms);
+    } else {
+      setSearchError(
+        outcome.reason === 'http'
+          ? 'Search failed. Please try again.'
+          : 'Network error. Please try again.',
+      );
     }
+    setSearching(false);
   }
 
   return (

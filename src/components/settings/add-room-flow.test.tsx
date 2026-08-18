@@ -5,11 +5,13 @@ import { AddRoomFlow } from './add-room-flow';
 /**
  * #136. This form enumerated its two request bodies inline, with nothing
  * checking either against `createRoomSchema` / `createTeacherRoomSchema`.
- * The pins in the source file hold the key sets at compile time; this test
- * holds what a pin cannot see, which is what actually reaches each endpoint
- * — and it is the only form in this batch that posts twice, to two
- * different endpoints, with two unrelated bodies. Asserting only the first
- * would leave the teacher-room payload unpinned at runtime.
+ * The pins hold the key sets at compile time — they live beside the literals
+ * they annotate, in `room-create-step.tsx` and `room-settings-step.tsx`, not
+ * in this file's component — while this test holds what a pin cannot see,
+ * which is what actually reaches each endpoint. It is the only form in this
+ * batch that posts twice, to two different endpoints, with two unrelated
+ * bodies. Asserting only the first would leave the teacher-room payload
+ * unpinned at runtime.
  *
  * There is no way to reach the "create a room" step without a completed
  * search first — the "create new room" affordance only renders once
@@ -156,5 +158,45 @@ describe('AddRoomFlow', () => {
     const roomOpts = roomOptions as { method: string; body: string };
     const body = JSON.parse(roomOpts.body) as { isPublic: boolean };
     expect(body.isPublic).toBe(false);
+  });
+
+  /**
+   * The search step's two failure modes, and why they are two.
+   *
+   * A refused request and an unreachable server are different problems with
+   * different remedies, and the teacher is the one who has to pick one. The
+   * regression these pin against is not a wrong string — it is the collapse
+   * of the two into whichever one the shared helper happened to throw. That
+   * already happened once: extracting `searchPublicRooms` turned a non-OK
+   * response into a thrown error, the `catch` reported it as a network
+   * failure, and `'Search failed. Please try again.'` left the codebase
+   * entirely. Nothing failed, because this file had no test on either path.
+   *
+   * The same distinction is stated for a write at src/lib/use-payment-actions.ts:51.
+   */
+  it('says the search failed, not that the network did, when the server refuses', async () => {
+    fetchMock.mockImplementation(async () => ({ ok: false, json: async () => ({}) }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AddRoomFlow />);
+
+    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
+    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    expect(await screen.findByText('Search failed. Please try again.')).toBeDefined();
+    expect(screen.queryByText('Network error. Please try again.')).toBeNull();
+  });
+
+  it('says the network failed when the request never lands', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AddRoomFlow />);
+
+    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
+    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    expect(await screen.findByText('Network error. Please try again.')).toBeDefined();
+    expect(screen.queryByText('Search failed. Please try again.')).toBeNull();
   });
 });

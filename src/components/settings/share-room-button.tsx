@@ -31,19 +31,29 @@ export function ShareRoomButton({ roomId, identity, postcode }: ShareRoomButtonP
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [matches, setMatches] = useState<RoomResult[] | null>(null);
+  const [checkFailed, setCheckFailed] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [error, setError] = useState('');
 
   async function handleOpen() {
     setConfirming(true);
     setError('');
-    try {
-      setMatches(await searchPublicRooms(postcode, identity.address));
-    } catch {
-      // A failed lookup must not block the action — the route refuses a real
-      // collision regardless. Show nothing rather than a false all-clear.
-      setMatches([]);
+    setCheckFailed(false);
+
+    const outcome = await searchPublicRooms(postcode, identity.address);
+    if (outcome.ok) {
+      setMatches(outcome.rooms);
+      return;
     }
+
+    // A failed lookup must not block the action — the route refuses a real
+    // collision regardless. But it must not be silent either: an empty
+    // `matches` renders exactly what a genuinely empty address renders, so
+    // without `checkFailed` the teacher reads a failed check as an all-clear.
+    // Both reasons say the same thing here, because the remedy is the same:
+    // proceed, and let the route decide.
+    setMatches([]);
+    setCheckFailed(true);
   }
 
   async function handleShare() {
@@ -87,6 +97,12 @@ export function ShareRoomButton({ roomId, identity, postcode }: ShareRoomButtonP
         </>
       ) : (
         <>
+          {checkFailed && (
+            <p className="text-brown text-sm">
+              Could not check for rooms already shared at this address. Sharing still
+              works — a duplicate is refused when you confirm.
+            </p>
+          )}
           {matches && matches.length > 0 && (
             <>
               <p className="text-ink text-sm font-semibold">Rooms already shared at this address</p>
@@ -108,7 +124,10 @@ export function ShareRoomButton({ roomId, identity, postcode }: ShareRoomButtonP
             {sharing ? 'Sharing...' : 'Share room'}
           </Button>
         )}
-        <Button variant="secondary" onClick={() => { setConfirming(false); setMatches(null); }}>
+        <Button
+          variant="secondary"
+          onClick={() => { setConfirming(false); setMatches(null); setCheckFailed(false); }}
+        >
           Cancel
         </Button>
       </div>
