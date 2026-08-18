@@ -154,6 +154,15 @@ place to pin timezone and DST behaviour, instead of two call sites that drift.
 
 Strictly `<`, so a class starting exactly now is allowed.
 
+**No service takes an injected clock**, and that is a decision rather than an
+omission. `autoTransitionToInProgress` and its siblings take `now?: Date`
+because they must be tested at chosen instants; these guards need no such thing,
+because every fixture is either unambiguously past (`2020-01-01`) or
+unambiguously future (`2099-06-01`) and the real clock sits between them for the
+next seventy years. Adding a parameter no test would pass is a widening that
+buys nothing. Only `startsInPast` itself takes `now`, because its own tests need
+to sit on both sides of a single instant.
+
 ---
 
 ## 5. The two doors
@@ -163,12 +172,18 @@ Strictly `<`, so a class starting exactly now is allowed.
 **Result variant.** A new member of `UpdateClassResult`:
 
 ```ts
-| { ok: false; reason: 'past_start'; startsAt: Date }
+| { ok: false; reason: 'past_start' }
 ```
 
-It carries the computed instant for the same reason `locked` carries its fields
-and `terminal` carries its status: that type's docblock says the caller owns the
-wording and needs to name what happened.
+**No payload, deliberately, and the reasoning is worth recording because the
+obvious move is the other one.** `locked` carries its fields and `terminal`
+carries its status because each caller's *message varies with that value* —
+`terminal`'s 409 renders "completed" or "cancelled" from one branch, and
+`classes-api.test.ts:1016-1022` exists to pin exactly that variance. This
+refusal's message does not vary: there is one sentence for every past start,
+whether the offending value arrived as `date`, as `startTime`, or as both. A
+carried instant would be a payload nothing reads, which is a thing to review out
+rather than ship.
 
 **The opening read** (`class-lifecycle.ts:741`) gains
 `include: { teacher: { select: { defaultTimezone: true } } }` — the shape
