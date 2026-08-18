@@ -77,7 +77,23 @@
  * The asymmetry is the design, not an oversight, and it is worth keeping
  * straight: the SERVICE holds the POLICY (which fields a teacher may edit at
  * which lifecycle stage — a product question, and its answer here is "none"),
- * the DATABASE holds the one INVARIANT this deleting sweep depends on. So the
+ * the DATABASE holds the one INVARIANT this deleting sweep depends on.
+ *
+ * ONE CORRECTION TO THE MIGRATION'S OWN COMMENT, recorded here because an
+ * applied migration is checksummed and cannot be edited to carry it. That
+ * comment justifies the narrowness partly on the grounds that a wider trigger
+ * "would put `spotBroadcastAt` and the completion write at risk". It would
+ * not, and the sentence immediately before it in the same comment is why: a
+ * wider trigger keeps the same `WHEN (OLD.status IN ('completed',
+ * 'cancelled'))` gate, `completeClass` writes its totals in the same
+ * statement as the status flip so `OLD.status` is `in_progress` there, and
+ * both `spotBroadcastAt` writers are behind an `open` check. Neither can trip
+ * a gate keyed on a terminal OLD.status at any column width. The half of that
+ * sentence that does hold is "would gain nothing" — the service already
+ * refuses every field, so a wider trigger would duplicate policy in a file
+ * that can never be edited, and would have to be re-derived every time a
+ * column is added. That is the reason for `date` alone; the risk claim is
+ * not. So the
  * trigger covers `date` and nothing else: the database still permits column
  * writes other than `status` and `date` on a terminal class — those two have
  * a trigger each — which `class-terminal-status.test.ts` asserts on purpose,
@@ -448,10 +464,26 @@ export async function reapClosedWaitlistEntries(
 }
 
 /**
- * Three branches, mirroring `report()` in `waitlist-reconciliation.ts`.
+ * Four branches, mirroring `report()` in `waitlist-reconciliation.ts`.
  *
  * An unconditional `log.info` said "swept" whatever happened, which is the
- * wrong statement for two of the three outcomes below.
+ * wrong statement for three of the four outcomes below.
+ *
+ * WHY THE THRESHOLD IS PROPORTIONAL AND NOT TOTAL. Only the all-failed branch
+ * threw at first, and the argument for it was that `{classes: 500, failed:
+ * 500, deleted: 0}` returning normally is an affirmative false statement
+ * rather than a missing signal. `{classes: 500, failed: 499, deleted: 2}` is
+ * the same false statement with one fewer decimal place, and it took the
+ * `failed > 0` branch: a `warn`, a normal return, `makeTick` stamping
+ * `lastSuccessAt` and clearing `lastError`, and `/api/health` — the surface
+ * `docs/DEPLOYMENT.md` tells operators to watch — reporting this job
+ * `healthy: true`. All-or-nothing was the weakest version of the check this
+ * module argues for.
+ *
+ * The failure direction is worth stating because it is the reason this is a
+ * reporting fix and not a data fix: every failure mode here is UNDER-
+ * deletion, which is the safe side for a permanent delete. Nothing is lost by
+ * failing; what was lost was the operator's ability to find out.
  */
 function report(summary: ReapSummary): void {
   if (summary.classes > 0 && summary.failed === summary.classes) {
@@ -460,6 +492,14 @@ function report(summary: ReapSummary): void {
     // classes and failed all N is a different statement at any N, and the one
     // that must not be swallowed.
     log.error(summary, 'waitlist retention reaped nothing — every class it tried failed');
+    throw new RetentionFailedError(summary.classes);
+  }
+
+  if (summary.failed > summary.classes / 2) {
+    // Strictly greater, so an exact half stays a warning: at two classes with
+    // one failure the sample is too small to mean anything, and the sweep runs
+    // daily.
+    log.error(summary, 'waitlist retention failed for most of the classes it tried');
     throw new RetentionFailedError(summary.classes);
   }
 

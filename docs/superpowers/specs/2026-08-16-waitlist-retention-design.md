@@ -346,7 +346,7 @@ this feature a wrong date on a finished class was inert; it is not any more.
 freeze at which lifecycle stage is a product call this spec does not make — and
 it is the one way a row this sweep should keep can be made to look reapable.
 
-> **Amendment, 2026-08-17 — #247 is closed; the four bullets above are history,
+> **Amendment, 2026-08-17 — superseded by #247; the four bullets above are history,
 > not the current tree.** Each was true of the tree this spec described, so they
 > stand as that record rather than being rewritten. What replaced them:
 >

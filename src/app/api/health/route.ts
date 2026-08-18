@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { getJobHealth } from '@/lib/scheduler';
+import { log } from '@/lib/log';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +29,13 @@ export async function GET() {
       db: 'up',
       jobs,
     });
-  } catch {
+  } catch (err) {
+    // `db: 'down'` is the whole of what the RESPONSE may say — this endpoint
+    // is public. WHY it is down must still reach the log: auth rejection,
+    // pool exhaustion, TLS failure and "the database is gone" are four
+    // different pages for whoever is woken up, and an empty catch here
+    // destroys the distinction on the one endpoint an uptime monitor polls.
+    log.error({ err }, 'health check: database probe failed');
     return Response.json({ status: 'degraded', db: 'down', jobs }, { status: 503 });
   }
 }

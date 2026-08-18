@@ -5,11 +5,31 @@ import { isIncomeTier } from '@/lib/tiers';
 // Shared field validators
 // ---------------------------------------------------------------------------
 
-/** ISO calendar date (YYYY-MM-DD) that actually parses. */
+/**
+ * ISO calendar date (YYYY-MM-DD) that names a day that exists.
+ *
+ * Round-tripped, not `Number.isNaN`-checked. V8 rejects an out-of-range MONTH
+ * (`2026-13-01` is `Invalid Date`) but silently NORMALISES an out-of-range
+ * DAY: `new Date('2026-02-31')` is `2026-03-03`. So the NaN check validated
+ * roughly the right shape and the wrong semantics — `PUT {"date":
+ * "2026-02-31"}` answered 200 having moved the class to a day the caller
+ * never sent, and reported that as success.
+ *
+ * This is `Class.date` among others, the column `waitlist-retention.ts` reads
+ * before it permanently deletes a class's waitlist, so a silently rewritten
+ * value here is not a cosmetic wrong answer.
+ */
 const isoDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD')
-  .refine((s) => !Number.isNaN(new Date(s).getTime()), 'Invalid date');
+  .refine((s) => {
+    const parsed = new Date(s);
+    if (Number.isNaN(parsed.getTime())) return false;
+    // The string is already known to be `YYYY-MM-DD`, and `new Date` on that
+    // form parses as UTC midnight, so `toISOString()` returns the same
+    // calendar day it was given — unless the day was rolled forward.
+    return parsed.toISOString().slice(0, 10) === s;
+  }, 'Invalid date');
 
 /** Wall-clock time, 00:00-23:59. */
 const timeHHmm = z

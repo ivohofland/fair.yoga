@@ -1,9 +1,9 @@
-import { readFileSync } from 'fs';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import type { ClassStatus } from '@prisma/client';
 import { classifyApiError } from '@/lib/api-errors';
 import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
+import { enforcedTerminalStatuses } from '../../tests/migration-sql';
 
 /**
  * A pure DB-invariant test — no HTTP surface, nothing here calls the app on
@@ -462,23 +462,7 @@ describe('class terminal status trigger', () => {
    * named failure rather than a silent pass. No database is touched.
    */
   it('matches the exact status set the trigger SQL enforces', () => {
-    const sql = readFileSync(
-      new URL(
-        '../../prisma/migrations/20260805120000_class_terminal_status_trigger/migration.sql',
-        import.meta.url,
-      ),
-      'utf8',
-    );
-    // `noUncheckedIndexedAccess` makes both capture groups possibly-undefined,
-    // and the narrowing is kept rather than cast away: a `!` here would turn a
-    // shape change into a runtime `undefined` inside the comparison, which is
-    // the failure mode this pin exists to make loud.
-    const inList = sql.match(/OLD\.status IN \(([^)]+)\)/)?.[1];
-    if (!inList) throw new Error('trigger SQL no longer has the shape this pin reads');
-    const enforced = [...inList.matchAll(/'([a-z_]+)'/g)]
-      .map((x) => x[1])
-      .filter((s): s is string => s !== undefined)
-      .sort();
+    const enforced = enforcedTerminalStatuses('20260805120000_class_terminal_status_trigger');
 
     expect(enforced.length).toBeGreaterThan(0);
     expect(TERMINAL_CLASS_STATUSES.length).toBeGreaterThan(0);

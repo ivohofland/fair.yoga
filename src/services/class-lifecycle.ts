@@ -697,8 +697,8 @@ export type UpdateClassResult =
  * the registration; that was never true. `settingsLocked` is only ever written
  * `true`, from one site (`POST /api/registrations`), and nothing anywhere
  * writes it back to `false` — `template-sync.ts` leans on exactly that,
- * calling it a one-way latch. A terminal status, in turn, has no outgoing
- * transition.
+ * saying registration latches it `true` one way and never back. A terminal
+ * status, in turn, has no outgoing transition.
  *
  * Both are checked twice, for the same reason. The first check, against the
  * row we just read, is an optimisation: it answers the common case in one
@@ -706,13 +706,28 @@ export type UpdateClassResult =
  * that matters — it catches a first registration, or a completion, landing
  * between that read and this write, and on its own it produces the identical
  * result, list of offending fields included. Deleting the ECONOMIC check costs
- * round trips, not correctness, for exactly that reason. Deleting the TERMINAL
- * check is not as free: for a class that is BOTH terminal and settings-locked
- * with an economic field sent, control then reaches the `settingsLocked` check
- * next and answers `locked` — the narrower and the misleading one of the two
- * true refusals, since it reports the refusal as being about economic fields
- * when in fact every field is refused — before the CAS ever runs. Everywhere
- * else it too costs only round trips.
+ * round trips, not correctness, for exactly that reason.
+ *
+ * DELETING THE TERMINAL CHECK IS NOT AS FREE, AND IT CHANGES THE ANSWER IN
+ * TWO CASES, NOT ONE. An earlier revision of this docblock said one, and the
+ * branch that wrote it had already shipped the test that disproves it. Both
+ * are questions of ORDER — the terminal check sits above two other early
+ * returns, and each would answer first without it:
+ *
+ *  1. A class that is BOTH terminal and settings-locked with an economic
+ *     field sent. `cls.settingsLocked && sentEconomic !== null` fires next and
+ *     answers `locked` — the narrower and more misleading of two true
+ *     refusals, since it reports the refusal as being about economic fields
+ *     when in fact every field is refused. Pinned by `'reports terminal, not
+ *     locked, when the class is both'`.
+ *  2. A terminal class with an empty or all-`undefined` payload. `hasEdit`
+ *     fires next and answers `no_fields` (a 400) where the class is in fact
+ *     frozen (a 409) — and here the CAS re-derives nothing at all, because
+ *     control returns before any write is attempted. Pinned by `'answers
+ *     terminal, not no_fields, for a body that asks for nothing'`.
+ *
+ * Everywhere else deleting it costs only round trips, and the CAS does
+ * re-derive the same refusal.
  *
  * The terminal freeze additionally has a database backstop for `date` alone
  * (`class_terminal_date_guard`), because that is the column
@@ -726,12 +741,16 @@ export async function updateClass(
   const cls = await db.class.findUnique({ where: { id: classId } });
   if (!cls) return { ok: false, reason: 'not_found' };
 
-  // Checked BEFORE the economic lock: for every case except one, this is an
-  // optimisation only — the CAS below re-derives the same refusal. The
-  // exception is a class that is BOTH terminal and settings-locked with an
-  // economic field sent: without this early return, `cls.settingsLocked &&
-  // sentEconomic !== null` fires next and answers `locked`, so THIS check is
-  // what makes `terminal` the true answer when both apply, not the CAS.
+  // Checked BEFORE the economic lock AND before `hasEdit`, and the position is
+  // load-bearing in both directions. For most inputs this is an optimisation
+  // only — the CAS below re-derives the same refusal — but for TWO it is what
+  // produces the right answer at all, because each of the two early returns
+  // downstream would otherwise answer first: `locked` for a class that is also
+  // settings-locked with an economic field sent, and `no_fields` for an empty
+  // or all-undefined payload. The second is the one that gets forgotten,
+  // because the CAS cannot cover it: `hasEdit` returns before any write is
+  // attempted, so there is no compare-and-swap to fall back on. `updateClass`'s
+  // docblock enumerates both, each with the test that pins it.
   if (TERMINAL_CLASS_STATUSES.includes(cls.status)) {
     return { ok: false, reason: 'terminal', status: cls.status };
   }
@@ -790,29 +809,35 @@ export async function updateClass(
   // completion can commit between this function's opening read and this
   // write. This function takes no lock at all.
   //
-  // Both cited by name, never by line. This comment shipped with `:324` and
-  // `:349-360`, correct the day they were written and stale before the
-  // branch that wrote them merged: a later commit on the SAME branch grew
-  // `TERMINAL_CLASS_STATUSES`' docblock above, moved everything below it
-  // down, and left the numbers pointing at `completeClass`'s signature and
-  // at the middle of an unrelated comment. `CHARGED_STATUSES`' docblock,
-  // several hundred lines above, states the general rule this violated — a
-  // line-number citation into a file whose docblocks keep growing goes stale
-  // silently. Grep the two identifiers instead.
+  // Cited by name, not by line — `CHARGED_STATUSES`' docblock above argues why.
   //
-  // Spread copy because `TERMINAL_CLASS_STATUSES` is `readonly` and Prisma's
-  // `notIn` wants a mutable array — the same reason `gdpr.ts` spreads
-  // `CANCELLABLE_STATUSES` into its own status CAS.
-  const live = { status: { notIn: [...TERMINAL_CLASS_STATUSES] } };
+  // ONE THING NEITHER TRIGGER CATCHES, recorded here because the migration
+  // that would be the natural home for it is applied and therefore frozen:
+  // both triggers gate on `OLD.status`, so a SINGLE statement that writes
+  // `status` and `date` together (`SET status = 'completed', date = <past>`)
+  // sees `OLD.status = 'open'` and satisfies neither WHEN clause. No such
+  // writer exists — every status writer in `src/` writes status alone or
+  // status-plus-totals — and this function cannot become one, since `status`
+  // is not a `TeacherEditableClassField`. It is a shape to refuse in review,
+  // not a hole in the guard.
+  //
+  // Built as one object rather than two ternary arms so the terminal conjunct
+  // cannot be present in one filter shape and missing from the other: there
+  // is only one shape. `settingsLocked` is the part that varies, and it
+  // varies by conditional spread, the idiom `route.ts` already uses to build
+  // this function's `data`. Spread copy of the statuses because
+  // `TERMINAL_CLASS_STATUSES` is `readonly` and Prisma's `notIn` wants a
+  // mutable array — the same reason `gdpr.ts` spreads `CANCELLABLE_STATUSES`
+  // into its own status CAS.
+  const where: Prisma.ClassWhereInput = {
+    id: classId,
+    status: { notIn: [...TERMINAL_CLASS_STATUSES] },
+    ...(sentEconomic !== null ? { settingsLocked: false } : {}),
+  };
 
   let result: Prisma.BatchPayload;
   try {
-    result = await db.class.updateMany({
-      where: sentEconomic !== null
-        ? { id: classId, settingsLocked: false, ...live }
-        : { id: classId, ...live },
-      data,
-    });
+    result = await db.class.updateMany({ where, data });
   } catch (err) {
     if (isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])) {
       return { ok: false, reason: 'slot_conflict' };
@@ -868,5 +893,15 @@ export async function updateClass(
     );
   }
 
-  return { ok: true, cls: await db.class.findUniqueOrThrow({ where: { id: classId } }) };
+  // `findUnique`, not `findUniqueOrThrow`. The write succeeded, but the row
+  // can still be gone by the time it is re-read: `template-sync.ts`'s
+  // wrong-day cleanup and `archiveOrUnarchiveTemplate` both delete future
+  // instances, which is the same population being edited here. `P2025` has no
+  // branch in `classifyApiError`, so throwing would surface a bare 500 for a
+  // race — and `isRecordNotFound`'s own docblock states the rule this would
+  // break: losing the race should produce the same answer as never having had
+  // the row. That answer already exists as a variant.
+  const updated = await db.class.findUnique({ where: { id: classId } });
+  if (!updated) return { ok: false, reason: 'not_found' };
+  return { ok: true, cls: updated };
 }

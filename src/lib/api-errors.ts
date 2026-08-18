@@ -68,13 +68,19 @@ export type ApiFailure = {
  *   terminal AND `date` more than 365 days past, and only the first half was
  *   enforced.
  *
- * THE NAME OF THIS FUNCTION PREDATES THE SECOND TRIGGER and is now narrower
- * than what it matches: a date violation is classified here too. Left as-is
- * deliberately — the rename would be a pure churn edit, changing no behaviour
- * while touching this file and every comment across the services and docs that
- * cites the name — but said out loud, because a future reader greps
- * `isTerminalStatusViolation`, finds nothing about dates, and must not
- * conclude that a date violation goes unhandled and falls to a 500.
+ * ADDING A THIRD TRIGGER: it joins this branch only by doing BOTH — declaring
+ * `USING ERRCODE = '23514'` *and* carrying the literal clause `which is
+ * terminal` in its message. Either one alone classifies 500 for a request
+ * that should be a 409. That requirement used to be undocumented and
+ * unenforced, so the author of a third trigger would have had to already know
+ * it; `api-errors.test.ts` now sweeps `prisma/migrations/` and reddens on the
+ * commit that adds a `23514` trigger without the phrase. Mechanical, not
+ * remembered.
+ *
+ * The name is narrower than what this matches — a date violation classifies
+ * here too. Kept rather than renamed, but said out loud, because a reader who
+ * greps `isTerminalStatusViolation`, finds nothing about dates, and concludes
+ * a date violation goes unhandled would be wrong.
  *
  * Measured directly rather than assumed (`src/services/class-terminal-
  * status.test.ts`, which also pins `classifyApiError(caught).status === 409`
@@ -95,31 +101,22 @@ export type ApiFailure = {
  *     PostgresError { code: "23514", message: "Class <id> is completed, which
  *     is terminal; cannot change its date from <old> to <new>", ... }
  *
- * Not `PrismaClientKnownRequestError` — FOR A TYPED CALL, which is the only
- * kind that reaches this in production. There is no P-code for "a trigger
- * fired", so a `class.update`/`updateMany` that trips one falls back to
- * Unknown, and Unknown carries no `.code`/`.meta` the way P2002 does below;
- * the SQLSTATE only exists inside the message string. The qualifier is
- * load-bearing and an earlier revision of this paragraph omitted it, turning
- * an observation about typed calls into a false claim about the SQLSTATE
- * itself: the error CLASS is decided by how the statement was issued, not by
- * what failed. Raw queries have a P-code of their own — `P2010`, "raw query
- * failed" — and carry the SQLSTATE in ``Code: `23514` `` framing regardless
- * of cause, the same split `isTransientDbError` below records for `55P03`.
- * `class-terminal-date.test.ts` observes both shapes from this one trigger.
+ * TWO ERROR SHAPES CARRY THE SAME SQLSTATE, and which one arrives is decided
+ * by how the statement was issued, not by what failed. A typed
+ * `class.update`/`updateMany` falls back to `PrismaClientUnknownRequestError`
+ * — there is no P-code for "a trigger fired" — and spells the SQLSTATE
+ * `code: "23514"`. A raw query has a P-code of its own, `P2010` ("raw query
+ * failed"), and spells it ``Code: `23514` ``. BOTH ARE MATCHED.
  *
- * The consequence belongs here, where the matcher is: a terminality `23514`
- * arriving over RAW SQL classifies 500, not 409, because the `instanceof`
- * conjunct below admits only the Unknown shape. That is a recorded choice,
- * not an oversight, and it is unreachable in production — the only raw
- * statements in `src/` that touch `Class` are `SELECT … FOR UPDATE` and the
- * lock-timeout `SET` (`lib/db-locks.ts`, `services/waitlist.ts`,
- * `api/registrations/route.ts`), none of which can fire either trigger, and
- * every raw `UPDATE "Class" SET date` in the repo lives inside the date
- * guard's own test. `api-errors.test.ts` pins the 500 with a fixture in that
- * exact shape. Should a production raw writer of `Class.date` or
- * `Class.status` ever appear, widening this conjunct is the decision to make
- * then; do not widen it speculatively.
+ * An earlier revision admitted only the Unknown shape and argued the raw one
+ * was unreachable. The argument was true, and it was the wrong thing to
+ * depend on: it made a 409-vs-500 hinge on a whole-repo census of raw
+ * `Class` writers that nothing could keep honest, and the census as written
+ * was already falsified by the date guard's own test file. `isTransientDbError`
+ * below had settled the identical question the other way for `55P03`, for the
+ * reason that applies here too — both shapes mean the same thing to a caller,
+ * so a matcher built for one silently misses the other. `class-terminal-
+ * date.test.ts` observes both shapes from this one trigger and pins both.
  *
  * `23514` (check_violation) alone is not a safe match: it is Postgres's
  * default SQLSTATE for a plain `CHECK` constraint too, and this schema
@@ -139,13 +136,18 @@ export type ApiFailure = {
  * `class-terminal-status.test.ts` and `class-terminal-date.test.ts`, each of
  * which pins `classifyApiError(...).status === 409` against its own real
  * thrown error.
+ *
+ * The SQLSTATE is matched inside its Postgres framing rather than as a bare
+ * substring — the trap `isTransientDbError` documents below, and which this
+ * function used to be the standing example of.
+ *
+ * Narrows to `Error` so the branch in `classifyApiError` can read the
+ * trigger's message tail without a cast.
  */
-function isTerminalStatusViolation(error: unknown): boolean {
-  return (
-    error instanceof Prisma.PrismaClientUnknownRequestError &&
-    error.message.includes('23514') &&
-    error.message.includes('which is terminal')
-  );
+function isTerminalStatusViolation(error: unknown): error is Error {
+  if (!(error instanceof Error)) return false;
+  if (!error.message.includes('which is terminal')) return false;
+  return error.message.includes('code: "23514"') || error.message.includes('Code: `23514`');
 }
 
 /**
@@ -266,27 +268,42 @@ export function classifyApiError(error: unknown): ApiFailure {
   // The terminality triggers (migrations 20260805120000 and 20260817120000)
   // raise with SQLSTATE 23514. Reaching here means a write to a frozen class
   // — its status, or since #247 its date — got past the guard that should
-  // have refused it first: a CAS or row lock for the status trigger, every
-  // writer has had one since #174, and `updateClass`'s terminal check for the
-  // date trigger. Either way this is a 409 and a `warn`, the same reading as
-  // the P2002 branch below: not an outage, but worth knowing a guard was
-  // bypassed.
+  // have refused it first. That is a 409 either way: the request is
+  // well-formed and it conflicts with a state the class has already reached.
   if (isTerminalStatusViolation(error)) {
-    // Deliberately says neither "status" nor "date". Two triggers reach this
-    // branch and the shared matcher cannot tell them apart — the discriminator
-    // is the `which is terminal` clause they have in common, not the tail that
-    // differs — so any wording that names one column is simply wrong half the
-    // time. The one thing true of both is that the class is frozen.
+    // WHICH trigger fired, read from the message tail the matcher itself
+    // deliberately ignores. Classification is shared; the operator's reading
+    // of the two is not, and `level` is the only field that can say so.
     //
-    // No `detail`: `withErrorHandler` always logs `err: error`, and the
-    // trigger's own message already names the class id, the terminal status
-    // and the attempted change — there is nothing this branch could add that
-    // isn't in one of those two places already.
+    // A STATUS fire is a lost race. Every status writer has had a CAS or a
+    // row lock since #174, so the trigger catching one means a guard was
+    // bypassed under contention — expected-but-notable, the same reading as
+    // the P2002 branch below, and `warn` is right for it.
+    //
+    // A DATE fire is not a race, because there is no race to lose:
+    // `updateClass` is the only writer of `Class.date` in `src/`, and its CAS
+    // (`status: { notIn: [...TERMINAL_CLASS_STATUSES] }`) means this trigger's
+    // own WHEN clause can never hold for it. The trigger is currently
+    // unfireable. If it fires, someone has added an unguarded writer of the
+    // exact column `reapClosedWaitlistEntries` reads before it permanently
+    // DELETEs a class's queue — the precondition for the data loss #247
+    // exists to prevent. That must not land in the log at the level a
+    // lock timeout lands at.
+    const trigger = error.message.includes('cannot change its date') ? 'date' : 'status';
     return {
       status: 409,
+      // Deliberately names neither "status" nor "date". Both triggers reach
+      // this branch and both mean the same thing to the caller — the class is
+      // frozen — so any wording that names one column is wrong half the time.
       message: 'That class can no longer be changed',
       logMessage: 'terminal class write reached a DB trigger',
-      level: 'warn',
+      level: trigger === 'date' ? 'error' : 'warn',
+      // `withErrorHandler` always logs `err: error`, so the trigger's own
+      // message is already in the line. What it is not is GROUPABLE: it lives
+      // inside a several-hundred-character driver string that no log filter
+      // can facet on. One field turns "did the unfireable trigger fire" into
+      // a query.
+      detail: { trigger },
     };
   }
 

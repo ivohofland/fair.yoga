@@ -70,16 +70,19 @@ export const PUT = withErrorHandler(async (
       409,
     );
   }
-  // #247. A terminal class is frozen whole, not by field list, so this is not
-  // a `locked` variant with a different set — the two differ in SCOPE (every
-  // field, versus `ECONOMIC_FIELDS`) and in TRIGGER POINT (terminality, versus
-  // the first registration). They do not differ in permanence: neither can be
-  // undone. `settingsLocked` is only ever written `true`, and a terminal
-  // status has no outgoing transition. 409 rather than 403: the request is
-  // well-formed and the teacher does own the class; it conflicts with a state
-  // the class has already reached.
+  // #247. Not a `locked` variant with a different field set — the two freezes
+  // differ in scope and in trigger point, and `updateClass`'s docblock owns
+  // that argument. Restated here once already and it went stale within the
+  // branch, so it is cited rather than copied.
+  //
+  // Route-local decision, which is the part that does belong here: 409 rather
+  // than 403, because the request is well-formed and the teacher does own the
+  // class — ownership was settled above — so this conflicts with a state the
+  // class has reached rather than with who is asking. Coded like the two 409s
+  // below it, so a client can tell "frozen" from "slot taken" without
+  // matching on English.
   if (result.reason === 'terminal') {
-    return respondError(`Cannot edit a class that is ${result.status}`, 409);
+    return respondError(`Cannot edit a class that is ${result.status}`, 409, 'CLASS_TERMINAL');
   }
   // A reschedule (date/startTime) landed on a slot this teacher already
   // occupies with another live class (#196) — the same clash a `POST` into

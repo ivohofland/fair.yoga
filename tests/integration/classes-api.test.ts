@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type ClassStatus } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { formatDayHeader } from '@/lib/format';
 
@@ -37,6 +37,7 @@ let lockStudentAccountId: string | null;
 // it through POST …/complete would need registrations and pricing fixtures to
 // prove something this test does not claim.
 let completedClassId: string;
+let cancelledTerminalClassId: string;
 
 const UNKNOWN_CLASS_ID = '00000000-0000-4000-8000-000000000000';
 
@@ -98,7 +99,7 @@ beforeAll(async () => {
   // sibling helpers in this directory (`templateBody` in
   // class-templates-api.test.ts, `makeTemplate` in studio-api.test.ts)
   // dropped their own defaults for the same reason.
-  function makeClass(classType: string, status: 'draft' | 'open' | 'completed', startTime: string) {
+  function makeClass(classType: string, status: ClassStatus, startTime: string) {
     return prisma.class.create({
       data: {
         teacherId: ownerId,
@@ -147,6 +148,14 @@ beforeAll(async () => {
 
   const completedCls = await makeClass('Classes API Terminal (#247)', 'completed', '10:15');
   completedClassId = completedCls.id;
+
+  // The OTHER terminal status. `updateClass` returns `reason: 'terminal'`
+  // with the status attached and the route interpolates it, so a fixture in
+  // only one of the two states leaves half the rendered message unasserted
+  // — and `TERMINAL_CLASS_STATUSES` has exactly two members, so covering
+  // both is cheap rather than combinatorial.
+  const cancelledCls = await makeClass('Classes API Terminal cancelled (#247)', 'cancelled', '10:30');
+  cancelledTerminalClassId = cancelledCls.id;
 
   // A student who books lockedClassId over HTTP — the same trigger path
   // registrations-api.test.ts uses (POST /api/registrations) — so the lock
@@ -225,6 +234,7 @@ afterAll(async () => {
     lockedClassId,
     noticeClassId,
     completedClassId,
+    cancelledTerminalClassId,
   ].filter(Boolean);
   if (allClassIds.length > 0) {
     await prisma.notification.deleteMany({ where: { relatedClassId: { in: allClassIds } } });
@@ -979,12 +989,42 @@ describe('PUT /api/classes/[id]', () => {
     const res = await put(ownerToken, completedClassId, { date: '2020-01-01' });
     expect(res.status).toBe(409);
 
-    const json = (await res.json()) as { error: { message: string } };
+    const json = (await res.json()) as { error: { code: string; message: string } };
     expect(json.error.message).toContain('completed');
+    expect(json.error.code).toBe('CLASS_TERMINAL');
 
     // The whole point: a refusal that still wrote the column would leave
     // waitlist-retention's sweep with a class dated 2020 to reap.
     const after = await prisma.class.findUniqueOrThrow({ where: { id: completedClassId } });
+    expect(after.date.toISOString().slice(0, 10)).toBe('2099-06-01');
+  });
+
+  it('cancelled class: the edit is refused with 409 naming cancelled, not completed (#247)', async () => {
+    const before = await prisma.class.findUniqueOrThrow({
+      where: { id: cancelledTerminalClassId },
+    });
+    expect(before.status).toBe('cancelled');
+
+    // Not a duplicate of the `completed` case above. The route builds its
+    // message by interpolating `result.status`, so the two statuses render two
+    // different sentences from one branch, and only one of them was pinned.
+    // A regression that hard-coded "completed" into that string — the obvious
+    // way to write it if only the completed fixture exists — would have passed
+    // the whole suite while telling half of the affected teachers their class
+    // is in a state it is not.
+    const res = await put(ownerToken, cancelledTerminalClassId, { date: '2020-01-01' });
+    expect(res.status).toBe(409);
+
+    const json = (await res.json()) as { error: { code: string; message: string } };
+    expect(json.error.message).toContain('cancelled');
+    expect(json.error.message).not.toContain('completed');
+    // Coded, like the two conflict 409s in the same handler, so a client can
+    // distinguish "frozen" from "slot taken" without matching on English.
+    expect(json.error.code).toBe('CLASS_TERMINAL');
+
+    const after = await prisma.class.findUniqueOrThrow({
+      where: { id: cancelledTerminalClassId },
+    });
     expect(after.date.toISOString().slice(0, 10)).toBe('2099-06-01');
   });
 });

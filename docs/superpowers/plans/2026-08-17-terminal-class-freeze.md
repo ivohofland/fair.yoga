@@ -2,6 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**On the line numbers in this document.** Same dated-record rule the design
+spec carries, and for the same reason: every `file.ts:NN` address below was
+exact against the tree this plan was written against, before the branch
+existed. The branch then grew `class-lifecycle.ts` and `docs/data-model.md`, so
+at least two of them now land on neighbouring content — `class-lifecycle.ts:78`
+in Task 1 (the constant moved down when its own docblock grew) and
+`docs/data-model.md:405` in the last task (which now points at the line that
+task itself added). They are left as written rather than chased, because
+re-pointing them would claim a precision a dated record cannot keep. Where an
+address matters the **symbol** is named beside it — follow the name, not the
+number. Live code comments are held to the stricter rule and carry none.
+
 **Goal:** Make `updateClass` refuse every edit to a `completed` or `cancelled`
 class with a typed reason the route answers 409, and back the one column a
 deleting sweep reads with a database trigger.
@@ -450,12 +462,16 @@ Replace the whole docblock above `export async function updateClass` (`:667-676`
 Immediately after `if (!cls) return { ok: false, reason: 'not_found' };`:
 
 ```ts
-  // Checked BEFORE the economic lock: for every case except one, this is an
-  // optimisation only — the CAS below re-derives the same refusal. The
-  // exception is a class that is BOTH terminal and settings-locked with an
-  // economic field sent: without this early return, `cls.settingsLocked &&
-  // sentEconomic !== null` fires next and answers `locked`, so THIS check is
-  // what makes `terminal` the true answer when both apply, not the CAS.
+  // Checked BEFORE the economic lock AND before `hasEdit`, and the position is
+  // load-bearing in both directions. For most inputs this is an optimisation
+  // only — the CAS below re-derives the same refusal — but for TWO it is what
+  // produces the right answer at all, because each of the two early returns
+  // downstream would otherwise answer first: `locked` for a class that is also
+  // settings-locked with an economic field sent, and `no_fields` for an empty
+  // or all-undefined payload. The second is the one that gets forgotten,
+  // because the CAS cannot cover it: `hasEdit` returns before any write is
+  // attempted, so there is no compare-and-swap to fall back on. `updateClass`'s
+  // docblock enumerates both, each with the test that pins it.
   if (TERMINAL_CLASS_STATUSES.includes(cls.status)) {
     return { ok: false, reason: 'terminal', status: cls.status };
   }

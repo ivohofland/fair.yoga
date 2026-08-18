@@ -1,8 +1,8 @@
-import { readFileSync } from 'fs';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma, ClassStatus } from '@prisma/client';
 import { classifyApiError } from '@/lib/api-errors';
 import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
+import { enforcedTerminalStatuses } from '../../tests/migration-sql';
 
 /**
  * A pure DB-invariant test for `class_terminal_date_guard` (#247) — no HTTP
@@ -170,8 +170,12 @@ describe('class_terminal_date_guard', () => {
   it.each(TERMINAL_CLASS_STATUSES)(
     'refuses to move a %s class to a past date, from raw SQL',
     async (status) => {
-      const { classId } = await makeClass({ status: 'open' });
-      await prisma.class.updateMany({ where: { id: classId, status: 'open' }, data: { status } });
+      // Inserted terminal directly. Both terminality guards are BEFORE
+      // UPDATE triggers, so an INSERT with a terminal status is unaffected and
+      // the row's state at the point of the date write below is identical to
+      // what a create-then-flip would produce. The intermediate `open` state
+      // is never read or asserted, so the extra statement covered nothing.
+      const { classId } = await makeClass({ status });
 
       // Raw SQL, not `updateClass` — the point is that this holds with the
       // service layer, and Prisma's typed layer, entirely out of the picture.
@@ -202,9 +206,12 @@ describe('class_terminal_date_guard', () => {
       expect(String(caughtRaw)).toMatch(/which is terminal/);
       expect(String(caughtRaw)).toMatch(new RegExp(`is ${status}`));
 
-      // The typed path, which is the one production actually takes: of the
-      // `class.update`/`updateMany` sites in `src/`, the only one that writes
-      // `date` is `updateClass`. It is also the only shape
+      // The typed path, which is the one production actually takes: of the 13
+      // NON-TEST `class.update`/`updateMany` sites in `src/`, the only one
+      // that writes `date` is `updateClass`. The qualifier is not pedantry —
+      // this very file issues a `prisma.class.update` writing `date` eight
+      // lines below, as do four cases in `class-transitions.test.ts`, so
+      // without "non-test" the sentence is refuted by its own test body. It is also the only shape
       // `isTerminalStatusViolation` matches, so the 409 claim has to be
       // pinned against this write rather than the raw one above — asserting
       // it on the raw error would assert something no caller can observe.
@@ -252,17 +259,13 @@ describe('class_terminal_date_guard', () => {
   });
 
   it('allows a write that carries a terminal class\'s unchanged date alongside another column', async () => {
-    // The IS DISTINCT FROM half of the WHEN clause, and the reason it is
-    // there: `UPDATE OF date` fires whenever `date` is in the SET list, value
-    // unchanged or not. Without this half, any future writer that carries the
-    // current date along with the columns it means to change is rejected by a
-    // guard aimed at something else — the same failure the sibling trigger
-    // records for its own WHEN.
-    const { classId } = await makeClass({ status: 'open' });
-    await prisma.class.updateMany({
-      where: { id: classId, status: 'open' },
-      data: { status: 'completed' },
-    });
+    // The IS DISTINCT FROM half of the WHEN clause. The migration's own
+    // comment argues why it is there (`UPDATE OF date` fires on presence in
+    // the SET list, not on change) and both triggers record it; this test is
+    // the part that cannot live in the SQL — a writer that carries the
+    // unchanged date alongside a column it does mean to change, proved to get
+    // through.
+    const { classId } = await makeClass({ status: 'completed' });
 
     // `${ORIGINAL_DATE}::date`, NOT `${new Date(ORIGINAL_DATE)}`. Binding a JS
     // Date sends a timestamptz, which Postgres narrows to `date` using the
@@ -323,30 +326,13 @@ describe('class_terminal_date_guard', () => {
    * for.
    *
    * Read out of the migration's own SQL rather than restated here, so the
-   * enforced set is written down in exactly one place. Regex over SQL is
-   * normally fragile; here it inverts, because the file is an APPLIED
-   * migration that `CLAUDE.md` forbids editing, so the text is frozen by
-   * policy — and the `if (!inList)` guard turns a shape change into a named
-   * failure rather than a silent pass. Reads a file; touches no database.
+   * enforced set is written down in exactly one place. The parsing lives in
+   * `tests/migration-sql.ts`, shared with the sibling pin — two pins, one
+   * regex: each must read its OWN migration, but neither needs its own copy
+   * of the fragile part. Reads a file; touches no database.
    */
   it('matches the exact status set the trigger SQL enforces', () => {
-    const sql = readFileSync(
-      new URL(
-        '../../prisma/migrations/20260817120000_class_terminal_date_trigger/migration.sql',
-        import.meta.url,
-      ),
-      'utf8',
-    );
-    // `noUncheckedIndexedAccess` makes the capture groups possibly-undefined,
-    // and the narrowing is kept rather than cast away: a `!` here would turn a
-    // shape change into a runtime `undefined` inside the comparison, which is
-    // the failure mode this pin exists to make loud.
-    const inList = sql.match(/OLD\.status IN \(([^)]+)\)/)?.[1];
-    if (!inList) throw new Error('trigger SQL no longer has the shape this pin reads');
-    const enforced = [...inList.matchAll(/'([a-z_]+)'/g)]
-      .map((x) => x[1])
-      .filter((s): s is string => s !== undefined)
-      .sort();
+    const enforced = enforcedTerminalStatuses('20260817120000_class_terminal_date_trigger');
 
     expect(enforced.length).toBeGreaterThan(0);
     expect(TERMINAL_CLASS_STATUSES.length).toBeGreaterThan(0);

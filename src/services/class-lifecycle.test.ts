@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, type ClassStatus } from '@prisma/client';
+import { PrismaClient, ClassStatus } from '@prisma/client';
 import { classStartInstant } from '@/lib/timezone';
 import {
   VALID_TRANSITIONS,
@@ -1241,6 +1241,22 @@ describe('updateClass (DB)', () => {
   // falsified it silently. Routed through the module-level `slotTime` rather
   // than a raw `09:${counter}` literal.
   let makeClassCounter = 0;
+  /**
+   * FAR-FUTURE ON PURPOSE, and it is not cosmetic.
+   *
+   * `autoCompleteClasses` sweeps `{ status: 'in_progress' }` GLOBALLY — no
+   * teacher filter — and `class-transitions.test.ts`'s `'does not complete a
+   * class rescheduled after the sweep read it'` asserts the global count is
+   * 0 against a frozen clock of 2026-07-20. This block's `it.each` control
+   * plants `in_progress` fixtures, so on the previous date of 2026-06-01 any
+   * of them surviving an interrupted run (the `afterAll` cleans up, a killed
+   * process does not) would fail a test in another file, in a way that
+   * self-heals on the next run because the sweep consumes the leftover. That
+   * is the shape of a flake that gets three sessions of investigation.
+   *
+   * A 2099 date is outside every sweep window, so a leftover is inert.
+   */
+  const FIXTURE_DATE = '2099-06-01';
   const makeClass = (settingsLocked: boolean, status: ClassStatus = 'draft') => {
     makeClassCounter += 1;
     return prisma.class.create({
@@ -1248,7 +1264,7 @@ describe('updateClass (DB)', () => {
         teacherId,
         teacherRoomId,
         classType: 'Hatha',
-        date: new Date('2026-06-01'),
+        date: new Date(FIXTURE_DATE),
         startTime: slotTime(makeClassCounter),
         durationMinutes: 60,
         roomCost: 35,
@@ -1435,7 +1451,7 @@ describe('updateClass (DB)', () => {
     // unfulfilled queue, so a refusal that still moved the column would close
     // nothing.
     const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(after.date.toISOString().slice(0, 10)).toBe('2026-06-01');
+    expect(after.date.toISOString().slice(0, 10)).toBe(FIXTURE_DATE);
   });
 
   it('refuses a date edit on a cancelled class too', async () => {
@@ -1449,7 +1465,7 @@ describe('updateClass (DB)', () => {
     // class's queue too, not only a `completed` one, so a refuse-but-write bug
     // on this path is the identical data-loss shape as T1's.
     const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
-    expect(after.date.toISOString().slice(0, 10)).toBe('2026-06-01');
+    expect(after.date.toISOString().slice(0, 10)).toBe(FIXTURE_DATE);
   });
 
   it('freezes the whole class, not a field list — a description edit is refused', async () => {
@@ -1479,14 +1495,15 @@ describe('updateClass (DB)', () => {
   });
 
   it('reports terminal, not locked, when the class is both', async () => {
-    // Pins the ORDER of the two early checks. Both freezes are permanent —
-    // `settingsLocked` is only ever written `true` — so "which one lifts"
-    // cannot be the tiebreak, and an earlier version of this comment claimed
-    // it was. SCOPE is the tiebreak: `locked` names the narrower policy and
-    // misleads, reporting the refusal as being about economic fields when
-    // every field is refused. A teacher told "locked: roomCost" would
-    // reasonably retry with a `description` edit, which also fails.
-    // `terminal` is the answer that does not invite a wrong retry.
+    // Pins the ORDER of the two early checks. Neither freeze lifts, so "which
+    // one lifts" cannot be the tiebreak — `updateClass`'s docblock owns that
+    // argument and an earlier copy of it here got it wrong, which is why this
+    // one cites rather than restates. SCOPE is the tiebreak, and the
+    // consequence is what belongs in a test comment: `locked` reports the
+    // refusal as being about economic fields when every field is refused, so a
+    // teacher told "locked: roomCost" reasonably retries with a `description`
+    // edit, which also fails. `terminal` is the answer that does not invite a
+    // wrong retry.
     const cls = await makeClass(true, 'completed');
 
     const result = await updateClass(prisma, cls.id, { roomCost: 999 });
@@ -1499,7 +1516,20 @@ describe('updateClass (DB)', () => {
     expect(Number(after.roomCost)).toBe(35);
   });
 
-  it.each(['draft', 'open', 'in_progress'] as const)(
+  /**
+   * Derived, not listed. `class-terminal-date.test.ts` builds the same control
+   * set as the enum minus the terminal constant and says in its own docblock
+   * that this literal is the inferior version it is mirroring — so the two
+   * shapes shipped side by side. A literal generates the same three cases
+   * today and silently generates the wrong ones tomorrow: add a status to the
+   * enum and it is never exercised; move one INTO the terminal set and the
+   * literal keeps asserting that a now-frozen class still updates.
+   */
+  const NON_TERMINAL_STATUSES = Object.values(ClassStatus).filter(
+    (s) => !TERMINAL_CLASS_STATUSES.includes(s),
+  );
+
+  it.each(NON_TERMINAL_STATUSES)(
     'still updates a %s class — the freeze starts at terminality, not at "not editable in the UI"',
     async (status) => {
       // `in_progress` is here deliberately. The teacher edit page redirects
@@ -1517,6 +1547,64 @@ describe('updateClass (DB)', () => {
       expect(after.description).toBe(`Edited while ${status}`);
     },
   );
+
+  /**
+   * THE COMPARE-AND-SWAP, AGAINST A REAL DATABASE. Every other test of the
+   * `notIn` conjunct is a stub that asserts the SHAPE OF THE OBJECT HANDED TO
+   * PRISMA — replace `status: { notIn: [...] }` with `{}` and only those stub
+   * tests redden, because nothing else demonstrates that Postgres actually
+   * refuses the write.
+   *
+   * That gap matters more than it looks. The DB trigger backstops `date` and
+   * ONLY `date`. For any other column — `description` here — the conjunct is
+   * the sole thing standing between a completion that commits mid-request and
+   * a write onto a frozen class, and this suite's own standard is that a
+   * refusal has to mean the row was not written, not merely that an error was
+   * returned. Until this test, that standard was unmet for exactly the path
+   * the conjunct exists to cover.
+   *
+   * The race is staged, not waited for: a query extension flips the class to
+   * `completed` after `updateClass`'s OPENING read has already returned
+   * `open`, so the early return sees a live class and steps aside. Same shape
+   * as `class-transitions.test.ts`'s `'does not complete a class rescheduled
+   * after the sweep read it'`. `reads` is asserted because a hook that fired
+   * on the wrong call would stage a different race than the one described and
+   * still produce a green `terminal`.
+   */
+  it('refuses the write at the database when the class completes mid-request', async () => {
+    const cls = await makeClass(false, 'open');
+
+    let reads = 0;
+    const racing = prisma.$extends({
+      query: {
+        class: {
+          async findUnique({ args, query }) {
+            const row = await query(args);
+            reads += 1;
+            if (reads === 1) {
+              await prisma.class.update({ where: { id: cls.id }, data: { status: 'completed' } });
+            }
+            return row;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const result = await updateClass(racing, cls.id, { description: 'Edited mid-completion' });
+
+    expect(result).toEqual({ ok: false, reason: 'terminal', status: 'completed' });
+    // The opening read, then the re-read in the `count === 0` branch. Three
+    // would mean the write was retried; one would mean the early return
+    // answered and the CAS never ran.
+    expect(reads).toBe(2);
+
+    // The assertion the stubs cannot make: the row is untouched. `description`
+    // is not economic and not `date`, so no trigger and no `settingsLocked`
+    // check was ever involved — this is the conjunct alone.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.description).toBeNull();
+    expect(after.status).toBe('completed');
+  });
 
   it('answers terminal, not no_fields, for a body that asks for nothing', async () => {
     // Pins the OTHER ordering the early return participates in. #247 put the
@@ -1579,6 +1667,11 @@ describe('updateClass — the count === 0 branches', () => {
     statusAfter?: ClassStatus;
   }) {
     const updateManyCalls: UpdateManyArgs[] = [];
+    // Resolved once rather than as a `??` chain at each use, so "statusAfter
+    // defaults to status, which defaults to open" is a statement rather than
+    // operator precedence, and `'open'` appears in one place.
+    const statusOnRead = opts.status ?? 'open';
+    const statusOnReRead = opts.statusAfter ?? statusOnRead;
     let reads = 0;
     const db = {
       class: {
@@ -1588,19 +1681,14 @@ describe('updateClass — the count === 0 branches', () => {
             return {
               id: 'stub-class',
               settingsLocked: opts.settingsLocked,
-              status: opts.status ?? 'open',
+              status: statusOnRead,
             };
           }
-          return opts.rowSurvives
-            ? { id: 'stub-class', status: opts.statusAfter ?? opts.status ?? 'open' }
-            : null;
+          return opts.rowSurvives ? { id: 'stub-class', status: statusOnReRead } : null;
         },
         updateMany: async (args: UpdateManyArgs) => {
           updateManyCalls.push(args);
           return { count: 0 };
-        },
-        findUniqueOrThrow: async () => {
-          throw new Error('findUniqueOrThrow must not be reached when count === 0');
         },
       },
     } as unknown as PrismaClient;

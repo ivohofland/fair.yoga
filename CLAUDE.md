@@ -43,7 +43,7 @@ The heart of the app. Income-based pricing with compressed tier spread and scali
 
 ### Class Lifecycle
 
-Classes move through states: `draft → open → full → in_progress → completed → cancelled`
+Classes move through states: `draft → open → in_progress → completed → cancelled` (the five members of the `ClassStatus` enum). `full` is a DERIVED display state, not a stored status — it means registrations have reached `max_students`
 
 - `settings_locked` flips true on first registration — economic fields become immutable
 - Terminal status (`completed`/`cancelled`) freezes the whole class — `updateClass` refuses every field, 409; `date` alone is additionally frozen by a DB trigger the retention sweep depends on
@@ -58,7 +58,7 @@ Classes move through states: `draft → open → full → in_progress → comple
 - Final hour before the *cancel deadline* (not before the class): switch to first-come-first-claimed broadcast
 - Frozen after deadline — no more promotions
 - Retention: an entry that never became a registration is reaped once its class
-  is terminal and *more than* 365 days past its date — a daily sweep, no migration
+  is terminal and *more than* 365 days past its date — a daily sweep, no migration of its own (the `date` half of that predicate is held by a trigger from #247, see Class Lifecycle)
 
 ### Payment Model
 
@@ -97,7 +97,7 @@ Key design decisions:
 
 - The tab bar renders only on the four tab roots; active tab = teal icon + label in a teal-tint pill, gold dot on Inbox when unread.
 - **Detail views are separate pages** — tapping a class, student, or notification opens a full page with a back link; the tab bar hides there.
-- Class detail is one adaptive page that transforms based on lifecycle stage (draft → open → full → in_progress → completed → cancelled)
+- Class detail is one adaptive page that transforms based on lifecycle stage (draft → open → full → in_progress → completed → cancelled) — `full` here is the derived at-capacity view of `open`, not a stored status
 - Dashboard IS the schedule — the Schedule tab at `/` is the home base (`/schedule` redirects there)
 - Rooms are in Settings (set-up-once infrastructure)
 - Studio classes are a quick entry in the schedule list (visually lighter dashed cards)

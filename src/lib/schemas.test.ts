@@ -196,6 +196,61 @@ describe('updateClassSchema', () => {
   });
 });
 
+describe('isoDate (via updateClassSchema.date)', () => {
+  /**
+   * The rolled-over calendar date. `new Date('2026-02-31')` is NOT
+   * `Invalid Date` — V8 rejects an out-of-range MONTH and silently NORMALISES
+   * an out-of-range DAY, so it parses as 2026-03-03. The previous
+   * `!Number.isNaN(getTime())` refine therefore accepted it, and
+   * `PUT /api/classes/[id]` answered 200 having moved the class three days
+   * past the date the caller sent, reporting that as success.
+   *
+   * `Class.date` is the column `reapClosedWaitlistEntries` reads before it
+   * permanently deletes a class's waitlist, so a silently rewritten value here
+   * is not a cosmetic wrong answer — it is a date nobody chose deciding what
+   * gets deleted.
+   *
+   * February is not the only case and the table says so: 31 April, 31 June and
+   * 31 November roll the same way, and the leap-year pair is included because
+   * a naive "day <= 31" check would pass 2026-02-29 while the calendar does
+   * not — and 2028 is a leap year, so the same string is legal two years
+   * later. Any implementation that special-cases lengths rather than
+   * round-tripping fails at least one row here.
+   */
+  it.each([
+    ['2026-02-31', 'February has no 31st'],
+    ['2026-02-30', 'nor a 30th'],
+    ['2026-02-29', '2026 is not a leap year'],
+    ['2026-04-31', 'April has 30 days'],
+    ['2026-06-31', 'June has 30 days'],
+    ['2026-11-31', 'November has 30 days'],
+  ])('rejects %s — %s', (date) => {
+    expect(updateClassSchema.safeParse({ date }).success).toBe(false);
+  });
+
+  it.each([
+    ['2026-02-28', 'the last real day of a non-leap February'],
+    ['2028-02-29', 'a real leap day'],
+    ['2026-01-31', 'a genuine 31st'],
+    ['2026-12-31', 'the last day of a year'],
+  ])('still accepts %s — %s', (date) => {
+    expect(updateClassSchema.safeParse({ date }).success).toBe(true);
+  });
+
+  /**
+   * The regex conjunct, which the round-trip alone does not cover: a
+   * `Date`-parseable string in another format would round-trip to a different
+   * string and be rejected for the wrong reason, so both halves are pinned
+   * rather than one standing in for the other.
+   */
+  it.each(['2026-6-01', '06/01/2026', '2026-06-01T00:00:00Z', 'tomorrow'])(
+    'rejects %s — not YYYY-MM-DD',
+    (date) => {
+      expect(updateClassSchema.safeParse({ date }).success).toBe(false);
+    },
+  );
+});
+
 describe('updateClassTemplateSchema', () => {
   // Mirrors the updateClassSchema key-set test. Less load-bearing here —
   // ClassTemplateUpdateData is a straight z.infer with no intersection, so the

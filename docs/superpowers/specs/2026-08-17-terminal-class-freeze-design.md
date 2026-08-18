@@ -199,15 +199,30 @@ The branch is therefore load-bearing on the *common* path reached through the
 CAS, not only on the racing path. It is the branch with the sharpest mutation in
 the branch (§5).
 
-### 3.4 The early return is an optimisation for every case but one
+### 3.4 The early return is an optimisation for every case but two
 
-Deleting it changes the result in exactly one case: a class that is BOTH
-terminal and settings-locked, edited with an economic field sent. Without the
-early return, control falls straight into `if (cls.settingsLocked &&
-sentEconomic !== null)` and answers `locked` — the wrong one of the two true
-refusals; §3.2's ordering decision says `terminal` is the truer answer when
-both apply, and only the early return delivers it, because that branch runs
-before the CAS ever does. T5 (§5) pins exactly this case.
+Deleting it changes the result in **two** cases, not one — both of them
+questions of ORDER, because the early return sits above two other early
+returns and either would answer first without it:
+
+1. **A class that is BOTH terminal and settings-locked, edited with an economic
+   field sent.** Control falls straight into `if (cls.settingsLocked &&
+   sentEconomic !== null)` and answers `locked` — the wrong one of the two true
+   refusals; §3.2's ordering decision says `terminal` is the truer answer when
+   both apply, and only the early return delivers it, because that branch runs
+   before the CAS ever does. T5 (§5) pins exactly this case.
+2. **A terminal class with an empty or all-`undefined` payload.** Control
+   reaches the `hasEdit` check and answers `no_fields` — a 400 — for a class
+   that is in fact frozen, a 409. This one is worse than a wrong label: the CAS
+   cannot re-derive anything here, because `hasEdit` returns *before any write
+   is attempted*. Pinned by `'answers terminal, not no_fields, for a body that
+   asks for nothing'`.
+
+**This section said "exactly one" through the whole of the branch**, including
+after the review round that discovered case 2, wrote its test, and recorded the
+choice in that test's own docblock. The claim and its refutation shipped in the
+same commit. It is corrected here, in the source comments, and in the plan's
+mirror of this section.
 
 That corrects an earlier draft of this section, which claimed the deletion was
 invisible to the whole suite by analogy with the `settingsLocked` check's own
@@ -219,11 +234,13 @@ Deleting it reddens T5 today, on the DB-backed suite alone, and will
 additionally redden T9 once Task 2 lands.
 
 Everywhere else — any class that is terminal but not locked, locked but not
-terminal, or terminal AND locked with no economic field sent (`sentEconomic`
-is null there, so the `settingsLocked` check cannot fire regardless of this
-early return) — deleting the early return costs round trips only: the CAS
-re-derives `terminal` (or `locked`) identically, via §3.2 and §3.3, and the
-existing suite already covers those paths (T1–T4).
+terminal, or terminal AND locked with no economic field sent *and at least one
+field actually being written* (`sentEconomic` is null there, so the
+`settingsLocked` check cannot fire regardless of this early return) — deleting
+the early return costs round trips only: the CAS re-derives `terminal` (or
+`locked`) identically, via §3.2 and §3.3, and the existing suite already covers
+those paths (T1–T4). The added qualifier is what case 2 above turns on: with
+nothing to write, there is no CAS to fall back on.
 
 What distinguishes the two paths for the query-count question is still
 observable, and the existing suite already knows how: `'answers a
@@ -359,9 +376,14 @@ re-verified — including the early-return deletion: it reddens T5 on its own,
 on the DB-backed suite, and additionally reddens T9 once Task 2 lands (§3.4).
 No mutation in this table survives the suite.
 
+### 5.1 Existing tests are unaffected
+
+Every fixture in the `updateClass (DB)` block is built by a `makeClass` helper
+whose `status` parameter defaults to `'draft'` (the `makeClass` inside `describe('updateClass (DB)')`). The change
+is additive; no existing assertion moves.
 ### 5.2 One existing test's title stops being true
 
-`class-terminal-status.test.ts:370`, `'leaves non-status updates to a completed
+`class-terminal-status.test.ts`'s `'leaves non-status updates to a completed
 class alone'`, writes `description` and asserts it lands. The test stays green —
 the new trigger is `BEFORE UPDATE OF date` and that write does not name `date` —
 but its title will over-claim, because after this branch some non-status updates
@@ -371,11 +393,6 @@ neighbours were checked as well: `'allows a completeClass-shaped write…'` writ
 status plus three totals and `'allows a no-op status write on a cancelled
 class'` writes status alone, so neither names `date` and neither is affected.
 
-### 5.1 Existing tests are unaffected
-
-Every fixture in the `updateClass (DB)` block is built by a `makeClass` helper
-that hard-codes `status: 'draft'` (`class-lifecycle.test.ts:1248`). The change
-is additive; no existing assertion moves.
 
 ---
 

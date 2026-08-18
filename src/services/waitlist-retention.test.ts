@@ -830,6 +830,78 @@ describe('reapClosedWaitlistEntries', () => {
   }, 30_000);
 
   /**
+   * MAJORITY failure throws too, not only total failure.
+   *
+   * The all-failed test above pins the loudest tier. It used to be the ONLY
+   * tier that threw, which made the check the weakest version of the argument
+   * `RetentionFailedError`'s own docblock makes: `{classes: 3, failed: 2,
+   * deleted: 1}` took the `failed > 0` branch — a `warn`, a normal return,
+   * `makeTick` stamping `lastSuccessAt` and clearing `lastError` — so
+   * `/api/health` reported this job healthy for a run that reaped one class of
+   * three. At production batch sizes that is 499 failures out of 500 reading
+   * as a successful sweep.
+   *
+   * STUBBED, unlike its all-failed sibling, and the difference is deliberate.
+   * That test provokes a real `55P03` because the SHAPE of a realistic failure
+   * is part of what it pins. This one pins an arithmetic threshold, and
+   * reaching a 2-of-3 split with real lock timing would mean planting three
+   * eligible classes in a shared database and depending on where they sort
+   * against every other fixture in this file — which is how a test acquires
+   * the power to break its neighbours. The sweep touches exactly three `db`
+   * surfaces, so the stub is small enough to be obviously faithful.
+   *
+   * Strictly-greater is what keeps this from being over-eager, and it is why
+   * the three-class shape matters: at two classes with one failure the sample
+   * is too small to mean anything and the sweep runs again tomorrow.
+   */
+  it('throws when most of the classes it tried failed, not only when all did', async () => {
+    const FAILING = ['class-a', 'class-b'];
+    const db = {
+      waitlistEntry: {
+        groupBy: async () => [{ classId: 'class-a' }, { classId: 'class-b' }, { classId: 'class-c' }],
+      },
+      $transaction: async (fn: (tx: unknown) => Promise<number>) => {
+        // The sweep passes `classId` into the callback's closure, not as an
+        // argument, so the stub decides by call order — deterministic here
+        // because the loop is sequential over the batch it was handed.
+        const classId = ['class-a', 'class-b', 'class-c'][calls++];
+        if (classId !== undefined && FAILING.includes(classId)) {
+          throw new Error(`stubbed failure for ${classId}`);
+        }
+        // `lockClassRow` issues the lock-timeout `SET` through
+        // `$executeRawUnsafe` and the `FOR UPDATE` through `$queryRaw`; both
+        // are no-ops here, since what is under test is the arithmetic after
+        // the loop, not the locking.
+        return fn({
+          $executeRawUnsafe: async () => 0,
+          $queryRaw: async () => [{ id: 'class-c' }],
+          waitlistEntry: { deleteMany: async () => ({ count: 1 }) },
+        });
+      },
+    } as unknown as PrismaClient;
+    let calls = 0;
+
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    try {
+      await expect(
+        reapClosedWaitlistEntries(db, { now: NOW, maxClasses: 50 }),
+      ).rejects.toBeInstanceOf(RetentionFailedError);
+
+      // Must be the MAJORITY branch, not the all-failed one. `deleted: 1` is
+      // what tells them apart: a test that only asserted "it threw" would pass
+      // if the two branches were ever merged back into one.
+      expect(error).toHaveBeenCalledWith(
+        expect.objectContaining({ classes: 3, failed: 2, deleted: 1 }),
+        expect.stringContaining('most of the classes it tried'),
+      );
+    } finally {
+      error.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  /**
    * The candidate read's sort direction, pinned.
    *
    * `orderBy: { classId: 'asc' }` → `'desc'` passed the entire suite while
