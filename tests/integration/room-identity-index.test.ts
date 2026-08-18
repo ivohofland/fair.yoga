@@ -11,6 +11,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { uniqueSuffix } from '../helpers';
 import { sameRoomIdentity } from '@/lib/room-identity';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -36,7 +37,7 @@ function shared(addr: string, floor: string, roomName: string) {
 }
 
 beforeAll(async () => {
-  // Fixture shape copied verbatim from rooms-api.test.ts:65-81.
+  // Fixture shape copied verbatim from rooms-api.test.ts:75-91.
   const email = `roomagree-${suffix}@test.local`;
   const teacher = await prisma.teacher.create({
     data: {
@@ -81,6 +82,20 @@ describe('sameRoomIdentity agrees with Room_public_identity_unique', () => {
     ).toBe(true);
 
     await shared(address, '2', 'Annex');
-    await expect(shared(address, '2', 'Annex')).rejects.toThrow();
+
+    // Asserted on the error's IDENTITY, not merely that one was thrown. A
+    // bare `rejects.toThrow()` passes on any failure at all — a missing
+    // column, a bad foreign key, a typo in the fixture — so a broken fixture
+    // would read as the index doing its job, which is the one thing this test
+    // exists to observe.
+    //
+    // Via the repo's own helper rather than a hand-written shape, for the
+    // reason its docblock gives: a partial index Prisma cannot see still
+    // reports `meta.target` as the COLUMN-NAME ARRAY, not the index name. So
+    // this also pins that the collision is the three-column public shape —
+    // `Room_public_identity_unique`, the index the predicate mirrors — and
+    // not the four-column private one the row just left.
+    const err = await shared(address, '2', 'Annex').catch((e: unknown) => e);
+    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(true);
   });
 });

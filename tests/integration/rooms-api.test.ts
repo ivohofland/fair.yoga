@@ -11,6 +11,15 @@
  * Each describe block below carries its own note on which of its cases pins
  * the *ordering* versus which pins the *product decision* — they are not the
  * same case, and only one of them can detect a guard swap.
+ *
+ * THE THIRD MUTATING VERB INVERTS THIS ORDER ON PURPOSE. Since #73, sharing
+ * a room is `POST /api/rooms/[id]/publish`, and it checks `createdById`
+ * BEFORE `isPublic`: a shared room is community property no matter who asks
+ * (so PUT and DELETE lead with `isPublic`), but only the creator may donate
+ * one (so publish leads with `createdById`). Both orders are correct, and
+ * "make it consistent with its neighbours" is the plausible future edit that
+ * breaks it. Its own cases live in tests/integration/rooms-publish-api.test.ts,
+ * which carries the same which-case-pins-what note.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
@@ -230,8 +239,8 @@ afterAll(async () => {
 });
 
 /**
- * These four cases cover the full 2x2 of {creator, non-creator} x {private,
- * public}, but they don't split evenly by what they prove:
+ * The first four cases cover the full 2x2 of {creator, non-creator} x
+ * {private, public}, but they don't split evenly by what they prove:
  *   - creator+public pins the *product decision* — a public room is
  *     read-only even for its own creator (see #52/#60).
  *   - non-creator+public pins the *guard ordering*. It is the only
@@ -243,9 +252,16 @@ afterAll(async () => {
  *     isPublic guard's alternate message, and creator+public passes the
  *     createdById guard as a no-op either way it's ordered.
  *
- * All four cases share one room and run in declaration order — the isPublic
- * flip (third case) is one-way, so any case declared below it inherits a
- * public room.
+ * Those four share one room and run in declaration order — the isPublic flip
+ * (third case) is one-way, so any case declared below it inherits a public
+ * room.
+ *
+ * A FIFTH case follows them and deliberately opts out, creating its own
+ * private room. It has to: `updateRoomSchema`'s `.strict()` rejection happens
+ * in `parseBody`, and the isPublic guard refuses a shared room with a 403
+ * BEFORE that runs — so on the inherited public room the expected 400 would
+ * never fire and the test would silently re-pin the isPublic guard instead.
+ * Its dedicated fixture is load-bearing, not boilerplate.
  */
 describe('PUT /api/rooms/[id]', () => {
   it('creator edits their own private room -> 200, the change persists', async () => {
@@ -304,7 +320,7 @@ describe('PUT /api/rooms/[id]', () => {
     const res = await put(otherToken, roomId, { venueName: 'Should not apply either' });
     expect(res.status).toBe(403);
 
-    // Current order: the isPublic guard (route.ts:77-79) fires first, so this
+    // Current order: the isPublic guard (rooms/[id]/route.ts:78) fires first, so this
     // is "Shared rooms cannot be edited" — NOT the createdById guard's "Only
     // the room creator..." message. Swap the two guards and this message
     // flips, because unlike the creator, a non-creator doesn't pass the
@@ -322,7 +338,18 @@ describe('PUT /api/rooms/[id]', () => {
   // request invalid. An old client is told, not quietly given different
   // behaviour. Sharing has its own route now; see
   // tests/integration/rooms-publish-api.test.ts.
-  it('rejects isPublic in the body outright, and leaves the room private', async () => {
+  //
+  // THE BODY MUST CARRY A SECOND, VALID FIELD, AND THE ASSERTION MUST COVER
+  // IT. `{ isPublic: true }` alone cannot distinguish the two outcomes this
+  // test exists to tell apart: without `.strict()` that body parses to `{}`,
+  // the route falls into its `Object.keys(updateData).length === 0` branch
+  // (rooms/[id]/route.ts:95) and returns 400 with the room still private —
+  // the same status and the same final state, for entirely the wrong reason.
+  // Measured: with `.strict()` removed and a single-key body, rooms-api was
+  // 17/17 green and schemas 53/53 green, while
+  // `PUT { venueName: 'Mutated', isPublic: true }` answered 200 and flipped
+  // the room shared. A mixed body is what separates "refused" from "ignored".
+  it('rejects isPublic in the body outright, and changes nothing at all', async () => {
     const room = await prisma.room.create({
       data: {
         venueName: 'Rooms API Studio',
@@ -337,11 +364,19 @@ describe('PUT /api/rooms/[id]', () => {
       },
     });
     strictRoomId = room.id;
-    const res = await put(creatorToken, room.id, { isPublic: true });
+    const res = await put(creatorToken, room.id, {
+      venueName: 'Mutated',
+      isPublic: true,
+    });
     expect(res.status).toBe(400);
 
+    // Both halves matter. `isPublic` unchanged is the one-way door staying
+    // shut; `venueName` unchanged is what proves the request was REFUSED
+    // rather than stripped and applied — a silently-ignored `isPublic` would
+    // have written the venue name and answered 200.
     const after = await prisma.room.findUniqueOrThrow({ where: { id: room.id } });
     expect(after.isPublic).toBe(false);
+    expect(after.venueName).toBe('Rooms API Studio');
   });
 });
 
@@ -497,7 +532,8 @@ describe('DELETE /api/rooms/[id]', () => {
  * address, floor, roomName)` WHERE `isPublic = false` (#196). Route change is
  * `src/app/api/rooms/route.ts`: a try/catch around `prisma.room.create` maps
  * a P2002 on either index to `DUPLICATE_ROOM`, same code and same message on
- * both branches as before. No `findFirst` pre-check in front of either — the
+ * both branches — the code unchanged since #196, the shared-branch wording
+ * reworded in #73. No `findFirst` pre-check in front of either — the
  * route's own comment explains why one would only make the catch reachable
  * under a race. That is also why this block carries its own sequential
  * public-duplicate case rather than leaning on the concurrent one alone: the
@@ -567,8 +603,10 @@ describe('POST /api/rooms dedupes both branches (#196)', () => {
     expect(second.status).toBe(409);
     const json = (await second.json()) as { error: { code: string; message: string } };
     expect(json.error.code).toBe('DUPLICATE_ROOM');
-    // Same message the pre-check used to return — deleting it must not
-    // change a single byte a client sees.
+    // The #196 invariant that still holds: deleting the pre-check did not
+    // change the CODE or the shape a client sees. The public-branch wording
+    // itself did change in #73 ("public" -> "shared"), which is why it is
+    // pinned here rather than assumed.
     expect(json.error.message).toBe('A shared room at this address already exists');
   });
 

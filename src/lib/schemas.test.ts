@@ -400,8 +400,8 @@ const _serverOwnedNamesExist: NoneOf<
 void _serverOwnedNamesExist;
 
 /**
- * Every schema that legitimately declares one, and why. Three of these are
- * known gaps rather than endorsements — they are recorded here, beside the
+ * Every schema that legitimately declares one, and why. Some are marked
+ * KNOWN GAP rather than endorsements — they are recorded here, beside the
  * guard, so the next person to touch that schema reads the gap instead of
  * rediscovering it.
  */
