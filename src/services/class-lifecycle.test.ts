@@ -255,8 +255,14 @@ describe('transitionClass (DB)', () => {
   // Per-test classes for the queue-close tests below (#216) — a date none of
   // the four hand-written tests above use, so the counter-derived startTime
   // only has to avoid colliding with itself across the two calls in this
-  // describe, not with those tests' literal '09:00'/'10:00' slots. Mirrors
-  // `completeClass (DB)`'s own `makeClass` below.
+   // describe, not with those tests' literal '09:00'/'10:00' slots. Mirrors
+   // `completeClass (DB)`'s own `makeClass` below.
+  /**
+   * 2099, not "a couple of months out". #249's publish guard reads the clock,
+   * so a fixture dated in what was the future when it was written fails once
+   * enough time passes. These were `2026-06-0X` and had already aged into the
+   * past by the time that guard was added.
+   */
   let makeClassCounter = 0;
   const makeClass = ({ status }: { status: ClassStatus }) => {
     makeClassCounter += 1;
@@ -265,7 +271,7 @@ describe('transitionClass (DB)', () => {
         teacherId,
         teacherRoomId,
         classType: 'Vinyasa',
-        date: new Date('2026-06-05'),
+        date: new Date('2099-06-05'),
         startTime: slotTime(makeClassCounter),
         durationMinutes: 60,
         roomCost: 35,
@@ -355,7 +361,7 @@ describe('transitionClass (DB)', () => {
         teacherId,
         teacherRoomId,
         classType: 'Hatha',
-        date: new Date('2026-06-01'),
+        date: new Date('2099-06-01'),
         startTime: '09:00',
         durationMinutes: 60,
         roomCost: 35,
@@ -513,6 +519,9 @@ describe('transitionClass (DB)', () => {
 
     const illegal = await transitionClass(prisma, cls.id, 'open');
     expect(illegal.ok).toBe(false);
+    // Also #249's fall-through: this class is dated in the past AND targeted at
+    // `open`, so a publish guard that refused instead of falling through would
+    // answer STARTS_IN_PAST here. Its fixture stays past-dated for that reason.
     if (!illegal.ok) expect(illegal.error).toMatch(/Invalid transition/);
 
     const missing = await transitionClass(prisma, 'no-such-class-id', 'open');
@@ -547,6 +556,62 @@ describe('transitionClass (DB)', () => {
 
     const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
     expect(after.status).toBe('waiting');
+  });
+
+  it('refuses to publish a draft whose start has already passed (#249)', async () => {
+    // No typo needed for this one — a draft written for last Friday and
+    // published the following week is enough. `transitionClass` had no date
+    // predicate at all before #249.
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Vinyasa',
+        date: new Date('2020-01-01'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 35,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 4,
+        maxStudents: 12,
+        status: 'draft',
+      },
+    });
+
+    const result = await transitionClass(prisma, cls.id, 'open');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('STARTS_IN_PAST');
+
+    // Refused means not written.
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.status).toBe('draft');
+  });
+
+  it('still starts an open class whose time has come (#249)', async () => {
+    // The target conjunct. `open -> in_progress` is a class starting, so its
+    // start instant being in the past is not merely allowed, it is the whole
+    // precondition. A guard that fired on every target would stop every class
+    // in the product from ever starting.
+    const cls = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Vinyasa',
+        date: new Date('2020-01-01'),
+        startTime: '10:00',
+        durationMinutes: 60,
+        roomCost: 35,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 4,
+        maxStudents: 12,
+        status: 'open',
+      },
+    });
+
+    const result = await transitionClass(prisma, cls.id, 'in_progress');
+    expect(result.ok).toBe(true);
   });
 });
 

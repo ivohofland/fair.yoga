@@ -167,7 +167,7 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
         teacherId,
         teacherRoomId,
         classType: 'Hatha',
-        date: new Date('2026-07-01'),
+        date: new Date('2099-07-01'),
         startTime: '09:00',
         durationMinutes: 60,
         roomCost: 35,

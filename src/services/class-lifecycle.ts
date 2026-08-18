@@ -109,12 +109,21 @@ export const TERMINAL_CLASS_STATUSES: readonly ClassStatus[] = Object.freeze(
  * the message — still importing the shared constant, still green under `tsc`
  * and the suite — would have flipped a benign, self-resolving race back to
  * logging at `error` on every tick.
+ *
+ * A SUPERSET over two functions, not a contract either one satisfies alone.
+ * `NOT_ENDED_YET` is returned only by `completeClass` and never by
+ * `transitionClass`; `STARTS_IN_PAST` (#249) is the mirror — only
+ * `transitionClass` returns it, and only for a `draft -> open` publish.
+ * Both functions declare `TransitionDbResult`, so each type is wider than its
+ * function's real range. That was already true before #249; this member does
+ * not introduce the looseness, it follows it.
  */
 export type TransitionFailureReason =
   | 'NOT_FOUND'
   | 'ILLEGAL_TRANSITION'
   | 'NOT_ENDED_YET'
-  | 'CONCURRENT_MODIFICATION';
+  | 'CONCURRENT_MODIFICATION'
+  | 'STARTS_IN_PAST';
 
 export type TransitionResult =
   | { ok: true }
@@ -214,6 +223,51 @@ export async function transitionClass(
   classId: string,
   targetStatus: ClassStatus,
 ): Promise<TransitionDbResult> {
+  // #249. A draft whose start has already passed cannot be published. This
+  // needs no typo to reach: a draft written for Friday and published the
+  // following week is enough.
+  //
+  // IT FALLS THROUGH RATHER THAN REFUSING for a missing row or a status the CAS
+  // would reject anyway, and that is the whole subtlety. A `completed` class
+  // targeted at `open` is illegal whatever its date; answering "it starts in
+  // the past" there would be true and misleading, and would break the test that
+  // pins `ILLEGAL_TRANSITION`. The older, stronger reason wins — the same
+  // precedence `updateClass` gives `terminal` over `past_start`.
+  //
+  // Decided with `sourceStatesFor`, the same helper the CAS below uses, so this
+  // guard can never disagree with the write it precedes. Spelling the source
+  // set out here by hand would be a second copy of `VALID_TRANSITIONS` to keep
+  // in sync.
+  //
+  // Read before the transaction rather than inside it. The stale window is
+  // milliseconds and runs only in the safe direction: since #249's other guard
+  // a class's stored start can never be moved into the past, so this read
+  // cannot understate it. It can be overtaken by the clock — read at 08:59:59.9
+  // for a 09:00 class, CAS at 09:00:00.1 — which publishes a class whose start
+  // has just passed, exactly as publishing it a second earlier legally would.
+  if (targetStatus === 'open') {
+    const cls = await db.class.findUnique({
+      where: { id: classId },
+      select: {
+        status: true,
+        date: true,
+        startTime: true,
+        teacher: { select: { defaultTimezone: true } },
+      },
+    });
+    if (
+      cls &&
+      sourceStatesFor(targetStatus).includes(cls.status) &&
+      startsInPast(cls.date, cls.startTime, cls.teacher.defaultTimezone, new Date())
+    ) {
+      return {
+        ok: false,
+        reason: 'STARTS_IN_PAST',
+        error: `Class ${classId} cannot be published: it started at ${classStartInstant(cls.date, cls.startTime, cls.teacher.defaultTimezone).toISOString()}`,
+      };
+    }
+  }
+
   // The CAS and the queue close in one transaction; the diagnostic reads below
   // stay outside it, because they decide nothing that gets persisted and would
   // only hold the transaction open on the failure path.
