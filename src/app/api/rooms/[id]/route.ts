@@ -27,7 +27,7 @@ export const DELETE = withErrorHandler(async (
   if (!room) return respondError('Room not found', 404);
 
   if (room.isPublic) {
-    return respondError('Public rooms cannot be deleted', 403);
+    return respondError('Shared rooms cannot be deleted', 403);
   }
 
   if (room.createdById !== session.teacherId) {
@@ -76,7 +76,7 @@ export const PUT = withErrorHandler(async (
   if (!room) return respondError('Room not found', 404);
 
   if (room.isPublic) {
-    return respondError('Public rooms cannot be edited', 403);
+    return respondError('Shared rooms cannot be edited', 403);
   }
 
   if (room.createdById !== session.teacherId) {

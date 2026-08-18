@@ -282,7 +282,7 @@ export const createRoomSchema = z.object({
   maxCapacity: z.number().int().positive(),
   equipment: z.array(z.string()).optional().default([]),
   notes: z.string().nullable().optional(),
-  isPublic: z.boolean().optional(),
+  isPublic: z.boolean().optional().default(false),
 });
 
 export const updateRoomSchema = z.object({

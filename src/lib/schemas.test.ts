@@ -8,6 +8,7 @@ import {
   passkeyAuthVerifySchema,
   createClassSchema,
   createStudioClassSchema,
+  createRoomSchema,
   updateClassSchema,
   updateClassTemplateSchema,
   updateTeacherSchema,
@@ -553,5 +554,36 @@ describe('requireNormalised', () => {
 
   it('throws on a mixed-case address, matching /un-normalised/', () => {
     expect(() => requireNormalised('Mixed@Example.com')).toThrow(/un-normalised/);
+  });
+});
+
+// #73. The schema default and the column default (Task 1) are belt and
+// braces, and they mask each other: with the column defaulting false,
+// removing this default changes nothing observable through the API. So each
+// is tested at its own level — this one here, the column in
+// tests/integration/room-default-privacy.test.ts. A single end-to-end
+// assertion would pass with either layer removed and certify neither.
+describe('createRoomSchema isPublic default', () => {
+  it('defaults a room to private when the field is omitted', () => {
+    const parsed = createRoomSchema.parse({
+      venueName: 'Somewhere',
+      address: 'Street 1',
+      city: 'Amsterdam',
+      postcode: '1234AB',
+      maxCapacity: 10,
+    });
+    expect(parsed.isPublic).toBe(false);
+  });
+
+  it('still honours an explicit true', () => {
+    const parsed = createRoomSchema.parse({
+      venueName: 'Somewhere',
+      address: 'Street 1',
+      city: 'Amsterdam',
+      postcode: '1234AB',
+      maxCapacity: 10,
+      isPublic: true,
+    });
+    expect(parsed.isPublic).toBe(true);
   });
 });

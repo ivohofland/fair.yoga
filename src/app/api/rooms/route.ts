@@ -55,8 +55,6 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if ('error' in parsed) return parsed.error;
   const body = parsed.data;
 
-  const isPublic = body.isPublic ?? true;
-
   // No pre-check here on purpose. `Room` has exactly two identity indexes —
   // `Room_public_identity_unique` and `Room_private_identity_unique` (plus
   // `Room_pkey` on `id`, which this create cannot collide on) — and
@@ -78,7 +76,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         maxCapacity: body.maxCapacity,
         equipment: body.equipment,
         notes: body.notes,
-        isPublic,
+        isPublic: body.isPublic,
         createdById: session.teacherId,
       },
     });
@@ -91,8 +89,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       isUniqueConflictOn(err, ['createdById', 'address', 'floor', 'roomName'])
     ) {
       return respondError(
-        isPublic
-          ? 'A public room at this address already exists'
+        body.isPublic
+          ? 'A shared room at this address already exists'
           // `floor`/`roomName` both default to `""` and are optional
           // free-text, so two genuinely different private rooms at one
           // address, both left blank, collide here too — names the way out,

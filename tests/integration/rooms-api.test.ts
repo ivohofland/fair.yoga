@@ -236,7 +236,7 @@ afterAll(async () => {
  *     read-only even for its own creator (see #52/#60).
  *   - non-creator+public pins the *guard ordering*. It is the only
  *     combination whose message differs when the two guards are swapped:
- *     current order (isPublic first) says "Public rooms cannot be edited";
+ *     current order (isPublic first) says "Shared rooms cannot be edited";
  *     swapped (createdById first) says "Only the room creator can update
  *     this room". The other three cases return the same message under either
  *     ordering — creator+private and non-creator+private never reach the
@@ -285,9 +285,9 @@ describe('PUT /api/rooms/[id]', () => {
     // guard *ordering* though — see the file header: with the creator as actor,
     // the createdById guard is a no-op under either ordering, so this case
     // would return the same message if the guards were swapped. What it pins
-    // is the product decision that a public room is read-only for its creator.
+    // is the product decision that a shared room is read-only for its creator.
     const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toContain('Public rooms cannot be edited');
+    expect(json.error.message).toContain('Shared rooms cannot be edited');
 
     const after = await prisma.room.findUniqueOrThrow({ where: { id: roomId } });
     expect(after.venueName).toBe(before.venueName);
@@ -305,13 +305,13 @@ describe('PUT /api/rooms/[id]', () => {
     expect(res.status).toBe(403);
 
     // Current order: the isPublic guard (route.ts:77-79) fires first, so this
-    // is "Public rooms cannot be edited" — NOT the createdById guard's "Only
+    // is "Shared rooms cannot be edited" — NOT the createdById guard's "Only
     // the room creator..." message. Swap the two guards and this message
     // flips, because unlike the creator, a non-creator doesn't pass the
     // createdById guard as a no-op. This is the only one of the four cases
     // whose outcome depends on guard order.
     const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toContain('Public rooms cannot be edited');
+    expect(json.error.message).toContain('Shared rooms cannot be edited');
 
     const after = await prisma.room.findUniqueOrThrow({ where: { id: roomId } });
     expect(after.venueName).toBe(before.venueName);
@@ -355,7 +355,7 @@ describe('PUT /api/rooms/[id]', () => {
  *   - creator+public pins the *product decision* — a public room can't be
  *     deleted even by its creator. It cannot detect any swap.
  *   - non-creator+public pins the isPublic <-> createdById order. Current
- *     order says "Public rooms cannot be deleted"; swapped, it says "Only the
+ *     order says "Shared rooms cannot be deleted"; swapped, it says "Only the
  *     room creator can delete this room".
  *   - non-creator+private+has-classes pins the createdById <-> hasClasses
  *     order. Current order says "Only the room creator can delete this room";
@@ -380,7 +380,7 @@ describe('DELETE /api/rooms/[id]', () => {
     // The isPublic guard's message, NOT the createdById guard's. Swapping the
     // two guards in the handler flips this string — see the block comment.
     const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toContain('Public rooms cannot be deleted');
+    expect(json.error.message).toContain('Shared rooms cannot be deleted');
 
     expect(await prisma.room.count({ where: { id: deletePublicRoomId } })).toBe(1);
   });
@@ -390,10 +390,10 @@ describe('DELETE /api/rooms/[id]', () => {
     expect(res.status).toBe(403);
 
     // This case can't detect a guard swap (the creator passes the createdById
-    // guard either way). What it pins is that a public room is undeletable by
+    // guard either way). What it pins is that a shared room is undeletable by
     // the person who created it — deliberate, see the file header.
     const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toContain('Public rooms cannot be deleted');
+    expect(json.error.message).toContain('Shared rooms cannot be deleted');
 
     expect(await prisma.room.count({ where: { id: deletePublicRoomId } })).toBe(1);
   });
@@ -569,7 +569,7 @@ describe('POST /api/rooms dedupes both branches (#196)', () => {
     expect(json.error.code).toBe('DUPLICATE_ROOM');
     // Same message the pre-check used to return — deleting it must not
     // change a single byte a client sees.
-    expect(json.error.message).toBe('A public room at this address already exists');
+    expect(json.error.message).toBe('A shared room at this address already exists');
   });
 
   it('leaves one row when two identical PUBLIC creates are in flight at once', async () => {
