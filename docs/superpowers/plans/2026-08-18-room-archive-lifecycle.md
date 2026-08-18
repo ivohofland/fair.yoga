@@ -1227,7 +1227,9 @@ At `template-form.tsx:152`, after `setTeacherRooms(json.data)`:
         );
 ```
 
-Add `isArchived: boolean` to the `TeacherRoomData` interface in that file.
+Add `isArchived: boolean` to the **`TeacherRoomOption`** interface at
+`template-form.tsx:24` — that is the name this file uses; it does not have a
+`TeacherRoomData`.
 
 If `form.teacherRoomId` is not in scope at the fetch site (the effect runs on mount), read it from `initial?.teacherRoomId` instead — that is the value `edit` mode seeds and it cannot have changed before the fetch resolves.
 
@@ -1246,12 +1248,42 @@ At `class/new/page.tsx:174`, the same filter without the selection carve-out —
 
 Add `isArchived: boolean` to that file's `TeacherRoomData` interface too.
 
-- [ ] **Step 5: Run the tests**
+- [ ] **Step 5: Fix the empty state this filter would otherwise break**
+
+Both pickers short-circuit to an empty state when the room list is empty:
+
+- `template-form.tsx:363-369` — "No rooms configured." / "Add a room in Settings
+  before creating a recurring class."
+- `class/new/page.tsx:326-332` — `EmptyState` titled "No rooms configured",
+  body "Add a room in Settings before creating a class."
+
+**The filter makes that copy wrong.** A teacher whose only rooms are archived
+now lands there and is told to add a room they already have, with no hint that
+un-archiving is the way out. That is a defect this task introduces, not a
+pre-existing one, so it is fixed here rather than filed.
+
+Distinguish the two cases using counts you already hold — filtering happens
+client-side, so the unfiltered response is in scope. Keep the existing copy for
+a teacher with genuinely no rooms; for a teacher whose rooms are all archived,
+say so and name the way out. Suggested wording, matching the house style of
+naming the remedy:
+
+> **All your rooms are archived.** Unarchive one in Settings to schedule here.
+
+Do not link out of the form — the other empty state does not, and this task is
+not a navigation change.
+
+- [ ] **Step 6: Run the tests**
 
 Run: `npx vitest run --project components src/components/settings/template-form.test.tsx`
 Expected: PASS both cases, and the pre-existing cases in that file unaffected.
 
 - [ ] **Step 6: Commit**
+
+Add a test for the all-archived empty state — it is the branch a teacher
+actually lands in, and nothing else covers it.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add 'src/app/(teacher)/class/new/page.tsx' src/components/settings/template-form.tsx src/components/settings/template-form.test.tsx

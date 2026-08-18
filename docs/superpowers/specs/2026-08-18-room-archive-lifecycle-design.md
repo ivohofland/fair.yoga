@@ -233,6 +233,14 @@ Both pickers filter `isArchived` client-side:
 Nothing depends on this filter for correctness. Doors 2 and 4 are the
 enforcement; the filter is feedback that arrives earlier.
 
+**The filter changes an empty state, and that copy has to change with it.**
+Both pickers fall back to "No rooms configured — add a room in Settings" when
+the list is empty. Filtering archived rooms out means a teacher whose rooms are
+*all* archived reaches that screen and is told to add a room they already own.
+The all-archived case gets its own message naming un-archiving as the way out.
+This is a defect the filter introduces rather than one it reveals, so it is
+fixed alongside it.
+
 ## 7. Three residues folded in
 
 1. **`src/components/settings/unlink-room-button.tsx:50`** promises "Classes
