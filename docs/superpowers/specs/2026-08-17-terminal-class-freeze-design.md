@@ -225,7 +225,7 @@ treatment — that is what T9 is for.
 - `updateClass`'s summary line reads *"Apply a partial update to a class,
   enforcing the economic-field lock."* It now enforces two locks on two
   different axes and at two different trigger points — first registration, and
-  terminality. Rewritten, naming both and saying which is permanent.
+  terminality. Rewritten, naming both and saying that neither lifts.
 - `UpdateClassResult`'s docblock explains why `locked` carries a non-empty
   tuple. It gains a sentence on why `terminal` carries a status.
 
@@ -424,7 +424,7 @@ measured links and what was ruled out, rather than assuming work. This branch
 leaves it open.
 
 It clears §7's floor on its own terms regardless: it is a live path to data a
-user loses, so it is repaired or filed, and it is filed.
+user loses, so it is fixed or filed, and it is filed.
 
 **Unaffected:** `settingsLocked` and `ECONOMIC_FIELDS`. They gate on first
 registration, not on terminality, and they already work. This is a second,
@@ -445,9 +445,15 @@ belongs to that decision, not to this one.
 - Eleven tests, eleven mutations, each recorded with its exact error text; none
   survives the suite — §3.4 corrects an earlier draft's claim that the
   early-return deletion was one legitimate exception.
-- Every artifact §6 lists states that the residual is closed, and §5.2's test
-  title no longer over-claims. (Phrased without a count on purpose: this line
-  said "Both artifacts" until §6's list grew from two entries to three, which
-  is the same way a count goes stale that §6 itself now warns about.)
+- Every location in §6's **numbered** list states that the residual is closed,
+  and §5.2's test title no longer over-claims. (Scoped to the numbered list on
+  purpose: §6's "Plus, on this branch:" list is a different obligation —
+  `UpdateClassResult`'s docblock is not asked to state closure, and
+  `docs/backlog-roadmap.md` is deferred to a later commit. And phrased without
+  a count on purpose: this line said "Both artifacts" until the numbered list
+  grew from two entries to three. That is a *different* failure from the one §6
+  itself warns about — §6's count came from a search structurally unable to
+  find every member, whereas this one was correct when written and went stale
+  when the list grew — but it takes the same fix, which is to state no number.)
 - `npm run verify` green — all three vitest projects, with the arithmetic in the
   PR body.
