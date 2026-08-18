@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { formatRoomLocation } from '@/lib/format';
 import { searchPublicRooms, type RoomResult } from '@/lib/room-search';
 import { RoomMatchList } from './room-match-list';
+import { PublicRoomNotice } from './public-room-notice';
 
 type Step = 'search' | 'create' | 'settings';
 
@@ -83,7 +84,7 @@ export function AddRoomFlow() {
     cushions: false,
   });
   const [notes, setNotes] = useState('');
-  const [isPublic, setIsPublic] = useState(true);
+  const [isPublic, setIsPublic] = useState(false);
   const [createError, setCreateError] = useState('');
   const [creating, setCreating] = useState(false);
 
@@ -337,15 +338,18 @@ export function AddRoomFlow() {
             />
           </div>
 
-          <label className="flex items-center gap-3 min-h-[44px]">
-            <input
-              type="checkbox"
-              checked={isPublic}
-              onChange={(e) => setIsPublic(e.target.checked)}
-              className="w-5 h-5 accent-teal"
-            />
-            <span className="text-brown text-sm">Make this room visible to other teachers</span>
-          </label>
+          <div className="flex flex-col gap-3">
+            <label className="flex items-center gap-3 min-h-[44px]">
+              <input
+                type="checkbox"
+                checked={isPublic}
+                onChange={(e) => setIsPublic(e.target.checked)}
+                className="w-5 h-5 accent-teal"
+              />
+              <span className="text-brown text-sm">Share this room with other teachers</span>
+            </label>
+            <PublicRoomNotice />
+          </div>
 
           {createError && <p className="text-sm text-danger">{createError}</p>}
 

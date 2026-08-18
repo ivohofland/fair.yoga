@@ -100,7 +100,7 @@ describe('AddRoomFlow', () => {
       maxCapacity: 20,
       equipment: ['mats', 'blocks'],
       notes: 'Bring a mat',
-      isPublic: true,
+      isPublic: false,
     });
 
     // Step 3: link the newly created room to the teacher.
@@ -121,5 +121,40 @@ describe('AddRoomFlow', () => {
       rentalRate: 15.5,
       equipmentNotes: 'Extra towels',
     });
+  });
+
+  // #73. The assertion that matters is on the REQUEST BODY, not the checkbox.
+  // An unchecked box that still posts `isPublic: true` is the regression shape
+  // this exists to catch, and `not.toBeChecked()` alone sails straight past it.
+  it('posts isPublic false when the share checkbox is left alone', async () => {
+    stubFetch();
+    render(<AddRoomFlow />);
+
+    // Reach the create step exactly as the existing test does.
+    fireEvent.change(screen.getByLabelText('Postcode'), { target: { value: '1018 DT' } });
+    fireEvent.change(screen.getByLabelText('Street'), { target: { value: 'Keizersgracht' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByText(/no rooms found/i);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create new room' }));
+
+    const checkbox = screen.getByRole('checkbox', {
+      name: /Share this room with other teachers/,
+    });
+    expect(checkbox).not.toBeChecked();
+
+    // Fill required fields so the form passes validation.
+    fireEvent.change(screen.getByLabelText('Venue name'), { target: { value: 'De Studio' } });
+    fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Amsterdam' } });
+    fireEvent.change(screen.getByLabelText('Max capacity'), { target: { value: '10' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /Create room/ }));
+
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(1));
+
+    const [, roomOptions] = fetchMock.mock.calls[1] ?? [];
+    const roomOpts = roomOptions as { method: string; body: string };
+    const body = JSON.parse(roomOpts.body) as { isPublic: boolean };
+    expect(body.isPublic).toBe(false);
   });
 });
