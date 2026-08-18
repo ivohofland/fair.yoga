@@ -10,6 +10,7 @@ import type { PrismaClient } from '@prisma/client';
 import type { GenerationResult, SkippedSlot } from '@/lib/generation';
 import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
 import { classStartInstant } from '@/lib/timezone';
+import { ACTIVE_TEMPLATE_WHERE } from '@/lib/template-selection';
 import { log } from '@/lib/log';
 
 // ---------------------------------------------------------------------------
@@ -350,9 +351,12 @@ export async function generateClassInstances(
 
   // isArchived is defense in depth: the routes keep archived templates
   // inactive, but if that invariant ever slips, the generator must not
-  // materialize classes for something the teacher shelved.
+  // materialize classes for something the teacher shelved. That half now
+  // comes from the shared constant so `services/room-archive.ts` cannot
+  // block on a different set than this query selects. See
+  // `lib/template-selection.ts`.
   const templates = await db.classTemplate.findMany({
-    where: { isActive: true, isArchived: false, ...(teacherId ? { teacherId } : {}) },
+    where: { ...ACTIVE_TEMPLATE_WHERE, ...(teacherId ? { teacherId } : {}) },
     include: { teacher: { select: { defaultTimezone: true } } },
   });
 
