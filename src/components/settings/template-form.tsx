@@ -151,10 +151,18 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
   const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState(false);
-  // `form.teacherRoomId` is not in scope at mount — `form` state has not
-  // settled from the initial render when this effect's dependency array is
-  // read — so the filter below reads the prop `edit` mode seeds directly.
-  // It cannot change before the fetch below resolves.
+  // The filter below keys off this prop rather than `form.teacherRoomId` so
+  // the effect only refires when the *seeded* room changes, not on every
+  // dropdown change a teacher makes while the form is open — keying off
+  // `form` state would refetch on each selection.
+  //
+  // It does refire on one real path: `handleSubmit`'s edit branch calls
+  // `router.refresh()` (below) after a save, which re-renders the server
+  // parent (`settings/recurring/[id]/page.tsx`) with a freshly-queried
+  // `initial`. If that save changed the room, this value's identity changes
+  // and the effect runs again. That is accepted, not a bug to route around:
+  // `GET /api/teacher-rooms` is idempotent, `loading` is not reset so there
+  // is no flash, and the refetched list is only more current for it.
   const initialTeacherRoomId = initial?.teacherRoomId;
 
   useEffect(() => {
