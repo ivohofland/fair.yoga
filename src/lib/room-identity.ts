@@ -10,8 +10,10 @@
  * Three raw `text` columns — no `citext`, no `lower()` — so the comparison
  * below is byte-exact on purpose. Do not add `.toLowerCase()` or `.trim()`
  * here without changing the index in the same commit: a predicate stricter
- * than the index refuses shares the database would have accepted, and the
- * refusal is invisible to everyone including the teacher.
+ * than the index refuses shares the database would have accepted. The
+ * teacher is not left in silence — they are told "already shared" about a
+ * room that is neither theirs nor the same, which is worse: what is
+ * invisible is that the message is wrong.
  *
  * Consequence, tracked as #260: two rooms differing only by case or trailing
  * whitespace are distinct to both this predicate and the index. The
@@ -21,7 +23,9 @@
  * Import-free by requirement. `share-room-button.tsx` is a client component
  * and value-imports this; a transitive edge to `@/lib/log` (pino, server-only)
  * would break `npm run build` while still passing `npm run verify`. Same
- * reason `src/lib/tiers.ts` and `src/lib/class-fields.ts` are import-free.
+ * reason `src/lib/tiers.ts` and `src/lib/class-fields.ts` ship no RUNTIME
+ * imports. `import type` is safe — it erases entirely — which is why
+ * `tiers.ts` carries one and this module may too.
  *
  * The server does not use this. `POST /api/rooms/[id]/publish` lets the index
  * refuse, exactly as `POST /api/rooms` already does and for the reason stated

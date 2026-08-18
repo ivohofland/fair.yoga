@@ -21,7 +21,8 @@ describe('sameRoomIdentity', () => {
   // byte. This predicate must do the same. The realistic regression here is
   // not a wrong boolean — it is someone adding `.toLowerCase()` or `.trim()`
   // to make matching "more helpful". Every test above passes against that
-  // version; only these two fail.
+  // version; one of these two fails for each of them — `.toLowerCase()`
+  // leaves the whitespace test green, `.trim()` leaves the case test green.
   //
   // A predicate STRICTER than the index refuses a share Postgres would have
   // accepted, and does it invisibly: the teacher is told "already shared"

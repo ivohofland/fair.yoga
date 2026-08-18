@@ -1,5 +1,7 @@
 /**
- * POST /api/rooms/[id]/publish — the only door into `isPublic: true`.
+ * POST /api/rooms/[id]/publish — the only door that flips an EXISTING room
+ * from private to shared. (`POST /api/rooms` can still create one already
+ * shared; see the route's own docblock.)
  *
  * GUARD ORDER IS THE INVERSE OF PUT's AND DELETE's, AND THAT IS DELIBERATE.
  * Those two ask `isPublic?` before `createdById?`, because a shared room is
@@ -53,7 +55,7 @@ function makeRoom(roomName: string, isPublic: boolean, createdById = creatorId) 
 
 // `seedSession(db, accountId)` takes an ACCOUNT ID and returns the raw token
 // STRING (tests/helpers.ts:170). The caller creates the Teacher and its nested
-// Account itself — this helper is the same shape as rooms-api.test.ts:65-81.
+// Account itself — this helper is the same shape as rooms-api.test.ts:75-91.
 async function makeTeacher(tag: string): Promise<{ id: string; token: string }> {
   const email = `roompublish-${tag}-${suffix}@test.local`;
   const teacher = await prisma.teacher.create({

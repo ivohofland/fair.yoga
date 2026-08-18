@@ -10,6 +10,33 @@ import {
 } from '@/lib/api-utils';
 import { createRoomSchema, roomSearchQuerySchema } from '@/lib/schemas';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import type { RoomResult } from '@/lib/room-search';
+
+/**
+ * The projection the shared-room search returns, tethered to the type its one
+ * consumer reads it as.
+ *
+ * `satisfies Record<keyof RoomResult, true>` is the tether, and it binds in
+ * both directions: drop a field here and the key is missing, add one and it
+ * is not in `keyof RoomResult`. Without it the two drift silently — and the
+ * drift is invisible, because `searchPublicRooms` only *asserts* the response
+ * shape. Omitting `floor` would leave `RoomResult.floor` declared, make
+ * `sameRoomIdentity` compare `undefined === '2'`, and quietly retire the
+ * "Already shared" branch this whole flow exists to reach.
+ *
+ * It also stops shipping other teachers' `createdById`, `notes` and
+ * timestamps to the browser, which the previous bare `findMany` did.
+ */
+const ROOM_SEARCH_SELECT = {
+  id: true,
+  venueName: true,
+  roomName: true,
+  address: true,
+  city: true,
+  postcode: true,
+  floor: true,
+  maxCapacity: true,
+} satisfies Record<keyof RoomResult, true>;
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -32,6 +59,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
         address: { contains: street, mode: 'insensitive' },
       },
       orderBy: { createdAt: 'desc' },
+      select: ROOM_SEARCH_SELECT,
     });
     return respondOk(rooms);
   }
