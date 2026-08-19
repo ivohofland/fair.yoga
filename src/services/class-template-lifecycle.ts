@@ -376,6 +376,10 @@ export async function updateClassTemplate(
     // onto the archived room — door 1 refuses to archive a room holding open
     // classes, and that gate produced the same state one step later.
     if (teacherRoom.isArchived && data.teacherRoomId !== template.teacherRoomId) {
+      log.info(
+        { templateId, from: template.teacherRoomId, to: data.teacherRoomId },
+        'template move refused: the target room is archived',
+      );
       return { ok: false, reason: 'room_archived' };
     }
   }
@@ -809,6 +813,10 @@ export async function pauseOrResumeTemplate(
   // brief and the test below require to keep working: a teacher must still
   // be able to stop a template whose room was archived out from under it.
   if (desiredActive && template.teacherRoom.isArchived) {
+    log.info(
+      { templateId, teacherRoomId: template.teacherRoomId },
+      'template resume refused: the room is archived',
+    );
     return { ok: false, reason: 'room_archived' };
   }
 

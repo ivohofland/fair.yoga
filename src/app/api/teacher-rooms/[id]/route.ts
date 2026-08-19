@@ -84,7 +84,24 @@ export const PATCH = withErrorHandler(async (
   );
 
   if (result.ok) {
-    return respondOk({ isArchived: result.isArchived, action: result.action });
+    // A `switch` with a `never` default rather than one `if`, because the
+    // `never` guard at the bottom of this handler closes only the `ok: false`
+    // half of the union. Proved at PR review: adding a fourth `ok: true` arm
+    // with its own payload compiled clean, exit 0, and was answered 200 with
+    // that payload silently dropped — while deleting an `ok: false` arm did
+    // error. `class-templates/[id]/route.ts:163-170` records the same failure
+    // class and closes both halves; this handler cited that discipline while
+    // implementing half of it.
+    switch (result.action) {
+      case 'archived':
+      case 'unarchived':
+      case 'unchanged':
+        return respondOk({ isArchived: result.isArchived, action: result.action });
+      default: {
+        const unhandledSuccess: never = result.action;
+        return unhandledSuccess;
+      }
+    }
   }
 
   if (result.reason === 'not_found') return respondError('Teacher-room not found', 404);
@@ -95,9 +112,10 @@ export const PATCH = withErrorHandler(async (
     return respondError(describeRoomBlockers(result.blockers), 409, 'ROOM_IN_USE');
   }
 
-  // Exhaustiveness: a new ArchiveRoomResult reason becomes a compile error
-  // here rather than being silently answered with the wrong status. Same
-  // discipline as `class-templates/[id]/route.ts`.
+  // Exhaustiveness for the `ok: false` half: a new ArchiveRoomResult reason
+  // becomes a compile error here rather than being silently answered with the
+  // wrong status. The `ok: true` half is closed separately, above — this guard
+  // structurally cannot see it, which is the gap the switch exists to fill.
   const unhandled: never = result;
   return unhandled;
 });

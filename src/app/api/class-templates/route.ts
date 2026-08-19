@@ -13,6 +13,7 @@ import { createClassTemplateSchema } from '@/lib/schemas';
 import { generateInstancesForTemplate } from '@/services/class-generator';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { countSkipReasons, type GenerationResult } from '@/lib/generation';
+import { log } from '@/lib/log';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -46,6 +47,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // `isActive: true` (schema.prisma:336) and starts generating immediately,
   // so creation is itself the commitment and there is no later door to catch.
   if (teacherRoom.isArchived) {
+    log.info(
+      { teacherRoomId: body.teacherRoomId, teacherId: session.teacherId },
+      'template create refused: the room is archived',
+    );
     return respondError(
       'This room is archived. Unarchive it to add a recurring class here.',
       409,

@@ -172,11 +172,14 @@ describe('setTeacherRoomArchived — ownership, idempotency, release valve', () 
 
 describe('describeRoomBlockers', () => {
   it.each([
-    [{ classes: 1, templates: 0 }, '1 upcoming class still uses this room.'],
-    [{ classes: 2, templates: 0 }, '2 upcoming classes still use this room.'],
+    [{ classes: 1, templates: 0 }, '1 unfinished class still uses this room.'],
+    [{ classes: 2, templates: 0 }, '2 unfinished classes still use this room.'],
     [{ classes: 0, templates: 1 }, '1 recurring class still uses this room.'],
     [{ classes: 0, templates: 3 }, '3 recurring classes still use this room.'],
-    [{ classes: 2, templates: 1 }, '2 upcoming classes and 1 recurring class still use this room.'],
+    [{ classes: 2, templates: 1 }, '2 unfinished classes and 1 recurring class still use this room.'],
+    // The state the type admits and the service never produces. Pinned so the
+    // empty-subject sentence (" still use this room.") cannot come back.
+    [{ classes: 0, templates: 0 }, 'This room is still in use.'],
   ])('renders %j', (blockers, expected) => {
     expect(describeRoomBlockers(blockers)).toBe(expected);
   });

@@ -329,6 +329,13 @@ export async function transitionClass(
       sourceStatesFor(targetStatus).includes(cls.status) &&
       cls.teacherRoom.isArchived
     ) {
+      // Logged for the same reason the `STARTS_IN_PAST` refusal below is:
+      // `respondError` does not log and `withErrorHandler` logs only on
+      // `throw`, so an unlogged refusal leaves no record but the 409 body.
+      log.info(
+        { classId, targetStatus, currentStatus: cls.status },
+        'class publish refused: the room is archived',
+      );
       return {
         ok: false,
         reason: 'ROOM_ARCHIVED',
