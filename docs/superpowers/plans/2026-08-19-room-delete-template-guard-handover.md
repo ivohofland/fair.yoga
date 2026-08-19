@@ -214,7 +214,10 @@ Order is **1 → 2 → 3 → 4 → 5 → 6**, and it is load-bearing, not prefer
   that guard has the same race and had no backstop at all.
 - `isRestrictViolationOn` keying on `meta.constraint` and **never** on
   `meta.modelName`. Measured: the same constraint arrives as
-  `modelName: "TeacherRoom"` from one route and `"Room"` from the other. A
+  `modelName: "TeacherRoom"` from one route and `"Room"` from the other —
+  **corrected in PR review: both routes actually report `"TeacherRoom"`; the
+  `"Room"` shape comes from a bare `room.delete`, which `rooms/[id]` does not
+  currently reach.** A
   matcher that checks the model passes one route's tests and 500s the other.
 
 **Preference (vary if you have a reason, and report it):**

@@ -55,6 +55,12 @@ describe('isRestrictViolationOn', () => {
    * keys on `constraint` alone. A matcher that also required
    * `modelName === 'TeacherRoom'` would pass every teacher-rooms test and
    * silently 500 the rooms route.
+   *
+   * [CORRECTED IN PR REVIEW — the last sentence was false. `DELETE
+   * /api/rooms/[id]` issues `teacherRoom.deleteMany` first, so it reports
+   * "TeacherRoom" like its sibling; the "Room" shape comes from a bare
+   * `room.delete`. The decision stands as a forward-looking one. See the
+   * shipped docblock in `src/lib/api-errors.ts`.]
    */
   const ROOM_FKS = ['ClassTemplate_teacherRoomId_fkey', 'Class_teacherRoomId_fkey'] as const;
 
@@ -138,6 +144,11 @@ Insert into `src/lib/api-errors.ts` immediately after `isRecordNotFound` (which 
  * `DELETE /api/rooms/[id]`, because the latter trips it through the
  * `Room`→`TeacherRoom` cascade. A matcher that also required the model would
  * pass one route's tests and 500 the other.
+ *
+ * [CORRECTED IN PR REVIEW: both routes emit "TeacherRoom" today — the rooms
+ * route's `teacherRoom.deleteMany` refuses before `room.delete` is reached.
+ * The "Room" shape is what that route acquires once the redundant statement
+ * is removed, which is what keying on `constraint` protects.]
  *
  * NARROW BY CONSTRUCTION, and that is the whole design. A blanket
  * `P2003 → 409` in `classifyApiError` would be less code and worse: almost
