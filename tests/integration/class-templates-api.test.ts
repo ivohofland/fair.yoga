@@ -1417,10 +1417,16 @@ describe('PUT /api/class-templates/[id]', () => {
     }
   });
 
-  // The gate proven directly: without `&& template.isActive` on the guard
-  // above, this case would also 409 — and stay green there is nothing else in
-  // this file that would catch someone deleting that clause.
-  it('still allows moving a paused template onto an archived room', async () => {
+  // Pausing is not protection, and this case asserted the opposite until PR
+  // review. `pauseOrResumeTemplate` deletes nothing, so a paused template
+  // still owns every `open` instance it generated before it was paused, and
+  // `syncTemplateInstances` relocates them with the move. The earlier gate
+  // (`&& template.isActive`) let this through and the earlier version of this
+  // test asserted only `after.teacherRoomId` — so the suite performed the
+  // relocation on every run and asserted nothing about it. Four `open`
+  // classes ended up on a room the teacher had shelved, which is precisely
+  // the state door 1 refuses to create.
+  it('refuses to move a paused template onto an archived room, and relocates nothing', async () => {
     const owner = await seedTeacher('move-archived-paused');
     let archivedRoomId = '';
     try {
@@ -1458,15 +1464,84 @@ describe('PUT /api/class-templates/[id]', () => {
         body: JSON.stringify({ teacherRoomId: archived.teacherRoomId }),
       });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe('ROOM_ARCHIVED');
+
       const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
-      expect(after.teacherRoomId).toBe(archived.teacherRoomId);
+      expect(after.teacherRoomId).toBe(owner.teacherRoomId);
+
+      // The assertion whose absence hid the defect. Its active-move sibling
+      // has carried it since the door was written; this case did not.
+      const instancesAfter = await prisma.class.findMany({ where: { templateId: template.id } });
+      expect(instancesAfter.length).toBeGreaterThan(0);
+      expect(instancesAfter.some((c) => c.teacherRoomId === archived.teacherRoomId)).toBe(false);
     } finally {
       await prisma.class.deleteMany({ where: { teacherId: owner.teacherId } });
       await prisma.classTemplate.deleteMany({ where: { teacherId: owner.teacherId } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
       await prisma.room.delete({ where: { id: owner.roomId } });
       if (archivedRoomId) await prisma.room.delete({ where: { id: archivedRoomId } });
+      await prisma.session.deleteMany({ where: { accountId: owner.accountId } });
+      await prisma.teacher.delete({ where: { id: owner.teacherId } });
+      await prisma.account.delete({ where: { id: owner.accountId } });
+    }
+  });
+
+  // The `!== template.teacherRoomId` half of door 5, proven directly: without
+  // it, this case 409s. `TemplateForm` posts the whole form on every edit, so
+  // an unchanged `teacherRoomId` rides along with a pure description change —
+  // and an active template whose own room is archived (spec section 10 says
+  // pre-branch data holds these) would become uneditable, answered with a 409
+  // about a move the teacher did not make.
+  it('allows a no-op room field on a template whose own room is archived', async () => {
+    const owner = await seedTeacher('move-archived-noop');
+    try {
+      const create = await fetch(`${BASE_URL}/api/class-templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(owner.sessionToken) },
+        body: JSON.stringify({
+          teacherRoomId: owner.teacherRoomId,
+          classType: 'Noop Edit',
+          dayOfWeek: DAY_OF_WEEK,
+          startTime: '09:54',
+          durationMinutes: 60,
+          roomCost: 15,
+          minRate: 10,
+          targetRate: 20,
+          minStudents: 2,
+          maxStudents: 8,
+        }),
+      });
+      expect(create.status).toBe(201);
+      const { data: template } = (await create.json()) as { data: { id: string } };
+
+      // Archive the room out from under the live template — the pre-branch
+      // state, reproduced directly rather than assumed. Door 1 is not
+      // involved: this writes the flag, it does not go through the service.
+      await prisma.teacherRoom.update({
+        where: { id: owner.teacherRoomId },
+        data: { isArchived: true },
+      });
+
+      const res = await fetch(`${BASE_URL}/api/class-templates/${template.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...cookie(owner.sessionToken) },
+        body: JSON.stringify({
+          teacherRoomId: owner.teacherRoomId,
+          description: 'edited while the room is archived',
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: template.id } });
+      expect(after.description).toBe('edited while the room is archived');
+      expect(after.teacherRoomId).toBe(owner.teacherRoomId);
+    } finally {
+      await prisma.class.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.classTemplate.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.room.delete({ where: { id: owner.roomId } });
       await prisma.session.deleteMany({ where: { accountId: owner.accountId } });
       await prisma.teacher.delete({ where: { id: owner.teacherId } });
       await prisma.account.delete({ where: { id: owner.accountId } });

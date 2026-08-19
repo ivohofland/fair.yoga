@@ -203,19 +203,35 @@ export type UpdateClassTemplateResult =
   | { ok: false; reason: 'no_fields' }
   | { ok: false; reason: 'invalid_room' }
   /**
-   * A fifth door on the room archive lifecycle (issue 76, fix round 2):
-   * relocating an *active* template onto an archived room is refused the same
-   * way creating (door 4) or resuming (door 3) one there is — the doors
-   * reasoned about creating a template and resuming one but never about
-   * moving one, the same commitment by a different verb, and
-   * `syncTemplateInstances` would otherwise relocate every future
-   * non-`settingsLocked` `draft`/`open` instance onto the archived room in
-   * the same transaction.
+   * A fifth door on the room archive lifecycle (issue 76): relocating a
+   * template onto an archived room is refused the same way creating (door 4)
+   * or resuming (door 3) one there is — the doors reasoned about creating a
+   * template and resuming one but never about moving one, the same commitment
+   * by a different verb, and `syncTemplateInstances` relocates every future
+   * non-`settingsLocked` `draft`/`open` instance onto the target room in the
+   * same transaction.
    *
-   * Gated on `template.isActive`, deliberately and symmetrically with door 3:
-   * relocating a *paused* template stays free, because its later resume is
-   * already refused there. Blocking the paused move would strand a teacher
-   * exactly as an ungated door 3 would have.
+   * Gated on a CHANGE of room, NOT on `template.isActive`. Fix round 2 gated
+   * it on `isActive` "symmetrically with door 3"; PR review proved that a
+   * false analogy. Door 3 gates on the *direction of the verb*
+   * (`desiredActive`), so that pausing a template whose room was archived
+   * under it still works. `isActive` is a property of the template on a
+   * different axis, and pausing deletes nothing — a paused template still
+   * owns the `open` instances it generated, and the sync carried every one of
+   * them onto the archived room. That produced, in a single request with no
+   * race, the exact state door 1 exists to refuse: an archived room holding
+   * bookable classes.
+   *
+   * Nobody needs to move a template ONTO an archived room. Moving one OFF one
+   * is the recovery, and this guard reads the TARGET room, so that direction
+   * was never affected by either version of the gate.
+   *
+   * The `!==` half is equally load-bearing: `TemplateForm` posts the whole
+   * form on every edit, so `teacherRoomId` is present on every PUT whether or
+   * not the teacher touched the picker. Without that half, an active template
+   * whose own room is archived — a state spec section 10 says exists in
+   * pre-branch data — could not be edited at all, and answered a description
+   * change with a 409 about moving.
    */
   | { ok: false; reason: 'room_archived' }
   | { ok: false; reason: 'slot_conflict' }
@@ -340,16 +356,26 @@ export async function updateClassTemplate(
       return { ok: false, reason: 'invalid_room' };
     }
 
-    // A fifth door (issue 76, fix round 2): moving an *active* template onto
-    // an archived room is the same commitment as creating (door 4) or
-    // resuming (door 3) one there, and was the only one of the three left
-    // unguarded — `syncTemplateInstances` below would relocate every future
-    // non-`settingsLocked` `draft`/`open` instance onto the archived room in
-    // the same transaction. Gated on `template.isActive`, symmetrically with
-    // door 3: relocating a *paused* template must stay free, since its later
-    // resume is already refused there — blocking the paused move would strand
-    // a teacher exactly as an ungated door 3 would have.
-    if (teacherRoom.isArchived && template.isActive) {
+    // A fifth door (issue 76): moving a template onto an archived room is the
+    // same commitment as creating (door 4) or resuming (door 3) one there, and
+    // was the only one of the three left unguarded — `syncTemplateInstances`
+    // below relocates every future non-`settingsLocked` `draft`/`open`
+    // instance onto the target room in the same transaction.
+    //
+    // Gated on a CHANGE of room, NOT on `template.isActive`. Both halves are
+    // load-bearing and each reddens a test alone (mutations 8 and 9, spec
+    // section 9):
+    //   - drop `isArchived` and both move-refusal cases go red.
+    //   - drop `!== template.teacherRoomId` and "allows a no-op room field"
+    //     goes red, because `TemplateForm` posts the whole form on every edit,
+    //     so an unchanged `teacherRoomId` arrives on every PUT.
+    //
+    // `isActive` is deliberately NOT consulted, and the fix-round-2 gate that
+    // did consult it was wrong: pausing deletes nothing, so a paused template
+    // still owns its generated `open` instances, and the sync carried them
+    // onto the archived room — door 1 refuses to archive a room holding open
+    // classes, and that gate produced the same state one step later.
+    if (teacherRoom.isArchived && data.teacherRoomId !== template.teacherRoomId) {
       return { ok: false, reason: 'room_archived' };
     }
   }
