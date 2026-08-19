@@ -279,10 +279,15 @@ export type UpdateClassTemplateResult =
    *    future instance, while `POST /api/registrations` holds its `Class` row
    *    `FOR UPDATE` for the length of its own transaction. #104 bounds how
    *    long that statement WAITS to acquire the row — the booking now takes
-   *    it through `lockClassRow`, the same helper `syncTemplateInstances`'s
-   *    pre-lock uses — but bounds nothing about how long the booking HOLDS
-   *    the row once acquired, and it is that hold this race is about. So a
-   *    student booking one instance can now time a teacher's edit out at 2s.
+   *    it through `lockClassRow` — but bounds nothing about how long the
+   *    booking HOLDS the row once acquired, and it is that hold this race is
+   *    about. So a student booking one instance can now time a teacher's edit
+   *    out at 2s. `lockClassRow`, not the `lockClassRowsOrdered` the sync's
+   *    own pre-lock calls: two different exports of `db-locks.ts`, sharing
+   *    `setLockTimeout`'s 2s bound and nothing else — the ordered one is the
+   *    only production `FOR UPDATE OF c` and carries an `ORDER BY c.id`
+   *    obligation the single-row helper has no need of. Reading them as one
+   *    code path would make the ordering guarantee look wider than it is.
    *    `archiveOrUnarchiveTemplate` documents the same exposure for its own
    *    pre-lock ("that one can lose to an ordinary booking holding a `Class`
    *    row"); this function acquired it in the same branch and inherits it.
@@ -488,10 +493,14 @@ export async function updateClassTemplate(
       // "a lock race", not "the template lock race". Since the write and the
       // sync became one transaction this can be lost on the `ClassTemplate`
       // row OR on any future `Class` row of the template — the sync's ordered
-      // pre-lock takes those, and an ordinary booking holds one unbounded
-      // (`db-locks.ts`). Naming the template row sent an operator to check
-      // the generation sweep and the archive path for a race that was
-      // actually a student booking, and find nothing. The code cannot tell
+      // pre-lock takes those, and an ordinary booking holds one for the length
+      // of its own transaction. The HOLD is what matters here and it is not
+      // bounded by anything; #104 bounded only the WAIT, at every site
+      // including this one. See the `busy` arm on `UpdateClassTemplateResult`
+      // above, cause 2, for that distinction spelled out. Naming the template
+      // row sent an operator to check the generation sweep and the archive
+      // path for a race that was actually a student booking, and find
+      // nothing. The code cannot tell
       // the two apart; `err`'s invocation line can, which is why it is logged
       // rather than summarised here. See the `busy` arm on
       // `UpdateClassTemplateResult` for both families.

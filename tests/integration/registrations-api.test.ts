@@ -648,8 +648,26 @@ describe('POST /api/registrations', () => {
    *
    * The 3.5s hold sits above the 2s bound and below Prisma's 5s default
    * budget, so reverting the route to its inline statement makes this request
-   * SUCCEED at 3.5s with a 200 — which is what makes this a guard rather than
-   * a description.
+   * SUCCEED at 3.5s with a 201 — which is what makes this a guard rather than
+   * a description. The status assertion is therefore the whole discriminator
+   * between "gave up at 2s" and "waited the holder out": waiting it out does
+   * not produce a slow 503, it produces the ordinary 201.
+   *
+   * `waited > 1_000` is the second half and is not decoration. The 503 body is
+   * a fixed generic string, so the SQLSTATE is genuinely not observable over
+   * HTTP — and `P2024` (pool timeout) is also in `TRANSIENT_PRISMA_CODES` and
+   * also classifies 503, so without a lower bound any fast transient 503 would
+   * satisfy this test.
+   *
+   * No upper bound. One was here (`toBeLessThan(3_400)`) and could not fail:
+   * every timeout value and every reordering inside `lockClassRow` that would
+   * redden it reddens the status assertion first, because a wait that reaches
+   * 3.5s acquires the row and succeeds. All it contributed was a ~1400ms
+   * overhead budget on a 2-4 core CI box running three vitest projects — a
+   * flake that reads as "the bound didn't fire" when the bound fired
+   * correctly. The timeout's VALUE is pinned by `db-locks.test.ts`, which
+   * asserts the literal and observes `SHOW lock_timeout`; a wall-clock ceiling
+   * here never pinned it.
    */
   it('answers 503 rather than blocking when another transaction holds the class row', async () => {
     const classId = await makeClass(5);
@@ -675,7 +693,7 @@ describe('POST /api/registrations', () => {
     await holder;
 
     expect(res.status).toBe(503);
-    expect(waited).toBeLessThan(3_400);
+    expect(waited).toBeGreaterThan(1_000);
   }, 20_000);
 });
 

@@ -54,7 +54,7 @@ export interface SeatCount {
    * and left the *predicate* written out five times, four as `freeSeats <= 0`
    * and one inverted as `freeSeats > 0`. A sixth site written `< 0` compiles,
    * reads like its neighbours, and admits one student into a class at exactly
-   * `maxStudents` — which is the shape of #212 itself. Four of this branch's
+   * `maxStudents` — which is the shape of #212 itself. Four of #212's
    * eight recorded mutations (M5-M8) were that off-by-one at four separate
    * sites; with the boundary here there is one place to get it wrong and one
    * mutation that proves it.
@@ -72,12 +72,10 @@ export interface SeatCount {
  * paths named above now go through `lockClassRow` (`db-locks.ts`).
  *
  * This function deliberately does NOT take the lock itself, and the reason is
- * SCOPE, not efficacy: this branch changes no behaviour, and having this
- * helper acquire a lock its callers do not already expect it to take would be
- * one. Every caller already holds the lock before calling in. Whether
- * `readSeatCount` should take it too — closing the gap the precondition below
- * names — is #219's decision to make, not a change to fold into a
- * documentation-only branch.
+ * SCOPE, not efficacy: every caller already holds the lock before calling in,
+ * so acquiring one here would change what those callers expect this helper to
+ * do. Whether `readSeatCount` should take it too — closing the gap the
+ * precondition above names — is #219's decision to make.
  *
  * It reads the class rather than accepting one, so a caller cannot compare a
  * freshly-locked count against a `maxStudents` it read BEFORE taking the lock.
