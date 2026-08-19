@@ -504,6 +504,66 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
     await prisma.waitlistEntry.deleteMany({ where: { classId: staleClassId } });
     await prisma.class.delete({ where: { id: staleClassId } });
   });
+
+  /**
+   * #104. `addToWaitlist` took an unbounded inline `FOR UPDATE` until this
+   * change; it now goes through `lockClassRow`, which issues the shared 2s
+   * `SET LOCAL lock_timeout` first.
+   *
+   * The 3.5s hold is the guard, not scenery: it sits above the 2s bound and
+   * below Prisma's 5s default transaction budget, so WITHOUT the bound this
+   * call acquires the lock at 3.5s and succeeds. Reverting the site to its
+   * inline statement therefore fails `expect(outcome.ok).toBe(false)` rather
+   * than hanging the suite.
+   *
+   * `toBeLessThan(3_400)` is below the hold on purpose — that is what
+   * distinguishes "gave up at 2s" from "waited the holder out". Neither bound
+   * pins the timeout's VALUE, which belongs to `db-locks.ts`.
+   */
+  it('gives up on the 2s bound when another transaction holds the class row', async () => {
+    // Its own full class: max 1, one registration. Not the block's shared
+    // `classId`, whose waitlist other tests mutate.
+    const lockedClassId = await makeClass('open', 1);
+    await prisma.registration.create({
+      data: {
+        classId: lockedClassId,
+        studentId: fillerIds[0]!,
+        status: 'registered',
+        tierAtBooking: 3,
+      },
+    });
+
+    const holderClient = new PrismaClient();
+    let signalHeld!: () => void;
+    const held = new Promise<void>((r) => {
+      signalHeld = r;
+    });
+
+    const holder = holderClient.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${lockedClassId} FOR UPDATE`;
+        signalHeld();
+        await new Promise((r) => setTimeout(r, 3_500));
+      },
+      { timeout: 30_000 },
+    );
+    await held;
+
+    const startedAt = Date.now();
+    const outcome = await addToWaitlist(prisma, lockedClassId, studentIds[0]!).then(
+      () => ({ ok: true as const }),
+      (err: unknown) => ({ ok: false as const, err: String(err) }),
+    );
+    const waited = Date.now() - startedAt;
+
+    await holder;
+    await holderClient.$disconnect();
+
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.err).toMatch(/55P03/);
+    expect(waited).toBeGreaterThan(1_000);
+    expect(waited).toBeLessThan(3_400);
+  }, 20_000);
 });
 
 describe('promoteNext (DB)', () => {
