@@ -1,5 +1,7 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
+import { log } from '@/lib/log';
+import { isRestrictViolationOn } from '@/lib/api-errors';
 import {
   respondOk,
   respondError,
@@ -10,6 +12,11 @@ import {
 } from '@/lib/api-utils';
 import { updateTeacherRoomSchema, archiveStateQuerySchema } from '@/lib/schemas';
 import { setTeacherRoomArchived, describeRoomBlockers } from '@/services/room-archive';
+import {
+  countTeacherRoomDeleteBlockers,
+  ROOM_DELETE_RESTRICT_FKS,
+  ROOM_DELETE_BLOCKED_MESSAGE,
+} from '@/services/room-deletion';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -135,13 +142,38 @@ export const DELETE = withErrorHandler(async (
     return respondError('Access denied', 403);
   }
 
-  // Only allow hard delete if no classes use this room
-  const classCount = await prisma.class.count({ where: { teacherRoomId: id } });
-  if (classCount > 0) {
-    return respondError('Cannot delete a room with class history. Archive it instead.', 409);
+  // Both blockers in one read. `Class` was already guarded; `ClassTemplate`
+  // was not, and a room referenced only by a template answered a raw P2003 as
+  // a 500 (issue 103).
+  const blockers = await countTeacherRoomDeleteBlockers(prisma, id);
+  if (blockers.classes > 0 || blockers.templates > 0) {
+    log.info(
+      { teacherRoomId: id, teacherId: session.teacherId, blockers },
+      'room delete refused: the room is still in use',
+    );
+    return respondError(ROOM_DELETE_BLOCKED_MESSAGE, 409, 'ROOM_IN_USE');
   }
 
-  await prisma.teacherRoom.delete({ where: { id } });
+  // THE CHECK ABOVE IS NOT REDUNDANT WITH THE CATCH BELOW, AND REMOVING IT
+  // REOPENS A DEADLOCK — with every test in this repo still green.
+  //
+  // `DELETE FROM "TeacherRoom"` locks the row, then the RESTRICT triggers take
+  // `FOR KEY SHARE` on referencing `ClassTemplate` rows. The generator sweep
+  // holds `FOR UPDATE` on a template (`claimTemplateForGeneration`) while its
+  // `Class` insert needs `FOR KEY SHARE` on this `TeacherRoom` — a genuine
+  // AB-BA cycle, `40P01`. The catch runs AFTER the DELETE has taken its locks,
+  // so it cannot prevent the cycle; only never issuing the statement can, and
+  // that is what this check does. `docs/lock-order.md` carries the full edge.
+  try {
+    await prisma.teacherRoom.delete({ where: { id } });
+  } catch (err) {
+    // The check-to-delete race: a template created in the gap. Same answer as
+    // the check, rather than the 500 a bare P2003 falls through to.
+    if (isRestrictViolationOn(err, ROOM_DELETE_RESTRICT_FKS)) {
+      return respondError(ROOM_DELETE_BLOCKED_MESSAGE, 409, 'ROOM_IN_USE');
+    }
+    throw err;
+  }
 
   return respondOk({ deleted: true });
 });

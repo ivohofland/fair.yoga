@@ -49,6 +49,10 @@ let freeRoomId: string;
 let publicRoomId: string;
 /** Private room owned by `other` — the one `owner` must not be able to claim. */
 let othersPrivateRoomId: string;
+/** A link whose only reference is an ARCHIVED template — the 500 reproducer. */
+let linkWithArchivedTemplateId: string;
+/** A link whose only reference is a LIVE template. */
+let linkWithLiveTemplateId: string;
 
 const ORIGINAL_RATE = 25;
 
@@ -204,12 +208,59 @@ beforeAll(async () => {
       status: 'open',
     },
   });
+
+  const archivedTemplateRoom = await makeRoom('Archived Template');
+  const archivedTemplateLink = await prisma.teacherRoom.create({
+    data: { teacherId: ownerId, roomId: archivedTemplateRoom.id, capacityOverride: 8, rentalRate: 15 },
+  });
+  linkWithArchivedTemplateId = archivedTemplateLink.id;
+  await prisma.classTemplate.create({
+    data: {
+      teacherId: ownerId,
+      teacherRoomId: archivedTemplateLink.id,
+      classType: 'Teacher Rooms Delete Guard',
+      dayOfWeek: 2,
+      startTime: '18:00',
+      durationMinutes: 60,
+      roomCost: 15,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 1,
+      maxStudents: 8,
+      isActive: false,
+      isArchived: true,
+    },
+  });
+
+  const liveTemplateRoom = await makeRoom('Live Template');
+  const liveTemplateLink = await prisma.teacherRoom.create({
+    data: { teacherId: ownerId, roomId: liveTemplateRoom.id, capacityOverride: 8, rentalRate: 15 },
+  });
+  linkWithLiveTemplateId = liveTemplateLink.id;
+  await prisma.classTemplate.create({
+    data: {
+      teacherId: ownerId,
+      teacherRoomId: liveTemplateLink.id,
+      classType: 'Teacher Rooms Delete Guard Live',
+      dayOfWeek: 3,
+      startTime: '19:00',
+      durationMinutes: 60,
+      roomCost: 15,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 1,
+      maxStudents: 8,
+      isActive: true,
+      isArchived: false,
+    },
+  });
 });
 
 afterAll(async () => {
-  // FK order: class → teacherRoom → room. Class.teacherRoom is required and
-  // defaults to Restrict, so the class has to go first.
+  // FK order: class → classTemplate → teacherRoom → room. Both Class and
+  // ClassTemplate.teacherRoom are Restrict, so both must go first.
   await prisma.class.deleteMany({ where: { teacherId: { in: [ownerId, otherId] } } });
+  await prisma.classTemplate.deleteMany({ where: { teacherId: { in: [ownerId, otherId] } } });
   await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: [ownerId, otherId] } } });
   await prisma.room.deleteMany({ where: { createdById: { in: [ownerId, otherId] } } });
   await prisma.session.deleteMany({
@@ -485,5 +536,33 @@ describe('DELETE /api/teacher-rooms/[id]', () => {
     const res = await send('DELETE', ownerToken, linkId);
     expect(res.status).toBe(200);
     expect(await prisma.teacherRoom.count({ where: { id: linkId } })).toBe(0);
+  });
+
+  it('refuses a link referenced only by an ARCHIVED template -> 409, not a 500', async () => {
+    // The exact state that reproduced `500 {"error":{"message":"Internal
+    // server error"}}` before this branch: zero Class rows, one archived
+    // ClassTemplate. Both delete routes did it; `rooms-api.test.ts` covers the
+    // other. The status assertion is the whole test — 409 vs 500 is the bug.
+    expect(await prisma.class.count({ where: { teacherRoomId: linkWithArchivedTemplateId } })).toBe(0);
+
+    const res = await send('DELETE', ownerToken, linkWithArchivedTemplateId);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toBe('Cannot delete a room with class history. Archive it instead.');
+
+    // Nothing removed. The template is what RESTRICTs the delete, and a
+    // teacher cannot delete it either — there is no DELETE verb on
+    // /api/class-templates/[id] — so this room is permanently undeletable,
+    // which is why the message points at archiving rather than at clearing.
+    expect(await prisma.teacherRoom.count({ where: { id: linkWithArchivedTemplateId } })).toBe(1);
+    expect(await prisma.classTemplate.count({ where: { teacherRoomId: linkWithArchivedTemplateId } })).toBe(1);
+  });
+
+  it('refuses a link referenced only by a LIVE template', async () => {
+    const res = await send('DELETE', ownerToken, linkWithLiveTemplateId);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toBe('Cannot delete a room with class history. Archive it instead.');
+    expect(await prisma.teacherRoom.count({ where: { id: linkWithLiveTemplateId } })).toBe(1);
   });
 });
