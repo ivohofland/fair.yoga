@@ -431,11 +431,19 @@ All 1613 pass at HEAD; full-suite duration 197 s. The three projects' globs are
 disjoint by construction (the config says so, and the file counts confirm it —
 no file is collected twice).
 
-**Predict, then measure anyway.** This branch adds four guards, one end-to-end
-route test, and re-pins one existing test, so the expected after-figure is
-1613 + 5 = **1618** with `unit` gaining four and `integration` one. The
-implementer must **measure** the real figure rather than assert this one — the
-prediction cannot know what the branch's own review will add. On #212 the
+**Predict, then measure anyway.** This branch adds four guards and re-pins one
+existing test, so the expected after-figure is 1613 + 4 = **1617**: `unit` gains
+three (`addToWaitlist`, `claimSpot`, `promoteNext`) and `integration` gains one
+(the booking route). The re-pin modifies a test rather than adding one.
+
+An earlier revision of this section said 1618, counting the booking-route guard
+and the §6.4 end-to-end 503 proof as two tests. The plan merges them into one
+integration test, which is both of those things at once — the booking route has
+no unit test home, and asserting the real HTTP 503 is strictly better evidence
+than asserting a thrown SQLSTATE. Corrected here rather than only in the plan.
+
+The implementer must **measure** the real figure rather than assert this one —
+the prediction cannot know what the branch's own review will add. On #212 the
 predicted 1294 came out at 1296 for exactly that reason.
 
 ---
