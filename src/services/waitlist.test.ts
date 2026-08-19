@@ -1087,6 +1087,62 @@ describe('claimSpot (DB)', () => {
     expect(notifications).toHaveLength(1);
     expect(notifications[0]!.type).toBe('booking_confirmed');
   });
+
+  /**
+   * #104. `claimSpot` took an unbounded inline `FOR UPDATE` until this change;
+   * it now goes through `lockClassRow` and its shared 2s bound.
+   *
+   * This is the site where contention is by DESIGN: the final-hour broadcast
+   * tells every waiting student at once, so N claims land on one `Class` row
+   * and serialize. That is not what the bound is for — each claim holds the
+   * row only for its own short transaction, so 2s covers a deep queue
+   * comfortably. What the bound stops is a claim arriving while an UNRELATED
+   * long holder has the row: a GDPR erasure holds every class a student
+   * touched for up to 20s.
+   *
+   * The 3.5s hold is the guard. It sits above the 2s bound and below Prisma's
+   * 5s default budget, so WITHOUT the bound this call acquires at 3.5s and
+   * succeeds — reverting the site fails `expect(outcome.ok).toBe(false)`
+   * rather than hanging the suite. `toBeLessThan(3_400)` is below the hold on
+   * purpose: that is what separates "gave up at 2s" from "waited it out".
+   */
+  it('gives up on the 2s bound when another transaction holds the class row', async () => {
+    // Same state the passing test above builds: in the claim window, one
+    // free spot, this student `waiting`.
+    const lockedClassId = await makeFullClass();
+    await freeTheSpot(lockedClassId);
+
+    const holderClient = new PrismaClient();
+    let signalHeld!: () => void;
+    const held = new Promise<void>((r) => {
+      signalHeld = r;
+    });
+
+    const holder = holderClient.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${lockedClassId} FOR UPDATE`;
+        signalHeld();
+        await new Promise((r) => setTimeout(r, 3_500));
+      },
+      { timeout: 30_000 },
+    );
+    await held;
+
+    const startedAt = Date.now();
+    const outcome = await claimSpot(prisma, lockedClassId, waiterId, IN_CLAIM_WINDOW).then(
+      () => ({ ok: true as const }),
+      (err: unknown) => ({ ok: false as const, err: String(err) }),
+    );
+    const waited = Date.now() - startedAt;
+
+    await holder;
+    await holderClient.$disconnect();
+
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.err).toMatch(/55P03/);
+    expect(waited).toBeGreaterThan(1_000);
+    expect(waited).toBeLessThan(3_400);
+  }, 20_000);
 });
 
 // ===========================================================================
