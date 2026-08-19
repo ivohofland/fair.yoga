@@ -45,6 +45,8 @@ let deletePrivateRoomId: string;
 let deleteWithClassRoomId: string;
 let deleteEmptyRoomId: string;
 let deleteClassId: string;
+/** Private, one link, referenced only by an archived template — the 500 reproducer. */
+let deleteWithTemplateRoomId: string;
 // #77: a room carrying TWO TeacherRooms, where only the OTHER teacher's has a
 // class. Every other fixture here gives a room exactly one TeacherRoom owned by
 // the deleting teacher, which is what left the cross-teacher guard unpinned.
@@ -162,6 +164,31 @@ beforeAll(async () => {
   });
   deleteClassId = blockingClass.id;
 
+  // Private, with a TeacherRoom whose only reference is an ARCHIVED template:
+  // the blocker that used to answer 500. `makeRoom` is defined above.
+  const deleteWithTemplateRoom = await makeRoom('Delete With Template', false);
+  deleteWithTemplateRoomId = deleteWithTemplateRoom.id;
+  const withTemplateTeacherRoom = await prisma.teacherRoom.create({
+    data: { teacherId: creator.id, roomId: deleteWithTemplateRoomId, capacityOverride: 8, rentalRate: 15 },
+  });
+  await prisma.classTemplate.create({
+    data: {
+      teacherId: creator.id,
+      teacherRoomId: withTemplateTeacherRoom.id,
+      classType: 'Rooms API Delete Template Guard',
+      dayOfWeek: 4,
+      startTime: '20:00',
+      durationMinutes: 60,
+      roomCost: 15,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 1,
+      maxStudents: 8,
+      isActive: false,
+      isArchived: true,
+    },
+  });
+
   // Private, with a TeacherRoom but NO classes: the 200. The TeacherRoom is
   // deliberate — a room with none would make the cleanup assertion vacuous.
   const deleteEmptyRoom = await makeRoom('Delete Empty', false);
@@ -202,9 +229,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // FK order: class -> teacher-rooms -> rooms. Class.teacherRoom is a required
-  // relation defaulting to Restrict, so the class must go first or the
-  // teacher-room delete throws.
+  // FK order: class → classTemplate → teacher-rooms → rooms. Both Class and
+  // ClassTemplate.teacherRoom are Restrict, so both must go first.
   const classIds = [deleteClassId, crossTeacherClassId].filter(Boolean);
   if (classIds.length > 0) {
     await prisma.class.deleteMany({ where: { id: { in: classIds } } });
@@ -215,10 +241,15 @@ afterAll(async () => {
     deletePublicRoomId,
     deletePrivateRoomId,
     deleteWithClassRoomId,
+    deleteWithTemplateRoomId,
     deleteEmptyRoomId,
     deleteCrossTeacherRoomId,
   ].filter(Boolean);
   if (roomIds.length > 0) {
+    // classTemplate.teacherRoom is Restrict — delete templates that reference
+    // teacherRooms being removed. The happy-path case already removed one room
+    // (cascade-deleting its teacherRoom and template), so this is best-effort.
+    await prisma.classTemplate.deleteMany({ where: { teacherId: { in: [creatorId, otherTeacherId] } } });
     await prisma.teacherRoom.deleteMany({ where: { roomId: { in: roomIds } } });
     // deleteMany, not delete: the happy-path case already removed one of these
     // rooms, and deleteMany no-ops over a missing row where delete would throw.
@@ -455,8 +486,11 @@ describe('DELETE /api/rooms/[id]', () => {
     // the teacher-room. It couldn't: the class that makes hasClasses true is
     // the same row whose Restrict relation makes the handler's
     // teacherRoom.deleteMany throw, and that throw is atomic, so the row
-    // survives. Drop the guard and this is a 500 (withErrorHandler maps only
-    // P2002 to a status of its own), which the assertion above catches first.
+    // survives. Drop the guard and this is still a 409 — the P2003 backstop
+    // added for issue 103 catches the raw foreign-key violation and answers
+    // with the same message. What the guard buys is not the status but the
+    // LOCKS: the backstop only runs once the DELETE has already taken them.
+    // See the block comment in the handler.
     expect(await prisma.room.count({ where: { id: deleteWithClassRoomId } })).toBe(1);
     expect(await prisma.teacherRoom.count({ where: { roomId: deleteWithClassRoomId } })).toBe(1);
   });
@@ -505,6 +539,26 @@ describe('DELETE /api/rooms/[id]', () => {
       await prisma.teacherRoom.count({ where: { roomId: deleteCrossTeacherRoomId } }),
     ).toBe(2);
     expect(await prisma.class.count({ where: { id: crossTeacherClassId } })).toBe(1);
+  });
+
+  it('the creator cannot delete a room referenced only by a template -> 409, not a 500', async () => {
+    // Zero classes, one archived template. This reproduced
+    // `500 {"error":{"message":"Internal server error"}}` before this branch —
+    // and `delete-room-button.tsx` renders that message verbatim, so the
+    // teacher read those words.
+    expect(
+      await prisma.class.count({ where: { teacherRoom: { roomId: deleteWithTemplateRoomId } } }),
+    ).toBe(0);
+
+    const res = await del(creatorToken, deleteWithTemplateRoomId);
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: { message: string } };
+    expect(json.error.message).toBe('Cannot delete a room with class history. Archive it instead.');
+
+    // Nothing removed — including the teacher-room, whose rentalRate CLAUDE.md
+    // calls "never shared between teachers".
+    expect(await prisma.room.count({ where: { id: deleteWithTemplateRoomId } })).toBe(1);
+    expect(await prisma.teacherRoom.count({ where: { roomId: deleteWithTemplateRoomId } })).toBe(1);
   });
 
   it('the creator deletes a private, class-free room -> 200, room and teacher-rooms gone', async () => {

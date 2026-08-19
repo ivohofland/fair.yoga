@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
+import { log } from '@/lib/log';
+import { isRestrictViolationOn } from '@/lib/api-errors';
 import {
   respondOk,
   respondError,
@@ -11,6 +13,11 @@ import {
 } from '@/lib/api-utils';
 import { updateRoomSchema } from '@/lib/schemas';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import {
+  countRoomDeleteBlockers,
+  ROOM_DELETE_RESTRICT_FKS,
+  ROOM_DELETE_BLOCKED_MESSAGE,
+} from '@/services/room-deletion';
 
 export const DELETE = withErrorHandler(async (
   request: NextRequest,
@@ -20,10 +27,7 @@ export const DELETE = withErrorHandler(async (
   const session = await requireTeacher(request);
   if (isErrorResponse(session)) return session;
 
-  const room = await prisma.room.findUnique({
-    where: { id },
-    include: { teacherRooms: { include: { _count: { select: { classes: true } } } } },
-  });
+  const room = await prisma.room.findUnique({ where: { id } });
   if (!room) return respondError('Room not found', 404);
 
   if (room.isPublic) {
@@ -34,20 +38,45 @@ export const DELETE = withErrorHandler(async (
     return respondError('Only the room creator can delete this room', 403);
   }
 
-  const hasClasses = room.teacherRooms.some((tr) => tr._count.classes > 0);
-  if (hasClasses) {
-    // Matches the sibling refusal in `teacher-rooms/[id]:141` in both status
-    // and wording. The 400 this replaces implied a clearable condition and
-    // named no way out; a room with class history is permanently undeletable
-    // BY DESIGN — archiving is the end state (issue 76), and hard deletion is
-    // reserved for rooms that were never used. 409, because it is a conflict
-    // with current state rather than a malformed request.
-    return respondError('Cannot delete a room with class history. Archive it instead.', 409);
+  // Across every link on the room, since the delete takes them all. The 400
+  // this replaced implied a clearable condition and named no way out; a room
+  // with class history is permanently undeletable BY DESIGN — archiving is the
+  // end state (issue 76). A template blocker is equally permanent, because a
+  // ClassTemplate is never hard-deleted (issue 103), which is why one message
+  // serves both. 409, a conflict with current state rather than a malformed
+  // request.
+  const blockers = await countRoomDeleteBlockers(prisma, id);
+  if (blockers.classes > 0 || blockers.templates > 0) {
+    log.info(
+      { roomId: id, teacherId: session.teacherId, blockers },
+      'room delete refused: the room is still in use',
+    );
+    return respondError(ROOM_DELETE_BLOCKED_MESSAGE, 409, 'ROOM_IN_USE');
   }
 
-  // Delete teacher-rooms first, then the room
-  await prisma.teacherRoom.deleteMany({ where: { roomId: id } });
-  await prisma.room.delete({ where: { id } });
+  // ONE TRANSACTION, not two statements. Un-transacted, a failure between them
+  // leaves the teacher's TeacherRoom rows — and the private rentalRate
+  // CLAUDE.md says is "never shared between teachers" — deleted with the room
+  // still standing.
+  //
+  // THE CHECK ABOVE IS NOT REDUNDANT WITH THE CATCH BELOW, AND REMOVING IT
+  // REOPENS A DEADLOCK. The RESTRICT triggers take `FOR KEY SHARE` on
+  // referencing ClassTemplate rows, which cycles against the generator sweep's
+  // `FOR UPDATE` on a template plus its `Class` insert's `FOR KEY SHARE` on
+  // this room's links. The catch runs after those locks are taken; only not
+  // issuing the DELETE avoids the cycle. `docs/lock-order.md` carries the edge.
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.teacherRoom.deleteMany({ where: { roomId: id } });
+      await tx.room.delete({ where: { id } });
+    });
+  } catch (err) {
+    // The check-to-delete race: a template created in the gap.
+    if (isRestrictViolationOn(err, ROOM_DELETE_RESTRICT_FKS)) {
+      return respondError(ROOM_DELETE_BLOCKED_MESSAGE, 409, 'ROOM_IN_USE');
+    }
+    throw err;
+  }
 
   return respondOk({ deleted: true });
 });
