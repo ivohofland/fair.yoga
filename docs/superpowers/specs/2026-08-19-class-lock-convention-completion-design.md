@@ -299,9 +299,14 @@ prose does not contain the string `#104`. See §5.
 
 ## 5. The correction surface
 
-**Fourteen** locations need a verdict. Per the process's §4 rule they are
+**Twenty** locations need a verdict. Per the process's §4 rule they are
 enumerated individually, because a finding that names N locations gets N
 verdicts, not one.
+
+They are grouped by **how they were found**, and that grouping is the point:
+§5.1 by keyword (9), §5.2 by reconciling the diff (5), §5.3 by sweeping for the
+old *shape* (6). This document said thirteen when it was written, then fourteen,
+and the true figure is twenty. Read §5.3 before trusting any list here.
 
 > **This section was itself one location short, and that is worth recording
 > rather than silently fixing.** It shipped saying thirteen. Task 3's
@@ -373,7 +378,48 @@ Locations 10–14 are why this branch's re-review must reconcile against the
 untouched — location 10 was misfiled in this spec's first draft for exactly that
 reason, and location 14 was missing from it altogether.
 
-### 5.3 Deliberately not edited
+### 5.3 Locations neither sweep could find — the concept axis
+
+**Six more, found only after the branch was built, by sweeping for the old
+*shape* rather than for the issue number or the diff.** They are numbered 15–20
+and they are the most important part of this section.
+
+| # | Location | Why both earlier sweeps missed it |
+|---|---|---|
+| 15 | `services/waitlist.ts` — `reorderWaitingEntries`' docblock: "`POST /api/registrations` — its own `FOR UPDATE` on the `Class` row" | No `#104`. Worse: it sits **inside a paragraph Task 5 itself edited**. |
+| 16 | `docs/lock-order.md` — "Three different statements take that lock and all three count: `lockClassRow`, an inline `SELECT … FOR UPDATE`, and a compare-and-swap" | No `#104`, and it **contradicts a claim the same task wrote 140 lines below it in the same file**. |
+| 17 | `services/class-transitions.ts` — "each via its own inline `SELECT … FOR UPDATE` rather than through this helper; `db-locks.ts` records those inline sites as deliberately not adopting it" | No `#104`; file absent from the diff. Its second half names the list this branch deleted. |
+| 18 | `services/class-transitions.ts` — a second paragraph asserting in the present tense that five named functions "all do" an inline `FOR UPDATE` | Same file, different paragraph. Fixing 17 alone would have left this standing. |
+| 19 | `services/class-template-lifecycle.ts` — "`POST /api/registrations` does take `SELECT … FOR UPDATE` on the class row inline … (`db-locks.ts` lists it as one of five deliberate inline sites)" | No `#104`. **Contradicts `:277-282` in its own file**, which Task 4 corrected. |
+| 20 | `services/email-fallback.ts` — "`POST /api/registrations` takes `FOR UPDATE` directly" | No `#104`; found by the fixer's own concept sweep, not by any review. |
+
+**The lesson, stated plainly because it cost a fix round.** This section already
+knew that a keyword sweep was insufficient and said so — §5.2 exists precisely
+to hold locations that do not contain `#104`. It then derived §5.2 from a
+keyword **and** the branch diff, and called that complete. Neither axis can see
+a paragraph that describes the old shape without naming the issue and lives in a
+file the branch never touches. `class-transitions.ts` and `email-fallback.ts`
+are both in that category.
+
+**Three axes are required, not two:**
+
+1. **Keyword** — `grep '#104'`. Finds locations 1–9.
+2. **Diff** — reconcile the files changed against the files that should have
+   changed. Finds 10–14.
+3. **Concept** — sweep for the vocabulary of the thing being removed: `inline`,
+   `unbounded`, `deliberately`, `one of the five`, `three different statements`,
+   and `FOR UPDATE` appearing in prose. Finds 15–20.
+
+The third is the one that generalises: **when a change makes a claim false,
+search for the claim, not for its citation.** Two of these six sat inside or
+beside text the fixing task had just edited, so proximity is no protection
+either.
+
+One honest limit, recorded rather than papered over: the concept sweep used a
+fixed vocabulary list, not a semantic audit. It is thorough, not provably
+exhaustive.
+
+### 5.4 Deliberately not edited
 
 `docs/superpowers/plans/` and `docs/superpowers/specs/` contain ~20 further
 `#104` references. These are historical records of what was true when written.
@@ -522,8 +568,10 @@ four sites can occupy a connection while blocked.
    mutation-verified with the failure text recorded.
 3. `POST /api/registrations` answers 503 with retry advice under a >2 s hold,
    proven end to end.
-4. All 14 locations in §5 have an individual, named verdict. Locations 11–14
-   verified against the branch diff, not against a `#104` grep.
+4. All 20 locations in §5 have an individual, named verdict, found across all
+   three axes: keyword (1–9), branch diff (10–14), and a sweep for the old
+   shape's vocabulary (15–20). A `#104` grep alone certifies nothing, and a
+   grep plus a diff still missed six.
 5. `npm run verify` green, with the after-figure **measured, not predicted**.
 6. Issues 122, 219, 229 and 232 all remain open and unaffected.
 
