@@ -269,6 +269,21 @@ docblock names both — and handles the bounded one sooner. So the change is an
 improvement, but it invalidates a test that pins the current mechanism
 deliberately. See §6.
 
+**A knock-on this section did not predict, added after Task 3 found it.** The
+mechanism change also inverts an *ordering*, not just an error code. The
+reconciliation test tracks whether the lock holder had already released by the
+time `handleSpotFreed` returned. Under `P2028` the call waited out the entire
+hold, so the holder always had released — the assertion was `true`. Under
+`55P03` the call gives up at 2 s while the holder still has 1.5 s of its 3.5 s
+hold left, so it has **not** — the assertion becomes `false`.
+
+Worth recording because of how it looks in a diff: an inverted boolean
+assertion in a test the change does not obviously touch is indistinguishable,
+by inspection, from an assertion flipped to force a green suite. It was
+re-derived independently from the three timings (hold duration, the 2 s bound,
+the 5 s budget) before being accepted. Any future change to the bound must
+re-check it, since it depends on the bound being *shorter* than the hold.
+
 ### 4.3 A consequence worth naming: `P2028` largely leaves these paths
 
 Once every lock wait at these sites is capped at 2 s under a 5 s budget, `P2028`
@@ -284,8 +299,23 @@ prose does not contain the string `#104`. See §5.
 
 ## 5. The correction surface
 
-Thirteen locations need a verdict. Per the process's §4 rule they are enumerated
-individually, because a finding that names N locations gets N verdicts, not one.
+**Fourteen** locations need a verdict. Per the process's §4 rule they are
+enumerated individually, because a finding that names N locations gets N
+verdicts, not one.
+
+> **This section was itself one location short, and that is worth recording
+> rather than silently fixing.** It shipped saying thirteen. Task 3's
+> implementer, working from it, found a **fourth** stale cross-reference in
+> `waitlist-reconciliation.test.ts` — inside the test `reconciles the remaining
+> classes when one loses its lock race`, which named the old test by name *and*
+> by mechanism. A subsequent exhaustive sweep by that task's reviewer confirmed
+> there is no fifth.
+>
+> So the document that exists to stop a finding being half-corrected was itself
+> incomplete about its own enumeration — the second time this spec has caught
+> that failure in its own §5, after the misfiled `registrations/route.ts` row
+> recorded below. Both were found by someone re-deriving the list rather than
+> reading it. That is the only method that works.
 
 The grep that bounds the first group, so a reviewer can check the enumeration is
 complete:
@@ -336,11 +366,12 @@ directly: derive the post-fix sweep from the wave's diff, not from a keyword.
 | 11 | `services/waitlist-reconciliation.ts` — the module docblock, "the auto-promote branch blows Prisma's default 5s interactive-transaction budget with `P2028`, measured at 7014 ms against a 7 s hold — it waits out the whole hold and fails afterwards" | **Rewrite.** After this branch the auto-promote branch aborts at 2 s with `55P03` like the broadcast branch. The 7014 ms measurement becomes a historical note and must be **marked** as such rather than silently deleted — it is the evidence for the Prisma-cannot-cancel claim, which stays true and is relied on by `gdpr.ts` and by §3.1 of this spec. |
 | 12 | `services/waitlist-reconciliation.test.ts` — the test `repairs an auto-promotion dropped by the transaction budget`: its **name**, its docblock (the 7 s hold and the 7014 ms measurement), and its 7 s hold value | **Rewrite.** See §6.3. |
 | 13 | `services/waitlist-reconciliation.test.ts` — the cross-reference inside `promotes the queue head of a class with a free seat`, which names both drop tests by name *and* by mechanism | **Rewrite.** Renaming location 12 breaks this reference; leaving the mechanism unchanged leaves it lying. |
+| 14 | `services/waitlist-reconciliation.test.ts` — a **second** cross-reference, inside `reconciles the remaining classes when one loses its lock race`, likewise naming the other drop test by name and by mechanism | **Rewrite.** Missed by this spec's first draft; found by Task 3's implementer. Same treatment as 13 — and do **not** flatten the two drop tests into one, since they cover different branches of `handleSpotFreed` and only their *mechanism* converged, not their subject. |
 
-Locations 10–13 are why this branch's re-review must reconcile against the
-**diff**, not a keyword. A `grep '#104'` sweep returns clean while all four sit
-untouched — and location 10 was misfiled in this spec's own first draft for
-exactly that reason.
+Locations 10–14 are why this branch's re-review must reconcile against the
+**diff**, not a keyword. A `grep '#104'` sweep returns clean while all five sit
+untouched — location 10 was misfiled in this spec's first draft for exactly that
+reason, and location 14 was missing from it altogether.
 
 ### 5.3 Deliberately not edited
 
@@ -491,7 +522,7 @@ four sites can occupy a connection while blocked.
    mutation-verified with the failure text recorded.
 3. `POST /api/registrations` answers 503 with retry advice under a >2 s hold,
    proven end to end.
-4. All 13 locations in §5 have an individual, named verdict. Locations 11–13
+4. All 14 locations in §5 have an individual, named verdict. Locations 11–14
    verified against the branch diff, not against a `#104` grep.
 5. `npm run verify` green, with the after-figure **measured, not predicted**.
 6. Issues 122, 219, 229 and 232 all remain open and unaffected.

@@ -511,7 +511,7 @@ The holder uses this file's existing module-level `prisma` client. The blocked r
    *
    * The 3.5s hold sits above the 2s bound and below Prisma's 5s default
    * budget, so reverting the route to its inline statement makes this request
-   * SUCCEED at 3.5s with a 200 — which is what makes this a guard rather than
+   * SUCCEED at 3.5s with a 201 — which is what makes this a guard rather than
    * a description.
    */
   it('answers 503 rather than blocking when another transaction holds the class row', async () => {
@@ -549,7 +549,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/   # expect 307
 npx vitest run --project integration tests/integration/registrations-api.test.ts -t 'answers 503'
 ```
 
-Expected: **FAIL** — the unmodified route waits the holder out and returns **200**. Record the exact message.
+Expected: **FAIL** — the unmodified route waits the holder out and returns **201** (`respondOk(..., 201)`). Record the exact message.
 
 A wall of `ECONNREFUSED` means the app is not running on :3000. Do **not** start it; ask.
 
@@ -581,9 +581,9 @@ npx vitest run --project integration tests/integration/registrations-api.test.ts
 
 Expected: **PASS**, 503 in under 3 400 ms.
 
-**The dev server serves this checkout**, so the route change is picked up on recompile. If the run still returns 200, confirm the server recompiled before concluding the fix failed.
+**The dev server serves this checkout**, so the route change is picked up on recompile. If the run still returns 201, confirm the server recompiled before concluding the fix failed.
 
-- [ ] **Step 5: Mutation-verify** — revert Step 3, re-run, record the failure text (expect a 200), restore, re-run green.
+- [ ] **Step 5: Mutation-verify** — revert Step 3, re-run, record the failure text (expect a 201), restore, re-run green.
 
 - [ ] **Step 6: Correct this file's `#107` comment (spec §5.2, location 10)**
 
