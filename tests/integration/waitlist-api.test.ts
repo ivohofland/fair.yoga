@@ -469,3 +469,275 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
     expect(res.status).toBe(200);
   });
 });
+
+/**
+ * #104 at the HTTP surface, for the two student-facing waitlist routes.
+ *
+ * The bound's cost lands on three student-facing routes; only
+ * `POST /api/registrations` had a guard asserting the real 503
+ * (`tests/integration/registrations-api.test.ts`). These are the other two.
+ *
+ * It holds today by construction — each route narrow-catches its own domain
+ * error (`WaitlistJoinError`, `WaitlistPromotionError`) and rethrows everything
+ * else into `withErrorHandler`, where `api-errors.test.ts` pins `55P03` → 503.
+ * Construction is exactly what a refactor discards, though, and one plausible
+ * one is admitted with nothing else in the suite going red: widening either
+ * `catch` to a bare `catch (err) { return respondError(err.message, 409) }`
+ * turns "the row is busy, retry" into "your request conflicts, do not retry".
+ * These two tests are what goes red then.
+ *
+ * `POST /api/waitlist` is the LEAST obvious of the three rather than the most,
+ * because it runs a post-commit `prisma.student.updateMany` on `tierSelectedAt`
+ * after the service call returns — so "did the route do anything else on the
+ * way out" is a real question there, and the `tierSelectedAt` assertion below
+ * is the answer.
+ *
+ * Both mirror the registrations guard: hold the class row from a second
+ * transaction for 3.5s — above `lockClassRow`'s 2s bound, below Prisma's 5s
+ * default budget — and assert what the student meets. `waited > 1_000` is not
+ * decoration: the 503 body is a fixed generic string, so the SQLSTATE is not
+ * observable over HTTP, and `P2024` (pool timeout) is also in
+ * `TRANSIENT_PRISMA_CODES` and also classifies 503, so any fast transient 503
+ * would otherwise satisfy these. There is deliberately no upper bound — a wait
+ * that reaches 3.5s acquires the row and SUCCEEDS, so the status assertion is
+ * already the discriminator and a ceiling could only flake. `waitlist.test.ts`'s
+ * `addToWaitlist` guard carries that argument in full.
+ */
+describe('#104 — the waitlist routes answer 503 while another transaction holds the class row', () => {
+  let fillerStudentId: string;
+  let actorStudentId: string;
+  let actorToken: string;
+  let joinClassId: string;
+  let lockClaimClassId: string;
+
+  const join = (token: string, body: unknown) =>
+    fetch(`${BASE_URL}/api/waitlist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(token) },
+      body: JSON.stringify(body),
+    });
+
+  /**
+   * Takes `classId`'s row `FOR UPDATE` and keeps it for 3.5s. Resolves as soon
+   * as the row is actually held — a handshake rather than a sleep, because
+   * measured holder-acquisition latency reaches ~500ms under load
+   * (`waitlist.test.ts`). Await `done` after the request under test.
+   *
+   * `done` is WRAPPED in an object, and that is not a style choice: an `async`
+   * function that `return`s a promise adopts it, so a `Promise<Promise<void>>`
+   * signature is a lie — `await holdClassRow(id)` would resolve only when the
+   * 3.5s transaction ENDED, and every request issued after it would meet an
+   * uncontended row and succeed. That was the first version of this helper and
+   * it failed exactly as a missing lock bound would: 201 at ~3.57s, twice.
+   */
+  async function holdClassRow(classId: string): Promise<{ done: Promise<void> }> {
+    let signalHeld!: () => void;
+    const held = new Promise<void>((r) => {
+      signalHeld = r;
+    });
+    const done = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
+        signalHeld();
+        await new Promise((r) => setTimeout(r, 3_500));
+      },
+      { timeout: 30_000 },
+    );
+    await held;
+    return { done };
+  }
+
+  beforeAll(async () => {
+    const filler = await prisma.student.create({
+      data: {
+        firstName: 'Lock',
+        lastName: 'Filler',
+        email: `waitlistapi-lock-filler-${suffix}@test.local`,
+        claimedAt: new Date(),
+        account: { create: { email: `waitlistapi-lock-filler-${suffix}@test.local` } },
+        incomeTier: 3,
+      },
+    });
+    fillerStudentId = filler.id;
+
+    const actor = await prisma.student.create({
+      data: {
+        firstName: 'Lock',
+        lastName: 'Contender',
+        email: `waitlistapi-lock-actor-${suffix}@test.local`,
+        claimedAt: new Date(),
+        account: { create: { email: `waitlistapi-lock-actor-${suffix}@test.local` } },
+        incomeTier: 3,
+        // Left null on purpose — the join test asserts the route's post-commit
+        // `tierSelectedAt` write did not land either.
+      },
+    });
+    actorStudentId = actor.id;
+    actorToken = await seedSession(prisma, actor.accountId!);
+
+    // FULL, and far enough out that no deadline logic fires. `addToWaitlist`
+    // refuses a class with a free seat ("book directly instead"), so without
+    // the filler registration this request would 409 for a reason that has
+    // nothing to do with the lock; with it, the uncontended answer is 201 and
+    // the lock is the only thing left that can change it. 2099-06-03 keeps
+    // this off farFutureClassId's and promoteClassId's slots —
+    // Class_teacher_slot_unique is (teacherId, date, startTime).
+    const joinClass = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Waitlist API Lock Join',
+        date: new Date('2099-06-03'),
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 1,
+        maxStudents: 1,
+        status: 'open',
+      },
+    });
+    joinClassId = joinClass.id;
+    await prisma.registration.create({
+      data: {
+        classId: joinClassId,
+        studentId: fillerStudentId,
+        status: 'registered',
+        tierAtBooking: 3,
+      },
+    });
+
+    // Same shape as freedSpotClassId, derived from the same module-scope
+    // `baseNow` for the same reason: one shared clock read makes the minute
+    // offsets exactly distinct instead of probably distinct. 6h48m here,
+    // against freedSpotClassId's 6h50m and claimClassId's 6h49m.
+    //
+    // The window has to resolve to `first_come_first_claimed` for the
+    // UNCONTENDED answer to be 201, which is what makes the 503 below mean
+    // "the lock refused" rather than "the window did". Under the hold nothing
+    // gets that far: `claimSpot` calls `lockClassRow` as its first statement.
+    const claimStart = new Date(baseNow.getTime() + (6 * 60 + 48) * 60 * 1000);
+    const lockClaimDate = new Date(
+      Date.UTC(claimStart.getUTCFullYear(), claimStart.getUTCMonth(), claimStart.getUTCDate()),
+    );
+    const lockClaimStartTime = `${String(claimStart.getUTCHours()).padStart(2, '0')}:${String(
+      claimStart.getUTCMinutes(),
+    ).padStart(2, '0')}`;
+
+    const lockClaimClass = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Waitlist API Lock Claim',
+        date: lockClaimDate,
+        startTime: lockClaimStartTime,
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 1,
+        maxStudents: 1, // no active registrations → the one spot reads as freed
+        cancelDeadline: 'HOURS_6',
+        status: 'open',
+      },
+    });
+    lockClaimClassId = lockClaimClass.id;
+    await prisma.waitlistEntry.create({
+      data: {
+        classId: lockClaimClassId,
+        studentId: actorStudentId,
+        position: 1,
+        status: 'waiting',
+      },
+    });
+
+    // Warm both routes before either guard runs. Under `next dev` a route is
+    // compiled on its FIRST request, and that compile would land inside the
+    // measured window: the request reaches `lockClassRow` late, waits out only
+    // what is left of the 3.5s hold, and can acquire the row and answer 201 —
+    // a failure indistinguishable from a missing bound. `POST /api/waitlist` is
+    // reached nowhere earlier in this file, so its guard below would otherwise
+    // be that first request. The claim route is warm by then (the block above
+    // sends six), and `registrations-api.test.ts` never needed this for the
+    // same reason. A precaution rather than something measured going wrong
+    // here; it costs two 400s, and none at all in CI, where the app under test
+    // is a production build.
+    //
+    // An empty body is enough: the module graph — `@/services/waitlist`
+    // included — is evaluated on import, so a 400 out of `parseBody` compiles
+    // everything the guards then measure.
+    await Promise.all([join(actorToken, {}), claim(actorToken, {})]);
+  });
+
+  afterAll(async () => {
+    const classIds = [joinClassId, lockClaimClassId];
+    const studentIds = [fillerStudentId, actorStudentId];
+    await prisma.waitlistEntry.deleteMany({ where: { classId: { in: classIds } } });
+    await prisma.registration.deleteMany({ where: { classId: { in: classIds } } });
+    await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
+    await prisma.teacherStudent.deleteMany({ where: { teacherId, studentId: { in: studentIds } } });
+    await prisma.studentPrivacy.deleteMany({ where: { teacherId, studentId: { in: studentIds } } });
+    await prisma.class.deleteMany({ where: { id: { in: classIds } } });
+
+    for (const id of studentIds) {
+      const record = await prisma.student.findUniqueOrThrow({
+        where: { id },
+        select: { accountId: true, email: true },
+      });
+      await prisma.session.deleteMany({ where: { accountId: record.accountId! } });
+      await prisma.student.delete({ where: { id } });
+      await prisma.account.deleteMany({ where: { email: record.email } });
+    }
+  });
+
+  it('POST /api/waitlist answers 503 rather than blocking', async () => {
+    const { done } = await holdClassRow(joinClassId);
+
+    const startedAt = Date.now();
+    const res = await join(actorToken, { classId: joinClassId });
+    const waited = Date.now() - startedAt;
+
+    await done;
+
+    expect(res.status).toBe(503);
+    expect(waited).toBeGreaterThan(1_000);
+
+    // Nothing landed, on either side of the service call: no queue entry, and
+    // the post-commit `tierSelectedAt` write never ran.
+    expect(
+      await prisma.waitlistEntry.count({
+        where: { classId: joinClassId, studentId: actorStudentId },
+      }),
+    ).toBe(0);
+    const actor = await prisma.student.findUniqueOrThrow({
+      where: { id: actorStudentId },
+      select: { tierSelectedAt: true },
+    });
+    expect(actor.tierSelectedAt).toBeNull();
+  }, 20_000);
+
+  it('POST /api/waitlist/claim answers 503 rather than blocking', async () => {
+    const { done } = await holdClassRow(lockClaimClassId);
+
+    const startedAt = Date.now();
+    const res = await claim(actorToken, { classId: lockClaimClassId });
+    const waited = Date.now() - startedAt;
+
+    await done;
+
+    expect(res.status).toBe(503);
+    expect(waited).toBeGreaterThan(1_000);
+
+    // The seat is still unclaimed and the entry still queued.
+    const entry = await prisma.waitlistEntry.findUniqueOrThrow({
+      where: { classId_studentId: { classId: lockClaimClassId, studentId: actorStudentId } },
+    });
+    expect(entry.status).toBe('waiting');
+    expect(
+      await prisma.registration.count({
+        where: { classId: lockClaimClassId, studentId: actorStudentId },
+      }),
+    ).toBe(0);
+  }, 20_000);
+});
