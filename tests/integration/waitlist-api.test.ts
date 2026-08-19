@@ -500,8 +500,10 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
  * `TRANSIENT_PRISMA_CODES` and also classifies 503, so any fast transient 503
  * would otherwise satisfy these. There is deliberately no upper bound — a wait
  * that reaches 3.5s acquires the row and SUCCEEDS, so the status assertion is
- * already the discriminator and a ceiling could only flake. `waitlist.test.ts`'s
- * `addToWaitlist` guard carries that argument in full.
+ * already the discriminator for every regression that matters here; the one
+ * sliver a ceiling would still catch — a `lock_timeout` configured between
+ * 3.4s and 3.5s — is already pinned directly by `db-locks.test.ts`.
+ * `waitlist.test.ts`'s `addToWaitlist` guard carries that argument in full.
  */
 describe('#104 — the waitlist routes answer 503 while another transaction holds the class row', () => {
   let fillerStudentId: string;

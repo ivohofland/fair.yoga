@@ -526,19 +526,25 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
    * the reference for the two sibling guards below (`promoteNext (DB)` and
    * `claimSpot (DB)`) and for the HTTP one in
    * `tests/integration/registrations-api.test.ts`. All four carried
-   * `toBeLessThan(3_400)`, described as what separated the two cases — which
-   * was backwards. It could not fail for any regression: at a 3.0s or 3.3s
-   * bound the call still raises `55P03` and passes the ceiling; at 3.6s it
-   * acquires when the holder releases and succeeds, which `ok === false`
-   * catches. There is no bound value, and no reordering inside `lockClassRow`,
-   * that reddens the ceiling while `ok === false` and `/55P03/` stay green.
-   * What it did contribute was a ~1400ms overhead budget, against a
-   * holder-acquisition latency this same file measured at 486ms under load and
-   * 428ms idle on a 10-core machine — so on a 2-4 core CI box running three
-   * vitest projects it reddened at random, under a label that sent the reader
-   * to look for a bound which had in fact fired correctly. The timeout's VALUE
-   * is pinned by `db-locks.test.ts` (the literal, plus `SHOW lock_timeout`),
-   * never by a wall-clock threshold here.
+   * `toBeLessThan(3_400)`. It was not dead weight for every value, though: a
+   * `lock_timeout` configured between 3.4s and 3.5s — say 3.45s — still sits
+   * below the 3.5s hold, so the call still raises `55P03` and `ok === false`
+   * and `/55P03/` both stay green while `waited` lands past the 3_400 ceiling.
+   * That was its one sliver of unique coverage. Everywhere else it was
+   * redundant with the other two assertions: at a 3.0s or 3.3s bound the call
+   * raises `55P03` and passes the ceiling anyway; at 3.6s it acquires when the
+   * holder releases and succeeds, which `ok === false` catches on its own.
+   * And that one sliver is already pinned directly — `db-locks.test.ts`
+   * asserts the literal `LOCK_TIMEOUT_SQL` value and observes the effect via
+   * `SHOW lock_timeout` — so the ceiling was never the only thing standing
+   * between a misconfigured bound and a green suite. What it cost instead was
+   * a ~1400ms overhead budget, against a holder-acquisition latency this same
+   * file measured at 486ms under load and 428ms idle on a 10-core machine —
+   * so on a 2-4 core CI box running three vitest projects it was the one
+   * flake surface in these guards, reddening at random under a label that
+   * sent the reader looking for a bound which had in fact fired correctly.
+   * The timeout's VALUE is pinned by `db-locks.test.ts`, never by a
+   * wall-clock threshold here.
    */
   it('gives up on the 2s bound when another transaction holds the class row', async () => {
     // Its own full class: max 1, one registration. Not the block's shared
@@ -869,8 +875,9 @@ describe('promoteNext (DB)', () => {
    * is therefore the discriminator, `/55P03/` names the mechanism, and
    * `waited > 1_000` excludes an instant unrelated failure — see the sibling
    * guard in `addToWaitlist + removeFromWaitlist (DB)` above for why there is
-   * no upper bound on `waited` and why the ceiling that used to be here could
-   * not fail.
+   * no upper bound on `waited`, and for why the ceiling that used to be here
+   * was worth deleting even though it had one sliver of coverage: that sliver
+   * is already pinned directly by `db-locks.test.ts`.
    */
   it('gives up on the 2s bound when another transaction holds the class row', async () => {
     // Its own full class: max 1, one filler registered (making it full,
@@ -1245,7 +1252,9 @@ describe('claimSpot (DB)', () => {
    * rather than hanging the suite. That failure IS what separates "gave up at
    * 2s" from "waited it out"; see the sibling guard in
    * `addToWaitlist + removeFromWaitlist (DB)` above for why there is no upper
-   * bound on `waited` and why the ceiling that used to be here could not fail.
+   * bound on `waited`, and for why the ceiling that used to be here was worth
+   * deleting even though it had one sliver of coverage: that sliver is
+   * already pinned directly by `db-locks.test.ts`.
    */
   it('gives up on the 2s bound when another transaction holds the class row', async () => {
     // Same state the passing test above builds: in the claim window, one

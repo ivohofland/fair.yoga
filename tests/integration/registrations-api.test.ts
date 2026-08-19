@@ -659,15 +659,21 @@ describe('POST /api/registrations', () => {
    * also classifies 503, so without a lower bound any fast transient 503 would
    * satisfy this test.
    *
-   * No upper bound. One was here (`toBeLessThan(3_400)`) and could not fail:
-   * every timeout value and every reordering inside `lockClassRow` that would
-   * redden it reddens the status assertion first, because a wait that reaches
-   * 3.5s acquires the row and succeeds. All it contributed was a ~1400ms
-   * overhead budget on a 2-4 core CI box running three vitest projects — a
-   * flake that reads as "the bound didn't fire" when the bound fired
-   * correctly. The timeout's VALUE is pinned by `db-locks.test.ts`, which
-   * asserts the literal and observes `SHOW lock_timeout`; a wall-clock ceiling
-   * here never pinned it.
+   * No upper bound. One was here (`toBeLessThan(3_400)`), and it had exactly
+   * one sliver of unique coverage: a `lock_timeout` configured between 3.4s
+   * and 3.5s — say 3.45s — still sits below the 3.5s hold, so the request is
+   * still refused with a 503 well inside `waited > 1_000`, and the ceiling
+   * was the only assertion here that would have caught it. Every other
+   * timeout value, and every reordering inside `lockClassRow`, reddens the
+   * status assertion first, because a wait that reaches 3.5s acquires the row
+   * and succeeds with a 201. That one sliver is already pinned directly —
+   * `db-locks.test.ts` asserts the literal `LOCK_TIMEOUT_SQL` value and
+   * observes the effect via `SHOW lock_timeout` — so against a bound already
+   * covered elsewhere, all the ceiling contributed was a ~1400ms overhead
+   * budget on a 2-4 core CI box running three vitest projects, the one flake
+   * surface in this guard: a wait that reads as "the bound didn't fire" when
+   * the bound fired correctly. The timeout's VALUE is pinned by
+   * `db-locks.test.ts`; a wall-clock ceiling here never pinned it.
    */
   it('answers 503 rather than blocking when another transaction holds the class row', async () => {
     const classId = await makeClass(5);
