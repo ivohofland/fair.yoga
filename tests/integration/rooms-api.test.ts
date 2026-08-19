@@ -315,7 +315,7 @@ describe('PUT /api/rooms/[id]', () => {
     const res = await put(otherToken, roomId, { venueName: 'Should not apply' });
     expect(res.status).toBe(403);
 
-    // The createdById guard's own message (rooms/[id]/route.ts:82).
+    // The createdById guard's own message (rooms/[id]/route.ts:37).
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toContain('Only the room creator can update this room');
 
@@ -332,7 +332,7 @@ describe('PUT /api/rooms/[id]', () => {
     const res = await put(creatorToken, roomId, { venueName: 'Should not apply either' });
     expect(res.status).toBe(403);
 
-    // The isPublic guard (rooms/[id]/route.ts:78) fires before the createdById
+    // The isPublic guard (rooms/[id]/route.ts:33) fires before the createdById
     // guard (:82), even for the room's own creator. This alone doesn't pin the
     // guard *ordering* though — see the file header: with the creator as actor,
     // the createdById guard is a no-op under either ordering, so this case
@@ -356,7 +356,7 @@ describe('PUT /api/rooms/[id]', () => {
     const res = await put(otherToken, roomId, { venueName: 'Should not apply either' });
     expect(res.status).toBe(403);
 
-    // Current order: the isPublic guard (rooms/[id]/route.ts:78) fires first, so this
+    // Current order: the isPublic guard (rooms/[id]/route.ts:33) fires first, so this
     // is "Shared rooms cannot be edited" — NOT the createdById guard's "Only
     // the room creator..." message. Swap the two guards and this message
     // flips, because unlike the creator, a non-creator doesn't pass the
@@ -379,7 +379,7 @@ describe('PUT /api/rooms/[id]', () => {
   // IT. `{ isPublic: true }` alone cannot distinguish the two outcomes this
   // test exists to tell apart: without `.strict()` that body parses to `{}`,
   // the route falls into its `Object.keys(updateData).length === 0` branch
-  // (rooms/[id]/route.ts:95) and returns 400 with the room still private —
+  // (rooms/[id]/route.ts:156) and returns 400 with the room still private —
   // the same status and the same final state, for entirely the wrong reason.
   // Measured: with `.strict()` removed and a single-key body, rooms-api was
   // 17/17 green and schemas 53/53 green, while
@@ -535,8 +535,11 @@ describe('DELETE /api/rooms/[id]', () => {
     const res = await del(creatorToken, deleteCrossTeacherRoomId);
 
     expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: { message: string } };
+    const body = (await res.json()) as { error: { message: string; code: string } };
     expect(body.error.message).toBe('This room is still in use and cannot be deleted. Archive it instead.');
+    // ROOM_IN_USE, not ROOM_IN_USE_RACE — see the twin file: this pins that the
+    // PRE-CHECK answered, which no status assertion can.
+    expect(body.error.code).toBe('ROOM_IN_USE');
 
     // Nothing removed — including the other teacher's link and its class.
     expect(await prisma.room.count({ where: { id: deleteCrossTeacherRoomId } })).toBe(1);
@@ -550,8 +553,10 @@ describe('DELETE /api/rooms/[id]', () => {
     // Twin of the case in `teacher-rooms-api.test.ts`, and needed separately:
     // each route carries its own pre-check, so a mutation to one is invisible
     // to the other's tests. PR review measured `if (false && ...)` in both
-    // routes leaving 434/434 green — the FK backstop answers the identical
-    // 409, so no status assertion anywhere can tell which guard replied.
+    // routes leaving every test in the integration project green — the FK
+    // backstop answers the identical status and body, so no status assertion
+    // anywhere could tell which guard replied. `error.code` now can; this case
+    // covers the part it cannot, that the DELETE was never issued.
     //
     // Holding `FOR UPDATE` on the template row makes them distinguishable: the
     // pre-check refuses without issuing the DELETE, while its absence makes
@@ -564,16 +569,27 @@ describe('DELETE /api/rooms/[id]', () => {
     const settled = await prisma.$transaction(
       async (tx) => {
         await tx.$queryRaw`SELECT 1 FROM "ClassTemplate" WHERE id = ${template.id} FOR UPDATE`;
-        return Promise.race([
-          del(creatorToken, deleteWithTemplateRoomId).then((r) => r.status),
-          new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 5_000)),
-        ]);
+        let timer: NodeJS.Timeout | undefined;
+        try {
+          return await Promise.race([
+            del(creatorToken, deleteWithTemplateRoomId).then((r) => r.status),
+            new Promise<'blocked'>((resolve) => {
+              timer = setTimeout(() => resolve('blocked'), 3_000);
+            }),
+          ]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
       },
       { timeout: 20_000 },
     );
 
+    // See the twin in `teacher-rooms-api.test.ts` for why the sentinel is
+    // 3 s inside an explicit 15 s `it` budget: vitest's default testTimeout is
+    // 5 000 ms and would otherwise win, replacing this assertion with a
+    // generic timeout that reads as flake.
     expect(settled).toBe(409);
-  });
+  }, 15_000);
 
   it('the creator cannot delete a room referenced only by a template -> 409, not a 500', async () => {
     // Zero classes, one archived template. This reproduced
@@ -586,8 +602,11 @@ describe('DELETE /api/rooms/[id]', () => {
 
     const res = await del(creatorToken, deleteWithTemplateRoomId);
     expect(res.status).toBe(409);
-    const json = (await res.json()) as { error: { message: string } };
+    const json = (await res.json()) as { error: { message: string; code: string } };
     expect(json.error.message).toBe('This room is still in use and cannot be deleted. Archive it instead.');
+    // ROOM_IN_USE, not ROOM_IN_USE_RACE — see the twin file: this pins that the
+    // PRE-CHECK answered, which no status assertion can.
+    expect(json.error.code).toBe('ROOM_IN_USE');
 
     // Nothing removed — including the teacher-room, whose rentalRate CLAUDE.md
     // calls "never shared between teachers".

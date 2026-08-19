@@ -221,6 +221,7 @@ describe('the FK names, against a real refused delete', () => {
       }),
     );
 
+    expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
     const known = err as Prisma.PrismaClientKnownRequestError;
     expect(known.code).toBe('P2003');
     expect(known.meta?.constraint).toBe('ClassTemplate_teacherRoomId_fkey');

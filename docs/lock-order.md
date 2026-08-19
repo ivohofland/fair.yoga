@@ -658,8 +658,10 @@ deadlocking case.
 **The `isRoomDeleteBlocked` catch beside each guard does NOT substitute for
 it.** The catch runs after the `DELETE` has taken its locks; it converts the
 outcome, it does not avoid the wait. Removing the pre-check as belt-and-braces
-reopens this edge, and until PR review it did so **with every test in the repo
-green** — `if (false && ...)` in both routes left 434/434 passing, because the
+reopens this edge, and until PR review it did so **with every test in the
+integration project green** — `if (false && ...)` in both routes left every one
+of them passing (434 at the time, 437 once this section's own cases landed;
+the whole suite is 1613), because the
 catch answers a byte-identical 409 and no status assertion can tell the two
 guards apart. Each integration suite now carries a case that can: it holds
 `FOR UPDATE` on the template row the RESTRICT trigger needs `FOR KEY SHARE` on,
@@ -667,12 +669,17 @@ and fails when the DELETE waits on it instead of refusing outright. That case
 is the only thing in the repo that observes this edge, so treat it as part of
 the guard rather than as coverage.
 
-**A second cycle of the same shape, which the guard structurally cannot close.**
-`Class_teacherRoomId_fkey` is equally `RESTRICT`, so the `Class` row the sweep
-is *inserting* forms the same edge. The pre-check cannot see it — the row does
-not exist at check time — so this one is residual by construction, not by
-choice. The template edge is the one a guard can close, and the section above
-is about that edge only.
+**Why `Class_teacherRoomId_fkey` does NOT add a second unclosable cycle**, which
+an earlier version of this section wrongly claimed. For the sweep to be
+inserting a `Class` on `TeacherRoom` X it must be holding
+`claimTemplateForGeneration`'s `FOR UPDATE` on a `ClassTemplate` whose
+`teacherRoomId` IS X (`class-generator.ts:186` copies `template.teacherRoomId`
+onto every row it inserts). That template row is committed, and the pre-check
+counts **every** template with no `isActive`/`isArchived` filter
+(`room-deletion.ts:97`), so it sees it, answers 409, and the `DELETE` is never
+issued — the same mechanism that closes the template edge. The `Class` edge is
+reachable only inside the check-to-`DELETE` window described next, not as an
+independent cycle.
 
 **Residual, and accepted:** a template created between the check and the
 `DELETE`. The wait is bounded well below the sweep's `{ timeout: 10_000 }`

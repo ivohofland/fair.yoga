@@ -68,8 +68,10 @@ simplifier agent you run — will call that belt-and-braces and collapse it.
   no test does. Every reachable test state is stopped by the pre-check first,
   and the race that reaches the catch cannot be forced over HTTP.
 - Removing the **pre-check** reopens a database deadlock, **with every test in
-  the repo still green** — measured too: `if (false && ...)` in both routes left
-  434/434 green, because the catch answers a byte-identical 409. It is pinned
+  the integration project still green** — measured: `if (false && ...)` in both
+  routes left all of them passing (434 at the time; 437 once the new cases
+  landed), because the catch answers a byte-identical 409. "434" is the
+  integration project, not the suite, which is 1613. It is pinned
   now, by holding `FOR UPDATE` on the template row and failing when the DELETE
   waits on it. That is because the catch runs *after* the `DELETE` has
   already taken its locks. Converting the outcome is not avoiding the wait.
@@ -86,7 +88,8 @@ still uses this room."` You will have a `{classes, templates}` object in hand
 and reaching for it is the obvious move.
 
 **Do not.** The approved decision (spec §2.1, chosen by the maintainer) is one
-fixed string for the delete door:
+fixed string for the delete door — **the wording below was superseded in PR
+review by `This room is still in use and cannot be deleted. Archive it instead.`; the "one fixed string" decision itself stands**:
 
 ```
 Cannot delete a room with class history. Archive it instead.

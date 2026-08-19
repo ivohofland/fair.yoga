@@ -1,5 +1,11 @@
 # Room-delete template guard — Implementation Plan
 
+> **CORRECTED IN PR REVIEW — the refusal string changed.** It is now
+> `This room is still in use and cannot be deleted. Archive it instead.`
+> The old noun was accurate only when a class was the blocker; a room blocked
+> solely by a template has zero classes, which is the state issue 103
+> reproduced. Occurrences below are the pre-implementation record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make both room-delete routes refuse with 409 when a `ClassTemplate` references the room, instead of 500-ing on a raw foreign-key violation — which also closes the deadlock vector against the generator sweep, because the deadlock needs that template row to exist.
@@ -13,7 +19,9 @@
 ## Global Constraints
 
 - **TypeScript `strict: true`** — no `any`, no implicit types. `noUncheckedIndexedAccess` is on: indexing an array yields `T | undefined`.
-- **Refusal string, verbatim, for every blocker:** `Cannot delete a room with class history. Archive it instead.` — status **409**.
+- **Refusal string, verbatim, for every blocker:** `This room is still in use and cannot be deleted. Archive it instead.` — status **409**.
+  *(Corrected in PR review; the plan was written against the old wording
+  `Cannot delete a room with class history. Archive it instead.`, which survives in the code blocks below as the historical record.)*
 - **Blocker predicate for deletion is EVERY template** — no `isActive` / `isArchived` filter. Do **not** reuse `ACTIVE_TEMPLATE_WHERE`; see Task 2.
 - **Services take typed inputs, return typed outputs, and import no `next/*`.**
 - **Never edit an applied migration.** No migration is needed in this branch.

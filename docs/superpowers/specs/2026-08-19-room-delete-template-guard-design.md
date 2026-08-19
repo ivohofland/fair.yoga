@@ -1,9 +1,13 @@
 # Room deletion: the template blocker, and the lock cycle it was hiding
 
-> **Line numbers below are as of `HEAD` of this branch after PR review.**
-> Section 1 cites pre-state where it describes what the issue found; sections
-> 2-4 cite current state. Every `file:NNN` here was re-resolved after the
-> review fix wave, which moved several by inserting into the files they name.
+> **Line numbers are mixed, deliberately, and this note says which is which.**
+> Citations describing what a door looked like BEFORE this branch — §1
+> throughout, §2.1's `:37` (`hasClasses`), §2.3's `:49-50` (the two
+> un-transacted statements), §2.4's "985 lines" — are as of `main`, and the
+> symbols they name no longer exist. Citations into `api-errors.ts` and
+> `classifyApiError` are as of `HEAD` after the PR-review fix wave, which
+> moved them by inserting into the file they name. An earlier version of this
+> header claimed §§2-4 were uniformly current state; that was wrong.
 
 Issue 103. Two problems the issue presents as related; they turn out to be **one
 guard apart**, which is the finding that shaped this design.
@@ -96,7 +100,9 @@ Alongside each existing `Class` check, count `ClassTemplate` rows for the same
 `teacherRoomId` and refuse with **409** and the string the `Class` guard already
 returns:
 
-> `Cannot delete a room with class history. Archive it instead.`
+> `This room is still in use and cannot be deleted. Archive it instead.`
+
+(Originally `Cannot delete a room with class history. Archive it instead.` — corrected in review; see below.)
 
 **The predicate is every template — no `isActive` / `isArchived` filter.** This
 deliberately differs from the archive door, which uses `ACTIVE_TEMPLATE_WHERE`
@@ -231,7 +237,8 @@ Mutation 4 uses a real-but-unrelated constraint name rather than an invented
 one, so the assertion cannot pass by matching nothing.
 
 **Added in review — the guard that could not fail.** Mutating the pre-check to
-`if (false && ...)` in both routes left **434/434 tests green**, because the FK
+`if (false && ...)` in both routes left **every test in the integration project
+green** (434 then, 437 now; the whole suite is 1613), because the FK
 backstop answers a byte-identical 409. The pre-check is the half this document
 and `docs/lock-order.md` say closes the deadlock, and no status assertion could
 observe it. Each integration suite now holds `FOR UPDATE` on the template row

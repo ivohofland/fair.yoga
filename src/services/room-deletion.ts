@@ -75,7 +75,7 @@ export const ROOM_DELETE_BLOCKED_MESSAGE =
  * BOTH ROUTES CALL THIS RATHER THAN `isRestrictViolationOn(err, ROOM_DELETE_RESTRICT_FKS)`
  * DIRECTLY, so the list cannot be got wrong at a call site. PR review measured
  * that nothing pinned that wiring: replacing the list with `[]` at both call
- * sites left all 39 cases in both integration suites green, because both
+ * sites left every case in both integration suites green, because both
  * routes' tests are stopped by the pre-check and never reach the catch. Owning
  * the list here removes the mistake instead of testing for it, and gives the
  * real-refused-delete cases in `room-deletion.test.ts` something to assert
@@ -84,6 +84,27 @@ export const ROOM_DELETE_BLOCKED_MESSAGE =
 export function isRoomDeleteBlocked(error: unknown): boolean {
   return isRestrictViolationOn(error, ROOM_DELETE_RESTRICT_FKS);
 }
+
+/**
+ * The pre-check's refusal code, and the backstop's.
+ *
+ * They differ ON PURPOSE. The two guards return the same status and the same
+ * message — that is deliberate, the teacher's situation is identical — which
+ * meant no assertion anywhere in the suite could tell which one answered, and
+ * disabling the pre-check left every integration test green. The code is the
+ * cheap half of the fix: every pre-check case asserts `ROOM_IN_USE`, so a dead
+ * pre-check now reddens all of them at once instead of nothing.
+ *
+ * It does not replace the lock-ordering cases. A code assertion still passes
+ * if someone moves the pre-check BELOW the delete inside the same handler;
+ * only holding `FOR UPDATE` on the template row observes that the statement
+ * was never issued, which is the property `docs/lock-order.md` depends on.
+ *
+ * `ROOM_IN_USE_RACE` also tells an operator which of the two causes fired,
+ * matching the `warn` line beside it.
+ */
+export const ROOM_IN_USE_CODE = 'ROOM_IN_USE';
+export const ROOM_IN_USE_RACE_CODE = 'ROOM_IN_USE_RACE';
 
 export type RoomDeleteBlockers = { classes: number; templates: number };
 

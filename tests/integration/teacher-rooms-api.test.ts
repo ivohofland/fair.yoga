@@ -539,11 +539,13 @@ describe('DELETE /api/teacher-rooms/[id]', () => {
   });
 
   it("refuses another teacher's link before it reveals whether it is in use", async () => {
-    // Ownership must lose to nothing. Swap the ownership check at `:141` with
-    // the blocker count at `:149` and this becomes a 409 naming the room's
-    // state — telling a stranger whether a link id they do not own is in use.
-    // The sibling route pins the same ordering (`rooms-api.test.ts`); this
-    // block had no ownership case at all until the delete guards landed here.
+    // Ownership must lose to nothing. Swap the ownership check at `:140-142`
+    // with the blocker count at `:147-148` and this becomes a 409 naming the
+    // room's state — telling a stranger whether a link id they do not own is
+    // in use.
+    // The sibling route pins the same ordering (`rooms-api.test.ts`). The
+    // ownership GUARD long predates this branch; this block simply had no case
+    // covering its position relative to the blocker count until now.
     const res = await send('DELETE', otherToken, linkWithArchivedTemplateId);
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: { message: string } };
@@ -554,9 +556,12 @@ describe('DELETE /api/teacher-rooms/[id]', () => {
   it('answers without waiting on the template row — pinning the pre-check, not the backstop', async () => {
     // THE ONLY TEST THAT CAN TELL THE TWO GUARDS APART, and the reason it
     // exists: PR review measured that mutating the pre-check to
-    // `if (false && ...)` in BOTH routes leaves 434/434 tests green, because
-    // the FK backstop answers with a byte-identical 409. Status cannot see the
-    // difference. Lock behaviour can.
+    // `if (false && ...)` in BOTH routes leaves every test in the integration
+    // project green, because the FK backstop answers with a byte-identical
+    // status and body. Status alone cannot see the difference. Lock behaviour
+    // can — and since this wave, so can `error.code`, which the pre-check
+    // cases below assert. This case remains the only one that observes the
+    // statement was never ISSUED, which is the part that orders the locks.
     //
     // The pre-check's real job is that the DELETE is never issued. Hold
     // `FOR UPDATE` on the very ClassTemplate row the RESTRICT trigger would
@@ -576,10 +581,17 @@ describe('DELETE /api/teacher-rooms/[id]', () => {
     const settled = await prisma.$transaction(
       async (tx) => {
         await tx.$queryRaw`SELECT 1 FROM "ClassTemplate" WHERE id = ${template.id} FOR UPDATE`;
-        return Promise.race([
-          send('DELETE', ownerToken, linkWithArchivedTemplateId).then((r) => r.status),
-          new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 5_000)),
-        ]);
+        let timer: NodeJS.Timeout | undefined;
+        try {
+          return await Promise.race([
+            send('DELETE', ownerToken, linkWithArchivedTemplateId).then((r) => r.status),
+            new Promise<'blocked'>((resolve) => {
+              timer = setTimeout(() => resolve('blocked'), 3_000);
+            }),
+          ]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
       },
       { timeout: 20_000 },
     );
@@ -587,7 +599,16 @@ describe('DELETE /api/teacher-rooms/[id]', () => {
     // 'blocked' means the handler issued the DELETE and is waiting on the row
     // this transaction holds — i.e. the pre-check did not stop it.
     expect(settled).toBe(409);
-  });
+    // 3 s sentinel inside a 15 s `it` budget, and the two numbers must stay
+    // apart. Vitest's DEFAULT testTimeout is 5 000 ms; the first version of
+    // this case used a 5 000 ms sentinel, so vitest's deadline always won by
+    // ~25 ms and the failure read "Test timed out in 5000ms" — which looks
+    // like flake, the one reading this case must never invite — instead of
+    // the diagnosis above. Prisma's interactive-transaction default is also
+    // 5 000 ms, which is what `{ timeout: 20_000 }` keeps out of the way.
+    // Measured margin: 16-20 ms across four full-project runs, worst observed
+    // 44 ms under a deliberately overloaded machine. The sentinel is ~70x that.
+  }, 15_000);
 
   it('refuses a link referenced only by an ARCHIVED template -> 409, not a 500', async () => {
     // The exact state that reproduced `500 {"error":{"message":"Internal
@@ -598,8 +619,13 @@ describe('DELETE /api/teacher-rooms/[id]', () => {
 
     const res = await send('DELETE', ownerToken, linkWithArchivedTemplateId);
     expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: { message: string } };
+    const body = (await res.json()) as { error: { message: string; code: string } };
     expect(body.error.message).toBe('This room is still in use and cannot be deleted. Archive it instead.');
+    // ROOM_IN_USE, not ROOM_IN_USE_RACE: this asserts the PRE-CHECK answered.
+    // Disabling it makes the backstop reply with the race code and reddens
+    // every case carrying this line — the cheap, deterministic half of the
+    // guard the lock-ordering case above pins the expensive half of.
+    expect(body.error.code).toBe('ROOM_IN_USE');
 
     // Nothing removed. The template is what RESTRICTs the delete, and a
     // teacher cannot delete it either — there is no DELETE verb on
@@ -621,8 +647,13 @@ describe('DELETE /api/teacher-rooms/[id]', () => {
 
     const res = await send('DELETE', ownerToken, linkWithLiveTemplateId);
     expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: { message: string } };
+    const body = (await res.json()) as { error: { message: string; code: string } };
     expect(body.error.message).toBe('This room is still in use and cannot be deleted. Archive it instead.');
+    // ROOM_IN_USE, not ROOM_IN_USE_RACE: this asserts the PRE-CHECK answered.
+    // Disabling it makes the backstop reply with the race code and reddens
+    // every case carrying this line — the cheap, deterministic half of the
+    // guard the lock-ordering case above pins the expensive half of.
+    expect(body.error.code).toBe('ROOM_IN_USE');
     expect(await prisma.teacherRoom.count({ where: { id: linkWithLiveTemplateId } })).toBe(1);
   });
 });
