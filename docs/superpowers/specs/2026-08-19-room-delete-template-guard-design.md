@@ -153,6 +153,22 @@ but a failure between them leaves the teacher's private rental rates
 (`TeacherRoom.rentalRate`, which CLAUDE.md calls "never shared between
 teachers") deleted with the room still standing. Wrapped in `prisma.$transaction`.
 
+**Corrected in review — this section's premise was incomplete.**
+`TeacherRoom_roomId_fkey` is `ON DELETE CASCADE`
+(`20260403092044_init/migration.sql:333`), so `room.delete` alone takes every
+link and the `deleteMany` is redundant. The window described above therefore
+exists only because of a statement that need not be issued at all; dropping it
+would close the window outright, and wrapping is the more conservative of two
+correct fixes. Kept as written — the explicit statement says what the delete
+removes, and the transaction makes keeping it free — but the handler now
+records the cascade beside it, because the `deleteMany` sits under a comment
+insisting the *pre-check* is not redundant, and the two redundancy stories run
+opposite ways.
+
+That same cascade is what §2.2's measurement was showing: a `room.delete`
+reporting `ClassTemplate_teacherRoomId_fkey` — a constraint declared on
+`TeacherRoom` — is only possible because the cascade reaches the link first.
+
 ### 2.4 `docs/lock-order.md` gains the edge
 
 985 lines and `grep -n "TeacherRoom"` returns nothing. A new section, in the
@@ -186,6 +202,13 @@ template precisely because that is the case the obvious implementation misses.
 
 Mutation 4 uses a real-but-unrelated constraint name rather than an invented
 one, so the assertion cannot pass by matching nothing.
+
+**Added in review:** a fourth block in `src/services/room-deletion.test.ts`
+provokes the real refused deletes and asserts on `meta.constraint` directly.
+Everything else pins P2003 against a hand-built error, so nothing stood behind
+the claim joining matcher to list — that Prisma really reports the constraint
+name in that field. A Prisma upgrade moving it would have disarmed both
+backstops with the whole suite green.
 
 **Honestly unproven:** §2.3's transaction. Its window needs a concurrent write
 between two adjacent statements, and this suite has no way to open it. It ships

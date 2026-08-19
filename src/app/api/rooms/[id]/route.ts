@@ -59,12 +59,25 @@ export const DELETE = withErrorHandler(async (
   // CLAUDE.md says is "never shared between teachers" — deleted with the room
   // still standing.
   //
-  // THE CHECK ABOVE IS NOT REDUNDANT WITH THE CATCH BELOW, AND REMOVING IT
-  // REOPENS A DEADLOCK. The RESTRICT triggers take `FOR KEY SHARE` on
-  // referencing ClassTemplate rows, which cycles against the generator sweep's
-  // `FOR UPDATE` on a template plus its `Class` insert's `FOR KEY SHARE` on
-  // this room's links. The catch runs after those locks are taken; only not
-  // issuing the DELETE avoids the cycle. `docs/lock-order.md` carries the edge.
+  // TWO REDUNDANCIES LIVE IN THIS BLOCK AND THEY POINT OPPOSITE WAYS. Read
+  // both before deleting either.
+  //
+  // 1. The `deleteMany` IS redundant and may go. `TeacherRoom_roomId_fkey` is
+  //    ON DELETE CASCADE (`20260403092044_init/migration.sql:333`), so the
+  //    room delete alone takes every link — which is also the only reason a
+  //    `room.delete` can report `ClassTemplate_teacherRoomId_fkey`, a
+  //    constraint declared on `TeacherRoom`, under `modelName: "Room"`
+  //    (pinned against a real refused delete in `room-deletion.test.ts`). It
+  //    stays as an explicit statement of what the delete removes, and the
+  //    transaction is what makes keeping it free.
+  //
+  // 2. THE CHECK ABOVE IS NOT REDUNDANT WITH THE CATCH BELOW, AND REMOVING IT
+  //    REOPENS A DEADLOCK. The RESTRICT triggers take `FOR KEY SHARE` on
+  //    referencing ClassTemplate rows, which cycles against the generator
+  //    sweep's `FOR UPDATE` on a template plus its `Class` insert's
+  //    `FOR KEY SHARE` on this room's links. The catch runs after those locks
+  //    are taken; only not issuing the DELETE avoids the cycle.
+  //    `docs/lock-order.md` carries the edge.
   try {
     await prisma.$transaction(async (tx) => {
       await tx.teacherRoom.deleteMany({ where: { roomId: id } });

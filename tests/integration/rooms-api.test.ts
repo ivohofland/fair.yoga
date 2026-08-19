@@ -246,9 +246,13 @@ afterAll(async () => {
     deleteCrossTeacherRoomId,
   ].filter(Boolean);
   if (roomIds.length > 0) {
-    // classTemplate.teacherRoom is Restrict — delete templates that reference
-    // teacherRooms being removed. The happy-path case already removed one room
-    // (cascade-deleting its teacherRoom and template), so this is best-effort.
+    // ClassTemplate.teacherRoom is Restrict, so templates go before the links
+    // they point at — a teacher-room delete cannot clear its own templates,
+    // which is the whole subject of issue 103. Swept by teacherId rather than
+    // by roomId: both teachers are file-scoped, and the happy-path case has
+    // already removed one of these rooms (taking its link with it, via
+    // TeacherRoom_roomId_fkey's CASCADE — that room carried no template), so a
+    // roomId-scoped sweep would have to tolerate that gap anyway.
     await prisma.classTemplate.deleteMany({ where: { teacherId: { in: [creatorId, otherTeacherId] } } });
     await prisma.teacherRoom.deleteMany({ where: { roomId: { in: roomIds } } });
     // deleteMany, not delete: the happy-path case already removed one of these

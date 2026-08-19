@@ -13,8 +13,9 @@
  * it was. See the mutation record at the foot.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { fixtureRun } from '../../tests/room-fixtures';
+import { isRestrictViolationOn } from '@/lib/api-errors';
 import {
   countTeacherRoomDeleteBlockers,
   countRoomDeleteBlockers,
@@ -128,5 +129,85 @@ describe('the shared constants', () => {
       'ClassTemplate_teacherRoomId_fkey',
       'Class_teacherRoomId_fkey',
     ]);
+  });
+});
+
+/**
+ * The FK names, checked against what Postgres and Prisma actually report.
+ *
+ * The cases above and `api-errors.test.ts`'s all build their P2003 by hand
+ * (`prismaError('P2003', {...})`), so between them they pin the MATCHER and
+ * the LIST but never the claim joining the two: that a refused delete really
+ * arrives as `code: 'P2003'` with the constraint name in `meta.constraint`.
+ *
+ * Nothing else in the suite closes that gap. Both routes' integration cases
+ * are stopped by the pre-check and never reach the `isRestrictViolationOn`
+ * catch, so a Prisma upgrade that moved the name — to `meta.field_name`, or
+ * into a nested `target` — would disarm both backstops with every test in the
+ * repo still green. The shape was verified live once, by the mutation recorded
+ * in 2798c5a, but that proof left with the mutation.
+ *
+ * These cases provoke the real errors instead of constructing them, which also
+ * pins the reason the matcher keys on `constraint` alone: the SAME constraint
+ * arrives under two different `modelName`s.
+ */
+describe('the FK names, against a real refused delete', () => {
+  /** Returns what the delete threw, and fails loudly if it did not throw. */
+  async function refusalFrom(run: () => Promise<unknown>): Promise<unknown> {
+    try {
+      await run();
+    } catch (err) {
+      return err;
+    }
+    throw new Error('expected the delete to be refused by a RESTRICT foreign key, but it succeeded');
+  }
+
+  it('a teacherRoom delete blocked by a template reports ClassTemplate_teacherRoomId_fkey', async () => {
+    const f = await fx.makeFixture(prisma);
+    await fx.addTemplate(prisma, f, { isActive: false, isArchived: true });
+
+    const err = await refusalFrom(() => prisma.teacherRoom.delete({ where: { id: f.linkId } }));
+
+    expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+    const known = err as Prisma.PrismaClientKnownRequestError;
+    expect(known.code).toBe('P2003');
+    expect(known.meta?.constraint).toBe('ClassTemplate_teacherRoomId_fkey');
+    expect(isRestrictViolationOn(err, ROOM_DELETE_RESTRICT_FKS)).toBe(true);
+  });
+
+  it('a room delete blocked by the same template reports the same constraint under a DIFFERENT modelName', async () => {
+    // The whole reason `isRestrictViolationOn` keys on `constraint` and never
+    // on `modelName`. `Room` has no template FK — `ClassTemplate_teacherRoomId_fkey`
+    // is declared on `TeacherRoom` — so this error can only arrive via
+    // TeacherRoom_roomId_fkey's ON DELETE CASCADE
+    // (`20260403092044_init/migration.sql:333`) taking the link on the way.
+    // A matcher that also required `modelName === 'TeacherRoom'` would pass
+    // the case above and 500 `DELETE /api/rooms/[id]`.
+    const f = await fx.makeFixture(prisma);
+    await fx.addTemplate(prisma, f, { isActive: false, isArchived: true });
+
+    const err = await refusalFrom(() => prisma.room.delete({ where: { id: f.roomId } }));
+
+    const known = err as Prisma.PrismaClientKnownRequestError;
+    expect(known.code).toBe('P2003');
+    expect(known.meta?.constraint).toBe('ClassTemplate_teacherRoomId_fkey');
+    expect(known.meta?.modelName).not.toBe('TeacherRoom');
+    expect(isRestrictViolationOn(err, ROOM_DELETE_RESTRICT_FKS)).toBe(true);
+  });
+
+  it('a teacherRoom delete blocked by a class reports Class_teacherRoomId_fkey', async () => {
+    // The second name in ROOM_DELETE_RESTRICT_FKS. Listed there because the
+    // `Class` guard has the identical check-to-delete race and had no backstop
+    // before this issue — so it is the half most likely to be wrong and least
+    // likely to be noticed.
+    const f = await fx.makeFixture(prisma);
+    await fx.addClass(prisma, f, 'completed');
+
+    const err = await refusalFrom(() => prisma.teacherRoom.delete({ where: { id: f.linkId } }));
+
+    const known = err as Prisma.PrismaClientKnownRequestError;
+    expect(known.code).toBe('P2003');
+    expect(known.meta?.constraint).toBe('Class_teacherRoomId_fkey');
+    expect(isRestrictViolationOn(err, ROOM_DELETE_RESTRICT_FKS)).toBe(true);
   });
 });
