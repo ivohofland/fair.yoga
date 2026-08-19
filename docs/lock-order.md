@@ -19,9 +19,11 @@ than one of these tables also holds `Class`'s row lock before touching any of
 the others, *when it touches `Class` at all*. Two different statements take
 that lock and both count: `lockClassRow` (or `lockClassRowsOrdered`), and a
 compare-and-swap `class.updateMany` (an `UPDATE` locks the rows it matches —
-`deleteTeacherAccount` takes its per-class lock this way and no other, so a
-version of this sentence that names only the first writes it out of the rule
-it is subject to). `POST
+`transitionClass` (`class-lifecycle.ts`) takes its `Class` lock this way and
+no other, so a version of this sentence that names only the first writes it
+out of the rule it is subject to; `deleteTeacherAccount` used to be this
+example, until #237 folded its per-class CAS behind its own
+`lockClassRowsOrdered` pre-lock). `POST
 /api/registrations` writes `Registration` before `WaitlistEntry`;
 `promoteNext` can write `WaitlistEntry` before `Registration`, but only
 conditionally (the stale-head-drop loop — it runs only when the current queue

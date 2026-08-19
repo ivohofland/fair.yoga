@@ -338,9 +338,11 @@ export async function autoCancelClasses(
         // inline `SELECT ... FOR UPDATE` on the class row, which is what
         // `addToWaitlist`, `promoteNext`, `claimSpot`,
         // `withdrawWaitingEntriesForTeacher` and `POST /api/registrations` all
-        // did AT THE TIME (issue #104 later converted every one of them onto
-        // `lockClassRow`/`lockClassRowsOrdered`, so this mechanism is gone
-        // from today's roster, not from the checklist below) — and the
+        // did AT THE TIME (issue #104 later converted `addToWaitlist`,
+        // `promoteNext`, `claimSpot` and `POST /api/registrations` onto
+        // `lockClassRow`; `withdrawWaitingEntriesForTeacher` had already
+        // moved to `lockClassRowsOrdered` under #237 — so this mechanism is
+        // gone from today's roster, not from the checklist below) — and the
         // universal claim is false regardless: issue #183 is open
         // precisely because `deleteStudentAccount`'s write set can exceed its
         // lock set. It replaced a correct hand-written roster with a general
