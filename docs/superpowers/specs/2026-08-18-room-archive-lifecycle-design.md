@@ -4,6 +4,14 @@ Issue 76 · 2026-08-18
 
 ## 1. What the issue asked, and what is actually true
 
+*Line references in sections 1 and 2 were measured against the pre-branch
+tree and describe the defect as it stood; they are deliberately NOT repointed,
+because the code they name has since moved or been replaced and rewriting them
+would turn a record of what was measured into a claim about what now exists.
+The end-state citations — section 4's door table, section 10 — are live, and
+were re-derived after fix round 2, whose own insertions had silently pushed
+four of them off their targets.*
+
 Issue 76 ("Room deletion is blocked forever by cancelled and completed
 classes") presents three options and recommends the third — *archive instead of
 delete*, using "the unused `TeacherRoom.isArchived`".
@@ -113,7 +121,7 @@ Archiving is a private act on a private link, never on the `Room`.
 |---|---|---|---|
 | 1 | Archive the room | refuse if in use (§3) | new `src/services/room-archive.ts`, called by `PATCH /api/teacher-rooms/[id]` |
 | 2 | Publish `draft → open` | refuse if room archived | the existing `if (targetStatus === 'open')` block, `src/services/class-lifecycle.ts:303` |
-| 3 | Resume template `paused → active` | refuse if room archived — **the resume direction only** | `pauseOrResumeTemplate`, beside the `reason: 'archived'` return at `class-template-lifecycle.ts:727` |
+| 3 | Resume template `paused → active` | refuse if room archived — **the resume direction only** | `pauseOrResumeTemplate`, beside the `reason: 'archived'` return at `class-template-lifecycle.ts:767` |
 | 4 | Create a template | refuse if room archived | `POST /api/class-templates` |
 | 5 | Move a template's `teacherRoomId` | refuse if room archived — **only while the template is active** | `updateClassTemplate`, `class-template-lifecycle.ts`, surfaced by `PUT /api/class-templates/[id]` |
 
@@ -163,7 +171,7 @@ must not be able to answer it differently.
 
 **Agreement is structural, not asserted.** Both import `ACTIVE_TEMPLATE_WHERE`
 from a new import-free `src/lib/template-selection.ts`: `room-archive.ts` for
-the blocking count, `class-generator.ts:359` for its `findMany`. Divergence is
+the blocking count, `class-generator.ts:369` for its `findMany`. Divergence is
 therefore impossible rather than merely detectable, and no test is needed to
 police it.
 
