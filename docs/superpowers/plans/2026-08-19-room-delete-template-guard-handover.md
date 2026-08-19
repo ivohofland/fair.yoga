@@ -59,10 +59,19 @@ Both delete routes end up with a count-then-refuse guard **and** a
 `isRestrictViolationOn` catch around the delete. Every instinct — and any
 simplifier agent you run — will call that belt-and-braces and collapse it.
 
-- Removing the **catch** loses the race window. Bad, recoverable, and a test
-  catches it.
+> **Corrected after PR review — this bullet pair was half wrong.** Both halves
+> were invisible to the suite, not one. See the lock-ordering case now in each
+> integration file.
+
+- Removing the **catch** loses the race window. Bad, recoverable — and caught
+  by **nothing**. The claim here used to read "and a test catches it"; measured,
+  no test does. Every reachable test state is stopped by the pre-check first,
+  and the race that reaches the catch cannot be forced over HTTP.
 - Removing the **pre-check** reopens a database deadlock, **with every test in
-  the repo still green**, because the catch runs *after* the `DELETE` has
+  the repo still green** — measured too: `if (false && ...)` in both routes left
+  434/434 green, because the catch answers a byte-identical 409. It is pinned
+  now, by holding `FOR UPDATE` on the template row and failing when the DELETE
+  waits on it. That is because the catch runs *after* the `DELETE` has
   already taken its locks. Converting the outcome is not avoiding the wait.
 
 Both handlers carry an inline comment saying this. Do not "tidy" those comments

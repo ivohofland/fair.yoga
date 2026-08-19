@@ -250,8 +250,9 @@ afterAll(async () => {
     // they point at — a teacher-room delete cannot clear its own templates,
     // which is the whole subject of issue 103. Swept by teacherId rather than
     // by roomId: both teachers are file-scoped, and the happy-path case has
-    // already removed one of these rooms (taking its link with it, via
-    // TeacherRoom_roomId_fkey's CASCADE — that room carried no template), so a
+    // already removed one of these rooms (the handler's own
+    // `teacherRoom.deleteMany` took its link — NOT the CASCADE, which that
+    // statement pre-empts; and that room carried no template), so a
     // roomId-scoped sweep would have to tolerate that gap anyway.
     await prisma.classTemplate.deleteMany({ where: { teacherId: { in: [creatorId, otherTeacherId] } } });
     await prisma.teacherRoom.deleteMany({ where: { roomId: { in: roomIds } } });
@@ -429,8 +430,8 @@ describe('PUT /api/rooms/[id]', () => {
  *     room creator can delete this room".
  *   - non-creator+private+has-classes pins the createdById <-> hasClasses
  *     order. Current order says "Only the room creator can delete this room";
- *     swapped, it says "Cannot delete a room with class history. Archive it
- *     instead." with a 409 — which would leak to a stranger whether a room
+ *     swapped, it says "This room is still in use and cannot be deleted.
+ *     Archive it instead." with a 409 — which would leak to a stranger whether a room
  *     they don't own has classes on it.
  *
  * Both pairs were verified by mutation, not by argument: swapping each pair
@@ -483,7 +484,7 @@ describe('DELETE /api/rooms/[id]', () => {
     expect(res.status).toBe(409);
 
     const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toContain('Cannot delete a room with class history. Archive it instead.');
+    expect(json.error.message).toContain('This room is still in use and cannot be deleted. Archive it instead.');
 
     // Both counts are here for the same reason every non-200 case in this file
     // asserts the DB is unchanged — not because a missing guard could orphan
@@ -508,8 +509,8 @@ describe('DELETE /api/rooms/[id]', () => {
     expect(res.status).toBe(403);
 
     // Ownership loses to nothing here. Swap createdById and hasClasses and
-    // this becomes 409 "Cannot delete a room with class history. Archive it
-    // instead." — telling a stranger something about a private room they
+    // this becomes 409 "This room is still in use and cannot be deleted.
+    // Archive it instead." — telling a stranger something about a private room they
     // have no business knowing.
     const json = (await res.json()) as { error: { message: string } };
     expect(json.error.message).toContain('Only the room creator can delete this room');
@@ -535,7 +536,7 @@ describe('DELETE /api/rooms/[id]', () => {
 
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toBe('Cannot delete a room with class history. Archive it instead.');
+    expect(body.error.message).toBe('This room is still in use and cannot be deleted. Archive it instead.');
 
     // Nothing removed — including the other teacher's link and its class.
     expect(await prisma.room.count({ where: { id: deleteCrossTeacherRoomId } })).toBe(1);
@@ -543,6 +544,35 @@ describe('DELETE /api/rooms/[id]', () => {
       await prisma.teacherRoom.count({ where: { roomId: deleteCrossTeacherRoomId } }),
     ).toBe(2);
     expect(await prisma.class.count({ where: { id: crossTeacherClassId } })).toBe(1);
+  });
+
+  it('answers without waiting on the template row — pinning the pre-check, not the backstop', async () => {
+    // Twin of the case in `teacher-rooms-api.test.ts`, and needed separately:
+    // each route carries its own pre-check, so a mutation to one is invisible
+    // to the other's tests. PR review measured `if (false && ...)` in both
+    // routes leaving 434/434 green — the FK backstop answers the identical
+    // 409, so no status assertion anywhere can tell which guard replied.
+    //
+    // Holding `FOR UPDATE` on the template row makes them distinguishable: the
+    // pre-check refuses without issuing the DELETE, while its absence makes
+    // the DELETE wait on the RESTRICT trigger's `FOR KEY SHARE` — the wait
+    // edge `docs/lock-order.md` attributes the AB-BA cycle to.
+    const template = await prisma.classTemplate.findFirstOrThrow({
+      where: { teacherRoom: { roomId: deleteWithTemplateRoomId } },
+    });
+
+    const settled = await prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT 1 FROM "ClassTemplate" WHERE id = ${template.id} FOR UPDATE`;
+        return Promise.race([
+          del(creatorToken, deleteWithTemplateRoomId).then((r) => r.status),
+          new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 5_000)),
+        ]);
+      },
+      { timeout: 20_000 },
+    );
+
+    expect(settled).toBe(409);
   });
 
   it('the creator cannot delete a room referenced only by a template -> 409, not a 500', async () => {
@@ -557,7 +587,7 @@ describe('DELETE /api/rooms/[id]', () => {
     const res = await del(creatorToken, deleteWithTemplateRoomId);
     expect(res.status).toBe(409);
     const json = (await res.json()) as { error: { message: string } };
-    expect(json.error.message).toBe('Cannot delete a room with class history. Archive it instead.');
+    expect(json.error.message).toBe('This room is still in use and cannot be deleted. Archive it instead.');
 
     // Nothing removed — including the teacher-room, whose rentalRate CLAUDE.md
     // calls "never shared between teachers".

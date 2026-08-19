@@ -2,7 +2,6 @@ import { NextRequest } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { log } from '@/lib/log';
-import { isRestrictViolationOn } from '@/lib/api-errors';
 import {
   respondOk,
   respondError,
@@ -15,7 +14,7 @@ import { updateRoomSchema } from '@/lib/schemas';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import {
   countRoomDeleteBlockers,
-  ROOM_DELETE_RESTRICT_FKS,
+  isRoomDeleteBlocked,
   ROOM_DELETE_BLOCKED_MESSAGE,
 } from '@/services/room-deletion';
 
@@ -64,12 +63,17 @@ export const DELETE = withErrorHandler(async (
   //
   // 1. The `deleteMany` IS redundant and may go. `TeacherRoom_roomId_fkey` is
   //    ON DELETE CASCADE (`20260403092044_init/migration.sql:333`), so the
-  //    room delete alone takes every link — which is also the only reason a
-  //    `room.delete` can report `ClassTemplate_teacherRoomId_fkey`, a
-  //    constraint declared on `TeacherRoom`, under `modelName: "Room"`
-  //    (pinned against a real refused delete in `room-deletion.test.ts`). It
-  //    stays as an explicit statement of what the delete removes, and the
-  //    transaction is what makes keeping it free.
+  //    room delete alone takes every link. It stays as an explicit statement
+  //    of what the delete removes, and the transaction is what makes keeping
+  //    it free.
+  //
+  //    IF YOU DO REMOVE IT, the P2003 this handler catches changes shape.
+  //    Today the `deleteMany` refuses first and reports
+  //    `modelName: "TeacherRoom"`; without it, `room.delete` refuses through
+  //    the CASCADE and reports `modelName: "Room"` (both measured, both
+  //    pinned in `room-deletion.test.ts`). `isRoomDeleteBlocked` reads only
+  //    `meta.constraint`, so the edit is safe — but a matcher narrowed to the
+  //    model would pass every test today and 500 this route afterwards.
   //
   // 2. THE CHECK ABOVE IS NOT REDUNDANT WITH THE CATCH BELOW, AND REMOVING IT
   //    REOPENS A DEADLOCK. The RESTRICT triggers take `FOR KEY SHARE` on
@@ -84,8 +88,16 @@ export const DELETE = withErrorHandler(async (
       await tx.room.delete({ where: { id } });
     });
   } catch (err) {
-    // The check-to-delete race: a template created in the gap.
-    if (isRestrictViolationOn(err, ROOM_DELETE_RESTRICT_FKS)) {
+    // A template OR a class created in the gap — both foreign keys land here.
+    if (isRoomDeleteBlocked(err)) {
+      // `warn`, not the pre-check's `info`. See the twin in
+      // `teacher-rooms/[id]`: reaching here means the pre-check did not stop
+      // this delete, and a drifted pre-check is otherwise silent because this
+      // branch answers identically.
+      log.warn(
+        { roomId: id, teacherId: session.teacherId },
+        'room delete refused by the FK backstop: the pre-check said it was clear',
+      );
       return respondError(ROOM_DELETE_BLOCKED_MESSAGE, 409, 'ROOM_IN_USE');
     }
     throw err;
@@ -157,7 +169,7 @@ export const PUT = withErrorHandler(async (
   //
   // THE GUARDS ABOVE ARE REPEATED IN THIS WRITE'S `where`, AND THAT IS NOT
   // BELT-AND-BRACES — it closes a race #73 itself opened. The guards ran
-  // against a row read at :75; `POST /api/rooms/[id]/publish` can commit
+  // against a row read at :135; `POST /api/rooms/[id]/publish` can commit
   // `isPublic: true` between that read and this write. It needs no second
   // device: the room detail page renders `EditRoomForm` and `ShareRoomButton`
   // on the same screen. Without the predicate here, the edit lands on a
@@ -190,7 +202,7 @@ export const PUT = withErrorHandler(async (
     // Find out which of the three predicates stopped it rather than asserting
     // one — #72 was exactly this branch naming a cause it had not checked.
     // Reaching here means the row changed under us, since all three held at
-    // :75-84.
+    // :135-144.
     const current = await prisma.room.findUnique({
       where: { id },
       select: { isPublic: true, createdById: true },

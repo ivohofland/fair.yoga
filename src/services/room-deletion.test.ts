@@ -10,15 +10,15 @@
  * predicate is EVERY template, and the obvious implementation — reusing
  * `ACTIVE_TEMPLATE_WHERE`, which the archive door two modules over uses — is
  * green against an active template and leaves the reproduced 500 exactly where
- * it was. See the mutation record at the foot.
+ * it was. See the mutation recorded in commit `70baade`.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { fixtureRun } from '../../tests/room-fixtures';
-import { isRestrictViolationOn } from '@/lib/api-errors';
 import {
   countTeacherRoomDeleteBlockers,
   countRoomDeleteBlockers,
+  isRoomDeleteBlocked,
   ROOM_DELETE_RESTRICT_FKS,
   ROOM_DELETE_BLOCKED_MESSAGE,
 } from './room-deletion';
@@ -117,7 +117,7 @@ describe('the shared constants', () => {
   // fact that it changes both.
   it('names one refusal for both blockers', () => {
     expect(ROOM_DELETE_BLOCKED_MESSAGE).toBe(
-      'Cannot delete a room with class history. Archive it instead.',
+      'This room is still in use and cannot be deleted. Archive it instead.',
     );
   });
 
@@ -141,7 +141,7 @@ describe('the shared constants', () => {
  * arrives as `code: 'P2003'` with the constraint name in `meta.constraint`.
  *
  * Nothing else in the suite closes that gap. Both routes' integration cases
- * are stopped by the pre-check and never reach the `isRestrictViolationOn`
+ * are stopped by the pre-check and never reach the `isRoomDeleteBlocked`
  * catch, so a Prisma upgrade that moved the name — to `meta.field_name`, or
  * into a nested `target` — would disarm both backstops with every test in the
  * repo still green. The shape was verified live once, by the mutation recorded
@@ -172,17 +172,23 @@ describe('the FK names, against a real refused delete', () => {
     const known = err as Prisma.PrismaClientKnownRequestError;
     expect(known.code).toBe('P2003');
     expect(known.meta?.constraint).toBe('ClassTemplate_teacherRoomId_fkey');
-    expect(isRestrictViolationOn(err, ROOM_DELETE_RESTRICT_FKS)).toBe(true);
+    expect(isRoomDeleteBlocked(err)).toBe(true);
   });
 
-  it('a room delete blocked by the same template reports the same constraint under a DIFFERENT modelName', async () => {
-    // The whole reason `isRestrictViolationOn` keys on `constraint` and never
-    // on `modelName`. `Room` has no template FK — `ClassTemplate_teacherRoomId_fkey`
+  it('a BARE room delete reports the same constraint under modelName "Room"', async () => {
+    // The whole reason the matcher keys on `constraint` and never on
+    // `modelName`. `Room` has no template FK — `ClassTemplate_teacherRoomId_fkey`
     // is declared on `TeacherRoom` — so this error can only arrive via
     // TeacherRoom_roomId_fkey's ON DELETE CASCADE
     // (`20260403092044_init/migration.sql:333`) taking the link on the way.
-    // A matcher that also required `modelName === 'TeacherRoom'` would pass
-    // the case above and 500 `DELETE /api/rooms/[id]`.
+    //
+    // `toBe('Room')`, not `not.toBe('TeacherRoom')`: a measured value exists,
+    // and the negative form also passes if Prisma stops sending `modelName`
+    // at all — the exact drift this block was added to catch.
+    //
+    // This is NOT the statement `DELETE /api/rooms/[id]` issues today; see the
+    // route-sequence case below. It is the shape that route acquires the day
+    // its redundant `teacherRoom.deleteMany` is removed.
     const f = await fx.makeFixture(prisma);
     await fx.addTemplate(prisma, f, { isActive: false, isArchived: true });
 
@@ -191,8 +197,35 @@ describe('the FK names, against a real refused delete', () => {
     const known = err as Prisma.PrismaClientKnownRequestError;
     expect(known.code).toBe('P2003');
     expect(known.meta?.constraint).toBe('ClassTemplate_teacherRoomId_fkey');
-    expect(known.meta?.modelName).not.toBe('TeacherRoom');
-    expect(isRestrictViolationOn(err, ROOM_DELETE_RESTRICT_FKS)).toBe(true);
+    expect(known.meta?.modelName).toBe('Room');
+    expect(isRoomDeleteBlocked(err)).toBe(true);
+  });
+
+  it('the rooms route SEQUENCE reports modelName "TeacherRoom", not "Room"', async () => {
+    // Mirrors `src/app/api/rooms/[id]/route.ts` exactly: deleteMany then
+    // delete, inside one interactive transaction. Added in PR review, which
+    // found every doc on this branch claiming that route emits `"Room"` — it
+    // does not, because the `deleteMany` refuses first, and the cascade the
+    // `"Room"` shape depends on never runs.
+    //
+    // Pinning the sequence rather than the statements matters twice over: it
+    // is the only case covering a P2003 raised by a BATCH delete inside a
+    // transaction, which is what the route actually catches in production.
+    const f = await fx.makeFixture(prisma);
+    await fx.addTemplate(prisma, f, { isActive: false, isArchived: true });
+
+    const err = await refusalFrom(() =>
+      prisma.$transaction(async (tx) => {
+        await tx.teacherRoom.deleteMany({ where: { roomId: f.roomId } });
+        await tx.room.delete({ where: { id: f.roomId } });
+      }),
+    );
+
+    const known = err as Prisma.PrismaClientKnownRequestError;
+    expect(known.code).toBe('P2003');
+    expect(known.meta?.constraint).toBe('ClassTemplate_teacherRoomId_fkey');
+    expect(known.meta?.modelName).toBe('TeacherRoom');
+    expect(isRoomDeleteBlocked(err)).toBe(true);
   });
 
   it('a teacherRoom delete blocked by a class reports Class_teacherRoomId_fkey', async () => {
@@ -208,6 +241,6 @@ describe('the FK names, against a real refused delete', () => {
     const known = err as Prisma.PrismaClientKnownRequestError;
     expect(known.code).toBe('P2003');
     expect(known.meta?.constraint).toBe('Class_teacherRoomId_fkey');
-    expect(isRestrictViolationOn(err, ROOM_DELETE_RESTRICT_FKS)).toBe(true);
+    expect(isRoomDeleteBlocked(err)).toBe(true);
   });
 });

@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { isRestrictViolationOn } from '@/lib/api-errors';
 
 /**
  * What blocks the HARD deletion of a room, and what to say when it does
@@ -41,14 +42,48 @@ export const ROOM_DELETE_RESTRICT_FKS = [
  *
  * A `ClassTemplate` is never hard-deleted anywhere in `src/` — there is no
  * `DELETE` verb on `/api/class-templates/[id]` — so a template blocker is as
- * permanent as class history and has the identical remedy. Wording that named
- * the cause would be right half the time and would imply, wrongly, that the
- * teacher can clear it. Same reasoning `classifyApiError` states for the two
- * terminality triggers ("any wording that names one column is wrong half the
- * time").
+ * permanent as class history and has the identical remedy. Same reasoning
+ * `classifyApiError` states for the two terminality triggers ("any wording
+ * that names one column is wrong half the time").
+ *
+ * "STILL IN USE", NOT "CLASS HISTORY" — the noun was corrected in PR review.
+ * The earlier wording was accurate only when a class was the blocker. A room
+ * blocked solely by a template has ZERO classes (that is the state issue 103
+ * reproduced), so it sent the teacher to a schedule showing nothing — the
+ * exact failure `describeRoomBlockers` documents at `room-archive.ts:74-79`
+ * for its own "unfinished" vs "upcoming" choice.
+ *
+ * AND DO NOT REACH FOR `describeRoomBlockers` TO SAY IT BETTER. The two doors
+ * count different things: it says "unfinished class", meaning
+ * `BLOCKING_CLASS_STATUSES` (`open`/`in_progress`), while this door counts
+ * EVERY class because a foreign key does. Reused here, three completed
+ * classes read "3 unfinished classes still use this room" — the same defect
+ * in a different word.
+ *
+ * The remedy is named unconditionally and is not always available in one
+ * step: a LIVE template blocks archiving too (`ACTIVE_TEMPLATE_WHERE`), so
+ * that teacher must pause or archive the template first. Same is already true
+ * of an `open` class, and predates this issue. Tracked separately.
  */
 export const ROOM_DELETE_BLOCKED_MESSAGE =
-  'Cannot delete a room with class history. Archive it instead.';
+  'This room is still in use and cannot be deleted. Archive it instead.';
+
+/**
+ * True when a room-delete statement was refused by one of the foreign keys
+ * above — the check-to-delete race, or a pre-check that has stopped working.
+ *
+ * BOTH ROUTES CALL THIS RATHER THAN `isRestrictViolationOn(err, ROOM_DELETE_RESTRICT_FKS)`
+ * DIRECTLY, so the list cannot be got wrong at a call site. PR review measured
+ * that nothing pinned that wiring: replacing the list with `[]` at both call
+ * sites left all 39 cases in both integration suites green, because both
+ * routes' tests are stopped by the pre-check and never reach the catch. Owning
+ * the list here removes the mistake instead of testing for it, and gives the
+ * real-refused-delete cases in `room-deletion.test.ts` something to assert
+ * that the routes actually call.
+ */
+export function isRoomDeleteBlocked(error: unknown): boolean {
+  return isRestrictViolationOn(error, ROOM_DELETE_RESTRICT_FKS);
+}
 
 export type RoomDeleteBlockers = { classes: number; templates: number };
 

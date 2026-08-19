@@ -655,16 +655,34 @@ requires a template row to exist — that row is what gives the trigger somethin
 to lock. With the guard in place the statement is never issued in the
 deadlocking case.
 
-**The `isRestrictViolationOn` catch beside each guard does NOT substitute for
+**The `isRoomDeleteBlocked` catch beside each guard does NOT substitute for
 it.** The catch runs after the `DELETE` has taken its locks; it converts the
-outcome, it does not avoid the wait. Anyone removing the pre-check as
-belt-and-braces reopens this edge with every test green, which is why both
-handlers carry the warning inline.
+outcome, it does not avoid the wait. Removing the pre-check as belt-and-braces
+reopens this edge, and until PR review it did so **with every test in the repo
+green** — `if (false && ...)` in both routes left 434/434 passing, because the
+catch answers a byte-identical 409 and no status assertion can tell the two
+guards apart. Each integration suite now carries a case that can: it holds
+`FOR UPDATE` on the template row the RESTRICT trigger needs `FOR KEY SHARE` on,
+and fails when the DELETE waits on it instead of refusing outright. That case
+is the only thing in the repo that observes this edge, so treat it as part of
+the guard rather than as coverage.
+
+**A second cycle of the same shape, which the guard structurally cannot close.**
+`Class_teacherRoomId_fkey` is equally `RESTRICT`, so the `Class` row the sweep
+is *inserting* forms the same edge. The pre-check cannot see it — the row does
+not exist at check time — so this one is residual by construction, not by
+choice. The template edge is the one a guard can close, and the section above
+is about that edge only.
 
 **Residual, and accepted:** a template created between the check and the
-`DELETE`. Bounded by the sweep's own `{ timeout: 10_000 }`
-(`class-generator.ts:408`), and either outcome is already legible — `40P01` is
-in `TRANSIENT_SQLSTATES` (`api-errors.ts:174`) and answers 503 retryable. A
+`DELETE`. The wait is bounded well below the sweep's `{ timeout: 10_000 }`
+envelope (`class-generator.ts:408`): Postgres's `deadlock_timeout` breaks the
+cycle at its 1 s default, which this repo does not override, and the sweep's
+own `LOCK_TIMEOUT_SQL` is `SET LOCAL lock_timeout = '2s'` (`db-locks.ts:94`).
+Both outcomes are legible — `40P01` is in `TRANSIENT_SQLSTATES`
+(`api-errors.ts:174`) and answers 503 retryable, and the far likelier `P2003`
+is answered 409 by the catch, which logs at `warn` because reaching it means
+the pre-check did not stop the delete. A
 `lock_timeout` on the delete was considered and rejected: it would add a
 lock-taking node to the ordering `template-lock-order.test.ts` defends, for a
 few seconds in a window that needs a concurrent template creation — the same

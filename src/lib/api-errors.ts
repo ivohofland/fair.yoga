@@ -251,12 +251,26 @@ export function isRecordNotFound(error: unknown): boolean {
  * points at the row — `P2003` — and the constraint that refused is one of
  * `constraints`.
  *
- * Keyed on `meta.constraint`, never on `meta.modelName`. Measured: the same
- * `ClassTemplate_teacherRoomId_fkey` arrives as `modelName: "TeacherRoom"`
- * from `DELETE /api/teacher-rooms/[id]` and as `modelName: "Room"` from
- * `DELETE /api/rooms/[id]`, because the latter trips it through the
- * `Room`→`TeacherRoom` cascade. A matcher that also required the model would
- * pass one route's tests and 500 the other.
+ * Keyed on `meta.constraint`, never on `meta.modelName`, because the same
+ * constraint reports different models depending on the statement that tripped
+ * it. Measured: `teacherRoom.delete` and `teacherRoom.deleteMany` both report
+ * `modelName: "TeacherRoom"`, while a bare `room.delete` reports
+ * `modelName: "Room"` — it trips the constraint through
+ * `TeacherRoom_roomId_fkey`'s CASCADE.
+ *
+ * CORRECTED IN PR REVIEW, because the earlier justification here was false and
+ * a maintainer would have tested it and found it did not bite. It claimed
+ * `DELETE /api/rooms/[id]` emits `"Room"`. It does not: that route issues
+ * `teacherRoom.deleteMany` BEFORE `room.delete`, so a blocker aborts at the
+ * first statement and reports `"TeacherRoom"`, same as its sibling route.
+ * Both routes emit `"TeacherRoom"` today.
+ *
+ * So this is a FORWARD-LOOKING guarantee, not a current-state one, and that is
+ * exactly why it matters: the `deleteMany` is redundant (the CASCADE already
+ * takes the links) and `rooms/[id]` says so inline, so the day someone removes
+ * it that route starts emitting `"Room"`. Keying on `constraint` alone is what
+ * makes that edit safe. A matcher narrowed to `modelName` would pass every
+ * test today and 500 the rooms route later.
  *
  * NARROW BY CONSTRUCTION, and that is the whole design. A blanket
  * `P2003 → 409` in `classifyApiError` would be less code and worse: almost

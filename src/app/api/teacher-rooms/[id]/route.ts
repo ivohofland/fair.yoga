@@ -1,7 +1,6 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { log } from '@/lib/log';
-import { isRestrictViolationOn } from '@/lib/api-errors';
 import {
   respondOk,
   respondError,
@@ -14,7 +13,7 @@ import { updateTeacherRoomSchema, archiveStateQuerySchema } from '@/lib/schemas'
 import { setTeacherRoomArchived, describeRoomBlockers } from '@/services/room-archive';
 import {
   countTeacherRoomDeleteBlockers,
-  ROOM_DELETE_RESTRICT_FKS,
+  isRoomDeleteBlocked,
   ROOM_DELETE_BLOCKED_MESSAGE,
 } from '@/services/room-deletion';
 
@@ -167,9 +166,21 @@ export const DELETE = withErrorHandler(async (
   try {
     await prisma.teacherRoom.delete({ where: { id } });
   } catch (err) {
-    // The check-to-delete race: a template created in the gap. Same answer as
-    // the check, rather than the 500 a bare P2003 falls through to.
-    if (isRestrictViolationOn(err, ROOM_DELETE_RESTRICT_FKS)) {
+    // A template OR a class created in the gap — both foreign keys land here,
+    // so do not narrow this comment to templates and then narrow the list to
+    // match it. Same answer as the check, rather than the 500 a bare P2003
+    // falls through to.
+    if (isRoomDeleteBlocked(err)) {
+      // `warn`, not the `info` the pre-check uses, and NOT optional: reaching
+      // here means the pre-check did NOT stop this delete. Either we lost the
+      // race, or the pre-check's predicate has drifted from the foreign key's
+      // — and the second is otherwise completely silent, because this branch
+      // answers with the same status, body and code the pre-check does. It is
+      // also the branch that reopens the deadlock edge above.
+      log.warn(
+        { teacherRoomId: id, teacherId: session.teacherId },
+        'room delete refused by the FK backstop: the pre-check said it was clear',
+      );
       return respondError(ROOM_DELETE_BLOCKED_MESSAGE, 409, 'ROOM_IN_USE');
     }
     throw err;

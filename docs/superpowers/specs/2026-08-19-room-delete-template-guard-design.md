@@ -1,5 +1,10 @@
 # Room deletion: the template blocker, and the lock cycle it was hiding
 
+> **Line numbers below are as of `HEAD` of this branch after PR review.**
+> Section 1 cites pre-state where it describes what the issue found; sections
+> 2-4 cite current state. Every `file:NNN` here was re-resolved after the
+> review fix wave, which moved several by inserting into the files they name.
+
 Issue 103. Two problems the issue presents as related; they turn out to be **one
 guard apart**, which is the finding that shaped this design.
 
@@ -32,9 +37,9 @@ Reproduced against the running app on 2026-08-19, with a `TeacherRoom` carrying
 [REPRO rooms]         status=500 body={"error":{"message":"Internal server error"}}
 ```
 
-Both routes, not one. `classifyApiError` (`src/lib/api-errors.ts:267`) has
+Both routes, not one. `classifyApiError` (`src/lib/api-errors.ts:315`) has
 branches for the terminality triggers, `isTransientDbError`, and `P2002`;
-`P2003` matches none, so it falls to the generic 500 at `:350` — `level:
+`P2003` matches none, so it falls to the generic 500 at `:398` — `level:
 'error'`, the level that pages someone.
 
 This is **user-visible, not API-only**. `src/components/settings/delete-room-button.tsx:22`
@@ -51,7 +56,7 @@ The issue predicts `40P01` and treats that as the harm. Since it was filed,
 const TRANSIENT_SQLSTATES = ['40001', '40P01', '55P03'] as const;
 ```
 
-routed at `:325` to **503**, *"The system was busy and could not finish that.
+routed at `:375` to **503**, *"The system was busy and could not finish that.
 Please try again."*, at `level: 'warn'`. The generator's claim also now takes
 `LOCK_TIMEOUT_SQL` before its `FOR UPDATE` (`src/services/class-generator.ts:319`),
 which the issue predates.
@@ -104,11 +109,22 @@ foreign key asks *"does a row point here?"*, and it does not read `isActive` or
 `rooms/[id]` counts across every `TeacherRoom` on the room, matching the shape
 of its existing `hasClasses` check (`:37`).
 
+**Corrected in review — the message changed, the "one string" decision did
+not.** The approved wording named a cause it could not guarantee: a room
+blocked solely by a template has zero classes, so "class history" sent that
+teacher to a schedule showing nothing. It now reads
+`This room is still in use and cannot be deleted. Archive it instead.`, which
+is true in every blocker combination. `describeRoomBlockers` is still the wrong
+tool for the reason §2.1 gives *and* one more found in review: it says
+"unfinished class", meaning `BLOCKING_CLASS_STATUSES`, while this door counts
+every class — so three completed classes would read "3 unfinished classes".
+The reasoning below stands as written for why ONE string serves both blockers.
+
 **One message for both causes, deliberately.** A template is not literally class
 history, and a teacher blocked only by an archived template may look for classes
 that are not on their schedule. Accepted, because both causes are permanent and
 share one remedy, so the confusion cannot produce a wrong action — the same
-reasoning `classifyApiError:295-297` states for the terminality message
+reasoning `classifyApiError:343-345` states for the terminality message
 (*"Both triggers reach this branch and both mean the same thing to the caller —
 so any wording that names one column is wrong half the time"*). One string also
 means the two guards cannot drift.
@@ -128,10 +144,21 @@ teacherRoom.deleteMany: code=P2003 meta={"modelName":"TeacherRoom","constraint":
 room.delete:            code=P2003 meta={"modelName":"Room","constraint":"ClassTemplate_teacherRoomId_fkey"}
 ```
 
-`modelName` differs between the routes — `room.delete` trips the constraint
-*through* the `Room`→`TeacherRoom` cascade — so the matcher must key on
+`modelName` differs **between statements**, so the matcher must key on
 `constraint` alone. It takes a list, covering `Class_teacherRoomId_fkey` too:
 the `Class` guard has the identical TOCTOU and no backstop today.
+
+**Corrected in review — the sentence here used to say "differs between the
+routes", and that was false.** `DELETE /api/rooms/[id]` issues
+`teacherRoom.deleteMany` before `room.delete`, so a blocker aborts at the first
+statement and reports `modelName: "TeacherRoom"` exactly like its sibling
+route. Both routes emit `"TeacherRoom"` today; the measured `"Room"` row above
+comes from a bare `room.delete`, which is the shape the rooms route acquires
+only once its redundant `deleteMany` is removed (§2.3). The design decision is
+unchanged and the reason is now forward-looking rather than current-state,
+which is the version worth defending: it is what makes that removal safe.
+Both shapes, and the route's actual transaction sequence, are now pinned in
+`room-deletion.test.ts` instead of asserted in prose.
 
 **Not a global `P2003` branch in `classifyApiError`.** Everywhere else in this
 app a `P2003` means the server wrote a dangling reference — a defect that must
@@ -202,6 +229,15 @@ template precisely because that is the case the obvious implementation misses.
 
 Mutation 4 uses a real-but-unrelated constraint name rather than an invented
 one, so the assertion cannot pass by matching nothing.
+
+**Added in review — the guard that could not fail.** Mutating the pre-check to
+`if (false && ...)` in both routes left **434/434 tests green**, because the FK
+backstop answers a byte-identical 409. The pre-check is the half this document
+and `docs/lock-order.md` say closes the deadlock, and no status assertion could
+observe it. Each integration suite now holds `FOR UPDATE` on the template row
+and asserts the DELETE refuses rather than waits; each fails on its own route's
+mutation and on nothing else. That is the only test in the repo that can see
+the wait edge.
 
 **Added in review:** a fourth block in `src/services/room-deletion.test.ts`
 provokes the real refused deletes and asserts on `meta.constraint` directly.

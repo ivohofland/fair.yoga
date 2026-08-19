@@ -538,6 +538,57 @@ describe('DELETE /api/teacher-rooms/[id]', () => {
     expect(await prisma.teacherRoom.count({ where: { id: linkId } })).toBe(0);
   });
 
+  it("refuses another teacher's link before it reveals whether it is in use", async () => {
+    // Ownership must lose to nothing. Swap the ownership check at `:141` with
+    // the blocker count at `:149` and this becomes a 409 naming the room's
+    // state — telling a stranger whether a link id they do not own is in use.
+    // The sibling route pins the same ordering (`rooms-api.test.ts`); this
+    // block had no ownership case at all until the delete guards landed here.
+    const res = await send('DELETE', otherToken, linkWithArchivedTemplateId);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toBe('Access denied');
+    expect(await prisma.teacherRoom.count({ where: { id: linkWithArchivedTemplateId } })).toBe(1);
+  });
+
+  it('answers without waiting on the template row — pinning the pre-check, not the backstop', async () => {
+    // THE ONLY TEST THAT CAN TELL THE TWO GUARDS APART, and the reason it
+    // exists: PR review measured that mutating the pre-check to
+    // `if (false && ...)` in BOTH routes leaves 434/434 tests green, because
+    // the FK backstop answers with a byte-identical 409. Status cannot see the
+    // difference. Lock behaviour can.
+    //
+    // The pre-check's real job is that the DELETE is never issued. Hold
+    // `FOR UPDATE` on the very ClassTemplate row the RESTRICT trigger would
+    // need `FOR KEY SHARE` on, then delete:
+    //   - pre-check present: 409 straight away, the held row never touched
+    //   - pre-check gone:    the DELETE blocks on the trigger until this
+    //                        transaction ends, and the race below times out
+    //
+    // That wait edge is the one `docs/lock-order.md` says reopens the AB-BA
+    // cycle against the generator sweep. This case is what keeps the "the
+    // pre-check is not redundant with the catch" comment in both handlers
+    // from being an unenforced claim.
+    const template = await prisma.classTemplate.findFirstOrThrow({
+      where: { teacherRoomId: linkWithArchivedTemplateId },
+    });
+
+    const settled = await prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT 1 FROM "ClassTemplate" WHERE id = ${template.id} FOR UPDATE`;
+        return Promise.race([
+          send('DELETE', ownerToken, linkWithArchivedTemplateId).then((r) => r.status),
+          new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 5_000)),
+        ]);
+      },
+      { timeout: 20_000 },
+    );
+
+    // 'blocked' means the handler issued the DELETE and is waiting on the row
+    // this transaction holds — i.e. the pre-check did not stop it.
+    expect(settled).toBe(409);
+  });
+
   it('refuses a link referenced only by an ARCHIVED template -> 409, not a 500', async () => {
     // The exact state that reproduced `500 {"error":{"message":"Internal
     // server error"}}` before this branch: zero Class rows, one archived
@@ -548,7 +599,7 @@ describe('DELETE /api/teacher-rooms/[id]', () => {
     const res = await send('DELETE', ownerToken, linkWithArchivedTemplateId);
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toBe('Cannot delete a room with class history. Archive it instead.');
+    expect(body.error.message).toBe('This room is still in use and cannot be deleted. Archive it instead.');
 
     // Nothing removed. The template is what RESTRICTs the delete, and a
     // teacher cannot delete it either — there is no DELETE verb on
@@ -559,10 +610,19 @@ describe('DELETE /api/teacher-rooms/[id]', () => {
   });
 
   it('refuses a link referenced only by a LIVE template', async () => {
+    // Premise, asserted rather than assumed — the archived sibling above does
+    // the same. This is the ONLY fixture in the file matching
+    // ACTIVE_TEMPLATE_WHERE, which is what `generateClassInstances` selects
+    // on, and the dev server runs that sweep every 60 minutes. If a tick lands
+    // inside this file's lifetime the link gains real Class rows and the case
+    // starts passing on the CLASSES blocker — still green, no longer testing
+    // the template half.
+    expect(await prisma.class.count({ where: { teacherRoomId: linkWithLiveTemplateId } })).toBe(0);
+
     const res = await send('DELETE', ownerToken, linkWithLiveTemplateId);
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toBe('Cannot delete a room with class history. Archive it instead.');
+    expect(body.error.message).toBe('This room is still in use and cannot be deleted. Archive it instead.');
     expect(await prisma.teacherRoom.count({ where: { id: linkWithLiveTemplateId } })).toBe(1);
   });
 });

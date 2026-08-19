@@ -466,11 +466,16 @@ describe('isRestrictViolationOn', () => {
    *   teacherRoom.deleteMany: {"modelName":"TeacherRoom","constraint":"ClassTemplate_teacherRoomId_fkey"}
    *   room.delete:            {"modelName":"Room","constraint":"ClassTemplate_teacherRoomId_fkey"}
    *
-   * `modelName` DIFFERS across them — `room.delete` trips the constraint
-   * through the Room→TeacherRoom cascade — which is exactly why the matcher
-   * keys on `constraint` alone. A matcher that also required
-   * `modelName === 'TeacherRoom'` would pass every teacher-rooms test and
-   * silently 500 the rooms route.
+   * `modelName` DIFFERS across them — a bare `room.delete` trips the
+   * constraint through TeacherRoom_roomId_fkey's CASCADE — which is why the
+   * matcher keys on `constraint` alone.
+   *
+   * NOTE, corrected in PR review: `DELETE /api/rooms/[id]` does not currently
+   * emit the `"Room"` shape. It issues `teacherRoom.deleteMany` first, so a
+   * blocker aborts there reporting `"TeacherRoom"`. The `"Room"` row above is
+   * the shape that route WILL emit once the redundant `deleteMany` is removed,
+   * which its own handler comment invites. Keeping the matcher blind to
+   * `modelName` is what makes that removal safe.
    */
   const ROOM_FKS = ['ClassTemplate_teacherRoomId_fkey', 'Class_teacherRoomId_fkey'] as const;
 
