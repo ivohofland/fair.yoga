@@ -153,6 +153,7 @@ export default function CreateClassPage() {
   // offerable count) so the empty state below can tell "no rooms at all"
   // from "rooms exist, all archived" — the filter collapses both to zero.
   const [allRoomsCount, setAllRoomsCount] = useState(0);
+  const [roomsFailed, setRoomsFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   // Client-only, so `undefined` for the server render and the hydration pass.
   const minDate = useTodayLocal();
@@ -173,6 +174,8 @@ export default function CreateClassPage() {
       try {
         const res = await fetch('/api/teacher-rooms');
         if (!res.ok) {
+          // A failed load is NOT an absence of rooms — see the render branch.
+          setRoomsFailed(true);
           setLoading(false);
           return;
         }
@@ -184,7 +187,7 @@ export default function CreateClassPage() {
         // archived room.
         setTeacherRooms(json.data.filter((tr) => !tr.isArchived));
       } catch {
-        // Silently fail — empty room list will show message
+        setRoomsFailed(true);
       } finally {
         setLoading(false);
       }
@@ -330,6 +333,20 @@ export default function CreateClassPage() {
   if (loading) {
     return (
       <div className="py-12 text-center type-caption">Loading rooms...</div>
+    );
+  }
+
+  if (roomsFailed) {
+    // Distinct from both empty states below. On a 401/500/network failure
+    // `allRoomsCount` stays 0, so the teacher was told "No rooms configured —
+    // add a room in Settings" while their rooms existed and the fetch simply
+    // failed. That is the message this branch's `allRoomsCount` work exists to
+    // prevent, reached down the path nobody looked at.
+    return (
+      <EmptyState
+        title="Couldn't load your rooms"
+        body="Check your connection and reload the page."
+      />
     );
   }
 

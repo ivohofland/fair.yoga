@@ -798,6 +798,34 @@ type PlainUpdateForbiddenClassField =
   | 'totalRevenue';
 
 /**
+ * Compile-time pin (completeness): no column may leave the list above
+ * silently. The other two pins hold MEMBERSHIP — every name is a real column —
+ * and NON-OVERLAP with the allowlist. Neither notices a deletion, so until
+ * this line the docblock's "the contributor has to remove it from this list
+ * first" was a one-line edit with nothing on the other side of it.
+ *
+ * Measured at PR review on the template twin: running the full escape hatch —
+ * drop the name here, add it to the allowlist, add it to the zod schema —
+ * produced exactly ONE error across the whole project, and it was in a client
+ * component's form-coverage pin, which a contributor clears by adding the
+ * field to the form. Duplication is the price; it turns a silent deletion into
+ * a two-place edit, which is the visibility the docblock above says it wants.
+ */
+const _classForbiddenListIsComplete: NoneOf<
+  Exclude<
+    | 'id'
+    | 'teacherId'
+    | 'status'
+    | 'settingsLocked'
+    | 'effectiveTeacherRate'
+    | 'totalStudents'
+    | 'totalRevenue',
+    PlainUpdateForbiddenClassField
+  >
+> = true;
+void _classForbiddenListIsComplete;
+
+/**
  * Compile-time pin: every name above must be a real `Class` column. Without
  * this, a typo (`statuss`) would sit in the forbidden list protecting nothing
  * while looking like protection — the same rot the reverse pin exists to stop,

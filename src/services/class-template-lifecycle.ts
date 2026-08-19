@@ -173,6 +173,32 @@ type PlainUpdateForbiddenTemplateField =
   | 'updatedAt';
 
 /**
+ * Compile-time pin (completeness): no column may leave the list above
+ * silently. See the twin in `class-lifecycle.ts` for the measurement that
+ * motivated it — the pins either side of this one hold membership and
+ * non-overlap, and both are blind to a deletion.
+ *
+ * `isActive` is the entry that matters most here: it is what stops a `PUT`
+ * flipping a template active, which would bypass the transaction-and-generate
+ * path `PATCH` owns and door 3's resume refusal with it. Door 5 no longer
+ * gates on `isActive`, but door 3 still does.
+ */
+const _templateForbiddenListIsComplete: NoneOf<
+  Exclude<
+    | 'id'
+    | 'teacherId'
+    | 'isActive'
+    | 'isArchived'
+    | 'archivedAt'
+    | 'withdrawnCount'
+    | 'createdAt'
+    | 'updatedAt',
+    PlainUpdateForbiddenTemplateField
+  >
+> = true;
+void _templateForbiddenListIsComplete;
+
+/**
  * Compile-time pin: every name above must be a real `ClassTemplate` column.
  * Without this a typo (`isActiv`) would sit in the forbidden list protecting
  * nothing while looking like protection.

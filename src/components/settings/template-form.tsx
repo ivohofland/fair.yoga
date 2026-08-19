@@ -146,6 +146,7 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
   // at all" from "rooms exist, all archived" — the filter collapses both to
   // zero without this.
   const [allRoomsCount, setAllRoomsCount] = useState(0);
+  const [roomsFailed, setRoomsFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -169,7 +170,13 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
     async function fetchRooms() {
       try {
         const res = await fetch('/api/teacher-rooms');
-        if (!res.ok) return;
+        // A failed load is NOT an absence of rooms. Without this the empty
+        // list spoke for the failure and the teacher was told to add a room
+        // they already own — the exact message `allRoomsCount` exists to stop.
+        if (!res.ok) {
+          setRoomsFailed(true);
+          return;
+        }
         const json: { data: TeacherRoomOption[] } = await res.json();
         setAllRoomsCount(json.data.length);
         // Issue 76: an archived room accepts no new commitments, so it is not
@@ -182,6 +189,11 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         setTeacherRooms(
           json.data.filter((tr) => !tr.isArchived || tr.id === initialTeacherRoomId),
         );
+      } catch {
+        // There was no `catch` here at all, so a thrown `fetch` escaped
+        // `void fetchRooms()` as an unhandled rejection and still rendered
+        // "No rooms configured."
+        setRoomsFailed(true);
       } finally {
         setLoading(false);
       }
@@ -387,6 +399,15 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
 
   if (loading) {
     return <div className="py-12 text-center text-brown">Loading rooms...</div>;
+  }
+
+  if (roomsFailed) {
+    return (
+      <div className="py-12 text-center">
+        <p className="text-brown mb-4">Couldn&apos;t load your rooms.</p>
+        <p className="text-sm text-brown">Check your connection and reload the page.</p>
+      </div>
+    );
   }
 
   if (teacherRooms.length === 0) {

@@ -1,14 +1,16 @@
 /**
  * Doors 2 and 3 of the room archive lifecycle (issue 76): an archived room
- * accepts no new commitments. Door 1 lives in `room-archive.test.ts`; doors 4
- * (create a template) and 5 (move an active template) are HTTP-level guards
- * and are pinned in `tests/integration/class-templates-api.test.ts`.
+ * accepts no new commitments. Door 1 lives in `room-archive.test.ts`. Door 4
+ * is a route-level guard (`POST /api/class-templates`); door 5's guard is in
+ * `updateClassTemplate` but is only reachable through `PUT`, so both are
+ * pinned in `tests/integration/class-templates-api.test.ts` — plus the
+ * ownership-ordering case below, which needs no HTTP.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { fixtureRun, type RoomFixture, type ClassFixtureStatus } from '../../tests/room-fixtures';
 import { transitionClass } from './class-lifecycle';
-import { pauseOrResumeTemplate } from './class-template-lifecycle';
+import { pauseOrResumeTemplate, updateClassTemplate } from './class-template-lifecycle';
 
 const prisma = new PrismaClient();
 // `rad-` distinguishes this file's rows from `room-archive.test.ts`'s,
@@ -79,5 +81,72 @@ describe('pauseOrResumeTemplate — door 3: resuming into an archived room', () 
     const result = await pauseOrResumeTemplate(prisma, tpl.id, f.teacherId, 'paused');
 
     expect(result).toMatchObject({ ok: true, action: 'paused' });
+  });
+});
+
+// Both cases below pin ORDERING, not the guard itself. PR review proved each
+// by mutation: door 2's guard could be moved below the past-start check, or
+// stripped of its status clause, and the whole unit project stayed green. The
+// guard's docblock argues for both placements; nothing enforced either.
+describe('transitionClass — door 2: what the refusal must lose to', () => {
+  // The comment at the guard says it sits before the past-start check
+  // "deliberately", because the archived room is the condition a teacher can
+  // clear and `STARTS_IN_PAST` is permanent. Swap the two and this reddens.
+  it('reports the clearable room condition, not the permanent past-start one', async () => {
+    const f = await makeFixture();
+    const cls = await addClass(f, 'draft');
+    // `addClass` hard-codes today+14; a draft is not terminal, so its `date`
+    // is not frozen by the #247 trigger and can be moved into the past here.
+    await prisma.class.update({
+      where: { id: cls.id },
+      data: { date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
+    });
+    await prisma.teacherRoom.update({ where: { id: f.linkId }, data: { isArchived: true } });
+
+    const result = await transitionClass(prisma, cls.id, 'open');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.reason).toBe('ROOM_ARCHIVED');
+  });
+
+  // The guard is scoped by `sourceStatesFor(targetStatus).includes(cls.status)`
+  // — its `STARTS_IN_PAST` sibling carries the identical clause and IS pinned.
+  // Without it, republishing a cancelled class in an archived room tells the
+  // teacher to unarchive the room, when the transition is illegal regardless.
+  it('yields to ILLEGAL_TRANSITION for a class that cannot reach open at all', async () => {
+    const f = await makeFixture();
+    const cls = await addClass(f, 'cancelled');
+    await prisma.teacherRoom.update({ where: { id: f.linkId }, data: { isArchived: true } });
+
+    const result = await transitionClass(prisma, cls.id, 'open');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.reason).toBe('ILLEGAL_TRANSITION');
+  });
+});
+
+describe('updateClassTemplate — door 5: ownership still outranks the room state', () => {
+  // `updateClassTemplate`'s own docblock warns that "only two tests stand
+  // between" the merged `invalid_room` outcome and a cross-teacher existence
+  // oracle. Both of those tests use a NON-archived foreign room, so hoisting
+  // door 5's `isArchived` check above the ownership check stayed green while
+  // leaking existence for archived ids: `room_archived` would confirm the row
+  // exists, `invalid_room` would not.
+  it('answers invalid_room, not room_archived, for another teacher archived room', async () => {
+    const mine = await makeFixture();
+    const theirs = await makeFixture();
+    await prisma.teacherRoom.update({
+      where: { id: theirs.linkId },
+      data: { isArchived: true },
+    });
+    const tpl = await addTemplate(mine, { isActive: true, isArchived: false });
+
+    const result = await updateClassTemplate(prisma, tpl.id, mine.teacherId, {
+      teacherRoomId: theirs.linkId,
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'invalid_room' });
   });
 });

@@ -282,4 +282,68 @@ describe('NewClassPage', () => {
       vi.useRealTimers();
     }
   });
+
+  /**
+   * Issue 76, added at PR review. `TemplateForm` got three tests for the
+   * identical picker change; this wizard got none, and deleting BOTH the
+   * `!tr.isArchived` filter and the `allRoomsCount > 0` branch left all 235
+   * component tests green.
+   *
+   * Note `ROOM` above carries no `isArchived` key, which is why the existing
+   * tests could not have caught this: `!undefined` is truthy, so every stubbed
+   * room passes the filter whether or not the filter is there. These stubs set
+   * the field explicitly.
+   */
+  describe('archived rooms (issue 76)', () => {
+    const ARCHIVED = { ...ROOM, id: '22222222-2222-4222-8222-222222222222',
+      room: { roomName: 'Attic', venueName: 'Shelved Venue' }, isArchived: true };
+    const LIVE = { ...ROOM, isArchived: false };
+
+    function stubRooms(data: unknown[]) {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data }) });
+      vi.stubGlobal('fetch', fetchMock);
+    }
+
+    it('does not offer an archived room in the picker', async () => {
+      stubRooms([LIVE, ARCHIVED]);
+      render(<CreateClassPage />);
+
+      expect(await screen.findByText(/Main Venue/)).toBeInTheDocument();
+      expect(screen.queryByText(/Shelved Venue/)).not.toBeInTheDocument();
+    });
+
+    it('tells a teacher whose rooms are all archived to unarchive, not to add one', async () => {
+      stubRooms([ARCHIVED]);
+      render(<CreateClassPage />);
+
+      expect(await screen.findByText('All your rooms are archived')).toBeInTheDocument();
+      expect(screen.queryByText('No rooms configured')).not.toBeInTheDocument();
+    });
+
+    it('still tells a teacher with no rooms at all to add one', async () => {
+      stubRooms([]);
+      render(<CreateClassPage />);
+
+      expect(await screen.findByText('No rooms configured')).toBeInTheDocument();
+    });
+
+    // The failure path the empty list used to speak for: rooms exist, the
+    // fetch failed, and the teacher was told to add a room they already own.
+    it('distinguishes a failed load from an absence of rooms', async () => {
+      fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
+      vi.stubGlobal('fetch', fetchMock);
+      render(<CreateClassPage />);
+
+      expect(await screen.findByText("Couldn't load your rooms")).toBeInTheDocument();
+      expect(screen.queryByText('No rooms configured')).not.toBeInTheDocument();
+    });
+
+    it('distinguishes a thrown fetch from an absence of rooms', async () => {
+      fetchMock.mockRejectedValue(new Error('network down'));
+      vi.stubGlobal('fetch', fetchMock);
+      render(<CreateClassPage />);
+
+      expect(await screen.findByText("Couldn't load your rooms")).toBeInTheDocument();
+    });
+  });
 });

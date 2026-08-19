@@ -442,6 +442,32 @@ describe('PATCH /api/teacher-rooms/[id]', () => {
   });
 });
 
+// The list endpoint feeds both scheduling pickers, and both filter on
+// `isArchived` client-side. PR review proved that field unpinned: swapping
+// `include: { room: true }` for a `select` that omits it left the whole
+// components project green — 41 files, 235 tests — while both pickers silently
+// stopped filtering, because `!undefined` is truthy. The picker tests cannot
+// see it: they stub `fetch`, so they assert against a payload they invent.
+// This is the one place the real shape is observable.
+describe('GET /api/teacher-rooms', () => {
+  it('returns isArchived on every link, because the pickers filter on it', async () => {
+    const res = await fetch(`${BASE_URL}/api/teacher-rooms`, {
+      headers: cookie(ownerToken),
+    });
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as {
+      data: Array<{ id: string; isArchived: boolean; room: { venueName: string } }>;
+    };
+    expect(data.length).toBeGreaterThan(0);
+    for (const link of data) {
+      expect(link).toHaveProperty('isArchived');
+      expect(typeof link.isArchived).toBe('boolean');
+      // The picker also needs the joined room to render a label at all.
+      expect(link.room).toBeTruthy();
+    }
+  });
+});
+
 describe('DELETE /api/teacher-rooms/[id]', () => {
   it('refuses to delete a link that still carries class history, and says to archive instead', async () => {
     const res = await send('DELETE', ownerToken, linkWithClassId);

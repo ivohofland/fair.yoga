@@ -329,6 +329,32 @@ describe('TemplateForm', () => {
   });
 
   /**
+   * PR #262 review. The three states above are distinguished carefully; the
+   * fourth was not. A non-ok response returned early leaving `allRoomsCount`
+   * at 0, so a teacher whose fetch failed was told to add a room they already
+   * own — the message the `allRoomsCount` work exists to prevent, reached down
+   * the path nobody looked at. There was also no `catch` at all, so a thrown
+   * `fetch` escaped `void fetchRooms()` as an unhandled rejection.
+   */
+  it('distinguishes a failed room load from an absence of rooms', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+
+    render(<TemplateForm mode="create" />);
+
+    expect(await screen.findByText(/couldn't load your rooms/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no rooms configured/i)).not.toBeInTheDocument();
+  });
+
+  it('distinguishes a thrown room fetch from an absence of rooms', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down'); }));
+
+    render(<TemplateForm mode="create" />);
+
+    expect(await screen.findByText(/couldn't load your rooms/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no rooms configured/i)).not.toBeInTheDocument();
+  });
+
+  /**
    * PR #208 review, C3. #196 made `slotTaken` reachable on create for the
    * first time: a teacher creating a template onto a day/time they already
    * occupy gets a live template whose window came back short. Before this,
