@@ -7,11 +7,22 @@
  *   - the broadcast branch aborts at `lockClassRow`'s 2s `SET LOCAL
  *     lock_timeout` with `55P03`, while the contending writer still holds the
  *     row;
- *   - the auto-promote branch blows Prisma's default 5s interactive-transaction
- *     budget with `P2028`, measured at 7014 ms against a 7 s hold — it waits out
- *     the whole hold and fails afterwards, because Prisma cannot cancel a
- *     statement already blocked inside Postgres (see `deleteStudentAccount`'s
- *     transaction-budget note in `services/gdpr.ts`).
+ *   - the auto-promote branch aborts the same way now: `promoteNext` (#104)
+ *     takes its class row lock through `lockClassRow` too, so the two
+ *     branches converged on one failure mechanism, not one branch merging
+ *     into the other.
+ *
+ * HISTORICAL, kept as the evidence for a claim that is still true: before
+ * #104 bounded it, the auto-promote branch's `FOR UPDATE` was unbounded and
+ * ran inside a bare `db.$transaction(...)`, so a held row instead blew
+ * Prisma's default 5s interactive-transaction budget — measured at 7014 ms
+ * against a 7 s hold, having waited out the whole hold and failed afterwards
+ * with `P2028`. That happened because Prisma's interactive-transaction
+ * timeout cannot cancel a statement already blocked inside Postgres, only
+ * refuse to start a new one (see `deleteStudentAccount`'s transaction-budget
+ * note in `services/gdpr.ts`) — the claim this conversion leaves untouched,
+ * since `lockClassRow`'s 2s bound now stops the wait long before that 5s
+ * budget would ever be reached here.
  *
  * Both of those callers log and swallow, so this sweep is the only thing that
  * makes either loss recoverable. It is also the answer to a July 2026 audit

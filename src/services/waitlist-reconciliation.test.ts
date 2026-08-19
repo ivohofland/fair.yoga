@@ -211,8 +211,9 @@ describe('reconcileWaitlists (DB)', () => {
    * The class this sweep exists for: a seat is free, someone is queued, and the
    * live hook never delivered. This proves the sweep repairs that state; the
    * two tests that CREATE the state by dropping a real hook are `repairs an
-   * auto-promotion dropped by the transaction budget` (`P2028`) and
-   * `reconciles the remaining classes when one loses its lock race` (`55P03`).
+   * auto-promotion dropped by the 2s lock bound` and `reconciles the
+   * remaining classes when one loses its lock race` — both `55P03` now, one
+   * per branch of `handleSpotFreed` (auto-promote, broadcast).
    */
   it('promotes the queue head of a class with a free seat', async () => {
     const cls = await makeFreedSeat('Head');
@@ -271,21 +272,31 @@ describe('reconcileWaitlists (DB)', () => {
   });
 
   /**
-   * **The measured failure, end to end.** `promoteNext` runs in a bare
-   * `db.$transaction(...)` with no options, so it carries Prisma's DEFAULT 5 s
-   * interactive-transaction budget, while its first statement is an unbounded
-   * inline `FOR UPDATE`. Held past 5 s it fails with `P2028` — measured at
-   * 7014 ms against this exact 7 s hold, having waited out the entire hold and
-   * failed afterwards.
+   * **The measured failure, end to end.** `promoteNext` (#104) now takes its
+   * class row lock through `lockClassRow`, so its first statement carries the
+   * shared 2s `SET LOCAL lock_timeout` rather than an unbounded inline `FOR
+   * UPDATE`. Held past 2s it fails with `55P03` — Postgres cancelling the
+   * blocked statement itself, the same mechanism the broadcast branch already
+   * exercises below (`reconciles the remaining classes when one loses its
+   * lock race`). Only the mechanism converged: this test still exercises the
+   * auto-promote branch of `handleSpotFreed`, that one the broadcast branch,
+   * and that split is what the sweep's design rests on.
+   *
+   * HISTORICAL, kept rather than deleted: before this conversion, the same
+   * scenario at a 7 s hold measured 7014 ms and failed with `P2028` instead —
+   * `promoteNext` ran in a bare `db.$transaction(...)` carrying Prisma's
+   * default 5 s interactive-transaction budget, and Prisma waited out the
+   * entire hold before noticing its own wall-clock budget had been blown,
+   * because its timeout cannot cancel a statement already blocked inside
+   * Postgres, only refuse to start a new one. That claim is unchanged by this
+   * conversion and is still relied on by `deleteStudentAccount` (`gdpr.ts`)
+   * and by spec §3.1 — this measurement is its evidence.
    *
    * Baseline before the sweep existed, measured on 2026-08-13: entry still
    * `waiting`, registration `NONE`, 0 notifications. So the pre-sweep assertions
    * below are a recorded observation, not a guess.
-   *
-   * Note this is a DIFFERENT mechanism from the broadcast branch's 2 s
-   * `lock_timeout` (`55P03`) — a Prisma client-side budget, not a Postgres one.
    */
-  it('repairs an auto-promotion dropped by the transaction budget', async () => {
+  it('repairs an auto-promotion dropped by the 2s lock bound', async () => {
     const cls = await makeFreedSeat('E2E');
     const waiter = cls.waiter;
     const clocks = windowClocks(cls.startTime);
@@ -301,9 +312,10 @@ describe('reconcileWaitlists (DB)', () => {
       async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
         signalHeld();
-        // Longer than Prisma's 5s default transaction budget, well inside
-        // deleteStudentAccount's own 20s ceiling.
-        await new Promise((r) => setTimeout(r, 7_000));
+        // Past lockClassRow's 2s bound, under Prisma's 5s default budget, so
+        // the failure is 55P03 from Postgres rather than P2028 from the
+        // client.
+        await new Promise((r) => setTimeout(r, 3_500));
         released = true;
       },
       { timeout: 30_000 },
@@ -324,18 +336,17 @@ describe('reconcileWaitlists (DB)', () => {
     await holderClient.$disconnect();
 
     expect(dropped.ok).toBe(false);
-    if (!dropped.ok) expect(dropped.err).toMatch(/P2028|Transaction already closed/i);
+    if (!dropped.ok) expect(dropped.err).toMatch(/55P03/);
 
-    // The ordering claim, and the one assertion here that slowness cannot
-    // manufacture. `P2028` alone would not do it: unlike `55P03` — which
-    // Postgres raises only when a statement is genuinely blocked on a lock —
-    // `P2028` is a client-side wall-clock verdict, and a machine slow enough to
-    // burn 5s inside `promoteNext` produces it with no lock involved. What rules
-    // that out is that the holder had already finished its 7s body when the hook
-    // returned: the hook outlived the hold rather than timing out beside it.
-    // Delete `lockClassRow`'s contention and an unblocked `promoteNext` returns
-    // in milliseconds with `released` still false.
-    expect(releasedWhenHookReturned).toBe(true);
+    // The ordering claim, inverted from before this re-pin: `55P03` is
+    // Postgres cancelling the blocked statement itself once `lockClassRow`'s
+    // 2s bound elapses, so the hook must come back BEFORE the holder's 3.5s
+    // hold ends, not after it — the opposite of the old `P2028` mechanism,
+    // which waited out the whole hold and only then noticed its own budget
+    // was blown. `released` is still false when the hook returns; awaiting
+    // the holder afterwards is what lets it flip to true, which is why the
+    // snapshot has to be taken before that await, not after.
+    expect(releasedWhenHookReturned).toBe(false);
 
     // The measured baseline: nothing happened to the student.
     expect(
@@ -551,9 +562,9 @@ describe('reconcileWaitlists (DB)', () => {
     // moment ago.
     //
     // The auto-promote half is proved end-to-end by `repairs an auto-promotion
-    // dropped by the transaction budget` through a different mechanism
-    // (`P2028`, a Prisma client-side budget). This is the Postgres
-    // `lock_timeout` half — the one #220 was actually filed about.
+    // dropped by the 2s lock bound` through the same `55P03` `lock_timeout`
+    // mechanism, on the other branch of `handleSpotFreed`. This test is the
+    // one #220 was actually filed about.
     const repair = await reconcileWaitlists(prisma, { now: clocks.inClaimWindow });
 
     expect(repair.reconciledClassIds).toContain(blocked.id);

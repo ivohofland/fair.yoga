@@ -815,6 +815,100 @@ describe('promoteNext (DB)', () => {
       await prisma.student.delete({ where: { id: extra.id } });
     }
   });
+
+  /**
+   * #104. `promoteNext` is the one converted site that is NOT a route. It is
+   * called by `handleSpotFreed` and by `reconcileWaitlists`, so its failure
+   * surface is the reconciliation sweep repairing it later, not a 503 a
+   * student reads.
+   *
+   * That is what makes the bound an improvement here rather than a trade:
+   * before this change a contended promotion waited out the WHOLE hold and
+   * then blew Prisma's 5s budget (`P2028`, measured at 7014ms against a 7s
+   * hold — it cannot cancel a statement already blocked inside Postgres).
+   * Now it aborts at 2s with `55P03`, and the sweep gets to retry sooner.
+   *
+   * The 3.5s hold sits above the 2s bound and below the 5s budget, so without
+   * the bound this call acquires at 3.5s and succeeds.
+   */
+  it('gives up on the 2s bound when another transaction holds the class row', async () => {
+    // Its own full class: max 1, one filler registered (making it full,
+    // which `addToWaitlist` requires), a second filler waitlisted, then that
+    // registration cancelled to free the seat. Not the block's shared
+    // `classId` — its queue is consumed in a fixed order by `beforeAll` and
+    // the tests above, so a guard appended there would depend on that order.
+    // `cancelRegistration` above closes over the shared `classId` and can't
+    // target this class, so its update is inlined below.
+    const lockedClass = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Yin',
+        date: new Date('2099-07-01'),
+        startTime: '19:00',
+        durationMinutes: 75,
+        roomCost: 40,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 1,
+        status: 'open',
+        settingsLocked: true,
+      },
+    });
+    const lockedClassId = lockedClass.id;
+
+    try {
+      await prisma.registration.create({
+        data: {
+          classId: lockedClassId,
+          studentId: fillerIds[0]!,
+          status: 'registered',
+          tierAtBooking: 3,
+        },
+      });
+      await addToWaitlist(prisma, lockedClassId, fillerIds[1]!);
+      await prisma.registration.update({
+        where: { classId_studentId: { classId: lockedClassId, studentId: fillerIds[0]! } },
+        data: { status: 'cancelled', cancelledAt: new Date() },
+      });
+
+      const holderClient = new PrismaClient();
+      let signalHeld!: () => void;
+      const held = new Promise<void>((r) => {
+        signalHeld = r;
+      });
+
+      const holder = holderClient.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${lockedClassId} FOR UPDATE`;
+          signalHeld();
+          await new Promise((r) => setTimeout(r, 3_500));
+        },
+        { timeout: 30_000 },
+      );
+      await held;
+
+      const startedAt = Date.now();
+      const outcome = await promoteNext(prisma, lockedClassId).then(
+        () => ({ ok: true as const }),
+        (err: unknown) => ({ ok: false as const, err: String(err) }),
+      );
+      const waited = Date.now() - startedAt;
+
+      await holder;
+      await holderClient.$disconnect();
+
+      expect(outcome.ok).toBe(false);
+      if (!outcome.ok) expect(outcome.err).toMatch(/55P03/);
+      expect(waited).toBeGreaterThan(1_000);
+      expect(waited).toBeLessThan(3_400);
+    } finally {
+      await prisma.waitlistEntry.deleteMany({ where: { classId: lockedClassId } });
+      await prisma.registration.deleteMany({ where: { classId: lockedClassId } });
+      await prisma.class.delete({ where: { id: lockedClassId } });
+    }
+  }, 20_000);
 });
 
 // ===========================================================================

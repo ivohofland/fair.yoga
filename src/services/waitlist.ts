@@ -433,7 +433,7 @@ export async function promoteNext(
   opts: { now?: Date } = {},
 ): Promise<WaitlistEntry | null> {
   return db.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
+    await lockClassRow(tx, classId);
 
     const cls = await tx.class.findUniqueOrThrow({
       where: { id: classId },
