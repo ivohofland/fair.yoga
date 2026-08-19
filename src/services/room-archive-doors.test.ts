@@ -1,7 +1,8 @@
 /**
  * Doors 2 and 3 of the room archive lifecycle (issue 76): an archived room
- * accepts no new commitments. Door 1 lives in `room-archive.test.ts`; door 4
- * is an HTTP-level guard and is pinned in `tests/integration/`.
+ * accepts no new commitments. Door 1 lives in `room-archive.test.ts`; doors 4
+ * (create a template) and 5 (move an active template) are HTTP-level guards
+ * and are pinned in `tests/integration/class-templates-api.test.ts`.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';

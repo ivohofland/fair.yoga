@@ -7,9 +7,11 @@ import { ACTIVE_TEMPLATE_WHERE } from '@/lib/template-selection';
  * `TeacherRoom.isArchived` shipped in `e57b8bd` as a display flag: it decided
  * which of two list pages a row appeared on and nothing else read it. This
  * module is what gives it meaning — a room may not be archived while in use,
- * and (via the three doors in `class-lifecycle`, `class-template-lifecycle`
- * and `POST /api/class-templates`) an archived room accepts no new
- * commitments.
+ * and an archived room accepts no new commitments. The other doors are named
+ * by verb rather than counted, because the count is what went stale: this
+ * sentence said "three" until fix round 2 added a fourth. They are publish
+ * (`class-lifecycle`), resume and move (`class-template-lifecycle`), and
+ * create (`POST /api/class-templates`).
  *
  * Framework-agnostic per CLAUDE.md: no HTTP, no `next/*`. The route is a thin
  * wrapper.

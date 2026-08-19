@@ -107,7 +107,7 @@ scoped by `teacherRoomId`, and `TeacherRoom` is per-teacher. A shared room
 archived by teacher A is unaffected by teacher B's classes and templates.
 Archiving is a private act on a private link, never on the `Room`.
 
-## 4. The four doors
+## 4. The five doors
 
 | # | Door | Rule | Where the guard goes |
 |---|---|---|---|
@@ -115,6 +115,7 @@ Archiving is a private act on a private link, never on the `Room`.
 | 2 | Publish `draft → open` | refuse if room archived | the existing `if (targetStatus === 'open')` block, `src/services/class-lifecycle.ts:303` |
 | 3 | Resume template `paused → active` | refuse if room archived — **the resume direction only** | `pauseOrResumeTemplate`, beside the `reason: 'archived'` return at `class-template-lifecycle.ts:727` |
 | 4 | Create a template | refuse if room archived | `POST /api/class-templates` |
+| 5 | Move a template's `teacherRoomId` | refuse if room archived — **only while the template is active** | `updateClassTemplate`, `class-template-lifecycle.ts`, surfaced by `PUT /api/class-templates/[id]` |
 
 Door 4 exists because `ClassTemplate.isActive` defaults `true`
 (`prisma/schema.prisma:336`) — a template created on an archived room begins
@@ -123,7 +124,13 @@ generating immediately.
 There is no door for creating a *class* on an archived room: a new class is
 always born `draft` (`src/app/api/classes/route.ts:80`), and door 2 catches it
 at publish. A parked draft on an archived room is harmless and deliberately
-permitted.
+permitted. Nor is there a class-shaped door 5: `teacherRoomId` is absent from
+`TeacherEditableClassField` (`class-lifecycle.ts:703-713`), so a class's room
+is immutable after creation and no edit can move an `open` class onto an
+archived room. Recorded because door 5 exists precisely where nobody had asked
+the *move* question — asking it of classes too, and answering it from the
+allowlist, is what makes the "every path a teacher can reach" claim below
+checkable rather than asserted.
 
 **Door 3 guards one direction, not the verb.** Pausing a template whose room is
 archived must keep working, so the check is gated on the resume direction, not
@@ -339,6 +346,8 @@ restore, re-verify. A guard that compiles but cannot fail certifies nothing.
 | 5 | Invert door 2's `isArchived` check | publish-into-archived test | — |
 | 6 | Invert door 3's `isArchived` check | resume-into-archived test | — |
 | 7 | Remove door 4's room check | create-template-on-archived test | — |
+| 8 | Remove door 5's `teacherRoom.isArchived` check | move-active-template-onto-archived test | the paused-move test |
+| 9 | Drop `&& template.isActive` from door 5 | the paused-move test — the only case in the suite that can catch it | the move-active test |
 
 **Mutations 1 and 2 are the ones that matter.** If either can be applied with
 the suite staying green, the isolation failed and the fixtures are wrong.
@@ -380,7 +389,7 @@ generator's tests stay green, the two sides are not actually sharing.
   branch keeps whatever an active template was already doing on it (see
   below).
 - **The generator does not read the room's archive state.**
-  `class-generator.ts:352-359` selects templates on `ACTIVE_TEMPLATE_WHERE` —
+  `class-generator.ts:368-371` selects templates on `ACTIVE_TEMPLATE_WHERE` —
   the template's own `isActive`/`isArchived` — and never consults
   `teacherRoom.isArchived`; generated instances are written directly with
   `status: 'open'` (`class-generator.ts:200`), bypassing `transitionClass`
@@ -390,8 +399,10 @@ generator's tests stay green, the two sides are not actually sharing.
   product decision (auto-pause on archive? refuse the sweep per-instance and
   log?), not a bug this branch's doors can reach — none of the five checks a
   room's state at generation time, only at the moment a teacher commits to it.
-  No migration and no backfill. Recorded as `known-open` beside the read,
-  `class-generator.ts:352-359`.
+  No migration and no backfill. Recorded as `known-open` at
+  `class-generator.ts:359-367`, immediately above the read it describes —
+  line numbers re-derived after fix round 2, whose own ten-line insertion is
+  what pushed the read down and falsified the previous citation.
 - **No change to what archiving does to existing drafts or paused templates.**
   They survive on the archived room and are stopped at their own doors.
 - **Studio templates are untouched.** `StudioClass` is disconnected from
