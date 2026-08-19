@@ -157,21 +157,25 @@ a call):
    about its own list, and #237 is the response. What holds now, and is
    checkable rather than remembered: **every multi-row lock is
    `lockClassRowsOrdered` (`db-locks.ts`), and it is the only production
-   `FOR UPDATE OF c` in `src/`.** The single-id `FOR UPDATE`s remain plural and
-   inline — three in `waitlist.ts` (`addToWaitlist`, `promoteNext`,
-   `claimSpot`) and one in `POST /api/registrations` — plus `lockClassRow`'s
-   own body, which is bounded and is what `removeFromWaitlist` and
-   `handleSpotFreed` reach the lock through rather than inlining it. Those four
-   inline ones carry no ordering obligation individually, which is why they
-   were never the subject here; their unbounded wait is #104's subject. It was
-   four in `waitlist.ts` until #237, when `withdrawWaitingEntriesForTeacher`
-   adopted the helper — that took its statement off the inline list and its
-   wait off #104's at the same time. Do not substitute another name into the
-   vacated slot to keep the count at four: a count that stays right while the
-   membership changes is the one error nothing that counts can catch, and this
-   document has already made it once (`db-locks.ts`'s register named
-   `deleteStudentAccount` as a `lockClassRow` caller long after it stopped
-   being one, and the total never moved);
+   `FOR UPDATE OF c` in `src/`.** The single-id `FOR UPDATE`s are gone. Every
+   one that used to be inline — three in `waitlist.ts` (`addToWaitlist`,
+   `promoteNext`, `claimSpot`) and one in `POST /api/registrations` — now
+   goes through `lockClassRow`'s own bounded body, the same helper
+   `removeFromWaitlist` and `handleSpotFreed` already reached the lock
+   through rather than inlining it.
+   `grep -rn "FOR UPDATE" src/ --include='*.ts' | grep -v "\.test\.ts:" |
+   grep -vE ":[0-9]+: *(\*|//)"` is the check, not a number kept here: a
+   count that stays right while the membership changes is the one error
+   nothing that counts can catch, and this document has already made that
+   mistake once (`db-locks.ts`'s register named `deleteStudentAccount` as a
+   `lockClassRow` caller long after it stopped being one, and the total never
+   moved). The branch that closed this section produced a fresh instance of
+   the same failure in its own planning, not just this file's history: an
+   earlier draft of its spec moved a misfiled row between two groups and left
+   the TOTAL unchanged at thirteen while the membership moved underneath it,
+   and a later task then found a fourteenth location the count had missed
+   outright. The count was never the thing to trust; re-deriving the list
+   was;
 3. `lockClassRow(` — the helper's callers;
 4. **parent deletes that cascade onto `Class` without naming it** — the
    category a grep for `class.` misses. `Class` holds three FKs pointing *out*

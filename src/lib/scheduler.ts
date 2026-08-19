@@ -246,10 +246,12 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
       // email-fallback's 5 minutes it would be 8% of the window. That is why
       // `scheduler.test.ts` pins this number rather than trusting it.
       //
-      // A typical-case bound, not a guarantee: `promoteNext`'s inline
-      // `FOR UPDATE` is unbounded (#104), so a contended tick can outlast its
-      // own interval, and the `job.running` guard then drops the ticks it
-      // overruns.
+      // A typical-case bound, not a guarantee: `promoteNext`'s `Class` row
+      // lock (`lockClassRow`, `db-locks.ts`) is bounded at 2s PER ACQUISITION,
+      // but this tick calls it once per contended class in `classes`
+      // (`reconcileOne`'s loop), so several contended classes in one pass can
+      // still add up past the interval, and the `job.running` guard then
+      // drops the ticks it overruns.
       //
       // Its own job name rather than a fourth sweep inside `class-transitions`,
       // so its `lastRunAt` / `lastSuccessAt` describe this sweep alone — and

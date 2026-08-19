@@ -176,24 +176,21 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * `claimStudioTemplateForGeneration`) — the only other bounded lock waits in
  * the codebase, and the ones this lock deadlocks against.
  *
- * Four pre-existing `FOR UPDATE` sites deliberately do NOT use this and keep
- * their inline SQL: three in `waitlist.ts` (`addToWaitlist`, `promoteNext`,
- * `claimSpot`), one in `POST /api/registrations`. All four take an unbounded
- * wait, which is #104's subject, and retrofitting them from here would blur
- * what that issue is accountable for.
+ * Every `SELECT … FOR UPDATE` on a `Class` row goes through this function or
+ * `lockClassRowsOrdered` below now — no site keeps its own inline statement.
+ * `grep -rn "FOR UPDATE" src/` (excluding comments and tests) is the check;
+ * a prose list of sites here would only go stale the way this one did, which
+ * is why it was deleted rather than rewritten to say "zero remain."
  *
- * It was FIVE until #237, and the fifth leaving is worth a sentence rather
- * than a silently smaller number. `withdrawWaitingEntriesForTeacher`
- * (`waitlist.ts`) adopted `lockClassRowsOrdered` below, which took its
- * statement off this list and its wait off #104's in the same edit — the
- * helper issues `setLockTimeout`, and that site issued none. That is a real
- * behaviour change on the unlink path, not an incidental one:
- * `unlinkTeacher` (`invitations.ts`) is the single production caller, so
- * `DELETE /api/teacher-links/[teacherId]` can now answer 503 where it used to
- * block and succeed. Acceptable on the same argument `api-errors.ts` already
- * makes for the "leave waitlist" tap — `withErrorHandler` routes the `55P03`
- * through `isTransientDbError` to a retryable 503 with advice, which beats an
- * unbounded block on a row the 60-second transitions sweep can hold.
+ * `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) adopting
+ * `lockClassRowsOrdered` below (#237) was a real behaviour change on the
+ * unlink path, worth keeping on record: `unlinkTeacher` (`invitations.ts`) is
+ * the single production caller, so `DELETE /api/teacher-links/[teacherId]`
+ * can now answer 503 where it used to block and succeed. Acceptable on the
+ * same argument `api-errors.ts` already makes for the "leave waitlist" tap —
+ * `withErrorHandler` routes the `55P03` through `isTransientDbError` to a
+ * retryable 503 with advice, which beats an unbounded block on a row the
+ * 60-second transitions sweep can hold.
  *
  * This helper takes the bound instead because not every
  * caller that will end up sharing it can afford an unbounded one:

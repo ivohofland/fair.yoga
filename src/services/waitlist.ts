@@ -357,11 +357,10 @@ export async function removeFromWaitlist(
   studentId: string,
 ): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'NOT_WAITING' }> {
   return db.$transaction(async (tx) => {
-    // The same row and `FOR UPDATE` mode `addToWaitlist`, `promoteNext`,
-    // `claimSpot` and `withdrawWaitingEntriesForTeacher` take — though this
-    // wait is bounded to 2s by `lockClassRow`'s `SET LOCAL lock_timeout`,
-    // unlike those four inline sites' unbounded wait (#104; not this
-    // branch's to fix). Without the lock at all, two renumberings of one
+    // The same row and lock mode `addToWaitlist`, `promoteNext`, `claimSpot`
+    // and `withdrawWaitingEntriesForTeacher` take, all through `lockClassRow`
+    // (or `lockClassRowsOrdered`) now, bounded to 2s by its `SET LOCAL
+    // lock_timeout`. Without the lock at all, two renumberings of one
     // queue interleave, each having read a snapshot the other invalidated,
     // and nothing errors: there is no unique on `(classId, position)`, only
     // a plain index. `promoteNext` then picks its head by lowest position
@@ -418,11 +417,19 @@ export async function removeFromWaitlist(
  * positions. Stale heads (a student who booked directly but whose `waiting`
  * row survives) are dropped and skipped rather than promoted.
  *
- * Guards (all inside the transaction, serialized by a FOR UPDATE lock on
- * the class row shared with the registration route):
+ * Guards (all inside the transaction, serialized by `lockClassRow`'s bounded
+ * `Class` row lock, shared with the registration route):
  * - the class must still be open
  * - the promotion window must not be frozen (past the cancel deadline)
  * - the class must have a free spot — promotions are not walk-ins
+ *
+ * `lockClassRow`'s bound now covers the rest of this transaction too, not
+ * just the lock itself (see its docblock in `db-locks.ts`) — so
+ * `activateRegistration`, the `teacherStudent.upsert` below and
+ * `reorderWaitingEntries` inherit the 2s budget, where before this
+ * conversion none of them had any timeout at all. A bust surfaces as a
+ * `55P03` that aborts the whole promotion; `waitlist-reconciliation.ts` is
+ * what makes that recoverable.
  *
  * Returns the updated waitlist entry, or null when the queue is empty.
  * Throws WaitlistPromotionError when a guard rejects.
@@ -764,10 +771,9 @@ export async function handleSpotFreed(
   // which would erase it. The structural argument above survives that change;
   // the timing one would not.
   //
-  // `lockClassRow`, not the inline `FOR UPDATE` the three functions above
-  // use: those are pre-existing unbounded waits that `db-locks.ts` reserves
-  // for #104. This site is new, so it takes the bounded 2s wait from the
-  // start. The cost is that a class row held longer than that drops the
+  // `lockClassRow` here is the same helper `addToWaitlist`, `promoteNext`
+  // and `claimSpot` above now take too — all four share the bounded 2s
+  // wait. The cost is that a class row held longer than that drops the
   // broadcast entirely — both callers log and swallow. That is the
   // conservative outcome: a writer holding this row that long is probably
   // filling the seat.
@@ -895,9 +901,9 @@ async function hasActiveRegistration(
  * This paragraph claims nothing about renumbering writers beyond the ones
  * named here. `deleteStudentAccount` (`gdpr.ts`) was the last renumbering
  * writer that ran fully unlocked — closed in #174 Task 5 — so as of that
- * task nothing renumbers this queue unlocked any more; see
- * `src/lib/db-locks.ts` for the bounded-vs-unbounded split (#104) that
- * remains among the ones that do lock.
+ * task nothing renumbers this queue unlocked any more; every one of them now
+ * takes the same bounded 2s wait, through `lockClassRow` or
+ * `lockClassRowsOrdered` (`src/lib/db-locks.ts`).
  *
  * A narrower, still-open gap: three writers flip `WaitlistEntry.status` out
  * of `waiting` — never touching `position`, so "renumbering writer" above

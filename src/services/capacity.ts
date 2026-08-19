@@ -68,14 +68,15 @@ export interface SeatCount {
  * **Precondition: the caller must already hold the `Class` row lock.** Without
  * it this is a snapshot with no meaning — a registration committing a
  * millisecond later makes the answer wrong, which is exactly the defect this
- * module exists to fix. Every caller takes that lock first: four via their own
- * inline `SELECT … FOR UPDATE` (the sites `db-locks.ts` reserves for #104),
- * the waitlist broadcast via `lockClassRow`.
+ * module exists to fix. Every caller takes that lock first: all five write
+ * paths named above now go through `lockClassRow` (`db-locks.ts`).
  *
- * This function deliberately does NOT take the lock itself. Doing so would
- * retrofit `lockClassRow`'s bounded 2s wait onto those four pre-existing
- * sites, which `db-locks.ts` reserves for #104 — "retrofitting them from here
- * would blur what that issue is accountable for."
+ * This function deliberately does NOT take the lock itself. Taking it here
+ * would not close the gap that matters — nothing would stop a caller from
+ * holding the lock on a DIFFERENT class and passing this one's id, since the
+ * brand only rejects a bare client and proves no more than that. That gap is
+ * #219's, not this one's; see the precondition paragraph below for the
+ * options on file to close it structurally.
  *
  * It reads the class rather than accepting one, so a caller cannot compare a
  * freshly-locked count against a `maxStudents` it read BEFORE taking the lock.
