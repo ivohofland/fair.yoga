@@ -16,9 +16,16 @@ across them is about 34 and counting that would have overstated the round. The o
 the generator's blind spot — a template left active on a room archived *before*
 this branch keeps generating into it — which is carried as `known-open` beside
 the read site (`class-generator.ts:359-367`) and in spec §10 rather than on the
-tracker. It is reachable and it needs a product call, so it is a defensible
-filing; it is recorded here so the next round can make that call deliberately
-rather than rediscover it.
+tracker. **It is latent rather than live**, and the round closed with that
+settled rather than deferred: the state needs an *active* template on an
+*archived* room, which this branch makes unreachable through the app, and the
+only population that could already hold it — rows archived before the branch —
+is empty, because the app has not shipped. No backfill is owed. Applying §7's
+own test, the concrete path requires a state the system cannot produce, which
+is the same ground on which a stored `ClassStatus` of `full` is declined. The
+note stays beside the code because the query is safe by an invariant held
+elsewhere, not by anything it checks — a future writer setting `isArchived`
+outside `room-archive.ts` would make it reachable again.
 
 **The round's most useful output is that a review round's own fix was wrong,
 and the review that checked it agreed.** The whole-branch review found a fifth

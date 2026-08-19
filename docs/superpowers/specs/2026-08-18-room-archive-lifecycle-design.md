@@ -6,9 +6,12 @@ Issue 76 · 2026-08-18
 
 *Which line references in this document are live, stated once because getting
 it wrong has now cost three rounds. **Live, re-derived against the branch head:
-section 4's door table, section 9's mutation table, and section 10.** Every
-other section — 1, 2, 5, 6, 7, 8 and 11 — measures the PRE-branch tree and
-describes the defect as it stood; those are deliberately NOT repointed,
+section 4's door table, section 9's mutation table, section 10, and section
+5's shared-constant paragraph** — that last one is a claim about what the
+branch BUILDS, so it is live despite sitting in a section whose other
+references are not, which is why classifying by section alone was too coarse.
+Everything else in sections 1, 2, 5, 6, 7, 8 and 11 measures the PRE-branch
+tree and describes the defect as it stood; those are deliberately NOT repointed,
 because the code they name has since moved or been replaced, and rewriting
 them would turn a record of what was measured into a claim about what exists
 now. The "Cited as / Actually" table in section 11 is likewise a log of
@@ -205,7 +208,7 @@ must not be able to answer it differently.
 
 **Agreement is structural, not asserted.** Both import `ACTIVE_TEMPLATE_WHERE`
 from a new import-free `src/lib/template-selection.ts`: `room-archive.ts` for
-the blocking count, `class-generator.ts:369` for its `findMany`. Divergence is
+the blocking count, `class-generator.ts:382` for its `findMany`. Divergence is
 therefore impossible rather than merely detectable, and no test is needed to
 police it.
 
@@ -442,24 +445,37 @@ generator's tests stay green, the two sides are not actually sharing.
   by nothing (`room-archive.ts`'s header), so a row already `true` was
   archived in name only — an active template could already sit on it, and
   every doorway this branch adds now treats that same row as meaning
-  something. No backfill reconciles the two; a room archived before this
-  branch keeps whatever an active template was already doing on it (see
-  below).
+  something. No backfill reconciles the two — and none is owed: the app has
+  not shipped, so there are no pre-branch rows to reconcile (confirmed with
+  the maintainer, 2026-08-19). The semantic change is real and worth stating;
+  the migration it would have implied over live data is not.
 - **The generator does not read the room's archive state.**
-  `class-generator.ts:368-371` selects templates on `ACTIVE_TEMPLATE_WHERE` —
+  `class-generator.ts:381-384` selects templates on `ACTIVE_TEMPLATE_WHERE` —
   the template's own `isActive`/`isArchived` — and never consults
   `teacherRoom.isArchived`; generated instances are written directly with
   `status: 'open'` (`class-generator.ts:200`), bypassing `transitionClass`
-  entirely, so door 2 cannot see them either. A template already active on a
-  room archived before this branch — back when the flag meant nothing — keeps
-  generating into it, indefinitely, through this branch. Closing that is a
-  product decision (auto-pause on archive? refuse the sweep per-instance and
-  log?), not a bug this branch's doors can reach — none of the five checks a
-  room's state at generation time, only at the moment a teacher commits to it.
-  No migration and no backfill. Recorded as `known-open` at
-  `class-generator.ts:359-367`, immediately above the read it describes —
-  line numbers re-derived after fix round 2, whose own ten-line insertion is
-  what pushed the read down and falsified the previous citation.
+  entirely, so door 2 cannot see them either.
+
+  **Latent, not live.** What would generate here is an *active* template on an
+  *archived* room, and this branch makes that state unreachable through the
+  app: door 1 refuses to archive a room an active template uses, and doors 3,
+  4 and 5 refuse to resume, create or move an active template onto an archived
+  room. The only population that could already hold it was rows archived
+  before this branch, when the flag meant nothing — and the app has not
+  shipped, so that set is empty (confirmed with the maintainer, 2026-08-19).
+  No migration and no backfill.
+
+  It stays recorded because none of the five doors checks a room's state at
+  *generation* time — only at the moment a teacher commits to it — so the
+  query is safe by an invariant held elsewhere rather than by anything it
+  checks. A future writer that sets `isArchived` outside `room-archive.ts`
+  (a seed script, an admin surface, a data import) makes it reachable again,
+  and closing it is then a product decision (auto-pause on archive? refuse the
+  sweep per-instance and log?). Recorded as `known-open` at
+  `class-generator.ts:359-380`, immediately above the read it describes —
+  line numbers re-derived twice now, because the note's own growth moved the
+  read each time. That is the rule this branch kept relearning: a commit that
+  inserts lines above a cited line invalidates every citation below it.
 - **No change to what archiving does to existing drafts or paused templates.**
   They survive on the archived room and are stopped at their own doors.
 - **Studio templates are untouched.** `StudioClass` is disconnected from

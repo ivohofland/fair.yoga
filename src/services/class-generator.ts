@@ -360,11 +360,24 @@ export async function generateClassInstances(
   // `ACTIVE_TEMPLATE_WHERE` are the TEMPLATE's own — this selection never
   // reads `teacherRoom.isArchived`. `room-archive.ts`'s header calls that
   // module "what gives `isArchived` meaning"; this query is the one reader
-  // that still doesn't consult it. A template already active on a room
-  // archived before this branch — when `isArchived` meant nothing — keeps
-  // generating into it, and every fix here is a product decision (does
-  // archiving pause the template? Refuse the sweep per-instance and log?),
-  // not a bug this file corrects on its own.
+  // that still doesn't consult it.
+  //
+  // LATENT, not live, and the distinction is the whole of why this is a note
+  // rather than a bug. What would keep generating here is an ACTIVE template
+  // on an ARCHIVED room, and after this branch no teacher action produces
+  // that state: door 1 refuses to archive a room an active template uses, and
+  // doors 3, 4 and 5 refuse to resume, create or move an active template onto
+  // an archived room. The one population that could already hold it was rows
+  // archived BEFORE this branch, when `isArchived` meant nothing — and the app
+  // has not shipped, so that set is empty and no backfill is owed (confirmed
+  // with the maintainer, 2026-08-19).
+  //
+  // Kept anyway, because what makes this query safe is an invariant held
+  // elsewhere rather than anything the query itself checks. Any future writer
+  // that sets `isArchived` outside `room-archive.ts` — a seed script, an admin
+  // surface, a data import — makes the gap reachable again, and closing it is
+  // then a product decision (does archiving pause the template? refuse the
+  // sweep per-instance and log?), not something this file settles alone.
   const templates = await db.classTemplate.findMany({
     where: { ...ACTIVE_TEMPLATE_WHERE, ...(teacherId ? { teacherId } : {}) },
     include: { teacher: { select: { defaultTimezone: true } } },
