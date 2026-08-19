@@ -4,13 +4,22 @@ Issue 76 · 2026-08-18
 
 ## 1. What the issue asked, and what is actually true
 
-*Line references in sections 1 and 2 were measured against the pre-branch
-tree and describe the defect as it stood; they are deliberately NOT repointed,
-because the code they name has since moved or been replaced and rewriting them
-would turn a record of what was measured into a claim about what now exists.
-The end-state citations — section 4's door table, section 10 — are live, and
-were re-derived after fix round 2, whose own insertions had silently pushed
-four of them off their targets.*
+*Which line references in this document are live, stated once because getting
+it wrong has now cost three rounds. **Live, re-derived against the branch head:
+section 4's door table, section 9's mutation table, and section 10.** Every
+other section — 1, 2, 5, 6, 7, 8 and 11 — measures the PRE-branch tree and
+describes the defect as it stood; those are deliberately NOT repointed,
+because the code they name has since moved or been replaced, and rewriting
+them would turn a record of what was measured into a claim about what exists
+now. The "Cited as / Actually" table in section 11 is likewise a log of
+corrections, not a set of references.*
+
+*The earlier version of this note named only sections 1-2 as historical and
+only section 4's table plus section 10 as live, which left sections 5-8 and 11
+unclassified and invited reading them as current. It also asserted the door
+table had been fully re-derived while door 2's entry in that same table still
+carried its pre-branch line number — the sweep was declared complete in the
+commit that left it incomplete.*
 
 Issue 76 ("Room deletion is blocked forever by cancelled and completed
 classes") presents three options and recommends the third — *archive instead of
@@ -120,10 +129,10 @@ Archiving is a private act on a private link, never on the `Room`.
 | # | Door | Rule | Where the guard goes |
 |---|---|---|---|
 | 1 | Archive the room | refuse if in use (§3) | new `src/services/room-archive.ts`, called by `PATCH /api/teacher-rooms/[id]` |
-| 2 | Publish `draft → open` | refuse if room archived | the existing `if (targetStatus === 'open')` block, `src/services/class-lifecycle.ts:303` |
-| 3 | Resume template `paused → active` | refuse if room archived — **the resume direction only** | `pauseOrResumeTemplate`, beside the `reason: 'archived'` return at `class-template-lifecycle.ts:767` |
+| 2 | Publish `draft → open` | refuse if room archived | the existing `if (targetStatus === 'open')` block, `src/services/class-lifecycle.ts:307` |
+| 3 | Resume template `paused → active` | refuse if room archived — **the resume direction only** | `pauseOrResumeTemplate`, beside the `reason: 'archived'` return at `class-template-lifecycle.ts:823` |
 | 4 | Create a template | refuse if room archived | `POST /api/class-templates` |
-| 5 | Move a template's `teacherRoomId` | refuse if room archived — **only while the template is active** | `updateClassTemplate`, `class-template-lifecycle.ts`, surfaced by `PUT /api/class-templates/[id]` |
+| 5 | Move a template's `teacherRoomId` | refuse if the **target** room is archived — **only when the room actually changes** | `updateClassTemplate`, `class-template-lifecycle.ts`, surfaced by `PUT /api/class-templates/[id]` |
 
 Door 4 exists because `ClassTemplate.isActive` defaults `true`
 (`prisma/schema.prisma:336`) — a template created on an archived room begins
@@ -133,7 +142,7 @@ There is no door for creating a *class* on an archived room: a new class is
 always born `draft` (`src/app/api/classes/route.ts:80`), and door 2 catches it
 at publish. A parked draft on an archived room is harmless and deliberately
 permitted. Nor is there a class-shaped door 5: `teacherRoomId` is absent from
-`TeacherEditableClassField` (`class-lifecycle.ts:703-713`), so a class's room
+`TeacherEditableClassField` (`class-lifecycle.ts:712-722`), so a class's room
 is immutable after creation and no edit can move an `open` class onto an
 archived room. Recorded because door 5 exists precisely where nobody had asked
 the *move* question — asking it of classes too, and answering it from the
@@ -145,23 +154,48 @@ archived must keep working, so the check is gated on the resume direction, not
 on the room's state alone — `active → paused` is a real transition that does
 not hit the already-in-state short-circuit and would otherwise be refused.
 
-This is load-bearing rather than tidy. An *active* template on an archived room
-used to be described as reachable only through the accepted race in §8: door 1
-refuses archiving while an active template exists, door 4 refuses creating one
-there, and door 3 refuses resuming into one. That enumeration missed a fourth,
-fully deterministic route — moving an already-active template's
-`teacherRoomId` onto an archived room, which none of those three doors
-touched — closed only in fix round 2 (`updateClassTemplate`, gated on
-`template.isActive` the same way door 3 is; issue 76). With that guard, the
-doors close every path a teacher can reach through the app. What remains is
-outside their reach, not a hole in them: the generator, which does not read
-the room's archive state at all and keeps producing into a room a template was
-left active on (§10), and a row already archived before this branch, back when
-`isArchived` meant nothing. Both are recoverable the same way — pausing —
-which is why the guard stays on the resume direction and not the room's state
-alone: a guard on the room's state alone would remove it, leaving a teacher
-unable to stop a template still generating classes into a room they had
-shelved.
+**Door 5 does NOT guard a direction, and getting that wrong shipped a
+defect.** The enumeration above originally read: door 1 refuses archiving
+while an active template exists, door 4 refuses creating one there, door 3
+refuses resuming into one — so an active template on an archived room is
+reachable only through §8's race. That missed a fourth, deterministic route:
+moving a template's `teacherRoomId` onto an archived room, which none of the
+three touched. Door 5 was added for it in fix round 2 and gated on
+`template.isActive`, justified as "symmetrical with door 3".
+
+The symmetry was a false analogy, and PR review proved it with a single
+request. Door 3 gates on the *direction of the verb* (`desiredActive`) because
+pausing is the recovery and must stay available. `isActive` is a property of
+the template on a different axis, and it does not answer the question door 5
+is asking. Pausing deletes nothing: a paused template still owns every `open`
+instance it generated, and `syncTemplateInstances` relocates all of them onto
+the target room in the same transaction. So one PUT moved four bookable
+classes onto an archived room — the exact state door 1 exists to refuse,
+produced one step after door 1 refused it. Re-archiving the room afterwards
+reports `{ reason: 'in_use', blockers: { classes: 4 } }`: the system's own
+guard testifies against the state the other guard allowed.
+
+The stranding argument never transferred either. Door 5 reads the **target**
+room, so moving a template *off* an archived room — the actual recovery — was
+free under both versions of the gate. Nobody needs to move a template *onto*
+one.
+
+So door 5 gates on a CHANGE of room instead: `teacherRoom.isArchived &&
+data.teacherRoomId !== template.teacherRoomId`. The second half is not
+tidiness — `TemplateForm` posts the whole form on every edit, so an unchanged
+`teacherRoomId` arrives on every PUT, and gating on `isArchived` alone refused
+*every* edit (a description change included) to an active template whose own
+room is archived, answering with a 409 about a move the teacher had not made.
+Those templates are exactly the pre-branch rows §10 describes.
+
+With that, the doors close every path a teacher can reach through the app.
+What remains is outside their reach, not a hole in them: the generator, which
+does not read the room's archive state at all (§10), and a row already
+archived before this branch, when `isArchived` meant nothing. Both are
+recoverable by pausing, which is why door 3's guard stays on the resume
+direction — a guard on the room's state alone would remove that recovery,
+leaving a teacher unable to stop a template still generating into a room they
+had shelved.
 
 ### The template predicate must not be invented
 
@@ -354,8 +388,23 @@ restore, re-verify. A guard that compiles but cannot fail certifies nothing.
 | 5 | Invert door 2's `isArchived` check | publish-into-archived test | — |
 | 6 | Invert door 3's `isArchived` check | resume-into-archived test | — |
 | 7 | Remove door 4's room check | create-template-on-archived test | — |
-| 8 | Remove door 5's `teacherRoom.isArchived` check | move-active-template-onto-archived test | the paused-move test |
-| 9 | Drop `&& template.isActive` from door 5 | the paused-move test — the only case in the suite that can catch it | the move-active test |
+| 8 | Remove door 5's guard entirely | both move-refusal tests (active and paused) | the no-op-edit test |
+| 9 | Drop `!== template.teacherRoomId`, leaving `if (teacherRoom.isArchived)` | the no-op-edit test — the only case that can catch it | both move-refusal tests |
+| 10 | Make door 2 yield to the past-start check | "reports the clearable room condition" | the rest of door 2 |
+| 11 | Drop door 2's `sourceStatesFor(...).includes(cls.status)` clause | "yields to ILLEGAL_TRANSITION" | the publish-refusal test |
+| 12 | Hoist door 5's archive check above the ownership check | "answers invalid_room … for another teacher archived room" | every other door-5 case |
+| 13 | `select` away `isArchived` in `GET /api/teacher-rooms` | the `teacher-rooms-api` field pin | — (this is the mutation that left 235 component tests green) |
+| 14 | Delete `class/new`'s filter and its `allRoomsCount` branch | two of the five `class/new` cases | — |
+| 15 | Add a fourth `ok: true` arm to `ArchiveRoomResult` | `tsc` (`'"zz_new_success"' is not assignable to type 'never'`) | — |
+| 16 | Delete `'isActive'` from `PlainUpdateForbiddenTemplateField` | `tsc` (`Type 'true' is not assignable to type '"isActive"'`) | — |
+
+**Mutations 10-16 were added at PR review, and all seven describe guards that
+existed and could not fail.** That is the branch's characteristic defect and
+it is worth naming: the guards were argued for in prose more rigorously than
+they were enforced by tests, so a reviewer reading them was persuaded and a
+reviewer breaking them was not. Mutations 8 and 9 replace an earlier pair that
+pinned the *wrong* rule — they proved the `isActive` gate fired, never what it
+let through.
 
 **Mutations 1 and 2 are the ones that matter.** If either can be applied with
 the suite staying green, the isolation failed and the fixtures are wrong.
@@ -384,7 +433,7 @@ generator's tests stay green, the two sides are not actually sharing.
 
 ## 10. Out of scope
 
-- **Issues 52 and 259 are unaffected.** Neither is touched by this branch.
+- **Issues 52, 259 and 74 are unaffected.** None is touched by this branch.
 - **No migration — but the column acquires new meaning over existing data.**
   `TeacherRoom.isArchived` already exists (`prisma/schema.prisma:298`) and
   nothing about the schema changes, which is true and is the whole of what "no

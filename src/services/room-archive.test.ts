@@ -97,7 +97,7 @@ describe('setTeacherRoomArchived — door 1, template clause (no blocking class 
 
   // `isActive: true` here, deliberately, not `false` like the paused case
   // above. Every real write pairs `isArchived: true` with `isActive: false`
-  // (`class-template-lifecycle.ts:1053-1054`, `gdpr.ts:1139-1140`), so an
+  // (`class-template-lifecycle.ts:1174-1175`, `gdpr.ts:1139-1140`), so an
   // `isActive: false` fixture would already be excluded by the `isActive`
   // half of `ACTIVE_TEMPLATE_WHERE` and could never isolate the `isArchived`
   // half — dropping it from the constant would leave this case green. This

@@ -115,8 +115,10 @@ export const TERMINAL_CLASS_STATUSES: readonly ClassStatus[] = Object.freeze(
  * Both `transitionClass` and `completeClass` declare `TransitionDbResult`, so
  * each sees a type wider than its own range. Enumerated in full, because an
  * earlier revision named only `NOT_ENDED_YET` and `STARTS_IN_PAST` and called
- * them "the mirror" — a tidy symmetry that miscounts. The split is 2/3/1, not
- * 1/1:
+ * them "the mirror" — a tidy symmetry that miscounts. The split is 2 shared /
+ * 3 `transitionClass`-only / 1 `completeClass`-only, not 1/1 — named by axis
+ * because the bullets below do not run in that order, and "2/3/1" over them
+ * reads as a mismatch:
  *
  * - SHARED: `NOT_FOUND`, and `ILLEGAL_TRANSITION` — both functions call
  *   `validateTransition`, `transitionClass` in the diagnostic read after a

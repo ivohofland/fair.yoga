@@ -28,7 +28,11 @@ export default async function EditRoomPage({
   }
 
   const { room } = teacherRoom;
-  // KNOWN-OPEN (issue 76): a server-render snapshot. The buttons below gate on
+  // KNOWN-OPEN (issue 76): a server-render snapshot. BOTH buttons below gate
+  // on it — `UnlinkRoomButton` (:135) and `DeleteRoomButton` (:141) — and the
+  // reasoning holds for each, since both meet a route-level 409. The earlier
+  // wording named one, which is the enumeration shape that goes stale here.
+  // The buttons gate on
   // it, so a class created on this room after render leaves `Delete room`
   // offered; the click then meets the route's own refusal, which is the
   // authority. Recorded rather than locked, for the same reason as the archive

@@ -36,7 +36,7 @@ export const DELETE = withErrorHandler(async (
 
   const hasClasses = room.teacherRooms.some((tr) => tr._count.classes > 0);
   if (hasClasses) {
-    // Matches the sibling refusal in `teacher-rooms/[id]:123` in both status
+    // Matches the sibling refusal in `teacher-rooms/[id]:141` in both status
     // and wording. The 400 this replaces implied a clearable condition and
     // named no way out; a room with class history is permanently undeletable
     // BY DESIGN — archiving is the end state (issue 76), and hard deletion is
@@ -123,7 +123,7 @@ export const PUT = withErrorHandler(async (
   // teacher just accepted, for every other teacher using that room.
   //
   // `count` rather than the row, so the same statement both guards and
-  // writes. Following `updateClass` (src/services/class-lifecycle.ts:1132).
+  // writes. Following `updateClass` (src/services/class-lifecycle.ts:1193).
   let result: Prisma.BatchPayload;
   try {
     result = await prisma.room.updateMany({
