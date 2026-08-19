@@ -17,6 +17,7 @@ import { classStartInstant } from '@/lib/timezone';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { CLAIMABLE_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 import { readSeatCount } from '@/services/capacity';
+import { lockClassRow } from '@/lib/db-locks';
 
 /** Thrown inside the registration transaction when the class is at capacity. */
 class ClassFullError extends Error {}
@@ -100,15 +101,15 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     const registration = await prisma.$transaction(async (tx) => {
       // Serialize concurrent registrations for this class: without the row
       // lock, two simultaneous requests both count below max and both insert.
-      await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${body.classId} FOR UPDATE`;
+      await lockClassRow(tx, body.classId);
 
       // Read the class UNDER that lock, and decide everything from this row.
       // #107: this read used to happen before the transaction, so `status`,
       // `maxStudents` and the walk-in window were decided from a snapshot the
       // lock did not protect — a class cancelled or re-capped in the gap was
       // booked anyway. `waitlist.ts` takes this same lock in four places and
-      // reads under it in all four — `addToWaitlist`, `promoteNext` and
-      // `claimSpot` inline, and the #212 broadcast via `lockClassRow`, which
+      // reads under it in all four — `addToWaitlist`, `promoteNext`,
+      // `claimSpot` and the #212 broadcast — each via `lockClassRow`, which
       // issues the identical statement. This is the fifth.
       //
       // `findUnique`, not `findUniqueOrThrow`: unlike the generator claims in

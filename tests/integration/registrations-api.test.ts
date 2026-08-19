@@ -635,6 +635,48 @@ describe('POST /api/registrations', () => {
     expect(json.error.message).toContain('Class is full');
     expect(await prisma.registration.count({ where: { classId } })).toBe(1);
   });
+
+  /**
+   * #104. The booking path took an unbounded inline `FOR UPDATE` until this
+   * change. It is the case the issue calls sharpest: a student clicking Book,
+   * on a path with no bound on its wait.
+   *
+   * Asserted at the HTTP surface rather than the service, because the point is
+   * the contract a student meets — a retryable 503, not a 500 and not a
+   * request that occupies a pool connection for the holder's full duration.
+   * `withErrorHandler` routes the `55P03` through `isTransientDbError`.
+   *
+   * The 3.5s hold sits above the 2s bound and below Prisma's 5s default
+   * budget, so reverting the route to its inline statement makes this request
+   * SUCCEED at 3.5s with a 200 — which is what makes this a guard rather than
+   * a description.
+   */
+  it('answers 503 rather than blocking when another transaction holds the class row', async () => {
+    const classId = await makeClass(5);
+
+    let signalHeld!: () => void;
+    const held = new Promise<void>((r) => {
+      signalHeld = r;
+    });
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
+        signalHeld();
+        await new Promise((r) => setTimeout(r, 3_500));
+      },
+      { timeout: 30_000 },
+    );
+    await held;
+
+    const startedAt = Date.now();
+    const res = await post(studentTokens[0]!, { classId });
+    const waited = Date.now() - startedAt;
+
+    await holder;
+
+    expect(res.status).toBe(503);
+    expect(waited).toBeLessThan(3_400);
+  }, 20_000);
 });
 
 describe('DELETE /api/waitlist/[id] — profile-presence authorization', () => {
