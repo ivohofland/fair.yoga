@@ -629,6 +629,47 @@ empty — six real boolean columns, every call — so it was never protected by
 this quirk. The `{StudentPrivacy, TeacherStudent}` inversion #174 task 7 fixed
 was a live, reproduced deadlock in real production code, not a theoretical one.
 
+## The RESTRICT trigger is a wait edge, and a route guard is what closes it (#103)
+
+`ClassTemplate_teacherRoomId_fkey` and `Class_teacherRoomId_fkey` are both
+`ON DELETE RESTRICT` (`20260403092044_init/migration.sql:339,345`). A
+`DELETE FROM "TeacherRoom"` therefore locks the parent row and then runs the
+triggers' `SELECT 1 FROM "ClassTemplate" WHERE "teacherRoomId" = $1 FOR KEY
+SHARE` — a lock nothing in this document's site enumeration can see, because
+no source line issues it.
+
+The cycle:
+
+| | holds | waits for |
+|---|---|---|
+| generator sweep | `ClassTemplate` `FOR UPDATE` (`claimTemplateForGeneration`) | `TeacherRoom` `FOR KEY SHARE`, from its `Class` insert's FK check |
+| room delete | `TeacherRoom`, exclusively | `ClassTemplate` `FOR KEY SHARE`, from the RESTRICT trigger |
+
+AB-BA, so `40P01`. It did not exist before #95, which is when the sweep first
+held a template lock across its inserts.
+
+**What closes it is a guard in each delete route, not a lock.** Both routes
+count `ClassTemplate` rows and refuse with 409 before issuing the `DELETE`
+(`countRoomDeleteBlockers`, `src/services/room-deletion.ts`), and the cycle
+requires a template row to exist — that row is what gives the trigger something
+to lock. With the guard in place the statement is never issued in the
+deadlocking case.
+
+**The `isRestrictViolationOn` catch beside each guard does NOT substitute for
+it.** The catch runs after the `DELETE` has taken its locks; it converts the
+outcome, it does not avoid the wait. Anyone removing the pre-check as
+belt-and-braces reopens this edge with every test green, which is why both
+handlers carry the warning inline.
+
+**Residual, and accepted:** a template created between the check and the
+`DELETE`. Bounded by the sweep's own `{ timeout: 10_000 }`
+(`class-generator.ts:408`), and either outcome is already legible — `40P01` is
+in `TRANSIENT_SQLSTATES` (`api-errors.ts:174`) and answers 503 retryable. A
+`lock_timeout` on the delete was considered and rejected: it would add a
+lock-taking node to the ordering `template-lock-order.test.ts` defends, for a
+few seconds in a window that needs a concurrent template creation — the same
+trade `room-archive.ts:146-147` refused.
+
 ## Known conformance
 
 - **`unlinkTeacher`** (`src/services/invitations.ts`) — `Class`/`WaitlistEntry`
