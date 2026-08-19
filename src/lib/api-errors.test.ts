@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { describe, it, expect } from 'vitest';
 import { Prisma } from '@prisma/client';
-import { classifyApiError, isTransientDbError } from './api-errors';
+import { classifyApiError, isRestrictViolationOn, isTransientDbError } from './api-errors';
 
 /**
  * Matches the construction used in src/services/studio-class-generator.test.ts
@@ -453,5 +453,78 @@ describe('classifyApiError', () => {
     expect(failure.status).toBe(500);
     expect(failure.level).toBe('error');
     expect(failure.detail).toEqual({ thrownType });
+  });
+});
+
+describe('isRestrictViolationOn', () => {
+  /**
+   * The three shapes were MEASURED on 2026-08-19 by provoking each delete
+   * against a TeacherRoom carrying one archived ClassTemplate and zero Class
+   * rows, not hand-written:
+   *
+   *   teacherRoom.delete:     {"modelName":"TeacherRoom","constraint":"ClassTemplate_teacherRoomId_fkey"}
+   *   teacherRoom.deleteMany: {"modelName":"TeacherRoom","constraint":"ClassTemplate_teacherRoomId_fkey"}
+   *   room.delete:            {"modelName":"Room","constraint":"ClassTemplate_teacherRoomId_fkey"}
+   *
+   * `modelName` DIFFERS across them — `room.delete` trips the constraint
+   * through the Room→TeacherRoom cascade — which is exactly why the matcher
+   * keys on `constraint` alone. A matcher that also required
+   * `modelName === 'TeacherRoom'` would pass every teacher-rooms test and
+   * silently 500 the rooms route.
+   */
+  const ROOM_FKS = ['ClassTemplate_teacherRoomId_fkey', 'Class_teacherRoomId_fkey'] as const;
+
+  it('matches the template FK from either delete, despite the differing modelName', () => {
+    for (const modelName of ['TeacherRoom', 'Room']) {
+      const err = prismaError('P2003', {
+        modelName,
+        constraint: 'ClassTemplate_teacherRoomId_fkey',
+      });
+      expect(isRestrictViolationOn(err, ROOM_FKS)).toBe(true);
+    }
+  });
+
+  it('matches the class FK too — the Class guard has the same race and no other backstop', () => {
+    const err = prismaError('P2003', {
+      modelName: 'TeacherRoom',
+      constraint: 'Class_teacherRoomId_fkey',
+    });
+    expect(isRestrictViolationOn(err, ROOM_FKS)).toBe(true);
+  });
+
+  /**
+   * The mutation guard, and the only case that fails when the matcher is
+   * widened to "any P2003" — which is the tempting simplification, because
+   * every case above passes under it.
+   *
+   * `Registration_classId_fkey` is a REAL constraint
+   * (`20260403092044_init/migration.sql:354`), deliberately not an invented
+   * name: an assertion against a string nothing in the schema produces cannot
+   * distinguish a working matcher from one that matches nothing at all.
+   */
+  it('does not match a P2003 from an unrelated foreign key', () => {
+    const err = prismaError('P2003', {
+      modelName: 'Registration',
+      constraint: 'Registration_classId_fkey',
+    });
+    expect(isRestrictViolationOn(err, ROOM_FKS)).toBe(false);
+  });
+
+  it('does not match a non-P2003, a non-Prisma throwable, or a missing constraint', () => {
+    expect(
+      isRestrictViolationOn(
+        prismaError('P2002', { constraint: 'ClassTemplate_teacherRoomId_fkey' }),
+        ROOM_FKS,
+      ),
+    ).toBe(false);
+    // The bare-substring trap `isTransientDbError` documents at :208 — an
+    // Error whose text merely quotes the constraint name is not a P2003.
+    expect(isRestrictViolationOn(new Error('ClassTemplate_teacherRoomId_fkey'), ROOM_FKS)).toBe(
+      false,
+    );
+    expect(isRestrictViolationOn(undefined, ROOM_FKS)).toBe(false);
+    expect(isRestrictViolationOn(prismaError('P2003', { modelName: 'TeacherRoom' }), ROOM_FKS)).toBe(
+      false,
+    );
   });
 });

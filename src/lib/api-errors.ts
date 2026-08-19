@@ -247,6 +247,40 @@ export function isRecordNotFound(error: unknown): boolean {
 }
 
 /**
+ * True when Prisma refused a delete because a `RESTRICT` foreign key still
+ * points at the row — `P2003` — and the constraint that refused is one of
+ * `constraints`.
+ *
+ * Keyed on `meta.constraint`, never on `meta.modelName`. Measured: the same
+ * `ClassTemplate_teacherRoomId_fkey` arrives as `modelName: "TeacherRoom"`
+ * from `DELETE /api/teacher-rooms/[id]` and as `modelName: "Room"` from
+ * `DELETE /api/rooms/[id]`, because the latter trips it through the
+ * `Room`→`TeacherRoom` cascade. A matcher that also required the model would
+ * pass one route's tests and 500 the other.
+ *
+ * NARROW BY CONSTRUCTION, and that is the whole design. A blanket
+ * `P2003 → 409` in `classifyApiError` would be less code and worse: almost
+ * everywhere else in this app a `P2003` means the server tried to write a
+ * dangling reference, which is a defect that must stay a 500 at
+ * `level: 'error'`. Relabelling those "still in use" would hide exactly the
+ * class of failure this project hunts. `isUniqueConflictOn`
+ * (`src/lib/unique-conflict.ts`) sets the same precedent one module over:
+ * match the specific constraint, never the code class.
+ *
+ * Lives here rather than beside `isUniqueConflictOn` because this module
+ * already claims the "what does this thrown value MEAN" lookup table — see
+ * `isRecordNotFound`'s docblock, which argues against splitting that table by
+ * who imports it.
+ */
+export function isRestrictViolationOn(error: unknown, constraints: readonly string[]): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2003') {
+    return false;
+  }
+  const constraint = error.meta?.constraint;
+  return typeof constraint === 'string' && constraints.includes(constraint);
+}
+
+/**
  * Classify anything thrown out of a route handler. Total: every input,
  * including non-Error throwables, yields an ApiFailure.
  *
