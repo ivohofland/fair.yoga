@@ -195,8 +195,13 @@ At **T = 4 s**: 1 s remains for the same 8–12 statements, several of which are
 writes that take **their own** row locks — `teacherStudent.upsert`,
 `waitlistEntry.update`, `class.update`, and `reorderWaitingEntries`, which walks
 the queue. This does *not* preserve the success window as it first appears to:
-it converts slow success into **`P2028` after the lock was won and partial work
-was done**, which is strictly worse than failing before touching anything.
+it converts slow success into **`P2028` after the lock was won and the work was
+done and thrown away**. Nothing partial survives — `P2028` aborts the
+interactive transaction and Postgres rolls it back — so the cost is not a
+half-written state but a connection held for the full wait plus the work, and a
+student who gets a 503 having occupied a pool slot the whole time. Still worse
+than failing before touching anything, for the same reason a smaller `T` leaves
+more of the 5s budget: the conclusion below is unaffected.
 
 There is a compounding reason the slack must be generous: `SET LOCAL
 lock_timeout` governs **every** lock acquisition left in the transaction, not

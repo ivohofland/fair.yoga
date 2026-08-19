@@ -107,10 +107,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // #107: this read used to happen before the transaction, so `status`,
       // `maxStudents` and the walk-in window were decided from a snapshot the
       // lock did not protect — a class cancelled or re-capped in the gap was
-      // booked anyway. `waitlist.ts` takes this same lock in four places and
-      // reads under it in all four — `addToWaitlist`, `promoteNext`,
-      // `claimSpot` and the #212 broadcast — each via `lockClassRow`, which
-      // issues the identical statement. This is the fifth.
+      // booked anyway. `waitlist.ts` READS the class under this same lock in
+      // four places — `addToWaitlist`, `promoteNext`, `claimSpot` and the #212
+      // broadcast — each via `lockClassRow`, which issues the identical
+      // statement. This is the fifth. Reading under the lock is the property
+      // that matters here, and it is what picks those four out: a bare
+      // `grep 'lockClassRow(' src/services/waitlist.ts` returns FIVE, because
+      // `removeFromWaitlist` takes the same lock and renumbers under it
+      // without deciding anything from the class row. Before #104 the four
+      // were separable another way — three inline plus one through the helper
+      // — and that distinction is gone now, so it is stated rather than
+      // implied.
       //
       // `findUnique`, not `findUniqueOrThrow`: unlike the generator claims in
       // #102, the id here comes from the request body, so a missing class is

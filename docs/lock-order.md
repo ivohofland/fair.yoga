@@ -23,7 +23,16 @@ compare-and-swap `class.updateMany` (an `UPDATE` locks the rows it matches —
 no other, so a version of this sentence that names only the first writes it
 out of the rule it is subject to; `deleteTeacherAccount` used to be this
 example, until #237 folded its per-class CAS behind its own
-`lockClassRowsOrdered` pre-lock). `POST
+`lockClassRowsOrdered` pre-lock). Those are the two that take it
+*deliberately*, which is not the same as being the only two statements that
+take it: plain DML on `Class` locks the rows it matches as well, and
+`archiveOrUnarchiveTemplate`'s `class.deleteMany` and `syncTemplateInstances`'
+same-day `class.updateMany` are both examples. Neither is a third category
+today, and the reason is placement rather than kind — each runs behind an
+ordered `lockClassRowsOrdered` pre-lock over a superset of the rows it can
+match, so it acquires nothing its transaction is not already holding. A bare
+`class.updateMany` or `class.deleteMany` added OUTSIDE such a pre-lock joins
+this rule as a full member and has to be ordered like one. `POST
 /api/registrations` writes `Registration` before `WaitlistEntry`;
 `promoteNext` can write `WaitlistEntry` before `Registration`, but only
 conditionally (the stale-head-drop loop — it runs only when the current queue
@@ -166,7 +175,15 @@ a call):
    body instead, the same helper `removeFromWaitlist` and `handleSpotFreed`
    already reached the lock through rather than inlining it.
    `grep -rn "FOR UPDATE" src/ --include='*.ts' | grep -v "\.test\.ts:" |
-   grep -vE ":[0-9]+: *(\*|//)"` is the check, not a number kept here: a
+   grep -vE ":[0-9]+: *(\*|//)"` is the check, not a number kept here. It
+   returns four hits and **two of them are not `Class` locks at all**:
+   `claimTemplateForGeneration` (`class-generator.ts`) and
+   `claimStudioTemplateForGeneration` (`studio-class-generator.ts`) take
+   `FOR UPDATE` on a `ClassTemplate` / `StudioClassTemplate` row, so the claim
+   above holds over them rather than being violated by them. Named because
+   otherwise the only way to discharge the two apparent exceptions is to open
+   both generators. The other two hits are the helpers in `db-locks.ts`, which
+   is the whole point. A
    count that stays right while the membership changes is the one error
    nothing that counts can catch, and this document has already made that
    mistake once (`db-locks.ts`'s register named `deleteStudentAccount` as a
@@ -848,7 +865,7 @@ trade `room-archive.ts:146-147` refused.
   already `StudentPrivacy` before `TeacherStudent`; not the outlier.
 - **`transitionClass`** (`src/services/class-lifecycle.ts`) — takes its
   `Class` lock a different way than every other site on this list: not
-  `lockClassRow`, not an inline `SELECT ... FOR UPDATE`, but a bare CAS
+  through `lockClassRow` or `lockClassRowsOrdered`, but a bare CAS
   `class.updateMany` on the outer client, opened as an interactive
   transaction since #216/#182 (it was a single autocommit `UPDATE` before).
   It calls `setLockTimeout` as its first statement, so its CAS gets the same

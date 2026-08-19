@@ -326,11 +326,18 @@ describe('reconcileWaitlists (DB)', () => {
       () => ({ ok: true as const }),
       (err: unknown) => ({ ok: false as const, err: String(err) }),
     );
-    // Snapshotted BEFORE `await holder`, which is the whole assertion. Read
-    // after it, `released` is `true` unconditionally — the holder's body sets it
-    // as its last statement, so awaiting the holder guarantees the value and the
-    // check cannot fail. The precedent is `waitlist.test.ts`, which asserts its
-    // own flag before awaiting for exactly this reason.
+    // Snapshotted BEFORE `await holder`, because read after it the flag is
+    // `true` unconditionally — the holder's body sets it as its last
+    // statement. So the early read is what makes `toBe(false)` below
+    // expressible at all.
+    //
+    // It is NOT what makes this test bite, and an earlier version of this
+    // comment argued that it was, on the grounds that a late read "cannot
+    // fail". That reasoning was inherited from the old `toBe(true)` pin, where
+    // the early read genuinely WAS the claim. Under `toBe(false)` it inverts:
+    // reading late is the only arrangement in which this check could fail, so
+    // "cannot fail" is an argument against an assertion, never for it. What
+    // carries the weight now is the SQLSTATE — see below.
     const releasedWhenHookReturned = released;
     await holder;
     await holderClient.$disconnect();
@@ -338,14 +345,17 @@ describe('reconcileWaitlists (DB)', () => {
     expect(dropped.ok).toBe(false);
     if (!dropped.ok) expect(dropped.err).toMatch(/55P03/);
 
-    // The ordering claim, inverted from before this re-pin: `55P03` is
-    // Postgres cancelling the blocked statement itself once `lockClassRow`'s
-    // 2s bound elapses, so the hook must come back BEFORE the holder's 3.5s
-    // hold ends, not after it — the opposite of the old `P2028` mechanism,
-    // which waited out the whole hold and only then noticed its own budget
-    // was blown. `released` is still false when the hook returns; awaiting
-    // the holder afterwards is what lets it flip to true, which is why the
-    // snapshot has to be taken before that await, not after.
+    // `dropped.err` above is what carries this test: only a `lock_timeout`
+    // produces `55P03`, so matching it names the mechanism as Postgres
+    // cancelling the blocked statement itself once `lockClassRow`'s 2s bound
+    // elapses — the opposite of the old `P2028`, which waited out the whole
+    // hold and only then noticed its own budget was blown.
+    //
+    // The flag below CORROBORATES the ordering that mechanism implies: the
+    // hook came back before the holder's 3.5s hold ended, not after it. It is
+    // not an independent claim. Every regression that would flip it to `true`
+    // flips `dropped.ok` first, because a wait that reaches 3.5s acquires the
+    // row and SUCCEEDS rather than failing late.
     expect(releasedWhenHookReturned).toBe(false);
 
     // The measured baseline: nothing happened to the student.

@@ -747,15 +747,21 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
   //
   // Split by transience for the reason `promoteAfterCancel`
   // (`api/registrations/[id]/route.ts`) carries in full: #212 put the
-  // broadcast branch behind `lockClassRow`, so `55P03` is reachable here, and
-  // `api-errors.ts` reserves `error` for things that should page someone. This
-  // loop is the likelier of the two to hit it — an erasure holds every class
-  // row it locks until its own transaction commits, so a concurrent cancel on
-  // a shared class is exactly the contention that times out.
+  // broadcast branch behind `lockClassRow` and #104 put the auto-promote
+  // branch there too, so `55P03` is reachable here on EITHER branch — and the
+  // auto-promote one is much the larger surface, since `getWaitlistWindow`
+  // returns it for everything up to (cancel deadline − 1h) against one hour of
+  // `first_come_first_claimed`. `api-errors.ts` reserves `error` for things
+  // that should page someone. This loop is the likelier of the two call sites
+  // to hit it — an erasure holds every class row it locks until its own
+  // transaction commits, so a concurrent cancel on a shared class is exactly
+  // the contention that times out.
   for (const classId of freedClassIds) {
     try {
       await handleSpotFreed(db, classId);
     } catch (err) {
+      // `-1` and its blind spot: same shape and same caveat as
+      // `promoteAfterCancel`'s, which carries the reasoning in full.
       const waiting = await db.waitlistEntry
         .count({ where: { classId, status: 'waiting' } })
         .catch(() => -1);
@@ -763,7 +769,7 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
       log[transient ? 'warn' : 'error'](
         { err, classId, waiting, transient },
         transient
-          ? 'gdpr: spot-freed hook lost a lock race after erasure — waiting students were not notified'
+          ? 'gdpr: spot-freed hook lost a lock race after erasure — the freed seat was neither promoted nor broadcast'
           : 'gdpr: spot-freed hook failed after erasure',
       );
     }

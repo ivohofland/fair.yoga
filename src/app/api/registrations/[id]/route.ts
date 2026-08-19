@@ -285,20 +285,33 @@ export const DELETE = withErrorHandler(async (
  * already succeeded — a promotion failure must not turn it into a 500, so
  * errors are logged and swallowed here.
  *
- * **Split by transience since #212 made a lock timeout reachable here.** The
- * broadcast branch now opens a transaction on `lockClassRow`, whose `SET LOCAL
+ * **Split by transience since #212 made a lock timeout reachable here.** #212
+ * put the BROADCAST branch behind `lockClassRow`, whose `SET LOCAL
  * lock_timeout = '2s'` raises `55P03` on a contended `Class` row — where the
- * old bare-client body could barely fail at all. `api-errors.ts` states the
+ * old bare-client body could barely fail at all. #104 then put the
+ * AUTO-PROMOTE branch behind the same helper, and that is the far larger
+ * surface of the two: `getWaitlistWindow` returns `auto_promote` for
+ * everything up to (cancel deadline − 1h), against exactly one hour of
+ * `first_come_first_claimed`. Read this paragraph as being about both
+ * branches. `api-errors.ts` states the
  * rule this obeys, with this exact scenario as its example: "`error` is the
  * level that pages someone, while a `lock_timeout` on a contended row is the
  * system doing what it was configured to do." Logging routine contention at
  * `error` gets the line tuned out, and then the genuine defect hides in the
  * noise it created.
  *
- * `waiting` is what makes either line actionable. The failure means every
- * student queued on this class was silently not told a seat opened — 0 is a
- * non-event, 12 is a seat that now goes unsold and reprices the class for
- * everyone left.
+ * `waiting` is what makes either line actionable — but WHAT was lost depends
+ * on which branch `handleSpotFreed` was in, and this handler cannot see that
+ * from the error alone. On the broadcast branch every student queued on this
+ * class was silently not told a seat opened. On the auto-promote branch, which
+ * covers everything up to (cancel deadline − 1h) and is therefore the commoner
+ * of the two by a wide margin, the loss is narrower and sharper: ONE specific
+ * student who should now hold that seat does not. Either way `waiting` sizes
+ * it — 0 is a non-event, 12 is a seat that now goes unsold and reprices the
+ * class for everyone left. Logging the resolved window beside it is what would
+ * make the line triageable without guessing; `handleSpotFreed` knows the
+ * branch and does not hand it back today, which is a change for its own issue
+ * rather than for a documentation pass.
  *
  * It used to say the loss could never be recovered, because nobody would know
  * to look. That is no longer true: the `waitlist-reconciliation` sweep
@@ -325,6 +338,14 @@ async function promoteAfterCancel(classId: string): Promise<void> {
     // `-1`, not `0`, and not a second silent failure: this runs inside a
     // handler that must not throw, and a count no real queue can take keeps
     // the line honest about not knowing rather than claiming nobody waited.
+    //
+    // What `-1` no longer distinguishes is WHY the count failed. #104 routes
+    // materially more traffic into this catch — both branches of
+    // `handleSpotFreed` can raise `55P03` now, not just the broadcast one — so
+    // a `-1` here can be pool exhaustion or a second `lock_timeout` on the
+    // count itself, and the error is discarded either way. One
+    // `log.debug({ err }, …)` in this `.catch` restores that; it is left out
+    // of a documentation-only pass on purpose, not by oversight.
     const waiting = await prisma.waitlistEntry
       .count({ where: { classId, status: 'waiting' } })
       .catch(() => -1);
@@ -332,7 +353,7 @@ async function promoteAfterCancel(classId: string): Promise<void> {
     log[transient ? 'warn' : 'error'](
       { err, classId, waiting, transient },
       transient
-        ? 'waitlist spot-freed hook lost a lock race after cancel — waiting students were not notified'
+        ? 'waitlist spot-freed hook lost a lock race after cancel — the freed seat was neither promoted nor broadcast'
         : 'waitlist spot-freed hook failed after cancel',
     );
   }

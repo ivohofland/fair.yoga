@@ -672,10 +672,16 @@ describe('class transitions (DB, timezone-aware)', () => {
   // .create` the way the test above's is — it goes through `lockClassRow`
   // first, so it takes the same Class row lock every production writer that
   // CREATES a registration takes (`POST /api/registrations`; `waitlist.ts`'s
-  // `activateRegistration`). Those two take it with their own inline `SELECT
-  // … FOR UPDATE` rather than through this helper — `db-locks.ts` records
-  // them as deliberately not adopting it — so what is shared here is the
-  // lock, not the code path. That is deliberate: a writer that does not
+  // `activateRegistration`, reached through `promoteNext` and `claimSpot`).
+  // Since #104 both reach the lock through `lockClassRow` — the route
+  // directly, `activateRegistration` via whichever of those two called it —
+  // so what is shared here is the code path, not merely the lock, which
+  // strengthens
+  // this argument rather than qualifying it. (It used to say the two took it
+  // with their own inline `SELECT … FOR UPDATE` and that `db-locks.ts`
+  // recorded them as deliberately not adopting the helper. Both halves are
+  // false now; `class-transitions.ts`'s own docblock was corrected and this
+  // was not.) Sharing the path is deliberate: a writer that does not
   // contend for the Class row lock at all cannot be used to demonstrate that
   // taking the lock closes anything, since nothing it does could ever have
   // been blocked by a lock on the other side.
@@ -743,8 +749,8 @@ describe('class transitions (DB, timezone-aware)', () => {
 
               // A real, separately committed transaction, taking the same
               // Class row lock every production registration-creating writer
-              // takes (through `lockClassRow` here; those writers take it
-              // with their own inline `FOR UPDATE`) — awaited to completion
+              // takes — and since #104 through the same helper, `lockClassRow`,
+              // rather than merely the same row — awaited to completion
               // (success or the lock-timeout failure) before this hook
               // returns, so the ordering is deterministic rather than racing
               // real scheduling.

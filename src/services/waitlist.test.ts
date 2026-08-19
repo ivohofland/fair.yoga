@@ -516,9 +516,29 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
    * inline statement therefore fails `expect(outcome.ok).toBe(false)` rather
    * than hanging the suite.
    *
-   * `toBeLessThan(3_400)` is below the hold on purpose — that is what
-   * distinguishes "gave up at 2s" from "waited the holder out". Neither bound
-   * pins the timeout's VALUE, which belongs to `db-locks.ts`.
+   * `outcome.ok === false` is what distinguishes "gave up at 2s" from "waited
+   * the holder out", and it is the only thing that can: waiting the holder out
+   * does not fail slowly, it SUCCEEDS at 3.5s. `/55P03/` then names the
+   * mechanism as Postgres's `lock_timeout` rather than some other refusal, and
+   * `waited > 1_000` excludes an instant failure that never reached the lock.
+   *
+   * There is deliberately NO upper bound on `waited`, and this paragraph is
+   * the reference for the two sibling guards below (`promoteNext (DB)` and
+   * `claimSpot (DB)`) and for the HTTP one in
+   * `tests/integration/registrations-api.test.ts`. All four carried
+   * `toBeLessThan(3_400)`, described as what separated the two cases — which
+   * was backwards. It could not fail for any regression: at a 3.0s or 3.3s
+   * bound the call still raises `55P03` and passes the ceiling; at 3.6s it
+   * acquires when the holder releases and succeeds, which `ok === false`
+   * catches. There is no bound value, and no reordering inside `lockClassRow`,
+   * that reddens the ceiling while `ok === false` and `/55P03/` stay green.
+   * What it did contribute was a ~1400ms overhead budget, against a
+   * holder-acquisition latency this same file measured at 486ms under load and
+   * 428ms idle on a 10-core machine — so on a 2-4 core CI box running three
+   * vitest projects it reddened at random, under a label that sent the reader
+   * to look for a bound which had in fact fired correctly. The timeout's VALUE
+   * is pinned by `db-locks.test.ts` (the literal, plus `SHOW lock_timeout`),
+   * never by a wall-clock threshold here.
    */
   it('gives up on the 2s bound when another transaction holds the class row', async () => {
     // Its own full class: max 1, one registration. Not the block's shared
@@ -562,7 +582,6 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) expect(outcome.err).toMatch(/55P03/);
     expect(waited).toBeGreaterThan(1_000);
-    expect(waited).toBeLessThan(3_400);
   }, 20_000);
 });
 
@@ -818,18 +837,40 @@ describe('promoteNext (DB)', () => {
 
   /**
    * #104. `promoteNext` is the one converted site that is NOT a route. It is
-   * called by `handleSpotFreed` and by `reconcileWaitlists`, so its failure
-   * surface is the reconciliation sweep repairing it later, not a 503 a
-   * student reads.
+   * called only by `handleSpotFreed`, which `reconcileWaitlists` re-invokes
+   * every minute — `waitlist-reconciliation.ts`'s own docblock puts it as
+   * "this module detects; `handleSpotFreed` decides". So its failure surface
+   * is the reconciliation sweep repairing it later, not a 503 a student reads.
    *
-   * That is what makes the bound an improvement here rather than a trade:
-   * before this change a contended promotion waited out the WHOLE hold and
-   * then blew Prisma's 5s budget (`P2028`, measured at 7014ms against a 7s
-   * hold — it cannot cancel a statement already blocked inside Postgres).
-   * Now it aborts at 2s with `55P03`, and the sweep gets to retry sooner.
+   * The bound is a TRADE here, not a free improvement, and the trade is worth
+   * stating because both directions are real. What it buys: a contended
+   * promotion used to wait out the WHOLE hold and then blow Prisma's 5s budget
+   * (`P2028`, measured at 7014ms against a 7s hold — it cannot cancel a
+   * statement already blocked inside Postgres), occupying a pool connection
+   * the whole time; now it aborts at 2s with `55P03` and the sweep retries
+   * sooner. What it costs: before the conversion a promotion still SUCCEEDED
+   * against a competing hold of up to roughly 4.5s (the 5s budget less the
+   * 8-12 statements that still have to run after the lock is won — spec §3.3).
+   * `2s < h ≲ 4.5s` is therefore a band where a promotion that used to happen
+   * no longer does on the live path.
+   *
+   * That band is not invisible. `reconcileWaitlists` catches per class, and
+   * `report` throws `ReconciliationFailedError` when every class it invoked
+   * failed (`waitlist-reconciliation.ts`); `scheduler.ts` stores that as the
+   * job's `lastError`, and `/api/health` reports `degraded` while it is set.
+   * On a single-teacher VPS one candidate class per tick is the ordinary case,
+   * so "every class failed" is reachable from a single benign lock race that
+   * the next tick repairs. Changing that error semantics is filed separately;
+   * it is not this test's business, but a reader of this comment should not
+   * come away thinking the trade has no downstream.
    *
    * The 3.5s hold sits above the 2s bound and below the 5s budget, so without
-   * the bound this call acquires at 3.5s and succeeds.
+   * the bound this call acquires at 3.5s and succeeds. `outcome.ok === false`
+   * is therefore the discriminator, `/55P03/` names the mechanism, and
+   * `waited > 1_000` excludes an instant unrelated failure — see the sibling
+   * guard in `addToWaitlist + removeFromWaitlist (DB)` above for why there is
+   * no upper bound on `waited` and why the ceiling that used to be here could
+   * not fail.
    */
   it('gives up on the 2s bound when another transaction holds the class row', async () => {
     // Its own full class: max 1, one filler registered (making it full,
@@ -902,7 +943,6 @@ describe('promoteNext (DB)', () => {
       expect(outcome.ok).toBe(false);
       if (!outcome.ok) expect(outcome.err).toMatch(/55P03/);
       expect(waited).toBeGreaterThan(1_000);
-      expect(waited).toBeLessThan(3_400);
     } finally {
       await prisma.waitlistEntry.deleteMany({ where: { classId: lockedClassId } });
       await prisma.registration.deleteMany({ where: { classId: lockedClassId } });
@@ -1191,14 +1231,21 @@ describe('claimSpot (DB)', () => {
    * and serialize. That is not what the bound is for — each claim holds the
    * row only for its own short transaction, so 2s covers a deep queue
    * comfortably. What the bound stops is a claim arriving while an UNRELATED
-   * long holder has the row: a GDPR erasure holds every class a student
-   * touched for up to 20s.
+   * long holder has the row: a GDPR erasure holds, for up to 20s, every class
+   * the erased student was QUEUED in — `deleteStudentAccount` pre-locks on a
+   * join over `WaitlistEntry` (`gdpr.ts`), across every entry status, not on
+   * registrations. A class the student was registered in but never queued in
+   * is written UNLOCKED by that same erasure, a distinction `handleSpotFreed`
+   * makes deliberately in `waitlist.ts` — so "every class a student touched"
+   * would name a wider lock set than the one that actually exists.
    *
    * The 3.5s hold is the guard. It sits above the 2s bound and below Prisma's
    * 5s default budget, so WITHOUT the bound this call acquires at 3.5s and
    * succeeds — reverting the site fails `expect(outcome.ok).toBe(false)`
-   * rather than hanging the suite. `toBeLessThan(3_400)` is below the hold on
-   * purpose: that is what separates "gave up at 2s" from "waited it out".
+   * rather than hanging the suite. That failure IS what separates "gave up at
+   * 2s" from "waited it out"; see the sibling guard in
+   * `addToWaitlist + removeFromWaitlist (DB)` above for why there is no upper
+   * bound on `waited` and why the ceiling that used to be here could not fail.
    */
   it('gives up on the 2s bound when another transaction holds the class row', async () => {
     // Same state the passing test above builds: in the claim window, one
@@ -1235,7 +1282,6 @@ describe('claimSpot (DB)', () => {
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) expect(outcome.err).toMatch(/55P03/);
     expect(waited).toBeGreaterThan(1_000);
-    expect(waited).toBeLessThan(3_400);
   }, 20_000);
 });
 

@@ -426,10 +426,24 @@ export async function removeFromWaitlist(
  * `lockClassRow`'s bound now covers the rest of this transaction too, not
  * just the lock itself (see its docblock in `db-locks.ts`) — so
  * `activateRegistration`, the `teacherStudent.upsert` below and
- * `reorderWaitingEntries` inherit the 2s budget, where before this
- * conversion none of them had any timeout at all. A bust surfaces as a
- * `55P03` that aborts the whole promotion; `waitlist-reconciliation.ts` is
- * what makes that recoverable.
+ * `reorderWaitingEntries` each run under a 2s ceiling on any lock THEY wait
+ * on. PER ACQUISITION, though, not a shared 2s allowance across them: `SET
+ * LOCAL lock_timeout` arms afresh for every lock a statement waits on, so what
+ * is bounded is each wait, and the total is 2s × however many contended
+ * acquisitions this transaction makes — a number that is not fixed, since
+ * `reorderWaitingEntries` loops one `update` per row it renumbers. `db-locks.ts`
+ * warns about exactly this and `docs/lock-order.md` records the measurement
+ * (two rows, releases at 1.5s and 3.0s, one waiter at 2s, succeeded after
+ * 2.67s). The transaction opened below carries Prisma's default 5s budget, so
+ * reading this as "the 2s budget" and sizing from it would under-size it.
+ *
+ * What those three lacked before the #104 conversion was a LOCK timeout, not
+ * a timeout: they ran under Prisma's default 5s interactive-transaction
+ * budget, which is the very thing `waitlist-reconciliation.ts` documents
+ * blowing at 7014ms — Prisma cannot cancel a statement already blocked inside
+ * Postgres, only refuse to start the next one. A bust surfaces as a `55P03`
+ * that aborts the whole promotion; `waitlist-reconciliation.ts` is what makes
+ * that recoverable.
  *
  * Returns the updated waitlist entry, or null when the queue is empty.
  * Throws WaitlistPromotionError when a guard rejects.
@@ -918,8 +932,18 @@ async function hasActiveRegistration(
  * have already taken one — `lockClassRow` from `autoTransitionToInProgress`
  * and `completeClass`, or the CAS `UPDATE` from `transitionClass`. Either
  * way, none of the three can race a `lockClassRow` holder into corrupting
- * anything. The first two still do not bound their own wait the way
- * `lockClassRow` does, and `deleteStudentAccount`'s `reorderWaitingEntries`
+ * anything. Only the FIRST of those two is still unbounded: the transition
+ * route's cancel branch issues its CAS `class.updateMany` with no
+ * `setLockTimeout` ahead of it, so it waits as long as it takes. (Its service
+ * sibling `transitionClass` DOES bound its own CAS, as of #216/#182 — but the
+ * route intercepts `cancelled` and never reaches it.) `deleteTeacherAccount`
+ * is bounded: it calls `lockClassRowsOrdered` (`gdpr.ts`) immediately before
+ * that cancel loop, and that helper issues `setLockTimeout`, which governs
+ * every statement left in the transaction. This paragraph claimed both were
+ * unbounded until #104's review found otherwise; `docs/lock-order.md`'s
+ * version of the same claim was corrected a round before this one was, which
+ * is the twin-artifact failure this file keeps hitting.
+ * `deleteStudentAccount`'s `reorderWaitingEntries`
  * loop runs under the 2s bound its own transaction sets unconditionally
  * (`setLockTimeout` as that transaction's first statement, `gdpr.ts`) for
  * every statement it runs, these two mutators' rows included. That used to

@@ -178,9 +178,22 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  *
  * Every `SELECT … FOR UPDATE` on a `Class` row goes through this function or
  * `lockClassRowsOrdered` below now — no site keeps its own inline statement.
- * `grep -rn "FOR UPDATE" src/` (excluding comments and tests) is the check;
- * a prose list of sites here would only go stale the way this one did, which
- * is why it was deleted rather than rewritten to say "zero remain."
+ * The check, filters included, because an unfiltered grep returns roughly 70
+ * lines of prose:
+ *
+ *   grep -rn "FOR UPDATE" src/ --include='*.ts' | grep -v "\.test\.ts:" \
+ *     | grep -vE ":[0-9]+: *(\*|//)"
+ *
+ * Expect FOUR hits, and two of them are not violations: the two helpers in
+ * this file, plus `claimTemplateForGeneration` (`class-generator.ts`) and
+ * `claimStudioTemplateForGeneration` (`studio-class-generator.ts`), which lock
+ * a `ClassTemplate` / `StudioClassTemplate` row and not a `Class` row at all —
+ * so the claim above holds over them rather than being broken by them. They
+ * are named here because otherwise the only way to discharge them is to open
+ * both generators. A prose list of the CALL SITES would still go stale the way
+ * the old one did, which is why that was deleted rather than rewritten to say
+ * "zero remain"; this is a list of the grep's own noise, which changes only
+ * when a new raw statement is added.
  *
  * `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) adopting
  * `lockClassRowsOrdered` below (#237) was a real behaviour change on the

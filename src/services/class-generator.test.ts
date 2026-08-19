@@ -1497,10 +1497,18 @@ describe('generateClassInstances (DB)', () => {
    * The archive transaction is bounded by the same `SET LOCAL`, and the
    * writer it can lose to is not the sweep — it is an ordinary booking.
    * `POST /api/registrations` holds its `Class` row `FOR UPDATE` for the length
-   * of its transaction and is one of the five deliberately unbounded sites
-   * `db-locks.ts` lists, so "teacher archives a recurring class while a student
-   * is booking one of its instances" now ends in `busy` at 2s where it used to
-   * wait. That trade is deliberate; it was also untested.
+   * of its transaction, and it is the HOLD that does the damage here: #104
+   * bounded how long that route WAITS for the row (it takes the lock through
+   * `lockClassRow` now, not an inline statement), and bounded nothing about
+   * how long it keeps it. So "teacher archives a recurring class while a
+   * student is booking one of its instances" ends in `busy` at 2s where it
+   * used to wait. That trade is deliberate; it was also untested.
+   *
+   * This used to say the booking was "one of the five deliberately unbounded
+   * sites `db-locks.ts` lists". Wrong three ways after #104: that list is gone
+   * (the helpers are the convention now), the route's wait is bounded, and the
+   * count had already been stale since #237. Only the hold survives, and the
+   * hold is the part this test is about.
    *
    * Named for the `deleteMany` originally, back when that was the only
    * statement in this transaction that could contend for a `Class` row it
