@@ -162,10 +162,10 @@ export async function processEmailFallback(
       //    draft/open/in_progress class of theirs in it too. All three
       //    writers of a teacher-recipient notification now gate on one of
       //    those statuses under the class row lock that transaction holds:
-      //    `POST /api/registrations` takes `FOR UPDATE` directly;
-      //    `completeClass` and `class-transitions`' auto-cancel each take it
-      //    via `lockClassRow`. So no fresh one can be written afterwards —
-      //    for a class this transaction actually reaches. Its own `findMany`
+      //    `POST /api/registrations`, `completeClass` and `class-transitions`'
+      //    auto-cancel each take it via `lockClassRow`. So no fresh one can
+      //    be written afterwards — for a class this transaction actually
+      //    reaches. Its own `findMany`
       //    for `upcoming` classes runs unlocked, before the per-class CAS
       //    loop below it; a class created after that read is never touched
       //    by this transaction at all, so nothing here blocks a fresh

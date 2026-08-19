@@ -249,9 +249,9 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
       // A typical-case bound, not a guarantee: `promoteNext`'s `Class` row
       // lock (`lockClassRow`, `db-locks.ts`) is bounded at 2s PER ACQUISITION,
       // but this tick calls it once per contended class in `classes`
-      // (`reconcileOne`'s loop), so several contended classes in one pass can
-      // still add up past the interval, and the `job.running` guard then
-      // drops the ticks it overruns.
+      // (`reconcileWaitlists`'s loop), so several contended classes in one
+      // pass can still add up past the interval, and the `job.running` guard
+      // then drops the ticks it overruns.
       //
       // Its own job name rather than a fourth sweep inside `class-transitions`,
       // so its `lastRunAt` / `lastSuccessAt` describe this sweep alone — and

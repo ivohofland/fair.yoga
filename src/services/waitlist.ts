@@ -895,9 +895,9 @@ async function hasActiveRegistration(
  * nothing it raced could have manufactured the standing request this
  * withdraws; the gap was skew in the position numbering, not a wrong
  * promotion.) `POST /api/registrations` locks and renumbers the same way,
- * outside this module (`src/app/api/registrations/route.ts` — its own
- * `FOR UPDATE` on the `Class` row, and the `reorderWaitingEntries` call in
- * its waitlist-resolution step).
+ * outside this module (`src/app/api/registrations/route.ts` — `lockClassRow`,
+ * the same helper this module's functions call, and the
+ * `reorderWaitingEntries` call in its waitlist-resolution step).
  * This paragraph claims nothing about renumbering writers beyond the ones
  * named here. `deleteStudentAccount` (`gdpr.ts`) was the last renumbering
  * writer that ran fully unlocked — closed in #174 Task 5 — so as of that

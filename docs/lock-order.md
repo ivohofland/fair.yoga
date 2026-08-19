@@ -16,12 +16,12 @@ type can prevent the cycle forming — only the order can.
 
 `Class` is not merely first in the list — every site below that touches more
 than one of these tables also holds `Class`'s row lock before touching any of
-the others, *when it touches `Class` at all*. Three different statements take
-that lock and all three count: `lockClassRow`, an inline
-`SELECT ... FOR UPDATE`, and a compare-and-swap `class.updateMany` (an
-`UPDATE` locks the rows it matches — `deleteTeacherAccount` takes its
-per-class lock this way and no other, so a version of this sentence that names
-only the first two writes it out of the rule it is subject to). `POST
+the others, *when it touches `Class` at all*. Two different statements take
+that lock and both count: `lockClassRow` (or `lockClassRowsOrdered`), and a
+compare-and-swap `class.updateMany` (an `UPDATE` locks the rows it matches —
+`deleteTeacherAccount` takes its per-class lock this way and no other, so a
+version of this sentence that names only the first writes it out of the rule
+it is subject to). `POST
 /api/registrations` writes `Registration` before `WaitlistEntry`;
 `promoteNext` can write `WaitlistEntry` before `Registration`, but only
 conditionally (the stale-head-drop loop — it runs only when the current queue
@@ -157,12 +157,12 @@ a call):
    about its own list, and #237 is the response. What holds now, and is
    checkable rather than remembered: **every multi-row lock is
    `lockClassRowsOrdered` (`db-locks.ts`), and it is the only production
-   `FOR UPDATE OF c` in `src/`.** The single-id `FOR UPDATE`s are gone. Every
-   one that used to be inline — three in `waitlist.ts` (`addToWaitlist`,
-   `promoteNext`, `claimSpot`) and one in `POST /api/registrations` — now
-   goes through `lockClassRow`'s own bounded body, the same helper
-   `removeFromWaitlist` and `handleSpotFreed` already reached the lock
-   through rather than inlining it.
+   `FOR UPDATE OF c` in `src/`.** The single-id `FOR UPDATE`s no longer live at
+   the call sites. Every one that used to be inline — three in `waitlist.ts`
+   (`addToWaitlist`, `promoteNext`, `claimSpot`) and one in
+   `POST /api/registrations` — now goes through `lockClassRow`'s own bounded
+   body instead, the same helper `removeFromWaitlist` and `handleSpotFreed`
+   already reached the lock through rather than inlining it.
    `grep -rn "FOR UPDATE" src/ --include='*.ts' | grep -v "\.test\.ts:" |
    grep -vE ":[0-9]+: *(\*|//)"` is the check, not a number kept here: a
    count that stays right while the membership changes is the one error

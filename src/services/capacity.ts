@@ -71,12 +71,13 @@ export interface SeatCount {
  * module exists to fix. Every caller takes that lock first: all five write
  * paths named above now go through `lockClassRow` (`db-locks.ts`).
  *
- * This function deliberately does NOT take the lock itself. Taking it here
- * would not close the gap that matters — nothing would stop a caller from
- * holding the lock on a DIFFERENT class and passing this one's id, since the
- * brand only rejects a bare client and proves no more than that. That gap is
- * #219's, not this one's; see the precondition paragraph below for the
- * options on file to close it structurally.
+ * This function deliberately does NOT take the lock itself, and the reason is
+ * SCOPE, not efficacy: this branch changes no behaviour, and having this
+ * helper acquire a lock its callers do not already expect it to take would be
+ * one. Every caller already holds the lock before calling in. Whether
+ * `readSeatCount` should take it too — closing the gap the precondition below
+ * names — is #219's decision to make, not a change to fold into a
+ * documentation-only branch.
  *
  * It reads the class rather than accepting one, so a caller cannot compare a
  * freshly-locked count against a `maxStudents` it read BEFORE taking the lock.

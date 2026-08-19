@@ -1231,10 +1231,9 @@ export async function archiveOrUnarchiveTemplate(
         const now = new Date();
         const today = startOfLocalDay(now, timeZone);
 
-        // A lock is not unavailable — `POST /api/registrations` does take
-        // `SELECT … FOR UPDATE` on the class row inline rather than through
-        // `lockClassRow` (`db-locks.ts` lists it as one of five deliberate inline
-        // sites) — and this transaction now takes one too, immediately below.
+        // A lock is not unavailable — `POST /api/registrations` already takes
+        // the `Class` row lock too, through `lockClassRow` (`db-locks.ts`) —
+        // and this transaction now takes one too, immediately below.
         // An earlier draft of this comment argued that locking every candidate
         // class would work and was simply worse than a second read, because it
         // blocks booking on every future class of the template for the

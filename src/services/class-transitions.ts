@@ -270,9 +270,8 @@ export async function autoCancelClasses(
         // writer that CREATES a registration takes the same Class row lock
         // first — `POST /api/registrations` and `waitlist.ts`'s
         // `activateRegistration` (reached through `promoteNext` and
-        // `claimSpot`), each via its own inline `SELECT … FOR UPDATE`
-        // rather than through this helper; `db-locks.ts` records those
-        // inline sites as deliberately not adopting it. So this serializes
+        // `claimSpot`), each via `lockClassRow` — the same helper this
+        // transaction takes it through below. So this serializes
         // against all of them: one already inside its own lock when this
         // transaction starts is finished (committed or rolled back) before
         // this count runs; one arriving after this count has been read
@@ -339,7 +338,10 @@ export async function autoCancelClasses(
         // inline `SELECT ... FOR UPDATE` on the class row, which is what
         // `addToWaitlist`, `promoteNext`, `claimSpot`,
         // `withdrawWaitingEntriesForTeacher` and `POST /api/registrations` all
-        // do — and the universal claim is false regardless: issue #183 is open
+        // did AT THE TIME (issue #104 later converted every one of them onto
+        // `lockClassRow`/`lockClassRowsOrdered`, so this mechanism is gone
+        // from today's roster, not from the checklist below) — and the
+        // universal claim is false regardless: issue #183 is open
         // precisely because `deleteStudentAccount`'s write set can exceed its
         // lock set. It replaced a correct hand-written roster with a general
         // rule, on the reasoning that rosters go stale. They do; a false
