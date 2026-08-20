@@ -381,13 +381,22 @@ describe('updateTeacherSchema.pageSlug', () => {
  * createWaitlistSchema, claimWaitlistSchema, createAnnouncementSchema), so this
  * register doesn't — and shouldn't — name them. A new route that accepts one of
  * those with no ownership check would pass this guard.
+ *
+ * `isActive`, `createdAt` and `updatedAt` were added by #114. `isActive` is the
+ * one with teeth: it exists on exactly two models (`ClassTemplate`,
+ * `StudioClassTemplate`), and on both a plain `PUT` flipping it would bypass
+ * the transaction-and-generate path `PATCH` owns. Both template families now
+ * also refuse it at compile time, so this is the generalisation — it covers
+ * every schema in the repo, including ones nobody has written yet. Measured
+ * when added: no exported schema declared any of the three, so none needed an
+ * EXPECTED entry.
  */
 const SERVER_OWNED_FIELDS = [
-  'accountId', 'archivedAt', 'cancelledAt', 'claimedAt', 'createdById',
-  'effectiveTeacherRate', 'id', 'isArchived', 'isPublic', 'paidAt', 'photoUrl',
-  'settingsLocked', 'status', 'studentId', 'teacherId', 'templateId',
-  'tierAtBooking', 'tierSelectedAt', 'totalRevenue', 'totalStudents',
-  'withdrawnCount',
+  'accountId', 'archivedAt', 'cancelledAt', 'claimedAt', 'createdAt',
+  'createdById', 'effectiveTeacherRate', 'id', 'isActive', 'isArchived',
+  'isPublic', 'paidAt', 'photoUrl', 'settingsLocked', 'status', 'studentId',
+  'teacherId', 'templateId', 'tierAtBooking', 'tierSelectedAt', 'totalRevenue',
+  'totalStudents', 'updatedAt', 'withdrawnCount',
 ] as const;
 
 // Every name above must be a real column on one of the fourteen models in this
@@ -464,9 +473,11 @@ describe('server-owned fields', () => {
       'archivedAt',
       'cancelledAt',
       'claimedAt',
+      'createdAt',
       'createdById',
       'effectiveTeacherRate',
       'id',
+      'isActive',
       'isArchived',
       'isPublic',
       'paidAt',
@@ -480,6 +491,7 @@ describe('server-owned fields', () => {
       'tierSelectedAt',
       'totalRevenue',
       'totalStudents',
+      'updatedAt',
       'withdrawnCount',
     ]);
   });

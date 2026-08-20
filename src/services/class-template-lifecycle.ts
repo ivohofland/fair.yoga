@@ -3,7 +3,7 @@
  * `PUT /api/class-templates/[id]`.
  *
  * The sibling of `class-lifecycle.ts`'s update section (#82 is #79 one route
- * over), with the same five pins. Three things deliberately differ, and are
+ * over), with the same six pins. Three things deliberately differ, and are
  * worth knowing before reading this as a mirror:
  *
  *   - Ownership lives here, not in the route. `updateClass` takes no
