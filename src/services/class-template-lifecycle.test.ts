@@ -2062,4 +2062,103 @@ describe('pauseOrResumeTemplate (DB)', () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.action).toBe('unchanged');
   });
+
+  /**
+   * The claim's observable effect, stated as a race rather than as a lock:
+   * while `pauseOrResumeTemplate` generates, a concurrent `Class` insert for
+   * this template cannot proceed — and with the claim removed, it can.
+   *
+   * The mechanism is the mode. Inserting a `Class` takes `FOR KEY SHARE` on
+   * its `ClassTemplate` for FK integrity. `claimTemplateForGeneration` takes
+   * `FOR UPDATE`, which conflicts with it; the CAS above it takes
+   * `FOR NO KEY UPDATE`, which does not. So the claim is the only thing in
+   * this transaction that can block an inserting writer, and this test drives
+   * the collision from the other side: the holder takes `FOR KEY SHARE`
+   * first, and the resume must then fail to get its `FOR UPDATE` inside the
+   * 2s `setLockTimeout` bound and answer `busy`.
+   *
+   * The holder's date is deliberately OUTSIDE the generator's four-week
+   * window (`futureOn(60)`), so nothing here is a unique-index collision.
+   * That is what makes the test discriminate: with the claim removed the
+   * resume takes only `FOR NO KEY UPDATE`, never conflicts with the holder,
+   * finds no colliding date, and succeeds. Measured both ways — see the
+   * mutation record.
+   *
+   * Why not a `FOR KEY SHARE NOWAIT` probe interposed on the generator's own
+   * queries, which is what an earlier version of this test did: a second
+   * `PrismaClient`'s query does not run while a Prisma interactive
+   * transaction is in flight in the same process. Measured — the probe
+   * returned after 9982ms, i.e. only once the resume's 10s transaction
+   * budget expired and released everything, so it reported "granted" whether
+   * or not the claim was ever held. `NOWAIT` was never the problem: the same
+   * statement against a psql-held `FOR UPDATE` is refused in 5ms through this
+   * same Prisma client. The probe simply never ran while the lock existed.
+   */
+  it(
+    'blocks a concurrent Class insert while generating, and answers busy',
+    async () => {
+      const t = await makeTemplate('Claim Blocks Insert');
+      await prisma.classTemplate.update({ where: { id: t.id }, data: { isActive: false } });
+
+      const holder = new PrismaClient();
+      let release!: () => void;
+      let holdEstablished!: () => void;
+      const released = new Promise<void>((r) => {
+        release = r;
+      });
+      const holding_ = new Promise<void>((r) => {
+        holdEstablished = r;
+      });
+
+      const holding = holder.$transaction(
+        async (tx) => {
+          // The FK check on this insert is what takes `FOR KEY SHARE` on the
+          // template row. Far outside the generator's window, so the resume
+          // has no unique-index reason to wait on us — only a lock reason.
+          await tx.class.create({
+            data: {
+              teacherId,
+              teacherRoomId,
+              templateId: t.id,
+              classType: 'Claim Blocks Insert',
+              date: futureOn(60),
+              startTime: '20:00',
+              durationMinutes: 60,
+              roomCost: 15,
+              minRate: 10,
+              targetRate: 20,
+              minStudents: 1,
+              maxStudents: 8,
+              status: 'open',
+            },
+          });
+          holdEstablished();
+          await released;
+        },
+        { timeout: 30_000 },
+      );
+
+      try {
+        await holding_;
+        const startedAt = Date.now();
+        const result = await pauseOrResumeTemplate(prisma, t.id, teacherId, 'active');
+        const waited = Date.now() - startedAt;
+
+        expect(result).toEqual({ ok: false, reason: 'busy' });
+        // The 2s bound, not the 10s transaction budget: proves the wait was a
+        // lock wait cut short by `setLockTimeout`, not a transaction expiry.
+        expect(waited).toBeGreaterThanOrEqual(1_800);
+        expect(waited).toBeLessThan(5_000);
+
+        // The rollback took the flag with it.
+        const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
+        expect(after.isActive).toBe(false);
+      } finally {
+        release();
+        await holding;
+        await holder.$disconnect();
+      }
+    },
+    30_000,
+  );
 });
