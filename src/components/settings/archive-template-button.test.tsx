@@ -52,6 +52,30 @@ describe('ArchiveTemplateButton', () => {
     );
   });
 
+  /**
+   * The class-family twin of `archive-studio-template-button.test.tsx`'s
+   * "reports that un-archiving left the template paused". Both directions of
+   * `archiveOrUnarchiveTemplate` force `isActive: false` and the archive has
+   * already deleted the future classes, so the teacher lands on a paused
+   * template with an empty window; until #116 the class family said nothing
+   * about it, which let them leave believing the class was restored.
+   *
+   * DOM-level rather than resolver-level on purpose: `template-action-messages
+   * .test.ts` pins the string, this pins that the button actually renders it.
+   */
+  it('reports that un-archiving left the recurring class paused', async () => {
+    stubFetch({ ok: true, json: async () => ({ data: { action: 'unarchived' } }) });
+    render(<ArchiveTemplateButton templateId="tpl-1" isArchived={true} />);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    expect(
+      await screen.findByText(
+        'Un-archived. This recurring class is paused — resume it to put classes back on your schedule.',
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('sends state=unarchived when the template is archived', async () => {
     stubFetch({ ok: true, json: async () => ({ data: { action: 'unarchived' } }) });
     render(<ArchiveTemplateButton templateId="tpl-1" isArchived={true} />);

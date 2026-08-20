@@ -164,8 +164,22 @@ describe('resolveTemplateConfirmation', () => {
     expect(resolveTemplateConfirmation({ action: 'unchanged' })).toBeNull();
   });
 
+  /**
+   * The literal, not the constant. Comparing against `UNARCHIVE_MESSAGE` pins
+   * which ARM answers and nothing about what it says — measured, rewording the
+   * constant to the studio's "This template is paused" passed this file and
+   * both component files. That is precisely the regression the constant's own
+   * docblock singles out, so the string is spelled out here the way
+   * `resolveStudioConfirmation`'s twin spells out its own.
+   */
   it('speaks on un-archive for the class family', () => {
-    expect(resolveTemplateConfirmation({ action: 'unarchived' })).toBe(UNARCHIVE_MESSAGE);
+    expect(resolveTemplateConfirmation({ action: 'unarchived' })).toBe(
+      'Un-archived. This recurring class is paused — resume it to put classes back on your schedule.',
+    );
+    // Still the exported constant, so a caller importing it gets the same text.
+    expect(UNARCHIVE_MESSAGE).toBe(
+      'Un-archived. This recurring class is paused — resume it to put classes back on your schedule.',
+    );
   });
 });
 
