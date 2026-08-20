@@ -177,12 +177,18 @@ void _studioTemplateAllowlistHasNoStaleFields;
  * into the allowlist — the reflexive grant #79 is about. This is the set where
  * that repair is never right.
  *
- * A runtime guard covers five of these already and is worth knowing about,
- * because it is weaker in exactly the way that matters: `schemas.test.ts`'s
- * `server-owned fields` register walks every exported schema and refuses
- * `id`, `teacherId`, `isArchived`, `archivedAt` and `withdrawnCount`. But its
- * failure message says "add it to EXPECTED with a reason" — so *its* quickest
- * repair IS the reflexive grant. The pin below is what refuses that.
+ * A runtime guard covers all eight of these already and is worth knowing
+ * about, because it is weaker in exactly the way that matters:
+ * `schemas.test.ts`'s `server-owned fields` register walks every exported
+ * schema and refuses every name on this list. But its failure message says
+ * "add it to EXPECTED with a reason" — so *its* quickest repair IS the
+ * reflexive grant. The pin below is what refuses that.
+ *
+ * This paragraph said "five" until review, naming the five the register held
+ * when the pins were written. #114's own later task added `isActive`,
+ * `createdAt` and `updatedAt` to `SERVER_OWNED_FIELDS`, and the count was
+ * never re-derived — a claim falsified three commits later by the same
+ * branch that wrote it.
  */
 type PlainUpdateForbiddenStudioTemplateField =
   | 'id'
@@ -210,10 +216,25 @@ type PlainUpdateForbiddenStudioTemplateField =
  * the migration.
  *
  * Available here only because the two lists partition the model exactly —
- * 6 + 8 = 14 columns, measured, not counted off `schema.prisma`. If a future
- * column is legitimately neither teacher-editable nor forbidden, this pin is
- * the wrong shape and should be replaced rather than have a name pasted into
- * one of the lists to silence it.
+ * 6 + 8 = 14 columns, measured, not counted off `schema.prisma`.
+ *
+ * If a future column is legitimately neither teacher-editable nor forbidden,
+ * do not paste a name into either list to silence this. Read "replaced" as
+ * "given a third operand", not "deleted": add a
+ * `ServerManagedStudioTemplateColumn` union and `Exclude` against
+ * `Allowlist | Forbidden | ServerManaged`. That keeps completeness while
+ * letting the third category exist.
+ *
+ * Measured, on the two single-edit escapes from a red pin here: pasting the
+ * name into the ALLOWLIST does not work — the reverse pin
+ * (`…AllowlistHasNoStaleFields`) fires instead, and silencing that needs a
+ * second edit in `schemas.ts` which for any forbidden name also reddens the
+ * `server-owned fields` register. Pasting it into the FORBIDDEN list does
+ * work and leaves every other pin green. So the only one-edit escape is the
+ * deny direction, which is the safe one — the cost is documentation rot, not
+ * a privilege grant: the forbidden list's docblock claims every name on it is
+ * owned by a guarded path, and a paste-in falsifies that with nothing
+ * checking.
  */
 const _studioTemplateListsPartitionTheModel: NoneOf<
   Exclude<
@@ -228,10 +249,18 @@ void _studioTemplateListsPartitionTheModel;
  * `StudioClassTemplate` column. Without this a typo (`isActiv`) would sit there
  * protecting nothing while looking like protection.
  *
- * Overlaps the partition pin above — a typo trips both — and is kept anyway,
- * because the two name different halves of the same mistake. This one says
- * "`isActiv` is not a column"; the partition pin says "`isActive` is
- * unclassified". The first is the one that points at the fix.
+ * Kept for substance, not only for phrasing — an earlier version of this
+ * comment undersold it as a message-quality tiebreak. It is the ONLY pin that
+ * observes a name ADDED to the forbidden list that is not a column. Every
+ * other pin either has the forbidden list on the excluding side of an
+ * `Exclude` (the partition pin) or never mentions it at all, so junk added
+ * here is invisible to all five. Measured: adding `'publishedAt'` to the list
+ * below leaves the partition pin and both allowlist pins green and fails only
+ * this one. Delete it and that mutation goes silent.
+ *
+ * A typo does trip both, and there the messages differ usefully: this one says
+ * "`isActiv` is not a column", the partition pin says "`isActive` is
+ * unclassified", and the first points at the fix.
  */
 const _studioTemplateForbiddenColumnsExist: NoneOf<
   Exclude<
@@ -280,7 +309,17 @@ export type UpdateStudioClassTemplateResult =
  * updateStudioClassTemplate(db, id, me, patch)`) and it never triggers, so a
  * value with no matching type declaration would sail straight through to
  * `update`. Marking each forbidden key optional-and-`never` forces TypeScript
- * to reject that argument however it arrives.
+ * to reject that argument however it arrives *as a typed object*.
+ *
+ * That qualifier is measured, not hedging. After the intersection the type has
+ * zero required properties, and TypeScript will not use a source's index
+ * signature to satisfy a target's named optional properties — so
+ * `const bag: Record<string, unknown>` assigns to this parameter with no
+ * error, and `updateStudioClassTemplate(db, id, me, await req.json() as
+ * Record<string, unknown>)` would type-check and write whatever the bag holds.
+ * Bounded today by there being exactly one production caller
+ * (`api/studio-class-templates/[id]/route.ts`) which passes a `z.infer` of a
+ * `.strict()` schema. Worth knowing before adding a second.
  *
  * No instance sync. Unlike the class family, editing `dayOfWeek` or
  * `startTime` here leaves generated `StudioClass` rows on the superseded
@@ -297,12 +336,23 @@ export async function updateStudioClassTemplate(
     Partial<Record<PlainUpdateForbiddenStudioTemplateField, never>>,
 ): Promise<UpdateStudioClassTemplateResult> {
   const template = await db.studioClassTemplate.findUnique({ where: { id: templateId } });
-  // Deliberately silent, all three of the returns in this pre-transaction
-  // block. #231's own acceptance criterion allows a failure to go unlogged
-  // when it carries no information an operator could act on, and a 404 or a
-  // 403 for a template the caller never owned is that case. The `catch` below
-  // has three returns and logs two of them; see the P2025 arm for why that one
-  // is silent too.
+  // All three returns in this pre-transaction block are silent. #231's
+  // acceptance criterion allows that when a comment says why, so here is why,
+  // one at a time — and one of them is a live question, not a settled one.
+  //
+  //   - `not_found`: a 404 for a row that is not there. A stale bookmark.
+  //     Near-zero signal; #231 accepts this case.
+  //   - `no_fields`: pure input validation with nothing behind it.
+  //   - `forbidden`: #231 explicitly does NOT settle this — "`forbidden` is
+  //     the one worth arguing about — it is an ownership rejection, and
+  //     template-id enumeration across teachers is currently invisible to an
+  //     operator." The route answers 404 and 403 differently, so id-existence
+  //     is probeable, and neither arm logs. Left silent here to match the
+  //     three sibling functions rather than to answer the question; #231 owns
+  //     answering it for the family at once. An earlier revision of this
+  //     comment claimed #231 had allowed it, which inverted the issue.
+  //
+  // The `catch` below has three returns and logs all three.
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
@@ -317,9 +367,14 @@ export async function updateStudioClassTemplate(
   try {
     return await db.$transaction(
       async (tx): Promise<UpdateStudioClassTemplateResult> => {
-        // Bounds the wait for this row. `archiveOrUnarchiveStudioTemplate`'s
-        // CAS holds it inside a transaction that then deletes and generates,
-        // so a concurrent edit really can queue behind it.
+        // Bounds the wait for this row. Two siblings hold it long enough to
+        // matter, on the same 10s budget: `archiveOrUnarchiveStudioTemplate`'s
+        // CAS holds it through a `studioClass.deleteMany` and a count, and
+        // `pauseOrResumeStudioTemplate`'s holds it from its CAS through the
+        // generation claim and generation itself. So a concurrent edit really
+        // can queue behind one. (This said "deletes and generates" of the
+        // archive alone until review; the archive never generates — that is
+        // the resume arm.)
         //
         // Without this the wait is bounded by NOTHING — a stronger statement
         // than the 10s budget below and the one that is true: Prisma checks
@@ -338,9 +393,23 @@ export async function updateStudioClassTemplate(
         // forbidden list — so disjoint from anything this write touches.
         await setLockTimeout(tx);
 
+        // The parameter's intersection guards the DOOR; this guards the
+        // WRITE. Without it the invariant holds only as long as nobody edits
+        // this call — `data: { ...data, isActive: false }` compiles clean with
+        // all six pins above still green, which is precisely what they exist
+        // to prevent, one level down.
+        //
+        // Honest about its reach: it catches the natural regression, which is
+        // a spread added to this initializer. A future edit that bypasses
+        // `writeData` entirely and spreads at the call site is not caught —
+        // there is no way to annotate an object literal in argument position.
+        // It raises the bar; it is not a proof.
+        const writeData: Prisma.StudioClassTemplateUncheckedUpdateManyInput &
+          Partial<Record<PlainUpdateForbiddenStudioTemplateField, never>> = data;
+
         const updated = await tx.studioClassTemplate.update({
           where: { id: templateId },
-          data,
+          data: writeData,
         });
 
         return { ok: true, template: updated };
@@ -355,7 +424,7 @@ export async function updateStudioClassTemplate(
     if (isTransientDbError(err)) {
       log.warn(
         { err, templateId, teacherId },
-        'studio template edit lost the template lock race — nothing committed',
+        'studio template edit lost a lock race (its own row, or the slot index against a concurrent write) — nothing committed',
       );
       return { ok: false, reason: 'busy' };
     }
@@ -370,12 +439,35 @@ export async function updateStudioClassTemplate(
     // Mapped anyway because `classifyApiError` has no P2025 branch and would
     // fall through to a bare 500 — see `isRecordNotFound`'s own docblock.
     //
-    // Silent, unlike the two arms either side of it, and that asymmetry is
-    // deliberate: this is the branch #231 calls "unreachable today", where a
-    // future statement inside the transaction could turn a genuine bug into a
-    // 404 leaving no trace. It stays silent only while this transaction holds
-    // exactly one statement that can raise P2025. Add a second and log here.
-    if (isRecordNotFound(err)) return { ok: false, reason: 'not_found' };
+    // Logs, like the two arms either side of it. An earlier revision left this
+    // silent on the grounds that it is unreachable, and that was wrong twice
+    // over.
+    //
+    // Wrong on the rule: `classifyApiError` has NO P2025 branch, so an
+    // uncaught one falls through to its default arm — 500 at `level: 'error'`,
+    // the level that pages someone. Catching it here therefore removes an
+    // ERROR line, where the other two arms each replace a `warn` with a richer
+    // `warn`. #231's acceptance criterion is exactly this: "Catching an error
+    // that `classifyApiError` would have logged never reduces what an operator
+    // sees." There is no trade being made — the 404 is the right status AND
+    // the line costs one call.
+    //
+    // Wrong on the instrument, even though the reachability claim itself
+    // holds (nothing in `src/` deletes a `Teacher`, an `Account` or a
+    // `StudioClassTemplate`; GDPR erasure sets `deletedAt`). `api-errors.ts`
+    // has already litigated depending on that kind of argument: "An earlier
+    // revision admitted only the Unknown shape and argued the raw one was
+    // unreachable. The argument was true, and it was the wrong thing to depend
+    // on." Hinging observability on a whole-repo census nothing keeps honest
+    // is the same mistake one file over. By that same census the line can
+    // never fire, so it cannot flood anything either.
+    if (isRecordNotFound(err)) {
+      log.warn(
+        { err, templateId, teacherId },
+        'studio template vanished between the ownership read and the write — nothing committed',
+      );
+      return { ok: false, reason: 'not_found' };
+    }
 
     // `dayOfWeek` and `startTime` are both teacher-editable and both in
     // `StudioClassTemplate_teacher_slot_unique` (#196), so an edit can move

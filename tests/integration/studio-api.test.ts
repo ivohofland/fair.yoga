@@ -398,6 +398,53 @@ describe('PUT /api/studio-class-templates/[id] — the teacher-editable boundary
     expect(after.isActive).toBe(true);
   });
 
+  /**
+   * The `not_found` → 404 mapping had no HTTP coverage: changing this arm to
+   * 403 left all 36 studio integration tests green. The `never` guard at the
+   * end of the handler cannot catch that — it fires on an UNHANDLED reason,
+   * never a mishandled one — and the 404 case above this describe uses `GET`
+   * only, while `PUT`'s 403 is already covered by the verb loop.
+   */
+  it('404s a PUT against an id that does not exist', async () => {
+    const res = await send(
+      'PUT',
+      ownerToken,
+      '/api/studio-class-templates/00000000-0000-0000-0000-000000000000',
+      { classType: 'Ghost Edit' },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  /**
+   * The ordering this branch introduced, ported from the class family's
+   * `class-templates-api.test.ts` twin. Body parsing now runs before the
+   * exists/ownership checks, because the service owns those and needs typed
+   * data to be called at all — so a malformed body against someone else's
+   * template is a 400, not the 403 the pre-service handler returned.
+   *
+   * Deliberate, and not an information leak, which is the half this test
+   * exists to hold: `{}` parses fine and still yields 403 (asserted below), so
+   * a prober learns strictly less than before rather than more. Without this
+   * case the route's comment cited the ownership test, which sends a valid
+   * `{ hourlyRate: 1 }` and pins neither half.
+   */
+  it('rejects a malformed body before revealing that the template is not yours', async () => {
+    const t = await makeTemplate(ownerId, 'Order Guard Studio', '18:43');
+
+    const malformed = await send('PUT', otherToken, `/api/studio-class-templates/${t.id}`, {
+      hourlyRate: 'not a number',
+    });
+    expect(malformed.status).toBe(400);
+
+    // The cheap probe still discriminates exactly as it did before, which is
+    // what makes the 400 above a loss of information to the prober, not a gain.
+    const empty = await send('PUT', otherToken, `/api/studio-class-templates/${t.id}`, {});
+    expect(empty.status).toBe(403);
+
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(Number(after.hourlyRate)).toBe(45);
+  });
+
   it(
     'answers 503 STUDIO_TEMPLATE_BUSY when an edit loses the row, and changes nothing',
     async () => {

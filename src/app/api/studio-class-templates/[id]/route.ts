@@ -44,15 +44,23 @@ export const PUT = withErrorHandler(async (
   // another teacher's template is now a 400 where it used to be a 403 — the
   // same reordering `class-templates/[id]` accepted for the same reason, and
   // not an information leak: the cheap probe is `{}`, which parses fine and
-  // still yields 403 (pinned by the ownership case in `studio-api.test.ts`).
-  // This ordering tells a prober strictly less, not more.
+  // still yields 403, because `updateStudioClassTemplate` checks ownership
+  // before its defined-value scan. This ordering tells a prober strictly less,
+  // not more — a malformed body used to be an existence oracle in its own
+  // right (404 / 403 / 400 by target) and is now a flat 400 for every target.
+  //
+  // Pinned by `studio-api.test.ts`'s "rejects a malformed body before
+  // revealing that the template is not yours", ported from the class family's
+  // twin. This comment used to cite the ownership case instead, which sends a
+  // valid `{ hourlyRate: 1 }` and pins the well-formed 403 rather than
+  // anything about ordering.
   const parsed = await parseBody(request, updateStudioClassTemplateSchema);
   if ('error' in parsed) return parsed.error;
 
   // Annotated for insurance, not for wiring: `parsed.data` already has this
   // type. It would start earning its keep if `StudioClassTemplateUpdateData`
   // ever stops being a bare `z.infer` of the schema. Left at that type rather
-  // than widened to `updateStudioClassTemplate`'s actual, narrower parameter
+  // than narrowed to `updateStudioClassTemplate`'s actual parameter
   // type — the allowlist intersected with the forbidden-field exclusions. That
   // narrowing holds only because the schema declares none of the forbidden
   // keys, which is exactly what the pins in `studio-class-template-lifecycle.ts`
@@ -89,12 +97,21 @@ export const PUT = withErrorHandler(async (
     );
   }
 
-  // Exhaustiveness: a new UpdateStudioClassTemplateResult reason becomes a
-  // compile error here rather than being silently answered with the wrong
-  // status. The success half gets no `switch`, unlike PATCH's below: that
-  // result carries an `action` discriminant with three arms, this one is a
-  // single variant with nothing to switch on, and inventing a discriminant to
-  // match the shape would be ceremony.
+  // Exhaustiveness, and only of the FAILURE half. A new
+  // `UpdateStudioClassTemplateResult` reason becomes a compile error here
+  // rather than being silently answered with the wrong status — measured: an
+  // added arm fails as `Type '{ ok: false; reason: "…" }' is not assignable to
+  // type 'never'`.
+  //
+  // It does not cover the success half, and that is the part worth stating.
+  // `if (result.ok) return respondOk(result.template)` reads one field, so a
+  // SECOND success arm carrying a new field compiles clean and drops it
+  // silently. Not hypothetical: the class twin's success arm already carries
+  // `sync`, and its route spreads it. It is also the exact failure the PATCH
+  // handlers below record twice about their own ternaries. No `switch` here
+  // because a single-variant success has no discriminant to switch on and
+  // inventing one would be ceremony — but nobody should read this guard as
+  // covering more than it does.
   const unhandled: never = result;
   return unhandled;
 });

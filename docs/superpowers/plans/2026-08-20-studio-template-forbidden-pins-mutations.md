@@ -304,9 +304,90 @@ twice (`class-template-lifecycle.test.ts:274` and `:1921`).
 
 ---
 
+### Mutation 13 — PUT `not_found` 404 → 403 (added at PR review)
+
+**Change:** line 76 of `api/studio-class-templates/[id]/route.ts` — the PUT's
+`not_found` arm only, not the three identical strings elsewhere in the file.
+
+**Must fire:** the new integration test "404s a PUT against an id that does not
+exist".
+
+**Before the test existed:** the PR-review test agent applied this same mutation
+and **all 36 studio integration tests stayed green**, with a 503→500 control on
+the same file going red to rule out stale compilation. The route's `never` guard
+cannot catch it — that fires on an *unhandled* reason, never a *mishandled* one.
+
+**Outcome (verbatim):**
+```
+AssertionError: expected 403 to be 404 // Object.is equality
+```
+
+**Reverted, re-run green.** ✅
+
+---
+
+### Mutation 14 — move the P2025 hook's delete before `query(args)` (added at PR review)
+
+**Change:** in the interposing `$extends` hook, delete the row *before* the real
+read rather than after, so the service's early `if (!template)` return fires and
+the transaction is never entered.
+
+**Must fire:** the `updateAttempted` assertion.
+
+**Before that assertion existed:** this mutation left **all 8 tests green**. The
+service has two paths to `not_found` — the early return and the P2025 guard —
+and `toEqual({ ok: false, reason: 'not_found' })` cannot tell them apart. The
+test was one fixture edit from certifying nothing.
+
+**Outcome (verbatim):**
+```
+AssertionError: the write must have been reached and raised P2025: expected false to be true
+```
+
+**Reverted, re-run green.** ✅
+
+---
+
+### Mutation 15 — the missing `afterAll`, proven by measurement rather than mutation
+
+Not a mutation: the defect was live, not hypothetical. `updateStudioClassTemplate (DB)`
+shipped without the cleanup both sibling describes carry, and
+`tests/setup/unit-db.ts` provisions `ethical_yoga_test` but never truncates it.
+
+**Measured before the fix**, against the real test database:
+
+```
+leaked update-* teachers: 52 | their templates: 149 | templates NOT theirs: 2
+DELETED studioClasses=1788 templates=149 teachers=52 accounts=52
+```
+
+149 of the 151 studio templates in the entire test database were this one
+describe's garbage, plus 1788 studio classes the generator had produced from
+them. `generateStudioClassInstances` sweeps `{ isActive: true, isArchived: false }`
+with **no teacher scope**, and `studio-class-generator.test.ts` calls it unscoped
+seven times — so every one of those was opening ~150 transactions per call, and
+growing by roughly seven templates per run, forever.
+
+**After the `afterAll`, measured across two consecutive runs:**
+
+```
+before run 1: templates=2 classes=12
+after  run 1: templates=2 classes=12
+after  run 2: templates=2 classes=12
+```
+
+Flat. The leaked rows were removed from `ethical_yoga_test` by hand, scoped to
+`Teacher.pageSlug LIKE 'studio-tpl-update-%'` — verified first as a
+`RAISE EXCEPTION` dry run, which rolls its own transaction back, before being
+re-run to commit.
+
+---
+
 ## Summary
 
-All twelve mutations fired as expected. No mutation failed to fire. The contrast
+All fifteen mutations fired as expected. No mutation failed to fire. Three of
+them (13-15) were added at PR review, and two of those closed guards that had
+already been proven vacuous by a reviewer applying the mutation first. The contrast
 in mutation 8 confirmed the partition pin's structural advantage over the
 duplicate-union form — though not in the way this record first claimed; see
 mutation 8 for the correction, and for why "green by construction" is the

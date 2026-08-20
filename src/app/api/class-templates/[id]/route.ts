@@ -55,8 +55,8 @@ export const PUT = withErrorHandler(async (
   // the pins in it — are type-checked project-wide regardless of whether this
   // file imports it; the import is for the type, not to trigger the checking.
   //
-  // Left at `ClassTemplateUpdateData` rather than widened to match
-  // `updateClassTemplate`'s actual (narrower) parameter type — the allowlist
+  // Left at `ClassTemplateUpdateData` rather than narrowed to match
+  // `updateClassTemplate`'s actual parameter type — the allowlist
   // intersected with the forbidden-field exclusions. That narrowing holds
   // only because the schema declares none of the forbidden keys, which is
   // exactly what the pins in class-template-lifecycle.ts already enforce;

@@ -1250,8 +1250,13 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
 });
 
 describe('updateStudioClassTemplate (DB)', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const futureOn = (daysFromNow: number) => new Date(Date.now() + daysFromNow * DAY);
+
   let teacherId: string;
+  let accountId: string;
   let otherTeacherId: string;
+  let otherAccountId: string;
   let counter = 0;
 
   const makeTemplate = async (owner: string, classType: string) => {
@@ -1270,8 +1275,34 @@ describe('updateStudioClassTemplate (DB)', () => {
   };
 
   beforeAll(async () => {
-    ({ teacherId } = await seedTeacher('update-owner'));
-    ({ teacherId: otherTeacherId } = await seedTeacher('update-other'));
+    ({ teacherId, accountId } = await seedTeacher('update-owner'));
+    ({ teacherId: otherTeacherId, accountId: otherAccountId } = await seedTeacher('update-other'));
+  });
+
+  // Both sibling describes carry this and it was missed here. `unit-db.ts`
+  // provisions and migrates `ethical_yoga_test` but never truncates it, so an
+  // uncleaned describe accumulates across every run forever. Measured before
+  // this was added: 151 studio templates in the test database, 150 of them
+  // active-and-unarchived, ~149 of those this describe's garbage.
+  //
+  // The cost is not a wrong assertion — the generator tests scope to their own
+  // `templateId`. It is that `generateStudioClassInstances`
+  // (`studio-class-generator.ts`) sweeps `{ isActive: true, isArchived: false }`
+  // with NO teacher scope, and `studio-class-generator.test.ts` calls it
+  // unscoped seven times. Every one of those was opening ~150 transactions —
+  // a claim, a `FOR UPDATE` and a generate apiece — growing by seven per run.
+  afterAll(async () => {
+    for (const [t, a] of [
+      [teacherId, accountId],
+      [otherTeacherId, otherAccountId],
+    ] as const) {
+      await prisma.studioClass.deleteMany({ where: { teacherId: t } });
+      await prisma.studioClassTemplate.deleteMany({ where: { teacherId: t } });
+      await prisma.session.deleteMany({ where: { accountId: a } });
+      await prisma.teacher.delete({ where: { id: t } });
+      await prisma.account.delete({ where: { id: a } });
+    }
+    await prisma.$disconnect();
   });
 
   it('returns not_found for a template that does not exist', async () => {
@@ -1364,10 +1395,19 @@ describe('updateStudioClassTemplate (DB)', () => {
 
   /**
    * The bound, proved the way `studio-class-generator.test.ts`'s twin proves
-   * the archive's: a third transaction holds the row `FOR UPDATE`, the edit
-   * queues behind it, and the timing assertions carry the claim. The lower
-   * bound proves it actually waited; the upper proves it answered near the 2s
-   * `setLockTimeout` bound rather than at the 10s budget.
+   * the archive's: a second transaction holds the row — that twin holds it
+   * through the generation claim, this one with a raw `SELECT … FOR UPDATE`,
+   * so the shared part is the shape, not the locking call. The edit queues
+   * behind it and the timing assertions carry the claim.
+   *
+   * The lower bound proves it actually waited. The upper bound guards a
+   * *raised* `LOCK_TIMEOUT_SQL` — measured: `'2s'` → `'6s'` fails it at 6032 ms
+   * and `'2s'` → `'1s'` fails the lower bound at 1024 ms, against an unmutated
+   * 2025-2030 ms. It does **not** guard "answered at the 2s bound rather than
+   * the 10s budget", as this used to say: mutation 10 established the budget
+   * can never be what answers, because Prisma cannot roll back a statement
+   * already blocked inside Postgres. Deleting `setLockTimeout` produces a
+   * hang, not a late answer, so that outcome was never reachable.
    *
    * Removing `setLockTimeout` does not slide the answer later — it stops the
    * edit settling at all, so the test dies on its own 20s timeout. That is the
@@ -1406,7 +1446,7 @@ describe('updateStudioClassTemplate (DB)', () => {
 
         expect(warn).toHaveBeenCalledWith(
           expect.objectContaining({ templateId: t.id, teacherId }),
-          'studio template edit lost the template lock race — nothing committed',
+          'studio template edit lost a lock race (its own row, or the slot index against a concurrent write) — nothing committed',
         );
       } finally {
         warn.mockRestore();
@@ -1428,15 +1468,26 @@ describe('updateStudioClassTemplate (DB)', () => {
    * through to a bare 500.
    *
    * The twin of `class-template-lifecycle.test.ts`'s "maps a delete landing
-   * between the read and the write to not_found", and simpler than it in one
-   * way: `StudioClass.template` is `onDelete: SetNull`
-   * (`prisma/schema.prisma:533`), so there are no child rows to clear first
-   * the way the class version has to `deleteMany` its `Class` rows.
+   * between the read and the write to not_found". The class version
+   * additionally clears its `Class` rows before deleting the template; that is
+   * housekeeping, **not** a constraint, and this comment used to claim
+   * otherwise. Both families' instance FK is `onDelete: SetNull` —
+   * `prisma/schema.prisma:432` for `Class.template`, `:533` for
+   * `StudioClass.template`, and `ON DELETE SET NULL` in both migrations. A
+   * reader who trusted the old wording would conclude the two schemas differ
+   * where they are identical.
    *
    * Interposed rather than raced: the extension performs the real read and
    * then deletes the row before returning it, which *is* the interleaving the
    * guard exists for, rather than a race that may or may not land. Nothing
-   * runs between the hooked read and the write except the defined-value scan.
+   * between the read and the write re-reads the row.
+   *
+   * `updateAttempted` is what makes this test about the `catch` rather than
+   * about `not_found` in general. The service has TWO paths to that reason —
+   * the early `if (!template)` return and this P2025 guard — and they are
+   * indistinguishable by result value alone. Without the flag, moving the
+   * delete to *before* `query(args)` leaves this test green while exercising
+   * the early return and never entering the transaction at all.
    *
    * Unreachable in production today — no DELETE route, and `gdpr.ts` archives
    * rather than deletes — which is exactly why it is worth pinning. #231's
@@ -1447,6 +1498,7 @@ describe('updateStudioClassTemplate (DB)', () => {
     const t = await makeTemplate(teacherId, 'P2025 Write');
 
     let deleted = false;
+    let updateAttempted = false;
     // Cast for the same reason the class family's twin needs one: the extended
     // client is missing `$on`, so it is not assignable to
     // `updateStudioClassTemplate`'s `PrismaClient`-typed `db` parameter.
@@ -1461,6 +1513,10 @@ describe('updateStudioClassTemplate (DB)', () => {
             }
             return row;
           },
+          async update({ args, query }) {
+            updateAttempted = true;
+            return query(args);
+          },
         },
       },
     }) as unknown as PrismaClient;
@@ -1470,5 +1526,66 @@ describe('updateStudioClassTemplate (DB)', () => {
     });
 
     expect(result).toEqual({ ok: false, reason: 'not_found' });
+    // The assertion that makes the one above mean the `catch` arm.
+    expect(updateAttempted, 'the write must have been reached and raised P2025').toBe(true);
+  });
+
+  /**
+   * #194, pinned rather than merely asserted in prose.
+   *
+   * `updateStudioClassTemplate`'s docblock says editing `dayOfWeek` or
+   * `startTime` leaves generated `StudioClass` rows on the superseded
+   * schedule, because this family has no `syncTemplateInstances` equivalent —
+   * and says the omission "is stated rather than left to be discovered". Until
+   * this test, the statement was the only thing enforcing it: nothing in the
+   * suite created instances, edited the template and checked what happened to
+   * them, so adding a sync would have broken no test.
+   *
+   * Deliberately a pin on today's behaviour, NOT an endorsement of it. #194
+   * carries two open product decisions (withdraw or leave standing; reuse
+   * `syncTemplateInstances` or mirror it), and whichever way they go this test
+   * is expected to be *rewritten* — that is the point. It fails loudly when
+   * someone changes the behaviour, which is what turns a prose claim into a
+   * decision someone has to make on purpose.
+   *
+   * Also covers the two allowlisted fields nothing else writes: `dayOfWeek`
+   * and `location` appear in no other update payload in this file.
+   */
+  it('leaves generated classes on the superseded schedule when dayOfWeek moves (#194)', async () => {
+    const t = await makeTemplate(teacherId, 'No Sync On Edit');
+
+    const instance = await prisma.studioClass.create({
+      data: {
+        teacherId,
+        templateId: t.id,
+        classType: 'No Sync On Edit',
+        date: futureOn(7),
+        startTime: t.startTime,
+        durationMinutes: 60,
+        location: 'Update Studio',
+        hourlyRate: 45,
+      },
+    });
+
+    const result = await updateStudioClassTemplate(prisma, t.id, teacherId, {
+      dayOfWeek: t.dayOfWeek === 4 ? 5 : 4,
+      location: 'Moved Studio',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.template.dayOfWeek).not.toBe(t.dayOfWeek);
+    expect(result.template.location).toBe('Moved Studio');
+
+    // The instance is untouched: same day, same time, same location, not
+    // cancelled, still attached. Four assertions rather than one because a
+    // future sync could plausibly move it, cancel it, re-point it or delete
+    // it, and each would be a different product answer to #194.
+    const after = await prisma.studioClass.findUnique({ where: { id: instance.id } });
+    expect(after).not.toBeNull();
+    expect(after?.startTime).toBe(instance.startTime);
+    expect(after?.location).toBe('Update Studio');
+    expect(after?.cancelledAt).toBeNull();
+    expect(after?.templateId).toBe(t.id);
   });
 });

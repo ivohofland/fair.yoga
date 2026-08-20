@@ -390,6 +390,20 @@ describe('updateTeacherSchema.pageSlug', () => {
  * every schema in the repo, including ones nobody has written yet. Measured
  * when added: no exported schema declared any of the three, so none needed an
  * EXPECTED entry.
+ *
+ * `createdAt` and `updatedAt` are a different kind of entry from every other
+ * name here, and that is worth stating rather than leaving to be noticed.
+ * The other twenty-two encode AUTHORIZATION — a client must not set this
+ * column. These two encode PRISMA HYGIENE. They are also the two most widely
+ * present columns in the schema and the two likeliest in this repo to arrive
+ * later as a legitimate top-level request key: a keyset-pagination cursor, a
+ * date-range filter, an optimistic-concurrency token. Each such arrival gets
+ * repaired by an EXPECTED entry — which is the reflexive grant this register
+ * is criticised for inviting, in the very docblock of
+ * `PlainUpdateForbiddenStudioTemplateField`. Kept because nothing declares
+ * them today and the cost of the first legitimate one is a reviewed EXPECTED
+ * line, not a silent hole; recorded because that trade is real and runs the
+ * other way from `isActive`'s.
  */
 const SERVER_OWNED_FIELDS = [
   'accountId', 'archivedAt', 'cancelledAt', 'claimedAt', 'createdAt',
