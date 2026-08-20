@@ -362,15 +362,27 @@ export async function generateClassInstances(
   // module "what gives `isArchived` meaning"; this query is the one reader
   // that still doesn't consult it.
   //
-  // LATENT, not live, and the distinction is the whole of why this is a note
-  // rather than a bug. What would keep generating here is an ACTIVE template
-  // on an ARCHIVED room, and after this branch no teacher action produces
-  // that state: door 1 refuses to archive a room an active template uses, and
-  // doors 3, 4 and 5 refuse to resume, create or move an active template onto
-  // an archived room. The one population that could already hold it was rows
-  // archived BEFORE this branch, when `isArchived` meant nothing — and the app
-  // has not shipped, so that set is empty and no backfill is owed (confirmed
-  // with the maintainer, 2026-08-19).
+  // REACHABLE and measured, not latent. What generates here is an ACTIVE
+  // template on an ARCHIVED room: door 3 of the room archive lifecycle reads
+  // `teacherRoom.isArchived` from a non-transactional `findUnique` at the top
+  // of `pauseOrResumeTemplate`, so a room archive committing between that read
+  // and the CAS below is invisible to it. Measured on #116's branch: four
+  // classes generated into a just-archived room
+  // (`{"outcome":"active","roomArchived":true,"generated":4}`). The template's
+  // own archive race IS closed by the CAS — but a CAS on `ClassTemplate`
+  // cannot carry a predicate on the related room's column.
+  //
+  // Not closed here, deliberately, and not by oversight: `room-archive.ts`
+  // (see its own KNOWN-OPEN, spec section 8) accepts this same race class from
+  // the other side rather than locking, because the alternative is a new
+  // `FOR UPDATE` node in the ordering `template-lock-order.test.ts` exists to
+  // defend. A re-read after the CAS would close the interleaving measured
+  // above and leave its mirror open — a half-guard whose residue would need
+  // documenting forever. The invariant "an active template may not sit on an
+  // archived room" is currently enforced by five application doors, every one
+  // a non-transactional read. Enforcing it once in Postgres is the structural
+  // answer and a product-and-schema decision, filed as such: issue #272, which
+  // carries the reproduction above and three options.
   //
   // Kept anyway, because what makes this query safe is an invariant held
   // elsewhere rather than anything the query itself checks. Any future writer

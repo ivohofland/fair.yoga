@@ -875,6 +875,27 @@ export async function pauseOrResumeTemplate(
   // above, so an ungated check here would also refuse the one direction the
   // brief and the test below require to keep working: a teacher must still
   // be able to stop a template whose room was archived out from under it.
+  //
+  // KNOWN-OPEN (issue 116). This guard reads `teacherRoom.isArchived` from the
+  // non-transactional `findUnique` at the top of this function, so a room
+  // archive committing between that read and the CAS below is invisible to it:
+  // measured on #116's branch, four classes generated into a just-archived
+  // room. The template's own archive race IS closed, by the CAS — but a CAS on
+  // `ClassTemplate` cannot carry a predicate on the related room's column.
+  //
+  // Not closed here, deliberately, and not by oversight: `room-archive.ts`
+  // (see its own KNOWN-OPEN, spec section 8) accepts this same race class from
+  // the other side rather than locking, because the alternative is a new
+  // `FOR UPDATE` node in the ordering `template-lock-order.test.ts` exists to
+  // defend. A re-read after the CAS would close the interleaving measured
+  // above and leave its mirror open — a half-guard whose residue would need
+  // documenting forever.
+  //
+  // The invariant "an active template may not sit on an archived room" is
+  // currently enforced by five application doors, every one a non-transactional
+  // read. Enforcing it once in Postgres is the structural answer and a
+  // product-and-schema decision, filed as such: issue #272, which carries the
+  // reproduction above and three options.
   if (desiredActive && template.teacherRoom.isArchived) {
     log.info(
       { templateId, teacherRoomId: template.teacherRoomId },
