@@ -303,11 +303,10 @@ export async function generateInstancesForTemplate(
     // AFTER the own-date branch above, deliberately — and that half of the
     // order IS pinned: reversing it reddens the steady-state re-run case,
     // which is why it is stated as a guarantee where the next paragraph is
-    // not. `heldWeeks` contains this
-    // candidate's own week too, so checking week-first would mask
-    // `already_generated` on every steady-state re-run — and the two are not
-    // interchangeable downstream, since `countSkipReasons` counts
-    // `already_this_week` into a number that reaches the teacher and
+    // not. `heldWeeks` contains this candidate's own week too, so checking
+    // week-first would mask `already_generated` on every steady-state re-run —
+    // and the two are not interchangeable downstream, since `countSkipReasons`
+    // counts `already_this_week` into a number that reaches the teacher and
     // deliberately ignores `already_generated`. That chain is real now rather
     // than planned: the count runs `pauseOrResumeTemplate` → the PATCH
     // `active` arm → `resumeMessage`, which renders it as "N dates are still

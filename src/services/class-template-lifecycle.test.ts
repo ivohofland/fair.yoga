@@ -246,14 +246,14 @@ describe('updateClassTemplate (DB)', () => {
     // `TemplateSyncResult`'s six counts — `synced`, `regenerated`, `refilled`,
     // `blockedByCancelled`, `slotTaken`, `kept`, counted off the deleted
     // declaration at `5db8dca:src/services/template-sync.ts` rather than
-    // remembered — and it is what caught the three fields #204's review added — the reason the form could not silently
-    // keep reading a stale shape. #194 removed the propagation, so the same
-    // assertion now guards the opposite property: the success arm carries the
-    // template and nothing else, and a re-added propagation report fails
-    // here rather than reaching the client unnoticed. `Object.keys`, not
-    // `toEqual` on the whole result, because the template row's own fields
-    // are asserted above and re-listing all twenty here would make this case
-    // fail on every unrelated schema change.
+    // remembered — and it is what caught the three fields #204's review added,
+    // the reason the form could not silently keep reading a stale shape. #194
+    // removed the propagation, so the same assertion now guards the opposite
+    // property: the success arm carries the template and nothing else, and a
+    // re-added propagation report fails here rather than reaching the client
+    // unnoticed. `Object.keys`, not `toEqual` on the whole result, because the
+    // template row's own fields are asserted above and re-listing all twenty
+    // here would make this case fail on every unrelated schema change.
     //
     // Four keys, not two, since #194: `firstEffective` and `generationState`
     // are both PREDICTIONS about the sweep, not reports of work this call did,

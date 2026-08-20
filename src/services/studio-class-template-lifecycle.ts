@@ -565,8 +565,11 @@ export type PauseStudioTemplateResult =
        * These two counts do **not** sum with `added` to the window: they are
        * two of the five `SkipReason` members (`src/lib/generation.ts`), and
        * they omit three — `already_generated`, the common case; `raced`; and
-       * `already_this_week`, which is declared fifteen lines below this
-       * sentence in this same file and was missing from it. On a
+       * `already_this_week`, which this same arm carries below as
+       * `alreadyThisWeek` and which this sentence was missing. Named rather
+       * than measured: a line-distance in a comment is falsified by any edit
+       * above it and nothing checks, which is how the first correction to this
+       * sentence arrived with a wrong number of its own. On a
        * steady-state hourly sweep all three of these numbers are zero while
        * the window still has four candidate dates. The invariant that does
        * hold is `GenerationResult`'s own: `created + skipped.length` is the

@@ -866,7 +866,7 @@ export type LastScheduledClass = { date: Date; startTime: string };
  * nothing beyond the template itself, because it describes a request that
  * changed nothing.
  *
- * This paragraph used to say "resuming needs no explanation", ten lines above
+ * This paragraph used to say "resuming needs no explanation", directly above
  * the arm that now carries five counts. That is exactly the shape #164 was
  * caused by — a header disagreeing with the declaration beneath it — so it is
  * worth stating why it survived: it was true when resuming only flipped a flag,
