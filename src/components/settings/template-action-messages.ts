@@ -218,14 +218,25 @@ export function resumeMessage(
  * labelled button appeared. That is #119's failure mode one arm over, found by
  * PR review in this same function.
  *
- * The class family has the identical gap — `archiveOrUnarchiveTemplate` forces
- * `isActive: false` too (`class-template-lifecycle.ts`, and its own comment
- * says so) — and `resolveTemplateConfirmation` still answers `null` there.
- * Deliberately not fixed alongside this; tracked with the rest of the
- * class-family reporting work on #116.
+ * The class family now has `UNARCHIVE_MESSAGE`; the two differ only in the
+ * noun ("recurring class" vs "template"), matching each family's own copy.
  */
 export const UNARCHIVE_STUDIO_MESSAGE =
   'Un-archived. This template is paused — resume it to put classes back on your schedule.';
+
+/**
+ * The class family's twin of `UNARCHIVE_STUDIO_MESSAGE`, and the same failure
+ * one arm over: `archiveOrUnarchiveTemplate` forces `isActive: false` on both
+ * directions — its own comment says so — and the archive has already deleted
+ * the future classes. So a teacher who un-archives to get their weekly class
+ * back lands on a paused template with an empty window, and until #116 the
+ * only signal was that a differently-labelled button appeared.
+ *
+ * "recurring class" rather than the studio wording's "classes": that is what
+ * this family calls the thing throughout its own copy.
+ */
+export const UNARCHIVE_MESSAGE =
+  'Un-archived. This recurring class is paused — resume it to put classes back on your schedule.';
 
 /**
  * The `data` payload of a successful PATCH on a class template.
@@ -289,10 +300,15 @@ export type StudioTemplateToggleResponse =
 /**
  * Decides whether the button says anything, and what.
  *
- * `null` means "say nothing", which is the correct answer for two of the five
- * actions — and `unchanged` is the one that matters: it is what a stale second
- * tab and a retry-after-lost-response reach, so showing either confirmation
- * there would describe something that did not happen.
+ * `null` means "say nothing", which is the correct answer for exactly one of
+ * the five actions — `unchanged`. It is what a stale second tab and a
+ * retry-after-lost-response reach, so showing a confirmation there would
+ * describe something that did not happen.
+ *
+ * A `switch` with a `never` default rather than an if-chain, for the reason
+ * `resolveStudioConfirmation` records: an if-chain ending in `return null` is
+ * *accidentally* exhaustive, so a sixth arm on `TemplateToggleResponse` would
+ * compile clean and fall through to silence.
  *
  * Pure, and separated from the components for that reason: this is the seam the
  * #93 wrong-shape bug lived in (`archiveStudioMessage` had the wrong signature
@@ -300,27 +316,38 @@ export type StudioTemplateToggleResponse =
  * rather than by a test because nothing here was testable.
  */
 export function resolveTemplateConfirmation(data: TemplateToggleResponse): string | null {
-  if (data.action === 'paused') {
-    const last = data.lastScheduled;
-    return pauseMessage(last ? { date: new Date(last.date), startTime: last.startTime } : null);
-  }
-  if (data.action === 'archived') return archiveMessage(data.deleted, data.remaining);
-  if (data.action === 'active') {
-    // Checked rather than trusted, for the reason `resolveStudioConfirmation`'s
-    // own `active` case records below — the type constrains the server and
-    // nothing constrains the wire, so a counts-less `{ action: 'active' }`
-    // must be answered with silence, not a sentence about undefined.
-    if (
-      !Number.isInteger(data.added) ||
-      !Number.isInteger(data.scheduled) ||
-      !Number.isInteger(data.blockedByCancelled) ||
-      !Number.isInteger(data.slotTaken)
-    ) {
+  switch (data.action) {
+    case 'paused': {
+      const last = data.lastScheduled;
+      return pauseMessage(last ? { date: new Date(last.date), startTime: last.startTime } : null);
+    }
+    case 'archived':
+      return archiveMessage(data.deleted, data.remaining);
+    case 'active': {
+      // Checked rather than trusted, for the reason `resolveStudioConfirmation`'s
+      // own `active` case records below — the type constrains the server and
+      // nothing constrains the wire, so a counts-less `{ action: 'active' }`
+      // must be answered with silence, not a sentence about undefined.
+      if (
+        !Number.isInteger(data.added) ||
+        !Number.isInteger(data.scheduled) ||
+        !Number.isInteger(data.blockedByCancelled) ||
+        !Number.isInteger(data.slotTaken)
+      ) {
+        return null;
+      }
+      return resumeMessage(data.added, data.scheduled, data.blockedByCancelled, data.slotTaken);
+    }
+    case 'unarchived':
+      return UNARCHIVE_MESSAGE;
+    case 'unchanged':
+      return null;
+    default: {
+      const unhandled: never = data;
+      void unhandled;
       return null;
     }
-    return resumeMessage(data.added, data.scheduled, data.blockedByCancelled, data.slotTaken);
   }
-  return null;
 }
 
 /**

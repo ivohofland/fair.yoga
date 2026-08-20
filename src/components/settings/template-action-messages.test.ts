@@ -7,6 +7,7 @@ import {
   resolveStudioConfirmation,
   resumeMessage,
   resumeStudioMessage,
+  UNARCHIVE_MESSAGE,
   type StudioTemplateToggleResponse,
   type TemplateToggleResponse,
 } from './template-action-messages';
@@ -159,8 +160,12 @@ describe('resolveTemplateConfirmation', () => {
    * different hat. `active` used to be listed here too; it speaks now — its
    * own test above pins the message.
    */
-  it.each(['unarchived', 'unchanged'] as const)('says nothing for %s', (action) => {
-    expect(resolveTemplateConfirmation({ action })).toBeNull();
+  it('says nothing for unchanged', () => {
+    expect(resolveTemplateConfirmation({ action: 'unchanged' })).toBeNull();
+  });
+
+  it('speaks on un-archive for the class family', () => {
+    expect(resolveTemplateConfirmation({ action: 'unarchived' })).toBe(UNARCHIVE_MESSAGE);
   });
 });
 

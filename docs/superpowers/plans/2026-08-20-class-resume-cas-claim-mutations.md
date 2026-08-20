@@ -58,3 +58,32 @@ A plain pause was answered `archived` because `isArchived` was checked first, ma
 **Impact on test count:** Task 3 predicted +1 test; measured +0. The claim's correctness is certified by the throw's message being asserted (unreachable branch) and by the catch's enumeration, not by a lock probe.
 
 The three Task 2 mutations (CAS archive predicate, CAS already-in-state predicate, guard order) remain the effective guards for this change.
+
+## Task 4
+
+### Mutation 4: make `case 'unarchived'` return `null`
+
+**Diff:** changed `return UNARCHIVE_MESSAGE` to `return null` in `resolveTemplateConfirmation`'s `unarchived` case.
+
+**Command:** `npx vitest run src/components/settings/template-action-messages.test.ts -t 'speaks on un-archive'`
+
+**Verbatim failure output:**
+
+```
+FAIL src/components/settings/template-action-messages.test.ts > resolveTemplateConfirmation > speaks on un-archive for the class family
+AssertionError: expected null to be 'Un-archived. This recurring class is paused — resume it to put classes back on your schedule.'
+```
+
+### Mutation 5: add a sixth action to `TemplateToggleResponse` without a case
+
+**Diff:** added `| { action: 'vanished' }` to `TemplateToggleResponse` without adding a `case 'vanished'` to the switch.
+
+**Command:** `npx tsc --noEmit`
+
+**Verbatim failure output:**
+
+```
+src/components/settings/template-action-messages.ts(347,13): error TS2322: Type '{ action: "vanished"; }' is not assignable to type 'never'.
+```
+
+The `never` default catches the unhandled arm at compile time — this is the guard the switch conversion exists for, and an if-chain would have compiled clean.
