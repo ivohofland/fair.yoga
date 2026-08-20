@@ -16,11 +16,15 @@
  *     Prisma's P2025 when the row is already gone rather than silently
  *     matching zero rows the way `updateMany` does, so catching that one error
  *     code and mapping it to `not_found` is enough — no compare-and-swap
- *     needed. Scoped to `updateClassTemplate` and `pauseOrResumeTemplate`
- *     (#100; the latter's guard points back at the former): the archive section
- *     further down does use a compare-and-swap, because there the race to
- *     close is two requests applying the same transition, not a row
- *     disappearing.
+ *     needed. Scoped to `updateClassTemplate` ALONE (#100): the archive
+ *     section further down uses a compare-and-swap, because there the race to
+ *     close is two requests applying the same transition rather than a row
+ *     disappearing — and since #116 so does `pauseOrResumeTemplate`, which
+ *     this paragraph named as the second P2025 site until that change made it
+ *     the third CAS. Its `updateMany` returns a count where the old `update`
+ *     threw, so nothing under its transaction raises P2025 at all and its
+ *     `not_found` comes from the CAS's miss classification instead; its own
+ *     `catch` carries the enumeration.
  */
 
 import { Prisma } from '@prisma/client';
@@ -1128,6 +1132,21 @@ export async function pauseOrResumeTemplate(
     // *unprotected* `findUniqueOrThrow` or single-record `update` inside
     // this transaction and that changes silently. Whoever does that owes
     // this comment an enumeration of what it now covers.
+    //
+    // Never P2002 from the CAS either, and this half is worth proving rather
+    // than asserting, because #196 added a partial unique index this file's
+    // other CAS does collide on. `data` up there is `{ isActive: desiredActive }`
+    // — nothing else — and `ClassTemplate_teacher_slot_unique` covers
+    // `(teacherId, dayOfWeek, startTime)` `WHERE isArchived = false`. None of
+    // those four columns is in this write's `data`, so the indexed values are
+    // unchanged: a row that already satisfied the constraint still does,
+    // whatever mechanism Postgres uses to re-check it. That exemption is local
+    // to this write — `archiveOrUnarchiveTemplate`'s CAS DOES write
+    // `isArchived`, and un-archiving into a slot another live template holds is
+    // exactly what makes that one raise P2002. This paragraph stood in the
+    // `catch` #116 replaced; it is kept because deleting the P2025 branch is no
+    // reason to delete the P2002 reasoning beside it, and
+    // `studio-class-template-lifecycle.ts` still cites it as the original.
     if (isTransientDbError(err)) {
       log.warn(
         { err, templateId, teacherId, target },
@@ -1307,8 +1326,10 @@ export async function archiveOrUnarchiveTemplate(
         // … WHERE "id" = $1 AND "isArchived" = $2` — a filter it compiled to a
         // subquery would be re-run under the same snapshot and match anyway.
         //
-        // No P2025 guard here, unlike `updateClassTemplate` and
-        // `pauseOrResumeTemplate` (#100). Not an omission: `updateMany` returns
+        // No P2025 guard here, unlike `updateClassTemplate` (#100) — and
+        // unlike `pauseOrResumeTemplate` only until #116 gave it this same
+        // shape, which is why the sentence below now describes both of them.
+        // Not an omission: `updateMany` returns
         // `{ count: 0 }` rather than throwing when nothing matches, and the
         // zero-count branch below already answers `not_found` by re-reading. The
         // `findUniqueOrThrow`/`update` sites further down *can* raise P2025, but

@@ -29,8 +29,9 @@
  *     before generating — see that function's own doc comment for why both
  *     matter (#94). The class family's `pauseOrResumeTemplate`
  *     (`class-template-lifecycle.ts`) also generates inside its own
- *     `$transaction` on resume — that part is not a difference — but with a
- *     plain `update` and no claim first (#116).
+ *     `$transaction` on resume, and since #116 it does both of these too — a
+ *     compare-and-swap and a claim, ported from here statement for statement.
+ *     This paragraph listed them as differences until then.
  */
 
 import type { Prisma, PrismaClient, StudioClassTemplate } from '@prisma/client';
@@ -501,8 +502,10 @@ export async function updateStudioClassTemplate(
  * This used to say the class family was "deliberately not fixed alongside
  * this", because its resume generates *without* taking the claim and a count
  * from an unclaimed generation would be a racy count. That reason has not gone
- * away — `pauseOrResumeTemplate` still takes no claim, and **#116 is still
- * open** — but it stopped being a reason to withhold the numbers: since #164
+ * away in the form it was written — #116 has since given
+ * `pauseOrResumeTemplate` the claim, so the class family's counts are read
+ * under a lock now as well — but it had already stopped being a reason to
+ * withhold the numbers before that: since #164
  * a lost race costs one date and reports it, rather than aborting the
  * transaction, so the count is honest about a smaller window instead of being
  * a count of rows that were rolled back. #116 makes the race rarer; it is no
@@ -756,8 +759,9 @@ export async function pauseOrResumeStudioTemplate(
         // request — what can happen only once, closing the race the two fast
         // paths above cannot.
         //
-        // No P2025 guard here, unlike `updateClassTemplate` and
-        // `pauseOrResumeTemplate` in the class family (#100). Not an omission:
+        // No P2025 guard here, unlike `updateClassTemplate` in the class
+        // family (#100) — `pauseOrResumeTemplate` belonged in that list until
+        // #116 made it a CAS with this same shape. Not an omission:
         // `updateMany` returns `{ count: 0 }` rather than throwing when nothing
         // matches, and the zero-count branch below already answers `not_found`
         // by re-reading. The `findUniqueOrThrow` on the paused arm below, and
@@ -772,9 +776,11 @@ export async function pauseOrResumeStudioTemplate(
         // P2025 source needing its own guard.
         //
         // No P2002 guard here either, and this one is worth proving rather
-        // than asserting — the class family's `pauseOrResumeTemplate`
-        // (`class-template-lifecycle.ts`) carries the identical proof for its
-        // own CAS, and it never got ported here. `data` below is
+        // than asserting. The class family's `pauseOrResumeTemplate`
+        // (`class-template-lifecycle.ts`) carried the identical proof for its
+        // own CAS and it never got ported here; #116 rewrote that `catch`
+        // wholesale and kept the paragraph, so the two still agree — check
+        // there before editing this. `data` below is
         // `{ isActive: desiredActive }` — nothing else — and
         // `StudioClassTemplate_teacher_slot_unique` covers `(teacherId,
         // dayOfWeek, startTime)` `WHERE isArchived = false`. None of those four
@@ -1121,8 +1127,9 @@ export async function archiveOrUnarchiveStudioTemplate(
         // UPDATE` — but the two *conflict*, and the timeout below exists for
         // the wait that conflict can impose.
         //
-        // No P2025 guard here, unlike `updateClassTemplate` and
-        // `pauseOrResumeTemplate` in the class family (#100). Not an omission:
+        // No P2025 guard here, unlike `updateClassTemplate` in the class
+        // family (#100) — `pauseOrResumeTemplate` belonged in that list until
+        // #116 made it a CAS with this same shape. Not an omission:
         // `updateMany` returns `{ count: 0 }` rather than throwing when nothing
         // matches, and the zero-count branch below already answers `not_found`
         // by re-reading. The `findUniqueOrThrow`/`update` sites further down

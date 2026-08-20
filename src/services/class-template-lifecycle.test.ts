@@ -1909,9 +1909,18 @@ describe('pauseOrResumeTemplate (DB)', () => {
   });
 
   /**
-   * #100. The read and the write are not one transaction, so a delete landing
-   * between them raises Prisma's P2025 at the write. The guard maps it to
-   * `not_found`; before #100 it escaped as a 500, which is what this pins.
+   * #100, and since #116 by a different mechanism — worth stating, because the
+   * test passes either way and a reader debugging a 404 here would otherwise
+   * hunt for a guard that no longer exists.
+   *
+   * The read and the write are still not one transaction, so a delete can
+   * still land between them. What changed is the write: it used to be a
+   * single-record `update` raising P2025, caught and mapped to `not_found`
+   * (before #100 that escaped as a 500, which is what this originally pinned).
+   * It is now a CAS whose `updateMany` matches zero rows, and `not_found`
+   * comes from the miss branch's `findUnique` returning null. No P2025, no
+   * guard — the same answer down a different path, and this test is what
+   * proves that path exists.
    *
    * Interposed rather than raced: the extension below performs the real read
    * and then deletes the row before returning it, which *is* the interleaving
@@ -1919,7 +1928,7 @@ describe('pauseOrResumeTemplate (DB)', () => {
    * state less reliably.
    */
   it('maps a delete landing between the read and the write to not_found', async () => {
-    const t = await makeTemplate('P2025 Pause');
+    const t = await makeTemplate('Deleted Pause');
     await prisma.classTemplate.update({ where: { id: t.id }, data: { isActive: false } });
 
     let deleted = false;
