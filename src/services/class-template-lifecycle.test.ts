@@ -1948,4 +1948,118 @@ describe('pauseOrResumeTemplate (DB)', () => {
 
     expect(result).toEqual({ ok: false, reason: 'not_found' });
   });
+
+  /**
+   * The window this test drives is the one the pre-transaction guards cannot
+   * cover: the `findUnique` at the top of the function and the transaction's
+   * first write are not one statement, so an archive committing in between is
+   * invisible to the guard that already passed. Before the CAS, the write's
+   * `where` was `{ id }` alone and simply did not notice — it set
+   * `isActive: true` on a row that had just been archived and then generated a
+   * four-week window onto it. `pauseOrResumeStudioTemplate`'s docblock
+   * describes exactly this failure for its own family, which is why the fix is
+   * a port rather than an invention.
+   */
+  it('answers archived when an archive lands between the read and the write', async () => {
+    const t = await makeTemplate('Archive Race');
+    await prisma.classTemplate.update({ where: { id: t.id }, data: { isActive: false } });
+
+    let archived = false;
+    // Cast for the same reason the sibling tests' `interposing` clients need
+    // one: the extended client is missing `$on`, so it is not assignable to
+    // `pauseOrResumeTemplate`'s `PrismaClient`-typed `db` parameter.
+    const interposing = prisma.$extends({
+      query: {
+        classTemplate: {
+          async findUnique({ args, query }) {
+            const row = await query(args);
+            if (!archived) {
+              archived = true;
+              await prisma.classTemplate.update({
+                where: { id: t.id },
+                data: { isArchived: true, isActive: false, archivedAt: new Date() },
+              });
+            }
+            return row;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const result = await pauseOrResumeTemplate(interposing, t.id, teacherId, 'active');
+
+    expect(result).toEqual({ ok: false, reason: 'archived' });
+
+    // The refusal is not the whole guarantee: assert the two states the old
+    // code actually corrupted. Without these, dropping `isArchived: false`
+    // from the CAS and answering `archived` from a stale read would pass.
+    const after = await prisma.classTemplate.findUnique({ where: { id: t.id } });
+    expect(after?.isActive).toBe(false);
+    expect(await prisma.class.count({ where: { templateId: t.id } })).toBe(0);
+  });
+
+  it('answers unchanged when a pause lands between the read and the write', async () => {
+    const t = await makeTemplate('Pause Race');
+
+    let paused = false;
+    const interposing = prisma.$extends({
+      query: {
+        classTemplate: {
+          async findUnique({ args, query }) {
+            const row = await query(args);
+            if (!paused) {
+              paused = true;
+              await prisma.classTemplate.update({
+                where: { id: t.id },
+                data: { isActive: false },
+              });
+            }
+            return row;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const result = await pauseOrResumeTemplate(interposing, t.id, teacherId, 'paused');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.action).toBe('unchanged');
+  });
+
+  /**
+   * An archived row racing a *pause* is simultaneously "already the desired
+   * state" (archiving forces `isActive: false`) and "archived". The miss
+   * branch must answer `unchanged`, matching the fast path above it — checking
+   * `isArchived` first would answer a plain pause with a 409 meant for
+   * resuming an archived template. A racing *resume* is not already-desired,
+   * so it falls through to `isArchived` regardless of order; only this
+   * direction can tell the two orderings apart.
+   */
+  it('answers unchanged, not archived, when an archive races a pause', async () => {
+    const t = await makeTemplate('Order Race');
+
+    let archived = false;
+    const interposing = prisma.$extends({
+      query: {
+        classTemplate: {
+          async findUnique({ args, query }) {
+            const row = await query(args);
+            if (!archived) {
+              archived = true;
+              await prisma.classTemplate.update({
+                where: { id: t.id },
+                data: { isArchived: true, isActive: false, archivedAt: new Date() },
+              });
+            }
+            return row;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const result = await pauseOrResumeTemplate(interposing, t.id, teacherId, 'paused');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.action).toBe('unchanged');
+  });
 });

@@ -785,6 +785,34 @@ const scheduledWhere = (templateId: string, date: { gt: Date } | { gte: Date }) 
 });
 
 /**
+ * One arm per way `pauseOrResumeTemplate`'s transaction can resolve. Internal
+ * only — mapped to the public `PauseTemplateResult` after the transaction
+ * commits. Mirrors `ResumeTransactionOutcome` in
+ * `studio-class-template-lifecycle.ts`; the two families are meant to be read
+ * side by side.
+ *
+ * None of these carries the stale pre-transaction snapshot the CAS exists to
+ * stop being trusted, but they reach that differently: `paused` and `active`
+ * are read back under a lock the successful CAS is still holding, while
+ * `unchanged` comes from a plain re-read in the miss branch that may or may
+ * not run under a lock this transaction already holds — see that branch, and
+ * `archiveOrUnarchiveTemplate`'s, for why the re-read is correct either way.
+ */
+type ResumeTransactionOutcome =
+  | { outcome: 'not_found' }
+  | { outcome: 'archived' }
+  | { outcome: 'unchanged'; template: ClassTemplate }
+  | { outcome: 'paused'; template: ClassTemplate }
+  | {
+      outcome: 'active';
+      template: ClassTemplate;
+      scheduled: number;
+      added: number;
+      blockedByCancelled: number;
+      slotTaken: number;
+    };
+
+/**
  * Pause or resume generation. Deletes nothing: pausing means "no new classes",
  * not "withdraw what I already offered" — that is what archiving is for.
  *
@@ -855,7 +883,7 @@ export async function pauseOrResumeTemplate(
     return { ok: false, reason: 'room_archived' };
   }
 
-  const updated = await db
+  const result = await db
     .$transaction(
       async (tx) => {
         // Bounds every statement left in this transaction, the `update` below
@@ -868,49 +896,95 @@ export async function pauseOrResumeTemplate(
         // measure as a hung test rather than a 10s abort.
         await setLockTimeout(tx);
 
-        const t = await tx.classTemplate.update({
-          where: { id: templateId },
+        // A compare-and-swap, not a plain `update`. The two guards at the top
+        // of this function are read outside any lock and are fast paths only,
+        // not the guarantee: an archive can commit between those reads and
+        // this write. Keyed on `{ id }` alone — which is what stood here until
+        // #116 — this statement would not notice. It would re-read the new row
+        // version and set `isActive: true` on a template that had just been
+        // archived, then generate a four-week window onto it: measured, four
+        // `open` classes on an archived template, which is precisely the
+        // shelved-but-bookable state #86 exists to prevent. Constraining the
+        // write to the exact `isArchived`/`isActive` values the guards saw
+        // makes that transition impossible rather than merely unlikely.
+        //
+        // `updateMany`, not `update`, because `update` throws P2025 when
+        // nothing matches and a CAS miss is an ordinary outcome here, not an
+        // exception — see the miss branch below for the three things it can
+        // mean. That choice is also why this transaction no longer has a
+        // P2025 source at all; the `catch` below records the full enumeration.
+        const swapped = await tx.classTemplate.updateMany({
+          where: { id: templateId, isArchived: false, isActive: !desiredActive },
           data: { isActive: desiredActive },
+        });
+
+        if (swapped.count === 0) {
+          // [Task 1's corrected wording applies here too — a miss may or may
+          // not leave this transaction holding a lock, and this plain re-read
+          // is correct either way. See `archiveOrUnarchiveTemplate`'s own miss
+          // branch for the full account rather than repeating it.]
+          const current = await tx.classTemplate.findUnique({ where: { id: templateId } });
+          if (!current) return { outcome: 'not_found' as const };
+          // `isActive === desiredActive` before `isArchived`, deliberately —
+          // the same order as the fast paths above, and for the same reason:
+          // archiving forces `isActive: false`, so an archived row racing a
+          // *pause* is simultaneously "already the desired state" and
+          // "archived". Checking already-desired first answers that case
+          // `unchanged`, matching the fast path; checking `isArchived` first
+          // would answer a plain pause with a 409 meant for resuming an
+          // archived template. A racing *resume* is not already-desired, so it
+          // falls through regardless of order.
+          if (current.isActive === desiredActive) {
+            return { outcome: 'unchanged' as const, template: current };
+          }
+          if (current.isArchived) return { outcome: 'archived' as const };
+          // Residual, not provably unreachable. This CAS's `where` is
+          // `isArchived: false AND isActive: !desiredActive`; a miss means one
+          // of those held *when the CAS ran*, and both are checked above
+          // against a second, later read. Under READ COMMITTED each statement
+          // takes its own snapshot, so a row that changed back in between — a
+          // second race stacked on the first — could in principle reach here.
+          throw new Error(
+            `pauseOrResumeTemplate: CAS matched no row for template ${templateId} ` +
+              'and a later read found it neither already in the desired state nor ' +
+              'archived — a second race stacked on the first, or the CAS predicate ' +
+              'and this classification have diverged',
+          );
+        }
+
+        if (!desiredActive) {
+          // `updateMany` returns a count, not a row. Safe to read back without
+          // a lock re-check: the CAS above matched, so this transaction holds
+          // `FOR NO KEY UPDATE` on the row and nothing can change or delete it
+          // before we commit. `OrThrow` for that reason — a `| null` here
+          // would be an impossible branch every caller had to pretend to
+          // handle.
+          const paused = await tx.classTemplate.findUniqueOrThrow({
+            where: { id: templateId },
+          });
+          return { outcome: 'paused' as const, template: paused };
+        }
+
+        // [Task 3 inserts the claim here.]
+        const t = await tx.classTemplate.findUniqueOrThrow({
+          where: { id: templateId },
           include: { teacher: { select: { defaultTimezone: true } } },
         });
-        if (!t.isActive) {
-          return { template: t, generation: { created: 0, skipped: [] }, scheduled: 0 };
-        }
         const generation = await generateInstancesForTemplate(tx, t);
 
-        // Inside the transaction, on `tx`, and keyed to `t.teacher` — all
-        // three deliberately, to match `pauseOrResumeStudioTemplate` rather
-        // than merely resemble it.
-        //
-        // `t.teacher.defaultTimezone`, not the `template.teacher` read at the
-        // top of this function. That is the studio twin's rule, and its
-        // reasoning carries over unchanged: `generateInstancesForTemplate`
-        // filtered its candidate dates with `classStartInstant(date,
-        // startTime, t.teacher.defaultTimezone)` off this same object, so
-        // keying the count's boundary to a *different* read of that column is
-        // the one way `scheduled < added` becomes reachable — a zone change
-        // committing between the two reads moves the `gte today` boundary past
-        // a row generation just added.
-        //
-        // **No test pins this, deliberately — know that before trusting it.**
-        // Making the two reads disagree needs a zone change injected between
-        // them (the `$extends` lever this file's tests already use) *and* a
-        // wall-clock hour at which the two zones' local days straddle a
-        // generated date. This function reads `new Date()` internally and takes
-        // no injectable clock, so such a test would pass vacuously at most
-        // hours — the #138 failure, where a check ran at a time when both code
-        // paths rendered identically and therefore proved nothing. Adding a
-        // `now` parameter to production code for a test to steer is the other
-        // thing this project declines to do. The guard is this paragraph and
-        // the studio twin's; if you change this line, nothing will stop you.
-        //
-        // Do not "simplify" this to
-        // `template.teacher.…`.
         const today = startOfLocalDay(new Date(), t.teacher.defaultTimezone);
         const scheduled = await tx.class.count({
           where: scheduledWhere(templateId, { gte: today }),
         });
-        return { template: t, generation, scheduled };
+        const { teacher: _gen, ...bareT } = t;
+        void _gen;
+        return {
+          outcome: 'active' as const,
+          template: bareT,
+          scheduled,
+          added: generation.created,
+          ...countSkipReasons(generation.skipped),
+        };
       },
       // The wait is bounded at 2s by the `setLockTimeout` at the top of this
       // transaction, so this budget no longer governs it — it governs this
@@ -926,59 +1000,21 @@ export async function pauseOrResumeTemplate(
       { timeout: 10_000 },
     )
     .catch((err: unknown) => {
-      // Same window as `updateClassTemplate`'s guard above: the read at the
-      // top of this function and this write are not one transaction, and the
-      // `update` is the transaction's first statement, so nothing holds the
-      // row when it runs. A delete landing in between surfaces as P2025. Map
-      // it to the outcome the read-time check would have produced (#100).
-      //
       // Note what this `catch` is actually attached to: the whole
-      // `$transaction`, not the `update` alone — so it covers
-      // `generateInstancesForTemplate` too. It is tight today only by
-      // accident of what runs under it, which is now three statements, not
-      // two: the `update` above, `generateInstancesForTemplate`'s
-      // `class.findMany` + `class.createManyAndReturn` (`class-generator.ts`),
-      // and this transaction's own `class.count`. P2003 only — never P2002
-      // from the insert, which the insert's bare `ON CONFLICT DO NOTHING`
-      // absorbs rather than raises. Never P2002 from the `update` above
-      // either, and this one is worth proving rather than asserting, because
-      // #196 added a partial unique index this file's other CAS now collides
-      // on: `data` here is `{ isActive: desiredActive }` — nothing else — and
-      // `ClassTemplate_teacher_slot_unique` covers `(teacherId, dayOfWeek,
-      // startTime)` `WHERE isArchived = false`. None of those four columns is
-      // in this write's `data`, so the indexed values themselves are
-      // unchanged: a row that already satisfied the constraint still does,
-      // regardless of which mechanism Postgres uses to re-check it — the
-      // conclusion holds without needing to claim anything about that
-      // mechanism. That exemption is local to this write, not
-      // to the file: `archiveOrUnarchiveTemplate`'s own CAS, a few hundred
-      // lines down, DOES write `isArchived`, and un-archiving into a slot
-      // another live template holds is exactly what makes that one raise
-      // P2002 — see its own `catch` for where that is handled. And never
-      // P2025, which neither a `findMany` nor a `count` can
-      // produce. So the `update` above really is the only
-      // P2025 source under here, and the guard says `not_found` about the only
-      // thing that can go missing. Add an *unprotected* `findUniqueOrThrow`
-      // or single-record `update` inside this transaction and that stops
-      // being true silently. Whoever does that owes this comment an
-      // enumeration of what it now covers, the way the sibling guard above
-      // already lists both of its statements.
-      //
-      // #116, the change most likely to add one, happens to be safe: it puts
-      // `claimTemplateForGeneration` here, whose `findUniqueOrThrow` is its
-      // *last* statement and runs under the `FOR UPDATE` its own raw `SELECT`
-      // just took — so on a transaction client that row provably exists and
-      // cannot raise P2025. Safe for the reason the lock gives, not because
-      // it is a read.
-      // Transient first, ahead of the P2025 sentinel below: `P2028`/`P2024`
-      // are `PrismaClientKnownRequestError`s too, so testing `err.code ===
-      // 'P2025'` first is safe today only because those codes differ — the
-      // ordering is kept explicit so it stays safe if either test widens.
-      //
-      // A SECOND sentinel, because `null` already means P2025 below. Both are
-      // narrowed at the call site; returning a bare `null` here for both would
-      // report a busy template as `not_found`, which is the wrong answer and
-      // an unretryable-sounding one.
+      // `$transaction`, not a single statement — so it covers
+      // `generateInstancesForTemplate` too. Nothing under this transaction can
+      // raise P2025: the CAS returns a count, the paused arm's
+      // `findUniqueOrThrow` runs after the CAS matched (under `FOR NO KEY
+      // UPDATE`), `claimTemplateForGeneration`'s `findUniqueOrThrow` runs
+      // under `FOR UPDATE` its own raw `SELECT` just took (so the row
+      // provably exists), `generateInstancesForTemplate` issues a `findMany`
+      // and a `createManyAndReturn` (neither produces P2025, and the insert
+      // absorbs P2002 rather than raising it), and `class.count` cannot
+      // produce it. `pauseOrResumeStudioTemplate`'s catch already carries only
+      // the transient branch and a rethrow; this converges on it. Add an
+      // *unprotected* `findUniqueOrThrow` or single-record `update` inside
+      // this transaction and that changes silently. Whoever does that owes
+      // this comment an enumeration of what it now covers.
       if (isTransientDbError(err)) {
         log.warn(
           { err, templateId, teacherId, target },
@@ -986,51 +1022,45 @@ export async function pauseOrResumeTemplate(
         );
         return 'busy' as const;
       }
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
-        return null;
-      }
       throw err;
     });
 
-  if (updated === 'busy') return { ok: false, reason: 'busy' };
-  if (updated === null) return { ok: false, reason: 'not_found' };
+  if (result === 'busy') return { ok: false, reason: 'busy' };
 
-  const { template: updatedTemplate, generation, scheduled } = updated;
-
-  // The include above is only for `generateInstancesForTemplate`'s benefit —
-  // `PauseTemplateResult` carries a plain `ClassTemplate`, so the joined
-  // `teacher` is dropped rather than leaked back to the caller.
-  const { teacher, ...template_ } = updatedTemplate;
-  void teacher;
-
-  if (!desiredActive) {
-    // `gte` today, not `gt`: this reports what is still on the schedule, and
-    // today's class is still on it. Pause deletes nothing, so there is no
-    // spare-today carve-out here to mirror — using the delete's `gt` boundary
-    // would tell a teacher whose only remaining class is today's that nothing
-    // is scheduled, while it sits on their schedule and open on their page.
-    const today = startOfLocalDay(new Date(), template.teacher.defaultTimezone);
-    const lastScheduled = await db.class.findFirst({
-      where: scheduledWhere(templateId, { gte: today }),
-      orderBy: [{ date: 'desc' }, { startTime: 'desc' }],
-      select: { date: true, startTime: true },
-    });
-    return { ok: true, action: 'paused', template: template_, lastScheduled };
+  switch (result.outcome) {
+    case 'not_found':
+      return { ok: false, reason: 'not_found' };
+    case 'archived':
+      return { ok: false, reason: 'archived' };
+    case 'unchanged':
+      return { ok: true, action: 'unchanged', template: result.template };
+    case 'paused': {
+      // `gte` today, not `gt`: this reports what is still on the schedule, and
+      // today's class is still on it. Pause deletes nothing, so there is no
+      // spare-today carve-out here to mirror.
+      const today = startOfLocalDay(new Date(), template.teacher.defaultTimezone);
+      const lastScheduled = await db.class.findFirst({
+        where: scheduledWhere(templateId, { gte: today }),
+        orderBy: [{ date: 'desc' }, { startTime: 'desc' }],
+        select: { date: true, startTime: true },
+      });
+      return { ok: true, action: 'paused', template: result.template, lastScheduled };
+    }
+    case 'active':
+      return {
+        ok: true,
+        action: 'active',
+        template: result.template,
+        scheduled: result.scheduled,
+        added: result.added,
+        blockedByCancelled: result.blockedByCancelled,
+        slotTaken: result.slotTaken,
+      };
+    default: {
+      const unhandled: never = result;
+      return unhandled;
+    }
   }
-
-  // `scheduled` was counted inside the transaction above — see the comment
-  // there for why it is not recomputed here. `countSkipReasons`
-  // (`@/lib/generation`) is the one place `blockedByCancelled`/`slotTaken`
-  // are reduced from `generation.skipped` — see its docblock for why a fifth
-  // `SkipReason` fails the build here instead of vanishing.
-  return {
-    ok: true,
-    action: 'active',
-    template: template_,
-    scheduled,
-    added: generation.created,
-    ...countSkipReasons(generation.skipped),
-  };
 }
 
 /**
