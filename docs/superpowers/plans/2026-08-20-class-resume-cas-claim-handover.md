@@ -196,7 +196,13 @@ implementation still looks right:
    fail. **The plan already got this wrong once**: it originally specified a
    `FOR UPDATE NOWAIT` probe, which is refused whether or not the claim is held, because
    the CAS alone holds `FOR NO KEY UPDATE` and that already conflicts with `FOR UPDATE`.
-   The probe is now `FOR KEY SHARE NOWAIT`. Measured, all four cells, against
+   The probe is now `FOR KEY SHARE NOWAIT`. **Superseded — no probe survives.**
+   The conflict table below is correct and was re-verified in PR review, but a
+   `NOWAIT` probe interposed on the generator's own queries turned out not to
+   be a usable harness for it; the guard is a race test instead
+   (`blocks a concurrent Class insert while generating, and answers busy`).
+   See the mutation ledger's Task 3 section for what was and was not
+   established about why. Measured, all four cells, against
    `ethical_yoga_test` on 2026-08-20:
 
    | holder | probe | result |
@@ -237,7 +243,12 @@ Trimmed from the project's list to what is reachable here.
   "**#N is unaffected**". And when *explaining* the trap, break the token rather than
   quoting it; a commit written to document this fired it again five minutes later.
 - **`@/lib/log` is pino and server-only.** Task 4 touches
-  `template-action-messages.ts`, which four client components value-import. Measured
+  `template-action-messages.ts`, which SIX client components value-import
+  (`template-form`, `studio-template-form`, `toggle-template-button`,
+  `toggle-studio-template-button`, `archive-template-button`,
+  `archive-studio-template-button`) — this line said four until PR review
+  re-counted it, six lines above this file's own "a grep with a `head` limit
+  is not a count". Measured
   2026-08-20, it has exactly two imports: `formatDayHeader` from `@/lib/format` (a pure,
   import-free module chosen for this reason) and an `import type` from
   `@/services/class-template-lifecycle` — which is safe *because* it erases completely.

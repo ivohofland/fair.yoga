@@ -8,14 +8,39 @@
 
 **Command:** `npx vitest run src/services/class-template-lifecycle.test.ts -t 'answers archived when an archive lands'`
 
-**Verbatim failure output:**
+**Verbatim failure output, re-measured on the final tree:**
 
 ```
-FAIL src/services/class-template-lifecycle.test.ts > pauseOrResumeTemplate (DB) > answers archived when an archive lands between the read and the write
-AssertionError: expected { ok: true, action: 'active', template: { …, isArchived: true, isActive: true, … } } to equal { ok: false, reason: 'archived' }
+ × answers archived when an archive lands between the read and the write 24ms
+Error: pauseOrResumeTemplate: claim returned null for template … right after
+this transaction's own CAS confirmed it eligible — the claim predicate and the
+CAS predicate have diverged
+ ❯ db.$transaction.timeout src/services/class-template-lifecycle.ts:1015:17
 ```
 
-The CAS without the archive predicate matched and resumed an archived template, generating four classes onto it.
+**Re-measured, and the first recording is superseded.** This entry originally
+read:
+
+> AssertionError: expected { ok: true, action: 'active', template: { …,
+> isArchived: true, isActive: true, … } } to equal { ok: false, reason:
+> 'archived' }
+>
+> The CAS without the archive predicate matched and resumed an archived
+> template, generating four classes onto it.
+
+That was true of Task 2's tree and Task 3 falsified it the next commit:
+`claimTemplateForGeneration`'s own `AND "isArchived" = false` now catches the
+archived row first, so no template is resumed and no classes are generated —
+the transaction throws and rolls back. The guard still fails, so the
+conclusion holds; the narrative did not, and a mutation record that describes
+a tree two commits back is exactly the rot this file is meant to prevent.
+
+Note what this also means: with a single-edit mutation, the test's two extra
+assertions (`isActive` false, zero classes) are never reached, because the
+function throws before returning. The CAS's `isArchived: false` predicate has
+no mutation that isolates it from the claim's identical predicate — it fails
+*something* either way, so it is not a vacuous guard, but the evidence pins
+less than the original wording claimed.
 
 ### Mutation 2: drop `isActive: !desiredActive` from the CAS `where`
 
@@ -26,9 +51,13 @@ The CAS without the archive predicate matched and resumed an archived template, 
 **Verbatim failure output:**
 
 ```
-FAIL src/services/class-template-lifecycle.test.ts > pauseOrResumeTemplate (DB) > answers unchanged when a pause lands between the read and the write
-AssertionError: expected the action to be 'unchanged' but was 'paused'
+ × answers unchanged when a pause lands between the read and the write
+AssertionError: expected 'paused' to be 'unchanged' // Object.is equality
 ```
+
+(Re-measured. The line recorded here originally — `expected the action to be
+'unchanged' but was 'paused'` — was a paraphrase, not tool output, against a
+file whose own Global Constraints say "Record the exact error text".)
 
 The CAS without the already-in-state predicate matched and applied the transition instead of answering unchanged.
 
@@ -41,9 +70,13 @@ The CAS without the already-in-state predicate matched and applied the transitio
 **Verbatim failure output:**
 
 ```
-FAIL src/services/class-template-lifecycle.test.ts > pauseOrResumeTemplate (DB) > answers unchanged, not archived, when an archive races a pause
-AssertionError: expected { ok: false, reason: 'archived' } to have property ok equal to true
+ × answers unchanged, not archived, when an archive races a pause
+AssertionError: expected false to be true // Object.is equality
 ```
+
+(Re-measured; the previous line was a paraphrase. The assertion that fails is
+`expect(result.ok).toBe(true)`, so the message names the boolean rather than
+the object.)
 
 A plain pause was answered `archived` because `isArchived` was checked first, matching the wrong fast path.
 
@@ -81,20 +114,29 @@ about locking.**
    `free.length === 0 ? [] : await db.class.createManyAndReturn(...)`. On a
    template with no free candidate dates the insert never runs, so a hook
    interposed on it never fires and `probeError` stays `null` either way.
-2. More fundamental: **a second `PrismaClient`'s query does not run while a
-   Prisma interactive transaction is in flight in the same process.** Measured
-   by re-instating the probe on `class.findMany` (unconditional, and after the
-   claim) with a timing counter: `PROBE_MS 9982` — the probe returned only once
-   the resume's 10s transaction budget expired and released everything, so it
-   reported "granted" no matter what had been held.
+2. **CAUSE NOT ESTABLISHED**, and this entry has now been wrong about it
+   twice. Re-instating the probe on `class.findMany` (unconditional, and after
+   the claim) with a timing counter gave `PROBE_MS 9982` — the probe returned
+   only once the resume's 10s transaction budget had expired. An earlier
+   version of this entry explained that as "a second `PrismaClient`'s query
+   does not run while a Prisma interactive transaction is in flight in the same
+   process". **That is false, measured:** two clients in one process, A holding
+   `SELECT … FOR UPDATE` inside an in-flight interactive transaction, B probing
+   `FOR KEY SHARE NOWAIT` — `REFUSED 55P03 after 5ms`. The second client's
+   query runs and `NOWAIT` discriminates.
 
-   `NOWAIT` was never the problem. The identical statement through the same
-   Prisma client, against a row held `FOR UPDATE` by a psql session, is refused
-   in **5ms** (parameterized) and **2ms** (literal) with
-   `55P03 could not obtain lock on row`.
+   `NOWAIT` was never the problem either: the same statement through the same
+   client against a psql-held `FOR UPDATE` is refused in **5ms**
+   (parameterized) and **2ms** (literal).
 
-So an in-process `NOWAIT` probe cannot observe this lock at all. The test was
-rebuilt as a race instead of a probe.
+   So the 9982ms is unexplained. It is recorded as unexplained rather than
+   given a third guess, because two have already been wrong and the pattern —
+   inventing a mechanism to justify a decision already taken — is the thing
+   this ledger exists to catch. Reason 1 above stands on its own and is
+   verifiable from the source.
+
+The test was rebuilt as a race rather than a probe, which is a better guard
+regardless of why the probe misbehaved.
 
 ### Mutation 6: remove `claimTemplateForGeneration` (new test: "blocks a concurrent Class insert while generating, and answers busy")
 
@@ -189,3 +231,74 @@ src/components/settings/template-action-messages.ts(347,13): error TS2322: Type 
 ```
 
 The `never` default catches the unhandled arm at compile time — this is the guard the switch conversion exists for, and an if-chain would have compiled clean.
+
+## PR review round (agents, PR #273)
+
+Five review agents re-ran every mutation above and added their own. All seven
+originals still kill exactly the test written for them. What follows is what
+they found that the originals did not.
+
+### Mutation 9: reinstate the residual `throw` in place of `busy`
+
+The CAS-miss branch's fourth state was a `throw`, which the route rendered as
+a 500 logged at `error`. Reachable — reproduced three times independently.
+
+**Command:** `npx vitest run --project unit src/services/class-template-lifecycle.test.ts -t 'residual fourth state'`
+
+```
+ × answers busy when the CAS miss lands in the residual fourth state 40ms
+Error: pauseOrResumeTemplate: CAS matched no row (mutant)
+```
+
+### Mutation 10: `unchanged` returns the stale pre-transaction snapshot
+
+`template: current` → `template: bare`. Before the assertion added in this
+round, that passed all 53 tests — the arm's advertised freshness was unpinned,
+and the route spreads this template onto the wire.
+
+```
+ × answers unchanged when a pause lands between the read and the write 25ms
+AssertionError: expected true to be false // Object.is equality
+```
+
+### Mutation 11: reword `UNARCHIVE_MESSAGE` to the studio noun
+
+Before this round both levels passed, because the test compared the function's
+output to the same constant it returns.
+
+```
+AssertionError: expected 'Un-archived. This template is paused …'
+  to be 'Un-archived. This recurring class is …' // Object.is equality
+TestingLibraryElementError: Unable to find an element with the text:
+  Un-archived. This recurring class is paused — resume it to put classes back…
+```
+
+### Mutation 12: a fifth `SkipReason`, completed the way a contributor would
+
+Not just adding the reason (which fails at `countSkipReasons`' own `never`) but
+finishing the job: handle it, add its count to `SkipCounts`, count it. Before
+the `& SkipCounts` binding this compiled **clean repo-wide** and the new count
+vanished at every hand-re-listing site. After:
+
+```
+src/services/class-template-lifecycle.ts(1211,7): error TS2322:
+  Property 'probeFifth' is missing in type '{ … blockedByCancelled: number;
+  slotTaken: number; }' but required in type 'SkipCounts'.
+```
+
+### Mutation 13: weaken the claim's `FOR UPDATE` to `FOR NO KEY UPDATE`
+
+Run by the test-coverage agent, and the strongest result in the review — the
+claim's whole argument is about lock MODE, and this is the edit
+`claimTemplateForGeneration`'s docblock explicitly forbids. Three tests caught
+it, across both files:
+
+```
+ FAIL … > blocks a concurrent Class insert while generating, and answers busy
+ FAIL … > still fills the other free date when the clash lands on the first
+AssertionError: expected [ '2026-09-08' ] to deeply equal []
+```
+
+The tests pin the mode, not merely "a lock". That is what retires the deleted
+`NOWAIT` probe honestly.
+

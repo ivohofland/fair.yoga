@@ -110,7 +110,7 @@ $transaction(timeout: 10_000):
         row missing            → not_found
         isActive === desired   → unchanged            // before isArchived, see 2.2
         isArchived             → archived
-        otherwise              → throw (residual, stacked race)
+        otherwise              → busy                 // §2.1a, corrected in PR review
 
   !desiredActive → read back the row → paused
 
@@ -129,6 +129,25 @@ them is what #126 exists to correct:
   concurrent `Class` insert takes for FK integrity. `FOR NO KEY UPDATE` does not.
   That is what makes a concurrent insert impossible rather than leaving it to
   `ON CONFLICT DO NOTHING` to cost that date its class with no error.
+
+### 2.1a The residual fourth state answers `busy`, not a throw
+
+**Corrected in PR review; this section originally specified a throw.** The miss
+branch's fourth arm — the re-read finds the row neither already in the desired
+state nor archived — is reachable, and not exotically: a resume commits between
+this transaction's read and its CAS, and a pause commits before the re-read.
+Two tabs get there.
+
+A throw escapes the transient branch and surfaces as `{ status: 500, message:
+'Internal server error', level: 'error' }`. But the CAS matched zero rows, so
+nothing was written and the transaction rolls back clean — a lost race a retry
+wins, which is what `busy` means everywhere else in this file.
+`archiveOrUnarchiveTemplate`'s miss branch reaches the analogous fourth state
+and answers `unchanged` rather than throwing, so a throw here also split the two
+families over one interleaving.
+
+`busy`, with a `log.warn` carrying the observed row so predicate drift — the
+case the throw was actually aimed at — stays diagnosable.
 
 ### 2.2 Guard order inside the miss branch
 
@@ -189,7 +208,10 @@ still gives the two their own `case`s, because TypeScript narrows a literal-unio
 property inside a single arm. So:
 
 - add the class message beside `UNARCHIVE_STUDIO_MESSAGE`, saying "recurring class"
-  where studio says "classes";
+  where studio says "template". **NOT "classes"** — that word appears
+  identically in both strings ("put classes back on your schedule"), so it is
+  the one that does not distinguish them. Corrected during the branch, and
+  again here, after the first correction touched only `src/`;
 - `resolveTemplateConfirmation` becomes a `switch` with a `never` default, for the
   reason `resolveStudioConfirmation`'s docblock already gives for its own: an
   if-chain ending in `return null` is *accidentally* exhaustive, so a sixth arm
@@ -213,8 +235,9 @@ version *before* the EvalPlanQual re-check, so a rejection still leaves it held 
 commit. No behaviour is wrong — the plain re-read is correct either way — but the
 sentence invites a contributor to add a read-then-write believing the row is pinned.
 
-Replaced with the studio side's corrected wording, adapted. **Two twins, both of
-which must move** (§4 of the solve-issue skill):
+Replaced with the studio side's corrected wording, adapted. **Three twins, all of
+which must move** (§4 of the solve-issue skill) — the third turned up only in PR
+review, by running the keyword sweep this spec already prescribes:
 
 - `studio-class-template-lifecycle.ts:811-815` points at this sentence by quoting it
   and saying "#117 owns correcting it" — that pointer becomes stale on the fix;
@@ -234,7 +257,9 @@ An `updateMany` takes `FOR NO KEY UPDATE`; the claims take `FOR UPDATE`. Differe
 modes with different conflict sets — the exact distinction §2.1 turns on. #125
 corrected this at six sites across four files and settled on one wording; `gdpr.ts`
 was left out because it is the referent of none of them, leaving one file asserting
-the opposite of six others.
+the opposite of six others. **Eight sites, not seven** — PR review found
+`class-generator.test.ts`'s contention docblock carrying the same conflation,
+which this branch's own `grep -rn "same row lock" src/` step would have caught.
 
 The same sentence continues *"always for the sweep, and now for the studio family's
 own resume too (#94)"* — which this branch makes true of the class family as well.
@@ -290,7 +315,7 @@ each mutation's exact error text is recorded (§3 of the solve-issue skill).
 | CAS closes the already-in-state race | pause interposed → `unchanged` | drop `isActive: !desiredActive` from the CAS `where` |
 | Guard order in the miss branch | archived row racing a *pause* → `unchanged`, not `archived` | swap the two checks → a plain pause answers 409 |
 | Claim is taken before generating | concurrent `Class` insert cannot interleave | remove `claimTemplateForGeneration` → the insert lands and a date is lost |
-| Claim's null is unreachable | — | the throw's message is asserted, and the branch is reached by making the claim predicate disagree with the CAS |
+| Claim's null is unreachable | **none, and recorded as none** | the branch is reachable only by editing the production predicate, so no test can drive it. An earlier draft of this row claimed the throw's message was asserted; nothing asserted it |
 | Un-archive speaks | `resolveTemplateConfirmation({action:'unarchived'})` returns the message | return `null` for `unarchived` |
 | Resolver exhaustiveness | a sixth arm fails the build | add an arm, observe the `never` default error |
 

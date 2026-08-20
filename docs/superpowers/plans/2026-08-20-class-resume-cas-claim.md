@@ -593,6 +593,17 @@ The catch rewritten in Task 2 Step 9 asserts nothing under the transaction raise
 
 - [ ] **Step 4: Write the test — the claim is actually taken**
 
+> **SUPERSEDED (PR review).** The `FOR KEY SHARE NOWAIT` probe specified below
+> was not a usable harness: `generateInstancesForTemplate` skips
+> `createManyAndReturn` entirely when `free.length === 0`, so a hook on the
+> insert may never fire. The shipped guard is a race instead — a holder takes
+> `FOR KEY SHARE` via a `Class` insert on a date outside the generator's
+> window, and the resume must fail to get its `FOR UPDATE` inside the 2s bound
+> and answer `busy`. See `class-template-lifecycle.test.ts`, "blocks a
+> concurrent Class insert while generating, and answers busy", and the mutation
+> ledger's Task 3 section. The conflict table below is still correct.
+
+
 The claim's observable effect is that a concurrent `Class` insert for this template cannot interleave. The probe must be **`FOR KEY SHARE NOWAIT`**, and the mode is the whole point:
 
 | Probe mode | With the claim (`FOR UPDATE` held) | Without it (CAS's `FOR NO KEY UPDATE` only) |
@@ -714,7 +725,7 @@ Beside `UNARCHIVE_STUDIO_MESSAGE` (line 227):
  * back lands on a paused template with an empty window, and until #116 the
  * only signal was that a differently-labelled button appeared.
  *
- * "recurring class" rather than the studio wording's "classes": that is what
+ * "recurring class" rather than the studio wording's "template": that is what
  * this family calls the thing throughout its own copy.
  */
 export const UNARCHIVE_MESSAGE =
