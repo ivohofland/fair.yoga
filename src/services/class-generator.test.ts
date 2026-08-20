@@ -1315,6 +1315,142 @@ describe('generateClassInstances (DB)', () => {
     });
   });
 
+  describe('generateInstancesForTemplate — week-keyed generation (#194)', () => {
+    // A template is a stamp, not a live link. The sync that used to rewrite
+    // already-generated classes is gone (#194), so the only thing standing
+    // between a day edit and a doubled schedule is this: no second class into
+    // a week this template already occupies.
+    //
+    // Monday 2026-04-06 is the anchor because the four Tuesdays that follow
+    // (Apr 7/14/21/28) and the four Thursdays (Apr 9/16/23/30) pair up
+    // one-for-one inside the same four Monday-anchored weeks — Apr 6, 13, 20,
+    // 27. That pairing IS the fixture: pick an anchor where the new day falls
+    // BEFORE the old one and the fourth candidate lands in a fifth week the
+    // old window never reached, which is a legitimate create and would make
+    // these assertions wrong rather than failing.
+    //
+    // A fixed `from` rather than the slot-reporting describe's `new Date()`,
+    // deliberately: these assertions name calendar weeks, and a run that
+    // straddled a Sunday/Monday boundary would move which Monday a candidate
+    // belongs to. The suite pins `TZ=America/New_York` (`vitest.config.ts`) —
+    // west of UTC, the direction in which reading one of these UTC-midnight
+    // `@db.Date` values with a local accessor moves the calendar day back one
+    // and a Monday back a whole week. So the weeks below are load-bearing.
+    const from = new Date('2026-04-06T00:00:00.000Z');
+    const TUESDAY = 1; // schema convention: 0=Mon, 1=Tue, ..., 6=Sun
+    const THURSDAY = 3;
+    const TUESDAYS = [
+      '2026-04-07T00:00:00.000Z',
+      '2026-04-14T00:00:00.000Z',
+      '2026-04-21T00:00:00.000Z',
+      '2026-04-28T00:00:00.000Z',
+    ];
+
+    /** Every date this template holds, oldest first — cancelled ones included. */
+    async function heldDates(): Promise<string[]> {
+      const rows = await prisma.class.findMany({
+        where: { templateId },
+        orderBy: { date: 'asc' },
+        select: { date: true },
+      });
+      return rows.map((c) => c.date.toISOString());
+    }
+
+    beforeEach(async () => {
+      await prisma.class.deleteMany({ where: { teacherId } });
+      await prisma.classTemplate.update({
+        where: { id: templateId },
+        data: { dayOfWeek: TUESDAY },
+      });
+      // The window every test here starts from. Asserted rather than assumed:
+      // a seed that quietly created three would make `created: 0` below mean
+      // something other than what it claims.
+      const seeded = await generateInstancesForTemplate(prisma, await freshTemplate(), from);
+      expect(seeded.created).toBe(4);
+    });
+
+    afterEach(async () => {
+      await prisma.class.deleteMany({ where: { teacherId } });
+      // Restored, not left on Thursday: `templateId` is the file's shared
+      // fixture and several tests above assert its Tuesday window by date.
+      await prisma.classTemplate.update({
+        where: { id: templateId },
+        data: { dayOfWeek: TUESDAY },
+      });
+    });
+
+    it('does not generate into a week that already holds a class from this template', async () => {
+      // Window generated on Tuesday, then the template moves to Thursday.
+      // Every candidate Thursday falls in a week a Tuesday class already holds.
+      expect(await heldDates()).toEqual(TUESDAYS);
+
+      await prisma.classTemplate.update({
+        where: { id: templateId },
+        data: { dayOfWeek: THURSDAY },
+      });
+      const result = await generateInstancesForTemplate(prisma, await freshTemplate(), from);
+
+      expect(result.created).toBe(0);
+      expect(result.skipped.map((s) => s.reason)).toEqual([
+        'already_this_week',
+        'already_this_week',
+        'already_this_week',
+        'already_this_week',
+      ]);
+
+      // The whole issue in one assertion: four classes on the schedule, not
+      // the eight a per-DATE key produces, and still the Tuesdays.
+      expect(await heldDates()).toEqual(TUESDAYS);
+    });
+
+    it('a CANCELLED class still holds its week', async () => {
+      // Spec §3.2. Cancel one Tuesday, move to Thursday: that week must stay
+      // empty rather than flipping to the new day for one week and back.
+      // This is the one place this codebase does NOT read cancelled as free —
+      // both partial slot indexes do, and the sibling test above ("does not
+      // treat a cancelled neighbour as occupying the slot") pins that. With a
+      // `status: { not: 'cancelled' }` filter on the week read, week 2 alone
+      // would move to Thursday while weeks 1, 3 and 4 stayed Tuesday.
+      const cancelled = new Date(TUESDAYS[1]!);
+      await prisma.class.updateMany({
+        where: { templateId, date: cancelled },
+        data: { status: 'cancelled' },
+      });
+      await prisma.classTemplate.update({
+        where: { id: templateId },
+        data: { dayOfWeek: THURSDAY },
+      });
+
+      const result = await generateInstancesForTemplate(prisma, await freshTemplate(), from);
+
+      expect(result.created).toBe(0);
+      // Length before `every`, which is vacuously true on a short array: the
+      // status-filtered variant does not mis-label week 2, it CREATES week 2
+      // and that date never reaches `skipped` at all.
+      expect(result.skipped).toHaveLength(4);
+      expect(result.skipped.every((s) => s.reason === 'already_this_week')).toBe(true);
+      expect(await heldDates()).toEqual(TUESDAYS);
+    });
+
+    it('still reports already_generated, not already_this_week, on a steady-state re-run', async () => {
+      // Evaluation order (spec §3.4): the week set contains the candidate's OWN
+      // week, so a week-first check would mask already_generated on every re-run.
+      // Not cosmetic — `countSkipReasons` counts `already_this_week` for the
+      // teacher and deliberately ignores `already_generated`, so week-first
+      // would report four blocked weeks after a run that did exactly what it
+      // was supposed to do.
+      const result = await generateInstancesForTemplate(prisma, await freshTemplate(), from);
+
+      expect(result.created).toBe(0);
+      expect(result.skipped.map((s) => s.reason)).toEqual([
+        'already_generated',
+        'already_generated',
+        'already_generated',
+        'already_generated',
+      ]);
+    });
+  });
+
   /** The template with the `teacher.defaultTimezone` join the generator requires. */
   async function freshTemplate() {
     return prisma.classTemplate.findUniqueOrThrow({

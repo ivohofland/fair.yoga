@@ -69,18 +69,23 @@ export function getNextOccurrences(
  * The first candidate date whose week no class of this template already holds,
  * or `null` if every candidate's week is taken (#194).
  *
- * Pure. Exists to be shared by two callers — the generator, deciding what to
- * create, and the template-edit endpoint's probe, deciding what to tell the
- * teacher. One function, so the sentence a teacher reads and the behaviour
- * they get cannot drift apart — `resumeMessage`'s docblock records what the
- * alternative cost, where copy guessed at generator internals it did not
- * share and guessed wrong.
+ * Pure. Its caller is the template-edit endpoint's probe — still to come on
+ * this branch — deciding what to tell the teacher.
  *
- * The two callers pass DIFFERENT candidate lists, and that is the point rather
- * than an inconsistency: the generator passes its own four-occurrence window,
- * while the probe passes a longer horizon, because when all four of those
- * weeks are held the honest answer is week five — outside anything the
- * generator can see.
+ * `generateInstancesForTemplate` below does NOT call it, and the plan's
+ * "one function, two callers" line is corrected here rather than upheld: the
+ * generator has to name a reason for EVERY candidate date, not find the first
+ * free one, so a function that returns a single date cannot express its
+ * answer. What the two genuinely share is the definition of "held" — the same
+ * `heldWeeks: Set<number>` of `mondayOf` values, built the same way from the
+ * same column — and that is where the drift risk actually lives.
+ * `resumeMessage`'s docblock records what the alternative cost, where copy
+ * guessed at generator internals it did not share and guessed wrong.
+ *
+ * The probe passes a LONGER candidate list than the generator's own
+ * four-occurrence window, and that is the point rather than an inconsistency:
+ * when all four of those weeks are held the honest answer is week five —
+ * outside anything the generator can see.
  */
 export function firstFreeWeek(
   candidates: readonly Date[],
@@ -103,6 +108,13 @@ type TemplateWithTimezone = Prisma.ClassTemplateGetPayload<{
 /**
  * Generates the rolling 4-week window for ONE template, reporting each
  * candidate date it could not fill and why (`GenerationResult`).
+ *
+ * Keyed per WEEK, not per date (#194). A template is a stamp, not a live link:
+ * editing `dayOfWeek` no longer rewrites the classes already generated — the
+ * sync that did is deleted — so without a week key, moving a template from
+ * Tuesday to Thursday would leave four Tuesdays standing and create four
+ * Thursdays beside them. The `heldWeeks` read below is what stops that, and
+ * `already_this_week` is what tells the teacher it happened.
  *
  * Two mechanisms, each with a job the other cannot do:
  *
@@ -163,6 +175,19 @@ export async function generateInstancesForTemplate(
     )
     .slice(0, DEFAULT_WEEKS);
 
+  // `dates` is empty only if every occurrence in the window has already
+  // started, which today it cannot be — the filter above can only drop the
+  // first of five. It is guarded rather than asserted anyway because the week
+  // bounds below dereference both ends of the array, and under
+  // `noUncheckedIndexedAccess` a `!` there would be a claim about a filter
+  // three lines up rather than a check. Returning the empty result is what the
+  // loop below would have produced from an empty `dates` regardless.
+  const windowStart = dates[0];
+  const windowEnd = dates[dates.length - 1];
+  if (windowStart === undefined || windowEnd === undefined) {
+    return { created: 0, skipped: [] };
+  }
+
   // One query for the whole window, replacing the per-date `findFirst`. Scoped
   // to this teacher because the slot key #196 enforces is
   // `(teacherId, date, startTime)` — another teacher's class can never block
@@ -171,6 +196,44 @@ export async function generateInstancesForTemplate(
     where: { teacherId: template.teacherId, date: { in: dates } },
     select: { templateId: true, date: true, startTime: true, status: true },
   });
+
+  // Week occupancy for the whole window (#194). A SECOND read rather than a
+  // widening of `occupants` above, and keyed on `templateId` rather than
+  // `teacherId`, for two reasons. The read above is scoped to the candidate
+  // dates and structurally cannot see the class that blocks a week from a
+  // DIFFERENT date — which is the entire case this exists for. And keying on
+  // `templateId` rides `@@unique([templateId, date])`, which both `Class` and
+  // `StudioClass` already carry, so this does not widen an unindexed scan
+  // (see the spec's §5; it corrects a claim on #284 that said otherwise).
+  //
+  // No `status` filter, deliberately: a cancelled class holds its week. Spec
+  // §3.2 has the flip-flop schedule the alternative produces — move a template
+  // Tuesday→Thursday, cancel the Tuesday in week 2 only, and a status-filtered
+  // read moves week 2 to Thursday while weeks 1, 3 and 4 stay Tuesday: a
+  // schedule that changes slot and changes back. A week left empty is easier
+  // for a teacher to read than that. Do not add a filter for consistency with
+  // `Class_teacher_slot_unique`, which reads cancelled as free for the
+  // different and correct reason that its index carries
+  // `WHERE "status" <> 'cancelled'`.
+  //
+  // Bounds derived from `dates` itself, not computed independently — the read
+  // and the loop below must not be able to disagree about which weeks are in
+  // play. `mondayOf` takes a CALENDAR DATE and no timezone, which is what both
+  // operands are: `Class.date` is `@db.Date` and `getNextOccurrences` builds
+  // UTC midnights. `startOfLocalWeek` is the wrong tool here — it resolves an
+  // INSTANT through `Intl`, and west of UTC it returns the previous day, which
+  // for a Monday is the previous week. The `+ 7 days` is plain UTC-midnight
+  // arithmetic for the same reason: no local calendar, so no DST to skew it.
+  const weekStart = new Date(mondayOf(windowStart));
+  const weekEnd = new Date(mondayOf(windowEnd) + 7 * 24 * 60 * 60 * 1000);
+  const heldWeeks = new Set(
+    (
+      await db.class.findMany({
+        where: { templateId: template.id, date: { gte: weekStart, lt: weekEnd } },
+        select: { date: true },
+      })
+    ).map((c) => mondayOf(c.date)),
+  );
 
   const skipped: SkippedSlot[] = [];
   const free: Date[] = [];
@@ -188,6 +251,19 @@ export async function generateInstancesForTemplate(
         date,
         reason: own.status === 'cancelled' ? 'blocked_by_cancelled' : 'already_generated',
       });
+      continue;
+    }
+
+    // AFTER the own-date branch above, deliberately: `heldWeeks` contains this
+    // candidate's own week too, so checking week-first would mask
+    // `already_generated` on every steady-state re-run — and the two are not
+    // interchangeable downstream, since `countSkipReasons` surfaces
+    // `already_this_week` to the teacher and deliberately ignores
+    // `already_generated`. BEFORE `slot_taken` below, because when a day edit
+    // and an unrelated class both block a date, the systematic cause is the one
+    // worth reporting.
+    if (heldWeeks.has(mondayOf(date))) {
+      skipped.push({ date, reason: 'already_this_week' });
       continue;
     }
 
