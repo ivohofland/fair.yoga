@@ -1516,6 +1516,209 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(mondayOf(filled[0]!.date)).toBe(predicted.getTime());
   });
 
+  /**
+   * The FIRST read's ABSENT status filter, from the only direction that can
+   * observe it: a cancelled class holds its week (#194, spec §3.2).
+   *
+   * The probe issues two reads a few lines apart and they disagree about
+   * `cancelled` deliberately — the week read (keyed `templateId`) carries no
+   * status filter, the slot read (keyed `teacherId` + `startTime`) carries
+   * `status: { not: 'cancelled' }`. Every other case in this file leaves all
+   * four generated classes live, so neither half of that asymmetry is
+   * observable anywhere: adding `status: { not: 'cancelled' }` to the week
+   * read left the whole suite green when it was mutated. This case is one
+   * missing half and the case below is the other.
+   *
+   * Adding that filter is the likely future edit, because the two reads sit in
+   * one `Promise.all` and only one of them is filtered, so "harmonising" them
+   * reads as tidying. It is the DISHONEST direction: the week it frees is one
+   * the sweep still refuses — `already_this_week`, asserted below — so the PUT
+   * would name a week no class ever lands in.
+   *
+   * Week ONE is the one cancelled, and weeks two to four are left live, so the
+   * two answers are four weeks apart rather than adjacent. A failure here
+   * therefore cannot be misread as an off-by-one in `mondayOf`, in
+   * `getNextOccurrences`, or in the past-start filter.
+   */
+  it('holds a week whose only class is cancelled, exactly as the sweep does', async () => {
+    const [OLD_DAY, NEW_DAY] = sameWeekDayPair();
+
+    // The probe's own horizon, built with the probe's own function so the
+    // arithmetic cannot drift: index 4 is week five, the first week the
+    // superseded schedule does not reach.
+    const horizon = getNextOccurrences(NEW_DAY, new Date(), 8);
+    const weekFive = horizon[4]!;
+
+    const create = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({
+        ...templateBody('Cancelled Holds Week', '10:02'),
+        dayOfWeek: OLD_DAY,
+      }),
+    });
+    expect(create.status).toBe(201);
+    const { data: created } = (await create.json()) as { data: { id: string } };
+    const id = created.id;
+
+    const before = await prisma.class.findMany({
+      where: { templateId: id },
+      orderBy: { date: 'asc' },
+    });
+    expect(before.length).toBe(4);
+
+    // Cancelled, not deleted, and cancelled through the one column the two
+    // reads disagree about. `@@unique([templateId, date])` carries no status,
+    // so this row still holds its DATE for good (#192); what is under test is
+    // that it also still holds its WEEK.
+    const cancelled = before[0]!;
+    await prisma.class.update({ where: { id: cancelled.id }, data: { status: 'cancelled' } });
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ dayOfWeek: NEW_DAY }),
+    });
+    expect(res.status).toBe(200);
+
+    const { data } = (await res.json()) as { data: { firstEffective: string | null } };
+    expect(data.firstEffective).not.toBeNull();
+    const predicted = new Date(data.firstEffective as string);
+
+    // Both halves — what it is and what it is not — because a status-filtered
+    // week read produces one specific wrong answer and `not.toBe` alone would
+    // accept every other one.
+    expect(predicted.getTime()).toBe(mondayOf(weekFive));
+    expect(predicted.getTime()).not.toBe(mondayOf(cancelled.date));
+
+    const template = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id },
+      include: { teacher: { select: { defaultTimezone: true } } },
+    });
+
+    // The sweep as it runs today, over those same four weeks. Week one comes
+    // back `already_this_week` and NOT `blocked_by_cancelled`: the cancelled
+    // row sits on the OLD weekday, so it is not on the candidate DATE at all.
+    // It is the WEEK it still holds, which is exactly the fact the probe's
+    // first read has to reproduce.
+    const today = await generateInstancesForTemplate(prisma, template);
+    expect(today.created).toBe(0);
+    expect(today.skipped.map((s) => s.reason)).toEqual([
+      'already_this_week',
+      'already_this_week',
+      'already_this_week',
+      'already_this_week',
+    ]);
+
+    // And the week the sentence named is the week the sweep then fills.
+    const later = await generateInstancesForTemplate(prisma, template, predicted);
+    expect(later.created).toBeGreaterThan(0);
+    const after = await prisma.class.findMany({
+      where: { templateId: id, id: { notIn: before.map((c) => c.id) } },
+      orderBy: { date: 'asc' },
+    });
+    expect(mondayOf(after[0]!.date)).toBe(predicted.getTime());
+  });
+
+  /**
+   * The SECOND read's PRESENT status filter — the same asymmetry from the
+   * other side, and the reason it is an asymmetry rather than an
+   * inconsistency.
+   *
+   * `Class_teacher_slot_unique` is PARTIAL (`WHERE "status" <> 'cancelled'`),
+   * so a cancelled class takes no slot and the slot read mirrors that
+   * predicate rather than the week read beside it. Delete
+   * `status: { not: 'cancelled' }` from it and the whole suite stays green —
+   * mutated and measured — because the slot case above puts a LIVE class in
+   * the blocked slot and nothing anywhere puts a cancelled one there.
+   *
+   * Wrong in the OPPOSITE direction to its sibling above, which is what makes
+   * it look harmless: an unfiltered slot read names a LATER week than the
+   * sweep delivers. That is the safe direction for a race, where the sweep
+   * corrects itself an hour later, and the wrong answer for a fact — the class
+   * arrives in week five, the teacher was told week six, and nothing ever
+   * revisits the sentence.
+   */
+  it('leaves a slot whose only class is cancelled free, exactly as the sweep does', async () => {
+    const [OLD_DAY, NEW_DAY] = sameWeekDayPair();
+
+    const horizon = getNextOccurrences(NEW_DAY, new Date(), 8);
+    const weekFive = horizon[4]!;
+    const weekSix = horizon[5]!;
+
+    const create = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({
+        ...templateBody('Cancelled Frees Slot', '10:03'),
+        dayOfWeek: OLD_DAY,
+      }),
+    });
+    expect(create.status).toBe(201);
+    const { data: created } = (await create.json()) as { data: { id: string } };
+    const id = created.id;
+    expect(await prisma.class.count({ where: { templateId: id } })).toBe(4);
+
+    // Somebody else's row in week five's slot: same teacher, same date, same
+    // startTime, `templateId` null — every column the live blocker in the case
+    // above has, differing only in the one the read filters on. The partial
+    // index does not cover it, so it holds nothing.
+    await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Cancelled Slot Blocker',
+        date: weekFive,
+        startTime: '10:03',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+        status: 'cancelled',
+      },
+    });
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ dayOfWeek: NEW_DAY }),
+    });
+    expect(res.status).toBe(200);
+
+    const { data } = (await res.json()) as { data: { firstEffective: string | null } };
+    expect(data.firstEffective).not.toBeNull();
+    const predicted = new Date(data.firstEffective as string);
+
+    // Week five, not week six. Both halves again, and the wrong answer here is
+    // the adjacent week, which is why the second assertion names it.
+    expect(predicted.getTime()).toBe(mondayOf(weekFive));
+    expect(predicted.getTime()).not.toBe(mondayOf(weekSix));
+
+    const template = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id },
+      include: { teacher: { select: { defaultTimezone: true } } },
+    });
+
+    // The sweep, run from week five's Monday and NOT from `predicted` — this
+    // half must stay true whatever the sentence said, since it is what makes a
+    // sentence naming week six a lie. It declines nothing: the cancelled row
+    // is invisible to the generator's own `status !== 'cancelled'` slot
+    // pre-check for the same reason it is invisible to the probe's.
+    const fromWeekFive = new Date(mondayOf(weekFive));
+    const sweep = await generateInstancesForTemplate(prisma, template, fromWeekFive);
+    expect(sweep.skipped).toEqual([]);
+    expect(sweep.created).toBe(4);
+
+    const filled = await prisma.class.findMany({
+      where: { templateId: id, date: { gte: fromWeekFive } },
+      orderBy: { date: 'asc' },
+    });
+    expect(filled.length).toBeGreaterThan(0);
+    expect(filled[0]!.date.getTime()).toBe(weekFive.getTime());
+  });
+
   // updateClassTemplate has no isArchived/isActive guard of its own, so
   // whether an archived template can be edited at all is current behaviour,
   // not a documented decision — pin it here rather than leave it assumed.

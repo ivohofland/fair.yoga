@@ -560,6 +560,60 @@ describe('TemplateForm', () => {
   });
 
   /**
+   * The third real state, and the only one whose sentence carries a remedy
+   * that is not obvious: both archive directions force `isActive: false`, so
+   * un-archiving ALONE puts nothing back and the copy has to say "un-archive
+   * and resume". A teacher who reads the plain sentence instead is told the
+   * edit takes effect for newly generated classes, for a template that
+   * generates none and will not start again on its own.
+   *
+   * Covered because the whitelist this exercises is a two-armed comparison and
+   * the arms are independently deletable. Dropping only the `'archived'`
+   * disjunct leaves the paused case above and the unknown-value fallback below
+   * both green — `'archived'` falls through to `'active'`, the plain sentence
+   * renders, and the route's own `generationState` is discarded at the last
+   * hop before the reader. That is the pre-#194 failure restored for exactly
+   * one state, and until this case existed nothing observed it.
+   */
+  it('names the un-archive when the route says the recurring class is archived', async () => {
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url === '/api/teacher-rooms') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{
+              id: '11111111-1111-4111-8111-111111111111',
+              capacityOverride: 30,
+              rentalRate: 20,
+              room: { roomName: 'Studio A', venueName: 'Main Venue' },
+            }],
+          }),
+        };
+      }
+      if (url === '/api/class-templates/tpl-1' && init?.method === 'PUT') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: { id: 'tpl-1', firstEffective: null, generationState: 'archived' },
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    fireEvent.click(await screen.findByRole('button', { name: /save/i }));
+
+    expect(
+      await screen.findByText(
+        'Template updated. It takes effect for newly generated classes — this recurring class is archived, so nothing is generated until you un-archive and resume it. Change existing classes individually if needed.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  /**
    * The wire is data, not a type. `generationState` is narrowed by comparison
    * against the two states that change the sentence, so an unrecognised value
    * — a newer server, a proxy rewriting the body, a typo in a future arm —
