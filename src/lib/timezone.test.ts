@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { classStartInstant, startsInPast, startOfLocalDay, startOfLocalWeek } from './timezone';
+import { classStartInstant, startsInPast, startOfLocalDay, startOfLocalWeek, mondayOf } from './timezone';
 import { log } from '@/lib/log';
 
 /**
@@ -385,5 +385,51 @@ describe('startOfLocalWeek', () => {
     const instant = new Date('2026-06-07T22:30:00.000Z');
     expect(startOfLocalWeek(instant, 'Europe/Amsterdam').toISOString())
       .toBe('2026-06-08T00:00:00.000Z');
+  });
+});
+
+describe('mondayOf', () => {
+  const iso = (ms: number) => new Date(ms).toISOString();
+
+  it('returns the Monday of the week containing a midweek date', () => {
+    // 2026-09-24 is a Thursday; its Monday is 2026-09-21.
+    expect(iso(mondayOf(new Date('2026-09-24T00:00:00.000Z')))).toBe('2026-09-21T00:00:00.000Z');
+  });
+
+  it('returns the date itself when it is already a Monday', () => {
+    expect(iso(mondayOf(new Date('2026-09-21T00:00:00.000Z')))).toBe('2026-09-21T00:00:00.000Z');
+  });
+
+  it('rolls a Sunday BACK six days, not forward one', () => {
+    // 2026-09-27 is a Sunday. Monday-first weeks put it at the END of the
+    // week beginning 2026-09-21 — not the start of the one beginning
+    // 2026-09-28. This is the off-by-one the whole week rule turns on.
+    expect(iso(mondayOf(new Date('2026-09-27T00:00:00.000Z')))).toBe('2026-09-21T00:00:00.000Z');
+  });
+
+  it('puts a Sunday and the following Monday in DIFFERENT weeks', () => {
+    // The consequence of the rule above, stated as the behaviour that matters:
+    // a template moved from Sunday to Monday crosses a week boundary.
+    const sunday = mondayOf(new Date('2026-09-27T00:00:00.000Z'));
+    const monday = mondayOf(new Date('2026-09-28T00:00:00.000Z'));
+    expect(sunday).not.toBe(monday);
+  });
+
+  it('reads the date with UTC accessors, not local ones', () => {
+    // `mondayOf` takes no timezone argument, so it cannot "ignore" one — what
+    // this actually pins is that its internals use `getUTCDate`/`getUTCDay`
+    // rather than their local-time twins. `vitest.config.ts:60` pins
+    // `TZ: 'America/New_York'` process-wide for exactly this reason: under
+    // that pin, midnight-UTC Monday 2026-09-21 reads as roughly 20:00 EDT the
+    // PREVIOUS evening, Sunday the 20th. A `mondayOf` written with
+    // `getDate()`/`getDay()` instead of the UTC pair would read that local
+    // Sunday, roll it back six days, and answer a Monday a week early —
+    // exactly the class of bug the `TZ` pin exists to make observable, per
+    // `vitest.config.ts`'s own comment on `format.ts`.
+    const monday = new Date('2026-09-21T00:00:00.000Z');
+    expect(iso(mondayOf(monday))).toBe('2026-09-21T00:00:00.000Z');
+    // And the Monday of the previous week is genuinely seven days earlier,
+    // proving the function is not silently shifting by an offset.
+    expect(iso(mondayOf(new Date('2026-09-14T00:00:00.000Z')))).toBe('2026-09-14T00:00:00.000Z');
   });
 });

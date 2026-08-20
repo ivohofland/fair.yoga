@@ -5,7 +5,7 @@ import { RegistrationProgress } from '@/components/ui/registration-progress';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatRoomLocation, formatDayHeader, FULL_MONTHS } from '@/lib/format';
-import { classStartInstant, startOfLocalWeek } from '@/lib/timezone';
+import { classStartInstant, startOfLocalWeek, mondayOf } from '@/lib/timezone';
 
 type ClassWithDetails = Class & {
   _count: { registrations: number };
@@ -25,14 +25,6 @@ interface ClassListProps {
 }
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-
-/** UTC-midnight Monday of the week containing `date`. */
-function mondayOf(date: Date): number {
-  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-  const day = d.getUTCDay();
-  d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day));
-  return d.getTime();
-}
 
 /** "This week" / "Next week" / "Last week" / "Week of 4 August". */
 function weekLabel(itemDate: Date, thisMonday: number): string {
