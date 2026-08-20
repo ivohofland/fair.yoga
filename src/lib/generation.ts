@@ -93,16 +93,31 @@ export interface SkipCounts {
 
 /**
  * The one place `GenerationResult['skipped']` is reduced to the counts a
- * caller surfaces. Five call sites used to each filter three of five
+ * caller surfaces. Five call sites used to each filter two of four
  * `SkipReason` members by hand — `api/class-templates/route.ts`,
  * `api/studio-class-templates/route.ts`, `class-template-lifecycle.ts`,
- * `studio-class-template-lifecycle.ts`, and `template-sync.ts` until #194
- * deleted it — so a sixth `SkipReason` member would have compiled clean and
- * vanished at every one of them. The exhaustive `switch` below is what turns
- * that into a single compile error instead: this project already uses the
- * `const unhandled: never` idiom for exactly this shape (see the API routes'
- * own `never` exhaustiveness checks), and reducing once is what lets one
- * instance of it cover every call site rather than needing one each.
+ * `studio-class-template-lifecycle.ts` and `template-sync.ts` — so a fifth
+ * `SkipReason` member would have compiled clean and vanished at every one of
+ * them. The exhaustive `switch` below is what turns that into a single compile
+ * error instead: this project already uses the `const unhandled: never` idiom
+ * for exactly this shape (see the API routes' own `never` exhaustiveness
+ * checks), and reducing once is what lets one instance of it cover every call
+ * site rather than needing one each.
+ *
+ * EVERY NUMBER IN THE PARAGRAPH ABOVE IS THE PRE-#194 STATE, deliberately, and
+ * must not be refreshed to today's. It is the roster the measurement was taken
+ * against: five sites, because `template-sync.ts` still existed; four members
+ * and two `SkipCounts` fields, because `already_this_week`/`alreadyThisWeek`
+ * did not. A pass over this branch rewrote the member counts to today's and
+ * left the call-site roster at yesterday's, and the result described a state
+ * this repo was never in at any point.
+ *
+ * Today, for the avoidance of exactly that: FOUR value-importing call sites
+ * (#194 deleted `template-sync.ts` — check with `grep -rn "lib/generation'"
+ * src/`), FIVE `SkipReason` members and THREE `SkipCounts` fields. So the
+ * member that would vanish without the `switch` below is now the SIXTH, and
+ * `class-template-lifecycle.ts`'s `PauseTemplateResult` cites this docblock
+ * for that number.
  */
 export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
   let blockedByCancelled = 0;

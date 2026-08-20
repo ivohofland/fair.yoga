@@ -300,7 +300,10 @@ export async function generateInstancesForTemplate(
       continue;
     }
 
-    // AFTER the own-date branch above, deliberately: `heldWeeks` contains this
+    // AFTER the own-date branch above, deliberately — and that half of the
+    // order IS pinned: reversing it reddens the steady-state re-run case,
+    // which is why it is stated as a guarantee where the next paragraph is
+    // not. `heldWeeks` contains this
     // candidate's own week too, so checking week-first would mask
     // `already_generated` on every steady-state re-run — and the two are not
     // interchangeable downstream, since `countSkipReasons` counts
@@ -310,9 +313,23 @@ export async function generateInstancesForTemplate(
     // `active` arm → `resumeMessage`, which renders it as "N dates are still
     // held by classes on your previous day".
     //
-    // BEFORE `slot_taken` below, because when a day edit and an unrelated
-    // class both block a date, the systematic cause is the one worth
-    // reporting.
+    // Before `slot_taken` below — a REPORTING PREFERENCE, not a guarantee, and
+    // deliberately stated as one: nothing pins it. No fixture makes a single
+    // date both week-held and slot-taken by an unrelated class, so swapping
+    // these two branches fails no test today. The preference is that when a
+    // day edit and an unrelated class both block a date, the systematic cause
+    // is the one worth reporting.
+    //
+    // Not free to get wrong, either: the two reasons land in DIFFERENT
+    // `SkipCounts` fields and reach a teacher as different clauses of
+    // `resumeMessage` ("N dates already had a class" versus "N dates are still
+    // held by classes on your previous day"). What bounds it is that both
+    // branches `continue` — no class is created either way, the total is
+    // unchanged, and `resumeMessage` appends every applicable clause before
+    // choosing a head — so a reorder changes WHICH CLAUSE the teacher reads,
+    // never whether the sentence is true. Closing it costs one fixture; until
+    // someone spends it, this comment must not claim an order the suite does
+    // not enforce.
     if (isWeekHeld(date, heldWeeks)) {
       skipped.push({ date, reason: 'already_this_week' });
       continue;

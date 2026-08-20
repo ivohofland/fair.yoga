@@ -1417,15 +1417,18 @@ describe('PUT /api/class-templates/[id]', () => {
    * The probe's second half, and the reason it takes two reads: a week held by
    * this template is not the same fact as a single date whose SLOT is taken.
    *
-   * `generateInstancesForTemplate` declines a date on four grounds, and three
-   * of them are the template's own rows — `already_generated`,
-   * `blocked_by_cancelled` and `already_this_week` all follow from a
-   * `templateId`-keyed read with no status filter. The fourth,
-   * `slot_taken` (#196), is somebody else's row entirely: another
-   * non-cancelled class of the same teacher at the same `(date, startTime)`.
-   * A probe that read only the template's own weeks cannot see it, and gets
-   * the answer wrong in the DISHONEST direction — it names a week EARLIER
-   * than the sweep will deliver.
+   * `generateInstancesForTemplate` declines a date on five grounds (the
+   * `SkipReason` union, `src/lib/generation.ts`), and three of them are the
+   * template's own rows — `already_generated`, `blocked_by_cancelled` and
+   * `already_this_week` all follow from a `templateId`-keyed read with no
+   * status filter. `slot_taken` (#196) is somebody else's row entirely:
+   * another non-cancelled class of the same teacher at the same
+   * `(date, startTime)`. A probe that read only the template's own weeks
+   * cannot see it, and gets the answer wrong in the DISHONEST direction — it
+   * names a week EARLIER than the sweep will deliver. (The fifth, `raced`, is
+   * a concurrent insert that has not happened yet at probe time; the probe's
+   * docblock records why it is unreproducible and why erring later-than-
+   * promised is the safe direction.)
    *
    * Reachable, and made more so by rule 1 of this very branch: template A
    * moves off Thursday 18:00 and leaves up to four Thursday 18:00 instances

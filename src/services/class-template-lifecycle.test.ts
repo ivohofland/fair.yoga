@@ -231,8 +231,10 @@ describe('updateClassTemplate (DB)', () => {
     expect(result.template.durationMinutes).toBe(75);
     // Exhaustive on the success arm's own keys, and that exhaustiveness is
     // inherited, not new. A whole-shape `toEqual` stood here against
-    // `TemplateSyncResult`'s seven counts, and it is what caught the three
-    // fields #204's review added — the reason the form could not silently
+    // `TemplateSyncResult`'s six counts — `synced`, `regenerated`, `refilled`,
+    // `blockedByCancelled`, `slotTaken`, `kept`, counted off the deleted
+    // declaration at `5db8dca:src/services/template-sync.ts` rather than
+    // remembered — and it is what caught the three fields #204's review added — the reason the form could not silently
     // keep reading a stale shape. #194 removed the propagation, so the same
     // assertion now guards the opposite property: the success arm carries the
     // template and nothing else, and a re-added propagation report fails

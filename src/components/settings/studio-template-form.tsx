@@ -157,7 +157,8 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         // resume button renders — `scheduled` is exactly `added` here, since
         // nothing existed under this brand-new template before this create.
         //
-        // `alreadyThisWeek` rides along as the fifth count, and the GATE below
+        // `alreadyThisWeek` rides along as `resumeMessage`'s fifth ARGUMENT —
+        // the fourth field on this payload, not the fifth — and the GATE below
         // deliberately does not test it. It is structurally 0 on create twice
         // over: a brand-new template holds no week of its own yet, and the
         // studio generator has no week key to produce the reason with until

@@ -328,7 +328,8 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         // `scheduled` is exactly `added` here, since nothing existed under
         // this brand-new template before this create.
         //
-        // `alreadyThisWeek` rides along as the fifth count, and the GATE below
+        // `alreadyThisWeek` rides along as `resumeMessage`'s fifth ARGUMENT —
+        // the fourth field on this payload, not the fifth — and the GATE below
         // deliberately does not test it. On create that count is structurally
         // 0: `already_this_week` requires a class of THIS template already
         // holding the week, and the template was created moments earlier in

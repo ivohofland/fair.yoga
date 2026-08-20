@@ -94,8 +94,12 @@ export const PUT = withErrorHandler(async (
   if (result.reason === 'forbidden') return respondError('Access denied', 403);
   if (result.reason === 'no_fields') return respondError('No valid fields to update', 400);
   if (result.reason === 'invalid_room') return respondError('Invalid teacher room', 400);
-  // Door 5 of the room archive lifecycle (issue 76, fix round 2): moving an
-  // active template onto an archived room. Symmetric with door 3's
+  // Door 5 of the room archive lifecycle (issue 76, fix round 2): moving a
+  // template onto an archived room. NOT gated on `isActive` — the service's
+  // `room_archived` docblock and the guard itself both say so in terms, and
+  // this comment said "active" until the branch that made them explicit turned
+  // a stale word into a live disagreement between two files about one rule.
+  // Symmetric with door 3's
   // `room_archived` branch on the PATCH handler below — same code, same
   // register, different verb.
   if (result.reason === 'room_archived') {

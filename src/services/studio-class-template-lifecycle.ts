@@ -504,8 +504,12 @@ export async function updateStudioClassTemplate(
  * beyond the template itself.
  *
  * `active` mirrors `PauseTemplateResult`'s own `active` arm exactly: both
- * families now report `scheduled`, `added`, `blockedByCancelled` and
- * `slotTaken`.
+ * families now report `scheduled`, `added`, `blockedByCancelled`, `slotTaken`
+ * and `alreadyThisWeek`. Five, not four — re-derived from the arm below rather
+ * than copied from the sentence's previous version, which named four and still
+ * said "exactly", turning an omission into a false equivalence. The fifth is
+ * always 0 on this side until #284; carried, not special-cased, and documented
+ * at its own field.
  *
  * This used to say the class family was "deliberately not fixed alongside
  * this", because its resume generates *without* taking the claim and a count
@@ -559,8 +563,10 @@ export type PauseStudioTemplateResult =
        * resume copy, a measured number rather than an inference.
        *
        * These two counts do **not** sum with `added` to the window: they are
-       * two of the four `SkipReason` members (`src/lib/generation.ts`), and
-       * they omit `already_generated` — the common case — and `raced`. On a
+       * two of the five `SkipReason` members (`src/lib/generation.ts`), and
+       * they omit three — `already_generated`, the common case; `raced`; and
+       * `already_this_week`, which is declared fifteen lines below this
+       * sentence in this same file and was missing from it. On a
        * steady-state hourly sweep all three of these numbers are zero while
        * the window still has four candidate dates. The invariant that does
        * hold is `GenerationResult`'s own: `created + skipped.length` is the

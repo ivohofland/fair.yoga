@@ -399,11 +399,14 @@ export type UpdateClassTemplateResult =
  *
  * ## Which of the generator's refusals this reproduces, and which it does not
  *
- * The generator declines a candidate date on four named grounds
- * (`SkipReason`, `@/lib/generation`). Stated one at a time rather than as a
- * parity claim, because the parity claim is what this docblock said before the
- * fourth ground was found missing — and a reader who trusted it had no way to
- * check it:
+ * The generator declines a candidate date on five named grounds (`SkipReason`,
+ * `@/lib/generation`, whose own header says "Five reasons, five distinct
+ * origins" — one number, derived from the type, not two conventions counting
+ * the same union). Stated one at a time rather than as a parity claim, because
+ * the parity claim is what this docblock said before `slot_taken` was found
+ * missing — and a reader who trusted it had no way to check it. Named rather
+ * than numbered, because "the Nth ground" resolves against no ordering anyone
+ * has written down:
  *
  *   - `already_generated` and `blocked_by_cancelled` — this template's own row
  *     on the date itself, live or cancelled. Both reproduced by the FIRST read:
@@ -697,8 +700,11 @@ export async function updateClassTemplate(
     // from P2025 and from both `isUniqueConflictOn` column sets below, so a
     // transient error could not fall into either of those branches even
     // checked last — but kept first anyway so a reader does not have to
-    // re-derive that for each of the five template lifecycle functions this
-    // helper now guards.
+    // re-derive that for each of the six template lifecycle functions this
+    // helper now guards — `updateClassTemplate`, `pauseOrResumeTemplate` and
+    // `archiveOrUnarchiveTemplate`, and the three studio twins. (Counted, not
+    // incremented: it read "five" at this branch's base too, and was wrong
+    // there as well.)
     if (isTransientDbError(err)) {
       // The template row, and it can now be named: this transaction takes one
       // lock and it is the `ClassTemplate` row's. For one branch the message
@@ -856,14 +862,23 @@ export type LastScheduledClass = { date: Date; startTime: string };
  * Outcome of a pause/resume PATCH. `paused` carries the furthest-out class
  * still on the schedule, for the pause confirmation; `active` reports what the
  * window holds and why it is not fuller — `scheduled`, `added`,
- * `blockedByCancelled`, `slotTaken`; `unchanged` reports nothing beyond the
- * template itself, because it describes a request that changed nothing.
+ * `blockedByCancelled`, `slotTaken` and `alreadyThisWeek`; `unchanged` reports
+ * nothing beyond the template itself, because it describes a request that
+ * changed nothing.
  *
  * This paragraph used to say "resuming needs no explanation", ten lines above
- * the arm that now carries four counts. That is exactly the shape #164 was
+ * the arm that now carries five counts. That is exactly the shape #164 was
  * caused by — a header disagreeing with the declaration beneath it — so it is
  * worth stating why it survived: it was true when resuming only flipped a flag,
  * and nothing forces a docblock to be re-read when the type under it grows.
+ *
+ * It then became one again, which is the more useful half of the record. #194
+ * added `alreadyThisWeek` to `SkipCounts`, the arm gained it through the `&`
+ * without either name being written here, and the sentence above kept naming
+ * four counts and listing four. Both numbers here are now DERIVED from the
+ * declaration below — two named fields plus `SkipCounts`' three — rather than
+ * incremented, which is the only way this stays true through the next one.
+ * `api/class-templates/[id]/route.ts` sends all five.
  */
 export type PauseTemplateResult =
   | {
@@ -896,7 +911,7 @@ export type PauseTemplateResult =
        * `& SkipCounts` rather than two re-listed `number`s, and the difference
        * is a guarantee that did not exist before #116.
        *
-       * `countSkipReasons`' docblock says a fifth `SkipReason` fails the build
+       * `countSkipReasons`' docblock says a sixth `SkipReason` fails the build
        * rather than vanishing, and that is true of the REASON — its exhaustive
        * `switch` catches it. It was not true of the COUNT: measured, adding a
        * fifth reason, handling it, and adding its count to `SkipCounts`
