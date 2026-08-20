@@ -1,9 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import {
   archiveOrUnarchiveStudioTemplate,
   pauseOrResumeStudioTemplate,
+  updateStudioClassTemplate,
 } from './studio-class-template-lifecycle';
+import { log } from '@/lib/log';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -1245,4 +1247,176 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
     expect(pauseResult.template.isArchived).toBe(true);
     expect(pauseResult.template.isActive).toBe(false);
   });
+});
+
+describe('updateStudioClassTemplate (DB)', () => {
+  let teacherId: string;
+  let otherTeacherId: string;
+  let counter = 0;
+
+  const makeTemplate = async (owner: string, classType: string) => {
+    counter += 1;
+    return prisma.studioClassTemplate.create({
+      data: {
+        teacherId: owner,
+        classType,
+        dayOfWeek: 4,
+        startTime: slotTime(counter),
+        durationMinutes: 60,
+        location: 'Update Studio',
+        hourlyRate: 45,
+      },
+    });
+  };
+
+  beforeAll(async () => {
+    ({ teacherId } = await seedTeacher('update-owner'));
+    ({ teacherId: otherTeacherId } = await seedTeacher('update-other'));
+  });
+
+  it('returns not_found for a template that does not exist', async () => {
+    const result = await updateStudioClassTemplate(
+      prisma,
+      '00000000-0000-0000-0000-000000000000',
+      teacherId,
+      { classType: 'Ghost' },
+    );
+    expect(result).toEqual({ ok: false, reason: 'not_found' });
+  });
+
+  it("returns forbidden for another teacher's template, and leaves it untouched", async () => {
+    const t = await makeTemplate(otherTeacherId, 'Not Yours');
+
+    const result = await updateStudioClassTemplate(prisma, t.id, teacherId, {
+      classType: 'Hijacked',
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'forbidden' });
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.classType).toBe('Not Yours');
+  });
+
+  it('returns no_fields for an empty payload', async () => {
+    const t = await makeTemplate(teacherId, 'Empty Payload');
+    expect(await updateStudioClassTemplate(prisma, t.id, teacherId, {})).toEqual({
+      ok: false,
+      reason: 'no_fields',
+    });
+  });
+
+  // The case a key-count check lets through. Unreachable over the wire — JSON
+  // cannot carry `undefined`, so a key never arrives with that value — and
+  // reachable here, which is the whole point of there being a function
+  // boundary. `Object.keys({ classType: undefined }).length` is 1.
+  it('returns no_fields for a payload whose only key is undefined', async () => {
+    const t = await makeTemplate(teacherId, 'Undefined Only');
+    expect(
+      await updateStudioClassTemplate(prisma, t.id, teacherId, { classType: undefined }),
+    ).toEqual({ ok: false, reason: 'no_fields' });
+
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.classType).toBe('Undefined Only');
+  });
+
+  it('writes the edited fields and returns the updated row', async () => {
+    const t = await makeTemplate(teacherId, 'Editable');
+
+    const result = await updateStudioClassTemplate(prisma, t.id, teacherId, {
+      classType: 'Edited',
+      hourlyRate: 62.5,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.template.classType).toBe('Edited');
+    expect(Number(result.template.hourlyRate)).toBe(62.5);
+    // Untouched fields survive a partial update.
+    expect(result.template.location).toBe('Update Studio');
+  });
+
+  it('returns slot_conflict when the edit lands on a live sibling slot, and logs it', async () => {
+    const occupant = await makeTemplate(teacherId, 'Slot Occupant');
+    const mover = await makeTemplate(teacherId, 'Slot Mover');
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    try {
+      const result = await updateStudioClassTemplate(prisma, mover.id, teacherId, {
+        startTime: occupant.startTime,
+      });
+
+      expect(result).toEqual({ ok: false, reason: 'slot_conflict' });
+
+      // #231: a RETURNED failure never reaches `withErrorHandler`, and
+      // `respondError` does not log. Catching this P2002 is what would delete
+      // the line `classifyApiError` emits when it escapes, so the catch has to
+      // put one back.
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ templateId: mover.id, teacherId }),
+        'studio template edit refused by the slot index',
+      );
+    } finally {
+      warn.mockRestore();
+    }
+
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: mover.id } });
+    expect(after.startTime).toBe(mover.startTime);
+  });
+
+  /**
+   * The bound, proved the way `studio-class-generator.test.ts`'s twin proves
+   * the archive's: a third transaction holds the row `FOR UPDATE`, the edit
+   * queues behind it, and the timing assertions carry the claim. The lower
+   * bound proves it actually waited; the upper proves it answered near the 2s
+   * `setLockTimeout` bound rather than at the 10s budget.
+   *
+   * Removing `setLockTimeout` does not slide the answer later — it stops the
+   * edit settling at all, so the test dies on its own 20s timeout. That is the
+   * mutation record, not a prediction.
+   */
+  it(
+    'returns busy when another transaction holds the row past the lock timeout, and logs it',
+    async () => {
+      const t = await makeTemplate(teacherId, 'Busy Edit');
+
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const blocking = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT "id" FROM "StudioClassTemplate" WHERE "id" = ${t.id} FOR UPDATE`;
+          await held;
+        },
+        { timeout: 15_000 },
+      );
+
+      await new Promise((r) => setTimeout(r, 100));
+
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+      try {
+        const startedAt = Date.now();
+        const result = await updateStudioClassTemplate(prisma, t.id, teacherId, {
+          classType: 'Blocked',
+        });
+        const waited = Date.now() - startedAt;
+
+        expect(result).toEqual({ ok: false, reason: 'busy' });
+        expect(waited).toBeGreaterThanOrEqual(1_800);
+        expect(waited).toBeLessThan(5_000);
+
+        expect(warn).toHaveBeenCalledWith(
+          expect.objectContaining({ templateId: t.id, teacherId }),
+          'studio template edit lost the template lock race — nothing committed',
+        );
+      } finally {
+        warn.mockRestore();
+        release();
+        await blocking.catch(() => {});
+      }
+
+      const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
+      expect(after.classType).toBe('Busy Edit');
+    },
+    20_000,
+  );
 });

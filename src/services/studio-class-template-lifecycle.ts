@@ -39,7 +39,7 @@ import type { updateStudioClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { startOfLocalDay } from '@/lib/timezone';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
-import { isTransientDbError } from '@/lib/api-errors';
+import { isRecordNotFound, isTransientDbError } from '@/lib/api-errors';
 import { setLockTimeout } from '@/lib/db-locks';
 import { countSkipReasons } from '@/lib/generation';
 // Server-only (pino). Safe here: this module's sole importer is
@@ -250,6 +250,150 @@ const _studioTemplateAllowlistHasNoForbiddenFields: NoneOf<
   Extract<TeacherEditableStudioTemplateField, PlainUpdateForbiddenStudioTemplateField>
 > = true;
 void _studioTemplateAllowlistHasNoForbiddenFields;
+
+/**
+ * Why an update did or did not happen. Every business outcome is a variant;
+ * callers own the user-facing wording.
+ */
+export type UpdateStudioClassTemplateResult =
+  | { ok: true; template: StudioClassTemplate }
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'forbidden' }
+  | { ok: false; reason: 'no_fields' }
+  | { ok: false; reason: 'slot_conflict' }
+  | { ok: false; reason: 'busy' };
+
+/**
+ * Applies a teacher's edit to their own studio template.
+ *
+ * Ownership lives here, not in the route, so the guard travels with the
+ * function — the same choice `updateClassTemplate` made and for the same
+ * reason.
+ *
+ * The `data` parameter's intersection with
+ * `Partial<Record<PlainUpdateForbiddenStudioTemplateField, never>>` is what
+ * makes the forbidden list bind *callers*, not just the wire schema. The pins
+ * above only prove the allowlist and the schema agree; they say nothing about
+ * a caller. TypeScript's excess-property check fires only on a fresh object
+ * literal — build `data` as a variable first
+ * (`const patch = { classType: 'Yin', isActive: true };
+ * updateStudioClassTemplate(db, id, me, patch)`) and it never triggers, so a
+ * value with no matching type declaration would sail straight through to
+ * `update`. Marking each forbidden key optional-and-`never` forces TypeScript
+ * to reject that argument however it arrives.
+ *
+ * No instance sync. Unlike the class family, editing `dayOfWeek` or
+ * `startTime` here leaves generated `StudioClass` rows on the superseded
+ * schedule — there is no `syncTemplateInstances` equivalent for this family.
+ * That is #194, with two open product decisions of its own; this function is
+ * the seam it will attach to, which is why the omission is stated rather than
+ * left to be discovered.
+ */
+export async function updateStudioClassTemplate(
+  db: PrismaClient,
+  templateId: string,
+  teacherId: string,
+  data: StudioClassTemplateUpdateData &
+    Partial<Record<PlainUpdateForbiddenStudioTemplateField, never>>,
+): Promise<UpdateStudioClassTemplateResult> {
+  const template = await db.studioClassTemplate.findUnique({ where: { id: templateId } });
+  // Deliberately silent, all three of the returns in this block. #231's own
+  // acceptance criterion allows a failure to go unlogged when it carries no
+  // information an operator could act on, and a 404 or a 403 for a template
+  // the caller never owned is that case. The two returns from the `catch`
+  // below are not, and both log.
+  if (!template) return { ok: false, reason: 'not_found' };
+  if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
+
+  // Defined-value scan, not a key count, matching `updateClassTemplate`: a key
+  // present with value `undefined` is not an edit. A key-count check would let
+  // `{ classType: undefined }` through and issue a no-op `update` that still
+  // reported `ok: true`. The wire cannot produce that shape — JSON has no
+  // `undefined` — but this function is callable without a wire.
+  const hasEdit = Object.values(data).some((v) => v !== undefined);
+  if (!hasEdit) return { ok: false, reason: 'no_fields' };
+
+  try {
+    return await db.$transaction(
+      async (tx): Promise<UpdateStudioClassTemplateResult> => {
+        // Bounds the wait for this row. `archiveOrUnarchiveStudioTemplate`'s
+        // CAS holds it inside a transaction that then deletes and generates,
+        // so a concurrent edit really can queue behind it.
+        //
+        // Without this the wait is bounded by NOTHING — a stronger statement
+        // than the 10s budget below and the one that is true: Prisma checks
+        // that budget at statement boundaries, so it "cannot roll back a
+        // statement already blocked inside Postgres, only refuse to start a
+        // new one" (`db-locks.ts`). The mutation record measures it: removing
+        // this line ends in a hung test, never a budget expiry.
+        //
+        // No `SELECT … FOR UPDATE` before the write, and no re-read. The gap
+        // between this function's opening read and this write is not a
+        // correctness problem: archiving only ever *leaves*
+        // `StudioClassTemplate_teacher_slot_unique`'s partial scope
+        // (`WHERE isArchived = false`), un-archiving re-enters it and the
+        // index itself arbitrates, and every column the archive writes
+        // (`isActive`, `isArchived`, `archivedAt`, `withdrawnCount`) is on the
+        // forbidden list — so disjoint from anything this write touches.
+        await setLockTimeout(tx);
+
+        const updated = await tx.studioClassTemplate.update({
+          where: { id: templateId },
+          data,
+        });
+
+        return { ok: true, template: updated };
+      },
+      { timeout: 10_000 },
+    );
+  } catch (err) {
+    // Transient first. `isTransientDbError` matches the SQLSTATE inside its
+    // Postgres framing, and a lock timeout arrives as `55P03` wrapped in a
+    // `PrismaClientUnknownRequestError` from a model write — the first of the
+    // two shapes its docblock records.
+    if (isTransientDbError(err)) {
+      log.warn(
+        { err, templateId, teacherId },
+        'studio template edit lost the template lock race — nothing committed',
+      );
+      return { ok: false, reason: 'busy' };
+    }
+
+    // The read above and the write inside the transaction are not the same
+    // statement, so a delete landing in the gap surfaces here as P2025.
+    //
+    // Defensive parity with the class family, NOT a bug fix: nothing in
+    // production deletes a `StudioClassTemplate`. `deleteTeacherAccount`
+    // (`gdpr.ts`) archives, there is no `DELETE` route, and the only reachable
+    // path is the `Teacher` cascade, which takes the caller's own row with it.
+    // Mapped anyway because `classifyApiError` has no P2025 branch and would
+    // fall through to a bare 500 — see `isRecordNotFound`'s own docblock.
+    //
+    // Silent, unlike the two arms either side of it, and that asymmetry is
+    // deliberate: this is the branch #231 calls "unreachable today", where a
+    // future statement inside the transaction could turn a genuine bug into a
+    // 404 leaving no trace. It stays silent only while this transaction holds
+    // exactly one statement that can raise P2025. Add a second and log here.
+    if (isRecordNotFound(err)) return { ok: false, reason: 'not_found' };
+
+    // `dayOfWeek` and `startTime` are both teacher-editable and both in
+    // `StudioClassTemplate_teacher_slot_unique` (#196), so an edit can move
+    // this template onto a slot another of its owner's live templates holds.
+    //
+    // The log line is the point of catching rather than rethrowing. #231:
+    // "`classifyApiError` logs this same P2002 at `warn` when it escapes;
+    // catching it here must not be what removes that."
+    if (isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime'])) {
+      log.warn(
+        { err, templateId, teacherId },
+        'studio template edit refused by the slot index',
+      );
+      return { ok: false, reason: 'slot_conflict' };
+    }
+
+    throw err;
+  }
+}
 
 /**
  * Outcome of a pause/resume PATCH. `paused` carries the furthest-out class
