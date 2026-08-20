@@ -1196,8 +1196,31 @@ export async function archiveOrUnarchiveTemplate(
           // gone — read which rather than assuming, the same distinction #72
           // had to make.
           //
-          // This read takes a fresh READ COMMITTED snapshot and holds no lock:
-          // the CAS matched nothing, so it acquired none. With three concurrent
+          // This read takes a fresh READ COMMITTED snapshot. Whether it also
+          // runs under a lock this transaction already holds depends on which
+          // interleaving produced the miss, and the re-read is correct either
+          // way — which is the point, because the two differ:
+          //
+          //   - the conflicting change committed BEFORE this statement's own
+          //     snapshot → the `where` evaluated against, and was rejected by,
+          //     that already-committed version, and nothing was locked;
+          //   - the conflicting change committed WHILE this statement was
+          //     already blocked waiting on it → Postgres takes
+          //     `LockTupleExclusive` on the newest row version *before*
+          //     running the EvalPlanQual re-check, so a rejection at that
+          //     point still leaves the lock held to commit.
+          //
+          // Settled by experiment during #94 — three Prisma connections and a
+          // `FOR UPDATE NOWAIT` probe — not from the docs. The second row is
+          // not exotic: it is the interleaving this repo's own three-
+          // transaction race tests construct. The sentence this replaces said
+          // flatly that a missed CAS "holds no lock: the CAS matched nothing,
+          // so it acquired none" (#117), which invites a contributor to add a
+          // read-then-write here believing the row is pinned. The reasoning
+          // about whether to lock on purpose survives that correction; the
+          // claim about what is already held does not.
+          //
+          // With three concurrent
           // requests a fourth state is possible — the winner archives, someone
           // un-archives, and this read returns `isArchived: !archiving`. The
           // answer is still `unchanged` for *this* request, which changed
