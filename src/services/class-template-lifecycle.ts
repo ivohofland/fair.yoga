@@ -40,7 +40,7 @@ import { lockClassRowsOrdered, setLockTimeout } from '@/lib/db-locks';
 import { log } from '@/lib/log';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { syncTemplateInstances, type TemplateSyncResult } from './template-sync';
-import { generateInstancesForTemplate } from './class-generator';
+import { generateInstancesForTemplate, claimTemplateForGeneration } from './class-generator';
 import { CHARGED_STATUSES } from './class-lifecycle';
 import { countSkipReasons } from '@/lib/generation';
 
@@ -883,9 +883,10 @@ export async function pauseOrResumeTemplate(
     return { ok: false, reason: 'room_archived' };
   }
 
-  const result = await db
-    .$transaction(
-      async (tx) => {
+  let result: ResumeTransactionOutcome;
+  try {
+    result = await db.$transaction(
+      async (tx): Promise<ResumeTransactionOutcome> => {
         // Bounds every statement left in this transaction, the `update` below
         // first among them — the sweep's claim holds this row `FOR UPDATE`.
         //
@@ -965,18 +966,77 @@ export async function pauseOrResumeTemplate(
           return { outcome: 'paused' as const, template: paused };
         }
 
-        // [Task 3 inserts the claim here.]
-        const t = await tx.classTemplate.findUniqueOrThrow({
-          where: { id: templateId },
-          include: { teacher: { select: { defaultTimezone: true } } },
-        });
-        const generation = await generateInstancesForTemplate(tx, t);
+        // Take the row lock before generating. The CAS above only flipped
+        // `isActive`, a non-key column, so Postgres granted it `FOR NO KEY
+        // UPDATE` — which does not conflict with the `FOR KEY SHARE` a
+        // concurrent `Class` insert takes on this template for FK integrity.
+        // Without this claim that race is live; `FOR UPDATE` makes the
+        // collision impossible instead of leaving it to the generator's
+        // `ON CONFLICT DO NOTHING`, which would cost that date's class with no
+        // error (#116, mirroring what #94 did for the studio family).
+        //
+        // It also returns the row, so the generation below runs off a value
+        // read under the lock rather than off the CAS's own count (#102).
+        const claimed = await claimTemplateForGeneration(tx, templateId);
+        if (!claimed) {
+          // Genuinely unreachable, not merely believed to be. The CAS above
+          // proved `isArchived: false` and set `isActive: true` in the same
+          // statement that took this row's write lock, and that lock is still
+          // held here — nothing can have archived, paused or deleted it since.
+          // A null here would mean the claim's eligibility predicate and the
+          // CAS's have drifted apart, not that a race slipped past either.
+          //
+          // This is the detail #116 got right for the wrong reason: it called
+          // a null "a logic error rather than a race" while proposing to keep
+          // the plain `update`, under which a raced archive makes null
+          // legitimately reachable and this throw a 500. The CAS is what earns
+          // the throw.
+          throw new Error(
+            `pauseOrResumeTemplate: claim returned null for template ${templateId} ` +
+              "right after this transaction's own CAS confirmed it eligible — " +
+              'the claim predicate and the CAS predicate have diverged',
+          );
+        }
+        const generation = await generateInstancesForTemplate(tx, claimed);
 
-        const today = startOfLocalDay(new Date(), t.teacher.defaultTimezone);
+        // `claimed.teacher`, not the CAS's own read either: the claim's
+        // `findUniqueOrThrow` runs under `FOR UPDATE`, so this is the one read
+        // of that column that cannot be stale, and `generateInstancesForTemplate`
+        // filtered its candidate dates off this same object.
+        //
+        // Inside the transaction, on `tx`, and keyed to `claimed.teacher` — all
+        // three deliberately, to match `pauseOrResumeStudioTemplate` rather
+        // than merely resemble it.
+        //
+        // `claimed.teacher.defaultTimezone`, not the `template.teacher` read at
+        // the top of this function. That is the studio twin's rule, and its
+        // reasoning carries over unchanged: `generateInstancesForTemplate`
+        // filtered its candidate dates with `classStartInstant(date,
+        // startTime, claimed.teacher.defaultTimezone)` off this same object, so
+        // keying the count's boundary to a *different* read of that column is
+        // the one way `scheduled < added` becomes reachable — a zone change
+        // committing between the two reads moves the `gte today` boundary past
+        // a row generation just added.
+        //
+        // **No test pins this, deliberately — know that before trusting it.**
+        // Making the two reads disagree needs a zone change injected between
+        // them (the `$extends` lever this file's tests already use) *and* a
+        // wall-clock hour at which the two zones' local days straddle a
+        // generated date. This function reads `new Date()` internally and takes
+        // no injectable clock, so such a test would pass vacuously at most
+        // hours — the #138 failure, where a check ran at a time when both code
+        // paths rendered identically and therefore proved nothing. Adding a
+        // `now` parameter to production code for a test to steer is the other
+        // thing this project declines to do. The guard is this paragraph and
+        // the studio twin's; if you change this line, nothing will stop you.
+        //
+        // Do not "simplify" this to
+        // `claimed.teacher.…`.
+        const today = startOfLocalDay(new Date(), claimed.teacher.defaultTimezone);
         const scheduled = await tx.class.count({
           where: scheduledWhere(templateId, { gte: today }),
         });
-        const { teacher: _gen, ...bareT } = t;
+        const { teacher: _gen, ...bareT } = claimed;
         void _gen;
         return {
           outcome: 'active' as const,
@@ -998,34 +1058,32 @@ export async function pauseOrResumeTemplate(
       // reaches one. It was the third of three comments making that claim and
       // the one the correction wave missed.
       { timeout: 10_000 },
-    )
-    .catch((err: unknown) => {
-      // Note what this `catch` is actually attached to: the whole
-      // `$transaction`, not a single statement — so it covers
-      // `generateInstancesForTemplate` too. Nothing under this transaction can
-      // raise P2025: the CAS returns a count, the paused arm's
-      // `findUniqueOrThrow` runs after the CAS matched (under `FOR NO KEY
-      // UPDATE`), `claimTemplateForGeneration`'s `findUniqueOrThrow` runs
-      // under `FOR UPDATE` its own raw `SELECT` just took (so the row
-      // provably exists), `generateInstancesForTemplate` issues a `findMany`
-      // and a `createManyAndReturn` (neither produces P2025, and the insert
-      // absorbs P2002 rather than raising it), and `class.count` cannot
-      // produce it. `pauseOrResumeStudioTemplate`'s catch already carries only
-      // the transient branch and a rethrow; this converges on it. Add an
-      // *unprotected* `findUniqueOrThrow` or single-record `update` inside
-      // this transaction and that changes silently. Whoever does that owes
-      // this comment an enumeration of what it now covers.
-      if (isTransientDbError(err)) {
-        log.warn(
-          { err, templateId, teacherId, target },
-          'recurring class pause/resume lost the template lock race',
-        );
-        return 'busy' as const;
-      }
-      throw err;
-    });
-
-  if (result === 'busy') return { ok: false, reason: 'busy' };
+    );
+  } catch (err: unknown) {
+    // Note what this `catch` is actually attached to: the whole
+    // `$transaction`, not a single statement — so it covers
+    // `generateInstancesForTemplate` too. Nothing under this transaction can
+    // raise P2025: the CAS returns a count, the paused arm's
+    // `findUniqueOrThrow` runs after the CAS matched (under `FOR NO KEY
+    // UPDATE`), `claimTemplateForGeneration`'s `findUniqueOrThrow` runs
+    // under `FOR UPDATE` its own raw `SELECT` just took (so the row
+    // provably exists), `generateInstancesForTemplate` issues a `findMany`
+    // and a `createManyAndReturn` (neither produces P2025, and the insert
+    // absorbs P2002 rather than raising it), and `class.count` cannot
+    // produce it. `pauseOrResumeStudioTemplate`'s catch already carries only
+    // the transient branch and a rethrow; this converges on it. Add an
+    // *unprotected* `findUniqueOrThrow` or single-record `update` inside
+    // this transaction and that changes silently. Whoever does that owes
+    // this comment an enumeration of what it now covers.
+    if (isTransientDbError(err)) {
+      log.warn(
+        { err, templateId, teacherId, target },
+        'recurring class pause/resume lost the template lock race',
+      );
+      return { ok: false, reason: 'busy' };
+    }
+    throw err;
+  }
 
   switch (result.outcome) {
     case 'not_found':

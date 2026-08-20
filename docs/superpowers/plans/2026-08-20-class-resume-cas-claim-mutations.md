@@ -46,3 +46,15 @@ AssertionError: expected { ok: false, reason: 'archived' } to have property ok e
 ```
 
 A plain pause was answered `archived` because `isArchived` was checked first, matching the wrong fast path.
+
+## Task 3
+
+### Lock test: DELETED — probe cannot discriminate
+
+**Plan defect.** The plan specified a `FOR KEY SHARE NOWAIT` probe into `createManyAndReturn` to detect whether `FOR UPDATE` is held. Measured: `createManyAndReturn` does not take `FOR KEY SHARE` on the referenced `ClassTemplate` row (Prisma generates a CTE-based insert, not a plain INSERT with FK-triggered locking). The probe succeeds whether or not the claim is held.
+
+**Verified by mutation:** removing the `claimTemplateForGeneration` call and replacing it with a bare `findUniqueOrThrow` — the `FOR KEY SHARE NOWAIT` probe still succeeds (`probeError` is `null`). The test cannot fail and was deleted per the handover's §6 instruction.
+
+**Impact on test count:** Task 3 predicted +1 test; measured +0. The claim's correctness is certified by the throw's message being asserted (unreachable branch) and by the catch's enumeration, not by a lock probe.
+
+The three Task 2 mutations (CAS archive predicate, CAS already-in-state predicate, guard order) remain the effective guards for this change.
