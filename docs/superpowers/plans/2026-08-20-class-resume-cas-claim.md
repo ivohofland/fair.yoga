@@ -531,7 +531,7 @@ git commit -m "fix: resume takes a compare-and-swap, and the P2025 branch it mak
 - Test: `src/services/class-template-lifecycle.test.ts`
 
 **Interfaces:**
-- Consumes: `claimTemplateForGeneration(tx: TransactionClientOnly, templateId: string): Promise<TemplateWithTimezone | null>` from `./class-generator` — already imported in this file? **Verify with `grep -n "from './class-generator'" src/services/class-template-lifecycle.ts` and add to the existing import if absent.**
+- Consumes: `claimTemplateForGeneration(tx: TransactionClientOnly, templateId: string): Promise<TemplateWithTimezone | null>` from `./class-generator`. **Measured 2026-08-20: line 43 imports `generateInstancesForTemplate` from that module and nothing else, so add `claimTemplateForGeneration` to the existing named import — do not add a second import statement.**
 - Produces: no new types.
 
 - [ ] **Step 1: Replace the active arm's read-back with the claim**
@@ -817,8 +817,8 @@ git commit -m "docs: the last file conflating FOR NO KEY UPDATE with FOR UPDATE 
 Comment-only, and the most important comment in the branch: it corrects a live claim that this branch's own measurement falsified.
 
 **Files:**
-- Modify: `src/services/class-generator.ts` (the `LATENT, not live` note in `generateClassInstances`)
-- Modify: `src/services/class-template-lifecycle.ts` (beside the door-3 guard, around line 849)
+- Modify: `src/services/class-generator.ts:365` (the `LATENT, not live` note in `generateClassInstances`)
+- Modify: `src/services/class-template-lifecycle.ts:850` (beside the door-3 guard)
 
 - [ ] **Step 1: Correct the generator's note**
 
@@ -834,7 +834,7 @@ Rewrite the "LATENT, not live" paragraph to say the state is **reachable and mea
 
 - [ ] **Step 2: Mark door 3 known-open**
 
-Beside the `if (desiredActive && template.teacherRoom.isArchived)` guard:
+Beside the `if (desiredActive && template.teacherRoom.isArchived)` guard (line 850 on `main`):
 
 ```ts
   // KNOWN-OPEN (issue 116). This guard reads `teacherRoom.isArchived` from the
