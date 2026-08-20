@@ -593,7 +593,19 @@ The catch rewritten in Task 2 Step 9 asserts nothing under the transaction raise
 
 - [ ] **Step 4: Write the test — the claim is actually taken**
 
-The claim's observable effect is that a concurrent `Class` insert for this template cannot interleave. Pin it by asserting the lock is held, using the same `FOR UPDATE NOWAIT` probe shape the repo uses elsewhere; if that proves flaky, fall back to pinning that `claimTemplateForGeneration` is called by spying through `$extends` on the raw query. **Prefer the behavioural version and say which you used and why.**
+The claim's observable effect is that a concurrent `Class` insert for this template cannot interleave. The probe must be **`FOR KEY SHARE NOWAIT`**, and the mode is the whole point:
+
+| Probe mode | With the claim (`FOR UPDATE` held) | Without it (CAS's `FOR NO KEY UPDATE` only) |
+|---|---|---|
+| `FOR UPDATE NOWAIT` | refused | **also refused** — cannot discriminate |
+| `FOR KEY SHARE NOWAIT` | refused (`55P03`) | **granted** — discriminates |
+
+Measured 2026-08-20 against `ethical_yoga_test`, two connections, all four cells —
+not read off the conflict matrix in the manual. Reproduce it with
+`docker exec fairyoga-db-1 psql -U yoga -d ethical_yoga_test` if you want to see
+it before trusting it.
+
+`FOR KEY SHARE` is exactly what an inserting `Class` row's FK check takes, so this probe stands in for the real racing writer rather than for an arbitrary one. An earlier draft of this plan specified `FOR UPDATE NOWAIT`; that test would have passed against the bug, because the CAS's own `FOR NO KEY UPDATE` already conflicts with `FOR UPDATE`. Recorded rather than silently corrected — a guard that cannot fail is the failure #39 shipped three of.
 
 ```ts
   it('holds FOR UPDATE on the template row while generating', async () => {
@@ -610,8 +622,11 @@ The claim's observable effect is that a concurrent `Class` insert for this templ
             // refused (55P03), which is what proves FOR UPDATE is held.
             const probe = new PrismaClient();
             try {
+              // FOR KEY SHARE, not FOR UPDATE — see the table above. This is
+              // the mode a concurrent `Class` insert's FK check takes, and the
+              // only one that tells "claim held" apart from "CAS held".
               await probe.$queryRawUnsafe(
-                `SELECT "id" FROM "ClassTemplate" WHERE "id" = $1 FOR UPDATE NOWAIT`,
+                `SELECT "id" FROM "ClassTemplate" WHERE "id" = $1 FOR KEY SHARE NOWAIT`,
                 t.id,
               );
             } catch (err) {
@@ -639,7 +654,9 @@ Run: `npx vitest run src/services/class-template-lifecycle.test.ts -t 'holds FOR
 Expected: PASS.
 
 Then **remove the `claimTemplateForGeneration` call** (reverting to the `findUniqueOrThrow` of Task 2) and re-run.
-Expected: FAIL — the probe succeeds, because `FOR NO KEY UPDATE` does not conflict with `FOR UPDATE NOWAIT`… **verify this actually holds before trusting the test.** `FOR NO KEY UPDATE` *does* conflict with `FOR UPDATE`, so the probe may still be refused and the mutation may not fail. If it does not fail, this test does not pin what it claims — say so, delete it, and pin the claim differently (a spy on the raw `SELECT … FOR UPDATE`). **Do not keep a guard that cannot fail; that is the exact failure #39 shipped three of.**
+Expected: **FAIL** — with only the CAS's `FOR NO KEY UPDATE` held, a `FOR KEY SHARE` probe is granted, so `probeError` stays `null` and the assertion fails. Record the exact message.
+
+If it does **not** fail, stop and report rather than proceeding: the test does not pin what it claims, and a guard that cannot fail certifies nothing. Do not paper over it by weakening the assertion.
 
 - [ ] **Step 6: Run the whole file**
 
