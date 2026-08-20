@@ -124,7 +124,7 @@ The teacher has a persistent bottom tab bar (64px, Lucide-style line icons) with
 - Before any registrations: all fields editable
 - After first registration: economic settings locked (greyed out with explanation)
 - Non-economic fields (description, time, notes) remain editable
-- For recurring: option to edit just this instance or the template for future instances
+- For recurring: this screen edits **this instance only** — there is no per-instance/per-template choice here. The template lives in Settings › Recurring, and editing it leaves every already-generated class exactly where it is (#194)
 - *Leads to:* 5.2 Class Detail
 
 ---

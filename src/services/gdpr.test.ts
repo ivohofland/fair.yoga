@@ -1728,7 +1728,10 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
       query: {
         async $queryRaw({ args, query }) {
           // Keyed on the query's own bound value, not on call order — the
-          // house rule (`template-sync.test.ts:308`). `teacherId` is the one
+          // house rule, and `template-lock-order.test.ts`'s own hooked clients
+          // are the live example of it (the citation here was
+          // `template-sync.test.ts` until #194 deleted that file with its
+          // function). `teacherId` is the one
           // bind `deleteTeacherAccount`'s ordered pre-lock carries since
           // #237; its other `$queryRaw` calls bind class ids.
           if (args.values[0] === teacherId) {

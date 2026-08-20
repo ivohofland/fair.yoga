@@ -1534,19 +1534,19 @@ describe('updateStudioClassTemplate (DB)', () => {
    * #194, pinned rather than merely asserted in prose.
    *
    * `updateStudioClassTemplate`'s docblock says editing `dayOfWeek` or
-   * `startTime` leaves generated `StudioClass` rows on the superseded
-   * schedule, because this family has no `syncTemplateInstances` equivalent —
-   * and says the omission "is stated rather than left to be discovered". Until
-   * this test, the statement was the only thing enforcing it: nothing in the
-   * suite created instances, edited the template and checked what happened to
-   * them, so adding a sync would have broken no test.
+   * `startTime` leaves generated `StudioClass` rows exactly where they are.
+   * Until this test, the statement was the only thing enforcing it: nothing in
+   * the suite created instances, edited the template and checked what happened
+   * to them, so adding a sync would have broken no test.
    *
-   * Deliberately a pin on today's behaviour, NOT an endorsement of it. #194
-   * carries two open product decisions (withdraw or leave standing; reuse
-   * `syncTemplateInstances` or mirror it), and whichever way they go this test
-   * is expected to be *rewritten* — that is the point. It fails loudly when
-   * someone changes the behaviour, which is what turns a prose claim into a
-   * decision someone has to make on purpose.
+   * Written as a pin on today's behaviour and NOT as an endorsement of it,
+   * while #194 still carried two open product decisions (withdraw or leave
+   * standing; mirror the class family's propagation, or not). #194 answered
+   * both on 2026-08-20 — leave standing, and DELETE the class family's
+   * propagation rather than mirror it — so this case now pins the decided rule
+   * for this family rather than a placeholder, and the rewrite it was written
+   * expecting is not coming. It still fails loudly when someone changes the
+   * behaviour, which is the whole of its job.
    *
    * Also covers the two allowlisted fields nothing else writes: `dayOfWeek`
    * and `location` appear in no other update payload in this file.

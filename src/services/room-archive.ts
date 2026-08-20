@@ -121,9 +121,13 @@ export async function setTeacherRoomArchived(
       // Not decoration. `respondError` does not log and `withErrorHandler`
       // logs only on `throw`, which this path does not do — so without this
       // line the only record of a refusal is a 409 body the teacher reads and
-      // nobody keeps. Same reasoning the `STARTS_IN_PAST` refusal states at
-      // `class-lifecycle.ts:365` and `sync_conflict` at
-      // `class-template-lifecycle.ts:512`. It matters most here: the accepted
+      // nobody keeps. Same reasoning the `STARTS_IN_PAST` refusal states in
+      // `transitionClass` (`class-lifecycle.ts`) and the template-move
+      // refusal states in `class-template-lifecycle.ts` ("template move
+      // refused: the target room is archived", door 5). That second citation
+      // was `sync_conflict` at a line number until #194 deleted the
+      // propagation that raised it — named by its log line this time, since
+      // the number is the half that rots. It matters most here: the accepted
       // race below can leave an archived room holding an `open` class, and
       // without a line on this side there is nothing to correlate that state
       // against afterwards.

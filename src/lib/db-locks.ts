@@ -19,14 +19,6 @@ import { Prisma } from '@prisma/client';
  *   adopt  `claimTemplateForGeneration` (`class-generator.ts`) and
  *          `claimStudioTemplateForGeneration` (`studio-class-generator.ts`) —
  *          each issues `LOCK_TIMEOUT_SQL` and then a `FOR UPDATE`.
- *   adopt  `syncTemplateInstances` (`template-sync.ts`) — calls
- *          `lockClassRowsOrdered` below, which issues `LOCK_TIMEOUT_SQL` via
- *          `setLockTimeout` and then the ordered `FOR UPDATE OF c` pre-lock
- *          (issue 180) before its re-read. Composed
- *          into `updateClassTemplate`'s transaction (`class-template-
- *          lifecycle.ts`) rather than opening its own — task 6 of the
- *          atomic-template-update work removed the inner `$transaction` this
- *          function used to wrap that pre-lock and the propagation in.
  *   adopt  `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) — calls
  *          `lockClassRowsOrdered` below, `FOR UPDATE
  *          OF c` inside the statement that selects the rows, with the
@@ -304,7 +296,10 @@ export async function lockClassRow(tx: TransactionClientOnly, classId: string): 
  * `id: { in: … }` so the write set is a structural SUBSET of the lock set,
  * rather than a predicate re-evaluated later against whatever the table looks
  * like when the write runs — the difference `docs/lock-order.md` draws between
- * `syncTemplateInstances` and `archiveOrUnarchiveTemplate`. Callers that do
+ * `withdrawWaitingEntriesForTeacher` (`waitlist.ts`), whose `updateMany` is
+ * keyed on the ids this helper handed back, and `archiveOrUnarchiveTemplate`
+ * (`class-template-lifecycle.ts`), whose `deleteMany` re-evaluates its own
+ * predicate when it runs. Callers that do
  * not need them may ignore the return value; the lock is the point.
  *
  * NOT for single-row locks — use `lockClassRow` above. One row cannot be

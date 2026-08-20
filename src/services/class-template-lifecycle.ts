@@ -262,20 +262,32 @@ export type UpdateClassTemplateResult =
    * template onto an archived room is refused the same way creating (door 4)
    * or resuming (door 3) one there is — the doors reasoned about creating a
    * template and resuming one but never about moving one, the same commitment
-   * by a different verb, and `syncTemplateInstances` relocates every future
+   * by a different verb. The template is what the generator stamps from, so
+   * an ACTIVE template pointed at an archived room hands the next sweep four
+   * weeks of `open` classes to create in a shelved room — the exact state
+   * door 1 exists to refuse, reached one step later.
+   *
+   * THE MECHANISM CHANGED UNDER THIS DOOR IN #194 AND THE DOOR DID NOT. Until
+   * then the edit produced that state itself, relocating every future
    * non-`settingsLocked` `draft`/`open` instance onto the target room in the
-   * same transaction.
+   * same transaction — one `PUT`, four bookable classes, no race needed.
+   * Nothing propagates now, so the sweep is the whole route, and a route that
+   * takes until the next hour is still a route.
    *
    * Gated on a CHANGE of room, NOT on `template.isActive`. Fix round 2 gated
    * it on `isActive` "symmetrically with door 3"; PR review proved that a
    * false analogy. Door 3 gates on the *direction of the verb*
    * (`desiredActive`), so that pausing a template whose room was archived
    * under it still works. `isActive` is a property of the template on a
-   * different axis, and pausing deletes nothing — a paused template still
-   * owns the `open` instances it generated, and the sync carried every one of
-   * them onto the archived room. That produced, in a single request with no
-   * race, the exact state door 1 exists to refuse: an archived room holding
-   * bookable classes.
+   * different axis, and it is not one this door can rest on: a paused
+   * template is one `PATCH` away from generating, and door 3 refuses exactly
+   * that resume — so an `isActive` gate here would accept the commitment at
+   * the move and refuse it at the resume, stranding the teacher one verb
+   * later over a decision this request already took. What that gate let
+   * through when it shipped is worse and is recorded rather than
+   * paraphrased: pausing deletes nothing, so a paused template still owned
+   * the `open` instances it had generated, and the propagation carried every
+   * one of them onto the archived room in a single request with no race.
    *
    * Nobody needs to move a template ONTO an archived room. Moving one OFF one
    * is the recovery, and this guard reads the TARGET room, so that direction
@@ -550,9 +562,14 @@ export async function updateClassTemplate(
 
     // A fifth door (issue 76): moving a template onto an archived room is the
     // same commitment as creating (door 4) or resuming (door 3) one there, and
-    // was the only one of the three left unguarded — `syncTemplateInstances`
-    // below relocates every future non-`settingsLocked` `draft`/`open`
-    // instance onto the target room in the same transaction.
+    // was the only one of the three left unguarded. The template is the
+    // generator's stamp, so an active one pointed here gives the next sweep
+    // four weeks of `open` classes to create in a shelved room. Until #194 the
+    // edit did it itself, relocating every future non-`settingsLocked`
+    // `draft`/`open` instance onto the target room in this transaction; that
+    // mechanism is gone and the door is not. `UpdateClassTemplateResult`'s
+    // `room_archived` docblock carries the same reasoning at length — the two
+    // were written together and must be corrected together.
     //
     // Gated on a CHANGE of room, NOT on `template.isActive`. Both halves are
     // load-bearing and each reddens a test alone (mutations 8 and 9, spec
@@ -562,11 +579,14 @@ export async function updateClassTemplate(
     //     goes red, because `TemplateForm` posts the whole form on every edit,
     //     so an unchanged `teacherRoomId` arrives on every PUT.
     //
-    // `isActive` is deliberately NOT consulted, and the fix-round-2 gate that
-    // did consult it was wrong: pausing deletes nothing, so a paused template
-    // still owns its generated `open` instances, and the sync carried them
-    // onto the archived room — door 1 refuses to archive a room holding open
-    // classes, and that gate produced the same state one step later.
+    // `isActive` is deliberately NOT consulted. The fix-round-2 gate that did
+    // consult it was wrong for a reason #194 has since removed — pausing
+    // deletes nothing, so a paused template still owned its generated `open`
+    // instances, and the propagation carried them onto the archived room, one
+    // step behind door 1's refusal — and it stays wrong for a reason that
+    // remains: a paused template is one resume away from generating, door 3
+    // refuses that resume, and gating here on `isActive` would move the
+    // refusal off the request that made the commitment.
     if (teacherRoom.isArchived && data.teacherRoomId !== template.teacherRoomId) {
       log.info(
         { templateId, from: template.teacherRoomId, to: data.teacherRoomId },
@@ -1289,11 +1309,14 @@ export async function pauseOrResumeTemplate(
       // waits at all three spends 6s of the 10 before doing any work at all.
       //
       // The work it was written for is the rest: the CAS, the claim's
-      // `SET LOCAL`, raw `SELECT` and `findUniqueOrThrow`, generation's
-      // occupancy read and its batched insert, and the `count`. The claim's
-      // three statements joined that list in #116 and this enumeration did
-      // not; the `catch` below asks whoever adds a statement to update its
-      // own enumeration, and this one deserved the same visit. A loaded VPS
+      // `SET LOCAL`, raw `SELECT` and `findUniqueOrThrow`, generation's TWO
+      // reads — its date-scoped occupancy `findMany` and the
+      // `templateId`-scoped week read #194 added — its batched insert, and the
+      // `count`. The claim's three statements joined that list in #116 and
+      // this enumeration did not; the week read joined it in #194 and this
+      // enumeration was visited for it. The `catch` below asks whoever adds a
+      // statement to update its own enumeration; this one asks the same, and
+      // has now been wrong twice by omission. A loaded VPS
       // can push the work past Prisma's 5s default on its own.
       //
       // The sentence this replaces said the 5s default "would abort us
@@ -1311,9 +1334,11 @@ export async function pauseOrResumeTemplate(
     // `findUniqueOrThrow` runs after the CAS matched (under `FOR NO KEY
     // UPDATE`), `claimTemplateForGeneration`'s `findUniqueOrThrow` runs
     // under `FOR UPDATE` its own raw `SELECT` just took (so the row
-    // provably exists), `generateInstancesForTemplate` issues a `findMany`
-    // and a `createManyAndReturn` (neither produces P2025, and the insert
-    // absorbs P2002 rather than raising it), and `class.count` cannot
+    // provably exists), `generateInstancesForTemplate` issues two `findMany`s
+    // — the date-scoped occupancy read and the `templateId`-scoped week read
+    // #194 added — and a `createManyAndReturn` (none of the three produces
+    // P2025, and the insert absorbs P2002 rather than raising it), and
+    // `class.count` cannot
     // produce it. `pauseOrResumeStudioTemplate`'s catch already carries only
     // the transient branch and a rethrow; this converges on it. Add an
     // *unprotected* `findUniqueOrThrow` or single-record `update` inside
@@ -1715,10 +1740,12 @@ export async function archiveOrUnarchiveTemplate(
         // with bookings on classes this archive cannot delete.
         //
         // Why lock ⊇ delete holds here is not structural the way it is for
-        // `syncTemplateInstances`'s own pre-lock (issue 180 task 2), which
-        // reads its write set straight out of the ids the pre-lock itself
-        // returned — `id: { in: lockedIds }`, a structural subset, not a
-        // predicate re-evaluated later. This one instead relies on the
+        // `withdrawWaitingEntriesForTeacher` (`waitlist.ts`), which reads its
+        // write set straight out of the ids `lockClassRowsOrdered` handed back
+        // — `classId: { in: classIds }`, a structural subset, not a predicate
+        // re-evaluated later. (The example was the template sync's own
+        // pre-lock, issue 180 task 2, until #194 deleted the function; the
+        // shape outlived it.) This one instead relies on the
         // delete's predicate (`scheduledWhere` plus `registrations: { none:
         // … }`) being a strict narrowing of this pre-lock's predicate
         // (`scheduledWhere` alone), so a row already matching the delete's
@@ -1750,14 +1777,14 @@ export async function archiveOrUnarchiveTemplate(
         // an erasure of a student waitlisted across both classes, timed into
         // the same gap) and no worse than the pre-branch state, which had no
         // ordering at all. Tracked as a residual, not closed here — see spec
-        // §7 risk 3. `syncTemplateInstances` does not share this exposure,
-        // for the structural reason given above: its write set is a subset
-        // of ids the pre-lock itself returned, not a predicate argument
-        // re-evaluated against whatever the table looks like when the write
-        // finally runs.
+        // §7 risk 3. `withdrawWaitingEntriesForTeacher` does not share this
+        // exposure, for the structural reason given above: its write set is a
+        // subset of the ids the pre-lock itself returned, not a predicate
+        // argument re-evaluated against whatever the table looks like when the
+        // write finally runs.
         //
         // The delete cannot instead be scoped to exactly the ids this
-        // pre-lock returns, the way the sync fix's is: that would undo the
+        // pre-lock returns, the way that function's write is: that would undo the
         // wide candidate read and the survivor filter #86/#112 depend on,
         // which stay wide on purpose (see the comment above the candidate
         // read). Nor can the pre-lock be widened past `date > today` to close
@@ -1870,9 +1897,12 @@ export async function archiveOrUnarchiveTemplate(
         }
 
         // `gte`, where the delete used `gt`. The delete deliberately spares a
-        // class dated today — "a class hours from starting should not shift under
-        // its students", the rule `syncTemplateInstances` already applies to
-        // edits — so counting with the delete's own boundary would exclude that
+        // class dated today — "a class hours from starting should not shift
+        // under its students", which since #194 is what a template EDIT does
+        // for every instance rather than only for today's: an edit moves
+        // nothing at all, and this delete is the one verb left that can take a
+        // generated class out from under a waiting student — so counting with
+        // the delete's own boundary would exclude that
         // same survivor and tell the teacher nothing is left while the class is
         // still open on their public page.
         const remaining = await tx.class.count({

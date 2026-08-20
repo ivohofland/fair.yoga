@@ -160,9 +160,12 @@ function isTerminalStatusViolation(error: unknown): error is Error {
  *   claims, so it is the one a user is most likely to meet.
  * - `40P01` deadlock_detected — Postgres broke an AB-BA cycle by killing one
  *   side. Reachable today, not hypothetical: `docs/lock-order.md`, "The slot
- *   key is a wait edge", records real reproduced deadlocks between
- *   `syncTemplateInstances`/`updateClass` and between two `updateClass`
- *   writes. It used to be reachable a second way too, via two live
+ *   key is a wait edge", records a real reproduced deadlock between two
+ *   `updateClass` writes — 32 of 100 runs, both sides plain autocommit
+ *   `UPDATE`s. The section records a second reproduction beside it, the
+ *   template sync against `updateClass`; #194 deleted that function, so that
+ *   pairing is evidence about a past state and the `updateClass` pair is what
+ *   keeps this branch live. It used to be reachable a second way too, via two live
  *   `Class`-row-ordering cycles against the template sites; those closed
  *   with an ordered pre-lock ahead of each site's multi-row write (issue
  *   180, atomic-template-update).

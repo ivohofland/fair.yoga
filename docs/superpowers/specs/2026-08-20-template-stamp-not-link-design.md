@@ -204,22 +204,40 @@ date, the systematic cause is the useful one to report.
 
 ---
 
-## 4. One decision function, two callers
+## 4. The shared layer is `isWeekHeld`, not the whole decision
+
+> **Corrected against what was built (task 5, 2026-08-20).** This section read *"one
+> decision function, two callers"*, with `generateInstancesForTemplate` calling
+> `firstFreeWeek`. That is not what shipped and could not have: the generator must name
+> a **reason** for every candidate it declines — `already_this_week` is a `SkipReason`,
+> `countSkipReasons` reduces it, and the number reaches the teacher — and a
+> `Date | null` return cannot carry one. "The first free candidate" and "each declined
+> date, with why" are different questions. What the two genuinely share is the
+> *definition of held*, and since task 6 they share it as code. Corrected here rather
+> than quietly abandoned, because this section is what the plan's task order was derived
+> from.
+
+Two exports, one definition of "held". Both pure, both in `class-generator.ts`:
 
 ```
-firstFreeWeek(candidates: Date[], heldWeeks: ReadonlySet<number>): Date | null
+isWeekHeld(date: Date, heldWeeks: ReadonlySet<number>): boolean
+firstFreeWeek(candidates: readonly Date[], heldWeeks: ReadonlySet<number>): Date | null
 ```
 
-Pure. Returns the first candidate whose `mondayOf` is not in `heldWeeks`, or `null`.
+- **`isWeekHeld`** is the shared code — the single place that says what "this week is
+  already taken" means. Called from the generator's loop, which on `true` pushes
+  `{ date, reason: 'already_this_week' }` and moves to the next candidate, and from
+  `firstFreeWeek` below. It exists for no other reason.
+- **`firstFreeWeek`** has ONE caller: the PUT's probe. It returns the first candidate
+  `isWeekHeld` says no to, or `null`. Its horizon is longer than the generator's own
+  4-occurrence window, because when all four of those weeks are held the honest answer
+  is week **5** — outside anything the generator can see. Horizon: `DEFAULT_WEEKS * 2`
+  occurrences. If none is free, the message degrades to the unspecific form rather than
+  inventing a date (§6).
 
-- **`generateInstancesForTemplate`** passes its own 4-occurrence window.
-- **The PUT's probe** passes a longer horizon, because when all four weeks are held
-  the answer is week **5** — outside the window the generator can see. Horizon:
-  `DEFAULT_WEEKS * 2` occurrences. If none is free, the message degrades to the
-  unspecific form rather than inventing a date (§6).
-
-Sharing the function is what stops the message describing generator internals it does
-not share. `resumeMessage`'s own docblock records the cost of the alternative: its
+Sharing the *predicate* is what stops the message describing generator internals it does
+not share — the point of this section, and it survives the correction.
+`resumeMessage`'s own docblock records the cost of the alternative: its
 first draft claimed `blockedByCancelled` "cannot co-occur" with a non-zero `scheduled`,
 which was a guess about generator internals and was wrong.
 
@@ -329,6 +347,22 @@ Per the skill's §4: a claim corrected in one artifact and not its twin is this
 project's recorded failure mode. Eight, and each gets its own verdict — not one verdict
 for the set.
 
+> **This enumeration was replaced during the build (task 7, 2026-08-20), not
+> completed.** Eight was written before the deletion was measured. `grep -rn
+> "syncTemplateInstances"` over the repo returns **154 hits across 37 files** with the
+> code changes in (173/37 before them), so the eight below are a subset, and two more
+> were found by task 4 — the door-5 INLINE comment (the twin of row 7) and this
+> branch's own plan file. The sweep that shipped verdicts every hit into one of three
+> buckets: **(a)** live source claims in `src/` — corrected; **(b)** live reference
+> docs (`docs/lock-order.md`, `docs/technical-architecture.md`, `CLAUDE.md`) —
+> corrected; **(c)** dated historical artifacts (`docs/superpowers/specs/*`,
+> `docs/superpowers/plans/*`, `docs/backlog-roadmap.md`) — **annotated, never
+> revised**, because a July design doc describing a function that existed in July is an
+> accurate record and rewriting it destroys the audit trail. This spec and this
+> branch's plan are the deliberate exceptions inside (c): they are live working
+> documents for the change itself. The eight rows below all landed; they were not the
+> whole list.
+
 | # | Artifact | Correction |
 |---|---|---|
 | 1 | `CLAUDE.md:51` | *"Recurring classes: template generates instances on rolling 4-week basis, runs indefinitely"* → add week-keying and the stamp-not-link stance |
@@ -375,7 +409,8 @@ the previous day in a west-of-UTC zone, proving the function ignores zones entir
   message names that week by date.
 - What the message claims is checkable against the Schedule tab.
 - `syncTemplateInstances` and its tests are gone, not merely unreferenced.
-- All eight artifacts in §9 corrected, each verdicted individually.
+- Every `syncTemplateInstances` hit in the repo verdicted individually into §9's three
+  buckets, the eight rows there included — not eight verdicts for 154 hits.
 - `npm run verify` green, with the arithmetic reconciling per project.
 
 ---

@@ -115,7 +115,13 @@ Add `mondayOf` to the existing import at the top of the file.
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `npx vitest run --project unit src/lib/timezone.test.ts`
-Expected: FAIL — `"mondayOf" is not exported by "src/lib/timezone.ts"`.
+Expected: FAIL — `TypeError: mondayOf is not a function`.
+
+**Not** `"mondayOf" is not exported by …` — that is Rollup's message, and Vitest
+transforms with esbuild, which leaves the missing named import as an undefined
+binding rather than refusing the module. The failure arrives at the call site, at
+runtime. Measured in task 1; the same correction applies to the two later
+predictions in this plan.
 
 - [ ] **Step 3: Implement in `src/lib/timezone.ts`**
 
@@ -334,7 +340,8 @@ Import `firstFreeWeek` from `./class-generator` and `mondayOf` from `@/lib/timez
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `npx vitest run --project unit src/services/class-generator.test.ts -t firstFreeWeek`
-Expected: FAIL — `firstFreeWeek is not exported`.
+Expected: FAIL — `TypeError: firstFreeWeek is not a function` (see task 1 step 2 for
+why it is not "is not exported").
 
 - [ ] **Step 3: Implement**
 
@@ -343,18 +350,16 @@ Expected: FAIL — `firstFreeWeek is not exported`.
  * The first candidate date whose week no class of this template already holds,
  * or `null` if every candidate's week is taken (#194).
  *
- * Pure, and shared deliberately: `generateInstancesForTemplate` below uses it
- * to decide what to create, and `updateClassTemplate`'s probe
- * (`class-template-lifecycle.ts`) uses it to tell the teacher when their edit
- * first takes effect. One function so the sentence and the behaviour cannot
- * drift — `resumeMessage`'s docblock records what the alternative cost, where
- * copy guessed at generator internals it did not share and guessed wrong.
+ * Pure. Its caller is the template-edit endpoint's probe — `updateClassTemplate`
+ * in `class-template-lifecycle.ts` — deciding what to tell the teacher.
  *
- * The two callers pass DIFFERENT candidate lists, and that is the point rather
- * than an inconsistency: the generator passes its own four-occurrence window,
- * while the probe passes a longer horizon, because when all four of those
- * weeks are held the honest answer is week five — outside anything the
- * generator can see.
+ * `generateInstancesForTemplate` below does NOT call it: the generator has to
+ * name a reason for EVERY candidate date, not find the first free one, so a
+ * function returning a single date cannot express its answer. What the two
+ * share is the definition of "held". The probe passes a LONGER candidate list
+ * than the generator's own four-occurrence window, and that is the point
+ * rather than an inconsistency: when all four of those weeks are held the
+ * honest answer is week five — outside anything the generator can see.
  */
 export function firstFreeWeek(
   candidates: readonly Date[],
@@ -368,6 +373,16 @@ export function firstFreeWeek(
 ```
 
 Add `mondayOf` to the existing `@/lib/timezone` import.
+
+**The docblock above is the corrected one.** As this plan was first written it said
+`generateInstancesForTemplate` "uses it to decide what to create" and called the
+arrangement "one function, two callers" — present tense about a call that never
+existed. Task 5 proved it could not: `already_this_week` is a `SkipReason` the
+generator must attach to each declined date, and a `Date | null` cannot carry one. The
+source docblock was corrected at that point, and this block is corrected to match
+rather than left contradicting the file it produced. Task 6 went one step further and
+extracted the shared predicate as `isWeekHeld`, which is what the shipped docblock
+names; see §4 of the spec, which carries the same correction.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -645,7 +660,8 @@ describe('templateUpdatedMessage', () => {
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `npx vitest run --project components src/components/settings/template-action-messages.test.ts`
-Expected: FAIL — `templateUpdatedMessage is not exported`.
+Expected: FAIL — `TypeError: templateUpdatedMessage is not a function` (see task 1
+step 2 for why it is not "is not exported").
 
 - [ ] **Step 3: Implement the copy**
 

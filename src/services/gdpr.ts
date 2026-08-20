@@ -415,16 +415,19 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // `withdrawWaitingEntriesForTeacher`, `POST /api/registrations`).
     //
     // Ascending by id is this project's intended order for taking more than
-    // one `Class` row. All five such sites take it, through the shared helper
+    // one `Class` row. All four such sites take it, through the shared helper
     // `lockClassRowsOrdered` (`db-locks.ts`) — this function's pre-lock above,
     // `withdrawWaitingEntriesForTeacher` (`waitlist.ts`),
-    // `deleteTeacherAccount` below, and `syncTemplateInstances`
-    // (`template-sync.ts`) and `archiveOrUnarchiveTemplate`
+    // `deleteTeacherAccount` below, and `archiveOrUnarchiveTemplate`
     // (`class-template-lifecycle.ts`), which used to lock in heap order and
-    // cycled against THIS function for real until each gained an ordered
+    // cycled against THIS function for real until it gained an ordered
     // pre-lock ahead of its multi-row write (issue 180, atomic-template-update).
+    // Five until #194, whose deleted template sync was the fifth and carried
+    // the same issue-180 pre-lock. Re-derived from `lockClassRowsOrdered(` in
+    // `src/` rather than decremented — this project has been wrong about the
+    // membership of this list while its total stayed plausible.
     //
-    // "Takes an order", deliberately, not "agree" — one of the five is not
+    // "Takes an order", deliberately, not "agree" — one of the four is not
     // total, and the exception is a pairing with THIS function, so it must
     // not be read out of this comment. `archiveOrUnarchiveTemplate`'s
     // pre-lock covers `date > today`; `updateClass` (`class-lifecycle.ts`)
@@ -435,9 +438,10 @@ export async function deleteStudentAccount(db: PrismaClient, studentId: string):
     // this function can still form through that window — narrow, measured,
     // and tracked as a residual rather than closed. See that pre-lock's own
     // comment and the atomic-template-update spec's risk list before
-    // treating this pairing as settled. `syncTemplateInstances` does not
-    // share the exposure: its write set is `id: { in: lockedIds }`, a
-    // structural subset of what its pre-lock returned.
+    // treating this pairing as settled. `withdrawWaitingEntriesForTeacher`
+    // does not share the exposure: its write set is keyed
+    // `classId: { in: classIds }`, a structural subset of what its pre-lock
+    // returned.
     //
     // The order lives in ONE place now — the helper's `ORDER BY c.id` — so
     // the two tables' disagreement that used to make this comment a three-way
@@ -981,7 +985,8 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       // in neither this lock set nor `upcoming`, so this erasure does not
       // cancel it. Unchanged from before #237 — the read was equally the last
       // word on what the loop visits — and not closed by scoping the read to
-      // these ids, the `syncTemplateInstances` shape, which would additionally
+      // these ids — the shape `withdrawWaitingEntriesForTeacher` uses — which
+      // would additionally
       // drop classes created between the read and this statement. A worse
       // trade on an Article 17 path.
       //

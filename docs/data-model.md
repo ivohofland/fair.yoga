@@ -194,7 +194,7 @@ Each teacher sets their own capacity and rental rate for a room. Rental rate is 
 | day_of_week | int (0-6) | 0 = Monday |
 | start_time | time | |
 | duration_minutes | int | |
-| **Economics** | | Copied to generated instances |
+| **Economics** | | Copied to each instance at generation time — a later template edit does not re-copy (#194) |
 | room_cost | decimal | From TeacherRoom.rental_rate |
 | min_rate | decimal | Minimum teacher earns per student |
 | target_rate | decimal | Ideal teacher earns per student |

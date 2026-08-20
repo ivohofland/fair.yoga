@@ -287,17 +287,23 @@ export async function transitionClass(
   // for a 09:00 class, CAS at 09:00:00.1 — which publishes a class whose start
   // has just passed, exactly as publishing it a second earlier legally would.
   //
-  // THE OTHER WRITER IS NOT `updateClass`, and an earlier revision of this
-  // comment rested the whole argument on it: "since #249's other guard a
-  // class's stored start can never be moved into the past, so this read cannot
-  // understate it". `updateClass` is indeed guarded. `template-sync.ts` is
-  // not — it rewrites `startTime` on a template's instances with a bare
-  // `updateMany` (see `waitlist-retention.ts`'s docblock for the measurement)
-  // and could in principle land in this window.
+  // THE CLOCK IS NOW THE ONLY OTHER WRITER, and that took a deletion rather
+  // than an argument. An earlier revision rested the whole case on "since
+  // #249's other guard a class's stored start can never be moved into the
+  // past, so this read cannot understate it"; that was false at the time,
+  // because the template sync rewrote `startTime` on a template's instances
+  // with a bare `updateMany` past no such guard (the measurement is in
+  // `waitlist-retention.ts`'s docblock) and could land in this window. #194
+  // deleted that function. Re-derived rather than recalled — the `class.`
+  // write sites in `src/`, minus the tests — `updateClass` below is the only
+  // statement left that moves an existing class's `date`/`startTime`, and it
+  // is guarded. The strong claim is true again, which is precisely why the
+  // narrower argument below is kept rather than dropped: it was one unguarded
+  // writer away from false once already.
   //
-  // It stays safe anyway, for a narrower reason than the one claimed. Losing
-  // that race means publishing a `draft` whose start had just been moved into
-  // the past by a template edit — the same outcome the clock produces on its
+  // It stays safe on that narrower reason regardless. Losing such a race would
+  // mean publishing a `draft` whose start had just been moved into
+  // the past by another writer — the same outcome the clock produces on its
   // own a moment later, and the same outcome as publishing one second earlier.
   // Nothing downstream depends on a published class's start being ahead: the
   // sweeps read the stored values fresh, and the retention argument this feeds
@@ -918,8 +924,11 @@ export type UpdateClassResult =
  * of this docblock said a teacher could undo the economic freeze by removing
  * the registration; that was never true. `settingsLocked` is only ever written
  * `true`, from one site (`POST /api/registrations`), and nothing anywhere
- * writes it back to `false` — `template-sync.ts` leans on exactly that,
- * saying registration latches it `true` one way and never back. A terminal
+ * writes it back to `false` — checked by grep rather than by memory
+ * (`settingsLocked:` in `src/`, minus the tests, is one `data:` payload and
+ * two `where:` filters). The sentence used to cite `template-sync.ts` as
+ * leaning on exactly that latch to choose the instances it could rewrite;
+ * #194 deleted that function, and the latch is unchanged. A terminal
  * status, in turn, has no outgoing transition.
  *
  * Both are checked twice, for the same reason. The first check, against the
@@ -1046,19 +1055,25 @@ export async function updateClass(
   // `??` falls back to.
   //
   // "AND THOSE CAN ONLY BE MOVED BY A WRITER THAT IS ITSELF THIS GUARD" is
-  // what this comment used to say, and it is false. `template-sync.ts` writes
-  // `startTime` on a template's `draft`/`open` instances through a bare
-  // `updateMany` with no past-start check (measured in `waitlist-retention.ts`'s
-  // docblock). It can commit between this read and the write below.
+  // what this comment used to say. It was false when it was written — the
+  // template sync wrote `startTime` on a template's `draft`/`open` instances
+  // through a bare `updateMany` with no past-start check (measured in
+  // `waitlist-retention.ts`'s docblock) and could commit between this read and
+  // the write below. #194 deleted that function, so the sentence is true
+  // again: re-derived from the `class.` write sites in `src/` rather than
+  // recalled, this `updateMany` is the only one that moves an existing class's
+  // `date`/`startTime`. A claim that has already gone stale once is worth
+  // re-running the grep on rather than trusting.
   //
-  // The conclusion survives the correction, on a smaller argument. The
-  // fallback only matters for a field the request did NOT send, and losing
-  // this race there means the guard judged an edit against a `startTime` a
-  // template sync replaced a millisecond later — leaving a start in the past
-  // that this request did not put there and the next `updateClass` will refuse
-  // to move further. A wrong answer in a millisecond window, not a broken
-  // invariant: nothing downstream treats "no live class starts in the past" as
-  // a fact, precisely because the generator produces such classes routinely.
+  // The conclusion never depended on it, which is why the smaller argument is
+  // kept. The fallback only matters for a field the request did NOT send, and
+  // losing such a race there would mean the guard judged an edit against a
+  // `startTime` another writer replaced a millisecond later — leaving a start
+  // in the past that this request did not put there and the next `updateClass`
+  // will refuse to move further. A wrong answer in a millisecond window, not a
+  // broken invariant: nothing downstream treats "no live class starts in the
+  // past" as a fact, precisely because the generator produces such classes
+  // routinely.
   if (data.date !== undefined || data.startTime !== undefined) {
     const timeZone = cls.teacher.defaultTimezone;
     const effectiveDate = data.date ?? cls.date;
@@ -1249,9 +1264,10 @@ export async function updateClass(
   }
 
   // `findUnique`, not `findUniqueOrThrow`. The write succeeded, but the row
-  // can still be gone by the time it is re-read: `template-sync.ts`'s
-  // wrong-day cleanup and `archiveOrUnarchiveTemplate` both delete future
-  // instances, which is the same population being edited here. `P2025` has no
+  // can still be gone by the time it is re-read: `archiveOrUnarchiveTemplate`
+  // deletes future instances, which is the same population being edited here.
+  // It was one of two until #194 deleted the template sync's wrong-day
+  // cleanup; one deleter is still one race. `P2025` has no
   // branch in `classifyApiError`, so throwing would surface a bare 500 for a
   // race — and `isRecordNotFound`'s own docblock states the rule this would
   // break: losing the race should produce the same answer as never having had

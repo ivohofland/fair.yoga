@@ -99,11 +99,13 @@ void _studioTemplateUpdateColumnsExist;
  *     startTime) WHERE isArchived = false`, #196), so editing either can
  *     collide with another of this teacher's live templates.
  *   - `dayOfWeek` additionally → generated `StudioClass` rows are NOT moved or
- *     withdrawn. Unlike the class family, this family has no
- *     `syncTemplateInstances` equivalent, so an edit leaves four weeks of
- *     classes on the superseded weekday. That is #194, which this branch does
- *     not address; it is named here because this list is where someone would
- *     look for it.
+ *     withdrawn, so an edit leaves up to four weeks of classes on the
+ *     superseded weekday. That is the decided rule, not a gap: #194 settled on
+ *     2026-08-20 that a template is a stamp and not a live link, and deleted
+ *     the class family's propagation rather than adding one here. This family
+ *     never had one, so its behaviour did not change — only the reading of it
+ *     did. #284 carries what the studio half still owes: week-keyed
+ *     generation, and an edit that says which week it first takes effect.
  */
 type TeacherEditableStudioTemplateField =
   | 'classType'
@@ -322,12 +324,18 @@ export type UpdateStudioClassTemplateResult =
  * (`api/studio-class-templates/[id]/route.ts`) which passes a `z.infer` of a
  * `.strict()` schema. Worth knowing before adding a second.
  *
- * No instance sync. Unlike the class family, editing `dayOfWeek` or
- * `startTime` here leaves generated `StudioClass` rows on the superseded
- * schedule — there is no `syncTemplateInstances` equivalent for this family.
- * That is #194, with two open product decisions of its own; this function is
- * the seam it will attach to, which is why the omission is stated rather than
- * left to be discovered.
+ * No instance sync, and that is the rule rather than an omission. Editing
+ * `dayOfWeek` or `startTime` here leaves every generated `StudioClass` exactly
+ * where it is, which is what #194 decided for BOTH families on 2026-08-20: a
+ * template is a stamp, not a live link. This function is unchanged by that
+ * decision — it never propagated — but this paragraph is, because it used to
+ * frame the absence as a seam a future branch would attach a propagation to.
+ * Nothing should attach here.
+ *
+ * What this family still owes #194 is tracked on #284: week-keyed generation,
+ * so a `dayOfWeek` edit cannot lay a second class into a week that already
+ * holds one from this template, and a response that names the week the new day
+ * first appears. Neither of those is a propagation.
  */
 export async function updateStudioClassTemplate(
   db: PrismaClient,

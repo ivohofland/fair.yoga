@@ -1,10 +1,41 @@
 # Plan: template-edit propagation & student-side updates
 
-Status: **implemented** (template sync: b5efe9a · updates strip: cfd8c88)
+Status: **Part 1 SUPERSEDED by #194 (2026-08-20)** · Part 2 **implemented**
+(updates strip: cfd8c88). Part 1 was implemented as b5efe9a and has since been
+deleted; do not read it as a description of the system.
+
+> **Superseded 2026-08-20 — Part 1 only, by #194.**
+>
+> Part 1's decision was *sync safe instances, say so for the rest*. #194
+> reversed it: **a template is a stamp, not a live link.** Editing a template
+> now changes nothing that already exists — no instance is rewritten, moved or
+> deleted, whatever its status or `settingsLocked` — and
+> `src/services/template-sync.ts` (`syncTemplateInstances`) was deleted
+> outright, along with its tests. Generation became week-keyed in the same
+> issue, so the classes the new schedule produces do not land beside the ones
+> the old schedule left standing, and the `PUT` answers with the first week the
+> new schedule reaches instead of a count of rows it rewrote.
+>
+> **Why the reversal.** The lock boundary this plan leaned on
+> (`settingsLocked`) split a template's instances into two populations with
+> different answers, so "what happens to my existing classes when I change
+> this?" had no single answer a teacher could hold. Deleting the propagation
+> gives it one. The costs Part 1 was written to avoid are real and were
+> accepted knowingly: a teacher who moves Tuesday to Thursday keeps the
+> Tuesdays already on the schedule and cancels the ones they do not want,
+> individually.
+>
+> **Nothing below is edited.** It is the record of why the sync existed, which
+> is the part #194 needed in order to remove it — including the field table,
+> which is the clearest surviving statement of exactly what used to propagate.
+> Read Part 1 as history. Part 2 is unaffected and still describes live
+> behaviour.
 
 ---
 
 ## Part 1 — Recurring-template edits vs already-generated instances
+
+*(Superseded — see the note above. Preserved unedited.)*
 
 ### Current behavior (verified in code)
 

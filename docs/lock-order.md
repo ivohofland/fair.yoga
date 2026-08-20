@@ -26,11 +26,13 @@ example, until #237 folded its per-class CAS behind its own
 `lockClassRowsOrdered` pre-lock). Those are the two that take it
 *deliberately*, which is not the same as being the only two statements that
 take it: plain DML on `Class` locks the rows it matches as well, and
-`archiveOrUnarchiveTemplate`'s `class.deleteMany` and `syncTemplateInstances`'
-same-day `class.updateMany` are both examples. Neither is a third category
-today, and the reason is placement rather than kind — each runs behind an
-ordered `lockClassRowsOrdered` pre-lock over a superset of the rows it can
-match, so it acquires nothing its transaction is not already holding. A bare
+`archiveOrUnarchiveTemplate`'s `class.deleteMany` is the example. It is not a
+third category today, and the reason is placement rather than kind — it runs
+behind an ordered `lockClassRowsOrdered` pre-lock over a superset of the rows
+it can match, so it acquires nothing its transaction is not already holding.
+There were two of these until #194: the template edit's same-day
+`class.updateMany` was the other, and it had the same placement and the same
+answer. A bare
 `class.updateMany` or `class.deleteMany` added OUTSIDE such a pre-lock joins
 this rule as a full member and has to be ordered like one. `POST
 /api/registrations` writes `Registration` before `WaitlistEntry`;
@@ -67,10 +69,16 @@ that suffix.
 ## Ordering WITHIN `Class`
 
 The list above orders the *tables*. It says nothing about the order of two rows
-of the SAME table, and `Class` is the one table where that matters: **five**
+of the SAME table, and `Class` is the one table where that matters: **four**
 sites lock more than one `Class` row inside a single transaction, and two of
 them taking the same pair in opposite sequences is an AB-BA cycle exactly like
 any cross-table one.
+
+**Five until #194**, which deleted the template edit's propagation and with it
+the fifth site. Re-derived by `grep -rn 'lockClassRowsOrdered(' src/` — the
+helper's definition plus four callers — rather than decremented, because this
+document's own history is of counts that stayed plausible while their
+membership moved.
 
 **The rule: ascending by `id`, taken by `lockClassRowsOrdered`
 (`src/lib/db-locks.ts`).** Every site that locks more than one `Class` row goes
@@ -111,19 +119,25 @@ both classes, timed into the same gap), it is measured rather than theorised,
 and it is no worse than the pre-#180 state, which had no ordering at all — but
 it is not closed. Widening the call past `today` would lock history for no
 gain, and #86/#112 require the delete's live predicate re-evaluation regardless.
-`syncTemplateInstances` does not share it: its write set is
-`id: { in: lockedIds }`, a structural subset of what its own call returned.
+`withdrawWaitingEntriesForTeacher` (`waitlist.ts`) does not share it: its write
+set is keyed on the ids its own `lockClassRowsOrdered` call handed back, a
+structural subset rather than a predicate re-evaluated when the write runs.
+That is the contrast `lockClassRowsOrdered`'s docblock (`db-locks.ts`) points
+back at this document for.
 
-`syncTemplateInstances`'s predicate carries no `status`/`settingsLocked`
-narrowing beyond `templateId`/`teacherId`/`date >` the current UTC calendar
-date, so it briefly locks every future instance of the template — including
-ones already `settingsLocked` by a registration, which its own writes will
-never touch. That is the safe direction for lock ordering, but it means a
-booking on one of those instances can contend with a template edit, where
-before #180 it could not — **for the rest of the edit transaction, not merely
-for the statement**. `SELECT … FOR UPDATE` holds until the transaction ends, so
-in production the exposure is bounded by `updateClassTemplate`'s
-`{ timeout: 15_000 }`, not by how long the `SELECT` itself takes.
+**The template EDIT has left this graph entirely (#194).** A paragraph stood
+here describing its pre-lock, and it is worth keeping what it said because the
+exposure was real: the predicate carried no `status`/`settingsLocked` narrowing
+beyond `templateId`/`teacherId`/`date >` the current UTC calendar date, so it
+briefly locked every future instance of the template — including ones already
+`settingsLocked` by a registration, which its own writes could never touch —
+and `SELECT … FOR UPDATE` holds until the transaction ends, so a booking on one
+of those instances contended with a template edit for the rest of that
+transaction rather than for the statement. #194 deleted `syncTemplateInstances`
+outright. `updateClassTemplate` now writes one `ClassTemplate` row under one
+`SET LOCAL lock_timeout` and takes no `Class` lock of any kind, so the exposure
+is gone rather than narrowed, and its budget moved 15s → 10s with the four
+statements it lost.
 
 See "The slot key is a wait edge" below before assuming `id` is the only thing
 that orders two `Class` rows: since #196 a unique index on
@@ -382,11 +396,11 @@ predicate, so it has no array to sort in the first place.
 
 Ordering a multi-row write means locking the rows first, explicitly: an
 `ORDER BY … FOR UPDATE` ahead of the write itself. In `src/` that is always
-`lockClassRowsOrdered` (`db-locks.ts`) — `withdrawWaitingEntriesForTeacher`,
-`syncTemplateInstances` and `archiveOrUnarchiveTemplate` take theirs as a
-pre-lock ahead of their `updateMany`/`deleteMany` (issue 180), and both
-erasures reach the same helper (#237). A per-row `lockClassRow` loop over a
-sorted read also works and is what `deleteStudentAccount` used before
+`lockClassRowsOrdered` (`db-locks.ts`) — `withdrawWaitingEntriesForTeacher`
+and `archiveOrUnarchiveTemplate` take theirs as a pre-lock ahead of their
+`updateMany`/`deleteMany` (issue 180), and both erasures reach the same helper
+(#237). The template edit was a third until #194 deleted its propagation.
+A per-row `lockClassRow` loop over a sorted read also works and is what `deleteStudentAccount` used before
 #216/#182; it costs 2N round trips, which is why it was replaced.
 
 ### The slot key is a wait edge, and the ascending-by-`id` rule cannot see it (#196)
@@ -405,14 +419,14 @@ excuses `create`/`createMany`/`createManyAndReturn` — "a freshly inserted row'
 lock conflicts with nothing, so it carries no ordering obligation". True of the
 row, false of its index entries since #196: `updateClass`'s single-row
 `UPDATE` was measured as one half of a reproduced `40P01` (see "The slot key
-is a wait edge" below — `syncTemplateInstances` vs `updateClass`, 1 of 120
-runs, and `updateClass` vs `updateClass`, 32 of 100). The generator's own
-`createManyAndReturn` is not what was reproduced here: measured against
-`syncTemplateInstances` it came back clean, 6 of 6, in the shipped
-configuration (see "The pairing that looks worst is currently unreachable"
-below), and only deadlocks — 3 of 3 — once `ClassTemplate_teacher_slot_unique`
-is dropped. For `Class` the candidate set is no longer "statements that can
-lock an existing row" but **"statements that write `(teacherId, date,
+is a wait edge" below — `updateClass` vs `updateClass`, 32 of 100 runs, and
+the template sync vs `updateClass`, 1 of 120, the second of which measured a
+function #194 has since deleted). The generator's own `createManyAndReturn` is
+not what was reproduced here: measured against that same sync it came back
+clean, 6 of 6, in the shipped configuration (see "The pairing that looks worst
+is unreachable" below), and only deadlocked — 3 of 3 — once
+`ClassTemplate_teacher_slot_unique` was dropped. For `Class` the candidate set
+is no longer "statements that can lock an existing row" but **"statements that write `(teacherId, date,
 startTime)`"** — every
 `Class` insert, and every update of those three columns or of `status` across
 the `cancelled` boundary. `updateClass` (`class-lifecycle.ts`) joins on that
@@ -428,10 +442,18 @@ There is no pre-lock that fixes it either: the resource is a key that does not
 exist yet.
 
 Reproduced against the real functions, on a throwaway database with the full
-migration history, **with no handshake at all** — these are the statements
-production issues, raced as-is:
+migration history, **with no handshake at all** — these were the statements
+production issued, raced as-is.
 
-- **`syncTemplateInstances` vs `updateClass`**, crossing on one date (the sync
+**#194 deleted one of the two participants**, and the results are kept rather
+than trimmed: they are evidence about a state this database really was in, and
+the mechanism they demonstrate — a slot key is a wait edge, and a
+vacate-and-claim has no order to take — is unchanged. Read the first bullet as
+history and the second as live. Nothing in `src/` calls `syncTemplateInstances`
+now; nothing can, it does not exist.
+
+- **`syncTemplateInstances` vs `updateClass`** — *the sync side no longer
+  exists (#194); recorded as measured.* Crossing on one date (the sync
   moves the template's instance 09:00 → 10:00 while the teacher moves a
   one-off class on that date 10:00 → 09:00): `40P01` in **1 of 120** runs,
   raised on the `updateClass` side. The other 119 ended with both sides taking
@@ -443,10 +465,11 @@ production issues, raced as-is:
   start times: `40P01` in **32 of 100** runs, either side the victim. Two
   single-statement autocommit `UPDATE`s, no transaction on either side.
 
-Both are new to #196, proven by mutation rather than argued: with
+Both were new to #196, proven by mutation rather than argued: with
 `Class_teacher_slot_unique` dropped and nothing else changed, the same races
-run clean — 120 of 120 for `syncTemplateInstances` vs `updateClass`, 60 of 60
-for `updateClass` vs `updateClass`. The second figure is a smaller sample than
+ran clean — 120 of 120 for the sync vs `updateClass` (the pairing #194 has
+since removed a side of), 60 of 60 for `updateClass` vs `updateClass`, which
+is still live. The second figure is a smaller sample than
 the 100-run original measurement above; the point of this mutation check is
 the pattern disappearing entirely once the index is gone, not reproducing the
 original run count, and 60/60 clean already establishes that as firmly as
@@ -456,13 +479,19 @@ recorded here, not fixed. The cheap fix (retry on `40P01`) is a decision about
 `withErrorHandler`, not about lock order, and a deferrable unique index would
 give up the immediate `409` the create routes answer with.
 
-**The pairing that looks worst is currently unreachable, and only because a
+**The pairing that looks worst is unreachable, and only because a
 SECOND new index blocks it.** A `POST /api/class-templates` transaction
 (`classTemplate.create`, then a four-week `createManyAndReturn`) against a
-`syncTemplateInstances` transaction is the case where both sides hold several
+`syncTemplateInstances` transaction was the case where both sides hold several
 `Class` slot keys across statements — the generator inserting in date order,
 the sync updating in heap order, an inversion of exactly the kind this section
-is about. Measured both orderings, three runs each, widened with a third
+is about. **#194 deleted the sync side**, so the measurement below is history;
+what it establishes is not. Every template-driven writer left is an INSERT in
+date order (`generateClassInstances`, `POST /api/class-templates`,
+`pauseOrResumeTemplate`'s resume), so the remaining pairings have neither an
+inversion nor a second participant that rewrites an existing key — and the
+structural argument two paragraphs down, which is what actually blocks them,
+never mentioned the sync. Measured both orderings, three runs each, widened with a third
 connection holding one `Class` row so the sync sat parked mid-`updateMany`
 (confirmed by `FOR UPDATE NOWAIT` from a fourth connection answering `55P03`
 for a row it had already taken): **no `40P01`, 6 of 6**. Every run died earlier
@@ -479,15 +508,22 @@ A (POST /api/class-templates): REJECTED 40P01 deadlock detected
 B (syncTemplateInstances)    : ok {"synced":4,"regenerated":0,"kept":0}
 ```
 
+*(Transcript kept verbatim. Side B is `syncTemplateInstances`, deleted by #194
+— the counts it returned describe a report shape that no longer exists either.
+It is retained as the measurement that proved `ClassTemplate_teacher_slot_unique`
+is load-bearing, which is a property of the index, not of the sync.)*
+
 The reason is structural, not luck. Two template-driven writers can only
 collide on `(teacherId, date, startTime)` if their templates agree on
 `(teacherId, dayOfWeek, startTime)` — a template generates on one weekday at
 one time, so same slot means same weekday and same time — and that is the key
 `ClassTemplate_teacher_slot_unique` forbids. The archived-template hole in that
 partial index does not open it: archiving deletes every future `draft`/`open`
-instance (`scheduledWhere`, `gt: today`), and what survives is either dated
-today or in a status `syncTemplateInstances`'s `mutable` filter drops, so an
-archived template's sync writes no slot key at all.
+instance (`scheduledWhere`, `gt: today`), and an archived template writes no
+`Class` row afterwards by any route — generation skips it, and since #194 an
+edit writes no `Class` row for any template at all. (This sentence used to
+reach the same conclusion through the sync's own `mutable` filter dropping
+what the delete spared; the mechanism went, the conclusion got shorter.)
 
 So one of the six new indexes is what keeps another of the six from being a
 live deadlock. **Nothing in the code says so, and nothing enforces it** — which
@@ -938,7 +974,7 @@ trade `room-archive.ts:146-147` refused.
 - **`reapClosedWaitlistEntries`** (`src/services/waitlist-retention.ts`) —
   `Class`, then `WaitlistEntry`, one class per `db.$transaction` via
   `lockClassRow`. **Deliberately a single-row-lock site**, like
-  `autoCancelClasses` and unlike the five `lockClassRowsOrdered` sites counted
+  `autoCancelClasses` and unlike the four `lockClassRowsOrdered` sites counted
   under **Ordering WITHIN `Class`**.
   **But holding one row lock is not by itself why it is safe**, and that is the
   multiplicity bound this document retires at "Ordering WITHIN `Class`" above:
@@ -967,10 +1003,11 @@ trade `room-archive.ts:146-147` refused.
   batches**. An earlier version of this bullet credited one-class-at-a-time with
   removing the cycle; it does not, and a future site copying that reasoning
   without also pre-locking its parents would inherit a deadlock this sweep does
-  not have. What one class at a time actually buys is the "**five** sites lock
+  not have. What one class at a time actually buys is the "**four** sites lock
   more than one `Class` row" count under **Ordering WITHIN `Class`** — above,
   not below — staying true, and a bound on how long the sweep holds locks
-  against live traffic.
+  against live traffic. (Five until #194 deleted the template edit's
+  propagation; the count moved, this bullet's argument did not.)
 
 ## Known safe by accident, not by order — not fixed here
 

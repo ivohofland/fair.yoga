@@ -272,9 +272,11 @@ defect, so write the concrete path before judging it. When that path needs a sta
 system cannot produce — a stored `ClassStatus` of `full`, when the enum has five members and
 that is not one of them — it is not a live defect, and the four tests below govern it like
 any other finding. Decline it the way you reject a false positive: path written out, blocking
-condition named. Rarity is not that. A narrow route is still a route — `template-sync` admits
-an already-started class only east of UTC, and that is recorded as known-open precisely
-because someone will reach it. Reachability is the test, not frequency.
+condition named. Rarity is not that. A narrow route is still a route — `template-sync`
+admitted an already-started class only east of UTC, and that was recorded as known-open
+precisely because someone would reach it. (#194 deleted the function; the lesson is why
+the route was recorded rather than declined, not that it is still there.) Reachability
+is the test, not frequency.
 
 The roadmap already draws this line — it tracks "live bugs, not just cleanup" and
 "someone is currently worse off" separately from everything else. Everything below governs
@@ -312,8 +314,9 @@ not theirs. Reject false positives with evidence and say so.
 to know about *at the moment they touch that code* belongs beside the code — #128's
 accessible-name gap is pointed at from beside the button it describes. An issue nobody
 opens is worse than a comment everybody reads. A reachable defect you are not fixing
-now is the same shape: mark it `known-open` beside the code, as `template-sync` is in
-`CLAUDE.md`.
+now is the same shape: mark it `known-open` beside the code — as `room-archive.ts` does
+for the archive-versus-publish race it accepts, and as `CLAUDE.md` did for
+`template-sync` until #194 deleted that function.
 
 **Watch the ratio.** Note in the roadmap how many issues a round closed and how many it
 opened. One in, one leaf out is healthy. One in, three out needs a reason stated out loud.

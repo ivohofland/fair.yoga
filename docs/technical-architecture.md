@@ -236,7 +236,7 @@ async function dispatch(notification: CreateNotification): Promise<void> {
 
 ### Class Generator (`services/class-generator.ts`)
 
-Runs hourly as part of the in-process scheduler (see Background Jobs below). For each active, unarchived ClassTemplate it tops up the rolling 4-week window, and reports every candidate date it could **not** fill along with the reason:
+Runs hourly as part of the in-process scheduler (see Background Jobs below). For each active, unarchived ClassTemplate it tops up the rolling 4-week window — **at most one class per week per template** (#194) — and reports every candidate date it could **not** fill along with the reason:
 
 ```typescript
 // generateInstancesForTemplate — one template, one window.
@@ -248,12 +248,26 @@ const dates = getNextOccurrences(template.dayOfWeek, startDate, DEFAULT_WEEKS + 
   .filter((d) => classStartInstant(d, template.startTime, tz) > startDate)
   .slice(0, DEFAULT_WEEKS);
 
-// ONE query classifies every candidate: already generated, blocked by a
-// cancelled instance of this template, or the teacher's slot taken by another
-// class. The reasons are what the teacher and the operator get told.
+// ONE query per question, and since #194 there are two. This one classifies
+// each candidate DATE: already generated, blocked by a cancelled instance of
+// this template, or the teacher's slot taken by another class.
 const occupants = await db.class.findMany({
   where: { teacherId: template.teacherId, date: { in: dates } },
 });
+
+// And this one classifies its WEEK — `already_this_week`. Keyed on
+// `templateId`, not `teacherId`: it rides `@@unique([templateId, date])`, and
+// the date-scoped read above structurally cannot see the class that holds a
+// week from a DIFFERENT day, which is the whole case it exists for. No status
+// filter, deliberately — a cancelled class holds its week.
+const heldWeeks = new Set(
+  (await db.class.findMany({
+    where: { templateId: template.id, date: { gte: weekStart, lt: weekEnd } },
+    select: { date: true },
+  })).map((c) => mondayOf(c.date)),
+);
+
+// The reasons are what the teacher and the operator get told.
 
 // ONE insert. `skipDuplicates` compiles to a bare `ON CONFLICT DO NOTHING`,
 // so a date lost to a concurrent insert costs that date and nothing else.
@@ -266,9 +280,11 @@ const inserted = await db.class.createManyAndReturn({
 return { created: inserted.length, skipped }; // GenerationResult
 ```
 
-**Not a per-date insert loop, deliberately.** It was one until #164. All four of this function's production call sites now pass a transaction client — `syncTemplateInstances` was the exception until the atomic-template-update branch (issue 83) stopped it opening a transaction of its own — and Prisma does not savepoint individual queries inside an interactive transaction, so a per-date insert that hit a unique violation aborted the whole transaction, and a clash on the last date let `COMMIT` return the `ROLLBACK` tag with no error at all. A teacher resuming a template was told it worked while the template stayed paused. See `docs/superpowers/specs/2026-08-11-generator-slot-reporting-design.md`.
+**Not a per-date insert loop, deliberately.** It was one until #164. All three of this function's production call sites pass a transaction client — `api/class-templates/route.ts`, `generateClassInstances`, and `pauseOrResumeTemplate`. There was a fourth, `syncTemplateInstances`, and it was the holdout that passed a bare client until the atomic-template-update branch (issue 83); #194 deleted it. Prisma does not savepoint individual queries inside an interactive transaction, so a per-date insert that hit a unique violation aborted the whole transaction, and a clash on the last date let `COMMIT` return the `ROLLBACK` tag with no error at all. A teacher resuming a template was told it worked while the template stayed paused. See `docs/superpowers/specs/2026-08-11-generator-slot-reporting-design.md`.
 
-`services/studio-class-generator.ts` is the studio twin and has the same shape and the same `GenerationResult`.
+`services/studio-class-generator.ts` is the studio twin and has the same shape and the same `GenerationResult` — apart from the week key, which is #284's.
+
+**A template edit reaches no generated class.** `updateClassTemplate` (`services/class-template-lifecycle.ts`) writes the template row and nothing else: since #194 there is no propagation service, and its `$transaction` survives only to scope `SET LOCAL lock_timeout` over that single `update`. The PUT then runs a read-only probe that predicts the first week the new schedule can reach, and says so in its response.
 
 ---
 

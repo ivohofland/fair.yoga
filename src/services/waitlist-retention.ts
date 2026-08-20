@@ -6,9 +6,11 @@
  * WHY THIS EXISTS. Nothing else removes a `WaitlistEntry`. The only other
  * production remover is `deleteStudentAccount` (`gdpr.ts`), which runs once per
  * account at that account's request; `onDelete: Cascade` from `Class` fires
- * only from two deleters, both scoped to FUTURE instances
- * (`template-sync.ts`'s wrong-day cleanup and `archiveOrUnarchiveTemplate`'s
- * `date > today`), so neither can reach a terminal class. `Student`'s cascade
+ * only from one deleter, scoped to FUTURE instances
+ * (`archiveOrUnarchiveTemplate`'s `date > today`), so it cannot reach a
+ * terminal class. There were two until #194 deleted the template sync's
+ * wrong-day cleanup; the argument is one participant shorter and otherwise
+ * unchanged. `Student`'s cascade
  * never fires at all, because erasure anonymises rather than deletes. So
  * without this sweep the population grows for the life of each account.
  *
@@ -124,27 +126,36 @@
  * legitimately produces, so there is no invariant for the database to hold.
  * See `docs/superpowers/specs/2026-08-18-past-start-guard-design.md` §3.
  *
- * TWO DOORS, NOT ALL OF THEM, and this paragraph is the honest version of a
- * claim that first went in as "the two doors where a past start can be
- * written". `template-sync.ts` is a third: it rewrites `startTime` on every
- * instance of a template with a bare `updateMany`, past no such guard, and it
- * selects those instances with `date: { gt: now }` — a `@db.Date` column
- * compared against an instant, which is the UTC-calendar mistake `timezone.ts`
- * exists to name. That filter is not the same predicate as "the start is still
- * ahead". Measured: for a `Pacific/Auckland` teacher at 2026-08-18T20:00Z, a
- * class dated 2026-08-19 at 00:30 local started at 12:30Z — eight hours
- * earlier — and still satisfies `date > now`.
+ * TWO DOORS, AND SINCE #194 THEY ARE ALL OF THEM — but the correction that
+ * got here is worth keeping, because the sentence was wrong once in each
+ * direction. It first went in as "the two doors where a past start can be
+ * written", which was an inventory it had not earned: the template sync was a
+ * third writer, rewriting `startTime` on every instance of a template with a
+ * bare `updateMany`, past no such guard, selecting those instances with
+ * `date: { gt: now }` — a `@db.Date` column compared against an instant, the
+ * UTC-calendar mistake `timezone.ts` exists to name. That filter was not the
+ * same predicate as "the start is still ahead". Measured: for a
+ * `Pacific/Auckland` teacher at 2026-08-18T20:00Z, a class dated 2026-08-19 at
+ * 00:30 local started at 12:30Z — eight hours earlier — and still satisfied
+ * `date > now`. #194 deleted that function on 2026-08-20, and the two doors
+ * became the inventory the first version claimed they were: re-derived from
+ * the `class.` write sites in `src/`, `updateClass` is the only statement that
+ * moves an existing class's `date`/`startTime`, and it is guarded. #257 is the
+ * issue that recorded the third writer; it is moot rather than fixed, and the
+ * measurement above is kept because the UTC-calendar trap it names outlived
+ * the function that fell into it.
  *
- * WHAT THAT COSTS THIS SWEEP IS NOTHING, which is why it is recorded here
+ * WHAT THAT COST THIS SWEEP WAS NOTHING, which is why it was recorded here
  * rather than fixed here. This delete-safety argument needs the class's `date`
  * to be immovable once TERMINAL, and it gets that from
- * `class_terminal_date_guard`, a trigger. `template-sync` writes `startTime`,
- * never `date`, and filters to `draft`/`open` besides — so it cannot move the
- * column this sweep reads, on a class this sweep would consider. The gap is in
- * the #249 rule's coverage, not in this one's. Filed under
- * `2026-08-18-past-start-guard-design.md` §11; closing it means deciding what
- * a template edit should do to an instance that has already started, which is
- * a product call and not a guard.
+ * `class_terminal_date_guard`, a trigger — never from the door count above.
+ * The sync wrote `startTime`, never `date`, and filtered to `draft`/`open`
+ * besides, so it could not move the column this sweep reads on a class this
+ * sweep would consider. The gap was in the #249 rule's coverage, not in this
+ * one's, and it closed with the function rather than by being fixed: the
+ * residual filed under `2026-08-18-past-start-guard-design.md` §11 asked what
+ * a template edit should do to an instance that has already started, and #194
+ * answered "nothing at all".
  *
  * WHY IT CANNOT DEADLOCK AGAINST THE ERASURE. `deleteStudentAccount` deletes
  * waitlist entries with an UNSCOPED `deleteMany({ where: { studentId } })` —

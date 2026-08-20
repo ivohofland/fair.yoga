@@ -79,7 +79,7 @@ Setting min rate and target rate to the same value collapses the scaling to a fl
 
 **Walk-ins:** Teachers can add walk-in students during or just before class. The walk-in must have an existing account with a tier. Walk-ins can exceed the maximum student count — the actual number of students becomes the new count for the price calculation. The teacher rate remains capped at the target rate, so walk-ins beyond max simply lower everyone's price. Walk-ins benefit everyone — more people sharing costs means lower prices for all.
 
-**Economic settings lock:** Once the first student registers for a class, the economic settings (room cost, min rate, target rate, min/max students) are locked. The teacher can still edit non-economic details (description, time, notes). If they need to change economics, they cancel the class and create a new one. For recurring classes, the template can be updated for future instances without affecting the current one.
+**Economic settings lock:** Once the first student registers for a class, the economic settings (room cost, min rate, target rate, min/max students) are locked. The teacher can still edit non-economic details (description, time, notes). If they need to change economics, they cancel the class and create a new one. For recurring classes, they edit the template — which changes nothing that is already on the schedule (#194: a template is a stamp, not a live link). Not the locked instance, and not the unlocked ones either: every class the generator has already created keeps the settings it was stamped with. The new economics reach only classes generated after the edit, and since the generator lays down at most one class per week per template, the first to carry them is the first week that holds no class from that template. Instances the teacher does not want on the old terms are cancelled individually.
 
 **Income tier selection:**
 - 5 tiers with compressed spread (0.65, 0.80, 1.00, 1.20, 1.35)
@@ -119,7 +119,7 @@ Setting min rate and target rate to the same value collapses the scaling to a fl
 - Auto-cancel check: 4h, 2h, or 1h before class (default: 2h)
 - Auto-cancel time must be shorter than the cancellation deadline
 
-**Recurring classes:** Run indefinitely until the teacher stops them — no end date needed. Instances are auto-generated on a rolling 4-week basis.
+**Recurring classes:** Run indefinitely until the teacher stops them — no end date needed. Instances are auto-generated on a rolling 4-week basis, at most one per week per template. A template is a stamp, not a live link (#194): each instance takes a copy of the template's fields when it is generated, and editing the template afterwards changes none of them. A teacher who moves their Tuesday class to Thursday keeps every Tuesday already on the schedule and cancels the ones they do not want; the Thursdays appear from the first week that holds no class from that template.
 
 **Waitlist:** When a class reaches maximum capacity, additional students join a waitlist. Waitlist promotion follows two rules depending on timing:
 
