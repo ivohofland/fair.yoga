@@ -1237,13 +1237,21 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
       if (erased.count === 0) throw new AlreadyErasedError('teacher');
     },
     // The `classTemplate.updateMany`/`studioClassTemplate.updateMany` below
-    // take the same row locks `claimTemplateForGeneration` /
+    // contend for the same ROWS that `claimTemplateForGeneration` /
     // `claimStudioTemplateForGeneration` (class-generator.ts,
-    // studio-class-generator.ts) hold for the duration of their own
-    // per-template transactions (#95) — always for the sweep, and now for the
-    // studio family's own resume too (#94) — so account erasure can now block
-    // on a sweep or a resume in progress the same way an archive or pause
-    // click can. This site needs the matching 10s budget more than those four
+    // studio-class-generator.ts) lock for the duration of their own
+    // per-template transactions (#95) — not in the same MODE, which is the
+    // distinction #126 corrects here last of seven sites (#125 did the other
+    // six). An `updateMany` takes `FOR NO KEY UPDATE`; the claims take `FOR
+    // UPDATE`. The two conflict with each other, which is all this paragraph
+    // needs — but they differ against a third party: an inserting row's FK
+    // check takes `FOR KEY SHARE`, which `FOR UPDATE` blocks and `FOR NO KEY
+    // UPDATE` does not.
+    //
+    // Those claims are held by the sweep for both families, and by both
+    // families' resume — the studio family's since #94, the class family's
+    // since #116 — so account erasure can block on a sweep or a resume in
+    // progress the same way an archive or pause click can. This site needs the matching 10s budget more than those four
     // do, not just for symmetry: by the time this transaction opens,
     // `deleteTeacherAccount` has already run `completeClass` for every
     // in-progress class above — pricing, payments, and notifications
