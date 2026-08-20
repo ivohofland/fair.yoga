@@ -1546,6 +1546,68 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(res.status).toBe(200);
 
     expect(await prisma.class.count({ where: { templateId: id } })).toBe(0);
+
+    // And the confirmation must not promise one either (#194). This is the
+    // sharpest form of the ungated probe: archiving deleted the future window,
+    // so nothing holds a week, so an ungated probe answers with the EARLIEST
+    // date it has — this week's Monday — for the one template guaranteed to
+    // generate nothing. `generationState` is what lets the copy say
+    // "un-archive and resume", the only remedy that works: both archive
+    // directions force `isActive: false`, so un-archiving alone puts nothing
+    // back.
+    const { data } = (await res.json()) as {
+      data: { firstEffective: string | null; generationState: string };
+    };
+    expect(data.firstEffective).toBeNull();
+    expect(data.generationState).toBe('archived');
+  });
+
+  /**
+   * The paused half of the same gate, over HTTP (#194).
+   *
+   * `/settings/recurring/[id]` renders the edit form for a paused recurring
+   * class exactly as for a live one — the only conditional on that page picks
+   * which toggle button to show — and `template-list.tsx` links there from
+   * both the paused and the archived sections. So this is not an exotic
+   * request: it is what a teacher who paused for the summer and then moved
+   * their class to Thursdays sends.
+   *
+   * The template keeps its four generated classes here, unlike the archived
+   * case above, which is what makes the two worth separating: an ungated probe
+   * reads those four held weeks and names week FIVE — a specific, plausible,
+   * checkable date, for a week the sweep will never reach. Wrong in the
+   * dishonest direction and impossible for the teacher to tell from a correct
+   * answer.
+   */
+  it('names no week for a paused template, and says which state it is in', async () => {
+    const id = await createTemplate('Paused Edit', '11:19');
+    expect(await prisma.class.count({ where: { templateId: id } })).toBe(4);
+
+    const pause = await fetch(`${BASE_URL}/api/class-templates/${id}?state=paused`, {
+      method: 'PATCH',
+      headers: cookie(sessionToken),
+    });
+    expect(pause.status).toBe(200);
+    // Pausing deletes nothing — the four weeks the ungated probe would read
+    // are still held.
+    expect(await prisma.class.count({ where: { templateId: id } })).toBe(4);
+
+    const NEW_DAY_OF_WEEK = (DAY_OF_WEEK + 2) % 7;
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ dayOfWeek: NEW_DAY_OF_WEEK }),
+    });
+    // The edit still succeeds. The gate is on the PREDICTION, not on the
+    // write: this PUT is deliberately open to a paused template.
+    expect(res.status).toBe(200);
+
+    const { data } = (await res.json()) as {
+      data: { dayOfWeek: number; firstEffective: string | null; generationState: string };
+    };
+    expect(data.dayOfWeek).toBe(NEW_DAY_OF_WEEK);
+    expect(data.firstEffective).toBeNull();
+    expect(data.generationState).toBe('paused');
   });
 
   // Task 6b (#196). `ClassTemplate_teacher_slot_unique` is (teacherId,

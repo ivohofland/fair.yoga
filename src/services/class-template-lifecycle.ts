@@ -52,6 +52,10 @@ import {
 } from './class-generator';
 import { CHARGED_STATUSES } from './class-lifecycle';
 import { countSkipReasons, type SkipCounts } from '@/lib/generation';
+import {
+  templateGenerationState,
+  type TemplateGenerationState,
+} from '@/lib/template-selection';
 
 /**
  * The fields a teacher may change on an existing template.
@@ -237,7 +241,15 @@ export type UpdateClassTemplateResult =
       template: ClassTemplate;
       /**
        * The **Monday of the first week the new schedule reaches**, or `null`
-       * when no free week is inside the probe's horizon (#194).
+       * when there is no such week to name (#194).
+       *
+       * `null` has TWO causes and they are not the same fact, which is why
+       * `generationState` sits beside it rather than being left for the copy
+       * layer to infer: either no free week is inside the probe's horizon, or
+       * the template is not eligible to generate at all and the probe was
+       * never run. Reading `null` alone as "no free week" is what produced a
+       * confirmation naming a week the sweep would never fill for every edit
+       * to a paused or archived template.
        *
        * Named as a week rather than as a date on purpose. `firstFreeWeek`
        * answers with a candidate *occurrence* — a Thursday, say — and the
@@ -252,6 +264,33 @@ export type UpdateClassTemplateResult =
        * it names does not exist yet and will be created by the sweep.
        */
       firstEffective: Date | null;
+      /**
+       * Whether the sweep will act on this edit at all, and if not, what the
+       * teacher has to do first (#194).
+       *
+       * This PUT is deliberately open to a paused or archived template — door
+       * 5's comment below argues that at length, and nothing here changes it.
+       * The edit commits either way. What differs is WHEN it takes effect,
+       * and for an ineligible template the answer is not a date: the hourly
+       * sweep never reaches it (`ACTIVE_TEMPLATE_WHERE` at the `findMany`,
+       * and again under the row lock in `claimTemplateForGeneration`), so no
+       * week can be named honestly until the teacher resumes — or un-archives
+       * and then resumes.
+       *
+       * Derived by `templateGenerationState` from the row this call just
+       * wrote, not from the row read at the top: `isActive`/`isArchived` are
+       * both on the forbidden list, so no PUT can move them, but reading the
+       * post-write row is what keeps that a fact about the code rather than a
+       * memory of it.
+       *
+       * Carried as its own field rather than left to the client to derive
+       * from the `isActive`/`isArchived` columns the route already spreads.
+       * Those two booleans are the INPUT to a rule that lives in
+       * `@/lib/template-selection`; re-deriving it in a `'use client'` copy
+       * layer would be a fourth copy of the generator's eligibility gate, in
+       * the one place nobody would look when it changes.
+       */
+      generationState: TemplateGenerationState;
     }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
@@ -338,7 +377,22 @@ export type UpdateClassTemplateResult =
 /**
  * The probe behind `UpdateClassTemplateResult.firstEffective` (#194): the
  * Monday of the first week in `horizon` whose candidate date
- * `generateInstancesForTemplate` would actually fill.
+ * `generateInstancesForTemplate` would actually fill, GIVEN that the template
+ * is eligible to generate at all.
+ *
+ * That precondition is the caller's, not this function's, and it is stated in
+ * the contract rather than assumed because it is not a `SkipReason` and so
+ * cannot appear in the enumeration below. `generateInstancesForTemplate`
+ * refuses candidate DATES; `ACTIVE_TEMPLATE_WHERE` refuses whole TEMPLATES,
+ * one layer up, before any candidate is considered — at the sweep's
+ * `findMany` (`class-generator.ts`) and again under the row lock in
+ * `claimTemplateForGeneration`. For a paused or archived template the
+ * generator is never called, no date is ever declined, and every answer this
+ * function could give would name a week nothing will fill. `updateClassTemplate`
+ * therefore calls it only when `templateGenerationState(updated) === 'active'`
+ * and reports the other two states as themselves; a reader completing the
+ * bullet list below would still be missing that case, which is why it is up
+ * here and not in it.
  *
  * Read-only, and it must stay that way — this endpoint creates no class, so
  * everything in the sentence it feeds is a prediction about the sweep.
@@ -738,10 +792,33 @@ export async function updateClassTemplate(
     (date) => classStartInstant(date, updated.startTime, template.teacher.defaultTimezone) > now,
   );
 
+  // The gate the probe cannot apply for itself, because it is not about a
+  // date: the sweep reaches only templates matching `ACTIVE_TEMPLATE_WHERE`,
+  // so for a paused or archived one there is no week to predict at all. Every
+  // per-date ground the probe reproduces sits INSIDE
+  // `generateInstancesForTemplate`, and for these two states that function is
+  // never called — which is exactly why the probe's own docblock could
+  // enumerate its grounds exhaustively and still be wrong here.
+  //
+  // Deterministic, not a race: `isActive` is a committed column read by every
+  // generation path. Before this gate, editing a paused template promised a
+  // dated week for 100% of such edits, and promised it EARLIER than delivery —
+  // the direction the past-start filter's comment above names as the dishonest
+  // one. The archived case was sharper still: archiving deletes the future
+  // window, so the probe found no held week and answered with the earliest
+  // date it has, this week's Monday, for a template that generates nothing.
+  //
+  // Not probed-then-discarded: two reads for an answer that cannot be used are
+  // two reads too many, and skipping them makes the precondition visible at
+  // the call site rather than buried in a `null` return.
+  const generationState = templateGenerationState(updated);
+
   return {
     ok: true,
     template: updated,
-    firstEffective: await probeFirstEffectiveWeek(db, updated, horizon),
+    firstEffective:
+      generationState === 'active' ? await probeFirstEffectiveWeek(db, updated, horizon) : null,
+    generationState,
   };
 }
 

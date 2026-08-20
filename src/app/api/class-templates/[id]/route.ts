@@ -66,15 +66,26 @@ export const PUT = withErrorHandler(async (
 
   const result = await updateClassTemplate(prisma, id, session.teacherId, data);
 
-  // `firstEffective` rides alongside the template row rather than replacing
-  // it: `TemplateForm` still reads nothing else from this body, and the
-  // integration suite's "the success body is the bare template" case pins that
-  // no propagation REPORT came back — a single extra prediction field is the
-  // opposite of that, and is what lets the form say when the edit takes hold
-  // (#194). Serialized as an ISO string by `respondOk`'s JSON encoding; the
-  // form converts it back.
+  // `firstEffective` and `generationState` ride alongside the template row
+  // rather than replacing it: `TemplateForm` reads nothing else from this
+  // body, and the integration suite's "the success body is the bare template"
+  // case pins that no propagation REPORT came back — two PREDICTION fields are
+  // the opposite of that, and are what let the form say when the edit takes
+  // hold (#194). `firstEffective` is serialized as an ISO string by
+  // `respondOk`'s JSON encoding and the form converts it back;
+  // `generationState` is already a string.
+  //
+  // `generationState` is not redundant with the `isActive`/`isArchived`
+  // columns the spread carries. Those are the rule's inputs; this is the
+  // service's own answer to it, taken from the row the write produced. The
+  // form must not re-derive the sweep's eligibility gate — see
+  // `templateGenerationState` (`@/lib/template-selection`).
   if (result.ok) {
-    return respondOk({ ...result.template, firstEffective: result.firstEffective });
+    return respondOk({
+      ...result.template,
+      firstEffective: result.firstEffective,
+      generationState: result.generationState,
+    });
   }
 
   // Narrowed one reason at a time so each maps to the response this route

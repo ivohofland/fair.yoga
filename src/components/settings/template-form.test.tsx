@@ -507,6 +507,106 @@ describe('TemplateForm', () => {
   });
 
   /**
+   * #194's Critical, at the seam this form owns. `/settings/recurring/[id]`
+   * renders this form for a paused or archived recurring class exactly as it
+   * does for a live one — there is no lifecycle guard on that page, only a
+   * choice of which toggle button to show — so this branch runs for every
+   * such edit.
+   *
+   * The service sends `firstEffective: null` and `generationState: 'paused'`
+   * for those, and the two are not interchangeable: `null` alone is also what
+   * a LIVE template sends when no free week is inside the probe's horizon, and
+   * that case correctly drops the clause (the case above). Reading only
+   * `firstEffective` here would render the same silent sentence for a template
+   * that will never generate at all, which is truthful-but-useless — the
+   * failure #194 exists to end.
+   */
+  it('names the resume when the route says the recurring class is paused', async () => {
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url === '/api/teacher-rooms') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{
+              id: '11111111-1111-4111-8111-111111111111',
+              capacityOverride: 30,
+              rentalRate: 20,
+              room: { roomName: 'Studio A', venueName: 'Main Venue' },
+            }],
+          }),
+        };
+      }
+      if (url === '/api/class-templates/tpl-1' && init?.method === 'PUT') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: { id: 'tpl-1', firstEffective: null, generationState: 'paused' },
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    fireEvent.click(await screen.findByRole('button', { name: /save/i }));
+
+    expect(
+      await screen.findByText(
+        'Template updated. It takes effect for newly generated classes — this recurring class is paused, so nothing is generated until you resume it. Change existing classes individually if needed.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * The wire is data, not a type. `generationState` is narrowed by comparison
+   * against the two states that change the sentence, so an unrecognised value
+   * — a newer server, a proxy rewriting the body, a typo in a future arm —
+   * lands on `'active'` and renders the pre-#194 sentence rather than reaching
+   * `templateUpdatedMessage`'s exhaustive `switch`, which throws on anything
+   * it does not know. A thrown error here would replace a confirmation with a
+   * blank panel after a save that already committed.
+   */
+  it('falls back to the plain sentence when the route names a state it does not know', async () => {
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url === '/api/teacher-rooms') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{
+              id: '11111111-1111-4111-8111-111111111111',
+              capacityOverride: 30,
+              rentalRate: 20,
+              room: { roomName: 'Studio A', venueName: 'Main Venue' },
+            }],
+          }),
+        };
+      }
+      if (url === '/api/class-templates/tpl-1' && init?.method === 'PUT') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: { id: 'tpl-1', firstEffective: null, generationState: 'hibernating' },
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    fireEvent.click(await screen.findByRole('button', { name: /save/i }));
+
+    expect(
+      await screen.findByText(
+        'Template updated. It takes effect for newly generated classes. Change existing classes individually if needed.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  /**
    * Review F4. `handleSubmit`'s `if (created) return;` cannot be reached
    * through the UI: settlement removes the only submit button, and HTML's
    * implicit submission needs one — or a single field that blocks it, where

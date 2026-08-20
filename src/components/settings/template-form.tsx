@@ -17,6 +17,7 @@ import {
   resumeMessage,
   templateUpdatedMessage,
 } from '@/components/settings/template-action-messages';
+import type { TemplateGenerationState } from '@/lib/template-selection';
 
 interface TeacherRoomOption {
   id: string;
@@ -377,9 +378,31 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         // this field sends, and `templateUpdatedMessage` answers both by
         // dropping the clause. Neither may become `new Date(undefined)`, which
         // renders "Invalid Date" into the middle of the sentence.
-        const json: { data?: { firstEffective?: string | null } } = await res.json();
+        //
+        // `generationState` is the other half of the same sentence and cannot
+        // be inferred from `firstEffective`: `null` means "no free week in
+        // view" for a live template and "the sweep will never run" for a
+        // paused or archived one, and only the service can tell them apart
+        // (`@/lib/template-selection`). Re-deriving it here from the
+        // `isActive`/`isArchived` columns this body also carries would put a
+        // fourth copy of the generator's eligibility gate in the copy layer.
+        //
+        // Narrowed by comparison rather than cast. This is wire data: a server
+        // predating the field sends nothing, and anything unrecognised must
+        // land on `'active'`, which is the pre-#194 sentence and the only one
+        // safe to say about a template whose state we do not know. A cast
+        // would hand an unknown string to an exhaustive `switch` that throws
+        // on it — an unhandled error where a teacher expects a confirmation.
+        const json: {
+          data?: { firstEffective?: string | null; generationState?: string };
+        } = await res.json();
         const firstEffective = json.data?.firstEffective ?? null;
-        setSuccess(templateUpdatedMessage(firstEffective ? new Date(firstEffective) : null));
+        const wireState = json.data?.generationState;
+        const generationState: TemplateGenerationState =
+          wireState === 'paused' || wireState === 'archived' ? wireState : 'active';
+        setSuccess(
+          templateUpdatedMessage(firstEffective ? new Date(firstEffective) : null, generationState),
+        );
         router.refresh();
       }
     } catch {

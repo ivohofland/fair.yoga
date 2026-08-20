@@ -241,17 +241,101 @@ describe('updateClassTemplate (DB)', () => {
     // are asserted above and re-listing all twenty here would make this case
     // fail on every unrelated schema change.
     //
-    // Three keys, not two, since task 6 of #194: `firstEffective` is a
-    // PREDICTION about the sweep, not a report of work this call did, and the
-    // distinction is exactly what this assertion is here to keep. A key that
-    // counted rows this call touched would be the propagation coming back.
-    expect(Object.keys(result).sort()).toEqual(['firstEffective', 'ok', 'template']);
+    // Four keys, not two, since #194: `firstEffective` and `generationState`
+    // are both PREDICTIONS about the sweep, not reports of work this call did,
+    // and the distinction is exactly what this assertion is here to keep. A
+    // key that counted rows this call touched would be the propagation coming
+    // back. Re-derived from the arm's own declaration when `generationState`
+    // was added rather than incremented, which is how the counts on this
+    // branch drifted in the first place.
+    expect(Object.keys(result).sort()).toEqual([
+      'firstEffective',
+      'generationState',
+      'ok',
+      'template',
+    ]);
+    // A live template, so the state is `active` and the week is a real
+    // prediction rather than the absence of one.
+    expect(result.generationState).toBe('active');
     // And it is a week, not a class date: `null` or a Monday, never a Thursday.
     // The copy renders it as "the week starting …", so a candidate occurrence
     // left unconverted would put the wrong weekday in front of a teacher.
     if (result.firstEffective !== null) {
       expect(result.firstEffective.getUTCDay()).toBe(1);
     }
+  });
+
+  /**
+   * #194's eligibility gate, paused half.
+   *
+   * The probe reproduces the grounds on which `generateInstancesForTemplate`
+   * declines a candidate DATE. `ACTIVE_TEMPLATE_WHERE` declines whole
+   * TEMPLATES, one layer up, before any candidate exists — so for a paused
+   * template the generator is never called, no date is ever declined, and
+   * every week the probe could name is a week nothing will fill. That gate is
+   * not a `SkipReason` and could not have been found by completing the probe's
+   * enumeration; it needs its own case.
+   *
+   * The edit itself still succeeds, and must: this PUT is deliberately open to
+   * a paused template (door 5's comment in the service argues why). What is
+   * refused is the dated sentence, not the write.
+   *
+   * Paused through `pauseOrResumeTemplate` rather than by setting the column,
+   * so this pins the state a teacher can actually reach from the toggle.
+   */
+  it('names no week for a paused template, and reports the state instead', async () => {
+    const template = await makeTemplate('Paused Edit');
+    const paused = await pauseOrResumeTemplate(prisma, template.id, teacherId, 'paused');
+    expect(paused.ok).toBe(true);
+
+    const result = await updateClassTemplate(prisma, template.id, teacherId, {
+      classType: 'Paused Edit, Renamed',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    // The write landed — the gate is on the prediction, not on the edit.
+    expect(result.template.classType).toBe('Paused Edit, Renamed');
+    expect(result.template.isActive).toBe(false);
+    // No week, and the reason for the absence is on the result rather than
+    // left for the copy layer to guess from a bare `null`.
+    expect(result.firstEffective).toBeNull();
+    expect(result.generationState).toBe('paused');
+  });
+
+  /**
+   * #194's eligibility gate, archived half — and the sharper of the two.
+   *
+   * Archiving deletes the future window, so an archived template has no held
+   * week at all. An ungated probe therefore returns the EARLIEST answer it can
+   * give, this week's Monday, for the template least likely to produce a class
+   * — the "dishonest direction" the past-start filter's own comment names,
+   * reached by a different route.
+   *
+   * `archived`, not `paused`, and the distinction is load-bearing rather than
+   * cosmetic: `archiveOrUnarchiveTemplate` forces `isActive: false` on both
+   * directions, so un-archiving alone puts nothing back. A teacher told to
+   * resume an archived recurring class has been given a remedy that does not
+   * work — which is what `UNARCHIVE_MESSAGE` exists to prevent one arm over.
+   */
+  it('distinguishes an archived template from a merely paused one', async () => {
+    const template = await makeTemplate('Archived Edit');
+    const archived = await archiveOrUnarchiveTemplate(prisma, template.id, teacherId, 'archived');
+    expect(archived.ok).toBe(true);
+
+    const result = await updateClassTemplate(prisma, template.id, teacherId, {
+      classType: 'Archived Edit, Renamed',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.template.classType).toBe('Archived Edit, Renamed');
+    // Both flags, because both halves of the state are what the answer below
+    // depends on: the archive forced `isActive: false` as well.
+    expect(result.template.isArchived).toBe(true);
+    expect(result.template.isActive).toBe(false);
+    expect(result.firstEffective).toBeNull();
+    expect(result.generationState).toBe('archived');
   });
 
   // The service-level statement of rule 1, next to the function that owns it:

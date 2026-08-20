@@ -480,15 +480,59 @@ describe('templateUpdatedMessage', () => {
     // The argument is always a MONDAY (the probe converts before returning),
     // so `formatDayHeader` renders "Monday, 21 Sep" and the sentence reads
     // "the week starting Monday, 21 Sep".
-    expect(templateUpdatedMessage(new Date('2026-09-21T00:00:00.000Z'))).toBe(
+    expect(templateUpdatedMessage(new Date('2026-09-21T00:00:00.000Z'), 'active')).toBe(
       'Template updated. It takes effect for newly generated classes — your first class on the new schedule is the week starting Monday, 21 Sep. Change existing classes individually if needed.',
     );
   });
 
   it('drops the middle clause when no free week is in view', () => {
-    expect(templateUpdatedMessage(null)).toBe(
+    expect(templateUpdatedMessage(null, 'active')).toBe(
       'Template updated. It takes effect for newly generated classes. Change existing classes individually if needed.',
     );
+  });
+
+  /**
+   * The two ineligible states, and the reason they are two sentences rather
+   * than one (#194). The sweep selects on `ACTIVE_TEMPLATE_WHERE`, so neither
+   * a paused nor an archived template is ever reached — and before this
+   * argument existed, both rendered the DATED sentence above, naming a week
+   * nothing would fill, for every such edit.
+   *
+   * The Monday is still passed in both cases, deliberately: these arms must
+   * answer from `generationState` alone. A resolver that fell back to
+   * `firstEffective` when it happened to be non-null would pass a test that
+   * only ever handed it `null`, and the service's own gate would then be the
+   * single point of failure for a sentence rendered on the client.
+   */
+  it('names the resume, not a week, for a paused recurring class', () => {
+    expect(templateUpdatedMessage(new Date('2026-09-21T00:00:00.000Z'), 'paused')).toBe(
+      'Template updated. It takes effect for newly generated classes — this recurring class is paused, so nothing is generated until you resume it. Change existing classes individually if needed.',
+    );
+  });
+
+  /**
+   * "un-archive AND resume", never "un-archive" alone.
+   * `archiveOrUnarchiveTemplate` forces `isActive: false` on BOTH directions,
+   * which is precisely what `UNARCHIVE_MESSAGE` (pinned above) exists to warn
+   * about — so a sentence that stopped at un-archiving would send the teacher
+   * to a paused template with an empty window and contradict the message they
+   * are about to read there.
+   */
+  it('names the un-archive and the resume for an archived recurring class', () => {
+    expect(templateUpdatedMessage(new Date('2026-09-21T00:00:00.000Z'), 'archived')).toBe(
+      'Template updated. It takes effect for newly generated classes — this recurring class is archived, so nothing is generated until you un-archive and resume it. Change existing classes individually if needed.',
+    );
+  });
+
+  // The remedy each ineligible sentence names must match the one
+  // `UNARCHIVE_MESSAGE` gives, or a teacher gets two different instructions
+  // for the same template within one page. Both say "resume"; only the
+  // archived one adds the step before it.
+  it('agrees with UNARCHIVE_MESSAGE about what un-archiving does not do', () => {
+    expect(UNARCHIVE_MESSAGE).toContain('resume it');
+    expect(templateUpdatedMessage(null, 'archived')).toContain('un-archive and resume it');
+    expect(templateUpdatedMessage(null, 'paused')).toContain('resume it');
+    expect(templateUpdatedMessage(null, 'paused')).not.toContain('un-archive');
   });
 });
 

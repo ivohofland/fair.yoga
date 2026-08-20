@@ -392,6 +392,8 @@ that compiles but cannot fail certifies nothing.
 | Evaluation order (§3.4) | Move the week check above the own-date check → steady-state re-runs report `already_this_week` instead of `already_generated` |
 | Probe agrees with the generator | Give the probe its own horizon constant → its date disagrees with where the sweep actually creates the class |
 | `already_this_week` cannot vanish | Add a sixth `SkipReason` without handling it → `countSkipReasons`'s `never` fails the build |
+| **The probe's eligibility precondition** | Drop the `generationState === 'active'` gate at the probe's call site → editing a paused template names week five and an archived one names *this* week, both of which the sweep never fills. Not reachable by completing the `SkipReason` enumeration, which is why it needs its own row |
+| Paused and archived are not one state | Collapse `templateUpdatedMessage`'s two ineligible arms into one → the archived sentence tells a teacher to resume, a remedy that does nothing until they un-archive first |
 
 **Timezone coverage is not optional here.** §1.4 is a defect that would have shipped;
 the test for `mondayOf` must include a class date whose UTC-midnight instant falls on
@@ -406,7 +408,14 @@ the previous day in a west-of-UTC zone, proving the function ignores zones entir
 - After a `dayOfWeek` edit, no class is generated into a week that already holds one
   from that template — cancelled ones included.
 - The first class on the new day appears in the first week holding none, and the PUT's
-  message names that week by date.
+  message names that week by date — **for a template the sweep will actually reach**.
+  Eligibility is a precondition of the whole prediction, not one of the generator's
+  per-date `SkipReason`s: `ACTIVE_TEMPLATE_WHERE` refuses whole templates one layer
+  above `generateInstancesForTemplate`, so for a paused or archived one no candidate is
+  ever considered and no week can be named honestly. The PUT still succeeds (§8 keeps
+  the edit open regardless of `isActive`/`isArchived`) and answers with the state
+  instead, and the two states get different sentences because their remedies differ —
+  un-archiving forces `isActive: false`, so it does not resume.
 - What the message claims is checkable against the Schedule tab.
 - `syncTemplateInstances` and its tests are gone, not merely unreferenced.
 - Every `syncTemplateInstances` hit in the repo verdicted individually into §9's three

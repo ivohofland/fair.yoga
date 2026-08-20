@@ -1,5 +1,10 @@
 import { formatDayHeader } from '@/lib/format';
 import type { LastScheduledClass } from '@/services/class-template-lifecycle';
+// Type-only, but it would be safe as a value import too: `template-selection.ts`
+// is import-free on purpose, so nothing server-only rides in with it. The rule
+// itself is evaluated on the server and arrives here as a string on the wire —
+// this file must never re-derive it from `isActive`/`isArchived`.
+import type { TemplateGenerationState } from '@/lib/template-selection';
 
 /**
  * Confirmation shown after pausing a template. Only ever called on the pause
@@ -297,13 +302,55 @@ export const UNARCHIVE_MESSAGE =
  * than a promise. `settingsLocked` refuses economic edits on a booked class,
  * so "change existing classes individually" is not universally available —
  * true before #194 too, since the deleted sync skipped those same instances,
- * but this sentence is new and must not over-promise.
+ * but this sentence is new and must not over-promise. It is kept on all four
+ * forms below, the archived one included: archiving withdraws only the
+ * unbooked future window, so a booked class of a shelved template can still
+ * be sitting on the schedule for a teacher to change.
+ *
+ * ## Why `generationState` is a second argument and not an inference
+ *
+ * `firstEffective` alone cannot carry this. `null` from a live template means
+ * "no free week inside the probe's horizon" and drops the clause; `null` from
+ * a paused or archived one means the sweep will not run at all. Rendering the
+ * dated sentence for the second case is the failure this argument exists to
+ * end — a confirmation naming a week that would never be filled, for 100% of
+ * edits to a paused or archived recurring class.
+ *
+ * `paused` and `archived` get DIFFERENT sentences rather than one "not
+ * currently generating" clause, because the remedies differ and the sentence
+ * is only useful if it names the right one. Un-archiving does not resume:
+ * `archiveOrUnarchiveTemplate` forces `isActive: false` on both directions,
+ * which is the whole reason `UNARCHIVE_MESSAGE` above exists. A teacher told
+ * "un-archive it" would do that, see nothing appear, and be exactly where
+ * #119 found them.
+ *
+ * Register borrowed from `UNARCHIVE_MESSAGE` — state, em-dash, remedy — but
+ * not its words: that constant describes what just happened to a template,
+ * and these describe when a change will reach the schedule.
  */
-export function templateUpdatedMessage(firstEffective: Date | null): string {
+export function templateUpdatedMessage(
+  firstEffective: Date | null,
+  generationState: TemplateGenerationState,
+): string {
   const head = 'Template updated. It takes effect for newly generated classes';
   const tail = 'Change existing classes individually if needed.';
-  if (!firstEffective) return `${head}. ${tail}`;
-  return `${head} — your first class on the new schedule is the week starting ${formatDayHeader(firstEffective)}. ${tail}`;
+  switch (generationState) {
+    case 'active':
+      if (!firstEffective) return `${head}. ${tail}`;
+      return `${head} — your first class on the new schedule is the week starting ${formatDayHeader(firstEffective)}. ${tail}`;
+    case 'paused':
+      return `${head} — this recurring class is paused, so nothing is generated until you resume it. ${tail}`;
+    case 'archived':
+      return `${head} — this recurring class is archived, so nothing is generated until you un-archive and resume it. ${tail}`;
+    default: {
+      // The `const unhandled: never` idiom this file already uses at both
+      // resolvers. A fourth state on `TemplateGenerationState` would compile
+      // clean here and silently take the `active` branch's shape if this were
+      // an `if`/`else` chain, which is how the sentence and the service drift.
+      const unhandled: never = generationState;
+      throw new Error(`templateUpdatedMessage: unhandled generation state ${String(unhandled)}`);
+    }
+  }
 }
 
 /**
