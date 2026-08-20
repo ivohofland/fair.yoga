@@ -289,7 +289,10 @@ Rejected alternatives:
 `template-form.tsx` renders it where the sync counters were. Copy lives in
 `template-action-messages.ts` beside `resumeMessage`.
 
-Two forms:
+Four forms — two when the sweep will reach this template, two when it will not. The
+route therefore sends `generationState` beside `firstEffective`: `null` alone cannot
+distinguish "no free week in view" from "no week is possible", and the second must not
+render the first's sentence.
 
 - **A date is known:** *"Template updated. It takes effect for newly generated classes
   — your first Thursday class is the week of 22 September. Change existing classes
@@ -297,6 +300,18 @@ Two forms:
 - **No free week inside the horizon:** the same sentence without the middle clause.
   Saying nothing specific beats inventing a date; this file's resolvers already treat
   `null` as "say nothing" for exactly this reason.
+- **Paused:** the middle clause names the remedy instead of a week — *"this recurring
+  class is paused, so nothing is generated until you resume it"*.
+- **Archived:** the same shape, different remedy — *"…until you un-archive and resume
+  it"*. Two sentences rather than one, because un-archiving does not resume:
+  `archiveOrUnarchiveTemplate` forces `isActive: false` on both directions, which is
+  what `UNARCHIVE_MESSAGE` exists to say. A teacher told only to un-archive would see
+  nothing appear.
+
+The last two were missing from the first implementation, which probed unconditionally
+and rendered a dated week for a template the sweep skips — for 100% of such edits, and
+earlier than delivery. §11's acceptance criterion carries the precondition; §10 carries
+the two mutations.
 
 If the sentence turns out word-for-word shareable with the studio family (#284), it
 follows this file's existing delegate-and-pin pattern — `resumeStudioMessage` delegates
