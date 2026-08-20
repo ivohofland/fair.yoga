@@ -9,7 +9,7 @@ import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import type { GenerationResult, SkippedSlot } from '@/lib/generation';
 import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
-import { classStartInstant } from '@/lib/timezone';
+import { classStartInstant, mondayOf } from '@/lib/timezone';
 import { ACTIVE_TEMPLATE_WHERE } from '@/lib/template-selection';
 import { log } from '@/lib/log';
 
@@ -63,6 +63,33 @@ export function getNextOccurrences(
   }
 
   return dates;
+}
+
+/**
+ * The first candidate date whose week no class of this template already holds,
+ * or `null` if every candidate's week is taken (#194).
+ *
+ * Pure. Exists to be shared by two callers — the generator, deciding what to
+ * create, and the template-edit endpoint's probe, deciding what to tell the
+ * teacher. One function, so the sentence a teacher reads and the behaviour
+ * they get cannot drift apart — `resumeMessage`'s docblock records what the
+ * alternative cost, where copy guessed at generator internals it did not
+ * share and guessed wrong.
+ *
+ * The two callers pass DIFFERENT candidate lists, and that is the point rather
+ * than an inconsistency: the generator passes its own four-occurrence window,
+ * while the probe passes a longer horizon, because when all four of those
+ * weeks are held the honest answer is week five — outside anything the
+ * generator can see.
+ */
+export function firstFreeWeek(
+  candidates: readonly Date[],
+  heldWeeks: ReadonlySet<number>,
+): Date | null {
+  for (const date of candidates) {
+    if (!heldWeeks.has(mondayOf(date))) return date;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
