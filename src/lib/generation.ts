@@ -57,7 +57,9 @@ export interface GenerationResult {
  * today reaches no user anywhere.
  */
 export interface SkipCounts {
+  /** Candidate dates a cancelled instance of this template holds (#192). */
   blockedByCancelled: number;
+  /** Candidate dates another of this teacher's classes holds (#196). */
   slotTaken: number;
 }
 

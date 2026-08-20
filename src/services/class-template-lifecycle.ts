@@ -46,7 +46,7 @@ import { createBulkNotifications, type CreateNotificationInput } from './notific
 import { syncTemplateInstances, type TemplateSyncResult } from './template-sync';
 import { generateInstancesForTemplate, claimTemplateForGeneration } from './class-generator';
 import { CHARGED_STATUSES } from './class-lifecycle';
-import { countSkipReasons } from '@/lib/generation';
+import { countSkipReasons, type SkipCounts } from '@/lib/generation';
 
 /**
  * The fields a teacher may change on an existing template.
@@ -636,7 +636,7 @@ export type PauseTemplateResult =
       template: ClassTemplate;
       lastScheduled: LastScheduledClass | null;
     }
-  | {
+  | ({
       ok: true;
       action: 'active';
       template: ClassTemplate;
@@ -656,11 +656,25 @@ export type PauseTemplateResult =
       scheduled: number;
       /** Rows this resume created. */
       added: number;
-      /** Candidate dates a cancelled instance of this template holds (#192). */
-      blockedByCancelled: number;
-      /** Candidate dates another of this teacher's classes holds (#196). */
-      slotTaken: number;
-    }
+      /**
+       * `& SkipCounts` rather than two re-listed `number`s, and the difference
+       * is a guarantee that did not exist before #116.
+       *
+       * `countSkipReasons`' docblock says a fifth `SkipReason` fails the build
+       * rather than vanishing, and that is true of the REASON — its exhaustive
+       * `switch` catches it. It was not true of the COUNT: measured, adding a
+       * fifth reason, handling it, and adding its count to `SkipCounts`
+       * compiled clean repo-wide, and the new number vanished at every site
+       * that re-lists the fields by hand. Intersecting instead means this arm
+       * gains the field automatically and the hand-written mapping below fails
+       * with `Property '…' is missing … but required in type 'SkipCounts'`.
+       *
+       * Covers this arm and `ResumeTransactionOutcome`'s. The studio family's
+       * destructure, `api/class-templates/route.ts` and `template-sync.ts`
+       * still re-list by hand and would still drop a new count — same fix,
+       * deliberately not smuggled into a class-family locking PR.
+       */
+    } & SkipCounts)
   | { ok: true; action: 'unchanged'; template: ClassTemplate }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
@@ -816,14 +830,12 @@ type ResumeTransactionOutcome =
   | { outcome: 'busy' }
   | { outcome: 'unchanged'; template: ClassTemplate }
   | { outcome: 'paused'; template: ClassTemplate }
-  | {
+  | ({
       outcome: 'active';
       template: ClassTemplate;
       scheduled: number;
       added: number;
-      blockedByCancelled: number;
-      slotTaken: number;
-    };
+    } & SkipCounts);
 
 /**
  * Pause or resume generation. Deletes nothing: pausing means "no new classes",
@@ -1103,12 +1115,31 @@ export async function pauseOrResumeTemplate(
         });
         const { teacher: _gen, ...bareT } = claimed;
         void _gen;
+        const skipCounts = countSkipReasons(generation.skipped);
+
+        // The studio twin's line, ported — this block was rewritten by #116
+        // and the warning did not come with it. The state it reports — a
+        // template flagged live that produces no classes — is reachable
+        // WITHOUT failing: every candidate date already holds a cancelled row,
+        // so generation creates nothing and there is no throw for
+        // `withErrorHandler` to classify. The teacher is told
+        // (`resumeMessage`'s `scheduled === 0` branch); this carries the
+        // breakdown to the operator side, which otherwise has no record that a
+        // resume left the window empty. Rare enough not to be noise: it only
+        // fires on a resume that filled nothing.
+        if (scheduled === 0) {
+          log.warn(
+            { templateId, teacherId, added: generation.created, ...skipCounts },
+            'recurring class template resumed live with an empty window',
+          );
+        }
+
         return {
           outcome: 'active' as const,
           template: bareT,
           scheduled,
           added: generation.created,
-          ...countSkipReasons(generation.skipped),
+          ...skipCounts,
         };
       },
       // Each individual WAIT is bounded at 2s by the `setLockTimeout` at the
@@ -1205,8 +1236,19 @@ export async function pauseOrResumeTemplate(
         slotTaken: result.slotTaken,
       };
     default: {
+      // Throws rather than returning `unhandled`, converging on
+      // `pauseOrResumeStudioTemplate`'s own default. Both are unreachable —
+      // the union is internal, closed, and the `never` binding is what proves
+      // a new arm cannot be forgotten — but the two failure modes are not
+      // equally diagnosable if one ever is reached. Returning the internal arm
+      // hands `{ outcome: … }` to the route, where `result.ok` is `undefined`,
+      // every `reason` test misses, and the route's own default returns a
+      // plain object where Next expects a `Response`: two silent hops and an
+      // unattributable 500. This says which arm, once, at the boundary.
       const unhandled: never = result;
-      return unhandled;
+      throw new Error(
+        `pauseOrResumeTemplate: unhandled transaction outcome ${JSON.stringify(unhandled)}`,
+      );
     }
   }
 }
