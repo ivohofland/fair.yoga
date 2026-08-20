@@ -181,15 +181,23 @@ only signal is a differently-labelled button: `TemplateToggleResponse` collapses
 `{ action: 'unarchived' | 'unchanged' }` and `resolveTemplateConfirmation` returns
 `null`. `UNARCHIVE_STUDIO_MESSAGE` exists for studio; the class family has no twin.
 
-Fix, copy-only plus the type split that lets it be reached:
+Fix, copy-only. **No type change** — an earlier draft of this spec called for
+splitting `unarchived` from `unchanged` on `TemplateToggleResponse`; measurement
+disproved it. `StudioTemplateToggleResponse` carries the same collapsed
+`{ action: 'unarchived' | 'unchanged' }` arm and `resolveStudioConfirmation`
+still gives the two their own `case`s, because TypeScript narrows a literal-union
+property inside a single arm. So:
 
-- split `unarchived` from `unchanged` on `TemplateToggleResponse`;
 - add the class message beside `UNARCHIVE_STUDIO_MESSAGE`, saying "recurring class"
   where studio says "classes";
 - `resolveTemplateConfirmation` becomes a `switch` with a `never` default, for the
   reason `resolveStudioConfirmation`'s docblock already gives for its own: an
   if-chain ending in `return null` is *accidentally* exhaustive, so a sixth arm
-  would fall through to silence instead of failing the build.
+  would fall through to silence instead of failing the build;
+- two docblocks are twins that must move with it: `resolveTemplateConfirmation`'s
+  own ("`null` … is the correct answer for two of the five actions" becomes one),
+  and `UNARCHIVE_STUDIO_MESSAGE`'s, which says the class family's gap is
+  "[deliberately] not fixed alongside this; tracked … on #116".
 
 ### 3.2 #117 — a zero-count CAS may hold a lock
 
