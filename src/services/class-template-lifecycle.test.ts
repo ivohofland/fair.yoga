@@ -2024,6 +2024,17 @@ describe('pauseOrResumeTemplate (DB)', () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.action).toBe('unchanged');
+    // The PAYLOAD, not just the arm. `ResumeTransactionOutcome`'s docblock
+    // claims none of its arms carries the stale pre-transaction snapshot, and
+    // `unchanged` is the one that has to earn it from a plain re-read rather
+    // than from under the CAS's lock. Without this, returning the stale `bare`
+    // instead of the re-read passes every other assertion in this file —
+    // measured — and `api/class-templates/[id]/route.ts` spreads this template
+    // onto the wire, so the settings toggle would render `isActive: true` for
+    // a template that is in fact paused.
+    if (result.ok && result.action === 'unchanged') {
+      expect(result.template.isActive).toBe(false);
+    }
   });
 
   /**
@@ -2161,4 +2172,54 @@ describe('pauseOrResumeTemplate (DB)', () => {
     },
     30_000,
   );
+
+  /**
+   * The CAS's miss branch has a fourth state, and it is reachable: the re-read
+   * finds the row neither already in the desired state nor archived. Driven
+   * here with the `$extends` lever the tests above use, interposed on the CAS
+   * itself — a resume commits before it (so the CAS misses on `isActive`) and
+   * a pause commits after it, before the re-read.
+   *
+   * Two tabs get there: A resumes and then pauses while B's resume is in
+   * flight. `busy` is the answer because the CAS matched zero rows, so B wrote
+   * nothing and rolled back clean — a retry wins. An earlier version of this
+   * branch threw instead, which the route rendered as a 500 logged at `error`.
+   */
+  it('answers busy when the CAS miss lands in the residual fourth state', async () => {
+    const t = await makeTemplate('Residual Race');
+    await prisma.classTemplate.update({ where: { id: t.id }, data: { isActive: false } });
+
+    let straddled = false;
+    const interposing = prisma.$extends({
+      query: {
+        classTemplate: {
+          async updateMany({ args, query }) {
+            if (straddled) return query(args);
+            straddled = true;
+            await prisma.classTemplate.update({
+              where: { id: t.id },
+              data: { isActive: true },
+            });
+            const swapped = await query(args);
+            await prisma.classTemplate.update({
+              where: { id: t.id },
+              data: { isActive: false },
+            });
+            return swapped;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const result = await pauseOrResumeTemplate(interposing, t.id, teacherId, 'active');
+
+    expect(straddled).toBe(true);
+    expect(result).toEqual({ ok: false, reason: 'busy' });
+
+    // Nothing was written: the CAS matched no row, so the rollback leaves the
+    // template exactly as the interposed pause left it.
+    const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.isActive).toBe(false);
+    expect(await prisma.class.count({ where: { templateId: t.id } })).toBe(0);
+  });
 });

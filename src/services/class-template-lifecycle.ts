@@ -801,6 +801,7 @@ const scheduledWhere = (templateId: string, date: { gt: Date } | { gte: Date }) 
 type ResumeTransactionOutcome =
   | { outcome: 'not_found' }
   | { outcome: 'archived' }
+  | { outcome: 'busy' }
   | { outcome: 'unchanged'; template: ClassTemplate }
   | { outcome: 'paused'; template: ClassTemplate }
   | {
@@ -960,18 +961,49 @@ export async function pauseOrResumeTemplate(
             return { outcome: 'unchanged' as const, template: current };
           }
           if (current.isArchived) return { outcome: 'archived' as const };
-          // Residual, not provably unreachable. This CAS's `where` is
-          // `isArchived: false AND isActive: !desiredActive`; a miss means one
-          // of those held *when the CAS ran*, and both are checked above
-          // against a second, later read. Under READ COMMITTED each statement
-          // takes its own snapshot, so a row that changed back in between — a
-          // second race stacked on the first — could in principle reach here.
-          throw new Error(
-            `pauseOrResumeTemplate: CAS matched no row for template ${templateId} ` +
-              'and a later read found it neither already in the desired state nor ' +
-              'archived — a second race stacked on the first, or the CAS predicate ' +
-              'and this classification have diverged',
+          // Residual, and REACHABLE — measured, not merely conceded. This
+          // CAS's `where` is `isArchived: false AND isActive: !desiredActive`;
+          // a miss means one of those held *when the CAS ran*, and both are
+          // checked above against a second, later read. Under READ COMMITTED
+          // each statement takes its own snapshot, so a row that changed back
+          // in between reaches here. One interleaving that does it, with the
+          // `$extends` lever this file's tests already use: a resume commits
+          // between this transaction's own read and its CAS (so the CAS misses
+          // on `isActive`), and a pause commits before the re-read (so the
+          // re-read sees neither already-desired nor archived).
+          //
+          // `busy`, not a throw, and the distinction is the whole point: the
+          // CAS matched ZERO rows, so this transaction has written nothing and
+          // rolls back clean. That is a lost race a retry wins, which is what
+          // `busy` means everywhere else in this file — the route renders it
+          // 503 "Nothing was changed. Wait a moment, then try again." An
+          // earlier version of this branch threw here on the theory that the
+          // state was a stacked race too exotic to answer; it surfaced as a
+          // 500 "Internal server error" logged at `error`, the paging level,
+          // for a condition `classifyApiError`'s transient branch exists to
+          // demote. `archiveOrUnarchiveTemplate`'s miss branch reaches the
+          // analogous fourth state and answers `unchanged` rather than
+          // throwing; the two families agreeing matters more than a
+          // distinction only this branch drew.
+          //
+          // Logged rather than silent, because `busy` now covers two causes
+          // that want telling apart in production: a lock wait that timed out
+          // (the `catch` below, which carries `err`) and this one, which
+          // carries the observed row instead. A steady trickle here with no
+          // concurrent writer would mean the CAS predicate and this
+          // classification have drifted apart — the case the throw was really
+          // aimed at.
+          log.warn(
+            {
+              templateId,
+              teacherId,
+              target,
+              observed: { isActive: current.isActive, isArchived: current.isArchived },
+              desiredActive,
+            },
+            'recurring class pause/resume CAS missed and the re-read matched no classification',
           );
+          return { outcome: 'busy' as const };
         }
 
         if (!desiredActive) {
@@ -1111,6 +1143,8 @@ export async function pauseOrResumeTemplate(
       return { ok: false, reason: 'not_found' };
     case 'archived':
       return { ok: false, reason: 'archived' };
+    case 'busy':
+      return { ok: false, reason: 'busy' };
     case 'unchanged':
       return { ok: true, action: 'unchanged', template: result.template };
     case 'paused': {
