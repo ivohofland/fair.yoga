@@ -1052,7 +1052,7 @@ export async function pauseOrResumeTemplate(
         // the studio twin's; if you change this line, nothing will stop you.
         //
         // Do not "simplify" this to
-        // `claimed.teacher.…`.
+        // `template.teacher.…`.
         const today = startOfLocalDay(new Date(), claimed.teacher.defaultTimezone);
         const scheduled = await tx.class.count({
           where: scheduledWhere(templateId, { gte: today }),
