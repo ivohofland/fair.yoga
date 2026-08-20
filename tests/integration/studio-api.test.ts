@@ -361,6 +361,83 @@ describe('PUT /api/studio-class-templates/[id] collides on the slot key (#196)',
   });
 });
 
+describe('PUT /api/studio-class-templates/[id] — the teacher-editable boundary', () => {
+  it('writes the edited fields and answers 200', async () => {
+    const t = await makeTemplate(ownerId, 'Boundary Edit', '18:40');
+
+    const res = await send('PUT', ownerToken, `/api/studio-class-templates/${t.id}`, {
+      classType: 'Boundary Edited',
+      hourlyRate: 71,
+    });
+    expect(res.status).toBe(200);
+
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.classType).toBe('Boundary Edited');
+    expect(Number(after.hourlyRate)).toBe(71);
+    expect(after.location).toBe('Community Studio');
+  });
+
+  // This is the runtime behaviour every compile-time pin's reasoning rests on:
+  // an undeclared key is a 400, so the ONLY way a forbidden column reaches
+  // Prisma is by being declared in the schema — a source edit, which the pins
+  // in studio-class-template-lifecycle.ts catch. If this test ever fails, the
+  // pins are guarding the wrong thing. Ported from the class family's twin in
+  // class-templates-api.test.ts, which the studio family never had (#114).
+  it('rejects an undeclared key — the schema is strict', async () => {
+    const t = await makeTemplate(ownerId, 'Strict Studio Flow', '18:41');
+
+    const res = await send('PUT', ownerToken, `/api/studio-class-templates/${t.id}`, {
+      classType: 'Renamed',
+      isActive: false,
+    });
+    expect(res.status).toBe(400);
+
+    // Rejected whole: the declared field is not written either.
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
+    expect(after.classType).toBe('Strict Studio Flow');
+    expect(after.isActive).toBe(true);
+  });
+
+  it(
+    'answers 503 STUDIO_TEMPLATE_BUSY when an edit loses the row, and changes nothing',
+    async () => {
+      const t = await makeTemplate(ownerId, 'Busy Studio Edit', '18:42');
+
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const settled = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "StudioClassTemplate" WHERE id = ${t.id} FOR UPDATE`;
+          await held;
+        },
+        { timeout: 15_000 },
+      );
+      await new Promise((r) => setTimeout(r, 100));
+
+      try {
+        const res = await send('PUT', ownerToken, `/api/studio-class-templates/${t.id}`, {
+          classType: 'Blocked Edit',
+        });
+
+        expect(res.status).toBe(503);
+        const json = (await res.json()) as { error: { code: string; message: string } };
+        expect(json.error.code).toBe('STUDIO_TEMPLATE_BUSY');
+        expect(json.error.message).toContain('could not edit this recurring studio class');
+        expect(json.error.message).toContain('Nothing was changed.');
+
+        const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } });
+        expect(after.classType).toBe('Busy Studio Edit');
+      } finally {
+        release();
+        await settled.catch(() => {});
+      }
+    },
+    20_000,
+  );
+});
+
 describe('PATCH /api/studio-class-templates/[id]', () => {
   it('reaches paused then active as named, and archiving forces inactive', async () => {
     const id = (await makeTemplate(ownerId, 'Toggle Target', '18:01')).id;
