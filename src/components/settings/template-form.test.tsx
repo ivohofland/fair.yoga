@@ -412,6 +412,101 @@ describe('TemplateForm', () => {
   });
 
   /**
+   * #194, the wire→copy seam on the EDIT branch. The service predicts the
+   * first week the new schedule reaches and the route sends its Monday back as
+   * `firstEffective`; this pins that the form reads that field, converts the
+   * ISO string, and renders the whole sentence.
+   *
+   * A date on a Monday, since that is what the probe returns and what the
+   * copy's "week starting …" phrasing depends on. The seam is worth its own
+   * case rather than being left to the e2e: this is the shape #93's
+   * wrong-shape bug had — a field that arrives and is silently discarded — and
+   * a route that stopped sending `firstEffective` would leave the e2e's own
+   * assertion to catch it four minutes later.
+   */
+  it('names the week an edit takes effect, from the field the route sends', async () => {
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url === '/api/teacher-rooms') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{
+              id: '11111111-1111-4111-8111-111111111111',
+              capacityOverride: 30,
+              rentalRate: 20,
+              room: { roomName: 'Studio A', venueName: 'Main Venue' },
+            }],
+          }),
+        };
+      }
+      if (url === '/api/class-templates/tpl-1' && init?.method === 'PUT') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: { id: 'tpl-1', firstEffective: '2026-09-21T00:00:00.000Z' },
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    fireEvent.click(await screen.findByRole('button', { name: /save/i }));
+
+    // The whole string, not a prefix: a form that dropped the middle clause
+    // would still pass a "Template updated" regex, and the middle clause is
+    // the entire content of this change.
+    expect(
+      await screen.findByText(
+        'Template updated. It takes effect for newly generated classes — your first class on the new schedule is the week starting Monday, 21 Sep. Change existing classes individually if needed.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * The `null` arm of the same seam, and the reason the form reads
+   * `?? null` rather than trusting the field to be there. `new Date(undefined)`
+   * is an Invalid Date, and `formatDayHeader` renders one as
+   * "undefined, NaN undefined" — a sentence, in teal, on the settings page.
+   */
+  it('drops the week clause when the response names no week', async () => {
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url === '/api/teacher-rooms') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{
+              id: '11111111-1111-4111-8111-111111111111',
+              capacityOverride: 30,
+              rentalRate: 20,
+              room: { roomName: 'Studio A', venueName: 'Main Venue' },
+            }],
+          }),
+        };
+      }
+      if (url === '/api/class-templates/tpl-1' && init?.method === 'PUT') {
+        // No `firstEffective` at all — a server predating the field, which is
+        // the case `null` and `undefined` have to answer the same way.
+        return { ok: true, json: async () => ({ data: { id: 'tpl-1' } }) };
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TemplateForm mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+    fireEvent.click(await screen.findByRole('button', { name: /save/i }));
+
+    expect(
+      await screen.findByText(
+        'Template updated. It takes effect for newly generated classes. Change existing classes individually if needed.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  /**
    * Review F4. `handleSubmit`'s `if (created) return;` cannot be reached
    * through the UI: settlement removes the only submit button, and HTML's
    * implicit submission needs one — or a single field that blocks it, where

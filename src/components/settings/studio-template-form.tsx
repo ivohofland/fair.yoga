@@ -156,8 +156,28 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         // on this page and says so, via the same `resumeStudioMessage` the
         // resume button renders — `scheduled` is exactly `added` here, since
         // nothing existed under this brand-new template before this create.
+        //
+        // `alreadyThisWeek` rides along as the fifth count, and the GATE below
+        // deliberately does not test it. It is structurally 0 on create twice
+        // over: a brand-new template holds no week of its own yet, and the
+        // studio generator has no week key to produce the reason with until
+        // #284. A gate term that can never fire would read as a case this
+        // page handles.
+        //
+        // Read from the wire rather than hard-coded so the count arrives on
+        // its own when #284 lands. That is when this gate needs the term —
+        // and it needs it only if #284 also makes the reason reachable on
+        // CREATE, which the first of the two arguments above says it will
+        // not. Without the term a short window would navigate away in
+        // silence, which is the #196 failure this branch of the code exists
+        // to answer.
         const json: {
-          data?: { added: number; blockedByCancelled: number; slotTaken: number };
+          data?: {
+            added: number;
+            blockedByCancelled: number;
+            slotTaken: number;
+            alreadyThisWeek: number;
+          };
         } = await res.json();
         const counts = json.data;
         setCreated(true);
@@ -168,6 +188,7 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
               counts.added,
               counts.blockedByCancelled,
               counts.slotTaken,
+              counts.alreadyThisWeek,
             ),
           );
         } else {

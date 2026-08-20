@@ -17,7 +17,18 @@ import { log } from '@/lib/log';
 // Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_WEEKS = 4;
+/**
+ * The rolling window, in occurrences — four weeks (`CLAUDE.md`).
+ *
+ * Exported since #194 for `updateClassTemplate`'s probe, which deliberately
+ * looks TWICE this far. The asymmetry is the point rather than a
+ * disagreement: when all four of the generator's weeks are held by the
+ * superseded schedule, the honest answer to "when does this edit take effect"
+ * is week five, and no window this generator can see contains it. Derived
+ * there rather than restated, so a change to the window moves the prediction
+ * with it.
+ */
+export const DEFAULT_WEEKS = 4;
 
 // ---------------------------------------------------------------------------
 // getNextOccurrences
@@ -66,21 +77,54 @@ export function getNextOccurrences(
 }
 
 /**
+ * Whether a class of this template already holds the WEEK containing `date`
+ * (#194).
+ *
+ * One line, and extracted anyway — not because the expression is long, but
+ * because two callers must never disagree about what makes a week
+ * unavailable, and they are the two halves of a single promise to the teacher:
+ * `generateInstancesForTemplate` below decides which dates the hourly sweep
+ * actually fills, and `firstFreeWeek` — through `updateClassTemplate`'s probe
+ * — decides which week the teacher is TOLD it will fill. Two copies of
+ * `heldWeeks.has(mondayOf(date))` is precisely how a sentence and a behaviour
+ * drift apart, and the drift is invisible from either side: both halves keep
+ * passing their own tests while saying different things.
+ *
+ * It is the definition of "held" that is shared here, not the decision. The
+ * generator must name a *reason* for every candidate date it declines, and a
+ * `Date | null` cannot carry one — see `firstFreeWeek` below, which records
+ * why the plan's "one decision function, two callers" was corrected rather
+ * than upheld.
+ *
+ * `heldWeeks` is a set of `mondayOf` values, and both call sites build it the
+ * same way: a `templateId`-keyed `findMany` with NO status filter, because a
+ * cancelled class holds its week
+ * (`docs/superpowers/specs/2026-08-20-template-stamp-not-link-design.md` §3.2,
+ * and `SkipReason`'s `already_this_week` in `@/lib/generation`). That
+ * construction is the one half of "held" this function cannot enforce for
+ * them.
+ */
+export function isWeekHeld(date: Date, heldWeeks: ReadonlySet<number>): boolean {
+  return heldWeeks.has(mondayOf(date));
+}
+
+/**
  * The first candidate date whose week no class of this template already holds,
  * or `null` if every candidate's week is taken (#194).
  *
- * Pure. Its caller is the template-edit endpoint's probe — still to come on
- * this branch — deciding what to tell the teacher.
+ * Pure. Its caller is the template-edit endpoint's probe — `updateClassTemplate`
+ * in `class-template-lifecycle.ts` — deciding what to tell the teacher.
  *
  * `generateInstancesForTemplate` below does NOT call it, and the plan's
  * "one function, two callers" line is corrected here rather than upheld: the
  * generator has to name a reason for EVERY candidate date, not find the first
  * free one, so a function that returns a single date cannot express its
- * answer. What the two genuinely share is the definition of "held" — the same
- * `heldWeeks: Set<number>` of `mondayOf` values, built the same way from the
- * same column — and that is where the drift risk actually lives.
- * `resumeMessage`'s docblock records what the alternative cost, where copy
- * guessed at generator internals it did not share and guessed wrong.
+ * answer. What the two genuinely share is the definition of "held", and since
+ * #194's task 6 they share it as CODE rather than as a convention —
+ * `isWeekHeld` above is called from here and from the generator's loop, and it
+ * exists for no other reason. `resumeMessage`'s docblock records what the
+ * alternative cost, where copy guessed at generator internals it did not share
+ * and guessed wrong.
  *
  * The probe passes a LONGER candidate list than the generator's own
  * four-occurrence window, and that is the point rather than an inconsistency:
@@ -92,7 +136,7 @@ export function firstFreeWeek(
   heldWeeks: ReadonlySet<number>,
 ): Date | null {
   for (const date of candidates) {
-    if (!heldWeeks.has(mondayOf(date))) return date;
+    if (!isWeekHeld(date, heldWeeks)) return date;
   }
   return null;
 }
@@ -204,9 +248,11 @@ export async function generateInstancesForTemplate(
   // DIFFERENT date — which is the entire case this exists for. And keying on
   // `templateId` rides `@@unique([templateId, date])`, which both `Class` and
   // `StudioClass` already carry, so this does not widen an unindexed scan
-  // (see the spec's §5; it corrects a claim on #284 that said otherwise).
+  // (see `docs/superpowers/specs/2026-08-20-template-stamp-not-link-design.md`
+  // §5; it corrects a claim on #284 that said otherwise).
   //
-  // No `status` filter, deliberately: a cancelled class holds its week. Spec
+  // No `status` filter, deliberately: a cancelled class holds its week.
+  // `docs/superpowers/specs/2026-08-20-template-stamp-not-link-design.md`
   // §3.2 has the flip-flop schedule the alternative produces — move a template
   // Tuesday→Thursday, cancel the Tuesday in week 2 only, and a status-filtered
   // read moves week 2 to Thursday while weeks 1, 3 and 4 stay Tuesday: a
@@ -257,12 +303,17 @@ export async function generateInstancesForTemplate(
     // AFTER the own-date branch above, deliberately: `heldWeeks` contains this
     // candidate's own week too, so checking week-first would mask
     // `already_generated` on every steady-state re-run — and the two are not
-    // interchangeable downstream, since `countSkipReasons` surfaces
-    // `already_this_week` to the teacher and deliberately ignores
-    // `already_generated`. BEFORE `slot_taken` below, because when a day edit
-    // and an unrelated class both block a date, the systematic cause is the one
-    // worth reporting.
-    if (heldWeeks.has(mondayOf(date))) {
+    // interchangeable downstream, since `countSkipReasons` counts
+    // `already_this_week` into a number that reaches the teacher and
+    // deliberately ignores `already_generated`. That chain is real now rather
+    // than planned: the count runs `pauseOrResumeTemplate` → the PATCH
+    // `active` arm → `resumeMessage`, which renders it as "N dates are still
+    // held by classes on your previous day".
+    //
+    // BEFORE `slot_taken` below, because when a day edit and an unrelated
+    // class both block a date, the systematic cause is the one worth
+    // reporting.
+    if (isWeekHeld(date, heldWeeks)) {
       skipped.push({ date, reason: 'already_this_week' });
       continue;
     }

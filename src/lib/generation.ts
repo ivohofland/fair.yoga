@@ -68,9 +68,13 @@ export interface GenerationResult {
 /**
  * The `SkipReason` counts `SkipCounts` carries for a caller to surface to a
  * teacher — `blockedByCancelled`, `slotTaken`, and `alreadyThisWeek`. The
- * third is the newest (#194): counted from this file outward starting now,
- * but as of this writing no caller's copy layer reads it yet — that wiring
- * is separate work. `already_generated` and `raced` are both deliberately
+ * third is the newest (#194) and is now read the whole way through:
+ * `resumeMessage` names it as "N dates are still held by classes on your
+ * previous day", which is what stops a resume after a day edit reporting
+ * "4 classes on your schedule. Nothing needed adding." about four classes on
+ * the weekday the teacher just abandoned. It is 0 on the studio side until
+ * #284 gives that generator a week key — carried, not special-cased.
+ * `already_generated` and `raced` are both deliberately
  * excluded, for different reasons: `already_generated` is the expected,
  * steady-state outcome of an idempotent re-run and saying so would be noise
  * (`logSkippedSlots` in `class-generator.ts` already treats it the same

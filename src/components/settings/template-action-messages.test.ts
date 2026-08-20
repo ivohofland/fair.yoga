@@ -7,6 +7,7 @@ import {
   resolveStudioConfirmation,
   resumeMessage,
   resumeStudioMessage,
+  templateUpdatedMessage,
   UNARCHIVE_MESSAGE,
   type StudioTemplateToggleResponse,
   type TemplateToggleResponse,
@@ -131,12 +132,13 @@ describe('resolveTemplateConfirmation', () => {
   });
 
   /**
-   * All four numbers distinct, for the reason the studio sibling below records
+   * All five numbers distinct, for the reason the studio sibling below records
    * about the first two: equal values make a transposition invisible. That rule
    * was added for `scheduled`/`added` after a measured live slip and was not
    * extended when `blockedByCancelled`/`slotTaken` arrived — so swapping
    * arguments 3 and 4 at this resolver's call site left the whole unit suite
-   * green. Keep all four unequal.
+   * green. `alreadyThisWeek` (#194) is the fifth and keeps the rule: unequal to
+   * all four of the others, so a swap with any of them changes this string.
    */
   it('returns the class resume message for an active payload', () => {
     expect(
@@ -147,10 +149,31 @@ describe('resolveTemplateConfirmation', () => {
         added: 3,
         blockedByCancelled: 2,
         slotTaken: 1,
+        alreadyThisWeek: 5,
       }),
     ).toBe(
-      '4 classes on your schedule. 1 date already had a class. 2 cancelled classes still hold those dates.',
+      '4 classes on your schedule. 1 date already had a class. 2 cancelled classes still hold those dates. 5 dates are still held by classes on your previous day.',
     );
+  });
+
+  /**
+   * The wire guard, one count over. `alreadyThisWeek` is the newest field on
+   * this arm, so a tab holding this bundle against a server that predates it
+   * receives an `active` payload without it — and an unguarded
+   * `${undefined} dates are still held…` is what the four older counts already
+   * have a test against. Silence is the contract for a payload this resolver
+   * cannot read.
+   */
+  it('says nothing rather than rendering undefined when the newest count is missing', () => {
+    const wire = {
+      action: 'active',
+      templateKind: 'class',
+      scheduled: 4,
+      added: 0,
+      blockedByCancelled: 0,
+      slotTaken: 0,
+    } as unknown as TemplateToggleResponse;
+    expect(resolveTemplateConfirmation(wire)).toBeNull();
   });
 
   /**
@@ -211,9 +234,12 @@ describe('resolveStudioConfirmation', () => {
    * Keep the two numbers unequal.
    */
   it('returns the resume message, with the arguments in the order it passes them', () => {
-    // All four distinct — see the class sibling above. Two unequal numbers
+    // All five distinct — see the class sibling above. Two unequal numbers
     // caught a transposition of arguments 1 and 2; it took four to catch one of
-    // 3 and 4, which passed 43/43 until this fixture changed.
+    // 3 and 4, which passed 43/43 until this fixture changed. `alreadyThisWeek`
+    // is 0 in production here until #284 (see this resolver's `active` case),
+    // and is non-zero in this FIXTURE for exactly the same reason the others
+    // are unequal: a value that is always 0 pins no position.
     expect(
       resolveStudioConfirmation({
         action: 'active',
@@ -222,9 +248,10 @@ describe('resolveStudioConfirmation', () => {
         added: 3,
         blockedByCancelled: 2,
         slotTaken: 1,
+        alreadyThisWeek: 5,
       }),
     ).toBe(
-      '4 classes on your schedule. 1 date already had a class. 2 cancelled classes still hold those dates.',
+      '4 classes on your schedule. 1 date already had a class. 2 cancelled classes still hold those dates. 5 dates are still held by classes on your previous day.',
     );
   });
 
@@ -259,40 +286,40 @@ describe('resolveStudioConfirmation', () => {
 
 describe('resumeStudioMessage', () => {
   it('reports the window when the resume filled it', () => {
-    expect(resumeStudioMessage(4, 4, 0, 0)).toBe('4 classes on your schedule.');
+    expect(resumeStudioMessage(4, 4, 0, 0, 0)).toBe('4 classes on your schedule.');
   });
 
   it('says nothing needed adding when the window was already full', () => {
-    expect(resumeStudioMessage(0, 4, 0, 0)).toBe(
+    expect(resumeStudioMessage(0, 4, 0, 0, 0)).toBe(
       '4 classes on your schedule. Nothing needed adding.',
     );
   });
 
   it('reports a short window without claiming why it is short', () => {
-    expect(resumeStudioMessage(2, 2, 0, 0)).toBe('2 classes on your schedule.');
+    expect(resumeStudioMessage(2, 2, 0, 0, 0)).toBe('2 classes on your schedule.');
   });
 
   it('agrees in number at one class', () => {
-    expect(resumeStudioMessage(1, 1, 0, 0)).toBe('1 class on your schedule.');
-    expect(resumeStudioMessage(0, 1, 0, 0)).toBe(
+    expect(resumeStudioMessage(1, 1, 0, 0, 0)).toBe('1 class on your schedule.');
+    expect(resumeStudioMessage(0, 1, 0, 0, 0)).toBe(
       '1 class on your schedule. Nothing needed adding.',
     );
   });
 
   it('names a taken slot rather than leaving a smaller number unexplained', () => {
-    expect(resumeStudioMessage(3, 4, 0, 1)).toBe(
+    expect(resumeStudioMessage(3, 4, 0, 1, 0)).toBe(
       '4 classes on your schedule. 1 date already had a class.',
     );
   });
 
   it('names the cancelled classes still holding an empty window', () => {
-    expect(resumeStudioMessage(0, 0, 4, 0)).toBe(
+    expect(resumeStudioMessage(0, 0, 4, 0, 0)).toBe(
       'Nothing is scheduled from this template. 4 cancelled classes still hold those dates.',
     );
   });
 
   it('stays silent about cause when there is none to name', () => {
-    expect(resumeStudioMessage(0, 0, 0, 0)).toBe('Nothing is scheduled from this template.');
+    expect(resumeStudioMessage(0, 0, 0, 0, 0)).toBe('Nothing is scheduled from this template.');
   });
 
   // The argument order is delta-first to match `archiveStudioMessage` even
@@ -305,36 +332,36 @@ describe('resumeStudioMessage', () => {
   // this test and every other one. The guard that does bite is the unequal
   // fixture in `resolveStudioConfirmation`'s own test above.
   it('distinguishes its two arguments', () => {
-    expect(resumeStudioMessage(0, 4, 0, 0)).not.toBe(resumeStudioMessage(4, 0, 0, 0));
+    expect(resumeStudioMessage(0, 4, 0, 0, 0)).not.toBe(resumeStudioMessage(4, 0, 0, 0, 0));
   });
 });
 
 describe('resumeMessage (class)', () => {
   it('says nothing extra when the window filled', () => {
-    expect(resumeMessage(4, 4, 0, 0)).toBe('4 classes on your schedule.');
+    expect(resumeMessage(4, 4, 0, 0, 0)).toBe('4 classes on your schedule.');
   });
 
   it('names a taken slot rather than leaving a smaller number unexplained', () => {
-    expect(resumeMessage(3, 4, 0, 1)).toBe(
+    expect(resumeMessage(3, 4, 0, 1, 0)).toBe(
       '4 classes on your schedule. 1 date already had a class.',
     );
   });
 
   it('names the cancelled classes still holding an empty window', () => {
-    expect(resumeMessage(0, 0, 4, 0)).toBe(
+    expect(resumeMessage(0, 0, 4, 0, 0)).toBe(
       'Nothing is scheduled from this template. 4 cancelled classes still hold those dates.',
     );
   });
 
   it('stays silent about cause when there is none to name', () => {
-    expect(resumeMessage(0, 0, 0, 0)).toBe('Nothing is scheduled from this template.');
+    expect(resumeMessage(0, 0, 0, 0, 0)).toBe('Nothing is scheduled from this template.');
   });
 
   // The singular was unreachable by the pins above, which only ever passed 4.
   // It read "1 cancelled class still hold those dates" — a verb after the
   // count, the shape `archiveMessage`'s docblock warns about.
   it('agrees with its verb when a single cancelled class holds a date', () => {
-    expect(resumeMessage(0, 0, 1, 0)).toBe(
+    expect(resumeMessage(0, 0, 1, 0, 0)).toBe(
       'Nothing is scheduled from this template. 1 cancelled class still holds that date.',
     );
   });
@@ -343,13 +370,13 @@ describe('resumeMessage (class)', () => {
   // one window. Naming only the taken slot here is the silence #192 was filed
   // about.
   it('names both causes on a window that has each', () => {
-    expect(resumeMessage(0, 2, 1, 1)).toBe(
+    expect(resumeMessage(0, 2, 1, 1, 0)).toBe(
       '2 classes on your schedule. 1 date already had a class. 1 cancelled class still holds that date.',
     );
   });
 
   it('names the cancelled dates even when some classes are scheduled', () => {
-    expect(resumeMessage(0, 2, 2, 0)).toBe(
+    expect(resumeMessage(0, 2, 2, 0, 0)).toBe(
       '2 classes on your schedule. 2 cancelled classes still hold those dates.',
     );
   });
@@ -358,13 +385,13 @@ describe('resumeMessage (class)', () => {
   // empty-window branch: every candidate date held by another of this teacher's
   // classes. `slotTaken` was measured correctly and then discarded.
   it('names the taken slots on an empty window, not just the cancelled ones', () => {
-    expect(resumeMessage(0, 0, 0, 4)).toBe(
+    expect(resumeMessage(0, 0, 0, 4, 0)).toBe(
       'Nothing is scheduled from this template. 4 dates already had a class.',
     );
   });
 
   it('names both causes on an empty window that has each', () => {
-    expect(resumeMessage(0, 0, 2, 2)).toBe(
+    expect(resumeMessage(0, 0, 2, 2, 0)).toBe(
       'Nothing is scheduled from this template. 2 dates already had a class. 2 cancelled classes still hold those dates.',
     );
   });
@@ -372,8 +399,45 @@ describe('resumeMessage (class)', () => {
   // `slotTaken > 1` was unreached — every fixture used 0 or 1 — so replacing
   // the plural branch with a bare 'date' shipped "2 date already had a class."
   it('pluralises the taken-slot count', () => {
-    expect(resumeMessage(1, 4, 0, 3)).toBe(
+    expect(resumeMessage(1, 4, 0, 3, 0)).toBe(
       '4 classes on your schedule. 3 dates already had a class.',
+    );
+  });
+
+  // #194's own failure at half the number, and the reason this count is
+  // carried at all: a teacher who moves Tuesday→Thursday and resumes has four
+  // Tuesdays holding the four weeks, so without this clause the sentence reads
+  // "4 classes on your schedule. Nothing needed adding." about four classes on
+  // the weekday they just abandoned.
+  it('names the weeks the previous day still holds', () => {
+    expect(resumeMessage(0, 4, 0, 0, 4)).toBe(
+      '4 classes on your schedule. 4 dates are still held by classes on your previous day.',
+    );
+  });
+
+  // Its own inflection, like the cancelled clause and unlike the slot one:
+  // "is/are" and "a class/classes" both change with number, where "had" does
+  // not. That is the trap this file's `resumeMessage` docblock records.
+  it('agrees with its verb when a single date is held by the previous day', () => {
+    expect(resumeMessage(0, 4, 0, 0, 1)).toBe(
+      '4 classes on your schedule. 1 date is still held by a class on your previous day.',
+    );
+  });
+
+  // Clause ORDER, pinned with all three causes non-zero and all three counts
+  // distinct: slotTaken, blockedByCancelled, alreadyThisWeek. The new one is
+  // last so every sentence pinned above keeps the prefix it already had.
+  it('orders the three causes: taken slots, cancelled holds, previous day', () => {
+    expect(resumeMessage(0, 4, 2, 1, 3)).toBe(
+      '4 classes on your schedule. 1 date already had a class. 2 cancelled classes still hold those dates. 3 dates are still held by classes on your previous day.',
+    );
+  });
+
+  // The empty-window head takes the clause too — the causes are assembled
+  // before the `scheduled === 0` branch, for the reason that branch records.
+  it('names the previous day on an empty window as well', () => {
+    expect(resumeMessage(0, 0, 0, 0, 2)).toBe(
+      'Nothing is scheduled from this template. 2 dates are still held by classes on your previous day.',
     );
   });
 });
@@ -383,23 +447,48 @@ describe('the two families resume with one sentence', () => {
   // they cannot drift. If a future change makes them differ on purpose, delete
   // this test in the same commit — do not let it rot into a false claim.
   it('answers identically for every case pinned above', () => {
-    const cases: Array<[number, number, number, number]> = [
-      [4, 4, 0, 0],
-      [0, 4, 0, 0],
-      [3, 4, 0, 1],
-      [0, 0, 4, 0],
-      [0, 0, 1, 0],
-      [0, 2, 1, 1],
-      [0, 0, 0, 4],
-      [0, 0, 2, 2],
-      [1, 1, 0, 0],
-      [0, 0, 0, 0],
+    // The fifth column is `alreadyThisWeek` (#194). It is 0 in production on
+    // the studio side until #284 gives that generator a producer for the
+    // reason — but the two functions must still answer identically when it is
+    // not, or the delegation has a hole exactly where the newest count lives.
+    const cases: Array<[number, number, number, number, number]> = [
+      [4, 4, 0, 0, 0],
+      [0, 4, 0, 0, 0],
+      [3, 4, 0, 1, 0],
+      [0, 0, 4, 0, 0],
+      [0, 0, 1, 0, 0],
+      [0, 2, 1, 1, 0],
+      [0, 0, 0, 4, 0],
+      [0, 0, 2, 2, 0],
+      [1, 1, 0, 0, 0],
+      [0, 0, 0, 0, 0],
+      [0, 4, 0, 0, 4],
+      [0, 4, 0, 0, 1],
+      [0, 4, 2, 1, 3],
+      [0, 0, 0, 0, 2],
     ];
-    for (const [added, scheduled, blocked, taken] of cases) {
-      expect(resumeStudioMessage(added, scheduled, blocked, taken)).toBe(
-        resumeMessage(added, scheduled, blocked, taken),
+    for (const [added, scheduled, blocked, taken, thisWeek] of cases) {
+      expect(resumeStudioMessage(added, scheduled, blocked, taken, thisWeek)).toBe(
+        resumeMessage(added, scheduled, blocked, taken, thisWeek),
       );
     }
+  });
+});
+
+describe('templateUpdatedMessage', () => {
+  it('names the week the change first takes effect', () => {
+    // The argument is always a MONDAY (the probe converts before returning),
+    // so `formatDayHeader` renders "Monday, 21 Sep" and the sentence reads
+    // "the week starting Monday, 21 Sep".
+    expect(templateUpdatedMessage(new Date('2026-09-21T00:00:00.000Z'))).toBe(
+      'Template updated. It takes effect for newly generated classes — your first class on the new schedule is the week starting Monday, 21 Sep. Change existing classes individually if needed.',
+    );
+  });
+
+  it('drops the middle clause when no free week is in view', () => {
+    expect(templateUpdatedMessage(null)).toBe(
+      'Template updated. It takes effect for newly generated classes. Change existing classes individually if needed.',
+    );
   });
 });
 
@@ -412,6 +501,7 @@ describe('the two toggle payloads are not interchangeable', () => {
       added: 0,
       blockedByCancelled: 0,
       slotTaken: 0,
+      alreadyThisWeek: 0,
     };
     // @ts-expect-error studio payloads must never satisfy the class resolver
     resolveTemplateConfirmation(studio);
@@ -423,6 +513,7 @@ describe('the two toggle payloads are not interchangeable', () => {
       added: 0,
       blockedByCancelled: 0,
       slotTaken: 0,
+      alreadyThisWeek: 0,
     };
     // @ts-expect-error class payloads must never satisfy the studio resolver
     resolveStudioConfirmation(cls);

@@ -213,6 +213,11 @@ export const PATCH = withErrorHandler(async (
           added: result.added,
           blockedByCancelled: result.blockedByCancelled,
           slotTaken: result.slotTaken,
+          // 0 on every response until #284 gives the studio generator a week
+          // key — carried anyway, so the wire and the class family's stay one
+          // shape and the copy layer needs no branch. See the service's
+          // `active` arm for the full note.
+          alreadyThisWeek: result.alreadyThisWeek,
         });
       case 'unchanged':
         return respondOk({ ...result.template, action: result.action });

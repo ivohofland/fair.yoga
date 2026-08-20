@@ -172,12 +172,17 @@ test.describe('Recurring classes', () => {
   // four had been rewritten to 10:00 and that the form said "Applied to 4
   // upcoming classes."
   //
-  // Worth more than the test it replaces, and worth keeping when `Saved.`
-  // grows into task 6's real sentence: `npm run verify` is
+  // Worth more than the test it replaces: `npm run verify` is
   // `typecheck && lint && vitest` (`package.json`), so Playwright runs only
   // under `test:e2e`. Nothing else in the toolchain proves that the form, the
   // route and the service agree about what an edit does — the vitest suites
   // each prove one layer.
+  //
+  // The confirmation is now the real sentence rather than `Saved.`, which
+  // makes this the one place where the SERVICE's prediction and the DATABASE's
+  // contents are checked against each other through a browser: the week named
+  // in the paragraph is derived below from the four rows the assertions on
+  // either side of it read.
   test('editing the template leaves the already-scheduled instances where they are', async ({
     page,
   }) => {
@@ -192,11 +197,23 @@ test.describe('Recurring classes', () => {
     await page.getByLabel('Start time').fill('10:00');
     await page.getByRole('button', { name: 'Save', exact: true }).click();
 
-    // Bare on purpose for one commit — task 6 replaces this with the sentence
-    // naming the week the change first takes effect. Asserted at all because
-    // the form must still confirm the save; a silent success reads as a
-    // failure to a teacher.
-    await expect(page.getByText('Saved.')).toBeVisible({ timeout: 10_000 });
+    // The whole sentence, with the week computed from the rows above rather
+    // than hard-coded: those four classes hold weeks 1–4, so the earliest week
+    // the new schedule can reach is the fifth — one week past the last of them
+    // — and the service's probe has to say so. `templateDate` moves with the
+    // run day, so a fixed date here would pass on one day of the week.
+    const weekFive = new Date(before[3]!.date);
+    weekFive.setUTCDate(weekFive.getUTCDate() + 7);
+    // Back to that week's Monday, the same conversion `mondayOf` makes: the
+    // copy speaks about weeks, not about the class's own weekday.
+    weekFive.setUTCDate(weekFive.getUTCDate() - ((weekFive.getUTCDay() + 6) % 7));
+    expect(weekFive.getUTCDay()).toBe(1);
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const expected =
+      'Template updated. It takes effect for newly generated classes — your first class on the new schedule is the week starting ' +
+      `Monday, ${weekFive.getUTCDate()} ${MONTHS[weekFive.getUTCMonth()]!}. ` +
+      'Change existing classes individually if needed.';
+    await expect(page.getByText(expected)).toBeVisible({ timeout: 10_000 });
 
     // The template moved.
     const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id: templateId } });

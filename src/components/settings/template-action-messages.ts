@@ -137,6 +137,7 @@ export function resumeStudioMessage(
   scheduled: number,
   blockedByCancelled: number,
   slotTaken: number,
+  alreadyThisWeek: number,
 ): string {
   // Delegates rather than duplicates. The two families' resume sentences are
   // identical word for word — unlike `archiveMessage`/`archiveStudioMessage`,
@@ -145,7 +146,7 @@ export function resumeStudioMessage(
   // basis. Kept as a separate export so the studio resolver's call site stays
   // family-specific and a future divergence has somewhere to land; delegating
   // so that until it does, the two cannot drift apart unnoticed.
-  return resumeMessage(added, scheduled, blockedByCancelled, slotTaken);
+  return resumeMessage(added, scheduled, blockedByCancelled, slotTaken, alreadyThisWeek);
 }
 
 /**
@@ -176,13 +177,32 @@ export function resumeStudioMessage(
  * number*: "holds/hold" changes, while the slot clause's "had" reads the same
  * for one date and four. That is the distinction that carries the guarantee,
  * and missing it is how this read "1 cancelled class still hold those dates"
- * until a singular case was pinned.
+ * until a singular case was pinned. `alreadyThisWeek`'s clause is in the
+ * inflecting family too, and doubly so — "is/are" AND "a class/classes" both
+ * change with number.
+ *
+ * `alreadyThisWeek` (#194) is last of the three causes, and the order is not
+ * arbitrary: every sentence pinned before it keeps the prefix it already had,
+ * so the existing tests stay meaningful rather than being rewritten around a
+ * new clause. It is also the reason the count is carried at all. A teacher who
+ * moves a template Tuesday→Thursday and resumes has four Tuesdays holding the
+ * four candidate weeks; without this clause the sentence read "4 classes on
+ * your schedule. Nothing needed adding." about four classes on the weekday
+ * they had just abandoned — #194's own "8 classes" failure at half the number,
+ * inside the branch that exists to end it.
+ *
+ * "your previous day" rather than a weekday name. The name is not on the wire:
+ * the template row now holds only the NEW day, and the old one survives
+ * nowhere but on the classes themselves. Naming it would mean either another
+ * query or a guess, and this file's rule is that a clause says only what its
+ * arguments measure.
  */
 export function resumeMessage(
   added: number,
   scheduled: number,
   blockedByCancelled: number,
   slotTaken: number,
+  alreadyThisWeek: number,
 ): string {
   // Assembled before the `scheduled === 0` branch, deliberately. An earlier
   // version built the causes only on the non-empty branch, so a teacher whose
@@ -201,6 +221,13 @@ export function resumeMessage(
       blockedByCancelled === 1
         ? '1 cancelled class still holds that date.'
         : `${blockedByCancelled} cancelled classes still hold those dates.`,
+    );
+  }
+  if (alreadyThisWeek > 0) {
+    causes.push(
+      alreadyThisWeek === 1
+        ? '1 date is still held by a class on your previous day.'
+        : `${alreadyThisWeek} dates are still held by classes on your previous day.`,
     );
   }
 
@@ -248,6 +275,38 @@ export const UNARCHIVE_MESSAGE =
   'Un-archived. This recurring class is paused — resume it to put classes back on your schedule.';
 
 /**
+ * Shown after a template edit (#194). The edit changes nothing that already
+ * exists, so this sentence carries the whole of what happened.
+ *
+ * `firstEffective` is the Monday of the first week the new schedule reaches —
+ * computed by `updateClassTemplate`'s probe from the same `isWeekHeld` the
+ * generator decides with, so the sentence cannot claim a week the sweep will
+ * not fill. `null` when no free week is in the probe's horizon: the clause is
+ * dropped rather than a date invented, matching this file's rule that saying
+ * nothing beats saying something unfounded.
+ *
+ * A MONDAY, not the candidate class date, and the conversion deliberately
+ * happens in the service rather than here — `mondayOf` lives in
+ * `@/lib/timezone`, which imports pino, and `template-form.tsx` (`'use
+ * client'`) value-imports this file. `formatDayHeader` is reused rather than a
+ * bare day-and-month formatter being added, and the sentence says "week
+ * *starting* Monday" so the weekday it renders reads as intentional rather
+ * than as noise.
+ *
+ * The closing clause is deliberately conditional in tone ("if needed") rather
+ * than a promise. `settingsLocked` refuses economic edits on a booked class,
+ * so "change existing classes individually" is not universally available —
+ * true before #194 too, since the deleted sync skipped those same instances,
+ * but this sentence is new and must not over-promise.
+ */
+export function templateUpdatedMessage(firstEffective: Date | null): string {
+  const head = 'Template updated. It takes effect for newly generated classes';
+  const tail = 'Change existing classes individually if needed.';
+  if (!firstEffective) return `${head}. ${tail}`;
+  return `${head} — your first class on the new schedule is the week starting ${formatDayHeader(firstEffective)}. ${tail}`;
+}
+
+/**
  * The `data` payload of a successful PATCH on a class template.
  *
  * The `scheduled?: never; added?: never` phantom on the old collapsed `active`
@@ -272,6 +331,8 @@ export type TemplateToggleResponse =
       added: number;
       blockedByCancelled: number;
       slotTaken: number;
+      /** Candidate dates whose week a class from this template already holds (#194). */
+      alreadyThisWeek: number;
     }
   | { action: 'unarchived' | 'unchanged' };
 
@@ -287,11 +348,11 @@ export type TemplateToggleResponse =
  * button silently discarded `remaining` — and the one #136's pins exist to
  * prevent.
  *
- * `scheduled`/`added`/`blockedByCancelled`/`slotTaken` are required, not
- * optional. The route sends all four on every `active` response; a type that
- * allowed their absence would be describing a payload the server cannot
- * produce. `templateKind: 'studio'` is the literal that keeps this type and
- * `TemplateToggleResponse` non-interchangeable — see that type's docblock.
+ * `scheduled`/`added`/`blockedByCancelled`/`slotTaken`/`alreadyThisWeek` are
+ * required, not optional. The route sends all five on every `active` response;
+ * a type that allowed their absence would be describing a payload the server
+ * cannot produce. `templateKind: 'studio'` is the literal that keeps this type
+ * and `TemplateToggleResponse` non-interchangeable — see that type's docblock.
  */
 export type StudioTemplateToggleResponse =
   | { action: 'paused'; lastScheduled: { date: string; startTime: string } | null }
@@ -303,6 +364,16 @@ export type StudioTemplateToggleResponse =
       added: number;
       blockedByCancelled: number;
       slotTaken: number;
+      /**
+       * Always 0 today, and that is not a bug. `countSkipReasons` returns all
+       * three counts for both families, so this value flows through the studio
+       * chain by the same route the other two do — but nothing on the studio
+       * side PRODUCES `already_this_week` yet: `generateStudioInstancesForTemplate`
+       * has no week key, which is #284. Carried rather than hard-coded to 0
+       * precisely so that when #284 lands, the count arrives here with no wiring
+       * left to remember.
+       */
+      alreadyThisWeek: number;
     }
   | { action: 'unarchived' | 'unchanged' };
 
@@ -341,11 +412,18 @@ export function resolveTemplateConfirmation(data: TemplateToggleResponse): strin
         !Number.isInteger(data.added) ||
         !Number.isInteger(data.scheduled) ||
         !Number.isInteger(data.blockedByCancelled) ||
-        !Number.isInteger(data.slotTaken)
+        !Number.isInteger(data.slotTaken) ||
+        !Number.isInteger(data.alreadyThisWeek)
       ) {
         return null;
       }
-      return resumeMessage(data.added, data.scheduled, data.blockedByCancelled, data.slotTaken);
+      return resumeMessage(
+        data.added,
+        data.scheduled,
+        data.blockedByCancelled,
+        data.slotTaken,
+        data.alreadyThisWeek,
+      );
     }
     case 'unarchived':
       return UNARCHIVE_MESSAGE;
@@ -423,7 +501,12 @@ export function resolveStudioConfirmation(data: StudioTemplateToggleResponse): s
         !Number.isInteger(data.added) ||
         !Number.isInteger(data.scheduled) ||
         !Number.isInteger(data.blockedByCancelled) ||
-        !Number.isInteger(data.slotTaken)
+        !Number.isInteger(data.slotTaken) ||
+        // Checked like the rest even though the studio generator cannot produce
+        // it until #284 — the guard is about what the WIRE carries, not about
+        // what the server currently counts, and an `active` payload missing this
+        // field is a payload from a bundle-vs-server mismatch either way.
+        !Number.isInteger(data.alreadyThisWeek)
       ) {
         return null;
       }
@@ -432,6 +515,7 @@ export function resolveStudioConfirmation(data: StudioTemplateToggleResponse): s
         data.scheduled,
         data.blockedByCancelled,
         data.slotTaken,
+        data.alreadyThisWeek,
       );
     case 'unarchived':
       return UNARCHIVE_STUDIO_MESSAGE;

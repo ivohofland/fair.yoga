@@ -563,6 +563,22 @@ export type PauseStudioTemplateResult =
        * Candidate dates another of this teacher's studio classes holds (#196).
        */
       slotTaken: number;
+      /**
+       * Candidate dates whose week a class from this template already holds
+       * (#194).
+       *
+       * **Always 0 on this side today, and that is not a bug.**
+       * `countSkipReasons` returns all three counts for both families, so this
+       * one flows through the studio chain by exactly the route the other two
+       * do — but nothing in the studio family PRODUCES `already_this_week`:
+       * `generateStudioInstancesForTemplate` has no week key, which is #284.
+       *
+       * Carried rather than hard-coded to 0 for that reason. A literal here
+       * would be a claim about the studio generator that only stays true until
+       * #284 lands, and it would have to be found and unpicked at four sites
+       * when it does; this way the count arrives on its own.
+       */
+      alreadyThisWeek: number;
     }
   | { ok: true; action: 'unchanged'; template: StudioClassTemplate }
   | { ok: false; reason: 'not_found' }
@@ -650,6 +666,8 @@ type ResumeTransactionOutcome =
       added: number;
       blockedByCancelled: number;
       slotTaken: number;
+      /** 0 until #284 gives the studio generator a week key — see the public arm. */
+      alreadyThisWeek: number;
     };
 
 /**
@@ -905,10 +923,18 @@ export async function pauseOrResumeStudioTemplate(
         const generation = await generateStudioInstancesForTemplate(tx, claimed);
         const added = generation.created;
         // `countSkipReasons` (`@/lib/generation`) is the one place
-        // `blockedByCancelled`/`slotTaken` are reduced from
+        // `blockedByCancelled`/`slotTaken`/`alreadyThisWeek` are reduced from
         // `generation.skipped` — see its docblock for why a fifth
         // `SkipReason` fails the build here instead of vanishing.
-        const { blockedByCancelled, slotTaken } = countSkipReasons(generation.skipped);
+        //
+        // `alreadyThisWeek` is destructured and carried even though this
+        // family's generator cannot produce it until #284: it is the same
+        // helper for both families, so the value needs no special-casing here
+        // and must not be replaced with a literal 0 — see the public `active`
+        // arm's own note.
+        const { blockedByCancelled, slotTaken, alreadyThisWeek } = countSkipReasons(
+          generation.skipped,
+        );
 
         // Same helper and same boundary as `archiveOrUnarchiveStudioTemplate`'s
         // `remaining`, so archiving and resuming report on one basis. `gte`, not
@@ -946,7 +972,7 @@ export async function pauseOrResumeStudioTemplate(
         // empty.
         if (scheduled === 0) {
           log.warn(
-            { templateId, teacherId, added, blockedByCancelled, slotTaken },
+            { templateId, teacherId, added, blockedByCancelled, slotTaken, alreadyThisWeek },
             'studio template resumed live with an empty window',
           );
         }
@@ -960,6 +986,7 @@ export async function pauseOrResumeStudioTemplate(
           added,
           blockedByCancelled,
           slotTaken,
+          alreadyThisWeek,
         };
       },
       // Three 10s budgets: the claim's own transaction, this transaction, and
@@ -1013,6 +1040,7 @@ export async function pauseOrResumeStudioTemplate(
         added: result.added,
         blockedByCancelled: result.blockedByCancelled,
         slotTaken: result.slotTaken,
+        alreadyThisWeek: result.alreadyThisWeek,
       };
     case 'paused':
       break;

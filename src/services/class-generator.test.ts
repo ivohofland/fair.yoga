@@ -1435,10 +1435,11 @@ describe('generateClassInstances (DB)', () => {
     it('still reports already_generated, not already_this_week, on a steady-state re-run', async () => {
       // Evaluation order (spec §3.4): the week set contains the candidate's OWN
       // week, so a week-first check would mask already_generated on every re-run.
-      // Not cosmetic — `countSkipReasons` counts `already_this_week` for the
-      // teacher and deliberately ignores `already_generated`, so week-first
-      // would report four blocked weeks after a run that did exactly what it
-      // was supposed to do.
+      // Not cosmetic — `countSkipReasons` counts `already_this_week` into the
+      // resume sentence the teacher reads (`resumeMessage`, "N dates are still
+      // held by classes on your previous day") and deliberately ignores
+      // `already_generated`, so week-first would report four blocked weeks
+      // after a run that did exactly what it was supposed to do.
       const result = await generateInstancesForTemplate(prisma, await freshTemplate(), from);
 
       expect(result.created).toBe(0);

@@ -32,7 +32,7 @@ import type { PrismaClient, ClassTemplate, ClassStatus } from '@prisma/client';
 import type { z } from 'zod';
 import type { updateClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
-import { startOfLocalDay } from '@/lib/timezone';
+import { startOfLocalDay, mondayOf, classStartInstant } from '@/lib/timezone';
 import { formatDayHeader } from '@/lib/format';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isTransientDbError } from '@/lib/api-errors';
@@ -43,7 +43,13 @@ import { lockClassRowsOrdered, setLockTimeout } from '@/lib/db-locks';
 // value-imports anything in this chain.
 import { log } from '@/lib/log';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
-import { generateInstancesForTemplate, claimTemplateForGeneration } from './class-generator';
+import {
+  generateInstancesForTemplate,
+  claimTemplateForGeneration,
+  getNextOccurrences,
+  firstFreeWeek,
+  DEFAULT_WEEKS,
+} from './class-generator';
 import { CHARGED_STATUSES } from './class-lifecycle';
 import { countSkipReasons, type SkipCounts } from '@/lib/generation';
 
@@ -226,7 +232,27 @@ void _templateAllowlistHasNoForbiddenFields;
  * callers own the user-facing wording.
  */
 export type UpdateClassTemplateResult =
-  | { ok: true; template: ClassTemplate }
+  | {
+      ok: true;
+      template: ClassTemplate;
+      /**
+       * The **Monday of the first week the new schedule reaches**, or `null`
+       * when no free week is inside the probe's horizon (#194).
+       *
+       * Named as a week rather than as a date on purpose. `firstFreeWeek`
+       * answers with a candidate *occurrence* — a Thursday, say — and the
+       * sentence built from this speaks about weeks; a bare `Date` here
+       * invites the occurrence reading and would put the wrong day in front
+       * of a teacher. The conversion happens in `updateClassTemplate` rather
+       * than in the copy layer because `mondayOf` lives in `@/lib/timezone`,
+       * which imports pino, and `template-action-messages.ts` is
+       * value-imported by a `'use client'` component.
+       *
+       * A prediction, not a report: this PUT generates nothing, so the class
+       * it names does not exist yet and will be created by the sweep.
+       */
+      firstEffective: Date | null;
+    }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'no_fields' }
@@ -298,6 +324,135 @@ export type UpdateClassTemplateResult =
   | { ok: false; reason: 'busy' };
 
 /**
+ * The probe behind `UpdateClassTemplateResult.firstEffective` (#194): the
+ * Monday of the first week in `horizon` whose candidate date
+ * `generateInstancesForTemplate` would actually fill.
+ *
+ * Read-only, and it must stay that way — this endpoint creates no class, so
+ * everything in the sentence it feeds is a prediction about the sweep.
+ *
+ * ## Which of the generator's refusals this reproduces, and which it does not
+ *
+ * The generator declines a candidate date on four named grounds
+ * (`SkipReason`, `@/lib/generation`). Stated one at a time rather than as a
+ * parity claim, because the parity claim is what this docblock said before the
+ * fourth ground was found missing — and a reader who trusted it had no way to
+ * check it:
+ *
+ *   - `already_generated` and `blocked_by_cancelled` — this template's own row
+ *     on the date itself, live or cancelled. Both reproduced by the FIRST read:
+ *     a row on a date is a row in that date's week, and the read carries no
+ *     status filter, so a cancelled row holds its week too. That absent filter
+ *     is deliberate and is the one place this codebase does not read cancelled
+ *     as free —
+ *     `docs/superpowers/specs/2026-08-20-template-stamp-not-link-design.md`
+ *     §3.2 has the flip-flop schedule the alternative produces.
+ *   - `already_this_week` — the same read, and the same `isWeekHeld` the
+ *     generator's loop decides with. That sharing is the point of the
+ *     function existing.
+ *   - `slot_taken` (#196) — somebody ELSE's row: another non-cancelled class of
+ *     this teacher at the same `(date, startTime)`. Invisible to a
+ *     `templateId`-keyed read, which is why there is a SECOND read. Missing it
+ *     made the prediction land EARLIER than the sweep delivers, which is the
+ *     dishonest direction: rule 1 of #194 leaves a moved-off template's
+ *     instances standing, so a second template edited onto that day and time
+ *     finds its own weeks empty and every date occupied.
+ *   - `raced` — **not reproduced, and not reproducible.** It is a concurrent
+ *     insert landing between the generator's pre-check and its write, so at
+ *     probe time it has not happened yet and there is nothing to read. Its
+ *     effect on this prediction is bounded and self-correcting: the sweep loses
+ *     that one date and picks the template up again on its next run, so the
+ *     class arrives late rather than never. This is the one divergence, and it
+ *     is the only one that errs later-than-promised.
+ *
+ * The two facts are kept apart rather than merged into one set, because they
+ * are not the same fact: a WEEK this template already occupies versus a single
+ * DATE whose slot another class holds. Slot-taken dates are removed from the
+ * candidate list; `firstFreeWeek` then answers the week question over what is
+ * left. Both reads are bounded by `horizon` itself — its first and last weeks
+ * for the week read, its own members for the slot read — so nothing here can
+ * disagree with anything else about which dates are in play.
+ *
+ * Answers `null` rather than throwing when a read fails. The edit has already
+ * committed by the time this runs, so a probe failure must not turn a saved
+ * template into a 500 — and `templateUpdatedMessage` already has a `null`
+ * branch that says nothing about weeks rather than something unfounded. Logged
+ * so the silence is not also invisible.
+ */
+async function probeFirstEffectiveWeek(
+  db: PrismaClient,
+  template: ClassTemplate,
+  horizon: readonly Date[],
+): Promise<Date | null> {
+  // Guarded rather than `!`-asserted: under `noUncheckedIndexedAccess` a `!`
+  // here would be a claim about `getNextOccurrences` and its filter several
+  // lines away, and both ends are dereferenced below.
+  const first = horizon[0];
+  const last = horizon[horizon.length - 1];
+  if (first === undefined || last === undefined) return null;
+
+  try {
+    const [ownRows, slotHolders] = await Promise.all([
+      // The weeks this template already occupies. Keyed on `templateId`, which
+      // rides `@@unique([templateId, date])`, and bounded by the horizon's own
+      // first and last weeks. No status filter — see the docblock.
+      db.class.findMany({
+        where: {
+          templateId: template.id,
+          date: {
+            gte: new Date(mondayOf(first)),
+            lt: new Date(mondayOf(last) + 7 * 24 * 60 * 60 * 1000),
+          },
+        },
+        select: { date: true },
+      }),
+      // The dates whose slot is already taken, mirroring the generator's own
+      // predicate: this teacher's non-cancelled classes at this template's
+      // `startTime`. `status: { not: 'cancelled' }` rather than no filter,
+      // matching `Class_teacher_slot_unique`'s partial scope (`WHERE "status"
+      // <> 'cancelled'`) — the opposite of the read above, and for the
+      // opposite reason: a cancelled class does not hold a slot, and a
+      // cancelled class does hold a week. `date: { in: … }` over the horizon
+      // itself rather than a second pair of bounds, so the two reads cannot
+      // drift apart about the range; `@@index([teacherId, date])` backs it.
+      db.class.findMany({
+        where: {
+          teacherId: template.teacherId,
+          startTime: template.startTime,
+          status: { not: 'cancelled' },
+          date: { in: [...horizon] },
+        },
+        select: { date: true },
+      }),
+    ]);
+
+    const heldWeeks = new Set(ownRows.map((c) => mondayOf(c.date)));
+    const takenDates = new Set(slotHolders.map((c) => c.date.getTime()));
+
+    // Removed from the candidates rather than folded into `heldWeeks`. Folding
+    // would be shorter and would say something false: a taken slot does not
+    // make the WEEK unavailable to this template in general, it makes this
+    // one date unfillable — and since a weekly template has exactly one
+    // candidate per week, the week is lost as a consequence, not as a
+    // definition. The generator draws the same distinction, which is why it
+    // reports two different reasons.
+    const candidates = horizon.filter((date) => !takenDates.has(date.getTime()));
+
+    const free = firstFreeWeek(candidates, heldWeeks);
+    // Converted to the WEEK's Monday before leaving this function, not left as
+    // the candidate date — see `UpdateClassTemplateResult`'s own note for why
+    // the conversion cannot live in the copy layer.
+    return free === null ? null : new Date(mondayOf(free));
+  } catch (err) {
+    log.warn(
+      { err, templateId: template.id },
+      'recurring class edit saved, but the first-effective-week probe failed — the confirmation will not name a week',
+    );
+    return null;
+  }
+}
+
+/**
  * Apply a partial update to a class template. The template row, and nothing
  * else.
  *
@@ -357,7 +512,16 @@ export async function updateClassTemplate(
   // argument regardless of whether it arrives as a literal or a variable.
   data: ClassTemplateUpdateData & Partial<Record<PlainUpdateForbiddenTemplateField, never>>,
 ): Promise<UpdateClassTemplateResult> {
-  const template = await db.classTemplate.findUnique({ where: { id: templateId } });
+  // `defaultTimezone` joined for the probe at the foot of this function, which
+  // has to drop an occurrence whose start has already passed exactly the way
+  // `generateInstancesForTemplate` does. Read here rather than separately
+  // because it is the same column the generator filters with and this read
+  // already exists; the zone is a `Teacher` field and no PUT can move it, so
+  // reading it before the write rather than after changes nothing.
+  const template = await db.classTemplate.findUnique({
+    where: { id: templateId },
+    include: { teacher: { select: { defaultTimezone: true } } },
+  });
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
@@ -412,6 +576,12 @@ export async function updateClassTemplate(
     }
   }
 
+  // Declared out here rather than returned from inside the `try`, so the probe
+  // below sits OUTSIDE the catch. Inside it, a transient failure of a
+  // read-only probe would be mapped to `busy` — "nothing was changed" — about
+  // an edit that had already committed. The catch either returns or rethrows
+  // on every path, so this is definitely assigned by the time the probe runs.
+  let updated: ClassTemplate;
   try {
     // `updated`, not `template`: the pre-transaction read at the head of this
     // function is already called `template`, and the `catch` below turns on
@@ -419,7 +589,7 @@ export async function updateClassTemplate(
     // transaction are not the same statement" is the sentence that explains
     // why P2025 has one source. Two values that the error mapping
     // distinguishes should not share a name.
-    const updated = await db.$transaction(
+    updated = await db.$transaction(
       async (tx) => {
         // First statement, deliberately — and now the only statement it has
         // to bound, the `update` immediately below it. A concurrent
@@ -446,8 +616,6 @@ export async function updateClassTemplate(
       // it is still here; it is not vestigial.
       { timeout: 10_000 },
     );
-
-    return { ok: true, template: updated };
   } catch (err) {
     // Transient first, matching the order `pauseOrResumeTemplate` and
     // `archiveOrUnarchiveTemplate` use in this same file. Not
@@ -521,6 +689,40 @@ export async function updateClassTemplate(
     }
     throw err;
   }
+
+  // The edit is committed; everything below is read-only and cannot undo it.
+  //
+  // This PUT creates nothing — generation still happens only on the cron
+  // sweep, on create and on resume — so the confirmation has to PREDICT where
+  // the new schedule first lands rather than report it.
+  //
+  // A longer horizon than the generator's own window, and that asymmetry is
+  // the point rather than an inconsistency: when all four of the generator's
+  // weeks are held by the superseded schedule, the honest answer is week five,
+  // which the generator cannot see. Derived from `DEFAULT_WEEKS` rather than
+  // written as 8, so widening the window widens the prediction with it.
+  //
+  // The same past-start filter the generator applies to its own candidates,
+  // with the same two inputs. Without it this probe can name the CURRENT week
+  // on the template's own weekday once the class hour has gone —
+  // `getNextOccurrences` includes today and the generator drops it — so the
+  // sentence would name a week the sweep never fills. That is the one
+  // direction the staleness note below does not cover, and it is the
+  // dishonest one.
+  //
+  // Staleness the other way is possible and harmless: if the sweep runs
+  // between this read and the teacher reading the sentence, the class can only
+  // land EARLIER than predicted, never later.
+  const now = new Date();
+  const horizon = getNextOccurrences(updated.dayOfWeek, now, DEFAULT_WEEKS * 2).filter(
+    (date) => classStartInstant(date, updated.startTime, template.teacher.defaultTimezone) > now,
+  );
+
+  return {
+    ok: true,
+    template: updated,
+    firstEffective: await probeFirstEffectiveWeek(db, updated, horizon),
+  };
 }
 
 // ---------------------------------------------------------------------------

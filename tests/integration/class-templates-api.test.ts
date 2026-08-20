@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { generateInstancesForTemplate } from '@/services/class-generator';
+import { generateInstancesForTemplate, getNextOccurrences } from '@/services/class-generator';
+// The production week key, used here as the assertion's own notion of "same
+// week". Deliberately the real one rather than a local reimplementation: the
+// claim under test is that the probe and the generator agree about weeks, and
+// a second definition in the test could only weaken it.
+import { mondayOf } from '@/lib/timezone';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 
 const prisma = new PrismaClient();
@@ -62,6 +67,33 @@ function templateBody(classType: string, startTime: string) {
     minStudents: 2,
     maxStudents: 8,
   };
+}
+
+/**
+ * Two weekdays whose next occurrences fall in the SAME Monday-week: the day a
+ * template starts on and the day it is moved to, for #194's probe cases.
+ *
+ * `getNextOccurrences` counts from today, so a weekday at or after today's own
+ * lands in this week and one before it lands in the next. Pick both from the
+ * same side of that line and the four weeks the old schedule generated are
+ * exactly the four the generator will next consider for the new day — which is
+ * the premise both probe cases below rest on ("every week the generator can see
+ * is held"). With the file's shared `(DAY_OF_WEEK + 2) % 7` that identity holds
+ * on five days of the week and not on the other two, and on those two the
+ * answer lands inside the generator's own window and the cases quietly stop
+ * testing what they are named for.
+ *
+ * Neither day is ever today, so the generator's past-start filter never has an
+ * occurrence to drop and cannot shift one window relative to the other.
+ *
+ * Returned in schema convention (0=Monday … 6=Sunday), like every other
+ * `dayOfWeek` in this file.
+ */
+function sameWeekDayPair(): [number, number] {
+  const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;
+  // Both at or after today (and neither today) while there is room for two;
+  // otherwise both before it, where they share next week instead.
+  return todaySchemaDay <= 4 ? [todaySchemaDay + 1, todaySchemaDay + 2] : [0, 1];
 }
 
 /**
@@ -1292,6 +1324,193 @@ describe('PUT /api/class-templates/[id]', () => {
     });
     expect(after.map((c) => c.id)).toEqual(before.map((c) => c.id));
     expect(after.every((c) => c.date.getUTCDay() === EXPECTED_JS_DAY)).toBe(true);
+  });
+
+  /**
+   * The claim the whole probe exists to make (#194): the week the PUT's
+   * confirmation names is the week the sweep actually fills. Asserted across
+   * the seam — an HTTP PUT for the prediction, `generateInstancesForTemplate`
+   * for the behaviour — because a unit test of either half can only prove that
+   * half agrees with itself.
+   *
+   * `sameWeekDayPair` for the two weekdays, not the file's shared
+   * `(DAY_OF_WEEK + 2) % 7`: this case's premise is that every week the
+   * generator can see is already held, and that premise is false on two days
+   * of the week with the shared pair. See that function.
+   */
+  it('names the week the generator then fills, and no earlier one', async () => {
+    const [OLD_DAY, NEW_DAY] = sameWeekDayPair();
+
+    const create = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ ...templateBody('Effective Week', '09:58'), dayOfWeek: OLD_DAY }),
+    });
+    expect(create.status).toBe(201);
+    const { data: created } = (await create.json()) as { data: { id: string } };
+    const id = created.id;
+
+    const before = await prisma.class.findMany({
+      where: { templateId: id },
+      orderBy: { date: 'asc' },
+    });
+    expect(before.length).toBe(4);
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ dayOfWeek: NEW_DAY }),
+    });
+    expect(res.status).toBe(200);
+
+    const { data } = (await res.json()) as { data: { firstEffective: string | null } };
+    // Not null: every week the generator can see is held, so the honest answer
+    // is one the generator cannot see — which is the case a probe sharing the
+    // generator's own four-week horizon gets wrong by answering "no free week".
+    expect(data.firstEffective).not.toBeNull();
+    const predicted = new Date(data.firstEffective as string);
+    // A Monday, in UTC — the copy renders it as "the week starting <this>".
+    expect(predicted.getUTCDay()).toBe(1);
+
+    const template = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id },
+      include: { teacher: { select: { defaultTimezone: true } } },
+    });
+
+    // The sweep as it runs today. Its four-occurrence window is entirely held
+    // by the superseded schedule, so it creates nothing — and the reason it
+    // gives for each date is the one the copy layer surfaces.
+    const today = await generateInstancesForTemplate(prisma, template);
+    expect(today.created).toBe(0);
+    expect(today.skipped.map((s) => s.reason)).toEqual([
+      'already_this_week',
+      'already_this_week',
+      'already_this_week',
+      'already_this_week',
+    ]);
+
+    // The same sweep once time has reached the week the teacher was told
+    // about. `from` is the only way a four-occurrence window can see week
+    // five, and it is what the hourly cron reaches by simply running later.
+    const later = await generateInstancesForTemplate(prisma, template, predicted);
+    expect(later.created).toBeGreaterThan(0);
+
+    const after = await prisma.class.findMany({
+      where: { templateId: id, id: { notIn: before.map((c) => c.id) } },
+      orderBy: { date: 'asc' },
+    });
+    expect(after.length).toBe(later.created);
+    const first = after[0]!;
+    // The week the sentence named, and the weekday the teacher moved to.
+    expect(mondayOf(first.date)).toBe(predicted.getTime());
+    expect(first.date.getUTCDay()).toBe((NEW_DAY + 1) % 7);
+
+    // And nothing landed earlier than the sentence promised — the assertion a
+    // probe that merely happened to agree on the first date would still pass,
+    // but one that named a week the old schedule still holds would not.
+    for (const c of after) {
+      expect(mondayOf(c.date)).toBeGreaterThanOrEqual(predicted.getTime());
+    }
+  });
+
+  /**
+   * The probe's second half, and the reason it takes two reads: a week held by
+   * this template is not the same fact as a single date whose SLOT is taken.
+   *
+   * `generateInstancesForTemplate` declines a date on four grounds, and three
+   * of them are the template's own rows — `already_generated`,
+   * `blocked_by_cancelled` and `already_this_week` all follow from a
+   * `templateId`-keyed read with no status filter. The fourth,
+   * `slot_taken` (#196), is somebody else's row entirely: another
+   * non-cancelled class of the same teacher at the same `(date, startTime)`.
+   * A probe that read only the template's own weeks cannot see it, and gets
+   * the answer wrong in the DISHONEST direction — it names a week EARLIER
+   * than the sweep will deliver.
+   *
+   * Reachable, and made more so by rule 1 of this very branch: template A
+   * moves off Thursday 18:00 and leaves up to four Thursday 18:00 instances
+   * standing, because an edit moves nothing. Template B is then edited onto
+   * Thursday 18:00 — no `ClassTemplate` slot conflict, and B's own weeks are
+   * empty — so an own-rows-only probe promises week 1 while the sweep skips
+   * four weeks in a row. A single stray class in the slot does the same, and
+   * is what this case builds.
+   */
+  it('skips a date another class already holds, exactly as the sweep does', async () => {
+    const [OLD_DAY, NEW_DAY] = sameWeekDayPair();
+
+    // The probe's own horizon, built with the probe's own function so the
+    // arithmetic cannot drift: index 4 is week five, the date the previous
+    // case proves would otherwise be named.
+    const horizon = getNextOccurrences(NEW_DAY, new Date(), 8);
+    const blocked = horizon[4]!;
+    const nextAfterBlocked = horizon[5]!;
+
+    const create = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ ...templateBody('Slot Blocked Week', '09:59'), dayOfWeek: OLD_DAY }),
+    });
+    expect(create.status).toBe(201);
+    const { data: created } = (await create.json()) as { data: { id: string } };
+    const id = created.id;
+    expect(await prisma.class.count({ where: { templateId: id } })).toBe(4);
+
+    // Not this template's row — `templateId` stays null, which is the whole
+    // point: it is invisible to a `templateId`-keyed read and fatal to the
+    // date all the same. Same teacher, same startTime, not cancelled, exactly
+    // the predicate `Class_teacher_slot_unique` carries.
+    await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        classType: 'Slot Blocker',
+        date: blocked,
+        startTime: '09:59',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+        status: 'open',
+      },
+    });
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ dayOfWeek: NEW_DAY }),
+    });
+    expect(res.status).toBe(200);
+
+    const { data } = (await res.json()) as { data: { firstEffective: string | null } };
+    expect(data.firstEffective).not.toBeNull();
+    const predicted = new Date(data.firstEffective as string);
+
+    // Week SIX, not week five. Stated as both halves — what it is and what it
+    // is not — because the failure this guards against is off by exactly one
+    // week and `not.toBe` alone would pass for any other wrong answer.
+    expect(predicted.getTime()).toBe(mondayOf(nextAfterBlocked));
+    expect(predicted.getTime()).not.toBe(mondayOf(blocked));
+
+    const template = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id },
+      include: { teacher: { select: { defaultTimezone: true } } },
+    });
+
+    // The sweep, run from the week the probe passed over. It declines that
+    // date for the reason the probe modelled, by name, and fills the one the
+    // probe named instead — the two halves of "the sentence cannot disagree
+    // with the sweep", asserted in a single run.
+    const sweep = await generateInstancesForTemplate(prisma, template, new Date(mondayOf(blocked)));
+    expect(sweep.skipped).toContainEqual({ date: blocked, reason: 'slot_taken' });
+
+    const filled = await prisma.class.findMany({
+      where: { templateId: id, date: { gte: new Date(mondayOf(blocked)) } },
+      orderBy: { date: 'asc' },
+    });
+    expect(filled.length).toBeGreaterThan(0);
+    expect(mondayOf(filled[0]!.date)).toBe(predicted.getTime());
   });
 
   // updateClassTemplate has no isArchived/isActive guard of its own, so

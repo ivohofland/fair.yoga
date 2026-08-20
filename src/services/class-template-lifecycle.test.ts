@@ -240,7 +240,18 @@ describe('updateClassTemplate (DB)', () => {
     // `toEqual` on the whole result, because the template row's own fields
     // are asserted above and re-listing all twenty here would make this case
     // fail on every unrelated schema change.
-    expect(Object.keys(result).sort()).toEqual(['ok', 'template']);
+    //
+    // Three keys, not two, since task 6 of #194: `firstEffective` is a
+    // PREDICTION about the sweep, not a report of work this call did, and the
+    // distinction is exactly what this assertion is here to keep. A key that
+    // counted rows this call touched would be the propagation coming back.
+    expect(Object.keys(result).sort()).toEqual(['firstEffective', 'ok', 'template']);
+    // And it is a week, not a class date: `null` or a Monday, never a Thursday.
+    // The copy renders it as "the week starting …", so a candidate occurrence
+    // left unconverted would put the wrong weekday in front of a teacher.
+    if (result.firstEffective !== null) {
+      expect(result.firstEffective.getUTCDay()).toBe(1);
+    }
   });
 
   // The service-level statement of rule 1, next to the function that owns it:

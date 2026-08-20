@@ -13,7 +13,10 @@ import { SettledNotice } from '@/components/ui/settled-notice';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
 import { formatRoomLocation } from '@/lib/format';
 import { CANCEL_DEADLINE_OPTIONS, AUTO_CANCEL_OPTIONS } from '@/lib/class-options';
-import { resumeMessage } from '@/components/settings/template-action-messages';
+import {
+  resumeMessage,
+  templateUpdatedMessage,
+} from '@/components/settings/template-action-messages';
 
 interface TeacherRoomOption {
   id: string;
@@ -323,14 +326,40 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         // says so, via the same `resumeMessage` the resume button renders —
         // `scheduled` is exactly `added` here, since nothing existed under
         // this brand-new template before this create.
+        //
+        // `alreadyThisWeek` rides along as the fifth count, and the GATE below
+        // deliberately does not test it. On create that count is structurally
+        // 0: `already_this_week` requires a class of THIS template already
+        // holding the week, and the template was created moments earlier in
+        // the same transaction with no `Class` rows of its own — the generator
+        // reads them by `templateId`, and there are none. A gate term that can
+        // never fire would tell the next reader that create can produce this
+        // reason, which it cannot.
+        //
+        // Read from the wire rather than hard-coded to 0 all the same: the
+        // POST route already sends it, and a literal would be a claim where
+        // this is a measurement. If create ever CAN produce the reason, this
+        // gate must gain the term in the same change — otherwise the window
+        // comes back short and the page navigates away without saying so.
         const json: {
-          data?: { added: number; blockedByCancelled: number; slotTaken: number };
+          data?: {
+            added: number;
+            blockedByCancelled: number;
+            slotTaken: number;
+            alreadyThisWeek: number;
+          };
         } = await res.json();
         const counts = json.data;
         setCreated(true);
         if (counts && (counts.blockedByCancelled > 0 || counts.slotTaken > 0)) {
           setSuccess(
-            resumeMessage(counts.added, counts.added, counts.blockedByCancelled, counts.slotTaken),
+            resumeMessage(
+              counts.added,
+              counts.added,
+              counts.blockedByCancelled,
+              counts.slotTaken,
+              counts.alreadyThisWeek,
+            ),
           );
         } else {
           router.push(RECURRING_LIST_PATH);
@@ -338,9 +367,19 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
       } else {
         // Nothing to count: since #194 an edit changes the template row and
         // no generated class, so there is no arrival, delete or kept tally to
-        // report. Deliberately bare for one commit — task 6 replaces this with
-        // the sentence that names the week the change first takes effect.
-        setSuccess('Saved.');
+        // report. What there IS to say is WHEN — the service probes for the
+        // first week the new schedule reaches and sends its Monday back as
+        // `firstEffective`, an ISO string on the wire.
+        //
+        // `?? null` rather than a bare read, and the type says `string | null`
+        // rather than `string`: `null` is what the service sends when no free
+        // week is inside its horizon, `undefined` is what a server predating
+        // this field sends, and `templateUpdatedMessage` answers both by
+        // dropping the clause. Neither may become `new Date(undefined)`, which
+        // renders "Invalid Date" into the middle of the sentence.
+        const json: { data?: { firstEffective?: string | null } } = await res.json();
+        const firstEffective = json.data?.firstEffective ?? null;
+        setSuccess(templateUpdatedMessage(firstEffective ? new Date(firstEffective) : null));
         router.refresh();
       }
     } catch {

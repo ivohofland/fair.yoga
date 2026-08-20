@@ -66,7 +66,16 @@ export const PUT = withErrorHandler(async (
 
   const result = await updateClassTemplate(prisma, id, session.teacherId, data);
 
-  if (result.ok) return respondOk(result.template);
+  // `firstEffective` rides alongside the template row rather than replacing
+  // it: `TemplateForm` still reads nothing else from this body, and the
+  // integration suite's "the success body is the bare template" case pins that
+  // no propagation REPORT came back — a single extra prediction field is the
+  // opposite of that, and is what lets the form say when the edit takes hold
+  // (#194). Serialized as an ISO string by `respondOk`'s JSON encoding; the
+  // form converts it back.
+  if (result.ok) {
+    return respondOk({ ...result.template, firstEffective: result.firstEffective });
+  }
 
   // Narrowed one reason at a time so each maps to the response this route
   // returned before the service existed.
@@ -216,6 +225,12 @@ export const PATCH = withErrorHandler(async (
           added: result.added,
           blockedByCancelled: result.blockedByCancelled,
           slotTaken: result.slotTaken,
+          // #194. Without this hop the resume after a day edit still reports
+          // "4 classes on your schedule. Nothing needed adding." about four
+          // classes on the weekday the teacher just stopped using — the count
+          // is measured by the generator and reaches the service, and this is
+          // where it used to stop.
+          alreadyThisWeek: result.alreadyThisWeek,
         });
       case 'unchanged':
         return respondOk({ ...result.template, action: result.action });
