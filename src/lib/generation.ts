@@ -16,8 +16,22 @@
  * file, so the client-bundle conclusion still holds — but the "only importers"
  * half of this sentence should be re-checked before being trusted, the same
  * way this paragraph corrects it now. The check is
- * `grep -rn "lib/generation'" src/ --include="*.ts" --include="*.tsx"`, wide
- * enough to see the relative-path importer a `@/lib/generation` grep misses.
+ * `grep -rn "/generation'" src/ --include="*.ts" --include="*.tsx"`.
+ *
+ * The needle starts at the SLASH, and that is the whole of it. This line used
+ * to prescribe `"lib/generation'"` and claim it was "wide enough to see the
+ * relative-path importer" — it is not, and was not: `generation.test.ts`
+ * imports `from './generation'`, which contains no `lib/` at all, so the
+ * prescribed grep returned eight lines and silently omitted the one importer
+ * that does not go through the `@/` alias. A docblock whose whole purpose is
+ * "re-check this rather than trusting it" is worse than useless with a check
+ * that cannot find what it is checking for.
+ *
+ * A leading `/` catches both spellings and still excludes `'class-generation'`
+ * — `scheduler.ts`'s job name, which has no slash. Every hit outside this
+ * docblock is an import; the hits inside it are this paragraph quoting both
+ * the grep and the two module specifiers back at itself, and are the only
+ * false positives the check has.
  *
  * The import-free rule is kept anyway because these names are meant to reach
  * the copy layer — `template-action-messages.ts` takes the counts as bare
@@ -113,9 +127,11 @@ export interface SkipCounts {
  * this repo was never in at any point.
  *
  * Today, for the avoidance of exactly that: FOUR value-importing call sites
- * (#194 deleted `template-sync.ts` — check with `grep -rn "lib/generation'"
- * src/`), FIVE `SkipReason` members and THREE `SkipCounts` fields. So the
- * member that would vanish without the `switch` below is now the SIXTH, and
+ * (#194 deleted `template-sync.ts` — check with the grep in this file's header
+ * docblock, which is also where its hits are split into value-imports,
+ * type-only imports and the one test), FIVE `SkipReason` members and THREE
+ * `SkipCounts` fields. So the member that would vanish without the `switch`
+ * below is now the SIXTH, and
  * `class-template-lifecycle.ts`'s `PauseTemplateResult` cites this docblock
  * for that number.
  */

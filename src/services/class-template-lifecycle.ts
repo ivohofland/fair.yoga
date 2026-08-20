@@ -1400,16 +1400,24 @@ export async function pauseOrResumeTemplate(
       // generation's insert), so it does govern their sum, and a path that
       // waits at all three spends 6s of the 10 before doing any work at all.
       //
-      // The work it was written for is the rest: the CAS, the claim's
-      // `SET LOCAL`, raw `SELECT` and `findUniqueOrThrow`, generation's TWO
-      // reads — its date-scoped occupancy `findMany` and the
-      // `templateId`-scoped week read #194 added — its batched insert, and the
-      // `count`. The claim's three statements joined that list in #116 and
-      // this enumeration did not; the week read joined it in #194 and this
-      // enumeration was visited for it. The `catch` below asks whoever adds a
-      // statement to update its own enumeration; this one asks the same, and
-      // has now been wrong twice by omission. A loaded VPS
-      // can push the work past Prisma's 5s default on its own.
+      // The work it was written for is the rest, and it forks. Both arms run
+      // this transaction's `SET LOCAL` and the CAS. The PAUSED arm then runs
+      // one further statement — its own `findUniqueOrThrow` read-back — and
+      // returns; three statements, the cheap path, and a path this enumeration
+      // did not mention at all. The ACTIVE arm runs the claim's `SET LOCAL`,
+      // raw `SELECT` and `findUniqueOrThrow`, generation's TWO reads — its
+      // date-scoped occupancy `findMany` and the `templateId`-scoped week read
+      // #194 added — its batched insert, and the `count`.
+      //
+      // The claim's three statements joined that list in #116 and this
+      // enumeration did not; the week read joined it in #194 and this
+      // enumeration was visited for it; the paused arm's read-back predates
+      // both and was never in it. Three by omission, not the two the sentence
+      // here used to own up to — which is why it now enumerates by ARM rather
+      // than as one flat list, since a flat list is what made a whole branch
+      // easy to miss. The `catch` below asks whoever adds a statement to
+      // update its own enumeration; this one asks the same. A loaded VPS can
+      // push the work past Prisma's 5s default on its own.
       //
       // The sentence this replaces said the 5s default "would abort us
       // mid-wait". It would not, and could not: Prisma checks the budget at

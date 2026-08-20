@@ -503,13 +503,25 @@ export async function updateStudioClassTemplate(
  * window holds and what this resume added (#119); `unchanged` reports nothing
  * beyond the template itself.
  *
- * `active` mirrors `PauseTemplateResult`'s own `active` arm exactly: both
- * families now report `scheduled`, `added`, `blockedByCancelled`, `slotTaken`
- * and `alreadyThisWeek`. Five, not four — re-derived from the arm below rather
- * than copied from the sentence's previous version, which named four and still
- * said "exactly", turning an omission into a false equivalence. The fifth is
- * always 0 on this side until #284; carried, not special-cased, and documented
- * at its own field.
+ * `active` reports the same FIELDS as `PauseTemplateResult`'s own `active`
+ * arm: both families now report `scheduled`, `added`, `blockedByCancelled`,
+ * `slotTaken` and `alreadyThisWeek`. Five, not four — re-derived from the arm
+ * below rather than copied from the sentence's previous version, which named
+ * four and still said "exactly", turning an omission into a false equivalence.
+ *
+ * It does not mirror that arm EXACTLY, and correcting the field COUNT left
+ * that word standing over a second difference it was also hiding. The class
+ * arm spells its last three fields as
+ * `& SkipCounts`, so a new count added to that type lands there on its own and
+ * fails the build at every site that maps the fields by hand; this arm
+ * hand-lists all five, so a new count would simply not appear here at all.
+ * `class-template-lifecycle.ts` says so at its own `& SkipCounts`, naming this
+ * family as one of the two sites that still re-list. Same fields today, and a
+ * different guarantee about tomorrow — which is the half a reader who stops at
+ * this docblock was being told the opposite of.
+ *
+ * The fifth is always 0 on this side until #284; carried, not special-cased,
+ * and documented at its own field.
  *
  * This used to say the class family was "deliberately not fixed alongside
  * this", because its resume generates *without* taking the claim and a count
@@ -562,18 +574,18 @@ export type PauseStudioTemplateResult =
        * The count that makes the `scheduled === 0` operator warn, and the
        * resume copy, a measured number rather than an inference.
        *
-       * These two counts do **not** sum with `added` to the window: they are
-       * two of the five `SkipReason` members (`src/lib/generation.ts`), and
-       * they omit three — `already_generated`, the common case; `raced`; and
-       * `already_this_week`, which this same arm carries below as
-       * `alreadyThisWeek` and which this sentence was missing. Named rather
+       * These THREE counts — this one, `slotTaken` and `alreadyThisWeek`
+       * below — do **not** sum with `added` to the window: they are three of
+       * the five `SkipReason` members (`src/lib/generation.ts`), and they omit
+       * two, `already_generated` (the common case) and `raced`. Named rather
        * than measured: a line-distance in a comment is falsified by any edit
        * above it and nothing checks, which is how the first correction to this
-       * sentence arrived with a wrong number of its own. On a
-       * steady-state hourly sweep all three of these numbers are zero while
-       * the window still has four candidate dates. The invariant that does
-       * hold is `GenerationResult`'s own: `created + skipped.length` is the
-       * candidate count.
+       * sentence arrived with a wrong number of its own — and the second said
+       * "these two counts" and then "all three of these numbers" in one
+       * paragraph, over sets that overlap without matching. On a steady-state
+       * hourly sweep all three are zero while the window still has four
+       * candidate dates. The invariant that does hold is `GenerationResult`'s
+       * own: `created + skipped.length` is the candidate count.
        */
       blockedByCancelled: number;
       /**
@@ -941,8 +953,11 @@ export async function pauseOrResumeStudioTemplate(
         const added = generation.created;
         // `countSkipReasons` (`@/lib/generation`) is the one place
         // `blockedByCancelled`/`slotTaken`/`alreadyThisWeek` are reduced from
-        // `generation.skipped` — see its docblock for why a fifth
-        // `SkipReason` fails the build here instead of vanishing.
+        // `generation.skipped` — see its docblock for why a SIXTH
+        // `SkipReason` fails the build here instead of vanishing. That
+        // docblock says sixth, in those words; this line said fifth, pointing
+        // the reader at the very text that contradicts it. Five members exist
+        // today, so the one that would vanish is the next one.
         //
         // `alreadyThisWeek` is destructured and carried even though this
         // family's generator cannot produce it until #284: it is the same

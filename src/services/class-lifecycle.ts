@@ -924,12 +924,22 @@ export type UpdateClassResult =
  * of this docblock said a teacher could undo the economic freeze by removing
  * the registration; that was never true. `settingsLocked` is only ever written
  * `true`, from one site (`POST /api/registrations`), and nothing anywhere
- * writes it back to `false` — checked by grep rather than by memory
- * (`settingsLocked:` in `src/`, minus the tests, is one `data:` payload and
- * two `where:` filters). The sentence used to cite `template-sync.ts` as
- * leaning on exactly that latch to choose the instances it could rewrite;
- * #194 deleted that function, and the latch is unchanged. A terminal
- * status, in turn, has no outgoing transition.
+ * writes it back to `false` — checked by grep rather than by memory.
+ * `settingsLocked:` in `src/`, minus the tests and minus prose (this sentence
+ * and the two comments beside the CAS below), is four sites: ONE `data:`
+ * payload, `registrations/route.ts`'s `{ settingsLocked: true }`; ONE `where:`
+ * filter, the conditional conjunct in `updateClass`'s own CAS below, which
+ * reads the column and writes nothing; and TWO type annotations,
+ * `isEconomicFieldLocked`'s parameter and `class-edit-form.tsx`'s prop. The
+ * version of this parenthesis before it was re-derived said "one `data:`
+ * payload and two `where:` filters" — a filter that does not exist, and no
+ * annotations at all. The conclusion held on a tally that did not, which is
+ * the failure a grep is there to prevent.
+ *
+ * The sentence used to cite `template-sync.ts` as leaning on exactly that
+ * latch to choose the instances it could rewrite; #194 deleted that function,
+ * and the latch is unchanged. A terminal status, in turn, has no outgoing
+ * transition.
  *
  * Both are checked twice, for the same reason. The first check, against the
  * row we just read, is an optimisation: it answers the common case in one

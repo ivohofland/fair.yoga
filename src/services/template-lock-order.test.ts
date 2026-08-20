@@ -302,9 +302,14 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * whole point (a fix at one site would otherwise leave the pairing live
    * through the other, unnoticed); closing this one is task 4's.
    *
-   * The handshake mirrors the sync test's, for the same reason: neither
-   * `deleteMany` (here) nor that `updateMany` is JS-observable
-   * mid-statement, so there is no moment to hook on the archive side itself.
+   * The handshake is shaped the way it is because `class.deleteMany` is not
+   * JS-observable mid-statement: there is no moment to hook on the archive
+   * side itself. It was written to mirror the sync test's, whose `updateMany`
+   * had the same property — a parity this sentence stated in the PRESENT
+   * tense, pointing at a file #194 deleted. The reason survives that deletion
+   * because it is a property of `deleteMany`, not of the pairing; the
+   * comparison does not, and is stated in the past above.
+   *
    * The hook lives on `deleteStudentAccount`'s `lockClassRow` loop instead —
    * the same `erasureDb` shape, keyed on the LOW class id, signalling once
    * LOW is locked and holding 300ms before reaching for HIGH. Once the

@@ -221,10 +221,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // live template whose every candidate date is taken. That used to be
   // impossible, so 201 with no counts was a complete answer; it no longer is.
   // The same counts the PATCH `active` arm carries — `countSkipReasons`
-  // (`@/lib/generation`) is the one place both reductions live, so a fifth
-  // `SkipReason` fails the build here rather than vanishing silently. The
-  // create form reads these and stays on the page to say so when the window
-  // isn't full (`template-form.tsx`); see the note at that read.
+  // (`@/lib/generation`) is the one place both reductions live, so a SIXTH
+  // `SkipReason` fails the build here rather than vanishing silently. Sixth,
+  // not fifth: the union has had five members since #194 added
+  // `already_this_week`, and the number is `countSkipReasons`' own docblock's
+  // — cited rather than recounted here, so the two do not drift. This line
+  // still said fifth after the branch's own correction pass, because the
+  // phrase WRAPS ACROSS A LINE BREAK: the line-oriented grep that found the
+  // sibling in `class-template-lifecycle.ts` could not match it.
+  //
+  // The create form reads these and stays on the page to say so when the
+  // window isn't full (`template-form.tsx`); see the note at that read.
   return respondOk(
     {
       ...created,
