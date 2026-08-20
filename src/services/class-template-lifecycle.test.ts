@@ -6,7 +6,7 @@ import {
   archiveOrUnarchiveTemplate,
   pauseOrResumeTemplate,
 } from './class-template-lifecycle';
-import { startOfLocalDay, classStartInstant } from '@/lib/timezone';
+import { startOfLocalDay, classStartInstant, mondayOf } from '@/lib/timezone';
 import { getNextOccurrences } from './class-generator';
 import { formatDayHeader } from '@/lib/format';
 import { setLockTimeout } from '@/lib/db-locks';
@@ -87,16 +87,28 @@ describe('updateClassTemplate (DB)', () => {
   let otherRoomId: string;
   let otherTeacherRoomId: string;
 
-  // Counter-derived startTime: this block calls makeTemplate 9 times for one
+  // Counter-derived startTime: this block calls makeTemplate 11 times for one
   // teacher/dayOfWeek, and none of its tests read or assert the created
   // template's literal startTime — so a distinct minute per call is enough
-  // to keep every create legal under ClassTemplate_teacher_slot_unique
-  // (none of these templates ever gets archived, which is the only thing
-  // that would otherwise free the slot). "Stamp Only" is the one exception
-  // to the no-assertion half: it MOVES its template's dayOfWeek and
-  // startTime, which frees this one's slot rather than taking another —
-  // still legal, and it lands on a (dayOfWeek, startTime) pair no sibling
-  // holds.
+  // to keep every create legal under ClassTemplate_teacher_slot_unique.
+  // Counted off the call sites when #194's fix wave added two of them, not
+  // incremented from the number that was here.
+  //
+  // One of those two, "Archived Edit", IS archived — which FREES its slot
+  // rather than taking one, since the index is partial (WHERE isArchived =
+  // false). That direction is always safe here: a freed slot can only make a
+  // later create legal, never illegal. It is worth naming because the sentence
+  // this replaces said no template in this block is ever archived, which was
+  // true when it was written and stopped being true when that case arrived.
+  //
+  // "Stamp Only" is the exception to the no-assertion half: it MOVES its
+  // template's dayOfWeek and startTime, which frees this one's slot rather
+  // than taking another — still legal, and it lands on a (dayOfWeek,
+  // startTime) pair no sibling holds.
+  //
+  // The past-start case further down builds its template inline instead,
+  // under its own teacher: it needs a specific dayOfWeek and startTime, which
+  // is exactly what this helper does not offer.
   let makeTemplateCounter = 0;
   const makeTemplate = (classType: string) => {
     makeTemplateCounter += 1;
@@ -338,6 +350,93 @@ describe('updateClassTemplate (DB)', () => {
     expect(result.template.isActive).toBe(false);
     expect(result.firstEffective).toBeNull();
     expect(result.generationState).toBe('archived');
+  });
+
+  /**
+   * The probe's past-start filter, which nothing could break until now (#194).
+   *
+   * `updateClassTemplate` filters its horizon with the same predicate
+   * `generateInstancesForTemplate` applies to its own candidates: an
+   * occurrence whose start instant has already passed is dropped. The comment
+   * on that filter says removing it means the sentence "would name a week the
+   * sweep never fills … and it is the dishonest one" — and deleting the
+   * `.filter(...)` failed no test. `class-templates-api.test.ts` drives both of
+   * its probe cases through `sameWeekDayPair()`, whose docblock states outright
+   * that neither day is ever today, and this file's own fixtures pin
+   * `dayOfWeek: 3`, so the template's weekday is today on one day in seven and
+   * the class hour was never arranged to have passed.
+   *
+   * The arrangement is deliberate on all three inputs and none of them can
+   * drift with the calendar:
+   *
+   *   - `dayOfWeek` is TODAY's, computed from `new Date()`, so
+   *     `getNextOccurrences` yields today as its first occurrence
+   *     (`daysUntilTarget === 0` — its own comment says it includes today).
+   *   - `startTime` is `'00:00'` and the teacher's zone is UTC, so
+   *     `classStartInstant` for today is today's midnight UTC, which is never
+   *     strictly after `now`. Today is dropped on every run, at every hour,
+   *     rather than only after some cutoff.
+   *   - No `Class` row exists for this template, so `heldWeeks` is empty and
+   *     the answer is simply the first surviving candidate's week. Nothing
+   *     else can be responsible for the difference.
+   *
+   * Both halves are asserted — the week it IS and the week it is NOT — because
+   * the failure is off by exactly one week and `not.toBe` alone would pass for
+   * any other wrong answer.
+   *
+   * Built inline rather than through `makeTemplate`, which hardcodes
+   * `dayOfWeek: 3` and a counter-derived `09:3x`; this case needs both fields
+   * to be something specific. Its own teacher, so the `(teacherId, dayOfWeek,
+   * startTime)` slot cannot collide with this block's other templates on the
+   * one day in seven when today is a Thursday.
+   */
+  it('drops an occurrence whose start has already passed, exactly as the sweep does', async () => {
+    const solo = await seedTeacher('past-start');
+    const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;
+    const template = await prisma.classTemplate.create({
+      data: {
+        teacherId: solo.teacherId,
+        teacherRoomId: solo.teacherRoomId,
+        classType: 'Past Start',
+        dayOfWeek: todaySchemaDay,
+        startTime: '00:00',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+      },
+    });
+
+    // The probe's own horizon function, so the arithmetic below cannot drift
+    // from the arithmetic under test: [0] is today, [1] is next week.
+    const occurrences = getNextOccurrences(todaySchemaDay, new Date(), 2);
+    const todayOccurrence = occurrences[0]!;
+    const nextWeekOccurrence = occurrences[1]!;
+    expect(todayOccurrence.getTime()).toBe(
+      Date.UTC(
+        new Date().getUTCFullYear(),
+        new Date().getUTCMonth(),
+        new Date().getUTCDate(),
+      ),
+    );
+
+    const result = await updateClassTemplate(prisma, template.id, solo.teacherId, {
+      classType: 'Past Start, Renamed',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.firstEffective).not.toBeNull();
+    expect(result.firstEffective!.getTime()).toBe(mondayOf(nextWeekOccurrence));
+    expect(result.firstEffective!.getTime()).not.toBe(mondayOf(todayOccurrence));
+
+    await prisma.classTemplate.deleteMany({ where: { teacherId: solo.teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: solo.teacherId } });
+    await prisma.room.delete({ where: { id: solo.roomId } });
+    await prisma.teacher.delete({ where: { id: solo.teacherId } });
+    await prisma.account.delete({ where: { id: solo.accountId } });
   });
 
   // The service-level statement of rule 1, next to the function that owns it:

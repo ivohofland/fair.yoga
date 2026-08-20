@@ -1613,6 +1613,96 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(data.generationState).toBe('paused');
   });
 
+  /**
+   * `alreadyThisWeek` is only ever asserted at ZERO across the two hops that
+   * carry it (#194), and that is the trap this repo has already paid for once.
+   *
+   * The count travels generator → `countSkipReasons` →
+   * `pauseOrResumeTemplate`'s `active` arm → the PATCH body → `resumeMessage`.
+   * Every resume fixture in the suite leaves it at 0 alongside a `slotTaken`
+   * of 0, so mis-wiring `alreadyThisWeek: result.slotTaken` at either hop
+   * passes `tsc` and every test — exactly the shape recorded at
+   * `template-action-messages.ts`, where transposing two arguments at a call
+   * site stayed green *because every fixture passed equal numbers*, and the
+   * fix was to make at least one case use unequal ones. It reappeared one
+   * count over, inside the branch that added the count.
+   *
+   * So this case drives an UNEQUAL, NON-ZERO value the whole way: four dates
+   * declined for `already_this_week` and none for anything else. The counts
+   * are asserted one at a time rather than as a shape, because it is their
+   * differing from each other that carries the guarantee.
+   *
+   * `sameWeekDayPair()` for the two weekdays, not the file's shared
+   * `(DAY_OF_WEEK + 2) % 7`: the premise is that the four weeks the old day
+   * generated are exactly the four the generator next considers for the new
+   * day, and the shared pair breaks that on two days of the week.
+   *
+   * The resume is what a teacher actually does after moving a paused class,
+   * and the sentence it produces — "4 classes on your schedule. 4 dates are
+   * still held by classes on your previous day." — is the whole reason the
+   * count is carried: without it the same request read "4 classes on your
+   * schedule. Nothing needed adding." about four classes on the weekday the
+   * teacher had just abandoned.
+   */
+  it('carries a non-zero alreadyThisWeek, distinct from slotTaken, to the PATCH body', async () => {
+    const [OLD_DAY, NEW_DAY] = sameWeekDayPair();
+
+    const create = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ ...templateBody('Week Held Resume', '11:20'), dayOfWeek: OLD_DAY }),
+    });
+    expect(create.status).toBe(201);
+    const { data: created } = (await create.json()) as { data: { id: string } };
+    const id = created.id;
+    expect(await prisma.class.count({ where: { templateId: id } })).toBe(4);
+
+    const pause = await fetch(`${BASE_URL}/api/class-templates/${id}?state=paused`, {
+      method: 'PATCH',
+      headers: cookie(sessionToken),
+    });
+    expect(pause.status).toBe(200);
+
+    // The edit that makes the four standing classes wrong-day: it moves the
+    // template and, since #194, moves nothing else.
+    const put = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ dayOfWeek: NEW_DAY }),
+    });
+    expect(put.status).toBe(200);
+
+    const resume = await fetch(`${BASE_URL}/api/class-templates/${id}?state=active`, {
+      method: 'PATCH',
+      headers: cookie(sessionToken),
+    });
+    expect(resume.status).toBe(200);
+    const { data: resumed } = (await resume.json()) as {
+      data: {
+        scheduled: number;
+        added: number;
+        blockedByCancelled: number;
+        slotTaken: number;
+        alreadyThisWeek: number;
+      };
+    };
+
+    // Non-zero, and different from every other count on the body. A hop wired
+    // to `slotTaken`, `blockedByCancelled` or `added` reports 0 here.
+    expect(resumed.alreadyThisWeek).toBe(4);
+    expect(resumed.slotTaken).toBe(0);
+    expect(resumed.blockedByCancelled).toBe(0);
+    // Nothing was created: all four candidate weeks are held by the old day's
+    // classes, which is the state that produces the count above.
+    expect(resumed.added).toBe(0);
+    expect(resumed.scheduled).toBe(4);
+    // And the classes really are still on the old weekday — the count means
+    // what its clause says it means.
+    const still = await prisma.class.findMany({ where: { templateId: id } });
+    expect(still.length).toBe(4);
+    expect(still.every((c) => c.date.getUTCDay() === (OLD_DAY + 1) % 7)).toBe(true);
+  });
+
   // Task 6b (#196). `ClassTemplate_teacher_slot_unique` is (teacherId,
   // dayOfWeek, startTime) WHERE isArchived = false — the six indexes
   // constrain every write, not just creates, so moving a template's own
