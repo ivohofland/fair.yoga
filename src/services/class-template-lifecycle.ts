@@ -1234,6 +1234,7 @@ export async function pauseOrResumeTemplate(
         added: result.added,
         blockedByCancelled: result.blockedByCancelled,
         slotTaken: result.slotTaken,
+        alreadyThisWeek: result.alreadyThisWeek,
       };
     default: {
       // Throws rather than returning `unhandled`, converging on
