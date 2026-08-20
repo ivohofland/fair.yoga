@@ -676,12 +676,20 @@ export type PauseTemplateResult =
    * See `ArchiveTemplateResult`'s `busy` arm for what it guarantees and the
    * range of causes behind it.
    *
-   * Two statements here can wait on a lock — the `update` below and
-   * generation's insert — against the archive's three, so this is the smaller
-   * exposure of the two. The second of them is what makes this arm worth its
-   * own note: the bound reaches generation, so a resume that loses a slot race
-   * answers `busy` rather than reporting that date as `raced`
-   * (`class-generator.test.ts`, "the clash outlives the lock timeout").
+   * THREE statements here can wait on a lock — the CAS, the generation claim's
+   * `SELECT … FOR UPDATE`, and generation's insert — matching the archive's
+   * three rather than undercutting them. This paragraph said two until #116
+   * added the claim.
+   *
+   * Which of them the bound catches first moved with that change, and the
+   * distinction is the arm's whole reason for existing: the bound reaches past
+   * the CAS, so a resume contending with a concurrent `Class` writer answers
+   * `busy` rather than reporting that date as `raced`. It used to reach that
+   * verdict at generation's insert, parking on a pending unique entry. It now
+   * reaches it one statement earlier, at the claim, whose `FOR UPDATE`
+   * conflicts with the `FOR KEY SHARE` an inserting row's FK check holds —
+   * measured, `class-generator.test.ts`, "the clash outlives the lock
+   * timeout".
    */
   | { ok: false; reason: 'busy' };
 
@@ -913,8 +921,8 @@ export async function pauseOrResumeTemplate(
   try {
     result = await db.$transaction(
       async (tx): Promise<ResumeTransactionOutcome> => {
-        // Bounds every statement left in this transaction, the `update` below
-        // first among them — the sweep's claim holds this row `FOR UPDATE`.
+        // Bounds every statement left in this transaction — the CAS below
+        // first among them, then the claim and generation's insert — the sweep's claim holds this row `FOR UPDATE`.
         //
         // Without it the wait is bounded by NOTHING, not by the 10s budget:
         // Prisma checks that budget at statement boundaries, so it "cannot
@@ -946,10 +954,10 @@ export async function pauseOrResumeTemplate(
         });
 
         if (swapped.count === 0) {
-          // [Task 1's corrected wording applies here too — a miss may or may
-          // not leave this transaction holding a lock, and this plain re-read
-          // is correct either way. See `archiveOrUnarchiveTemplate`'s own miss
-          // branch for the full account rather than repeating it.]
+          // A miss may or may not leave this transaction holding a lock, and
+          // this plain re-read is correct either way. See
+          // `archiveOrUnarchiveTemplate`'s own miss branch for the full
+          // account rather than repeating it here.
           const current = await tx.classTemplate.findUnique({ where: { id: templateId } });
           if (!current) return { outcome: 'not_found' as const };
           // `isActive === desiredActive` before `isArchived`, deliberately —
@@ -1103,11 +1111,19 @@ export async function pauseOrResumeTemplate(
           ...countSkipReasons(generation.skipped),
         };
       },
-      // The wait is bounded at 2s by the `setLockTimeout` at the top of this
-      // transaction, so this budget no longer governs it — it governs this
-      // transaction's own work once the row is won: the `update`, generation's
-      // occupancy read and its batched insert, and the `count`. A loaded VPS
-      // can push those past Prisma's 5s default.
+      // Each individual WAIT is bounded at 2s by the `setLockTimeout` at the
+      // top of this transaction, so this budget does not govern any one of
+      // them — but there are three that can wait (the CAS, the claim, and
+      // generation's insert), so it does govern their sum, and a path that
+      // waits at all three spends 6s of the 10 before doing any work at all.
+      //
+      // The work it was written for is the rest: the CAS, the claim's
+      // `SET LOCAL`, raw `SELECT` and `findUniqueOrThrow`, generation's
+      // occupancy read and its batched insert, and the `count`. The claim's
+      // three statements joined that list in #116 and this enumeration did
+      // not; the `catch` below asks whoever adds a statement to update its
+      // own enumeration, and this one deserved the same visit. A loaded VPS
+      // can push the work past Prisma's 5s default on its own.
       //
       // The sentence this replaces said the 5s default "would abort us
       // mid-wait". It would not, and could not: Prisma checks the budget at

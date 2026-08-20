@@ -20,8 +20,16 @@ export function pauseMessage(lastScheduled: LastScheduledClass | null): string {
 
 /**
  * Confirmation shown after archiving a recurring template. Un-archiving
- * deletes nothing and needs no explanation, so this is only ever called on
- * the archiving direction.
+ * deletes nothing, so this is only ever called on the archiving direction.
+ *
+ * That clause used to read "deletes nothing and needs no explanation". The
+ * second half is false and this file now disproves it twice over —
+ * `UNARCHIVE_STUDIO_MESSAGE` and, since #116, `UNARCHIVE_MESSAGE` exist
+ * precisely because un-archiving forces `isActive: false` onto a template
+ * whose future classes the archive already deleted, and saying nothing let a
+ * teacher leave believing the class was restored. The conclusion survives on
+ * the first half alone: this function reports DELETED COUNTS, and un-archiving
+ * deletes nothing.
  *
  * No pronoun on the "still N classes" branches ("cancel individually", not
  * "cancel them individually") — a pronoun would have to agree with `classWord`
@@ -53,8 +61,9 @@ export function archiveMessage(deleted: number, remaining: number): string {
 
 /**
  * Confirmation shown after archiving a studio class template. Un-archiving
- * deletes nothing and needs no explanation, so this is only ever called on
- * the archiving direction — mirroring `archiveMessage`.
+ * deletes nothing, so this is only ever called on the archiving direction —
+ * mirroring `archiveMessage`, including why the "needs no explanation" half of
+ * that clause had to go; see there.
  *
  * `remaining` is not always 0 here: `archiveOrUnarchiveStudioTemplate`'s
  * delete deliberately spares a class dated today, but the count backing

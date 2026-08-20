@@ -1324,9 +1324,11 @@ describe('generateClassInstances (DB)', () => {
      * What the claim changed. The holder inserts its colliding row and holds
      * it UNCOMMITTED, which takes `FOR KEY SHARE` on the template row for the
      * FK check and leaves a pending unique-index entry on `(templateId,
-     * date)`. Before #116 the resume walked straight past that lock — its CAS
-     * takes `FOR NO KEY UPDATE`, which does not conflict with `FOR KEY SHARE`
-     * — and only met the holder at its own insert, parking on the pending
+     * date)`. Before #116 the resume walked straight past that lock — its
+     * write was a plain `update({ where: { id } })`, which takes `FOR NO KEY
+     * UPDATE` and does not conflict with `FOR KEY SHARE`; there was no CAS
+     * here to credit, the CAS arrived on the same branch as the claim — and it
+     * only met the holder at its own insert, parking on the pending
      * entry and finally taking an `ON CONFLICT DO NOTHING` skip classified
      * `raced`. That is what `racedDates` was written to capture.
      *
@@ -1345,6 +1347,14 @@ describe('generateClassInstances (DB)', () => {
      * hold past the 2s `setLockTimeout` bound turns it into `busy`, which is
      * what the third test in this block pins.
      *
+     * That the wait is at the CLAIM is measured, not asserted. `waitedMs`
+     * below proves only that the resume stayed blocked until the holder
+     * committed — remove the claim and it still clears the floor, because the
+     * resume then waits at its own insert instead. `racedDates` is what
+     * separates those two worlds. Read the pair together: the wait says a race
+     * happened at all, the empty `racedDates` says the claim is what absorbed
+     * it.
+     *
      * `waitedMs` is returned because it is the only evidence the two
      * transactions actually overlapped. An empty `racedDates` is equally true
      * of a world where the holder committed before the resume ever started —
@@ -1356,6 +1366,7 @@ describe('generateClassInstances (DB)', () => {
       resumed: Awaited<ReturnType<typeof pauseOrResumeTemplate>>;
       waitedMs: number;
       holderCommitted: boolean;
+      holderError: unknown;
     }> {
       const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
       const holder = new PrismaClient();
@@ -1373,46 +1384,64 @@ describe('generateClassInstances (DB)', () => {
         { timeout: 20_000 },
       );
 
-      // Deterministic, not a sleep: `parked` resolves only once the holder's
-      // insert has actually returned, so its `FOR KEY SHARE` is held before
-      // the resume asks for `FOR UPDATE`. A fixed delay here would sometimes
-      // start the resume first, and the holder would then hit a unique
-      // violation instead of the interleaving this function exists to build.
-      await parked;
-      // Stamped when the resume's own promise settles, NOT after the sleep
-      // below — otherwise `waitedMs` would always include the 400ms hold and
-      // could never tell a blocked resume from an unblocked one. (Measured:
-      // with the naive stamp, pre-committing the collision still "waited"
-      // 400ms and the assertion passed.)
-      const startedAt = Date.now();
-      let settledAt = 0;
-      const resuming = pauseOrResumeTemplate(prisma, templateId, teacherId, 'active').then(
-        (r) => {
-          settledAt = Date.now();
-          return r;
-        },
-      );
-      await new Promise((r) => setTimeout(r, 400));
-      release();
-      // Not swallowed: a holder that deadlocked or aborted would leave every
-      // assertion below trivially satisfiable, so the callers assert it
-      // committed.
-      const holderCommitted = await holding.then(
-        () => true,
-        () => false,
-      );
-      const resumed = await resuming;
-      const waitedMs = settledAt - startedAt;
-      await holder.$disconnect();
+      // `try`/`finally` around everything after the holder is in flight. The
+      // resume can reject, and without this a rejection would skip
+      // `warn.mockRestore()` — leaving the `log.warn` spy installed for every
+      // later test in this file and silently emptying their `racedDates`. The
+      // `busy` test below already wraps its body this way; this helper did
+      // not. `release()` is in the `finally` too, so a rejection cannot leave
+      // the holder parked for its full 20s budget.
+      try {
+        // Deterministic, not a sleep: `parked` resolves only once the holder's
+        // insert has actually returned, so its `FOR KEY SHARE` is held before
+        // the resume asks for `FOR UPDATE`. A fixed delay here would sometimes
+        // start the resume first, and the holder would then hit a unique
+        // violation instead of the interleaving this function exists to build.
+        await parked;
+        // Stamped when the resume's own promise settles, NOT after the sleep
+        // below — otherwise `waitedMs` would always include the 400ms hold and
+        // could never tell a blocked resume from an unblocked one. (Measured:
+        // with the naive stamp, pre-committing the collision still "waited"
+        // 400ms and the assertion passed.)
+        const startedAt = Date.now();
+        let settledAt = 0;
+        const resuming = pauseOrResumeTemplate(prisma, templateId, teacherId, 'active').then(
+          (r) => {
+            settledAt = Date.now();
+            return r;
+          },
+        );
+        await new Promise((r) => setTimeout(r, 400));
+        release();
+        // Not swallowed, and the REASON is kept: a holder killed by `40P01`
+        // and one killed by `P2028` are different failures behind the same
+        // boolean, on a helper whose whole subject is lock contention.
+        // Returning only `false` reports both as `expected false to be true`
+        // with no cause, so the callers assert `holderError` is null and the
+        // message reaches the failure output.
+        let holderError: unknown = null;
+        const holderCommitted = await holding.then(
+          () => true,
+          (e) => {
+            holderError = e;
+            return false;
+          },
+        );
+        const resumed = await resuming;
+        const waitedMs = settledAt - startedAt;
 
-      const racedDates = warn.mock.calls.flatMap((call) => {
-        const payload = call[0] as { skipped?: Array<{ date: string; reason: string }> };
-        return (payload.skipped ?? [])
-          .filter((s) => s.reason === 'raced')
-          .map((s) => s.date);
-      });
-      warn.mockRestore();
-      return { racedDates, resumed, waitedMs, holderCommitted };
+        const racedDates = warn.mock.calls.flatMap((call) => {
+          const payload = call[0] as { skipped?: Array<{ date: string; reason: string }> };
+          return (payload.skipped ?? [])
+            .filter((s) => s.reason === 'raced')
+            .map((s) => s.date);
+        });
+        return { racedDates, resumed, waitedMs, holderCommitted, holderError };
+      } finally {
+        release();
+        warn.mockRestore();
+        await holder.$disconnect();
+      }
     }
 
     /**
@@ -1429,9 +1458,10 @@ describe('generateClassInstances (DB)', () => {
       // Only the last date is free, so the resume issues exactly one insert.
       for (const d of dates.slice(0, 3)) await prisma.class.create({ data: classRow(d) });
 
-      const { racedDates, resumed, waitedMs, holderCommitted } =
+      const { racedDates, resumed, waitedMs, holderCommitted, holderError } =
         await raceResumeAgainst(dates[3]!);
 
+      expect(holderError).toBeNull();
       expect(holderCommitted).toBe(true);
       // The resume blocked at the claim until the holder committed. This is
       // the assertion that says a race happened at all.
@@ -1439,7 +1469,12 @@ describe('generateClassInstances (DB)', () => {
       // And having waited, it found the date committed rather than losing it:
       // `already_generated`, which `logSkippedSlots` deliberately never logs.
       expect(racedDates).toEqual([]);
+      // The action asserted, then narrowed — not narrowed and silently
+      // skipped. `if (resumed.ok && resumed.action === 'active')` guarding the
+      // only count assertion means an `unchanged` answer passes this test
+      // without ever checking a count.
       expect(resumed.ok).toBe(true);
+      expect(resumed.ok && resumed.action).toBe('active');
       if (resumed.ok && resumed.action === 'active') expect(resumed.added).toBe(0);
 
       const after = await prisma.classTemplate.findUniqueOrThrow({ where: { id: templateId } });
@@ -1452,13 +1487,15 @@ describe('generateClassInstances (DB)', () => {
       const dates = candidates(now);
       for (const d of dates.slice(0, 2)) await prisma.class.create({ data: classRow(d) });
 
-      const { racedDates, resumed, waitedMs, holderCommitted } =
+      const { racedDates, resumed, waitedMs, holderCommitted, holderError } =
         await raceResumeAgainst(dates[2]!);
 
+      expect(holderError).toBeNull();
       expect(holderCommitted).toBe(true);
       expect(waitedMs).toBeGreaterThanOrEqual(HELD_FOR_MS);
       expect(racedDates).toEqual([]);
       expect(resumed.ok).toBe(true);
+      expect(resumed.ok && resumed.action).toBe('active');
       // dates[3] is the one nothing collided with — the resume still filled it
       // after its wait, so the claim cost a date nothing.
       if (resumed.ok && resumed.action === 'active') expect(resumed.added).toBe(1);
@@ -1472,10 +1509,17 @@ describe('generateClassInstances (DB)', () => {
     /**
      * The bound reaches past the CAS, and this is where that stops being
      * academic. `SET LOCAL lock_timeout` governs every statement left in the
-     * transaction — generation's insert among them — so #164's contract holds
-     * only while the colliding writer commits inside 2s. Past that, the resume
-     * does not report the date as `raced`; the whole transaction rolls back
-     * and the answer is `busy`.
+     * transaction — the claim and generation's insert among them — so #164's
+     * contract holds only while the colliding writer commits inside 2s. Past
+     * that, the resume does not report the date as `raced`; the whole
+     * transaction rolls back and the answer is `busy`.
+     *
+     * Since #116 the statement that gives up is the CLAIM, not the insert:
+     * `claimTemplateForGeneration`'s `FOR UPDATE` conflicts with the
+     * `FOR KEY SHARE` the holder's in-flight insert took for its FK check, so
+     * the resume never reaches its own insert to park on the pending unique
+     * entry. Same bound, same verdict, one statement earlier — see the inline
+     * note below, which carries the measured stack.
      *
      * The two tests above hold for 400ms and cannot see this. Written because
      * nothing in the branch that added the bound acknowledged it reached this

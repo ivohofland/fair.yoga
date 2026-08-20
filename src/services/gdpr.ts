@@ -1241,8 +1241,11 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
     // `claimStudioTemplateForGeneration` (class-generator.ts,
     // studio-class-generator.ts) lock for the duration of their own
     // per-template transactions (#95) — not in the same MODE, which is the
-    // distinction #126 corrects here last of seven sites (#125 did the other
-    // six). An `updateMany` takes `FOR NO KEY UPDATE`; the claims take `FOR
+    // distinction #126 corrects here, one of eight sites (#125 did six; this
+    // one and `class-generator.test.ts`'s contention docblock were the two it
+    // missed, and an earlier draft of this very paragraph called itself the
+    // last of seven before the eighth turned up on the same branch). An
+    // `updateMany` takes `FOR NO KEY UPDATE`; the claims take `FOR
     // UPDATE`. The two conflict with each other, which is all this paragraph
     // needs — but they differ against a third party: an inserting row's FK
     // check takes `FOR KEY SHARE`, which `FOR UPDATE` blocks and `FOR NO KEY

@@ -98,7 +98,7 @@ export const POST = withErrorHandler(async (
         // blocked on a concurrently-updated row and only then lost its
         // re-check still holds the lock to commit, because Postgres takes it
         // before the EvalPlanQual re-check rather than after. The re-read
-        // below is correct either way, which is why nothing here changes —
+        // ABOVE is correct either way, which is why nothing here changes —
         // see `archiveOrUnarchiveTemplate`'s miss branch
         // (`class-template-lifecycle.ts`) for the full account.
         //
