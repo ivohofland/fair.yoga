@@ -1460,6 +1460,61 @@ describe('generateClassInstances (DB)', () => {
     });
   }
 
+  describe('generateInstancesForTemplate — the empty-window guard', () => {
+    /**
+     * The guard's comment used to say this branch "today it cannot be — the
+     * filter above can only drop the first of five". It can be, and this is
+     * how: `classStartInstant` (`@/lib/timezone`) fails SOFT on an unreadable
+     * `startTime`, returning `new Date(NaN)` rather than throwing, and
+     * `NaN > startDate` is `false` for every candidate rather than for one.
+     *
+     * NOT a live defect, and this case is not written as one. Every route that
+     * writes a template's `startTime` validates it with `timeHHmm`
+     * (`@/lib/schemas`), so no stored row can carry a value this cannot read —
+     * which is why the bad value is passed in memory here rather than written.
+     * The argument is the whole reachable surface, and inventing a migration
+     * that could produce such a row in order to test the guard would be
+     * inventing the defect.
+     *
+     * What is pinned is that the branch is ACTIONABLE if the write path is
+     * ever widened. `classStartInstant`'s own warn carries `{ startTime }` and
+     * nothing else, so an operator reading it learns that A template was
+     * unreadable and never which one.
+     */
+    it('names the template when an unreadable startTime empties the window', async () => {
+      const base = await freshTemplate();
+      const spy = vi.spyOn(log, 'warn').mockImplementation(() => log);
+      try {
+        const result = await generateInstancesForTemplate(prisma, {
+          ...base,
+          startTime: 'nonsense',
+        });
+
+        // All five dropped, so there is no window at all — not four candidates
+        // that each got a reason. `skipped` is empty for the same reason
+        // `created` is 0: the function returns before the loop that would have
+        // classified anything.
+        expect(result).toEqual({ created: 0, skipped: [] });
+
+        // Once per call, and the one line that identifies the template. The
+        // other calls on this spy are `classStartInstant`'s own, one per
+        // unreadable occurrence, which is why this filters by message rather
+        // than counting the spy.
+        const guardCalls = spy.mock.calls.filter(
+          ([, msg]) => typeof msg === 'string' && msg.includes('no candidate dates'),
+        );
+        expect(guardCalls).toHaveLength(1);
+        expect(guardCalls[0]![0]).toMatchObject({
+          templateId,
+          teacherId,
+          startTime: 'nonsense',
+        });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
   describe('pauseOrResumeTemplate — a clash during generation (#164)', () => {
     beforeEach(async () => {
       await prisma.class.deleteMany({ where: { teacherId } });

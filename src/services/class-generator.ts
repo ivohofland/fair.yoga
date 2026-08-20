@@ -211,24 +211,66 @@ export async function generateInstancesForTemplate(
   // The next 4 occurrences whose start is still ahead of startDate. A run
   // after today's start time must not create a class that already happened;
   // the window slides one week further instead.
-  const dates = getNextOccurrences(template.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
-    .filter(
-      (date) =>
-        classStartInstant(date, template.startTime, template.teacher.defaultTimezone) >
-        startDate,
-    )
+  //
+  // The start instants are computed once and kept, rather than recomputed in
+  // the guard below: `classStartInstant` warns on every unreadable input, so
+  // asking it a second time would double the log lines for the one case the
+  // guard exists to report.
+  const starts = getNextOccurrences(template.dayOfWeek, startDate, DEFAULT_WEEKS + 1).map(
+    (date) => ({
+      date,
+      start: classStartInstant(date, template.startTime, template.teacher.defaultTimezone),
+    }),
+  );
+  const dates = starts
+    .filter(({ start }) => start > startDate)
+    .map(({ date }) => date)
     .slice(0, DEFAULT_WEEKS);
 
-  // `dates` is empty only if every occurrence in the window has already
-  // started, which today it cannot be — the filter above can only drop the
-  // first of five. It is guarded rather than asserted anyway because the week
+  // `dates` CAN be empty. The sentence that used to be here said it could not
+  // — "the filter above can only drop the first of five" — and that holds only
+  // while every start instant is READABLE. `classStartInstant`
+  // (`@/lib/timezone`) fails soft by design: an unparseable `startTime`
+  // returns `new Date(NaN)` rather than throwing, `NaN > startDate` is
+  // `false`, and the filter drops all five.
+  //
+  // What actually keeps that out of reach is the WRITE path, not this filter.
+  // Every route that sets a template's `startTime` validates it with
+  // `timeHHmm` (`@/lib/schemas`), so no stored row can carry a value
+  // `classStartInstant` cannot read, and no path reaches the empty case today.
+  // But that is a guarantee about the WRITERS — wideable by a new route, a
+  // migration, or a manual `UPDATE` — where the old sentence claimed one about
+  // this function, which was never there.
+  //
+  // Guarded rather than asserted for a second, independent reason: the week
   // bounds below dereference both ends of the array, and under
-  // `noUncheckedIndexedAccess` a `!` there would be a claim about a filter
-  // three lines up rather than a check. Returning the empty result is what the
-  // loop below would have produced from an empty `dates` regardless.
+  // `noUncheckedIndexedAccess` a `!` there would be a claim about a filter a
+  // few lines up rather than a check. Returning the empty result is what the
+  // loop below would have produced from an empty `dates` anyway.
+  //
+  // The `warn` tells the two ways of arriving here apart, and only one of them
+  // is worth a line. A window that is genuinely empty — which needs
+  // `getNextOccurrences` to start returning fewer dates than it is asked for —
+  // is an ordinary outcome and stays silent, so this cannot become hourly
+  // sweep noise on the legitimate case. A window emptied by an unreadable
+  // start instant is the latent case above, and logs exactly once per call.
+  // With `templateId` and `teacherId`, because `classStartInstant`'s own warn
+  // carries `{ startTime }` and nothing else: an operator seeing it could tell
+  // that A template was unreadable and not WHICH. That is the gap this closes,
+  // and the only reason to log at all for a case nothing can currently reach.
   const windowStart = dates[0];
   const windowEnd = dates[dates.length - 1];
   if (windowStart === undefined || windowEnd === undefined) {
+    if (starts.some(({ start }) => Number.isNaN(start.getTime()))) {
+      log.warn(
+        {
+          templateId: template.id,
+          teacherId: template.teacherId,
+          startTime: template.startTime,
+        },
+        'recurring class generation found no candidate dates because their start instants could not be read',
+      );
+    }
     return { created: 0, skipped: [] };
   }
 
