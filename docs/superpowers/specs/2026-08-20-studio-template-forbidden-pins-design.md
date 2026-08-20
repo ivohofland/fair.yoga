@@ -308,12 +308,19 @@ needed, and `_serverOwnedNamesExist` (`:397`) stays satisfied because `isActive`
 lives on `ClassTemplate` and `StudioClassTemplate`, both already in
 `AnyModelKey`, and `createdAt`/`updatedAt` on most of the fourteen.
 
-### H. The two stale docblocks
+### H. The stale docblock
 
 `class-template-lifecycle.ts:6` says the file is the sibling of
 `class-lifecycle.ts`'s update section "with the same five pins". Both files
-have six. Two-word correction in each; `class-lifecycle.ts` is otherwise
-untouched by this branch.
+have six, so the sentence is wrong twice over — about its own file and about
+the one it compares itself to.
+
+**Corrected during planning:** this section originally said "the two stale
+docblocks", planning for a fix in `class-lifecycle.ts` too. Measured — it
+makes no pin-count claim anywhere (`grep -n "pin" src/services/class-lifecycle.ts`
+returns only per-pin prose). There is one stale claim, in one file, and it is
+the file this branch reads as its template. `class-lifecycle.ts` is untouched
+by this branch.
 
 ### I. What gets no pin, deliberately
 
