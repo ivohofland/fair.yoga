@@ -297,11 +297,12 @@ export async function updateStudioClassTemplate(
     Partial<Record<PlainUpdateForbiddenStudioTemplateField, never>>,
 ): Promise<UpdateStudioClassTemplateResult> {
   const template = await db.studioClassTemplate.findUnique({ where: { id: templateId } });
-  // Deliberately silent, all three of the returns in this block. #231's own
-  // acceptance criterion allows a failure to go unlogged when it carries no
-  // information an operator could act on, and a 404 or a 403 for a template
-  // the caller never owned is that case. The two returns from the `catch`
-  // below are not, and both log.
+  // Deliberately silent, all three of the returns in this pre-transaction
+  // block. #231's own acceptance criterion allows a failure to go unlogged
+  // when it carries no information an operator could act on, and a 404 or a
+  // 403 for a template the caller never owned is that case. The `catch` below
+  // has three returns and logs two of them; see the P2025 arm for why that one
+  // is silent too.
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 

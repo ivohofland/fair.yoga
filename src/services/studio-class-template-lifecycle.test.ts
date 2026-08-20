@@ -1419,4 +1419,56 @@ describe('updateStudioClassTemplate (DB)', () => {
     },
     20_000,
   );
+
+  /**
+   * The read at the top of `updateStudioClassTemplate` and the `update` inside
+   * the transaction it opens are not one statement, so a delete landing
+   * between them raises P2025 at the write. Without the `isRecordNotFound`
+   * guard it reaches `classifyApiError`, which has no P2025 branch, and falls
+   * through to a bare 500.
+   *
+   * The twin of `class-template-lifecycle.test.ts`'s "maps a delete landing
+   * between the read and the write to not_found", and simpler than it in one
+   * way: `StudioClass.template` is `onDelete: SetNull`
+   * (`prisma/schema.prisma:533`), so there are no child rows to clear first
+   * the way the class version has to `deleteMany` its `Class` rows.
+   *
+   * Interposed rather than raced: the extension performs the real read and
+   * then deletes the row before returning it, which *is* the interleaving the
+   * guard exists for, rather than a race that may or may not land. Nothing
+   * runs between the hooked read and the write except the defined-value scan.
+   *
+   * Unreachable in production today — no DELETE route, and `gdpr.ts` archives
+   * rather than deletes — which is exactly why it is worth pinning. #231's
+   * point about this branch is that a future statement inside the transaction
+   * turns a genuine bug into a silent 404, and only a test makes that visible.
+   */
+  it('maps a delete landing between the read and the write to not_found', async () => {
+    const t = await makeTemplate(teacherId, 'P2025 Write');
+
+    let deleted = false;
+    // Cast for the same reason the class family's twin needs one: the extended
+    // client is missing `$on`, so it is not assignable to
+    // `updateStudioClassTemplate`'s `PrismaClient`-typed `db` parameter.
+    const interposing = prisma.$extends({
+      query: {
+        studioClassTemplate: {
+          async findUnique({ args, query }) {
+            const row = await query(args);
+            if (!deleted) {
+              deleted = true;
+              await prisma.studioClassTemplate.delete({ where: { id: t.id } });
+            }
+            return row;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const result = await updateStudioClassTemplate(interposing, t.id, teacherId, {
+      classType: 'Renamed',
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'not_found' });
+  });
 });

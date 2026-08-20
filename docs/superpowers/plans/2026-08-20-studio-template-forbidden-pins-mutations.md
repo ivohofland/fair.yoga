@@ -174,10 +174,34 @@ src/services/studio-class-template-lifecycle.ts(217,7): error TS2322: Type 'true
 src/services/studio-class-template-lifecycle.ts(218,7): error TS2322: Type 'true' is not assignable to type '"publishedAt"'.
 ```
 
-**Class family contrast:** the same `& { publishedAt?: Date | null }` applied to
-a local copy of `_templateForbiddenListIsComplete`'s `Exclude` — **tsc exits 0**.
-The duplicate-union form is structurally blind to a new column; the partition form
-is not. This contrast is the whole claim in spec §A.
+**Class family contrast:** none is possible as a mutation, and *that* is the
+finding. `_templateForbiddenListIsComplete` (`class-template-lifecycle.ts:186-199`)
+`Exclude`s one string-literal union against another:
+
+```ts
+NoneOf<Exclude<
+  'id' | 'teacherId' | 'isActive' | ... ,   // a string-literal union
+  PlainUpdateForbiddenTemplateField          // another string-literal union
+>>
+```
+
+Neither operand references the Prisma type, so there is nothing for
+`& { publishedAt?: Date | null }` to attach to — a column added to the model
+cannot change either side. The duplicate-union form is green **by
+construction**, not by experiment, which is a stronger statement than a passing
+`tsc` run and the one spec §A actually rests on.
+
+Confirmed by copying the pin's shape into a probe alongside a simulated
+`Prisma.ClassTemplateUncheckedUpdateManyInput & { publishedAt?: Date | null }`,
+declared *and referenced* so the intersection is not dead code — `tsc --noEmit`
+exit 0, probe deleted afterwards.
+
+**Corrected during review.** This section first claimed the intersection had
+been "applied to a local copy of `_templateForbiddenListIsComplete`'s
+`Exclude`". That cannot have been run as described: intersecting an object type
+onto a string union produces nothing the pin can observe, so `tsc` would have
+exited 0 before the change as well — a vacuous experiment reported as a
+contrast. The conclusion was right; the evidence was not.
 
 **Reverted, re-run green.** ✅
 
@@ -250,9 +274,40 @@ src/app/api/studio-class-templates/[id]/route.ts(98,9): error TS2322: Type '{ ok
 
 ---
 
+### Mutation 12 — delete the `isRecordNotFound` guard (added at review)
+
+**Change:** `if (isRecordNotFound(err)) return { ok: false, reason: 'not_found' };`
+removed from `updateStudioClassTemplate`'s `catch`.
+
+**Must fire:** the new unit test "maps a delete landing between the read and
+the write to not_found".
+
+**Outcome (verbatim):**
+```
+FAIL  |unit| src/services/studio-class-template-lifecycle.test.ts > updateStudioClassTemplate (DB) > maps a delete landing between the read and the write to not_found
+PrismaClientKnownRequestError:
+Invalid `tx.studioClassTemplate.update()` invocation in
+  .../src/services/studio-class-template-lifecycle.ts:341:54
+An operation failed because it depends on one or more records that were required but not found. No record was found for an update.
+```
+
+The raw `PrismaClientKnownRequestError` escaping is precisely the production
+failure the guard exists to prevent: `classifyApiError` has no P2025 branch, so
+it would surface as a bare 500 at `level: 'error'` for a race the function
+already models as `not_found`.
+
+Added during review, with the test it proves. The branch previously had a mapped
+error arm with no coverage, while the class family tests its identical twin
+twice (`class-template-lifecycle.test.ts:274` and `:1921`).
+
+**Reverted, re-run green.** ✅
+
+---
+
 ## Summary
 
-All eleven mutations fired as expected. No mutation failed to fire. The contrast
+All twelve mutations fired as expected. No mutation failed to fire. The contrast
 in mutation 8 confirmed the partition pin's structural advantage over the
-duplicate-union form: the studio pin went red naming `publishedAt`; the class
-family's twin stayed green under the same simulation.
+duplicate-union form — though not in the way this record first claimed; see
+mutation 8 for the correction, and for why "green by construction" is the
+stronger and more checkable statement than a passing `tsc` run.
