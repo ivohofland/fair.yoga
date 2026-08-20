@@ -154,11 +154,11 @@ describe('resolveTemplateConfirmation', () => {
   });
 
   /**
-   * Both would describe something that did not happen. `unchanged` in
-   * particular is what a stale second tab and a retry-after-lost-response
-   * reach, so captioning it with either message is the #98 bug wearing a
-   * different hat. `active` used to be listed here too; it speaks now — its
-   * own test above pins the message.
+   * `unchanged` is what a stale second tab and a retry-after-lost-response
+   * reach, so captioning it at all would describe something that did not
+   * happen — the #98 bug wearing a different hat. It is the only silent
+   * action left: `active` used to be listed here, and `unarchived` until
+   * #116; both speak now, and each has its own test pinning its message.
    */
   it('says nothing for unchanged', () => {
     expect(resolveTemplateConfirmation({ action: 'unchanged' })).toBeNull();

@@ -232,7 +232,7 @@ export const UNARCHIVE_STUDIO_MESSAGE =
  * back lands on a paused template with an empty window, and until #116 the
  * only signal was that a differently-labelled button appeared.
  *
- * "recurring class" rather than the studio wording's "classes": that is what
+ * "recurring class" rather than the studio wording's "template": that is what
  * this family calls the thing throughout its own copy.
  */
 export const UNARCHIVE_MESSAGE =
