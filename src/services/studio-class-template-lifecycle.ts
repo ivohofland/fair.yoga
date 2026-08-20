@@ -1,6 +1,7 @@
 /**
- * Studio Class Template lifecycle — pause/resume and archive/un-archive for
- * `PATCH /api/studio-class-templates/[id]` (#86, #98).
+ * Studio Class Template lifecycle — the teacher-editable boundary for
+ * `PUT /api/studio-class-templates/[id]` (#114), plus pause/resume and
+ * archive/un-archive for `PATCH` on the same route (#86, #98).
  *
  * The studio sibling of `class-template-lifecycle.ts`'s pause/archive section.
  * Deliberately not sharing an implementation with it — PR #92 found the two
@@ -32,7 +33,10 @@
  *     plain `update` and no claim first (#116).
  */
 
-import type { PrismaClient, StudioClassTemplate } from '@prisma/client';
+import type { Prisma, PrismaClient, StudioClassTemplate } from '@prisma/client';
+import type { z } from 'zod';
+import type { updateStudioClassTemplateSchema } from '@/lib/schemas';
+import type { NoneOf } from '@/lib/type-pins';
 import { startOfLocalDay } from '@/lib/timezone';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isTransientDbError } from '@/lib/api-errors';
@@ -48,6 +52,204 @@ import {
   claimStudioTemplateForGeneration,
   generateStudioInstancesForTemplate,
 } from './studio-class-generator';
+
+/**
+ * The fields a teacher may change on an existing studio template.
+ *
+ * Derived from `updateStudioClassTemplateSchema`, not hand-declared: deriving
+ * is what puts a newly added schema field into `keyof`, which is what every
+ * pin below depends on. A hand-declared type would never see the offending
+ * field at all.
+ *
+ * Needs no `Omit`/intersection — every schema field maps to a column of the
+ * same type, `hourlyRate: number` included, which assigns to the `Decimal`
+ * column's input union directly. Measured with `tsc --noEmit`, not assumed
+ * (spec, "Verified mechanics"). So the reverse pin here has no equivalent of
+ * the `date` blind spot `class-lifecycle.ts` documents.
+ */
+export type StudioClassTemplateUpdateData = z.infer<typeof updateStudioClassTemplateSchema>;
+
+/**
+ * Compile-time pin: every field the wire schema accepts must name a column
+ * `update` can write on `StudioClassTemplate` — the write checks the types,
+ * this checks the name, and only this catches a name Prisma has never heard of.
+ *
+ * The *Many* input is the reference deliberately, as in both class services:
+ * the single-record type additionally accepts a nested relation write
+ * (`studioClasses`) that a plain field update should never receive, so pinning
+ * against it would wave through a schema field named after that relation.
+ */
+const _studioTemplateUpdateColumnsExist: NoneOf<
+  Exclude<
+    keyof StudioClassTemplateUpdateData,
+    keyof Prisma.StudioClassTemplateUncheckedUpdateManyInput
+  >
+> = true;
+void _studioTemplateUpdateColumnsExist;
+
+/**
+ * The fields a teacher may change on their own studio template via
+ * `PUT /api/studio-class-templates/[id]`.
+ *
+ * Adding a member is how a new schema field gets authorized. Two members here
+ * already carry consequences beyond the template row:
+ *   - `dayOfWeek`, `startTime` → both are in
+ *     `StudioClassTemplate_teacher_slot_unique` (`(teacherId, dayOfWeek,
+ *     startTime) WHERE isArchived = false`, #196), so editing either can
+ *     collide with another of this teacher's live templates.
+ *   - `dayOfWeek` additionally → generated `StudioClass` rows are NOT moved or
+ *     withdrawn. Unlike the class family, this family has no
+ *     `syncTemplateInstances` equivalent, so an edit leaves four weeks of
+ *     classes on the superseded weekday. That is #194, which this branch does
+ *     not address; it is named here because this list is where someone would
+ *     look for it.
+ */
+type TeacherEditableStudioTemplateField =
+  | 'classType'
+  | 'dayOfWeek'
+  | 'startTime'
+  | 'durationMinutes'
+  | 'location'
+  | 'hourlyRate';
+
+/**
+ * Compile-time pin (forward): every field the schema accepts must be on the
+ * allowlist. Add a column-shaped field to the schema without adding it here and
+ * this names that field instead of resolving to `true`.
+ *
+ * Forward and reverse together force the allowlist to *equal* the schema's key
+ * set, so the allowlist holds no policy of its own. What it buys is that the
+ * grant must be explicit — a second edit, next to the hazards above. The
+ * forbidden pins below refuse the grants that are never right.
+ */
+const _studioTemplateFieldsArePermitted: NoneOf<
+  Exclude<keyof StudioClassTemplateUpdateData, TeacherEditableStudioTemplateField>
+> = true;
+void _studioTemplateFieldsArePermitted;
+
+/**
+ * Compile-time pin (reverse): every allowlist entry must still be a field the
+ * schema accepts, so the list cannot rot into granting permission for a column
+ * that no longer flows through this route.
+ *
+ * Also the only pin that fires if `StudioClassTemplateUpdateData` ever degrades
+ * to `{}` or `unknown` — on an empty `keyof` the forward pin passes vacuously.
+ */
+const _studioTemplateAllowlistHasNoStaleFields: NoneOf<
+  Exclude<TeacherEditableStudioTemplateField, keyof StudioClassTemplateUpdateData>
+> = true;
+void _studioTemplateAllowlistHasNoStaleFields;
+
+/**
+ * The `StudioClassTemplate` columns the plain update path must never write.
+ *
+ * "Plain update path", not "never": `isActive` and `isArchived` are edited
+ * constantly — by `PATCH` on this very route — and that is the point. Each
+ * column here is owned by a different, guarded path:
+ *   - `id`             → identity
+ *   - `teacherId`      → ownership
+ *   - `isActive`       → `PATCH ?state=active|paused`, which flips it inside a
+ *                        transaction that also takes the generation claim and
+ *                        generates the window (#94, #120). A bare flip to
+ *                        `true` would mark a template active with no window.
+ *   - `isArchived`     → `PATCH ?state=archived`, which also forces
+ *                        `isActive: false`. Writing it alone can produce the
+ *                        archived-but-active state `PATCH` refuses to create,
+ *                        and moves the row in and out of
+ *                        `StudioClassTemplate_teacher_slot_unique`'s partial
+ *                        scope without the conflict handling that owns it.
+ *   - `archivedAt`,
+ *     `withdrawnCount` → written only by the same archive transaction that
+ *                        owns `isArchived` (#97, #111). A plain update setting
+ *                        these could forge "Archived <date> · <count>
+ *                        withdrawn" onto a template that was never archived —
+ *                        the exact stale-record state the un-archive clear
+ *                        exists to prevent.
+ *   - `createdAt`,
+ *     `updatedAt`      → Prisma-managed.
+ *
+ * The same eight names as `PlainUpdateForbiddenTemplateField`
+ * (`class-template-lifecycle.ts`). The allowlists differ entirely; these do
+ * not, because the two models carry the same lifecycle columns.
+ *
+ * The forward and reverse pins make the allowlist mirror the schema, so the
+ * quickest way to clear a forward-pin failure is to paste the offending name
+ * into the allowlist — the reflexive grant #79 is about. This is the set where
+ * that repair is never right.
+ *
+ * A runtime guard covers five of these already and is worth knowing about,
+ * because it is weaker in exactly the way that matters: `schemas.test.ts`'s
+ * `server-owned fields` register walks every exported schema and refuses
+ * `id`, `teacherId`, `isArchived`, `archivedAt` and `withdrawnCount`. But its
+ * failure message says "add it to EXPECTED with a reason" — so *its* quickest
+ * repair IS the reflexive grant. The pin below is what refuses that.
+ */
+type PlainUpdateForbiddenStudioTemplateField =
+  | 'id'
+  | 'teacherId'
+  | 'isActive'
+  | 'isArchived'
+  | 'archivedAt'
+  | 'withdrawnCount'
+  | 'createdAt'
+  | 'updatedAt';
+
+/**
+ * Compile-time pin (completeness): every column on the model must be claimed by
+ * one of the two lists above. Catches a deletion from either — and, unlike the
+ * class family's twin, a column a migration adds that nobody classified.
+ *
+ * **Deliberately not a copy of `_templateForbiddenListIsComplete`**
+ * (`class-template-lifecycle.ts:186`). That pin duplicates the forbidden union
+ * literally and `Exclude`s it against itself, so it never consults Prisma and
+ * is structurally blind to a new column. Measured (spec, section A): a
+ * simulated migration adding an unclassified column leaves the duplicate-union
+ * form green and turns this form red, naming it. When #111 added `archivedAt`
+ * and `withdrawnCount` to both models, every pin then in place stayed green
+ * until a human remembered to classify them; this one would have gone red on
+ * the migration.
+ *
+ * Available here only because the two lists partition the model exactly —
+ * 6 + 8 = 14 columns, measured, not counted off `schema.prisma`. If a future
+ * column is legitimately neither teacher-editable nor forbidden, this pin is
+ * the wrong shape and should be replaced rather than have a name pasted into
+ * one of the lists to silence it.
+ */
+const _studioTemplateListsPartitionTheModel: NoneOf<
+  Exclude<
+    keyof Prisma.StudioClassTemplateUncheckedUpdateManyInput,
+    TeacherEditableStudioTemplateField | PlainUpdateForbiddenStudioTemplateField
+  >
+> = true;
+void _studioTemplateListsPartitionTheModel;
+
+/**
+ * Compile-time pin: every name on the forbidden list must be a real
+ * `StudioClassTemplate` column. Without this a typo (`isActiv`) would sit there
+ * protecting nothing while looking like protection.
+ *
+ * Overlaps the partition pin above — a typo trips both — and is kept anyway,
+ * because the two name different halves of the same mistake. This one says
+ * "`isActiv` is not a column"; the partition pin says "`isActive` is
+ * unclassified". The first is the one that points at the fix.
+ */
+const _studioTemplateForbiddenColumnsExist: NoneOf<
+  Exclude<
+    PlainUpdateForbiddenStudioTemplateField,
+    keyof Prisma.StudioClassTemplateUncheckedUpdateManyInput
+  >
+> = true;
+void _studioTemplateForbiddenColumnsExist;
+
+/**
+ * Compile-time pin (forbidden): no forbidden column may appear on the
+ * allowlist. Fails on a const whose name carries the reason, because the const
+ * name is the part of a type error people actually read.
+ */
+const _studioTemplateAllowlistHasNoForbiddenFields: NoneOf<
+  Extract<TeacherEditableStudioTemplateField, PlainUpdateForbiddenStudioTemplateField>
+> = true;
+void _studioTemplateAllowlistHasNoForbiddenFields;
 
 /**
  * Outcome of a pause/resume PATCH. `paused` carries the furthest-out class
