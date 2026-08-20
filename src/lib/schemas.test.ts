@@ -11,6 +11,7 @@ import {
   createRoomSchema,
   updateClassSchema,
   updateClassTemplateSchema,
+  updateStudioClassTemplateSchema,
   updateTeacherSchema,
   updateStudentSchema,
   isSafeRelativePath,
@@ -276,6 +277,28 @@ describe('updateClassTemplateSchema', () => {
       'startTime',
       'targetRate',
       'teacherRoomId',
+    ]);
+  });
+});
+
+describe('updateStudioClassTemplateSchema', () => {
+  // Mirrors the updateClassTemplateSchema key-set test above, and exists for
+  // the reason #114 measured: `.strict()` means an undeclared key is a 400, so
+  // the ONLY way a forbidden column reaches `studioClassTemplate.update` is by
+  // being declared here. A failure below is therefore a decision, not a chore.
+  //
+  // Read `PlainUpdateForbiddenStudioTemplateField`'s doc comment in
+  // `studio-class-template-lifecycle.ts` before adding a key. Adding one that
+  // names a column on that list is refused by a compile-time pin, not by this
+  // test — this test is what makes an *authorized* addition deliberate.
+  it('accepts exactly the teacher-editable field set', () => {
+    expect(Object.keys(updateStudioClassTemplateSchema.shape).sort()).toEqual([
+      'classType',
+      'dayOfWeek',
+      'durationMinutes',
+      'hourlyRate',
+      'location',
+      'startTime',
     ]);
   });
 });
