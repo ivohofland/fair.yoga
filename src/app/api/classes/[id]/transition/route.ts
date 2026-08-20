@@ -87,11 +87,21 @@ export const POST = withErrorHandler(async (
         // nothing left to protect by not reading.
         const current = await tx.class.findUnique({ where: { id }, select: { status: true } });
 
-        // GONE, not "still whatever the snapshot said". A failed CAS means this
-        // transaction holds no lock on the row — the `UPDATE` matched nothing
-        // and so locked nothing — and the row is freely deletable in that
-        // window: archiving a recurring template hard-deletes its future
-        // `draft`/`open` instances, the same status set this CAS matches on.
+        // GONE, not "still whatever the snapshot said". A failed CAS leaves the
+        // row freely deletable in that window: archiving a recurring template
+        // hard-deletes its future `draft`/`open` instances, the same status set
+        // this CAS matches on.
+        //
+        // This used to add "the `UPDATE` matched nothing and so locked
+        // nothing". Not true in one of the two interleavings, and #117
+        // corrected the same sentence in the template family: a CAS that
+        // blocked on a concurrently-updated row and only then lost its
+        // re-check still holds the lock to commit, because Postgres takes it
+        // before the EvalPlanQual re-check rather than after. The re-read
+        // below is correct either way, which is why nothing here changes —
+        // see `archiveOrUnarchiveTemplate`'s miss branch
+        // (`class-template-lifecycle.ts`) for the full account.
+        //
         // Falling back to `cls.status` here told the teacher "cannot cancel a
         // class with status open" about a class that no longer exists, which
         // is the very staleness the re-read above was added to remove. The
