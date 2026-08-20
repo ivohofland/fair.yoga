@@ -87,12 +87,16 @@ describe('updateClassTemplate (DB)', () => {
   let otherRoomId: string;
   let otherTeacherRoomId: string;
 
-  // Counter-derived startTime: this block calls makeTemplate 8 times for one
+  // Counter-derived startTime: this block calls makeTemplate 9 times for one
   // teacher/dayOfWeek, and none of its tests read or assert the created
   // template's literal startTime — so a distinct minute per call is enough
   // to keep every create legal under ClassTemplate_teacher_slot_unique
   // (none of these templates ever gets archived, which is the only thing
-  // that would otherwise free the slot).
+  // that would otherwise free the slot). "Stamp Only" is the one exception
+  // to the no-assertion half: it MOVES its template's dayOfWeek and
+  // startTime, which frees this one's slot rather than taking another —
+  // still legal, and it lands on a (dayOfWeek, startTime) pair no sibling
+  // holds.
   let makeTemplateCounter = 0;
   const makeTemplate = (classType: string) => {
     makeTemplateCounter += 1;
@@ -177,8 +181,8 @@ describe('updateClassTemplate (DB)', () => {
   // Defined-value scan (`updateClassTemplate`'s own `hasEdit` check,
   // `class-template-lifecycle.ts`): a key present with value `undefined` is
   // not an edit, unlike the key-count check this replaced, which would have
-  // let this through as `ok: true` and run a no-op update plus a full sync
-  // for nothing.
+  // let this through as `ok: true` and run a no-op update — taking the
+  // template row's lock — for nothing.
   it('returns no_fields for a payload of only undefined values, and writes nothing', async () => {
     const template = await makeTemplate('Undefined Only');
     const result = await updateClassTemplate(prisma, template.id, teacherId, {
@@ -213,7 +217,7 @@ describe('updateClassTemplate (DB)', () => {
     expect(after.teacherRoomId).toBe(teacherRoomId);
   });
 
-  it('applies the update and returns the sync result', async () => {
+  it('applies the update and returns just the template', async () => {
     const template = await makeTemplate('Editable');
 
     const result = await updateClassTemplate(prisma, template.id, teacherId, {
@@ -225,22 +229,67 @@ describe('updateClassTemplate (DB)', () => {
     if (!result.ok) throw new Error('expected ok');
     expect(result.template.classType).toBe('Edited');
     expect(result.template.durationMinutes).toBe(75);
-    // These counts are deterministic here — a bare template has no
-    // instances, so the sync can only be a hard zero — unlike the API test,
-    // which cannot pin an exact number without risking clock flakiness.
-    // `toEqual`, not `toMatchObject`, deliberately: a whole-shape assertion is
-    // what caught the three fields #204's review added to `TemplateSyncResult`,
-    // and it is the reason the form could not silently keep reading a stale
-    // shape. Keep it exhaustive.
-    expect(result.sync).toEqual({
-      synced: 0,
-      regenerated: 0,
-      refilled: 0,
-      blockedByCancelled: 0,
-      slotTaken: 0,
-      alreadyThisWeek: 0,
-      kept: 0,
+    // Exhaustive on the success arm's own keys, and that exhaustiveness is
+    // inherited, not new. A whole-shape `toEqual` stood here against
+    // `TemplateSyncResult`'s seven counts, and it is what caught the three
+    // fields #204's review added — the reason the form could not silently
+    // keep reading a stale shape. #194 removed the propagation, so the same
+    // assertion now guards the opposite property: the success arm carries the
+    // template and nothing else, and a re-added propagation report fails
+    // here rather than reaching the client unnoticed. `Object.keys`, not
+    // `toEqual` on the whole result, because the template row's own fields
+    // are asserted above and re-listing all twenty here would make this case
+    // fail on every unrelated schema change.
+    expect(Object.keys(result).sort()).toEqual(['ok', 'template']);
+  });
+
+  // The service-level statement of rule 1, next to the function that owns it:
+  // `updateClassTemplate` writes the template row and no `Class` row, ever.
+  // `class-templates-api.test.ts` proves the same thing end-to-end over HTTP;
+  // this one proves it of the service in isolation, which is where a future
+  // "just sync the unbooked ones" special case would actually be written.
+  //
+  // The edit deliberately spans all three families the deleted sync treated
+  // differently — the day (it deleted wrong-day instances), the time (it
+  // rewrote same-day ones) and the economics (it rewrote unbooked ones) — so
+  // a partial revival cannot pass by touching only the family this case
+  // forgot to name.
+  it('changes the template row and no Class row, on any field', async () => {
+    const template = await makeTemplate('Stamp Only');
+
+    const instance = await prisma.class.create({
+      data: {
+        teacherId,
+        teacherRoomId,
+        templateId: template.id,
+        classType: 'Stamp Only',
+        date: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+        startTime: template.startTime,
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+        status: 'open',
+        settingsLocked: false,
+      },
     });
+
+    const result = await updateClassTemplate(prisma, template.id, teacherId, {
+      dayOfWeek: (template.dayOfWeek + 2) % 7,
+      startTime: '23:31',
+      roomCost: 99,
+      maxStudents: 20,
+    });
+    expect(result.ok).toBe(true);
+
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: instance.id } });
+    expect(after.date.toISOString()).toBe(instance.date.toISOString());
+    expect(after.startTime).toBe(instance.startTime);
+    expect(after.roomCost.toString()).toBe(instance.roomCost.toString());
+    expect(after.maxStudents).toBe(instance.maxStudents);
+    expect(after.teacherRoomId).toBe(instance.teacherRoomId);
   });
 
   /**
@@ -250,14 +299,15 @@ describe('updateClassTemplate (DB)', () => {
    * as a 500 — the bug this issue exists to close.
    *
    * This used to be the first of two windows one `catch` covered. The
-   * second — a delete landing between the write committing and
-   * `syncTemplateInstances`'s own read — closed when task 6 of the
-   * atomic-template-update work put both inside one transaction: that read
-   * now runs on a row the write above has already locked, so nothing can
-   * delete it out from under the read before the transaction ends. A test
-   * pinning that second window used to stand here; it hung rather than
-   * failed once the window closed, because the out-of-band delete it relied
-   * on now blocks on the lock instead of racing it. This is the only window
+   * second — a delete landing between the write committing and the sync's
+   * own read — closed when task 6 of the atomic-template-update work put
+   * both inside one transaction: that read ran on a row the write above had
+   * already locked, so nothing could delete it out from under the read before
+   * the transaction ended. #194 then deleted the sync outright, so the second
+   * window has no code left behind it at all. A test pinning it used to stand
+   * here; it hung rather than failed once the window closed, because the
+   * out-of-band delete it relied on blocked on the lock instead of racing it.
+   * This is the only window
    * left; its replacement — pinning the blocking behaviour the closed window
    * now produces in place of a race — sits below. (Not "once task 7 gave that
    * wait a bound to test against", as this said: task 7's `setLockTimeout`
@@ -281,9 +331,11 @@ describe('updateClassTemplate (DB)', () => {
     // to `updateClassTemplate`'s `PrismaClient`-typed `db` parameter, and
     // reusing the existing stub-client cast is the only accepted way past that
     // without loosening the parameter's type. (Not `template-sync.test.ts`,
-    // which this pointed at: its casts exist for a DIFFERENT reason — the
-    // extended `$transaction` callback's `tx` is not assignable to
-    // `TransactionClientOnly` — and nothing to do with `$on`.)
+    // which this once pointed at: its casts existed for a DIFFERENT reason —
+    // the extended `$transaction` callback's `tx` was not assignable to
+    // `TransactionClientOnly` — and nothing to do with `$on`. That file went
+    // with its function in #194; the distinction is kept because the same
+    // wrong cross-reference is easy to write again.)
     const interposing = prisma.$extends({
       query: {
         classTemplate: {
@@ -309,12 +361,14 @@ describe('updateClassTemplate (DB)', () => {
 
   /**
    * The replacement for the test task 6 deleted (see the docblock above).
-   * Before task 6, `classTemplate.update` and `syncTemplateInstances`'s own
-   * read ran as two separately-committed statements with no lock held in
-   * between, so an out-of-band delete could land in the gap and race the
-   * write. After task 6 they run inside ONE transaction, so the write's row
-   * lock is held for that whole transaction's lifetime — there is no longer
-   * a gap for a concurrent delete to land in, only a lock to queue behind.
+   * Before task 6, `classTemplate.update` and the sync's own read ran as two
+   * separately-committed statements with no lock held in between, so an
+   * out-of-band delete could land in the gap and race the write. Task 6 put
+   * them inside ONE transaction, and #194 then deleted the sync entirely.
+   * Either way the write's row lock is held for the whole transaction's
+   * lifetime — there is no gap for a concurrent delete to land in, only a
+   * lock to queue behind. That property is what this case still pins, and it
+   * is a property of the transaction, not of the sync.
    *
    * That is why the deleted test could not simply be un-deleted: once this
    * window closed, its own out-of-band delete stopped racing and started
@@ -338,9 +392,8 @@ describe('updateClassTemplate (DB)', () => {
    * connection, in its own transaction, bounded by `setLockTimeout` the same
    * way any bounded wait in this project is. `hookedPrisma.$transaction`'s
    * query extension still applies inside the interactive transaction it
-   * opens (`template-sync.test.ts` proves the same mechanism for its own
-   * hooked pre-lock), so this fires on `tx.classTemplate.update` while that
-   * transaction is genuinely still open — not merely believed to be.
+   * opens, so this fires on `tx.classTemplate.update` while that transaction
+   * is genuinely still open — not merely believed to be.
    */
   it(
     'a concurrent delete blocks on the write lock and completes cleanly once the edit commits',
@@ -1933,7 +1986,7 @@ describe('pauseOrResumeTemplate (DB)', () => {
     await prisma.classTemplate.update({ where: { id: t.id }, data: { isActive: false } });
 
     let deleted = false;
-    // Cast for the same reason as the sync test's `interposing` above: the
+    // Cast for the same reason as `interposing` above: the
     // extended client is missing `$on`, so it is not assignable to
     // `pauseOrResumeTemplate`'s `PrismaClient`-typed `db` parameter, and
     // reusing the existing stub-client cast is the only accepted way past

@@ -329,14 +329,15 @@ describe('generateClassInstances (DB)', () => {
     // guessed restore value would corrupt them.
     let originalStartTime: string;
     // Captured alongside `startTime` because two `it`s in this `describe`
-    // now commit real edits through `updateClassTemplate` — the budget pin
-    // writes `description`, the `busy` test writes `classType` — and both
-    // propagate onto this template's future instances via
-    // `syncTemplateInstances`. Restoring only the three fields the older
-    // tests touched left the fixture mutated for anything added after them;
-    // today nothing reads those two columns later in file order, which makes
-    // it latent rather than broken, and latent is exactly how this `afterEach`
-    // earns its keep.
+    // commit real edits through `updateClassTemplate` — the budget pin writes
+    // `description`, the `busy` test writes `classType`. Restoring only the
+    // three fields the older tests touched left the fixture mutated for
+    // anything added after them; today nothing reads those two columns later
+    // in file order, which makes it latent rather than broken, and latent is
+    // exactly how this `afterEach` earns its keep. (The edits used to reach
+    // the template's future instances too, via `syncTemplateInstances`. #194
+    // deleted that, so the restore is now genuinely only about these
+    // columns.)
     let originalClassType: string;
     let originalDescription: string | null;
 
@@ -684,33 +685,34 @@ describe('generateClassInstances (DB)', () => {
     /**
      * `updateClassTemplate`'s own budget (`class-template-lifecycle.ts`),
      * pinned the same way the two transactions above pin theirs. Derived, not
-     * arbitrary — spec §2.4: five statements in that transaction can each
-     * wait on the lock timeout at 2s. `setLockTimeout` itself is not one of
-     * them — it issues `SET LOCAL lock_timeout`, which can never wait on a
-     * lock. The five that can: `classTemplate.update` (the template write —
-     * an unconditional update by primary key, NOT a CAS; this file uses that
-     * term for the archive's and pause/resume's conditional writes, and spec
-     * §2.4 calls this row plainly `classTemplate.update`), the ordered
-     * `FOR UPDATE OF c` pre-lock, `class.deleteMany` (the wrong-day delete —
-     * it cascades onto `WaitlistEntry` children the pre-lock does not cover,
-     * so the delete itself can still wait on one), `class.updateMany`
-     * (the same-day propagation, a real index-entry wait on
-     * `Class_teacher_slot_unique`), and the refill's `createManyAndReturn`
-     * (also a real index-entry wait, same index). Conservative, since
-     * `wrongDay` and `sameDay` are near-mutually-exclusive in practice — an
-     * earlier version of this comment named `setLockTimeout` as one of the
-     * five and omitted the refill; the total of five was right by
-     * coincidence, not by this derivation. (That retraction previously also
-     * disowned "`syncTemplateInstances`'s own pre-lock", which was never the
-     * error: the ordered `FOR UPDATE OF c` above IS that pre-lock —
-     * `updateClassTemplate` has no other — and spec §2.4 lists it as row 2.)
+     * arbitrary, and re-derived here rather than scaled: ONE statement in that
+     * transaction can wait on the lock timeout at 2s — `classTemplate.update`,
+     * the template write (an unconditional update by primary key, NOT a CAS;
+     * this file uses that term for the archive's and pause/resume's
+     * conditional writes). `setLockTimeout` is not a second — it issues `SET
+     * LOCAL lock_timeout`, which can never wait on a lock — and the
+     * transaction has no third statement at all.
+     *
+     * Spec §2.4 derived FIVE, and 15s from them: the write, the sync's
+     * ordered `FOR UPDATE OF c` pre-lock, its wrong-day `class.deleteMany`
+     * (which cascades onto `WaitlistEntry` children the pre-lock did not
+     * cover), its same-day `class.updateMany` (a real index-entry wait on
+     * `Class_teacher_slot_unique`) and the refill's `createManyAndReturn`
+     * (the same index again). #194 deleted the sync, taking the last four with
+     * it. 10s against one 2s wait is generous rather than tight, and that is
+     * deliberate — the budget is not the lock bound, and shrinking it further
+     * would buy nothing while risking a slow-connection false `busy`.
+     *
+     * The transaction is kept for `SET LOCAL lock_timeout`, which is a no-op
+     * outside one; this pin is what fails if someone reads it as vestigial
+     * and unwraps it, because there would then be no options object to record.
      *
      * `description`, not `classType` like the busy test below: this call is
      * expected to actually commit, and a distinct field keeps the two tests'
      * writes from reading as the same edit if one of their assertions ever
      * needs the other's payload for comparison.
      */
-    it('opens the template-edit transaction with { timeout: 15_000 }', async () => {
+    it('opens the template-edit transaction with { timeout: 10_000 }', async () => {
       let recordedOptions: TransactionOptions | undefined;
       const spyingClient = new Proxy(prisma, {
         get(target, prop, receiver) {
@@ -732,7 +734,7 @@ describe('generateClassInstances (DB)', () => {
       });
 
       expect(result.ok).toBe(true);
-      expect(recordedOptions).toEqual({ timeout: 15_000 });
+      expect(recordedOptions).toEqual({ timeout: 10_000 });
     });
 
     /**
@@ -748,8 +750,8 @@ describe('generateClassInstances (DB)', () => {
      * be the transaction's first statement (the archive and the pause/resume
      * already had theirs), so the edit now gives up at 2s and answers `busy` instead
      * of waiting the holder out. `setLockTimeout` takes no lock itself — it
-     * issues `SET LOCAL lock_timeout`, as this file's own 15s derivation says
-     * a few lines above.
+     * issues `SET LOCAL lock_timeout`, as this file's own budget derivation
+     * says a few lines above.
      *
      * Named for the edit specifically. Its two siblings in this `describe`
      * cover the archive and the pause/resume, and an unqualified name here
@@ -787,8 +789,10 @@ describe('generateClassInstances (DB)', () => {
 
           // Same bounds and same reasoning as the archive's test above: the
           // lower bound proves it really waited, the upper that it answered
-          // well inside the 15s budget. Neither pins the bound's VALUE —
-          // `db-locks.test.ts` does that.
+          // well inside the transaction budget — 10s for this transaction
+          // since #194, and the 5_000 upper bound was already well under the
+          // old 15s, so it needed no adjustment. Neither pins the LOCK
+          // bound's value — `db-locks.test.ts` does that.
           expect(waited).toBeGreaterThanOrEqual(1_800);
           expect(waited).toBeLessThan(5_000);
 
@@ -797,12 +801,13 @@ describe('generateClassInstances (DB)', () => {
           // silent.
           expect(warn).toHaveBeenCalledWith(
             expect.objectContaining({ templateId, teacherId }),
-            'recurring class edit lost a lock race (template row or one of its instances) — nothing committed',
+            'recurring class edit lost a lock race on the template row — nothing committed',
           );
         } finally {
           // In a `finally`, matching the archive/pause busy tests above: a
           // failure in the assertions must not leave the claim holding the
-          // row for its full 15s.
+          // row for its own full 15s (the CLAIM's budget, set inline above —
+          // not the edit's, which is 10s).
           release();
           await claiming.catch(() => {});
           warn.mockRestore();

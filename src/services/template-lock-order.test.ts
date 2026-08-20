@@ -1,42 +1,41 @@
 import { describe, it, expect, afterAll, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
-import { syncTemplateInstances } from './template-sync';
 import { archiveOrUnarchiveTemplate } from './class-template-lifecycle';
 import { deleteStudentAccount } from './gdpr';
 import { log } from '@/lib/log';
 
 /**
- * Issue 180, both halves now fixed — read past this first paragraph before
- * its tense misleads you. `syncTemplateInstances` (`template-sync.ts`) USED
- * TO take its `Class` row locks in HEAP order — its same-day `class.updateMany({ where: { id: {
- * in: [...] } } })` is one statement, and Postgres visits the matching rows
- * in whatever order the planner picks, never the array's
- * (`docs/lock-order.md`, "Sorting the id array does NOT order a multi-row
- * write"). `deleteStudentAccount` (`gdpr.ts`) also used to disagree, via a
- * JS `[...ids].sort()` feeding a per-class `lockClassRow` loop. Two rows,
- * opposite orders, one AB-BA cycle: reproduced against the real functions and
- * recorded in issue 180, before either site had the ordered pre-lock this
- * file now pins. `docs/lock-order.md`'s within-`Class` rule records the fix,
- * not the original reproduction — the section that used to hold that
- * transcript was deleted rather than narrowed once both sites closed (issue
- * 180 acceptance 3), per this project's own convention against leaving a
- * trimmed-but-still-open-looking cycle on the page.
+ * Issue 180 had two halves, and this file covers the one that still has code
+ * to cover. `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) USED
+ * TO take its `Class` row locks in HEAP order — read past this first
+ * paragraph before its tense misleads you. Its `class.deleteMany` is one
+ * statement, and Postgres visits the matching rows in whatever order the
+ * planner picks (`docs/lock-order.md`, "Sorting the id array does NOT order a
+ * multi-row write"); it has no id array to sort even in principle, since the
+ * delete takes a predicate. `deleteStudentAccount` (`gdpr.ts`) also used to
+ * disagree, via a JS `[...ids].sort()` feeding a per-class `lockClassRow`
+ * loop. Two rows, opposite orders, one AB-BA cycle: reproduced against the
+ * real functions and recorded in issue 180, before either site had the
+ * ordered pre-lock this file now pins. `docs/lock-order.md`'s within-`Class`
+ * rule records the fix, not the original reproduction — the section that used
+ * to hold that transcript was deleted rather than narrowed once both sites
+ * closed (issue 180 acceptance 3), per this project's own convention against
+ * leaving a trimmed-but-still-open-looking cycle on the page.
  *
  * The trigger (issue 180): a student waitlisted on TWO instances of one
- * recurring template deletes their account while the teacher edits that
+ * recurring template deletes their account while the teacher archives that
  * template.
  *
- * `syncTemplateInstances` now takes an ordered pre-lock (issue 180 task 2),
- * so this assertion is inverted from the version that shipped in task 1: it
- * asserted the deadlock as real and unfixed there, and asserts its absence
- * here, the same shape #174 task 7 used for the two `Class`-adjacent pairs it
- * actually closed (see the reordered-write tests in
- * `invitations-lock-order.test.ts`). `archiveOrUnarchiveTemplate`
- * (`class-template-lifecycle.ts`) shared the same defect and now takes its
- * own ordered pre-lock too (issue 180 task 4); the second `it` below is
- * inverted the same way, for the same reason — see that `it`'s own docblock
- * for the extra care its inversion needed beyond this one's.
+ * The other half was `syncTemplateInstances` (`template-sync.ts`), whose
+ * same-day `class.updateMany` had the identical defect and got the identical
+ * ordered pre-lock in issue 180 task 2. A third `it` in this file pinned it.
+ * #194 deleted that function outright — a template edit no longer touches any
+ * generated class, so the edit path takes no `Class` locks and cannot be one
+ * side of a `Class`-row cycle at all — and its `it` went with it, because it
+ * asserted a property of a mechanism that no longer exists rather than a
+ * property of the schedule. The fixture below is unchanged and still shared;
+ * only the number of `it`s using it dropped.
  *
  * Asserted by SQLSTATE, not by "it passed": `/40P01|deadlock/i` deliberately
  * does NOT match `55P03` (a `lock_timeout` expiry), so a second, separate
@@ -49,11 +48,8 @@ import { log } from '@/lib/log';
  * the erasure's deliberate 300ms hold plus the rest of its transaction — and
  * time out rather than deadlock. A bounded-wait expiry is a different
  * failure and must fail this test rather than satisfy it, on either side of
- * the race. The second `it` below carries the same two-assertion split on its
- * own erasure branch, for the same reason — see its docblock. (An earlier
- * version of this paragraph said that `it` needed no `not.toMatch` because
- * its `toMatch` was positive. That described the pre-inversion test: task 4
- * inverted it, and no positive `toMatch` remains anywhere in this file.)
+ * the race. Both `it`s below carry that two-assertion split on their own
+ * erasure branch, and no positive `toMatch` remains anywhere in this file.
  */
 const prisma = new PrismaClient();
 
@@ -64,8 +60,8 @@ function uniqueSuffix(): string {
 /**
  * Next UTC-midnight date, at least `weeksOut` weeks out, landing on
  * `jsDayOfWeek` (JS `Date.getUTCDay()` convention: 0 = Sunday) — the same
- * convention `syncTemplateInstances` converts the schema's `dayOfWeek`
- * (0 = Monday) into before comparing it against an instance's `date`.
+ * convention `class-generator.ts` converts the schema's `dayOfWeek`
+ * (0 = Monday) into before laying instances on the calendar.
  */
 function futureDate(jsDayOfWeek: number, weeksOut: number): Date {
   const d = new Date();
@@ -114,13 +110,15 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * waitlist has), and a student `waiting` on both. Follows the fixture
    * style of `invitations-lock-order.test.ts:77-170`.
    *
-   * Shared by both `it`s below, not duplicated: `syncTemplateInstances` and
-   * `archiveOrUnarchiveTemplate` each take `Class` row locks in heap order
-   * for a different multi-row statement, and both need this exact shape to
+   * Shared by both `it`s below, not duplicated: each drives
+   * `archiveOrUnarchiveTemplate` into a different corner of the same race,
+   * and both need this exact shape for its heap-order `deleteMany` to
    * disagree with `deleteStudentAccount`'s ascending sort — two rows, one
    * student waiting on both, inserted so their heap order is the
    * deterministic REVERSE of ascending-by-id (explicit ids below, not
-   * `uuid()` defaults — see the insertion-order comment inline).
+   * `uuid()` defaults — see the insertion-order comment inline). A third
+   * `it` shared it until #194, for `syncTemplateInstances`; the fixture did
+   * not change when that one went.
    *
    * Also, incidentally, exactly what `archiveOrUnarchiveTemplate`'s
    * `class.deleteMany` predicate requires to touch these rows at all:
@@ -189,7 +187,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
     });
 
     // Schema convention 0 = Monday; JS `getUTCDay()` 0 = Sunday — the same
-    // conversion `syncTemplateInstances` applies to `dayOfWeek` itself.
+    // conversion the generator applies to `dayOfWeek` itself.
     const dayOfWeek = 1; // Tuesday
     const jsDayOfWeek = (dayOfWeek + 1) % 7;
 
@@ -230,8 +228,8 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
     // HIGH inserted FIRST. An unordered scan over a table this small is a
     // sequential scan, which returns rows in physical order — insertion
     // order for rows this fresh — so a multi-row `Class` writer with no
-    // explicit order (`syncTemplateInstances`'s `updateMany`,
-    // `archiveOrUnarchiveTemplate`'s `deleteMany`) visits [HIGH, LOW] while
+    // explicit order (`archiveOrUnarchiveTemplate`'s `deleteMany`) visits
+    // [HIGH, LOW] while
     // `deleteStudentAccount`'s sorted lock loop visits [LOW, HIGH]. Asserted
     // by each `it` below, not assumed.
     await prisma.class.create({
@@ -242,8 +240,8 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
     // FIRST for the order to hold.
     //
     // Both statuses are equally valid here (`draft` and `open` are both
-    // mutable to `syncTemplateInstances` and both delete candidates for the
-    // archive, so every count below is unchanged), but a fixture that used
+    // delete candidates for the archive, so every count below is unchanged),
+    // but a fixture that used
     // only `open` could not observe the pre-lock's status list at all.
     // `archiveOrUnarchiveTemplate`'s pre-lock renders that list from
     // `SCHEDULED_STATUSES` into raw SQL, and dropping `'draft'` from it left
@@ -282,206 +280,30 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
     return { teacherId: teacher.id, templateId: template.id, studentId: student.id, lowClassId, highClassId };
   }
 
-  it(
-    'does not deadlock: syncTemplateInstances (ordered pre-lock) vs deleteStudentAccount (ascending order) on two shared instances',
-    async () => {
-      const { templateId, studentId, lowClassId, highClassId } = await makeTemplateWithTwoWaitedInstances();
-
-      // The teacher edits the template — the trigger `docs/lock-order.md`
-      // names, and what makes `syncTemplateInstances`'s same-day `updateMany`
-      // run at all. Not what makes the write "real": Postgres takes the
-      // row lock and writes a new tuple version whether or not the new values
-      // differ from the old, so an edit back to the same `startTime` would
-      // lock exactly the same rows.
-      await prisma.classTemplate.update({
-        where: { id: templateId },
-        data: { startTime: '10:30' },
-      });
-
-      // The premise, asserted rather than assumed: an unordered scan over
-      // these two rows returns them in insertion order, the REVERSE of
-      // ascending-by-id. If this ever stops holding — e.g. a bigger table
-      // pushing the planner onto a btree index scan, which visits ascending by
-      // `id` and would make BOTH sides agree — the race below can no longer
-      // form the cycle, and this assertion fails loudly instead of leaving the
-      // test green for an unrelated reason (docs/lock-order.md's own warning
-      // about the `ScalarArrayOp` index-scan trap).
-      const heapOrder = await prisma.$queryRaw<Array<{ id: string }>>`
-        SELECT id FROM "Class" WHERE "templateId" = ${templateId}
-      `;
-      expect(heapOrder.map((r) => r.id)).toEqual([highClassId, lowClassId]);
-
-      // The handshake. `deleteStudentAccount`'s lock loop issues exactly two
-      // `$queryRaw` calls (`lockClassRow`'s `FOR UPDATE`, once per class,
-      // ascending — so LOW first, HIGH second). Keyed on the query's own bound
-      // value — the house rule this repo's other lock-order hooks follow
-      // (`invitations-lock-order.test.ts` keys its own hooks on which bound
-      // key the query carries, not on how many times it has fired) — not on
-      // call sequence. Paraphrased, not quoted: an earlier version put
-      // "keyed on args shape, not call order" in quotation marks as if it
-      // were a line from that file. No such sentence exists there. The moment the LOW lock is granted,
-      // signal the test to start `syncTemplateInstances`, then hold this
-      // transaction here for a beat before letting it ask for HIGH — long
-      // enough for `syncTemplateInstances`'s own `updateMany` to start, lock
-      // HIGH (uncontended — nobody has asked for it yet), and block reaching
-      // for LOW. Without the hold, the two class locks in
-      // `deleteStudentAccount`'s loop are one round trip apart and nothing
-      // could reliably interleave between them — the same reasoning
-      // `invitations-lock-order.test.ts` and `gdpr.test.ts` give for their own
-      // handshakes.
-      let lowLocked!: () => void;
-      const lowLockedPromise = new Promise<void>((resolve) => {
-        lowLocked = resolve;
-      });
-      const erasureDb = prisma.$extends({
-        query: {
-          async $queryRaw({ args, query }) {
-            // Keyed on `studentId`, because that is what `deleteStudentAccount`
-            // now binds: since the #216/#182 review its class locks are taken by
-            // ONE ordered `SELECT … FOR UPDATE OF c` joined through
-            // `WaitlistEntry`, not by a `lockClassRow` per class. The old hook
-            // keyed on `lowClassId` and simply never fired against that shape,
-            // so this test hung on its own handshake for 30s rather than
-            // failing — the harness broke, not the property.
-            //
-            // The interleaving therefore INVERTS, and so does what this test
-            // can prove. There is no window between the LOW and HIGH locks to
-            // slip the other writer into any more, so this signals BEFORE the
-            // statement runs and holds, letting `syncTemplateInstances` take its
-            // own ordered pre-lock first; the erasure then asks for both rows at
-            // once and blocks behind it.
-            //
-            // BE HONEST ABOUT THE COST. With both sides taking every class lock
-            // in a single ordered statement, the AB-BA cycle cannot form — but
-            // it also cannot be CONSTRUCTED, so this test no longer detects a
-            // missing `ORDER BY` on the erasure side. That reduction is not
-            // real: deleting the clause FAILS `gdpr.test.ts`'s deadlock test
-            // ("does not deadlock when a teacher erasure and a student erasure
-            // overlap on two classes"), measured 5/5 with `40P01` on
-            // 2026-08-16 — the erasure's ordering is guarded by a
-            // reproduction the whole time, in that file. That measurement was
-            // machine-specific when it was written: the reproduction needs the
-            // student side driven from `WaitlistEntry`, which was left to the
-            // planner, and CI on the same commit could not even establish the
-            // premise. It holds generally only since #239 forced the plan
-            // there. What still fails in
-            // THIS file is a reverted pre-lock on the sync/archive side (no
-            // `FOR UPDATE`, no pre-lock at all, or a narrowed row set), which
-            // is where this file's mutations were always aimed. The general
-            // guard both files' tests are specific instances of is
-            // `db-locks-lock-order.test.ts`, which pins the helper's own
-            // `ORDER BY c.id`.
-            if (args.values[0] === studentId) {
-              lowLocked();
-              await new Promise((r) => setTimeout(r, 300));
-            }
-            return query(args);
-          },
-        },
-        // `$extends` returns a client missing `$on`, so it is not assignable
-        // to `deleteStudentAccount`'s `PrismaClient`-typed `db` parameter even
-        // though every method it calls here is the real one, running against
-        // the real database — same cast `invitations-lock-order.test.ts` uses
-        // for its own hooked clients.
-      }) as unknown as PrismaClient;
-
-      const b = deleteStudentAccount(erasureDb, studentId);
-
-      await lowLockedPromise;
-
-      // Wrapped in `prisma.$transaction` now: `syncTemplateInstances`
-      // (`template-sync.ts`) no longer opens its own transaction (task 6,
-      // atomic-template-update) — it takes a transaction client and expects
-      // the caller to supply one, composed into `updateClassTemplate`'s
-      // transaction in production. This wrapper IS the transaction that
-      // takes the locks, not a second, unrelated one wrapped around an inner
-      // transaction that used to take them itself.
-      const a = prisma.$transaction((tx) => syncTemplateInstances(tx, templateId));
-
-      // Destructured, not looped over generically — matching the archive
-      // test below, and for the same reason it does: a loop that only ever
-      // inspects rejections asserts the ABSENCE of `40P01`/`55P03`, which a
-      // fixture that never contended for the rows would also satisfy. This
-      // side has no transient-error `catch` of its own — a real deadlock or
-      // lock-timeout surfaces as a rejection here, not a resolved `busy` —
-      // so a rejection check on `aSettled` stays meaningful. What it cannot
-      // catch on its own is a sync that ran uncontended over the WRONG rows
-      // (or none at all), which is why `aSettled.value` is asserted below
-      // too: `synced: 2` is what proves both fixture instances were actually
-      // matched and actually locked by this statement's writes — the same
-      // role `deleted: 2` plays for the archive test, and the heap-order
-      // assertion above plays for lock ORDER, this plays for lock EXISTENCE.
-      const [aSettled, bSettled] = await Promise.allSettled([a, b]);
-
-      // SQLSTATE first, THEN the status check — and the order is the point.
-      // This side is where every pre-lock mutation actually lands (remove the
-      // `FOR UPDATE`, remove the `ORDER BY`, narrow the row set), so a bare
-      // `expect(status).toBe('fulfilled')` reports "expected 'rejected' to be
-      // 'fulfilled'" and names nothing: a `40P01`, a `55P03` and a broken
-      // fixture all look identical in the failure output. That made this
-      // file's own header claim — "Asserted by SQLSTATE, not by 'it passed'"
-      // — true of the erasure branch below and false of the branch that does
-      // the detecting. Asserting the reason first means a reverted pre-lock
-      // fails with the cycle named.
-      if (aSettled.status === 'rejected') {
-        const reason = String(aSettled.reason);
-        expect(reason).not.toMatch(/40P01|deadlock/i);
-        expect(reason).not.toMatch(/55P03/);
-      }
-      expect(aSettled.status).toBe('fulfilled');
-      if (aSettled.status === 'fulfilled') {
-        // Both fixture instances are on the template's own day — only
-        // `startTime` changed, not `dayOfWeek` — so nothing is wrong-day:
-        // `regenerated` (the wrong-day delete count) is 0. Both are future
-        // and `settingsLocked: false`, so both are `mutable`: `synced` is 2
-        // and `kept` (`future.length - mutable.length`) is 0. `toMatchObject`,
-        // not `toEqual` — measured directly (this assertion started as
-        // `toEqual` and failed with the real shape before being corrected):
-        // `TemplateSyncResult` also carries `refilled`/`slotTaken`/
-        // `blockedByCancelled`, all legitimately 0 here (no dayOfWeek change,
-        // so no refill window at all), but asserting them by name isn't this
-        // test's job — `template-sync.test.ts` already owns that.
-        expect(aSettled.value).toMatchObject({ synced: 2, kept: 0, regenerated: 0 });
-      }
-
-      // Also the absence of `55P03`, asserted separately from `40P01|deadlock`
-      // (see this file's top docblock for why one regex would weaken the
-      // guarantee rather than just shorten it) — a lock_timeout expiry means
-      // the template edit did not happen, and that must fail this test, not
-      // satisfy it.
-      // No `else` asserting `'fulfilled'`: `PromiseSettledResult` has exactly
-      // two states, so inside an `else` on `status === 'rejected'` that
-      // assertion cannot fail. It read as coverage and was not.
-      if (bSettled.status === 'rejected') {
-        const reason = String(bSettled.reason);
-        expect(reason).not.toMatch(/40P01|deadlock/i);
-        expect(reason).not.toMatch(/55P03/);
-      }
-    },
-    30_000,
-  );
-
   /**
    * The second half of issue 180. `archiveOrUnarchiveTemplate`'s multi-row
-   * `class.deleteMany` took its locks in heap order for the same reason
-   * `syncTemplateInstances`'s `updateMany` above did — and had no id array to
-   * sort even in principle, because its delete takes a predicate, not an
+   * `class.deleteMany` took its locks in heap order for the same reason the
+   * sync's `updateMany` did (issue 180's first half, deleted with the
+   * function in #194) — and had no id array to sort even in principle,
+   * because its delete takes a predicate, not an
    * `id: { in: [...] } }` filter (`docs/lock-order.md`: "`archiveOrUnarchiveTemplate`
    * does not even pass ids — its `deleteMany` takes a predicate, so it has no
    * array to sort in the first place").
    *
-   * INVERTED here (issue 180 task 4), the same way task 2 inverted the `it`
-   * above: `archiveOrUnarchiveTemplate` now opens with an ordered pre-lock —
+   * INVERTED here (issue 180 task 4), the same way task 2 inverted the sync's
+   * own `it` — the sibling this docblock keeps comparing itself to, which
+   * lived in this file until #194 deleted the function under it.
+   * `archiveOrUnarchiveTemplate` now opens with an ordered pre-lock —
    * `SELECT ... FOR UPDATE OF c ... ORDER BY c.id` over the full
    * `scheduledWhere(templateId, { gt: today })` set, immediately before the
    * `waitlistEntry.findMany` candidate read (`class-template-lifecycle.ts`) —
    * so this assertion now asserts the deadlock's ABSENCE, not its presence.
-   * Leaving this `it` unfixed while task 2 fixed the sibling above was task
-   * 1/3's whole point (a fix at one site would otherwise leave the pairing
-   * live through the other, unnoticed); closing this one is task 4's.
+   * Leaving this `it` unfixed while task 2 fixed the sibling was task 1/3's
+   * whole point (a fix at one site would otherwise leave the pairing live
+   * through the other, unnoticed); closing this one is task 4's.
    *
-   * The handshake mirrors the one above, for the same reason: neither
-   * `deleteMany` (here) nor `updateMany` (above) is JS-observable
+   * The handshake mirrors the sync test's, for the same reason: neither
+   * `deleteMany` (here) nor that `updateMany` is JS-observable
    * mid-statement, so there is no moment to hook on the archive side itself.
    * The hook lives on `deleteStudentAccount`'s `lockClassRow` loop instead —
    * the same `erasureDb` shape, keyed on the LOW class id, signalling once
@@ -498,7 +320,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * the candidate read, the `deleteMany`, the notifications, the record
    * write — runs uncontended, because every row it touches is already held.
    *
-   * **Not a plain rejection race, unlike the sync test above — measured, not
+   * **Not a plain rejection race, unlike the sync test was — measured, not
    * assumed from the brief's illustrative snippet.** Before this task's fix
    * existed, a first run written to this file in the sync test's exact shape
    * (`Promise.allSettled` + a rejection-only negation) was tried directly
@@ -518,7 +340,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * 1. **Never invert on rejections for this pairing.**
    *    `archiveOrUnarchiveTemplate` resolves `{ ok: false, reason: 'busy' }`
    *    on a deadlock rather than rejecting, so a rejection-only negation —
-   *    the sync test's own shape — would pass unconditionally for this
+   *    the sync test's shape — would pass unconditionally for this
    *    fixture, fixed or not (see the transcript above).
    * 2. **Keep the `log.warn` spy this `it` sets up, with its assertion
    *    flipped**: `expect(archiveLostRaceLog).toBeDefined()` becomes
@@ -568,8 +390,8 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
    * rejection alone — `/40P01|deadlock/i` also happens to match Prisma's own
    * `P2034` wording ("write conflict or a deadlock"), substantively the same
    * class of event as `40P01`, and a separate `not.toMatch(/55P03/)` catches
-   * a bare lock-timeout expiry explicitly, for the same reason the sync
-   * test's own two-assertion split does (see this file's top docblock).
+   * a bare lock-timeout expiry explicitly, for the reason this file's top
+   * docblock gives.
    */
   it(
     'does not deadlock: archiveOrUnarchiveTemplate (ordered pre-lock) vs deleteStudentAccount (ascending order) on two shared instances',
@@ -577,10 +399,10 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
       const { templateId, studentId, teacherId, lowClassId, highClassId } =
         await makeTemplateWithTwoWaitedInstances();
 
-      // The premise, asserted rather than assumed — same reasoning as the sync
-      // test's own heap-order check above, re-run here because this is a
-      // second, independent fixture with its own fresh ids, not a rerun of the
-      // same read.
+      // The premise, asserted rather than assumed: the fixture's HIGH-then-LOW
+      // insertion is what makes heap order the reverse of ascending-by-id, and
+      // without that the race is not adversarial. Re-read per `it` because
+      // each builds its own fixture with fresh ids, not a rerun of one read.
       const heapOrder = await prisma.$queryRaw<Array<{ id: string }>>`
         SELECT id FROM "Class" WHERE "templateId" = ${templateId}
       `;
@@ -604,9 +426,9 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
             // The interleaving therefore INVERTS, and so does what this test
             // can prove. There is no window between the LOW and HIGH locks to
             // slip the other writer into any more, so this signals BEFORE the
-            // statement runs and holds, letting `syncTemplateInstances` take its
-            // own ordered pre-lock first; the erasure then asks for both rows at
-            // once and blocks behind it.
+            // statement runs and holds, letting `archiveOrUnarchiveTemplate`
+            // take its own ordered pre-lock first; the erasure then asks for
+            // both rows at once and blocks behind it.
             //
             // BE HONEST ABOUT THE COST. With both sides taking every class lock
             // in a single ordered statement, the AB-BA cycle cannot form — but
@@ -622,7 +444,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
             // planner, and CI on the same commit could not even establish the
             // premise. It holds generally only since #239 forced the plan
             // there. What still fails in
-            // THIS file is a reverted pre-lock on the sync/archive side (no
+            // THIS file is a reverted pre-lock on the archive side (no
             // `FOR UPDATE`, no pre-lock at all, or a narrowed row set), which
             // is where this file's mutations were always aimed. The general
             // guard both files' tests are specific instances of is
@@ -635,7 +457,11 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
             return query(args);
           },
         },
-        // Same cast rationale as the sync test above.
+        // `$extends` returns a client missing `$on`, so it is not assignable
+        // to `deleteStudentAccount`'s `PrismaClient`-typed `db` parameter even
+        // though every method it calls here is the real one, running against
+        // the real database — same cast `invitations-lock-order.test.ts` uses
+        // for its own hooked clients.
       }) as unknown as PrismaClient;
 
       // Spied so an unexpected transient-error `catch` is visible rather than
@@ -658,10 +484,12 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
         // (`class-template-lifecycle.ts`), on the same `db` argument it is
         // passed, so wrapping it here would only start a second, unrelated
         // transaction and prove nothing about the one that actually takes
-        // the locks. `syncTemplateInstances` above no longer shares this
-        // shape: task 6 of the atomic-template-update work made it take an
-        // externally supplied transaction client instead, which is why its
-        // own call site just above IS wrapped.
+        // the locks. (The sync test that used to sit above DID wrap its call
+        // in `prisma.$transaction`, because task 6 of the
+        // atomic-template-update work made that function take an externally
+        // supplied transaction client. Do not copy that shape here from
+        // memory or from `docs/lock-order.md`'s transcripts: this function
+        // owns its transaction, and wrapping it proves nothing.)
         const a = archiveOrUnarchiveTemplate(prisma, templateId, teacherId, 'archived');
 
         const [aSettled, bSettled] = await Promise.allSettled([a, b]);
@@ -689,8 +517,9 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
         // Point 5: the erasure side stays a genuine rejection check — it has
         // no transient-error catch of its own, so a rejection here would be a
         // real deadlock or lock-timeout, not a false negative to explain away.
-        // No `else` asserting `'fulfilled'` — see the sync test's own note:
-        // inside an `else` on `status === 'rejected'` it cannot fail.
+        // No `else` asserting `'fulfilled'`: `PromiseSettledResult` has
+        // exactly two states, so inside an `else` on `status === 'rejected'`
+        // that assertion cannot fail. It reads as coverage and is not.
         if (bSettled.status === 'rejected') {
           expect(String(bSettled.reason)).not.toMatch(/40P01|deadlock/i);
           expect(String(bSettled.reason)).not.toMatch(/55P03/);
@@ -795,9 +624,9 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
             // The interleaving therefore INVERTS, and so does what this test
             // can prove. There is no window between the LOW and HIGH locks to
             // slip the other writer into any more, so this signals BEFORE the
-            // statement runs and holds, letting `syncTemplateInstances` take its
-            // own ordered pre-lock first; the erasure then asks for both rows at
-            // once and blocks behind it.
+            // statement runs and holds, letting `archiveOrUnarchiveTemplate`
+            // take its own ordered pre-lock first; the erasure then asks for
+            // both rows at once and blocks behind it.
             //
             // BE HONEST ABOUT THE COST. With both sides taking every class lock
             // in a single ordered statement, the AB-BA cycle cannot form — but
@@ -813,7 +642,7 @@ describe('Class row lock order: multi-row writers vs deleteStudentAccount (#180)
             // planner, and CI on the same commit could not even establish the
             // premise. It holds generally only since #239 forced the plan
             // there. What still fails in
-            // THIS file is a reverted pre-lock on the sync/archive side (no
+            // THIS file is a reverted pre-lock on the archive side (no
             // `FOR UPDATE`, no pre-lock at all, or a narrowed row set), which
             // is where this file's mutations were always aimed. The general
             // guard both files' tests are specific instances of is

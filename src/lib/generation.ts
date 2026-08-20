@@ -5,14 +5,19 @@
  * own — but note what that claim rests on: it is not, at present, load-bearing
  * for any client bundle, unlike `src/lib/tiers.ts` and `src/lib/class-fields.ts`,
  * which each name real `'use client'` files that *value*-import them. Today's
- * importers are two server-side generators (`import type` only) and, since
- * `countSkipReasons` below, five more server-only services and routes that
+ * importers are two server-side generators (`import type` only —
+ * `class-generator.ts`, `studio-class-generator.ts`) and, since
+ * `countSkipReasons` below, four more server-only services and routes that
  * *value*-import it: `api/class-templates/route.ts`,
  * `api/studio-class-templates/route.ts`, `class-template-lifecycle.ts`,
- * `studio-class-template-lifecycle.ts`, `template-sync.ts`. None of those is a
- * `'use client'` file, so the client-bundle conclusion still holds — but the
- * "only importers" half of this sentence should be re-checked before being
- * trusted, the same way this paragraph corrects it now.
+ * `studio-class-template-lifecycle.ts`. (`generation.test.ts` value-imports it
+ * too, by relative path; a test is not a bundle.) There was a fifth,
+ * `template-sync.ts`, until #194 deleted it. None of those is a `'use client'`
+ * file, so the client-bundle conclusion still holds — but the "only importers"
+ * half of this sentence should be re-checked before being trusted, the same
+ * way this paragraph corrects it now. The check is
+ * `grep -rn "lib/generation'" src/ --include="*.ts" --include="*.tsx"`, wide
+ * enough to see the relative-path importer a `@/lib/generation` grep misses.
  *
  * The import-free rule is kept anyway because these names are meant to reach
  * the copy layer — `template-action-messages.ts` takes the counts as bare
@@ -87,13 +92,13 @@ export interface SkipCounts {
  * caller surfaces. Five call sites used to each filter three of five
  * `SkipReason` members by hand — `api/class-templates/route.ts`,
  * `api/studio-class-templates/route.ts`, `class-template-lifecycle.ts`,
- * `studio-class-template-lifecycle.ts`, `template-sync.ts` — so a sixth
- * `SkipReason` member would have compiled clean and vanished at every one of
- * them. The exhaustive `switch` below is what turns that into a single
- * compile error instead: this project already uses the `const unhandled:
- * never` idiom for exactly this shape (see the API routes' own `never`
- * exhaustiveness checks), and reducing once is what lets one instance of it
- * cover all five call sites rather than needing five.
+ * `studio-class-template-lifecycle.ts`, and `template-sync.ts` until #194
+ * deleted it — so a sixth `SkipReason` member would have compiled clean and
+ * vanished at every one of them. The exhaustive `switch` below is what turns
+ * that into a single compile error instead: this project already uses the
+ * `const unhandled: never` idiom for exactly this shape (see the API routes'
+ * own `never` exhaustiveness checks), and reducing once is what lets one
+ * instance of it cover every call site rather than needing one each.
  */
 export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
   let blockedByCancelled = 0;

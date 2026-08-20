@@ -43,7 +43,6 @@ import { lockClassRowsOrdered, setLockTimeout } from '@/lib/db-locks';
 // value-imports anything in this chain.
 import { log } from '@/lib/log';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
-import { syncTemplateInstances, type TemplateSyncResult } from './template-sync';
 import { generateInstancesForTemplate, claimTemplateForGeneration } from './class-generator';
 import { CHARGED_STATUSES } from './class-lifecycle';
 import { countSkipReasons, type SkipCounts } from '@/lib/generation';
@@ -82,18 +81,18 @@ void _templateUpdateColumnsExist;
  * The fields a teacher may change on their own template via
  * `PUT /api/class-templates/[id]`.
  *
- * Adding a member is how a new schema field gets authorized. Three kinds of
- * member already here carry consequences beyond the template row — check what
- * you are joining before adding another:
- *   - `dayOfWeek`     → `syncTemplateInstances` DELETES generated instances on
- *                       the old day (a different day is a different class) and
- *                       the generator refills on the new one. The most
- *                       destructive field on this list.
+ * Adding a member is how a new schema field gets authorized. Since #194 a
+ * template is a stamp, not a live link: editing one of these fields changes
+ * the template row and NOTHING else. No generated `Class` moves, is rewritten,
+ * or is deleted — not on a `dayOfWeek` change, not on a rate change, not on a
+ * room change. The next generation run reads the new values; every class
+ * already on the schedule keeps the values it was stamped with.
+ *
+ * One member still carries a consequence beyond the row, and it is the reason
+ * this list is an allowlist rather than a schema dump:
  *   - `teacherRoomId` → cross-teacher. The ownership check in
  *                       `updateClassTemplate` is the only thing stopping a
  *                       teacher attaching their template to another's room.
- *   - the economic fields → propagate to instances with no registrations;
- *                       anything a student has booked keeps its settings.
  */
 type TeacherEditableClassTemplateField =
   | 'classType'
@@ -227,7 +226,7 @@ void _templateAllowlistHasNoForbiddenFields;
  * callers own the user-facing wording.
  */
 export type UpdateClassTemplateResult =
-  | { ok: true; template: ClassTemplate; sync: TemplateSyncResult }
+  | { ok: true; template: ClassTemplate }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'no_fields' }
@@ -265,86 +264,80 @@ export type UpdateClassTemplateResult =
    */
   | { ok: false; reason: 'room_archived' }
   | { ok: false; reason: 'slot_conflict' }
-  | { ok: false; reason: 'sync_conflict' }
   /**
    * This transaction lost a contention race and rolled back whole, so nothing
    * was applied and the identical request can win the next attempt.
    *
-   * TWO row families can produce it, and an earlier version of this docblock
-   * named only the first — which made the enumeration wrong from the moment
-   * the write and the sync became one transaction:
+   * ONE row family can produce it: the `ClassTemplate` row itself, held by a
+   * concurrent generation claim, archive, or pause/resume.
    *
-   * 1. The `ClassTemplate` row, held by a concurrent generation claim,
-   *    archive, or pause/resume. The only cause while this function's write
-   *    was a transaction of its own.
-   * 2. **Any `Class` row of this template**, held by an ordinary booking.
-   *    `syncTemplateInstances` (`template-sync.ts`) is composed into this
-   *    transaction now and takes an ordered `FOR UPDATE OF c` over every
-   *    future instance, while `POST /api/registrations` holds its `Class` row
-   *    `FOR UPDATE` for the length of its own transaction. #104 bounds how
-   *    long that statement WAITS to acquire the row — the booking now takes
-   *    it through `lockClassRow` — but bounds nothing about how long the
-   *    booking HOLDS the row once acquired, and it is that hold this race is
-   *    about. So a student booking one instance can now time a teacher's edit
-   *    out at 2s. `lockClassRow`, not the `lockClassRowsOrdered` the sync's
-   *    own pre-lock calls: two different exports of `db-locks.ts`, sharing
-   *    `setLockTimeout`'s 2s bound and nothing else — the ordered one is the
-   *    only production `FOR UPDATE OF c` and carries an `ORDER BY c.id`
-   *    obligation the single-row helper has no need of. Reading them as one
-   *    code path would make the ordering guarantee look wider than it is.
-   *    `archiveOrUnarchiveTemplate` documents the same exposure for its own
-   *    pre-lock ("that one can lose to an ordinary booking holding a `Class`
-   *    row"); this function acquired it in the same branch and inherits it.
+   * It was two for the length of one branch. While the write and the
+   * propagation were one transaction, any `Class` row of this template could
+   * lose the race too — the sync took an ordered `FOR UPDATE OF c` over every
+   * future instance, and an ordinary booking holding one `FOR UPDATE` for the
+   * length of its own transaction could time a teacher's edit out at 2s.
+   * #194 deleted the sync, so this transaction takes no `Class` locks at all
+   * and that second family is gone with it: the edit path has left the
+   * deadlock graph entirely. Do not re-derive it from the archive's
+   * exposure — `archiveOrUnarchiveTemplate` still holds an ordered pre-lock
+   * and still documents that race for itself; this function no longer shares
+   * it.
    *
-   * The log line at the `catch` deliberately names neither, because the code
-   * cannot tell them apart — `err`'s invocation line can, and is logged.
+   * The log line at the `catch` still logs `err`, whose invocation line names
+   * the statement that lost, which is the fastest way to tell a claim from an
+   * archive from a pause.
    *
    * See `ArchiveTemplateResult`'s `busy` arm for the fuller range of causes
    * `isTransientDbError` matches; this arm is produced by the same helper.
-   * Read its `40P01` paragraph with care, though: it says "this function is
-   * one side of" the `{Class, ClassTemplate}` ordering question (issue #229),
-   * meaning the archive. This branch made `updateClassTemplate` a fifth site
-   * on that same side (`docs/lock-order.md`, "Known violation, not fixed
-   * here"), so a `40P01` here carries the same reading.
+   * Its `40P01` paragraph no longer extends to this function, though: it says
+   * "this function is one side of" the `{Class, ClassTemplate}` ordering
+   * question (issue #229), meaning the archive. `updateClassTemplate` was a
+   * fifth site on that side for as long as it locked `Class` rows; it is not
+   * one now, so a `40P01` here can only come from the `ClassTemplate` row.
    */
   | { ok: false; reason: 'busy' };
 
 /**
- * Apply a partial update to a class template, then propagate it to the
- * instances that are still mutable.
+ * Apply a partial update to a class template. The template row, and nothing
+ * else.
+ *
+ * A template is a stamp, not a live link (#194): no already-generated `Class`
+ * is moved, rewritten or deleted by an edit — not its day, not its time, not
+ * its room, not its rates, not its capacity. The rule has no exception, which
+ * is the point of it; "what happens to my existing classes when I change
+ * this?" has exactly one answer. Until #194 this function also ran
+ * `syncTemplateInstances`, which rewrote unbooked future instances and DELETED
+ * the ones sitting on a superseded weekday. That function is gone, not
+ * narrowed.
  *
  * Takes `teacherId` rather than a session: this is the ownership check, and
  * keeping it a plain argument is what lets the function be tested without HTTP.
  *
- * The write and the propagation are ONE transaction (atomic-template-update,
- * issue 83) — not two, as this function used to run them, and not three
- * either: `syncTemplateInstances`'s delete/update step and the refill that
- * follows a day change both compose into the same `tx` now too (see
- * `template-sync.ts`), rather than the refill running afterward, outside any
- * transaction. A failure anywhere in that chain rolls the template write back
- * with it, so there is no longer a window where the row is updated but the
- * propagation partially applied. The `catch` sits OUTSIDE the `$transaction`
- * call, the same shape `archiveOrUnarchiveTemplate` and `POST
+ * The `$transaction` now wraps a single `update`, and survives for one
+ * reason: `SET LOCAL lock_timeout` is a no-op outside a transaction
+ * (`db-locks.ts`), so deleting the wrapper would silently delete the #100/#209
+ * lock bound with it. See the budget comment at the call for the same warning
+ * where someone trimming this would read it. The `catch` sits OUTSIDE the
+ * `$transaction` call, the same shape `archiveOrUnarchiveTemplate` and `POST
  * /api/class-templates` already use: a P2002 raised inside Postgres aborts
  * the transaction, so there is nothing to catch from within, and the whole
  * thing rolling back is what makes catching it after the fact meaningful —
  * every reason mapped below describes a transaction that did not commit.
  *
- * Four shapes are mapped below rather than left to propagate as a 500: P2025
+ * Three shapes are mapped below rather than left to propagate as a 500: P2025
  * becomes `{ ok: false, reason: 'not_found' }`, because the row is gone
  * before the caller is answered (#100); a P2002 on
- * `ClassTemplate_teacher_slot_unique` — raised by the `update` call above
+ * `ClassTemplate_teacher_slot_unique` — raised by the `update` call below
  * writing this template's own `dayOfWeek`/`startTime` — becomes
- * `slot_conflict` (#196); a P2002 on `Class_teacher_slot_unique` — raised by
- * `syncTemplateInstances`'s same-day rewrite colliding with an instance the
- * propagation never touches — becomes `sync_conflict` (#196), and now means
- * the whole transaction rolled back rather than a partially applied change
- * (see that branch's own comment below); and `isTransientDbError` matching —
- * a holder of either the `ClassTemplate` row or any of this template's
- * future `Class` rows outlasting the `setLockTimeout` bound below — becomes
- * `busy`. The second family is new with this transaction and is easy to miss:
- * see the `busy` arm's own docblock on `UpdateClassTemplateResult` above,
- * which enumerates both. Everything else still propagates as an opaque 500.
+ * `slot_conflict` (#196); and `isTransientDbError` matching — a holder of the
+ * `ClassTemplate` row outlasting the `setLockTimeout` bound below — becomes
+ * `busy`. There was a fourth, `sync_conflict`: a P2002 on
+ * `Class_teacher_slot_unique` raised when the propagation rewrote a generated
+ * instance's `startTime` onto a slot some other class already held. Nothing
+ * writes a `Class` row here any more, so that error can no longer be raised
+ * and the arm is gone; `slot_conflict`, which is the template's own slot
+ * index and a different failure entirely, stays. Everything else still
+ * propagates as an opaque 500.
  */
 export async function updateClassTemplate(
   db: PrismaClient,
@@ -371,8 +364,8 @@ export async function updateClassTemplate(
   // Defined-value scan, matching `updateClass`'s own `hasEdit` check
   // (`class-lifecycle.ts`): a key present with value `undefined` is not an
   // edit. A key-count check would let `{ description: undefined }` clear
-  // this guard, issue a no-op `update`, run a full sync for nothing, and
-  // still report `ok: true`.
+  // this guard, issue a no-op `update`, take the template row's lock for
+  // nothing, and still report `ok: true`.
   const hasEdit = Object.values(data).some((v) => v !== undefined);
   if (!hasEdit) return { ok: false, reason: 'no_fields' };
 
@@ -420,70 +413,41 @@ export async function updateClassTemplate(
   }
 
   try {
-    const { updated, sync } = await db.$transaction(
+    // `updated`, not `template`: the pre-transaction read at the head of this
+    // function is already called `template`, and the `catch` below turns on
+    // keeping the two apart — "the read above and the write inside the
+    // transaction are not the same statement" is the sentence that explains
+    // why P2025 has one source. Two values that the error mapping
+    // distinguishes should not share a name.
+    const updated = await db.$transaction(
       async (tx) => {
-        // First statement, deliberately — bounds every statement left in this
-        // transaction, the `update` immediately below it first among them. A
-        // concurrent generation claim, archive, or pause/resume can hold this
-        // row locked for the duration of its own transaction.
+        // First statement, deliberately — and now the only statement it has
+        // to bound, the `update` immediately below it. A concurrent
+        // generation claim, archive, or pause/resume can hold this row locked
+        // for the duration of its own transaction.
         //
-        // Without it the wait is bounded by NOTHING, not by the 15s budget
-        // below: Prisma checks that budget at statement boundaries, so it
-        // "cannot roll back a statement already blocked inside Postgres, only
-        // refuse to start a new one" (`db-locks.ts`).
+        // Without it the wait is bounded by NOTHING, not by the budget below:
+        // Prisma checks that budget at statement boundaries, so it "cannot
+        // roll back a statement already blocked inside Postgres, only refuse
+        // to start a new one" (`db-locks.ts`).
         //
-        // `syncTemplateInstances` (`template-sync.ts`) issues its own
-        // `setLockTimeout(tx)`, but only just before its own pre-lock — which
-        // runs AFTER `classTemplate.update` below, so that call alone would
-        // leave this transaction's true first statement unbounded. Calling it
-        // again here is not redundant: `SET LOCAL lock_timeout` is idempotent
-        // within one transaction — verified in psql that a later call
-        // overwrites the earlier rather than stacking or erroring
-        // (`db-locks.ts`, `LOCK_TIMEOUT_SQL`'s docblock, the
-        // "verified in psql that a later `SET LOCAL lock_timeout` overwrites
-        // the earlier one" sentence) — so the two coexist safely.
-        //
-        // Which of the two is load-bearing, stated exactly, because the
-        // tempting shorthand ("the inner one covers its other callers") is
-        // false: this is `syncTemplateInstances`'s ONLY production call site
-        // (`api/class-templates/route.ts` says the same thing from the other
-        // side — "its one production caller"). The inner `setLockTimeout` is
-        // therefore not covering production traffic this call does not; it
-        // earns its place two other ways. It bounds the test harnesses that
-        // compose the function directly into a bare `prisma.$transaction`
-        // (`template-sync.test.ts`, `template-lock-order.test.ts`), none of
-        // which issues the bound itself. And it keeps the function correct
-        // standalone, so a second caller can compose it without having to
-        // know that the bound is someone else's responsibility.
+        // This call was once one of two — `syncTemplateInstances` issued its
+        // own before its pre-lock, and the note here explained which of the
+        // two was load-bearing. #194 deleted that function, so there is one
+        // `setLockTimeout` on this path and no ambiguity left to resolve.
         await setLockTimeout(tx);
 
-        // `updated`, not `template`: the pre-transaction read at the head of
-        // this function is already called `template`, and the `catch` below
-        // turns on keeping the two apart — "the read above and the write
-        // inside the transaction are not the same statement" is the sentence
-        // that explains why P2025 now has one source instead of two. Two
-        // values that the error mapping distinguishes should not share a name.
-        const updated = await tx.classTemplate.update({ where: { id: templateId }, data });
-
-        // Composed into this transaction, not opening its own. Safe since
-        // #164/#192 (PR #204): `generateInstancesForTemplate` has no `catch`
-        // and inserts with a bare `ON CONFLICT DO NOTHING`, so the refill
-        // cannot abort the transaction it now runs inside.
-        //
-        // A statement rather than a property initialiser in the `return`
-        // below: this is the second of the transaction's two load-bearing
-        // steps — a pre-lock, four reads and up to three writes — and it read
-        // as an afterthought inlined into an object literal.
-        const sync = await syncTemplateInstances(tx, templateId);
-
-        return { updated, sync };
+        return tx.classTemplate.update({ where: { id: templateId }, data });
       },
-      // Five statements here can wait on a lock at 2s each (spec §2.4);
-      // 10_000 would be consumed entirely by lock waits.
-      { timeout: 15_000 },
+      // One statement now, where there were five (#194 deleted the sync).
+      // The transaction survives only to scope `SET LOCAL lock_timeout`, which
+      // is a no-op outside one (`db-locks.ts`) — remove the transaction and
+      // the #100/#209 bound goes with it, silently. That is the whole reason
+      // it is still here; it is not vestigial.
+      { timeout: 10_000 },
     );
 
-    return { ok: true, template: updated, sync };
+    return { ok: true, template: updated };
   } catch (err) {
     // Transient first, matching the order `pauseOrResumeTemplate` and
     // `archiveOrUnarchiveTemplate` use in this same file. Not
@@ -494,49 +458,38 @@ export async function updateClassTemplate(
     // re-derive that for each of the five template lifecycle functions this
     // helper now guards.
     if (isTransientDbError(err)) {
-      // "a lock race", not "the template lock race". Since the write and the
-      // sync became one transaction this can be lost on the `ClassTemplate`
-      // row OR on any future `Class` row of the template — the sync's ordered
-      // pre-lock takes those, and an ordinary booking holds one for the length
-      // of its own transaction. The HOLD is what matters here and it is not
-      // bounded by anything; #104 bounded only the WAIT, at every site
-      // including this one. See the `busy` arm on `UpdateClassTemplateResult`
-      // above, cause 2, for that distinction spelled out. Naming the template
-      // row sent an operator to check the generation sweep and the archive
-      // path for a race that was actually a student booking, and find
-      // nothing. The code cannot tell
-      // the two apart; `err`'s invocation line can, which is why it is logged
-      // rather than summarised here. See the `busy` arm on
-      // `UpdateClassTemplateResult` for both families.
+      // The template row, and it can now be named: this transaction takes one
+      // lock and it is the `ClassTemplate` row's. For one branch the message
+      // deliberately said "template row or one of its instances", because the
+      // composed sync's ordered pre-lock meant a student booking a single
+      // instance could time a teacher's edit out and an operator sent to the
+      // generation sweep would find nothing. #194 deleted the sync; no `Class`
+      // row is locked here any more, so the vaguer wording would now send that
+      // operator to look for a race the code cannot have. `err` is still
+      // logged — its invocation line names the statement that lost, which
+      // separates a generation claim from an archive from a pause/resume.
       log.warn(
         { err, templateId, teacherId },
-        'recurring class edit lost a lock race (template row or one of its instances) — nothing committed',
+        'recurring class edit lost a lock race on the template row — nothing committed',
       );
       return { ok: false, reason: 'busy' };
     }
 
     // The read above and the write inside the transaction are not the same
     // statement, so a delete landing in the gap between them still surfaces
-    // here as Prisma's P2025 — but from one source now, not two.
-    // `syncTemplateInstances`'s opening `findUniqueOrThrow` used to be a
-    // second source: before this ran inside the same transaction as the
-    // write, it re-read the row after the update had already committed with
-    // no lock held in between, so a delete landing in that gap could raise
-    // its own P2025, and telling the two apart needed the invocation line at
-    // the head of `err.message` rather than the one-word-apart cause string.
-    // That second source is gone: `syncTemplateInstances`'s read now runs
-    // inside this same transaction, on a row `classTemplate.update` has
-    // already locked, so nothing else can delete it out from under that read
-    // before this transaction ends. Only `classTemplate.update` itself can
-    // still raise this — when a concurrent delete lands between the read-time
-    // guard above and this transaction's own `update` — so map it to the
-    // same outcome that guard would have produced, rather than letting it
-    // fall through as an opaque 500.
+    // here as Prisma's P2025 — from one source, `classTemplate.update`
+    // itself. (Two branches ago the sync's opening `findUniqueOrThrow` was a
+    // second source, telling them apart needed the invocation line at the head
+    // of `err.message`, and composing the sync into this transaction closed
+    // it. #194 deleted the sync outright, so the question cannot come back
+    // through that door.) Map it to the same outcome the read-time guard above
+    // would have produced, rather than letting it fall through as an opaque
+    // 500.
     //
     // That reports `not_found` for a delete that beat this transaction to the
-    // row, so nothing here commits — no template write, no sync. The row
-    // really is gone, though, so the write that raced this one has its own
-    // consequences worth naming: `Class.template` is `onDelete: SetNull`
+    // row, so nothing here commits. The row really is gone, though, so the
+    // write that raced this one has its own consequences worth naming:
+    // `Class.template` is `onDelete: SetNull`
     // (`prisma/schema.prisma`), so deleting a template does not take its
     // generated classes with it. Each keeps standing with `templateId: null`,
     // still `open`, still on the teacher's schedule and public booking page,
@@ -547,40 +500,24 @@ export async function updateClassTemplate(
       return { ok: false, reason: 'not_found' };
     }
 
-    // Two more sources under this one `try`, added by #196, and they raise
-    // two different column shapes because they are two different tables. The
-    // `update` above writes `dayOfWeek`/`startTime` straight from `data` (both
-    // on `TeacherEditableClassTemplateField`), so it can collide on this
-    // template's own `ClassTemplate_teacher_slot_unique`. `syncTemplateInstances`
-    // (`template-sync.ts`)'s `sameDay` block then rewrites `startTime` on every
-    // still-mutable generated `Class` sharing this template's day, and each of
-    // those can independently collide on `Class_teacher_slot_unique` with a
-    // class the propagation never touches — a manually created draft, say, or
-    // an instance of a different template — sitting at the slot the new
-    // `startTime` now lands on. `isUniqueConflictOn`'s column-set match is what
-    // tells the two apart without needing `modelName`: neither column set names
-    // the other table.
+    // One more source under this `try`, from #196. The `update` above writes
+    // `dayOfWeek`/`startTime` straight from `data` (both on
+    // `TeacherEditableClassTemplateField`), so it can collide on this
+    // template's own `ClassTemplate_teacher_slot_unique` — a second template
+    // of this teacher's already sitting on the requested day and time.
+    //
+    // A second branch stood here until #194, matching
+    // `Class_teacher_slot_unique` (`teacherId`, `date`, `startTime`) and
+    // returning `sync_conflict`: the propagation rewrote `startTime` on every
+    // still-mutable generated `Class` sharing this template's day, and any one
+    // of those could collide with a class the propagation never touched. This
+    // transaction writes no `Class` row at all now, so that P2002 has no way
+    // to be raised from here. The two are NOT variants of one check to be
+    // re-merged later — they are different tables and different indexes, and
+    // `isUniqueConflictOn`'s column-set match is what told them apart without
+    // needing `modelName`.
     if (isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime'])) {
       return { ok: false, reason: 'slot_conflict' };
-    }
-    if (isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])) {
-      // Logged because this `return` would otherwise be silent: `respondError`
-      // (`api/class-templates/[id]/route.ts`) does not log, and
-      // `withErrorHandler` logs only on `throw`, which this path does not do
-      // — without this line a `sync_conflict` 409 is invisible to an
-      // operator. #209.
-      //
-      // What it means now (task 6, atomic-template-update): the whole
-      // transaction above rolled back, `classTemplate.update` included —
-      // propagating the new `startTime` to a still-mutable generated
-      // instance would have collided with an existing class, so nothing
-      // committed. This is NOT evidence of a template/instance desync to go
-      // reconcile; there is nothing left inconsistent to fix.
-      log.warn(
-        { templateId, teacherId },
-        'recurring class edit refused (sync_conflict): propagating startTime to a generated instance would collide with an existing class — nothing changed',
-      );
-      return { ok: false, reason: 'sync_conflict' };
     }
     throw err;
   }
@@ -670,9 +607,10 @@ export type PauseTemplateResult =
        * with `Property '…' is missing … but required in type 'SkipCounts'`.
        *
        * Covers this arm and `ResumeTransactionOutcome`'s. The studio family's
-       * destructure, `api/class-templates/route.ts` and `template-sync.ts`
-       * still re-list by hand and would still drop a new count — same fix,
-       * deliberately not smuggled into a class-family locking PR.
+       * destructure and `api/class-templates/route.ts` still re-list by hand
+       * and would still drop a new count — same fix, deliberately not
+       * smuggled into a class-family locking PR. (`template-sync.ts` was a
+       * third such site; #194 deleted it.)
        */
     } & SkipCounts)
   | { ok: true; action: 'unchanged'; template: ClassTemplate }

@@ -129,11 +129,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // caller rather than through itself.
       //
       // Sites that DO budget past 5s, stated as a list rather than as the
-      // list: the five template lifecycle functions (`updateClassTemplate`,
-      // `pauseOrResumeTemplate`, `archiveOrUnarchiveTemplate` and their two
-      // studio twins — `updateClassTemplate` is the fifth, since the
-      // atomic-template-update branch gave its transaction its own
-      // `{ timeout: 15_000 }`), both generator sweeps (`generateClassInstances`,
+      // list: the SIX template lifecycle functions — `updateClassTemplate`,
+      // `pauseOrResumeTemplate`, `archiveOrUnarchiveTemplate` and all three
+      // studio twins (`updateStudioClassTemplate`,
+      // `pauseOrResumeStudioTemplate`, `archiveOrUnarchiveStudioTemplate`),
+      // every one of them now at a flat `{ timeout: 10_000 }` — both
+      // generator sweeps (`generateClassInstances`,
       // `generateStudioClassInstances`), this route's own studio twin, and
       // **both GDPR erasures** — `deleteStudentAccount`'s flat
       // `{ timeout: 20_000 }` (sized until #240) and
@@ -143,12 +144,23 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // said "the ones that do budget past it are" and omitted both, which is
       // the definite-article trap this whole comment is otherwise about.
       //
-      // `syncTemplateInstances` (`template-sync.ts`) no longer belongs on
-      // either list: since the atomic-template-update branch (issue 83) it
-      // opens no transaction of its own, so it runs under whatever budget its
-      // one production caller sets — `updateClassTemplate`'s
-      // `{ timeout: 15_000 }` (`class-template-lifecycle.ts`) — not under
-      // Prisma's 5s default the way it used to.
+      // Six, and all six at 10s, only since #194 — this sentence said "five"
+      // and singled `updateClassTemplate` out at `{ timeout: 15_000 }`. Two
+      // separate corrections, recorded because the definite-article trap this
+      // whole comment is about is exactly how both survived:
+      //
+      //   - `updateStudioClassTemplate` budgets 10s too and always did. It
+      //     was simply missed; "their two studio twins" counted the pause and
+      //     the archive and forgot the edit.
+      //   - `updateClassTemplate` dropped 15s → 10s. #194 deleted
+      //     `syncTemplateInstances`, which was four of the five statements
+      //     that could each wait 2s in that transaction, leaving one.
+      //
+      // That deletion also takes the edit path off the counterparty list
+      // above: `updateClassTemplate` takes no `Class` locks at all now, so it
+      // can neither be waited on nor deadlock against anything this route
+      // does. `syncTemplateInstances` used to be argued about on both lists
+      // and is on neither, having ceased to exist.
       //
       // No claim is taken here (the row is brand-new inside this transaction, so
       // nothing can race the insert), which also means no claim `lock_timeout`
@@ -161,12 +173,15 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // of this comment claimed it did. Prisma checks the budget at statement
       // boundaries, so it "cannot roll back a statement already blocked inside
       // Postgres, only refuse to start a new one" (`db-locks.ts`) — measured
-      // by the four 10s lifecycle functions' mutation records, where removing
+      // by the 10s lifecycle functions' mutation records, where removing
       // their `setLockTimeout` leaves the blocked statement outliving that
-      // budget rather than being aborted at it. Four, not five: the fifth,
-      // `updateClassTemplate`, budgets `{ timeout: 15_000 }`, so "the 10s
-      // budget" was never its measurement to cite. What the budget buys is room
-      // for the three statements' own runtime; the FK wait itself is unbounded.
+      // budget rather than being aborted at it. A caveat stood here excluding
+      // `updateClassTemplate` from that evidence, on the grounds that it
+      // budgeted 15s so "the 10s budget" was never its measurement to cite.
+      // #194 moved it to 10s and the exclusion is moot — deleted rather than
+      // renumbered, because its reason is gone, not its arithmetic. What the
+      // budget buys is room for the three statements' own runtime; the FK
+      // wait itself is unbounded.
       //
       // No `setLockTimeout` here, and that is a scope decision rather than an
       // oversight — tracked as issue 228, which moves this transaction into a

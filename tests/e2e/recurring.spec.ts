@@ -26,9 +26,12 @@ const suffix = uniqueSuffix();
 
 // Three days from now, so the template's weekday never lands on the run
 // day itself. On the run day the counts turn time-of-day-dependent: the
-// generator skips today's occurrence once its start time has passed, and
-// template sync never touches today's instance at all — a fixed weekday
-// made this suite fail every time CI ran on that weekday.
+// generator skips today's occurrence once its start time has passed — a
+// fixed weekday made this suite fail every time CI ran on that weekday.
+// (A second source of that time-of-day dependence used to sit here: the
+// template sync skipped today's instance too. #194 deleted it, so the
+// generator is now the only one, and the reason to stay off the run day
+// is unchanged.)
 const templateDate = new Date();
 templateDate.setUTCDate(templateDate.getUTCDate() + 3);
 const templateJsDay = templateDate.getUTCDay();
@@ -162,19 +165,51 @@ test.describe('Recurring classes', () => {
     await expect(page.getByText('Open for registration')).toBeVisible();
   });
 
-  test('editing the template syncs unbooked instances and says so', async ({ page }) => {
+  // Rule 1 of #194 at the only level a teacher actually experiences it: they
+  // change the start time in the form, press Save, and their four already-
+  // scheduled classes do not move. This is the inverse of the test it
+  // replaces, which drove the same form and asserted the opposite — that all
+  // four had been rewritten to 10:00 and that the form said "Applied to 4
+  // upcoming classes."
+  //
+  // Worth more than the test it replaces, and worth keeping when `Saved.`
+  // grows into task 6's real sentence: `npm run verify` is
+  // `typecheck && lint && vitest` (`package.json`), so Playwright runs only
+  // under `test:e2e`. Nothing else in the toolchain proves that the form, the
+  // route and the service agree about what an edit does — the vitest suites
+  // each prove one layer.
+  test('editing the template leaves the already-scheduled instances where they are', async ({
+    page,
+  }) => {
+    const before = await prisma.class.findMany({
+      where: { templateId },
+      orderBy: { date: 'asc' },
+    });
+    expect(before.length).toBe(4);
+    expect(before.every((c) => c.startTime === '08:15')).toBe(true);
+
     await page.goto(`/settings/recurring/${templateId}`);
     await page.getByLabel('Start time').fill('10:00');
     await page.getByRole('button', { name: 'Save', exact: true }).click();
 
-    await expect(page.getByText(/Applied to 4 upcoming classes\./)).toBeVisible({
-      timeout: 10_000,
-    });
+    // Bare on purpose for one commit — task 6 replaces this with the sentence
+    // naming the week the change first takes effect. Asserted at all because
+    // the form must still confirm the save; a silent success reads as a
+    // failure to a teacher.
+    await expect(page.getByText('Saved.')).toBeVisible({ timeout: 10_000 });
 
-    const instances = await prisma.class.findMany({ where: { templateId } });
-    expect(instances.length).toBe(4);
-    for (const instance of instances) {
-      expect(instance.startTime).toBe('10:00');
-    }
+    // The template moved.
+    const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id: templateId } });
+    expect(template.startTime).toBe('10:00');
+
+    // The classes did not — same rows, same ids, same time. Asserted on ids
+    // as well as times: "still four rows at 08:15" would also be satisfied by
+    // a delete-and-refill that happened to land on the old time.
+    const after = await prisma.class.findMany({
+      where: { templateId },
+      orderBy: { date: 'asc' },
+    });
+    expect(after.map((c) => c.id)).toEqual(before.map((c) => c.id));
+    expect(after.every((c) => c.startTime === '08:15')).toBe(true);
   });
 });

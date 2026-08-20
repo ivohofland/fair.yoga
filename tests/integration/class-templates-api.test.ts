@@ -1044,8 +1044,24 @@ describe('PUT /api/class-templates/[id]', () => {
     return { roomId: room.id, teacherRoomId: teacherRoom.id };
   };
 
-  it('updates the template and propagates to its still-mutable instances', async () => {
+  // Rule 1 of #194, at the level a teacher experiences it: the template is a
+  // stamp, so the edit lands on the template row and NOTHING else. This case
+  // is the inverse of the one it replaces, which asserted every unbooked
+  // future instance had been rewritten to match — the behaviour
+  // `syncTemplateInstances` provided and #194 deleted.
+  //
+  // Asserted over ALL instances, not the `date > now` subset the old case
+  // used. That filter existed because the sync only reached future rows; with
+  // nothing propagating there is no boundary left to respect, and the wider
+  // set is the stronger claim.
+  it('updates the template and leaves every generated instance untouched', async () => {
     const id = await createTemplate('Editable Flow', '09:43');
+
+    const before = await prisma.class.findMany({
+      where: { templateId: id },
+      orderBy: { date: 'asc' },
+    });
+    expect(before.length).toBeGreaterThan(0);
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
@@ -1055,22 +1071,83 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(res.status).toBe(200);
 
     const { data } = (await res.json()) as {
-      data: { classType: string; durationMinutes: number; sync: { synced: number } };
+      data: { classType: string; durationMinutes: number };
     };
     expect(data.classType).toBe('Renamed Flow');
     expect(data.durationMinutes).toBe(75);
+    // The success body is the bare template — no propagation report rides
+    // along with it any more, and a re-added one fails here.
+    expect(data).not.toHaveProperty('sync');
 
-    // Nothing is booked, so every future instance is still mutable. Asserted
-    // on the future set rather than a fixed count: syncTemplateInstances uses
-    // `date > now`, so whether today's instance is in scope depends on the
-    // clock, and pinning "4" here would be flaky by construction.
-    expect(data.sync.synced).toBeGreaterThan(0);
-    const future = await prisma.class.findMany({
-      where: { templateId: id, date: { gt: new Date() } },
+    const after = await prisma.class.findMany({
+      where: { templateId: id },
+      orderBy: { date: 'asc' },
     });
-    expect(future.length).toBeGreaterThan(0);
-    expect(future.every((c) => c.classType === 'Renamed Flow')).toBe(true);
-    expect(future.every((c) => c.durationMinutes === 75)).toBe(true);
+    expect(after.map((c) => c.id)).toEqual(before.map((c) => c.id));
+    expect(after.every((c) => c.classType === 'Editable Flow')).toBe(true);
+    expect(after.every((c) => c.durationMinutes === 60)).toBe(true);
+  });
+
+  // Step 7 of #194's task 4, stated as the field-by-field identity claim
+  // rather than as "nothing changed": one PUT carrying a schedule field
+  // (`startTime`) and an economic one (`roomCost`) together, because the
+  // deleted sync treated those two families differently — same-day instances
+  // had their `startTime` rewritten, and unbooked ones had their economics
+  // rewritten — and a partial revival would show up in only one of them.
+  //
+  // `roomCost` compared through `.toString()`: Prisma returns `Decimal`
+  // objects, and `toEqual` on two of those passes on structural equality of
+  // the internal representation rather than on the number, which is not the
+  // claim being made here.
+  it('a PUT changing startTime and roomCost leaves every generated class byte-identical', async () => {
+    // 09:56 and 09:57 are BOTH this case's, and both must stay unused by
+    // every sibling: it creates on the first and moves the template onto the
+    // second, so a case that already holds 09:57 turns this into a
+    // `slot_conflict` 409 rather than the 200 it is asserting. The file's
+    // one-slot-per-case convention (see `templateBody`) needs the extra line
+    // only here, because this is the only case that moves a template's slot
+    // onto a value no create in this file mentions.
+    const id = await createTemplate('Stamp Not Link', '09:56');
+
+    const before = await prisma.class.findMany({
+      where: { templateId: id },
+      orderBy: { date: 'asc' },
+    });
+    expect(before.length).toBeGreaterThan(0);
+    expect(before.every((c) => c.startTime === '09:56')).toBe(true);
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ startTime: '09:57', roomCost: 99 }),
+    });
+    expect(res.status).toBe(200);
+
+    const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
+    expect(template.startTime).toBe('09:57');
+    expect(template.roomCost.toString()).toBe('99');
+
+    const after = await prisma.class.findMany({
+      where: { templateId: id },
+      orderBy: { date: 'asc' },
+    });
+    expect(
+      after.map((c) => ({
+        id: c.id,
+        startTime: c.startTime,
+        roomCost: c.roomCost.toString(),
+        date: c.date.toISOString(),
+        teacherRoomId: c.teacherRoomId,
+      })),
+    ).toEqual(
+      before.map((c) => ({
+        id: c.id,
+        startTime: c.startTime,
+        roomCost: c.roomCost.toString(),
+        date: c.date.toISOString(),
+        teacherRoomId: c.teacherRoomId,
+      })),
+    );
   });
 
   it('returns 404 for a well-formed id that does not exist', async () => {
@@ -1171,22 +1248,28 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(after.isActive).toBe(true);
   });
 
-  // `dayOfWeek` is the most destructive field on the allowlist
-  // (class-template-lifecycle.ts): changing it makes syncTemplateInstances
-  // DELETE mutable instances on the old day and refill on the new one. The
-  // unit-level template-sync.test.ts deliberately sets `isActive: false` to
-  // keep the generator out of its own tests, so this is the only place the
-  // *active* refill path — the one that actually runs in production — gets
-  // exercised end-to-end.
-  it('a dayOfWeek change deletes the old-day instances and refills the new day', async () => {
+  // `dayOfWeek` was the most destructive field on the allowlist: changing it
+  // made `syncTemplateInstances` DELETE the mutable instances sitting on the
+  // superseded day — waitlists cascading with them — and refill on the new
+  // one. #194 deleted that mechanism, and this case is the inverse of the one
+  // that pinned it: the old day's classes stay exactly where they are.
+  //
+  // The most important single assertion in this file for #194. A teacher who
+  // moves their Tuesday class to Thursday keeps every Tuesday class already
+  // on the schedule; they cancel the ones they do not want, individually, and
+  // the generator lays the Thursdays down from the next free week (task 5).
+  // Nothing about that is reachable from this endpoint any more.
+  it('a dayOfWeek change deletes nothing and moves nothing', async () => {
     const id = await createTemplate('Day Shift', '09:49');
 
-    const before = await prisma.class.findMany({ where: { templateId: id } });
+    const before = await prisma.class.findMany({
+      where: { templateId: id },
+      orderBy: { date: 'asc' },
+    });
     expect(before.length).toBeGreaterThan(0);
     expect(before.every((c) => c.date.getUTCDay() === EXPECTED_JS_DAY)).toBe(true);
 
     const NEW_DAY_OF_WEEK = (DAY_OF_WEEK + 2) % 7; // still schema convention, a different weekday
-    const newExpectedJsDay = (NEW_DAY_OF_WEEK + 1) % 7;
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
@@ -1194,39 +1277,36 @@ describe('PUT /api/class-templates/[id]', () => {
       body: JSON.stringify({ dayOfWeek: NEW_DAY_OF_WEEK }),
     });
     expect(res.status).toBe(200);
-    const { data } = (await res.json()) as { data: { sync: { regenerated: number } } };
-    expect(data.sync.regenerated).toBeGreaterThan(0);
 
-    // syncTemplateInstances only considers instances with `date > now`, so
-    // assert over the future set rather than all instances, and avoid
-    // pinning an exact count — same reasoning as the "propagates to its
-    // still-mutable instances" case above.
-    const future = await prisma.class.findMany({
-      where: { templateId: id, date: { gt: new Date() } },
+    const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
+    expect(template.dayOfWeek).toBe(NEW_DAY_OF_WEEK);
+
+    // Same rows, same ids, still on the OLD weekday. Asserted over every
+    // instance rather than the `date > now` subset the deleted sync was
+    // scoped to: with nothing propagating there is no boundary left to
+    // respect. No refill either — the PUT does not generate, so the count is
+    // unchanged rather than merely non-zero.
+    const after = await prisma.class.findMany({
+      where: { templateId: id },
+      orderBy: { date: 'asc' },
     });
-    expect(future.length).toBeGreaterThan(0);
-    expect(future.every((c) => c.date.getUTCDay() === newExpectedJsDay)).toBe(true);
-    expect(future.some((c) => c.date.getUTCDay() === EXPECTED_JS_DAY)).toBe(false);
+    expect(after.map((c) => c.id)).toEqual(before.map((c) => c.id));
+    expect(after.every((c) => c.date.getUTCDay() === EXPECTED_JS_DAY)).toBe(true);
   });
 
   // updateClassTemplate has no isArchived/isActive guard of its own, so
   // whether an archived template can be edited at all is current behaviour,
   // not a documented decision — pin it here rather than leave it assumed.
   //
-  // The write below is a dayOfWeek change specifically, because that is the
+  // The write below is a dayOfWeek change specifically, because that was the
   // one field whose sync could, in principle, materialize new bookable
-  // classes (via the delete-then-refill path exercised by the case above).
-  // Before #86, archiving didn't touch existing instances, so this used to
-  // observe the PUT deleting the wrong-day instances itself (`regenerated >
-  // 0`) with nothing replacing them, because an archived template is always
-  // `isActive: false` and syncTemplateInstances only refills after a
-  // day-of-week delete when the template is active. Now archiving already
-  // withdraws the future unbooked window, so there is nothing left for the
-  // PUT to find wrong-day or otherwise — `regenerated` is 0 because the
-  // window is already empty, not because a refill was skipped. Either way
-  // the guarantee holds: editing a shelved template cannot materialize
-  // classes, it can only ever shrink or leave empty what already exists.
-  it('an archived template accepts the PUT but the day-change refill never runs', async () => {
+  // classes, via a delete-then-refill this endpoint no longer performs at
+  // all (#194). The guarantee this case exists for outlives the mechanism it
+  // was written against and is now over-determined: editing a shelved
+  // template cannot materialize classes, because no edit materializes
+  // classes. Kept rather than deleted precisely for that reason — it fails
+  // if the PUT ever starts generating again, from any direction.
+  it('editing an archived template materializes no classes', async () => {
     const id = await createTemplate('Shelved Flow', '09:50');
     expect(await prisma.class.count({ where: { templateId: id } })).toBeGreaterThan(0);
 
@@ -1245,8 +1325,6 @@ describe('PUT /api/class-templates/[id]', () => {
       body: JSON.stringify({ dayOfWeek: NEW_DAY_OF_WEEK }),
     });
     expect(res.status).toBe(200);
-    const { data } = (await res.json()) as { data: { sync: { regenerated: number } } };
-    expect(data.sync.regenerated).toBe(0);
 
     expect(await prisma.class.count({ where: { templateId: id } })).toBe(0);
   });
@@ -1273,15 +1351,28 @@ describe('PUT /api/class-templates/[id]', () => {
     expect(after.startTime).toBe('11:16');
   });
 
-  // A second, independent way the same PUT can raise P2002: not the
-  // template's own slot key, but `syncTemplateInstances`'s propagation of the
-  // new `startTime` onto its still-mutable generated `Class` rows
-  // (`template-sync.ts`), which can land one of those instances on a slot an
-  // unrelated class already occupies (`Class_teacher_slot_unique`). The
-  // template row and the sync are one transaction now (#83, #209), so this
-  // collision rolls the whole write back — the template's own `startTime`
-  // never commits either — asserted below rather than assumed.
-  it('refuses a startTime change whose propagation to a generated instance would collide', async () => {
+  // The inverse of the `sync_conflict` case that stood here (#196, #209).
+  // There used to be a second, independent way this PUT could raise P2002:
+  // not the template's own slot key, but the sync's propagation of the new
+  // `startTime` onto its still-mutable generated `Class` rows, landing one of
+  // them on a slot an unrelated class already occupied
+  // (`Class_teacher_slot_unique`). That collision refused the whole edit —
+  // the template's own `startTime` included — and answered
+  // `TEMPLATE_SYNC_SLOT_CONFLICT`.
+  //
+  // #194 deleted the propagation, so this PUT writes no `Class` row and that
+  // index cannot be reached from here. The teacher's experience is the point
+  // of keeping the fixture: an unrelated draft sitting at 11:18 on one of the
+  // generated dates no longer blocks them from moving their recurring class
+  // to 11:18. Their existing classes stay at 11:17 next to it, and they move
+  // or cancel the ones they want moved.
+  //
+  // Deliberately NOT merged into the `slot_conflict` case above. That one is
+  // the template's own `ClassTemplate_teacher_slot_unique` and still 409s;
+  // this one is a `Class` row and now succeeds. Two different indexes, two
+  // different outcomes — a single "startTime collision" test would hide that
+  // one of the two stopped being a collision at all.
+  it('allows a startTime change onto a slot only a generated instance would have collided with', async () => {
     const id = await createTemplate('Sync Slot Template', '11:17');
     const instances = await prisma.class.findMany({
       where: { templateId: id },
@@ -1315,38 +1406,26 @@ describe('PUT /api/class-templates/[id]', () => {
       headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
       body: JSON.stringify({ startTime: '11:18' }),
     });
-    expect(res.status).toBe(409);
-    const json = (await res.json()) as { error: { code: string; message: string } };
-    // A distinct code from the plain slot collision (#209): this one is
-    // raised by the generated instance's collision, not the template's own
-    // slot, even though both now roll the whole write back with nothing
-    // changed.
-    expect(json.error.code).toBe('TEMPLATE_SYNC_SLOT_CONFLICT');
-    // The message must describe what actually happened: nothing did, because
-    // the template write and the sync are one transaction now (#83, #209)
-    // and this collision rolled both back. It still has to name the remedy —
-    // a teacher reading only "you already have a class at that time" has no
-    // way to know what to do about it.
-    expect(json.error.message).toBe(
-      'Your scheduled classes could not be moved — you already have a class at that time. Nothing was changed. Move or cancel that class, then edit this recurring class again.',
-    );
+    expect(res.status).toBe(200);
 
-    // The template write is now in the same transaction as the sync that
-    // failed, so it rolled back with it (#83, #209). This assertion is the
-    // inverse of the one that stood here before: it asserted `'11:18'`,
-    // pinning the half-applied write as intended behaviour.
+    // The template moved, which is the half that used to be rolled back.
     const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
-    expect(template.startTime).toBe('11:17');
+    expect(template.startTime).toBe('11:18');
 
+    // And the generated instance did not, which is why there was nothing to
+    // collide with. Both halves asserted: "the PUT returned 200" alone would
+    // also be satisfied by a propagation that happened to find the slot free.
     const instance = await prisma.class.findUniqueOrThrow({ where: { id: instances[0]!.id } });
     expect(instance.startTime).toBe('11:17');
   });
 
   // Door 5 of the room archive lifecycle (issue 76, fix round 2):
   // `updateClassTemplate` validated only that the target room belonged to the
-  // teacher, never whether it was archived — so this PUT could relocate every
-  // future non-`settingsLocked` `draft`/`open` instance onto a room the
-  // teacher had shelved, and the generator would keep producing more there.
+  // teacher, never whether it was archived. The door was written when this
+  // PUT could relocate every future non-`settingsLocked` `draft`/`open`
+  // instance onto a room the teacher had shelved; #194 deleted that
+  // relocation, and the door still stands on the half that never depended on
+  // it — the generator would keep producing new classes there.
   // A dedicated `seedTeacher` fixture rather than the shared `teacherRoomId`
   // dozens of other tests in this file reuse: archiving it here would affect
   // them, and door 5 needs a second room besides.
@@ -1419,13 +1498,18 @@ describe('PUT /api/class-templates/[id]', () => {
 
   // Pausing is not protection, and this case asserted the opposite until PR
   // review. `pauseOrResumeTemplate` deletes nothing, so a paused template
-  // still owns every `open` instance it generated before it was paused, and
-  // `syncTemplateInstances` relocates them with the move. The earlier gate
-  // (`&& template.isActive`) let this through and the earlier version of this
-  // test asserted only `after.teacherRoomId` — so the suite performed the
-  // relocation on every run and asserted nothing about it. Four `open`
-  // classes ended up on a room the teacher had shelved, which is precisely
-  // the state door 1 refuses to create.
+  // still owns every `open` instance it generated before it was paused. When
+  // the sync existed it relocated them with the move: the earlier gate
+  // (`&& template.isActive`) let that through and the earlier version of this
+  // test asserted only `after.teacherRoomId`, so the suite performed the
+  // relocation on every run and asserted nothing about it — four `open`
+  // classes on a room the teacher had shelved, precisely the state door 1
+  // refuses to create.
+  //
+  // #194 removed that route to the bad state; the gate's shape is what is
+  // still under test. The instance assertion below is kept and is no longer
+  // load-bearing against the relocation — it is load-bearing against a future
+  // one, and it costs one query.
   it('refuses to move a paused template onto an archived room, and relocates nothing', async () => {
     const owner = await seedTeacher('move-archived-paused');
     let archivedRoomId = '';

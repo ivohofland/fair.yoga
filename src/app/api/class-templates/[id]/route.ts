@@ -66,7 +66,7 @@ export const PUT = withErrorHandler(async (
 
   const result = await updateClassTemplate(prisma, id, session.teacherId, data);
 
-  if (result.ok) return respondOk({ ...result.template, sync: result.sync });
+  if (result.ok) return respondOk(result.template);
 
   // Narrowed one reason at a time so each maps to the response this route
   // returned before the service existed.
@@ -94,35 +94,13 @@ export const PUT = withErrorHandler(async (
       'DUPLICATE_TEMPLATE_SLOT',
     );
   }
-  // The startTime change would propagate to a still-mutable generated
-  // instance and land it on a slot a different class already occupies
-  // (#196). `updateClassTemplate` now runs the write and the sync in one
-  // transaction (#83, #209): this collision rolls the whole thing back, the
-  // template's own `startTime` included, so the message can no longer say
-  // the template moved. Still names the remedy, not just the state — "you
-  // already have a class at that time" alone leaves the teacher with no next
-  // step.
-  //
-  // A distinct code from the create/reschedule paths' `DUPLICATE_CLASS_SLOT`
-  // and from `slot_conflict` above: the cause still differs — this is a
-  // generated instance colliding with an unrelated class, not the template's
-  // own slot — even though all three now decline the write the same way,
-  // with nothing changed.
-  if (result.reason === 'sync_conflict') {
-    return respondError(
-      'Your scheduled classes could not be moved — you already have a class at that time. Nothing was changed. Move or cancel that class, then edit this recurring class again.',
-      409,
-      'TEMPLATE_SYNC_SLOT_CONFLICT',
-    );
-  }
-  // This transaction lost a contention race (#100/#209) — either a
-  // generation claim, archive or pause/resume holding the template row, or
-  // an ordinary booking holding one of this template's future classes, since
-  // the edit's transaction now takes those too via `syncTemplateInstances`'s
-  // ordered pre-lock. The copy names neither, which is correct: the service
-  // cannot tell them apart and the teacher's next step is the same either
-  // way. Distinct copy from the PATCH pause/resume branch below ("could not
-  // update this recurring class"): this is the edit, that is the toggle.
+  // This transaction lost a contention race (#100/#209) on the `ClassTemplate`
+  // row itself — a generation claim, an archive, or a pause/resume holding it.
+  // It can no longer be lost on a `Class` row: #194 deleted the sync, so this
+  // transaction takes no `Class` locks at all and the edit path has left the
+  // deadlock graph. Distinct copy from the PATCH pause/resume branch below
+  // ("could not update this recurring class"): this is the edit, that is the
+  // toggle.
   if (result.reason === 'busy') {
     return respondError(
       'The system was busy and could not save your changes to this recurring class. Nothing was changed. Wait a moment, then try again.',
