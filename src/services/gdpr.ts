@@ -1251,7 +1251,9 @@ export async function deleteTeacherAccount(db: PrismaClient, teacherId: string):
     // Those claims are held by the sweep for both families, and by both
     // families' resume — the studio family's since #94, the class family's
     // since #116 — so account erasure can block on a sweep or a resume in
-    // progress the same way an archive or pause click can. This site needs the matching 10s budget more than those four
+    // progress the same way an archive or pause click can.
+    //
+    // This site needs the matching 10s budget more than those four
     // do, not just for symmetry: by the time this transaction opens,
     // `deleteTeacherAccount` has already run `completeClass` for every
     // in-progress class above — pricing, payments, and notifications
