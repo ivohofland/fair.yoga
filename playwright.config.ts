@@ -10,9 +10,10 @@ export default defineConfig({
   // serves, and four parallel full runs during #285's gates produced four
   // different victims, each green alone. CI already ran at 1, so this
   // changes only local behaviour: slower, but a red run means what it says.
-  // Note the fan-out granularity: every spec carries beforeAll/afterAll, so
-  // Playwright schedules per FILE, not per test — locally that meant up to
-  // five whole suites interleaving against one dev server.
+  // Note the fan-out granularity: every spec carries beforeAll/afterAll,
+  // and tests sharing worker-scoped setup are scheduled as one group, so
+  // fullyParallel splits nothing here — a full local run reported
+  // "using 5 workers": five spec files' suites at once against one server.
   workers: 1,
   reporter: 'html',
   use: {

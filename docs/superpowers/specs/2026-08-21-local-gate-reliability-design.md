@@ -99,13 +99,15 @@ rather than pretending a red-to-green flake demo is available on demand.
 
 ### D2 — Budget the invitation burst per-test, house-style
 
-The burst test gets `{ timeout: 30_000 }` at the call site — the convention
-already used by 26 sites across 14 integration files, each carrying a
-measured-margin comment (`teacher-rooms-api.test.ts:596-611` is the worked
-example). The comment records: ~9s solo measured 2026-08-21 (51 sequential
-round trips, ~175ms each); 30s absorbs contention on a busy dev server, not
-just solo latency; the default 5s was exceeded even idle, so the test was red
-for reasons unrelated to any change.
+The burst test gets a positional timeout third arg (`}, 30_000);`) at the call
+site — the convention already used across the integration suite: 25 sites in
+`{ timeout: N }` option-object form across 12 files and 14 positional-arg
+sites across 8 files, each carrying a measured-margin comment
+(`teacher-rooms-api.test.ts:596-611` is the worked example). The comment
+records: ~9s solo measured 2026-08-21 (51 sequential round trips, ~175ms each);
+30s absorbs contention on a busy dev server, not just solo latency; the default
+5s was exceeded even idle, so the test was red for reasons unrelated to any
+change.
 
 Why not raise the project-wide default: the 5s default is load-bearing —
 `notifications-stream.test.ts:267` states it as the baseline tests reason
