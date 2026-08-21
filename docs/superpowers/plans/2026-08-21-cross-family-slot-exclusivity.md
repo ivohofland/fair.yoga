@@ -31,11 +31,11 @@
 | `src/services/slot-constraints.test.ts` | **Modify.** Cross-family cases at both levels, both directions, plus the liveness and editability guards. |
 | `src/lib/cross-family-conflict.ts` | **Create.** `isCrossFamilySlotConflict(err)` — recognises `YG001` in a Prisma error. |
 | `src/lib/cross-family-conflict.test.ts` | **Create.** Unit tests, including a negative case for `23514`. |
-| `src/lib/generation.ts` | **Modify.** Sixth `SkipReason`, fourth `SkipCounts` field, `countSkipReasons` arm. |
+| `src/lib/generation.ts` | **Modify (4b).** Sixth `SkipReason`, fourth `SkipCounts` field, `countSkipReasons` arm. |
 | `src/services/class-generator.ts` | **Modify.** Cross-family pre-check, new skip reason, `YG001` batch fallback. |
 | `src/services/studio-class-generator.ts` | **Modify.** Same. |
-| `src/services/studio-class-template-lifecycle.ts` | **Modify.** Replace the hand-listed `SkipCounts` fields with `SkipCounts` (#291). |
-| `src/components/settings/template-action-messages.ts` | **Modify.** `resumeMessage`/`resumeStudioMessage` take a `SkipCounts` object; new cross-family clause. |
+| `src/services/studio-class-template-lifecycle.ts` | **Modify (4a).** Two inline hand-listed count shapes become `counts: SkipCounts` — measured as six such copies repo-wide, not the one #291 describes. |
+| `src/components/settings/template-action-messages.ts` | **Modify (4a then 4b).** Signatures take a `SkipCounts` object; then the one cause clause the two families do not share. |
 | `src/app/api/classes/route.ts`, `.../classes/[id]/route.ts`, `.../studio-classes/route.ts`, `.../studio-classes/[id]/route.ts`, `.../class-templates/**`, `.../studio-class-templates/**` | **Modify.** Catch `YG001`, answer 409 with copy. |
 | `docs/lock-order.md` | **Modify.** New wait-edge section. |
 | `CLAUDE.md` | **Modify.** Class Lifecycle bullet. |
@@ -681,19 +681,100 @@ git commit -m "feat: recognise the cross-family slot guard, with its shape measu
 
 ---
 
-## Task 4: The sixth `SkipReason`, and the two hazards adding it creates
+## Task 4a: One shape for the skip counts — a pure refactor, no behaviour change
+
+**Files:**
+- Modify: `src/components/settings/template-action-messages.ts` (signatures at `:140` and `:205`; delegation at `:154`; inline shapes at `:379` and `:412`; call sites at `:467` and `:560`)
+- Modify: `src/components/settings/template-action-messages.test.ts` (~28 positional call sites)
+- Modify: `src/components/settings/studio-template-form.tsx` (inline shape `:178`, call `:187`)
+- Modify: `src/components/settings/template-form.tsx` (inline shape `:349`, call `:358`)
+- Modify: `src/services/studio-class-template-lifecycle.ts` (inline shapes `:596` and `:702`; build site `:1079`)
+- Modify: `src/services/class-template-lifecycle.ts` (build site `:1500`)
+- Modify: `src/app/api/class-templates/[id]/route.ts` (`:241`), `src/app/api/studio-class-templates/[id]/route.ts` (`:214`)
+- Modify: the matching `.test.ts` / `.test.tsx` files the typechecker flags
+
+**Interfaces:**
+- Consumes: `SkipCounts` from `src/lib/generation.ts` (already exported; unchanged by this task).
+- Produces: `resumeMessage(added: number, scheduled: number, counts: SkipCounts): string` and `resumeStudioMessage(added: number, scheduled: number, counts: SkipCounts): string`; every previously hand-listed `{ blockedByCancelled; slotTaken; alreadyThisWeek }` shape replaced by `counts: SkipCounts`.
+
+**Why this is its own task, before the feature.** Measured on the current tree, the count triple is hand-listed **six** times — `template-action-messages.ts:379` and `:412`, `studio-template-form.tsx:178`, `template-form.tsx:349`, `studio-class-template-lifecycle.ts:596` and `:702` — and `resumeMessage` takes five adjacent positional `number` parameters with ~28 call sites passing them literally. Adding a fourth count first would mean editing all of that; converting first makes the extension a one-line change to one interface. #291 describes this hand-list as a single site — it is six, across both families and the component layer.
+
+**This task changes no behaviour.** Every existing assertion must still hold, with only its call syntax rewritten. If a message string changes, that is a defect in the refactor, not an improvement.
+
+- [ ] **Step 1: Convert the two signatures**
+
+```ts
+export function resumeMessage(
+  added: number,
+  scheduled: number,
+  counts: SkipCounts,
+): string {
+  const { blockedByCancelled, slotTaken, alreadyThisWeek } = counts;
+  // body unchanged from here
+```
+
+and the same for `resumeStudioMessage`, whose delegation becomes:
+
+```ts
+  return resumeMessage(added, scheduled, counts);
+```
+
+Keep `resumeStudioMessage`'s existing docblock verbatim — it explains why it delegates rather than duplicates, and that reasoning is untouched by this change.
+
+- [ ] **Step 2: Replace the six inline shapes**
+
+Each is an arm of a discriminated union carrying `scheduled` and `added` beside the three counts. Replace the three count fields with one:
+
+```ts
+      action: 'active';
+      templateKind: 'class';
+      scheduled: number;
+      added: number;
+      counts: SkipCounts;
+```
+
+**Preserve the prose.** `template-action-messages.ts:412` and `studio-class-template-lifecycle.ts:596` carry a long comment explaining that `alreadyThisWeek` is always 0 on the studio side and why that is not a bug. Move it to sit above `counts: SkipCounts` at each site rather than deleting it — it documents a real property that this task does not change.
+
+- [ ] **Step 3: Update the four build sites**
+
+`api/class-templates/[id]/route.ts:241`, `api/studio-class-templates/[id]/route.ts:214`, `class-template-lifecycle.ts:1500` and `studio-class-template-lifecycle.ts:1079` each spread three fields off a result. Each becomes one field. Where the source is already a `SkipCounts` (i.e. `countSkipReasons`' return), pass it straight through rather than rebuilding it field by field — rebuilding is what let the shapes drift in the first place.
+
+- [ ] **Step 4: Update the test call sites**
+
+`resumeMessage(0, 4, 2, 1, 3)` becomes:
+
+```ts
+resumeMessage(0, 4, { blockedByCancelled: 2, slotTaken: 1, alreadyThisWeek: 3 })
+```
+
+There are roughly 28 of these. **Do not change any expected string.** The parity test near `:471`, which asserts `resumeStudioMessage(...)` equals `resumeMessage(...)` for the same inputs, must keep asserting exactly that.
+
+- [ ] **Step 5: Run typecheck and the full suite**
+
+Run: `npm run typecheck`
+Then: `npx vitest run --project unit && npx vitest run --project components`
+
+Expected: PASS, with **no expected-string edits** in the diff. Report the count of assertions touched and confirm none changed its expected value.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/components/settings/template-action-messages.ts src/components/settings/template-action-messages.test.ts src/components/settings/studio-template-form.tsx src/components/settings/template-form.tsx src/services/studio-class-template-lifecycle.ts src/services/class-template-lifecycle.ts src/app/api/class-templates src/app/api/studio-class-templates
+git commit -m "refactor: the skip counts travel as one shape, not three fields six times (issue 296)"
+```
+
+---
+
+## Task 4b: The sixth `SkipReason`
 
 **Files:**
 - Modify: `src/lib/generation.ts`
 - Modify: `src/components/settings/template-action-messages.ts`
-- Modify: `src/services/studio-class-template-lifecycle.ts`
 - Test: `src/lib/generation.test.ts`, `src/components/settings/template-action-messages.test.ts`
 
 **Interfaces:**
-- Consumes: nothing from earlier tasks.
-- Produces: `SkipReason` member `'blocked_by_other_family'`; `SkipCounts` field `blockedByOtherFamily: number`; `resumeMessage(added: number, scheduled: number, counts: SkipCounts): string` and `resumeStudioMessage(added: number, scheduled: number, counts: SkipCounts): string`.
-
-**Why the signature changes.** `resumeMessage` currently takes five adjacent positional `number` parameters. A sixth makes six mutually swappable arguments with no compile error — the hazard #286 is open about. This change *creates* that hazard, so it fixes it: the counts travel as one `SkipCounts` object. The same reasoning covers `studio-class-template-lifecycle.ts`, whose result type hand-lists the three `SkipCounts` fields (#291) and would otherwise be silently one field short.
+- Consumes: `resumeMessage(added, scheduled, counts: SkipCounts)` from Task 4a.
+- Produces: `SkipReason` member `'blocked_by_other_family'`; `SkipCounts` field `blockedByOtherFamily: number`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -714,20 +795,29 @@ it('counts blocked_by_other_family', () => {
 In `src/components/settings/template-action-messages.test.ts`:
 
 ```ts
-it('names the other family when it holds the slot', () => {
+it('names the studio family when it holds the class family slot', () => {
   const msg = resumeMessage(0, 0, {
     blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 2,
   });
   expect(msg).toContain('2');
   expect(msg.toLowerCase()).toContain('studio');
 });
+
+it('names the class family when it holds the studio family slot', () => {
+  const msg = resumeStudioMessage(0, 0, {
+    blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 1,
+  });
+  expect(msg.toLowerCase()).toContain('your own');
+});
 ```
+
+The second test is the one that matters: it forces `resumeStudioMessage` to stop delegating wholesale, because this is the first sentence the two families do not share.
 
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `npx vitest run --project unit src/lib/generation.test.ts` and `npx vitest run --project components src/components/settings/template-action-messages.test.ts`
 
-Expected: FAIL — `blockedByOtherFamily` is not a property of `SkipCounts`, and `resumeMessage` takes five numbers.
+Expected: FAIL — `blockedByOtherFamily` is not a property of `SkipCounts`.
 
 - [ ] **Step 3: Add the member and the field**
 
@@ -766,13 +856,13 @@ export interface SkipCounts {
 }
 ```
 
-- [ ] **Step 4: Let the compiler find the call sites**
+- [ ] **Step 4: Let the compiler find the rest**
 
 Run: `npm run typecheck`
 
-Expected: an error at `countSkipReasons`'s `default:` arm — `const unhandled: never = reason` cannot accept `'blocked_by_other_family'`. That exhaustiveness guard is why this member cannot vanish silently, and it is the intended way to find every site.
+Expected: an error at `countSkipReasons`' `default:` arm — `const unhandled: never = reason` cannot accept `'blocked_by_other_family'`. That exhaustiveness guard is the intended way to find every site; it is why this member cannot vanish silently.
 
-Add the arm:
+Add `let blockedByOtherFamily = 0;` beside the other three, this arm:
 
 ```ts
       case 'blocked_by_other_family':
@@ -780,40 +870,34 @@ Add the arm:
         break;
 ```
 
-with `let blockedByOtherFamily = 0;` beside the other three and the field added to the returned object.
+and the field on the returned object.
 
-- [ ] **Step 5: Change the message signatures**
+- [ ] **Step 5: Split the resume sentence where the families diverge**
 
-`resumeMessage(added: number, scheduled: number, counts: SkipCounts): string` and the same for `resumeStudioMessage`, which goes on delegating. Destructure `counts` inside. Add a cause clause for `blockedByOtherFamily` beside the existing ones, worded so each family names the *other*:
+`resumeStudioMessage` currently delegates wholly. Add the one cause clause that differs, keeping the delegation for everything else — its docblock already says a future divergence has "somewhere to land", and this is that divergence.
 
 - class family: `"N of those dates are held by a studio class."`
 - studio family: `"N of those dates are held by one of your own classes."`
 
-These sentences genuinely differ, so — unlike `resumeStudioMessage`'s delegation for the identical sentences — they are written separately, and that difference is the point.
+Singular/plural handling follows whatever the neighbouring cause clauses in this file already do; match them rather than inventing a second convention.
 
-- [ ] **Step 6: Replace the hand-listed SkipCounts fields (#291)**
-
-In `src/services/studio-class-template-lifecycle.ts`, the resume result arm inlines `blockedByCancelled`, `slotTaken` and `alreadyThisWeek` as three separate properties. Replace them with `counts: SkipCounts`, importing the type. Update the call sites the typechecker flags.
-
-Keep the existing prose about `alreadyThisWeek` always being 0 on the studio side today — it is still true and still explains a real thing. Move it to the `SkipCounts` import site or leave it as a comment on the arm.
-
-- [ ] **Step 7: Run typecheck and the tests**
+- [ ] **Step 6: Run typecheck and the tests**
 
 Run: `npm run typecheck && npx vitest run --project unit src/lib/generation.test.ts && npx vitest run --project components src/components/settings/template-action-messages.test.ts`
 
-Expected: PASS.
+Expected: PASS. The Task 4a parity test near `:471` will now fail if it asserts whole-message equality for inputs with a non-zero `blockedByOtherFamily` — narrow that test to the inputs where the families genuinely still agree, and say so in its comment.
 
-- [ ] **Step 8: Mutation — remove the `countSkipReasons` arm**
+- [ ] **Step 7: Mutation — remove the `countSkipReasons` arm**
 
 Delete the `case 'blocked_by_other_family':` arm.
 
-Expected: `npm run typecheck` FAILS at the `never` assignment. Record the text. This proves the exhaustiveness guard bites rather than merely existing. Restore.
+Expected: `npm run typecheck` FAILS at the `never` assignment. Record the exact text. This proves the exhaustiveness guard bites rather than merely existing. Restore.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/lib/generation.ts src/lib/generation.test.ts src/components/settings/template-action-messages.ts src/components/settings/template-action-messages.test.ts src/services/studio-class-template-lifecycle.ts
-git commit -m "feat: a skip reason for the other family, and the two hazards it would have added (issue 296)"
+git add src/lib/generation.ts src/lib/generation.test.ts src/components/settings/template-action-messages.ts src/components/settings/template-action-messages.test.ts
+git commit -m "feat: a skip reason for the other family, and the sentence each family needs (issue 296)"
 ```
 
 ---
@@ -826,7 +910,7 @@ git commit -m "feat: a skip reason for the other family, and the two hazards it 
 - Test: `src/services/studio-class-generator.test.ts`, `src/services/class-generator.test.ts`
 
 **Interfaces:**
-- Consumes: `'blocked_by_other_family'` (Task 4), `isCrossFamilySlotConflict` (Task 3).
+- Consumes: `'blocked_by_other_family'` (Task 4b), `isCrossFamilySlotConflict` (Task 3).
 - Produces: both generators emit `SkippedSlot { reason: 'blocked_by_other_family' }`.
 
 - [ ] **Step 1: Write the failing tests**
