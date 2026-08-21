@@ -20,6 +20,9 @@ npm test                    # vitest (unit + integration + components)
 npm run test:e2e            # Playwright (starts dev server if not running)
 ```
 
+- Local e2e is serialized (`workers: 1` in `playwright.config.ts`) — every test shares the one dev server on :3000; fan-out once failed four different tests across four parallel runs (#290).
+- After editing source, hit each touched route once (`curl` is enough) before trusting a gate run or scoring a mutation — `next dev` compiles lazily per route, so the first requests pay compilation and can blow a 5s timeout. A red right after an edit is a cold route until proven otherwise.
+
 ## Test architecture — three Vitest projects
 
 | Project | Files | Environment | DB |
