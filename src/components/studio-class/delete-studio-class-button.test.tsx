@@ -1,7 +1,18 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { DeleteStudioClassButton } from './delete-studio-class-button';
-import { routerPush } from '../../../tests/setup/components';
+
+/**
+ * The success path leaves via a full navigation (`window.location.assign`)
+ * rather than the router: a soft push serves the back link's stale prefetch
+ * of the schedule, which kept rendering a removed row. jsdom's `location` is
+ * replaced wholesale here so each test gets a fresh spy.
+ */
+const stubLocation = () => {
+  const assign = vi.fn();
+  Object.defineProperty(window, 'location', { value: { assign }, writable: true });
+  return assign;
+};
 
 describe('DeleteStudioClassButton', () => {
   const fetchMock = vi.fn();
@@ -35,6 +46,7 @@ describe('DeleteStudioClassButton', () => {
   });
 
   it('sends the removal and leaves for the schedule on success', async () => {
+    const assign = stubLocation();
     fetchMock.mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
     render(<DeleteStudioClassButton studioClassId="sc-1" earningsAtRisk={null} />);
@@ -46,10 +58,11 @@ describe('DeleteStudioClassButton', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/api/studio-classes/sc-1');
     expect(init.method).toBe('DELETE');
-    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/'));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/'));
   });
 
   it('shows the server message when the removal is refused, and stays put', async () => {
+    const assign = stubLocation();
     fetchMock.mockResolvedValue({
       ok: false,
       status: 409,
@@ -64,7 +77,7 @@ describe('DeleteStudioClassButton', () => {
     confirmRemove();
 
     expect(await screen.findByText(/Cancel it instead\./)).toBeInTheDocument();
-    expect(routerPush).not.toHaveBeenCalled();
+    expect(assign).not.toHaveBeenCalled();
   });
 
   it('says something when the request never reaches the server', async () => {

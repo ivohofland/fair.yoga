@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { readErrorMessage } from '@/lib/client-errors';
 
@@ -31,17 +30,19 @@ interface DeleteStudioClassButtonProps {
  * count exists for exactly one confirmation message and is deliberately never
  * persisted (`prisma/schema.prisma`, `withdrawnCount`).
  *
- * `router.push('/')` and not `refresh()`, unlike `CancelStudioClassButton`
- * beside it: the page this button lives on no longer exists after a success.
- * Same choice `DeleteRoomButton` makes. The confirm-then-silence failure that
- * button's sibling documents applies here too — the teacher has already
+ * Leaves for the schedule with a hard navigation, not `router.push('/')`:
+ * the detail page no longer exists after a success, and a soft push serves
+ * the back link's stale prefetch of the schedule (verified in the running
+ * app; see the comment at the call site). Same destination
+ * `DeleteRoomButton` pushes to — that button's soft push is an observation
+ * for another day, not this one's defect. The confirm-then-silence failure
+ * that button's sibling documents applies here too — the teacher has already
  * answered "yes, remove it", so an unchanged page reads as success.
  */
 export function DeleteStudioClassButton({
   studioClassId,
   earningsAtRisk,
 }: DeleteStudioClassButtonProps) {
-  const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState('');
@@ -59,7 +60,14 @@ export function DeleteStudioClassButton({
     try {
       const res = await fetch(`/api/studio-classes/${studioClassId}`, { method: 'DELETE' });
       if (res.ok) {
-        router.push('/');
+        // A hard exit, deliberately. The page's back link usually has '/' already
+        // prefetched by the time the removal lands, and a soft `router.push('/')`
+        // serves that pre-removal prefetch entry — the removed row kept
+        // rendering in the running app past a 4s settle window, with
+        // `router.refresh()` before or after the push (refresh revalidates the
+        // route being left, not the destination's cache entry). A full
+        // navigation cannot serve the old schedule.
+        window.location.assign('/');
       } else {
         setError(await readErrorMessage(res, 'Could not remove the class. Please try again.'));
       }
