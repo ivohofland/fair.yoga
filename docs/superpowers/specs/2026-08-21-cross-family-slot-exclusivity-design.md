@@ -174,9 +174,24 @@ remains is teacher-action-versus-sweep, or two teacher devices.
 **This spec does not accept that residual on reasoning.** `docs/lock-order.md`
 reproduced its own edges at 32/100 and 1/120, and contains two worked examples
 of a concurrency claim that was argued rather than measured and was wrong —
-one of them quoting evidence that disproved it. The residual is measured before
-it is documented (§6.3). If it measures common, this section is reopened and
-the advisory lock returns with a proper ordering section.
+one of them quoting evidence that disproved it.
+
+**Measured (issue #296 task 2), not argued.** Against `ethical_yoga_test`, on
+this checkout's real trigger functions and full migration history: 200 runs,
+each on its own `(teacherId, date, startTime)`, each opening two interactive
+Prisma transactions — one `Class.create`, one `StudioClass.create` — at that
+identical slot, with a 40ms delay inside each transaction after its `INSERT`
+and before its `COMMIT`, so both `BEFORE INSERT` triggers' sibling `SELECT`s
+necessarily execute before either side commits. Result: both transactions
+committed in **200 of 200** runs (`both / runs = 200 / 200 = 100%`). A control
+of the same 200 iterations with `class_cross_family_slot_insert_guard` and
+`studio_class_cross_family_slot_insert_guard` dropped also measured 200 of
+200 — the guard's presence made no measurable difference under a forced
+overlap, exactly what an unlocked `SELECT`'s inability to see an uncommitted
+row predicts — and a separate sequential (non-racing) insert against the
+restored trigger was rejected as expected, confirming the harness exercised a
+live, correctly-restored guard rather than a bypassed one. 200/200 is common
+by this section's own stated criterion, not rare: this section is reopened.
 
 ### 4.3 Rejected: a shared `TeacherSlot` table
 
