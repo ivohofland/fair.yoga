@@ -308,26 +308,33 @@ discipline `unique-conflict.ts` used when it recorded its own `meta.target`
 measurement. The measurement is a plan step, and its output is pasted into the
 docblock.
 
-### 5.4 Service and route pre-checks
+### 5.4 Route catches and generator pre-checks — two mechanisms, not one
 
-The trigger enforces; the pre-checks name the reason and produce the copy. This
-is the idiom `src/services/studio-class-generator.ts:173` already states (twin at `src/services/class-generator.ts:381`) for the
-within-family case: *"this pre-check is what names the reason, not what enforces
-it."*
+The trigger enforces. What the application adds differs by caller, and
+conflating the two is a mistake this spec made in an earlier draft:
 
-Paths that need one:
+- **Routes catch.** A route's only job is to turn the guard's error into copy a
+  teacher can act on. A pre-emptive query would buy nothing — unlike #103,
+  where the pre-check existed to avoid a deadlock, not to phrase an error.
+- **Generators pre-check.** A generator must classify a blocked date and
+  *continue* with the others, so it has to know before it writes. This is the
+  idiom `src/services/studio-class-generator.ts:173` already states (twin at
+  `src/services/class-generator.ts:381`): *"this pre-check is what names the
+  reason, not what enforces it."*
 
-| Path | Why |
-|---|---|
-| `POST /api/classes` | new slot |
-| `POST /api/studio-classes` | new slot |
-| `PUT /api/classes/[id]` | `date` / `startTime` edit |
-| `PUT /api/studio-classes/[id]` | `startTime` edit **and** the `cancelledAt: null` clear — the #275 link |
-| `POST /api/class-templates` | new template slot |
-| `POST /api/studio-class-templates` | new template slot |
-| `PUT` on both template routes | `dayOfWeek` / `startTime` edit |
-| both archive/unarchive paths | unarchiving re-enters the template key exactly as un-cancelling re-enters the instance key |
-| both generators | via the new `SkipReason` (§5.5) |
+Paths, and which mechanism each takes:
+
+| Path | Mechanism | Why |
+|---|---|---|
+| `POST /api/classes` | catch | new slot |
+| `POST /api/studio-classes` | catch | new slot |
+| `PUT /api/classes/[id]` | catch | `date` / `startTime` edit |
+| `PUT /api/studio-classes/[id]` | catch | `startTime` edit **and** the `cancelledAt: null` clear — the #275 link |
+| `POST /api/class-templates` | catch | new template slot |
+| `POST /api/studio-class-templates` | catch | new template slot |
+| `PUT` on both template routes | catch | `dayOfWeek` / `startTime` edit |
+| both archive/unarchive paths | catch | unarchiving re-enters the template key exactly as un-cancelling re-enters the instance key |
+| both generators | **pre-check** | must classify and continue, via the new `SkipReason` (§5.5) |
 
 Copy is user-facing prose, not a developer string (#197 is open about eighteen
 that are not). It names the other family: *"You already have a class at that
@@ -408,7 +415,8 @@ signal the within-family rules moved, which this spec forbids.
 | Drop the `BEFORE INSERT` declaration, keep `BEFORE UPDATE` | the create-route cases |
 | Drop the `BEFORE UPDATE` declaration, keep `BEFORE INSERT` | the un-cancel and unarchive cases |
 | Change `ERRCODE` to `23505` | the 409-mapping test — proves §5.3's reasoning rather than asserting it |
-| Remove a service pre-check | its route's copy test, **not** its status test — a pre-check and a trigger both answer 409, and #103 records a case where removing a pre-check left every test green because the catch answered a byte-identical 409 |
+| Remove a **route's** catch | that route's copy assertion — the status also moves (409 to 500), so this one is visible either way |
+| Remove a **generator's** cross-family pre-check | the skip-reason assertion, and **nothing else**. The trigger still fires, the batch still aborts, and §5.6's fallback silently reclassifies the date as `'raced'` — so the created count is unchanged and only the reason moves. This is the #103 shape exactly: a guard whose removal is masked by the fallback beneath it. Assert the reason, never the count |
 
 That last row is the one to get right. It is the exact defect #103 shipped past
 review, and a status-code assertion cannot see it.
