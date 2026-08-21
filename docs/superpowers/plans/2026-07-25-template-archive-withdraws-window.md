@@ -618,7 +618,7 @@ The two families are deliberately **not** sharing an implementation. PR #92 foun
 
 - [ ] **Step 1: Write the failing unit tests**
 
-Create `src/services/studio-class-template-lifecycle.test.ts` covering: a future uncancelled studio class is deleted; an already-cancelled future one is kept (it is an income record, not an offer); a past one is kept; today's is kept (`date > now`); `remaining` is 0; pause deletes nothing and reports the last scheduled class. Model the fixtures on `src/services/studio-class-generator.test.ts`, which already seeds a teacher and a studio template.
+Create `src/services/studio-class-template-lifecycle.test.ts` covering: a future uncancelled studio class is deleted; an already-cancelled future one is kept (it is an income record, not an offer — **the reason is wrong; corrected under issue 279.** A cancelled studio class is *not* an income record: `settings/reporting/page.tsx:36` filters on `cancelledAt: null` and excludes it. It is kept because it holds `(templateId, date)`. This sentence is the origin of four twins that stood in source and tests until 279 swept them); a past one is kept; today's is kept (`date > now`); `remaining` is 0; pause deletes nothing and reports the last scheduled class. Model the fixtures on `src/services/studio-class-generator.test.ts`, which already seeds a teacher and a studio template.
 
 - [ ] **Step 2: Run — expect failure**
 

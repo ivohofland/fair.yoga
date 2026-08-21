@@ -223,7 +223,15 @@ Add to the top of the `pauseOrResumeStudioTemplate (DB)` block, beside the exist
     });
 ```
 
-Then add the two tests:
+Then add the two tests.
+
+> **Correction, issue 279 (2026-08-21):** the comment below says cancelled
+> classes are spared because "they are income records". They are not —
+> `settings/reporting/page.tsx:36` filters on `cancelledAt: null` and excludes
+> them from earnings. The *mechanism* the comment describes is right
+> (`@@unique([templateId, date])` makes those dates unrepresentable); only the
+> reason is wrong. The shipped comment was corrected; this block is left as
+> written to record what the round believed.
 
 ```ts
   /**

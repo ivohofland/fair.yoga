@@ -12,9 +12,14 @@
  *   - Where the class family's deletable predicate spreads a `status: {
  *     in: ['draft', 'open'] }` clause, the studio predicate has no status to
  *     filter on. It uses `cancelledAt: null` instead — an already-cancelled
- *     future class is an income record, not a bookable offer, and archiving
- *     must leave it standing exactly like the class family leaves a charged
- *     registration standing.
+ *     future class is *not* an income record: `settings/reporting/page.tsx:36`
+ *     queries with `cancelledAt: null` and excludes it from earnings outright.
+ *     It survives because it holds `(templateId, date)`, and a date the
+ *     teacher cancelled deliberately must not be refilled on the next resume.
+ *     Archiving leaves it standing for that reason — structurally like the
+ *     class family leaving a charged registration standing, but not for the
+ *     same reason. Corrected under issue 279; see `StudioClass.cancelledAt` in
+ *     `prisma/schema.prisma` for the cancel-versus-remove split.
  *   - Where the class family excludes any class with a registration in a
  *     CHARGED status, the studio family has no registrations to consult at
  *     all — `studentCount` is a plain, unconnected `Int?`. So every future
@@ -1254,7 +1259,8 @@ export async function archiveOrUnarchiveStudioTemplate(
         // `deleteMany({ id: { in: ids } })`: a two-step read-then-delete lets a
         // class get cancelled in the gap between them under READ COMMITTED, and
         // the delete — keyed only on the ids already read — would not re-check
-        // it, destroying a class that became an income record after the read.
+        // it, destroying a class the teacher cancelled after the read — a date
+        // deliberately withheld, which the archive is required to leave standing.
         // Passing the predicate straight to `deleteMany` makes Postgres
         // re-evaluate it at execution time, and its returned `count` is the
         // number of rows that actually matched then — not a stale count from an

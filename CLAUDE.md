@@ -50,6 +50,16 @@ Classes move through states: `draft → open → in_progress → completed → c
 - Terminal status (`completed`/`cancelled`) freezes the whole class — `updateClass` refuses every field, 409; `date` alone is additionally frozen by a DB trigger the retention sweep depends on
 - Recurring classes: template generates instances on a rolling 4-week basis, runs indefinitely — **one class per week per template**, so a candidate date whose week already holds one of that template's classes (a cancelled one counts) is skipped rather than filled
 - **A template is a stamp, not a live link** (#194): editing one changes nothing that already exists — not the day, time, room, rates or capacity of any generated class, ever. The edit answers with the first week the new schedule can reach — or, for a paused or archived template, with that state instead, because the sweep skips those and no week could be named honestly; the hourly sweep is what lays a reachable one down. The studio family likewise propagates nothing on edit and always did; it does **not** yet key generation per week — `studio-class-generator.ts` has no week predicate, so a studio template moved Tuesday→Thursday generates four Thursdays beside the four standing Tuesdays. #284 carries that half
+- **Removal, and the two doors it is not** (#279): a studio class may be
+  removed outright only where the hourly sweep cannot undo it — a manually
+  logged one, or one whose start instant has passed. A generated class still to
+  come is refused with 409 and told to cancel instead, because removing it
+  releases `(templateId, date)` and the sweep recreates it within the hour. A
+  `StudioClassTemplate` is never removed at all: archiving withdraws its future
+  window and records what it withdrew (`archivedAt`/`withdrawnCount`), and a
+  delete would destroy that record. A cancelled studio class is **not** an
+  income record — reporting excludes it — so nothing about keeping one is about
+  money; it survives because it holds its template's date.
 - Auto-cancel: system checks at configured time, cancels if below min_students
 - Walk-ins can exceed max_students — teacher rate stays capped at target, extra students lower everyone's price
 - After completion: pricing engine runs → payments created → notifications sent

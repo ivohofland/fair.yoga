@@ -230,7 +230,7 @@ describe('archiveOrUnarchiveStudioTemplate (DB)', () => {
     expect(await prisma.studioClass.count({ where: { id: c.id } })).toBe(0);
   });
 
-  it('keeps an already-cancelled future class — it is an income record, not an offer', async () => {
+  it('keeps an already-cancelled future class — it holds its template date, and is not income', async () => {
     const t = await makeTemplate('Keep Cancelled');
     const c = await makeClass(t.id, { date: future(), cancelledAt: new Date() });
 
@@ -890,7 +890,8 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
   /**
    * The case #119 exists for. `pause → archive → un-archive → resume` is the
    * sequence #94's PR body named: the archive deliberately spares cancelled
-   * classes (they are income records), and the generator's existence probe has
+   * classes (not because they are income records — reporting excludes them —
+   * but because they hold their dates), and the generator's existence probe has
    * no `cancelledAt` filter, so those dates cannot be regenerated either —
    * `@@unique([templateId, date])` makes it unrepresentable. The teacher
    * therefore gets back fewer classes than the archive withdrew, and before

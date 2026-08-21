@@ -485,7 +485,13 @@ model StudioClassTemplate {
   /// Not "unbooked", unlike `ClassTemplate.withdrawnCount`: `StudioClass` has
   /// no registrations to consult, so the only filter is `cancelledAt: null`
   /// and every uncancelled future studio class the boundary reaches is
-  /// withdrawn. An already-cancelled one is an income record and survives.
+  /// withdrawn. An already-cancelled one survives — NOT because it is an
+  /// income record, which it is not: `settings/reporting/page.tsx:36` queries
+  /// with `cancelledAt: null` and excludes it from earnings and from the month
+  /// rollup outright. It survives because it holds `(templateId, date)`, and a
+  /// date the teacher cancelled deliberately must not be refilled on the next
+  /// resume. Corrected under issue 279, which inherited the wrong reason from
+  /// this sentence.
   ///
   /// What is still scheduled is deliberately not stored beside it. The archive
   /// PATCH returns a `remaining` count once, for the confirmation message
@@ -525,6 +531,26 @@ model StudioClass {
   location        String
   studentCount    Int?
   hourlyRate      Decimal   @db.Decimal(10, 2)
+  /// Cancelled, as opposed to removed — the two doors, and which is which
+  /// (issue 279).
+  ///
+  /// CANCEL says "this was scheduled and did not happen". It withholds the row
+  /// from earnings (`settings/reporting/page.tsx:36`), drops it out of the
+  /// partial slot index `(teacherId, date, startTime) WHERE "cancelledAt" IS
+  /// NULL`, and keeps `@@unique([templateId, date])` — so a generated class
+  /// goes on holding its date against the sweep, which is the point when a
+  /// teacher cancelled in order to teach something else in that slot.
+  ///
+  /// REMOVE (`DELETE /api/studio-classes/[id]`) takes the row away entirely,
+  /// and is allowed only where the sweep cannot undo it: a manual class, or one
+  /// whose start has passed. `studio-class-deletion.ts` holds the rule and the
+  /// reasoning. A future generated class is refused there, with cancel named as
+  /// the remedy.
+  ///
+  /// Cancellation is NOT a precondition of removal, and the removability
+  /// predicate cannot read this column — its parameter type has no field for
+  /// it. Requiring a cancel first would force the teacher to create the litter
+  /// before they could clear it.
   cancelledAt     DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
