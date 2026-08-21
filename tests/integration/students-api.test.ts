@@ -1219,7 +1219,13 @@ describe('POST /api/students — response disclosure (#162)', () => {
         await prisma.account.deleteMany({ where: { id: burst.accountId } });
       }
     }
-  });
+    // 51 sequential round trips ≈ 9s through next dev (measured 2026-08-21,
+    // idle server): over vitest's 5s default with nothing else running, so
+    // the default budget failed this test for reasons unrelated to any
+    // change (#290). 30s absorbs contention on a busy dev server, not just
+    // solo latency. Sequential stays load-bearing — see the limiter note
+    // above; the 429 must land on request 51, deterministically.
+  }, 30_000);
 
   // Used to be shared with the teacher branch of PUT /api/students/[id] —
   // see the history in `checkStudentWriteLimit`'s docblock (`src/lib/
