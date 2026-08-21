@@ -5,6 +5,9 @@ import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/layout/page-header';
 import { StudentCountEditor } from '@/components/studio-class/student-count-editor';
 import { CancelStudioClassButton } from '@/components/studio-class/cancel-studio-class-button';
+import { DeleteStudioClassButton } from '@/components/studio-class/delete-studio-class-button';
+import { studioClassDeletability } from '@/services/studio-class-deletion';
+import { startOfLocalDay } from '@/lib/timezone';
 import { formatDateWithYear } from '@/lib/format';
 
 export default async function StudioClassDetailPage({
@@ -23,6 +26,32 @@ export default async function StudioClassDetailPage({
   if (!studioClass || studioClass.teacherId !== session.teacherId) {
     redirect('/');
   }
+
+  // TWO PREDICATES, ON PURPOSE. They overlap almost everywhere and disagree in
+  // the two places that matter, so neither may be derived from the other:
+  //
+  //   REMOVABLE      — can the hourly sweep undo this removal
+  //                    (`studio-class-deletion.ts`, start-instant based)
+  //   COUNTS         — is this row inside reporting's window
+  //                    (`settings/reporting/page.tsx:36`, calendar-date based)
+  //
+  // A future-dated MANUAL class is removable and counts nothing. A class dated
+  // TODAY whose start has passed is removable and counts. Collapsing these into
+  // one flag gets both of those wrong, which is what
+  // `tests/integration/studio-class-page.test.ts` pins.
+  const { deletable } = studioClassDeletability(
+    studioClass,
+    new Date(),
+    session.defaultTimezone,
+  );
+
+  const endOfToday = startOfLocalDay(new Date(), session.defaultTimezone);
+  endOfToday.setUTCHours(23, 59, 59, 999);
+  const countsTowardEarnings =
+    studioClass.cancelledAt === null && studioClass.date <= endOfToday;
+  const earningsAtRisk = countsTowardEarnings
+    ? (Number(studioClass.hourlyRate) * studioClass.durationMinutes) / 60
+    : null;
 
   return (
     <>
@@ -58,9 +87,20 @@ export default async function StudioClassDetailPage({
       </div>
 
       {studioClass.cancelledAt ? (
-        <div className="py-8 text-center type-body">
-          This class was cancelled.
-        </div>
+        <>
+          <div className="py-8 text-center type-body">
+            This class was cancelled.
+          </div>
+
+          {deletable && (
+            <section className="mt-2 pt-6 border-t border-border">
+              <DeleteStudioClassButton
+                studioClassId={studioClass.id}
+                earningsAtRisk={earningsAtRisk}
+              />
+            </section>
+          )}
+        </>
       ) : (
         <>
           <section>
@@ -70,8 +110,14 @@ export default async function StudioClassDetailPage({
             />
           </section>
 
-          <section className="mt-8 pt-6 border-t border-border">
+          <section className="mt-8 pt-6 border-t border-border flex flex-col items-start gap-3">
             <CancelStudioClassButton studioClassId={studioClass.id} />
+            {deletable && (
+              <DeleteStudioClassButton
+                studioClassId={studioClass.id}
+                earningsAtRisk={earningsAtRisk}
+              />
+            )}
           </section>
         </>
       )}
