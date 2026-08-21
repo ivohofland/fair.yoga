@@ -412,9 +412,9 @@ the arithmetic then reconciles against the corruption. #199's round recovered on
   paths eaten. Write the markdown to a file in the scratchpad and pass the path.
 - **Warm routes before scoring mutations.** `next dev` recompiles lazily after a source
   edit; the first requests pay compilation and can blow a 5s timeout, which reads exactly
-  like an assertion failure — three mutations on #285 were mis-scored RED this way before
-  #290 named the protocol. Apply mutation → curl the touched route(s) → then judge
-  RED/GREEN.
+  like an assertion failure. On #285's sweep this would have mis-scored three mutations as
+  RED; warming the routes first is what prevented it, and #290 wrote the habit down.
+  Apply mutation → curl the touched route(s) → then judge RED/GREEN.
 - Recipes for driving the running app (auth without email, Playwright, seed data) live in the
   `verify` skill.
 

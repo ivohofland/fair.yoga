@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A local full run is either reliably green or reliably explains itself: serialize Playwright locally so its red means what it says, budget the one integration test that is inherently over vitest's default, and put the warm-before-scoring protocol beside the work that needs it.
+**Goal:** A local full run is either reliably green or reliably explains itself: serialize Playwright locally so its red means what it says, budget the integration suite's longest fetch loop against a loaded server, and put the warm-before-scoring protocol beside the work that needs it.
 
 **Architecture:** No production code changes. One config pin (`workers: 1`), one per-test timeout override following the suite's existing convention, and documentation in three sites. The branch's substance is measurements — every number below was re-derived on 2026-08-21, and Task 1 adds the two the spec deferred (local e2e duration, fanned out vs serialized).
 
@@ -99,6 +99,8 @@ Commit body carries the Step 1/3/4 measurements.
 - Modify: `tests/integration/students-api.test.ts` (the `it` closing around line 1220)
 
 The red side of this guard is already proven — measured twice (issue comment, then spec verification day-of): solo, idle server, `Test timed out in 5000ms`; passes with `--testTimeout=20000` at ~9s of test time. Re-confirm rather than trust:
+
+> **Corrected in PR review.** That ~9s does not reproduce against a *warm* dev server: the test runs in ~0.8s, and the two sibling tests making the same 51 sequential round trips pass on the untouched 5s default. The reading was a cold or contended server, not the loop. The budget stays, justified by exposure rather than by arithmetic — see the spec's D2 — and Steps 1 and 3 below will only show what they claim on a server in that same cold state. The comment that shipped is not the one drafted in Step 2; see the file.
 
 - [ ] **Step 1: Watch it fail at the default**
 

@@ -34,7 +34,7 @@ Delete the session row when done. (`tests/helpers.ts`'s `seedSession(db, account
 
 ## Gotchas
 
-- `next dev` compiles lazily per route: the first request after a source edit pays compilation and can blow a 5s test timeout or a Playwright visibility budget. Warm each touched route once (bare `curl`) before running gates or scoring mutations — a RED immediately after an edit is a cold route until proven otherwise (#290).
+- `next dev` compiles lazily per route: the first request after a source edit pays compilation and can blow vitest's 5s default (`vitest.config.ts` sets no `testTimeout`) or Playwright's 5s `expect` budget (`playwright.config.ts` sets no `expect.timeout`). Warm each touched route once (bare `curl`) before running gates or scoring mutations — a RED immediately after an edit is a cold route until proven otherwise (#290).
 - Notification titles are NOT unique — dev DB accumulates hundreds of e.g. "Payment received" rows from past testing. Scope any test-data mutation by `id` (capture the pre-state first), never by title.
 - `npm run db:seed` wipes and recreates all domain data — the reset hammer if test-data surgery goes wrong.
 - Judge visuals by measuring the DOM (`getBoundingClientRect`), not by eyeballing zoomed screenshots.

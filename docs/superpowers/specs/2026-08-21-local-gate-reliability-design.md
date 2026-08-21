@@ -30,11 +30,11 @@ fan-out. The fix for the integration side is therefore documentation and the
 existing per-test-timeout convention, not serialization (there is nothing to
 serialize).
 
-### Sub-case 2 — inherently over budget
+### Sub-case 2 — the longest loop in the suite, and a measurement that did not hold
 
 `tests/integration/students-api.test.ts > refuses a 51st invitation within the
 hour` makes **51 sequential HTTP round trips** to prove the rate limiter refuses
-the 51st. Re-measured 2026-08-21, alone, dev server idle:
+the 51st. First measured 2026-08-21, alone, dev server believed idle:
 
 ```
 npx vitest run --project integration tests/integration/students-api.test.ts \
@@ -45,9 +45,18 @@ npx vitest run --project integration tests/integration/students-api.test.ts \
   → 1 passed                            (tests: 9.01s)
 ```
 
-~175ms per round trip × 51 ≈ 9s: over the 5s default with nothing else running.
-No amount of serialization helps. CI passes it because CI's production build
-answers faster than `next dev`.
+That reading was written up as "~175ms per round trip, inherently over budget,
+no amount of serialization helps". **Re-measurement during PR review
+contradicted it.** Against a warm dev server the same test runs in ~0.8s —
+~15ms per round trip — and, decisively, the two sibling tests in the same
+describe make the same 51 sequential round trips and pass on the untouched 5s
+default. Were the cost a property of the round trips, those two would be red on
+every run.
+
+So the 9.01s was the server, not the loop: a cold or contended `next dev`,
+whose compilation half is exactly what §D3's warm-up protocol removes. The
+budget stays on a narrower justification — exposure, not arithmetic; see D2 —
+and the claim that no amount of serialization helps is withdrawn.
 
 The sequentiality is load-bearing and stays: the limiter
 (`src/lib/rate-limit.ts`) is synchronous and in-memory, so concurrent requests
@@ -62,9 +71,10 @@ Not CI risk — CI sets `workers: 1` and `retries: 2`. Two other reasons:
    real regression gets waved through as "just the flake".
 2. **Mutation scores silently lie.** After a source edit, `next dev` lazily
    recompiles the touched routes; the first requests pay compilation and can
-   blow a 5s timeout. During #285's sweep this mis-scored three mutations RED —
-   a timeout reads exactly like an assertion failure, so a guard appears to
-   bite when it did not. Mutation scoring is the technique this project relies
+   blow a 5s timeout. On #285's sweep this would have mis-scored three
+   mutations RED — a timeout reads exactly like an assertion failure, so a
+   guard appears to bite when it did not; warming the routes first is what
+   prevented it there. Mutation scoring is the technique this project relies
    on to prove guards bite (solve-issue §3); corrupting it silently corrupts
    every verdict built on it.
 
@@ -79,7 +89,20 @@ the remaining flake surface is small enough that retries would hide more than
 they save.
 
 `fullyParallel: true` stays: with one worker it has no scheduling effect, and
-keeping it makes the config honest if workers are ever raised deliberately.
+keeping it makes the config honest if workers are ever raised deliberately. If
+anyone does raise it, the thing holding each spec together is
+`test.describe.configure({ mode: 'serial' })`, which all 12 specs declare — not
+their `beforeAll`/`afterAll`, which on their own route a spec into Playwright's
+`parallelWithHooks` bucket and let it be chunked into `ceil(tests / workers)`
+groups with the fixture setup re-run per chunk. The config comment says so at
+the pin, because `mode: 'serial'` reads as redundant beside `workers: 1` and is
+otherwise exactly the line a tidy-up deletes.
+
+`trace` moves from `'on-first-retry'` to `'retain-on-failure'`. With CI's
+`retries: 2` the former recorded the *retry* — so a contention failure that
+passed on attempt 2 uploaded a trace of the healthy run and nothing of the
+failing one. A branch about red meaning what it says should not throw away the
+evidence from the red.
 
 Cost, to be measured during implementation and recorded in the PR body: full
 local e2e duration before (fanned out) vs after (serialized). Accepted
@@ -100,14 +123,26 @@ rather than pretending a red-to-green flake demo is available on demand.
 ### D2 — Budget the invitation burst per-test, house-style
 
 The burst test gets a positional timeout third arg (`}, 30_000);`) at the call
-site — the convention already used across the integration suite: 25 sites in
-`{ timeout: N }` option-object form across 12 files and 14 positional-arg
-sites across 8 files, each carrying a measured-margin comment
-(`teacher-rooms-api.test.ts:596-611` is the worked example). The comment
-records: ~9s solo measured 2026-08-21 (51 sequential round trips, ~175ms each);
-30s absorbs contention on a busy dev server, not just solo latency; the default
-5s was exceeded even idle, so the test was red for reasons unrelated to any
-change.
+site — the only form this repo uses for a test budget. There is no competing
+convention to weigh: `main` carries 13 positional sites across 7 files, and
+zero `it(name, { timeout: N }, fn)` sites. (The 25 `{ timeout: N }` sites in
+`tests/` are `prisma.$transaction` and `vi.waitFor` options — a different
+argument to a different function.) Of the 13, three carry a measured
+justification — `teacher-rooms-api.test.ts:611`, `rooms-api.test.ts:592`,
+`classes-api.test.ts:744`, the first being the worked example — so commenting
+this one puts it at the better end of house practice rather than merely
+matching it.
+
+The comment records what is actually true, which is *not* what the first draft
+of this spec claimed. Measured 2026-08-21 against a warm dev server, the burst
+test runs in ~0.8s, and the two sibling tests in the same describe make the
+same 51 sequential round trips and pass on the untouched 5s default. So "51
+round trips cost ~9s" was wrong: the ~9s reading came from a cold or contended
+server, and the compilation half of that is what §D3's warm-up protocol
+removes. The budget is justified instead by exposure — this is the longest
+fetch loop in the integration suite by an order of magnitude, 51 sequential
+round trips where the next-largest is 2, so it is the test most likely to be
+hurt by a loaded server, and it gets headroom the others do not need.
 
 Why not raise the project-wide default: the 5s default is load-bearing —
 `notifications-stream.test.ts:267` states it as the baseline tests reason
@@ -156,8 +191,8 @@ about `workers`/timeouts are checked against the shipped config.
   serves IP-keyed limits where the test wants to *avoid* tripping them. This
   budget is keyed on teacher id (`src/lib/rate-limit.ts:76-78`) and the 429 is
   the assertion — bypassing deletes the test's point, and varying IPs would
-  not recover the time anyway: the ~9s is 51 round trips through `next dev`,
-  not limiter cost.
+  not recover any time anyway: the runtime is 51 round trips through
+  `next dev`, not limiter cost.
 - **Local retries > 0**: hides real signal; unnecessary once serialized.
 
 ## Acceptance
@@ -167,9 +202,10 @@ Maps to the issue's acceptance, split per its comment:
 1. *Contention*: a local full e2e run is structurally serialized — one worker,
    visible in Playwright's output — so its red means what it says. Duration
    cost measured and stated, not asserted.
-2. *Inherently over budget*: the burst test passes alone at the default
-   invocation (`npx vitest run --project integration
-   tests/integration/students-api.test.ts`) with no flags.
+2. *The burst test*: passes alone at the default invocation (`npx vitest run
+   --project integration tests/integration/students-api.test.ts`) with no
+   flags, and its fixture sweep survives a timeout of the test body rather
+   than racing it.
 3. *Mutation workflow*: the warm-before-scoring rule exists beside the work —
    AGENTS.md, verify skill, solve-issue hazard list — with commands that were
    actually run.
