@@ -81,7 +81,14 @@ state. This is stronger than a red test — a red test can be deleted or
 skipped; this signature cannot be satisfied without threading reversible state
 through every caller.
 
-Result: **RED** — 7 errors, one per call site:
+Result: **RED** — recorded at the time as "7 errors, one per call site". That
+was an **undercount, and the reason is a trap worth more than the number**: 7 is
+the test file's call sites only. The real figure is **9 errors across 3 files** —
+the 7 tests plus `route.ts` and `page.tsx` — reproduced under review. `tsconfig`
+sets `"incremental": true`, so a warm `tsconfig.tsbuildinfo` suppresses errors in
+files the mutation did not itself touch. **Score any typecheck-gated mutation
+with `tsc --noEmit --incremental false`**, or a surviving mutant can read as
+caught. The original transcript follows unedited:
 
 ```
 src/services/studio-class-deletion.test.ts(18,11): error TS2345: Argument of type '{ templateId: null; date: Date; startTime: string; }' is not assignable to parameter of type '{ templateId: string | null; date: Date; startTime: string; template: { isArchived: boolean; }; }'.
@@ -226,12 +233,62 @@ Fixtures via Prisma; session seeded with the suite's own helper.
   same marker string as the removed row, so three consecutive STALE readings
   were detecting the *control*, not the removal. Key probes on a string only
   the subject can render.
-- `startOfLocalDay(now, tz)` is an instant; stored into `@db.Date` it
+- ~~`startOfLocalDay(now, tz)` is an instant; stored into `@db.Date` it
   truncates to the UTC date-part — *yesterday* for east-of-UTC zones at most
-  hours. Building "today" requires the calendar date formatted in-zone first
-  (`en-CA` + `T00:00:00Z`). This also means the plan's Task 4 case-4 fixture,
-  `date: startOfLocalDay(new Date(), TZ)`, silently stores yesterday's
-  calendar date under a Europe/Amsterdam teacher; its assertions are
-  unaffected (both predicates hold a fortiori for past dates), but the test's
-  "dated today" narrative is off by one day in storage.
+  hours.~~ **WITHDRAWN — this was wrong, and it propagated.** `startOfLocalDay`
+  does not return an instant. It formats the instant in the teacher's zone and
+  returns `Date.UTC(localY, localM, localD)` (`src/lib/timezone.ts:81-95`) — the
+  teacher's local calendar date, already in the midnight-UTC representation
+  `@db.Date` stores. Measured across the east-of-UTC edge: at 2026-08-21T22:30Z
+  it returns 2026-08-22 for a Europe/Amsterdam teacher, which is that teacher's
+  today, not yesterday. The function's own docblock states the contract, and it
+  exists *because* the naive comparison is wrong. So the plan's Task 4 case-4
+  fixture stores today's date correctly and its "dated today" narrative is
+  accurate. The claim reached PR #295's body before anyone read the helper.
+
+---
+
+## M8 — the boundary of the corrected rule (added during PR review)
+
+PR #295's review found that the shipped predicate asked the wrong question: it
+compared the CLASS's start instant against now, while the generator filters
+candidates on the TEMPLATE's current `startTime`. After a template time edit the
+two disagree by design ("a template is a stamp, not a live link"), so a class
+that had started could still be a generator candidate that same day — removal
+released `(templateId, date)` and the sweep re-inserted within the hour.
+
+The rule is now a calendar-date comparison. This mutation restores the old
+permissiveness at its boundary.
+
+Mutation: `startOfLocalDay(now, timeZone) > sc.date` → `>=`, i.e. a generated
+class dated TODAY becomes removable again.
+
+Result: **RED at both layers.**
+
+```
+ ❯ |unit| src/services/studio-class-deletion.test.ts (11 tests | 3 failed)
+       × refuses one whose own start passed hours ago
+       × refuses one at the last minute of the teacher’s day
+       × west of UTC: still the 14th in New York, so the 14th is refused though UTC calls it yesterday
+      Tests  3 failed | 8 passed (11)
+```
+
+```
+ ❯ |integration| tests/integration/studio-api.test.ts (50 tests | 1 failed)
+       × refuses a generated class dated today, however long ago it started
+AssertionError: expected 200 to be 409 // Object.is equality
+      Tests  1 failed | 49 passed (50)
+```
+
+The west-of-UTC case reddening is the useful part: it means the mutation is
+caught on the *zone* axis too, not only on the boundary — a teacher at 22:30 on
+the 14th in New York must not be able to remove the 14th, and `>=` lets them.
+
+Restored → 11 passed, 50 passed.
+
+**Not scored, and named so the gap is visible:** the optional-widening edit
+(`template?: { isArchived: boolean }`) is a mutation that **survives** — `tsc`
+clean, lint clean, whole suite green. It is documented in
+`studio-class-deletion.ts`'s docblock rather than hidden, and the
+`@ts-expect-error` case in the test file is the one site that now catches it.
 

@@ -23,8 +23,16 @@ const TZ = 'Europe/Amsterdam';
 let teacherId: string;
 let token: string;
 
-const page = (id: string) =>
-  fetch(`${BASE_URL}/studio-class/${id}`, { headers: cookie(token) }).then((r) => r.text());
+/**
+ * Asserts 200 before returning the body. Without it every `not.toContain` in
+ * this file passes against a page that did not render at all — a 500, or the
+ * `redirect('/')` a non-owner gets, contains none of the strings either.
+ */
+const page = async (id: string) => {
+  const res = await fetch(`${BASE_URL}/studio-class/${id}`, { headers: cookie(token) });
+  expect(res.status).toBe(200);
+  return res.text();
+};
 
 const makeClass = (data: {
   templateId?: string | null;
@@ -32,6 +40,7 @@ const makeClass = (data: {
   startTime: string;
   cancelledAt?: Date | null;
   hourlyRate?: number;
+  durationMinutes?: number;
 }) =>
   prisma.studioClass.create({
     data: {
@@ -85,7 +94,42 @@ describe('the studio class page: which classes offer removal', () => {
       date: new Date('2099-08-05T00:00:00.000Z'),
       startTime: '07:00',
     });
-    expect(await page(sc.id)).not.toContain('Remove this class');
+    const html = await page(sc.id);
+    // Anchored: without a string only this page can render, the negative
+    // assertion below would pass against a page that rendered nothing useful.
+    expect(html).toContain('Community Studio');
+    expect(html).not.toContain('Remove this class');
+  });
+
+  /**
+   * THE PAGE HALF OF THE REGRESSION PR #295's REVIEW FOUND. A generated class
+   * dated TODAY offers no removal, however long ago it started — the class's
+   * `startTime` is a stamp and the generator filters on the template's current
+   * one, so "it has started" does not mean "the sweep cannot rebuild it".
+   *
+   * The template is deliberately created at a LATER hour than the class, which
+   * is the divergence itself rather than merely a same-day class.
+   */
+  it('offers no removal on a generated class dated today, however long ago it started', async () => {
+    const tpl = await prisma.studioClassTemplate.create({
+      data: {
+        teacherId,
+        classType: 'Page Template Today',
+        dayOfWeek: 4,
+        startTime: '23:30',
+        durationMinutes: 60,
+        location: 'Community Studio',
+        hourlyRate: 45,
+      },
+    });
+    const sc = await makeClass({
+      templateId: tpl.id,
+      date: startOfLocalDay(new Date(), TZ),
+      startTime: '00:01',
+    });
+    const html = await page(sc.id);
+    expect(html).toContain('Community Studio');
+    expect(html).not.toContain('Remove this class');
   });
 
   it('offers removal on a cancelled past class, where the page used to dead-end', async () => {
@@ -127,34 +171,42 @@ describe('the studio class page: what the removal claims it costs', () => {
     expect(html).not.toContain('will come off your reported earnings');
     // …and the prop the page hands the button carries no figure.
     expect(html).toContain('\\"earningsAtRisk\\":null');
-    expect(html).not.toContain('\\"earningsAtRisk\\":45');
   });
 
   /**
-   * DATED TODAY, STARTING AT LOCAL MIDNIGHT — not at a convenient hour.
-   * `classStartInstant(today, '00:00', TZ)` is local midnight of today, which
-   * is in the past at every wall-clock moment of the day. A fixture at, say,
-   * '09:00' would be removable only after 09:00 Amsterdam and would fail every
-   * morning, which reads as a bug rather than as a fixture choice.
+   * DATED TODAY AND MANUAL. Manual is what keeps it removable: a GENERATED
+   * class dated today is refused outright (see the page case above), so only a
+   * manual one can be both inside reporting's window and removable — which is
+   * precisely the overlap this case exists to separate.
+   *
+   * NINETY MINUTES, NOT SIXTY, and that is the whole point. At 60 the formula
+   * `hourlyRate x durationMinutes / 60` returns the hourly rate unchanged, so
+   * input and output are the same number and a page that dropped the duration
+   * term entirely passed. 45.00 x 90 / 60 = 67.50 can only come from the real
+   * formula.
    */
-  it('claims the earnings for a class dated today whose start has passed', async () => {
-    const today = startOfLocalDay(new Date(), TZ);
+  it('claims the earnings for a manual class dated today, at its real duration', async () => {
     const sc = await makeClass({
       templateId: null,
-      date: today,
+      date: startOfLocalDay(new Date(), TZ),
       startTime: '00:00',
       hourlyRate: 45,
+      durationMinutes: 90,
     });
     const html = await page(sc.id);
     expect(html).toContain('Remove this class');
-    // 45.00 x 60 / 60 — threaded as the prop, rendered after the click.
-    expect(html).toContain('\\"earningsAtRisk\\":45');
+    // Delimited with the closing brace — `earningsAtRisk` is the last prop the
+    // page passes, so it is what follows. An unanchored `":67.5` would also
+    // match 67.55 or 675.
+    expect(html).toContain('\\"earningsAtRisk\\":67.5}');
   });
 });
 
 /**
  * The end-to-end proof of the spec's §1.5 — the claim issue 279 inherited from
- * `prisma/schema.prisma:488` and built half its dilemma on. A studio class's
+ * the `withdrawnCount` docblock on `StudioClassTemplate`, which read "an
+ * already-cancelled one is an income record and survives" until this branch
+ * corrected it, and on which the issue built half its dilemma. A studio class's
  * earnings are `hourlyRate x durationMinutes / 60` and nothing else;
  * `studentCount` never touches money; and removing the class takes the figure
  * with it.

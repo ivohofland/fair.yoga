@@ -28,19 +28,30 @@ export default async function StudioClassDetailPage({
   }
 
   // TWO PREDICATES, ON PURPOSE. They overlap almost everywhere and disagree in
-  // the two places that matter, so neither may be derived from the other:
+  // the places that matter, so neither may be derived from the other. Both are
+  // phrased so that TRUE means what the name says:
   //
-  //   REMOVABLE      — can the hourly sweep undo this removal
-  //                    (`studio-class-deletion.ts`, start-instant based)
-  //   COUNTS         — is this row inside reporting's window
-  //                    (`settings/reporting/page.tsx:36`, calendar-date based)
+  //   REMOVABLE — the hourly sweep cannot undo this removal
+  //               (`studio-class-deletion.ts`; manual, or dated before today)
+  //   COUNTS    — this row is inside reporting's window: uncancelled AND on or
+  //               before today, both conjuncts (the `studioClass.findMany` in
+  //               `settings/reporting/page.tsx`)
   //
-  // A future-dated MANUAL class is removable and counts nothing. A class dated
-  // TODAY whose start has passed is removable and counts. Collapsing these into
-  // one flag gets both of those wrong, which is what
+  // A future-dated MANUAL class is REMOVABLE and counts nothing. A cancelled
+  // past class is removable and counts NOTHING either — the `cancelledAt`
+  // conjunct is the one this branch's whole correction turns on. A generated
+  // class dated today counts and is NOT removable. Collapsing these into one
+  // flag gets each of those wrong, which is what
   // `tests/integration/studio-class-page.test.ts` pins.
+  //
+  // The predicate is handed a fresh literal carrying only the removal facts —
+  // never `studioClass` itself. This page fetches the template alongside the
+  // row, and passing the whole row is what let a widened predicate read
+  // template state HERE while the route's narrower `select` left it undefined:
+  // the page offered a Remove button the API answered 409. One projection,
+  // `STUDIO_CLASS_REMOVAL_FACTS_SELECT`, now defines what either may see.
   const { deletable } = studioClassDeletability(
-    studioClass,
+    { templateId: studioClass.templateId, date: studioClass.date },
     new Date(),
     session.defaultTimezone,
   );

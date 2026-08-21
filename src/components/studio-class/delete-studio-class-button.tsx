@@ -30,14 +30,18 @@ interface DeleteStudioClassButtonProps {
  * count exists for exactly one confirmation message and is deliberately never
  * persisted (`prisma/schema.prisma`, `withdrawnCount`).
  *
- * Leaves for the schedule with a hard navigation, not `router.push('/')`:
- * the detail page no longer exists after a success, and a soft push serves
- * the back link's stale prefetch of the schedule (verified in the running
- * app; see the comment at the call site). Same destination
- * `DeleteRoomButton` pushes to — that button's soft push is an observation
- * for another day, not this one's defect. The confirm-then-silence failure
- * that button's sibling documents applies here too — the teacher has already
- * answered "yes, remove it", so an unchanged page reads as success.
+ * Leaves for the schedule with a hard navigation, not `router.push('/')`: the
+ * detail page no longer exists after a success, and a soft push serves the back
+ * link's stale prefetch of the schedule (verified in the running app — see the
+ * inline comment on `window.location.assign` below). The same move
+ * `DeleteRoomButton` makes to its own list page, which since this branch does
+ * it the same way for the same measured reason.
+ *
+ * The confirm-then-silence failure applies here too — the teacher has already
+ * answered "yes, remove it", so an unchanged page reads as success. That is why
+ * `removing` is NOT cleared on the success path: the navigation is in flight,
+ * and re-enabling the button under it would show an idle "Remove" on a page
+ * that is leaving.
  */
 export function DeleteStudioClassButton({
   studioClassId,
@@ -57,25 +61,35 @@ export function DeleteStudioClassButton({
   async function handleRemove() {
     setRemoving(true);
     setError('');
+
+    let removed = false;
     try {
       const res = await fetch(`/api/studio-classes/${studioClassId}`, { method: 'DELETE' });
-      if (res.ok) {
-        // A hard exit, deliberately. The page's back link usually has '/' already
-        // prefetched by the time the removal lands, and a soft `router.push('/')`
-        // serves that pre-removal prefetch entry — the removed row kept
-        // rendering in the running app past a 4s settle window, with
-        // `router.refresh()` before or after the push (refresh revalidates the
-        // route being left, not the destination's cache entry). A full
-        // navigation cannot serve the old schedule.
-        window.location.assign('/');
-      } else {
-        setError(await readErrorMessage(res, 'Could not remove the class. Please try again.'));
-      }
+      if (res.ok) removed = true;
+      else setError(await readErrorMessage(res, 'Could not remove the class. Please try again.'));
     } catch {
       setError('Network error. Please try again.');
-    } finally {
-      setRemoving(false);
     }
+
+    if (removed) {
+      // A hard exit, deliberately. The page's back link usually has '/' already
+      // prefetched by the time the removal lands, and a soft `router.push('/')`
+      // serves that pre-removal prefetch entry — the removed row kept rendering
+      // in the running app past a 4s settle window, with `router.refresh()`
+      // before or after the push (refresh revalidates the route being left, not
+      // the destination's cache entry). A full navigation cannot serve the old
+      // schedule.
+      //
+      // Outside the `try` on purpose: inside it, a throw here would report a
+      // removal the server COMMITTED as "Network error. Please try again.", and
+      // the retry would then answer 404. `removing` is left set — the page is
+      // going away, and an enabled "Remove" under an in-flight navigation is
+      // the silence half of confirm-then-silence.
+      window.location.assign('/');
+      return;
+    }
+
+    setRemoving(false);
   }
 
   if (!confirming) {

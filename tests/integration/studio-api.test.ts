@@ -1171,9 +1171,18 @@ describe('DELETE /api/studio-classes/[id]', () => {
     expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).toBeNull();
   });
 
-  /** Cancellation is orthogonal to removability — the predicate cannot read it. */
-  it('removes a cancelled past class', async () => {
+  /**
+   * Cancellation is orthogonal to removability — the predicate cannot read it.
+   *
+   * GENERATED, deliberately. This case was written manual, which returns on the
+   * first disjunct (`templateId === null`) and never reaches the date branch the
+   * comment names — it proved nothing about cancellation. With a template it
+   * exercises the real path, and its twin below covers the other direction.
+   */
+  it('removes a cancelled past generated class', async () => {
+    const tpl = await makeTemplate(ownerId, 'Del Cancelled Past', '06:30');
     const sc = await makeClass({
+      templateId: tpl.id,
       date: PAST,
       startTime: '06:30',
       cancelledAt: new Date('2020-07-01T10:00:00.000Z'),
@@ -1184,6 +1193,76 @@ describe('DELETE /api/studio-classes/[id]', () => {
   });
 
   /** The double-click. P2025 must read as 404, not as a 500. */
+  /**
+   * THE OTHER DIRECTION, and the one that was missing: cancellation must not
+   * ENABLE a removal either. Add `if (cancelledAt !== null) return deletable`
+   * to the predicate — "it is already cancelled, let them clear the litter",
+   * a far more attractive edit than reading template state — and every other
+   * case in this file still passes.
+   *
+   * What it would ship: removing a cancelled FUTURE generated class releases
+   * `(templateId, date)`, and that date is held only because the cancelled row
+   * occupies it (`studio-class-generator.ts`, `blocked_by_cancelled`). The
+   * sweep recreates the class LIVE within the hour, so a teacher's cancellation
+   * silently un-cancels itself on a class students were told was off.
+   */
+  it('refuses a cancelled future generated class, so cancelling cannot buy a removal', async () => {
+    const tpl = await makeTemplate(ownerId, 'Del Cancelled Future', '05:45');
+    const sc = await makeClass({
+      templateId: tpl.id,
+      date: FUTURE,
+      startTime: '05:45',
+      cancelledAt: new Date('2020-07-01T10:00:00.000Z'),
+    });
+
+    const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
+    expect(res.status).toBe(409);
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).not.toBeNull();
+  });
+
+  /**
+   * THE REGRESSION PR #295's REVIEW FOUND. A generated class dated TODAY is
+   * refused however long ago it started, because the class's `startTime` is a
+   * stamp and the generator filters on the TEMPLATE's current one.
+   *
+   * Under the start-instant rule this answered 200: the class started at 00:01
+   * and "cannot regenerate". But move the template to a later hour — an
+   * ordinary edit, and one CLAUDE.md guarantees leaves the class untouched —
+   * and the sweep finds that later instant still ahead, finds
+   * `(templateId, date)` released by the removal, and re-inserts on the same
+   * date within the hour. A delete that undid itself.
+   *
+   * The template here is created at a LATER time than the class deliberately,
+   * so the fixture is the divergence rather than merely a same-day class.
+   */
+  it('refuses a generated class dated today, however long ago it started', async () => {
+    const today = new Date(
+      `${new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Amsterdam' }).format(new Date())}T00:00:00.000Z`,
+    );
+    const tpl = await makeTemplate(ownerId, 'Del Today Diverged', '23:30');
+    const sc = await makeClass({ templateId: tpl.id, date: today, startTime: '00:01' });
+
+    const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { message: string; code?: string } };
+    expect(body.error.code).toBe('STUDIO_CLASS_REGENERATES');
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).not.toBeNull();
+  });
+
+  /** The complement: one day earlier, the sweep cannot reach it and it goes. */
+  it('removes a generated class dated before today', async () => {
+    const todayMs = new Date(
+      `${new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Amsterdam' }).format(new Date())}T00:00:00.000Z`,
+    ).getTime();
+    const yesterday = new Date(todayMs - 24 * 60 * 60 * 1000);
+    const tpl = await makeTemplate(ownerId, 'Del Yesterday', '23:45');
+    const sc = await makeClass({ templateId: tpl.id, date: yesterday, startTime: '00:01' });
+
+    const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
+    expect(res.status).toBe(200);
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).toBeNull();
+  });
+
   it('answers the second removal with 404 rather than a 500', async () => {
     const sc = await makeClass({ date: PAST, startTime: '06:45' });
     expect((await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`)).status).toBe(200);

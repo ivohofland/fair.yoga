@@ -543,14 +543,22 @@ model StudioClass {
   ///
   /// REMOVE (`DELETE /api/studio-classes/[id]`) takes the row away entirely,
   /// and is allowed only where the sweep cannot undo it: a manual class, or one
-  /// whose start has passed. `studio-class-deletion.ts` holds the rule and the
-  /// reasoning. A future generated class is refused there, with cancel named as
-  /// the remedy.
+  /// whose CALENDAR DATE is strictly before the teacher's today.
+  /// `studio-class-deletion.ts` holds the rule and the reasoning. A generated
+  /// class dated today or later is refused there, with cancel named as the
+  /// remedy.
+  ///
+  /// Not "one whose start has passed", which is what this said until PR #295's
+  /// review: a class's `startTime` is a stamp and the generator filters on the
+  /// TEMPLATE's current one, so after a template time edit the two disagree and
+  /// a started class could still be regenerated the same day. The date rule is
+  /// immune to that — no start time on a past date can still be ahead of now.
   ///
   /// Cancellation is NOT a precondition of removal, and the removability
-  /// predicate cannot read this column — its parameter type has no field for
-  /// it. Requiring a cancel first would force the teacher to create the litter
-  /// before they could clear it.
+  /// predicate is not given this column: it is fetched through
+  /// `STUDIO_CLASS_REMOVAL_FACTS_SELECT`, which both call sites use. Requiring
+  /// a cancel first would force the teacher to create the litter before they
+  /// could clear it.
   cancelledAt     DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
