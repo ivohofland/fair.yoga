@@ -170,9 +170,14 @@ describe('ClassTemplate_teacher_slot_unique', () => {
 
 describe('StudioClassTemplate_teacher_slot_unique', () => {
   it('rejects a second live studio template on the same slot', async () => {
-    await prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 3) });
+    // day 6, not 3 (PR #296 review, C1/R5): day 3 at the shared '09:00'
+    // startTime is where `ClassTemplate_teacher_slot_unique` above already
+    // leaves teacherId holding a live ClassTemplate, and the cross-family
+    // guard (20260821120000) now rejects a live StudioClassTemplate there —
+    // this test wants the pre-existing single-table P2002, not that.
+    await prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 6) });
     const err = await prisma.studioClassTemplate
-      .create({ data: studioTpl(teacherId, 3) }).catch((e: unknown) => e);
+      .create({ data: studioTpl(teacherId, 6) }).catch((e: unknown) => e);
     expect((err as Prisma.PrismaClientKnownRequestError).code).toBe('P2002');
     expect((err as Prisma.PrismaClientKnownRequestError).meta?.target)
       .toEqual(['teacherId', 'dayOfWeek', 'startTime']);
@@ -329,51 +334,283 @@ describe('cross-family slot exclusivity (#296)', () => {
       prisma.studioClass.create({ data: { ...studio(teacherId, 1), date: D7b } }),
     ).rejects.toThrow(/YG001/);
   });
+
+  // PR #296 review, I1. The "does not block another teacher" test above only
+  // pins `studio_class_reject_cross_family_slot`'s own `teacherId` filter
+  // (a live Class(teacherId) resident, a StudioClass(otherTeacherId) mover —
+  // that fires the STUDIO-side function). Dropping `teacherId` from
+  // `class_reject_cross_family_slot`'s WHERE reddened nothing before this
+  // test existed. This is the opposite pairing: a live StudioClass belonging
+  // to a DIFFERENT teacher must not stop `teacherId` from taking the same
+  // date/startTime.
+  it('does not block a class from another teacher\'s studio class at the same slot', async () => {
+    const D8 = new Date(Date.UTC(2027, 5, 9));
+    await prisma.studioClass.create({ data: { ...studio(otherTeacherId, 1), date: D8 } });
+    const c = await prisma.class.create({ data: { ...cls(teacherId, 1), date: D8 } });
+    expect(c.id).toBeTruthy();
+  });
+
+  // PR #296 review, I3. Nothing anywhere moved a `date`/`startTime` into an
+  // occupied cross-family slot, so the slot-move disjuncts of both
+  // instance-level UPDATE `WHEN` clauses were dead to this suite. Two tests,
+  // one per disjunct (moving `date` here, `startTime` in the mirror below) —
+  // covering the same field twice would leave the other permanently
+  // unproven.
+  it('moving a class into an occupied cross-family slot is rejected', async () => {
+    const D9 = new Date(Date.UTC(2027, 5, 10)); // resident StudioClass's date
+    const D10 = new Date(Date.UTC(2027, 5, 11)); // mover Class's starting date
+    await prisma.studioClass.create({ data: { ...studio(teacherId, 1), date: D9 } });
+    const c = await prisma.class.create({ data: { ...cls(teacherId, 1), date: D10 } });
+    await expect(
+      prisma.class.update({ where: { id: c.id }, data: { date: D9 } }),
+    ).rejects.toThrow(/YG001/);
+  });
+
+  it('moving a studio class into an occupied cross-family slot is rejected', async () => {
+    const D11 = new Date(Date.UTC(2027, 5, 12));
+    await prisma.class.create({ data: { ...cls(teacherId, 1), date: D11 } });
+    const s = await prisma.studioClass.create({
+      data: { ...studio(teacherId, 1), date: D11, startTime: '08:00' },
+    });
+    await expect(
+      prisma.studioClass.update({ where: { id: s.id }, data: { startTime: '09:00' } }),
+    ).rejects.toThrow(/YG001/);
+  });
+
+  // PR #296 review, I4 (the `Class` half — the `StudioClass` half already had
+  // "un-cancelling a studio class..." above). A direct `status: 'cancelled'`
+  // insert is used, as the "a cancelled class does not block..." test above
+  // already established works for this table.
+  //
+  // `class_terminal_status_guard` (20260805120000) also blocks EVERY
+  // cancelled -> non-cancelled status change, unconditionally — so this
+  // update is refused either way. What proves the became-live disjunct
+  // specifically is WHICH error surfaces: Postgres fires same-table BEFORE
+  // ROW triggers in alphabetical name order, and
+  // `class_cross_family_slot_update_guard` sorts before
+  // `class_terminal_status_guard` ('r' < 't' at the first difference), so
+  // the occupied-slot case raises YG001 before the terminal-status trigger
+  // ever runs. Drop the became-live disjunct and this specific assertion
+  // goes red (the update is still refused, but with the terminal-status
+  // trigger's 23514 instead) even though the update remains rejected either
+  // way — which is exactly why this needs its own test rather than folding
+  // into the terminal-status suite.
+  it('un-cancelling a class into an occupied cross-family slot is rejected', async () => {
+    const D12 = new Date(Date.UTC(2027, 5, 13));
+    await prisma.studioClass.create({ data: { ...studio(teacherId, 1), date: D12 } });
+    const c = await prisma.class.create({
+      data: { ...cls(teacherId, 1), date: D12, status: 'cancelled' },
+    });
+    await expect(
+      prisma.class.update({ where: { id: c.id }, data: { status: 'draft' } }),
+    ).rejects.toThrow(/YG001/);
+  });
+
+  // PR #296 review, mutation W2 finding. "leaves a pre-existing violating
+  // pair editable on unrelated columns" above only pins the narrowness of
+  // `class_cross_family_slot_update_guard`'s own `WHEN` — reducing the
+  // SIBLING trigger's `WHEN` (`studio_class_cross_family_slot_update_guard`)
+  // to its liveness term alone reddened nothing until this test existed, for
+  // the same reason W1 caught `class_cross_family_slot_update_guard`'s
+  // reduction: dropping the extra conjunct WIDENS when a trigger fires
+  // (it stops excluding "nothing relevant changed"), so only an
+  // unrelated-column-edit-stays-editable test can catch it — a
+  // slot-move/became-live rejection test cannot, since widening a WHEN never
+  // removes coverage those already exercise.
+  it('leaves a pre-existing violating pair editable on unrelated columns (studio class)', async () => {
+    const D13 = new Date(Date.UTC(2027, 5, 14));
+    const s = await prisma.studioClass.create({ data: { ...studio(teacherId, 1), date: D13 } });
+    await prisma.$executeRaw`ALTER TABLE "Class" DISABLE TRIGGER USER`;
+    try {
+      await prisma.class.create({ data: { ...cls(teacherId, 1), date: D13 } });
+    } finally {
+      await prisma.$executeRaw`ALTER TABLE "Class" ENABLE TRIGGER USER`;
+    }
+    const updated = await prisma.studioClass.update({
+      where: { id: s.id },
+      data: { location: 'edited while a violating pair stands' },
+    });
+    expect(updated.location).toBe('edited while a violating pair stands');
+
+    // Prove the guard still fires: the DISABLE/ENABLE bracket above must not
+    // have leaked.
+    const D13b = new Date(Date.UTC(2027, 5, 15));
+    await prisma.class.create({ data: { ...cls(teacherId, 1), date: D13b } });
+    await expect(
+      prisma.studioClass.create({ data: { ...studio(teacherId, 1), date: D13b } }),
+    ).rejects.toThrow(/YG001/);
+  });
 });
 
-// dayOfWeek 10-14 here, not 2-6: `ClassTemplate_teacher_slot_unique` and
-// `StudioClassTemplate_teacher_slot_unique` above already leave teacherId
-// holding live rows on days 1-3 (ClassTemplate) and 3-5 (StudioClassTemplate),
-// and otherTeacherId on day 3 / day 5 respectively — nothing in this file
-// cleans between describe blocks. Instance-level tests below sidestep the
-// same problem by overriding `date` to disjoint June dates; templates have no
-// such override, so distinct dayOfWeek values are what keeps these tests
-// exercising the cross-family trigger instead of tripping the pre-existing
-// single-table partial unique index (20260811202634) on an unrelated column.
+// PR #296 review, M1/R7. The first draft of this block reused dayOfWeek
+// 10-14 to dodge the live rows `ClassTemplate_teacher_slot_unique` and
+// `StudioClassTemplate_teacher_slot_unique` above leave teacherId holding on
+// days 1-3 / 4-6 (both at the factories' default startTime '09:00') — values
+// outside a real day-of-week's 0-6 domain, which only worked because nothing
+// CHECK-constrains the column, and would break the day one does. `startTime`
+// is the axis this block claims instead: every test below runs at '10:00' or
+// '11:00', never '09:00', which is what actually keeps it clear of the
+// single-family fixtures — freeing dayOfWeek 0-6 to be used honestly.
 describe('cross-family template slot exclusivity (#296)', () => {
   it('rejects a live studio template on a live class template slot', async () => {
-    await prisma.classTemplate.create({ data: tpl(teacherId, 10) });
+    await prisma.classTemplate.create({ data: { ...tpl(teacherId, 0), startTime: '10:00' } });
     await expect(
-      prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 10) }),
+      prisma.studioClassTemplate.create({ data: { ...studioTpl(teacherId, 0), startTime: '10:00' } }),
     ).rejects.toThrow(/YG001/);
   });
 
   it('rejects a live class template on a live studio template slot', async () => {
-    await prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 11) });
+    await prisma.studioClassTemplate.create({ data: { ...studioTpl(teacherId, 1), startTime: '10:00' } });
     await expect(
-      prisma.classTemplate.create({ data: tpl(teacherId, 11) }),
+      prisma.classTemplate.create({ data: { ...tpl(teacherId, 1), startTime: '10:00' } }),
     ).rejects.toThrow(/YG001/);
   });
 
-  it('an archived template does not block the sibling family', async () => {
-    await prisma.classTemplate.create({ data: { ...tpl(teacherId, 12), isArchived: true } });
-    const st = await prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 12) });
+  it('an archived class template does not block the sibling studio family', async () => {
+    await prisma.classTemplate.create({
+      data: { ...tpl(teacherId, 2), startTime: '10:00', isArchived: true },
+    });
+    const st = await prisma.studioClassTemplate.create({
+      data: { ...studioTpl(teacherId, 2), startTime: '10:00' },
+    });
     expect(st.id).toBeTruthy();
   });
 
-  it('unarchiving into an occupied cross-family slot is rejected', async () => {
-    const t = await prisma.classTemplate.create({
-      data: { ...tpl(teacherId, 13), isArchived: true },
+  // PR #296 review, I2. The test above only pins the liveness predicate on
+  // `studio_class_template_reject_cross_family_slot`'s own lookup (it reads
+  // `ClassTemplate`, filtered `isArchived = false`). This is the mirror,
+  // pinning `class_template_reject_cross_family_slot`'s `AND "isArchived" =
+  // false` on its `StudioClassTemplate` lookup — dropping that predicate
+  // reddened nothing before this test existed.
+  it('an archived studio template does not block the sibling class family', async () => {
+    await prisma.studioClassTemplate.create({
+      data: { ...studioTpl(teacherId, 5), startTime: '10:00', isArchived: true },
     });
-    await prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 13) });
+    const t = await prisma.classTemplate.create({ data: { ...tpl(teacherId, 5), startTime: '10:00' } });
+    expect(t.id).toBeTruthy();
+  });
+
+  it('unarchiving a class template into an occupied cross-family slot is rejected', async () => {
+    const t = await prisma.classTemplate.create({
+      data: { ...tpl(teacherId, 3), startTime: '10:00', isArchived: true },
+    });
+    await prisma.studioClassTemplate.create({ data: { ...studioTpl(teacherId, 3), startTime: '10:00' } });
     await expect(
       prisma.classTemplate.update({ where: { id: t.id }, data: { isArchived: false } }),
     ).rejects.toThrow(/YG001/);
   });
 
+  // PR #296 review, I4 (the `StudioClassTemplate` half — the `ClassTemplate`
+  // half is the test above). Mirrors it, pinning the became-live disjunct of
+  // `studio_class_template_cross_family_slot_update_guard`, which had no
+  // rejection coverage in either direction before this test existed.
+  it('unarchiving a studio template into an occupied cross-family slot is rejected', async () => {
+    const st = await prisma.studioClassTemplate.create({
+      data: { ...studioTpl(teacherId, 6), startTime: '10:00', isArchived: true },
+    });
+    await prisma.classTemplate.create({ data: { ...tpl(teacherId, 6), startTime: '10:00' } });
+    await expect(
+      prisma.studioClassTemplate.update({ where: { id: st.id }, data: { isArchived: false } }),
+    ).rejects.toThrow(/YG001/);
+  });
+
   it('does not block another teacher on the same dayOfWeek and startTime', async () => {
-    await prisma.classTemplate.create({ data: tpl(teacherId, 14) });
-    const st = await prisma.studioClassTemplate.create({ data: studioTpl(otherTeacherId, 14) });
+    await prisma.classTemplate.create({ data: { ...tpl(teacherId, 4), startTime: '10:00' } });
+    const st = await prisma.studioClassTemplate.create({
+      data: { ...studioTpl(otherTeacherId, 4), startTime: '10:00' },
+    });
     expect(st.id).toBeTruthy();
+  });
+
+  // PR #296 review, mutation F5 finding — the template-level mirror of I1.
+  // The test above only pins `studio_class_template_reject_cross_family_slot`'s
+  // own `teacherId` filter (a live ClassTemplate(teacherId) resident, a
+  // StudioClassTemplate(otherTeacherId) mover — that fires the STUDIO-side
+  // function on ITS insert). Dropping `teacherId` from
+  // `class_template_reject_cross_family_slot`'s WHERE reddened nothing until
+  // this test existed. This is the opposite pairing: a live studio template
+  // belonging to a DIFFERENT teacher must not stop `teacherId` from taking
+  // the same dayOfWeek/startTime.
+  it("does not block a class template from another teacher's studio template at the same slot", async () => {
+    await prisma.studioClassTemplate.create({ data: { ...studioTpl(otherTeacherId, 4), startTime: '11:00' } });
+    const t = await prisma.classTemplate.create({ data: { ...tpl(teacherId, 4), startTime: '11:00' } });
+    expect(t.id).toBeTruthy();
+  });
+
+  // PR #296 review, I3. Nothing anywhere moved a `dayOfWeek` into an occupied
+  // cross-family slot, so the slot-move disjuncts of both template-level
+  // UPDATE `WHEN` clauses were dead to this suite. `startTime` '11:00' here,
+  // not '10:00': each of these needs two free dayOfWeek values (a resident
+  // and a mover), and reusing 0-3 at a third startTime is simpler than
+  // hunting for four more values in the 0-6 domain.
+  it('moving a class template into an occupied cross-family slot is rejected', async () => {
+    await prisma.studioClassTemplate.create({ data: { ...studioTpl(teacherId, 0), startTime: '11:00' } });
+    const t = await prisma.classTemplate.create({ data: { ...tpl(teacherId, 1), startTime: '11:00' } });
+    await expect(
+      prisma.classTemplate.update({ where: { id: t.id }, data: { dayOfWeek: 0 } }),
+    ).rejects.toThrow(/YG001/);
+  });
+
+  it('moving a studio template into an occupied cross-family slot is rejected', async () => {
+    await prisma.classTemplate.create({ data: { ...tpl(teacherId, 2), startTime: '11:00' } });
+    const st = await prisma.studioClassTemplate.create({
+      data: { ...studioTpl(teacherId, 3), startTime: '11:00' },
+    });
+    await expect(
+      prisma.studioClassTemplate.update({ where: { id: st.id }, data: { dayOfWeek: 2 } }),
+    ).rejects.toThrow(/YG001/);
+  });
+
+  // PR #296 review, mutation W3/W4 finding — the template-level twins of the
+  // instance-level "leaves a pre-existing violating pair editable..." tests
+  // above. `startTime` '12:00' here: a third reserved value, alongside '10:00'
+  // and '11:00', for the same reason those two exist — clear of the '09:00'
+  // single-family fixtures and of each other.
+  it('leaves a pre-existing violating pair of templates editable on unrelated columns (class template)', async () => {
+    const t = await prisma.classTemplate.create({ data: { ...tpl(teacherId, 0), startTime: '12:00' } });
+    await prisma.$executeRaw`ALTER TABLE "StudioClassTemplate" DISABLE TRIGGER USER`;
+    try {
+      await prisma.studioClassTemplate.create({
+        data: { ...studioTpl(teacherId, 0), startTime: '12:00' },
+      });
+    } finally {
+      await prisma.$executeRaw`ALTER TABLE "StudioClassTemplate" ENABLE TRIGGER USER`;
+    }
+    const updated = await prisma.classTemplate.update({
+      where: { id: t.id },
+      data: { description: 'edited while a violating pair stands' },
+    });
+    expect(updated.description).toBe('edited while a violating pair stands');
+
+    // Prove the guard still fires: the DISABLE/ENABLE bracket above must not
+    // have leaked.
+    await prisma.studioClassTemplate.create({ data: { ...studioTpl(teacherId, 1), startTime: '12:00' } });
+    await expect(
+      prisma.classTemplate.create({ data: { ...tpl(teacherId, 1), startTime: '12:00' } }),
+    ).rejects.toThrow(/YG001/);
+  });
+
+  it('leaves a pre-existing violating pair of templates editable on unrelated columns (studio template)', async () => {
+    const st = await prisma.studioClassTemplate.create({
+      data: { ...studioTpl(teacherId, 2), startTime: '12:00' },
+    });
+    await prisma.$executeRaw`ALTER TABLE "ClassTemplate" DISABLE TRIGGER USER`;
+    try {
+      await prisma.classTemplate.create({ data: { ...tpl(teacherId, 2), startTime: '12:00' } });
+    } finally {
+      await prisma.$executeRaw`ALTER TABLE "ClassTemplate" ENABLE TRIGGER USER`;
+    }
+    const updated = await prisma.studioClassTemplate.update({
+      where: { id: st.id },
+      data: { location: 'edited while a violating pair stands' },
+    });
+    expect(updated.location).toBe('edited while a violating pair stands');
+
+    // Prove the guard still fires: the DISABLE/ENABLE bracket above must not
+    // have leaked.
+    await prisma.classTemplate.create({ data: { ...tpl(teacherId, 3), startTime: '12:00' } });
+    await expect(
+      prisma.studioClassTemplate.create({ data: { ...studioTpl(teacherId, 3), startTime: '12:00' } }),
+    ).rejects.toThrow(/YG001/);
   });
 });
