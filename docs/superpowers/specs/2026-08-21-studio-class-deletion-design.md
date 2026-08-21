@@ -230,6 +230,15 @@ and the sweep treats a cancelled own-row as occupancy either way
 precondition would force the teacher to create the litter before they could
 clear it.
 
+**Neither is a convention — the parameter type is the guard.** `sc` is
+`{ templateId, date, startTime }` and nothing else, so both reads are
+*unrepresentable*: adding either requires widening the signature, which breaks
+every call site and every test at once. The room-deletion warning quoted above
+ends "it compiles, it passes any test written against a live template" — here it
+does not compile, which is the point. §7.2's M4 is scored against `tsc` rather
+than against a red test for that reason, and §7.3 carries the behavioural pin
+for whoever widens it deliberately.
+
 ---
 
 ## 5. Forward constraint: what week-keying (#284) does to this
@@ -395,9 +404,18 @@ on success, and the matching refusal line, following `rooms/[id]`.
 
 ### 7.1 Unit — `src/services/studio-class-deletion.test.ts`
 
-The full matrix, `templateId ∈ {null, set}` × `start ∈ {past, future}` ×
-`cancelledAt ∈ {null, set}` = 8 cases, expecting the §2 table with cancellation
-orthogonal.
+**The matrix is 4 cases, not 8** — `templateId ∈ {null, set}` ×
+`start ∈ {past, future}`, expecting the §2 table. Cancellation does not appear,
+because the predicate's parameter type has no field for it and so **cannot**
+read it. That is §4.2's second clause enforced by the compiler rather than
+asserted by a test, which is strictly stronger: a test can be deleted, a
+signature cannot be widened without breaking every call site at once.
+
+Cancellation being orthogonal is pinned one level up instead, where it is
+observable — §7.3's "removes a cancelled past class".
+
+Plus a boundary case: a class whose start instant is *exactly* `now` is
+removable, because the comparison is `<=`.
 
 Plus two timezone cases, **in both directions**, because a test run at a UTC
 hour where local and UTC agree proves nothing. `prisma/seed.ts:622-625` records
@@ -412,24 +430,31 @@ that failure directly:
 | `Europe/Amsterdam` (+2) | today 09:00 | 08:00 | removable (started 07:00Z) | refused |
 | `America/New_York` (−4) | today 09:00 | 12:00 | refused (starts 13:00Z) | removable |
 
-Plus the §4.2 pins: an archived template does not change a future generated
-class's verdict, and a paused one does not either.
+§4.2's first clause — template state — is enforced the same way, so its
+behavioural pin also lives in §7.3: a future generated class under an
+**archived** template is still refused. That case is what catches someone who
+widens the signature properly and then adds the read.
 
 ### 7.2 Mutations — each guard broken, error recorded, restored, re-verified
 
 Warm the touched routes before scoring: `next dev` recompiles lazily and the
 first request can blow a timeout that reads exactly like an assertion failure.
 
-| # | Mutation | Must fail |
-|---|---|---|
-| M1 | Compare `sc.date <= startOfLocalDay(now, tz)` instead of start instants | Amsterdam row of §7.1 |
-| M2 | Drop the `templateId === null` disjunct | manual-future case |
-| M3 | Drop the past disjunct | past-generated case |
-| M4 | Let the predicate read `template.isArchived` and allow removal | §4.2 pin |
-| M5 | Remove the route's `teacherId !== session.teacherId` check | cross-teacher integration case |
-| M6 | Skip the predicate in the route and delete unconditionally | 409 integration case |
+| # | Mutation | Gate | Must fail |
+|---|---|---|---|
+| M1 | Compare `startOfLocalDay(sc.date, tz) <= startOfLocalDay(now, tz)` — day granularity, not instants | `unit` | the **New York** row of §7.1 |
+| M2 | Drop the `templateId === null` disjunct | `unit` | manual-future case |
+| M3 | Drop the past disjunct | `unit` | both "has started" cases |
+| M4 | Widen the parameter to carry `template: { isArchived }` and return removable when archived | `npm run typecheck` | **every call site and every test** — the failure is a `tsc` error, not a red test |
+| M5 | Change `<=` to `<` | `unit` | the boundary case |
+| M6 | Remove the route's `teacherId !== session.teacherId` check | `integration` | cross-teacher case |
+| M7 | Skip the predicate in the route and delete unconditionally | `integration` | both 409 cases |
 
-M5 is listed explicitly because ownership is gate 4, and gate-4 defects hide
+**M4 is the one that matters most**, and it is why the parameter type is narrow.
+The guard against §4.2's wrong edit is the compiler, so its proof is a compile
+failure — which also means the mutation cannot be applied by accident.
+
+M6 is listed explicitly because ownership is gate 4, and gate-4 defects hide
 precisely because gates 1-3 pass.
 
 ### 7.3 Integration — two files, because the house splits them
@@ -437,10 +462,11 @@ precisely because gates 1-3 pass.
 **`tests/integration/studio-api.test.ts`** (appended to the existing 1080 lines,
 API only — it carries 56 `api/` references and no page fetch): 401 without a
 session; 403 on another teacher's class; 404 on a missing id; 409 with
-`STUDIO_CLASS_REGENERATES` on a future generated class; 200 on a future manual
-class; 200 on a past generated class; and a reporting-total assertion — the
-studio earnings figure drops by `hourlyRate × durationMinutes / 60` after a past
-logged class is removed.
+`STUDIO_CLASS_REGENERATES` on a future generated class; **409 on a future
+generated class whose template is archived** (§4.2's first clause, behaviourally);
+200 on a future manual class; 200 on a past generated class; **200 on a cancelled
+past class** (§7.1's orthogonality, where it is observable); and **404 rather
+than 500 on a second removal**, which is the only real race the route has.
 
 **`tests/integration/studio-class-page.test.ts`** — new, following the
 `privacy-api.test.ts` / `privacy-page.test.ts` split, fetching `BASE_URL` with
@@ -451,7 +477,17 @@ would get wrong:
 1. a future **generated** class renders no Remove action;
 2. a **cancelled** past class renders one, where the page renders a dead end today;
 3. a **future-dated manual** class renders a Remove action with **no** euro claim;
-4. a class **dated today whose start has passed** renders one **with** the figure.
+4. a class **dated today whose start has passed** renders one **with** the figure;
+5. **reporting loses the figure when the class is removed** — §1.5's claim proved
+   end to end, on its own teacher so the total is deterministic, with
+   `studentCount` left null to show it plays no part in the money.
+
+Case 4's fixture starts at **local midnight**, not at a convenient hour. A
+`startTime` of `'09:00'` would be removable only after 09:00 in the teacher's
+zone and would fail every morning — which reads as a bug rather than as a
+fixture choice, and this repo has just spent a round on a flaky gate (#290,
+#293). `classStartInstant(today, '00:00', tz)` is in the past at every
+wall-clock moment of the day.
 
 This file is also the first integration coverage `studio-class/[id]/page.tsx`
 has ever had — see §8.3's row for issue 143.
