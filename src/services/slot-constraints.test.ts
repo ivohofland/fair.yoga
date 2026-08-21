@@ -243,3 +243,137 @@ describe('Room identity indexes', () => {
       .resolves.toBeTruthy();
   });
 });
+
+describe('cross-family slot exclusivity (#296)', () => {
+  const D = new Date(Date.UTC(2027, 5, 1));
+
+  it('rejects a live studio class on a live class slot', async () => {
+    await prisma.class.create({ data: { ...cls(teacherId, 1), date: D } });
+    await expect(
+      prisma.studioClass.create({ data: { ...studio(teacherId, 1), date: D } }),
+    ).rejects.toThrow(/YG001/);
+  });
+
+  it('rejects a live class on a live studio class slot', async () => {
+    const D2 = new Date(Date.UTC(2027, 5, 2));
+    await prisma.studioClass.create({ data: { ...studio(teacherId, 1), date: D2 } });
+    await expect(
+      prisma.class.create({ data: { ...cls(teacherId, 1), date: D2 } }),
+    ).rejects.toThrow(/YG001/);
+  });
+
+  it('a cancelled class does not block a studio class on that slot', async () => {
+    const D3 = new Date(Date.UTC(2027, 5, 3));
+    await prisma.class.create({
+      data: { ...cls(teacherId, 1), date: D3, status: 'cancelled' },
+    });
+    const s = await prisma.studioClass.create({
+      data: { ...studio(teacherId, 1), date: D3 },
+    });
+    expect(s.id).toBeTruthy();
+  });
+
+  it('a cancelled studio class does not block a class on that slot', async () => {
+    const D4 = new Date(Date.UTC(2027, 5, 4));
+    await prisma.studioClass.create({
+      data: { ...studio(teacherId, 1), date: D4, cancelledAt: new Date() },
+    });
+    const c = await prisma.class.create({ data: { ...cls(teacherId, 1), date: D4 } });
+    expect(c.id).toBeTruthy();
+  });
+
+  it('un-cancelling a studio class into an occupied slot is rejected', async () => {
+    const D5 = new Date(Date.UTC(2027, 5, 5));
+    const s = await prisma.studioClass.create({
+      data: { ...studio(teacherId, 1), date: D5, cancelledAt: new Date() },
+    });
+    await prisma.class.create({ data: { ...cls(teacherId, 1), date: D5 } });
+    await expect(
+      prisma.studioClass.update({ where: { id: s.id }, data: { cancelledAt: null } }),
+    ).rejects.toThrow(/YG001/);
+  });
+
+  it('does not block another teacher at the same date and time', async () => {
+    const D6 = new Date(Date.UTC(2027, 5, 6));
+    await prisma.class.create({ data: { ...cls(teacherId, 1), date: D6 } });
+    const s = await prisma.studioClass.create({
+      data: { ...studio(otherTeacherId, 1), date: D6 },
+    });
+    expect(s.id).toBeTruthy();
+  });
+
+  it('leaves a pre-existing violating pair editable on unrelated columns', async () => {
+    const D7 = new Date(Date.UTC(2027, 5, 7));
+    const c = await prisma.class.create({ data: { ...cls(teacherId, 1), date: D7 } });
+    await prisma.$executeRaw`ALTER TABLE "StudioClass" DISABLE TRIGGER USER`;
+    try {
+      await prisma.$executeRaw`
+        INSERT INTO "StudioClass"
+          ("id","teacherId","classType","date","startTime","durationMinutes","location","hourlyRate","createdAt","updatedAt")
+        VALUES
+          (gen_random_uuid()::text, ${teacherId}, 'Yoga', ${D7}::date, '09:00', 60, 'Studio', 40, now(), now())`;
+    } finally {
+      await prisma.$executeRaw`ALTER TABLE "StudioClass" ENABLE TRIGGER USER`;
+    }
+    const updated = await prisma.class.update({
+      where: { id: c.id },
+      data: { description: 'edited while a violating pair stands' },
+    });
+    expect(updated.description).toBe('edited while a violating pair stands');
+
+    // Prove the guard still fires: the DISABLE/ENABLE bracket above must not
+    // have leaked, or every other test in this file would be silently voided.
+    const D7b = new Date(Date.UTC(2027, 5, 8));
+    await prisma.class.create({ data: { ...cls(teacherId, 1), date: D7b } });
+    await expect(
+      prisma.studioClass.create({ data: { ...studio(teacherId, 1), date: D7b } }),
+    ).rejects.toThrow(/YG001/);
+  });
+});
+
+// dayOfWeek 10-14 here, not 2-6: `ClassTemplate_teacher_slot_unique` and
+// `StudioClassTemplate_teacher_slot_unique` above already leave teacherId
+// holding live rows on days 1-3 (ClassTemplate) and 3-5 (StudioClassTemplate),
+// and otherTeacherId on day 3 / day 5 respectively — nothing in this file
+// cleans between describe blocks. Instance-level tests below sidestep the
+// same problem by overriding `date` to disjoint June dates; templates have no
+// such override, so distinct dayOfWeek values are what keeps these tests
+// exercising the cross-family trigger instead of tripping the pre-existing
+// single-table partial unique index (20260811202634) on an unrelated column.
+describe('cross-family template slot exclusivity (#296)', () => {
+  it('rejects a live studio template on a live class template slot', async () => {
+    await prisma.classTemplate.create({ data: tpl(teacherId, 10) });
+    await expect(
+      prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 10) }),
+    ).rejects.toThrow(/YG001/);
+  });
+
+  it('rejects a live class template on a live studio template slot', async () => {
+    await prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 11) });
+    await expect(
+      prisma.classTemplate.create({ data: tpl(teacherId, 11) }),
+    ).rejects.toThrow(/YG001/);
+  });
+
+  it('an archived template does not block the sibling family', async () => {
+    await prisma.classTemplate.create({ data: { ...tpl(teacherId, 12), isArchived: true } });
+    const st = await prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 12) });
+    expect(st.id).toBeTruthy();
+  });
+
+  it('unarchiving into an occupied cross-family slot is rejected', async () => {
+    const t = await prisma.classTemplate.create({
+      data: { ...tpl(teacherId, 13), isArchived: true },
+    });
+    await prisma.studioClassTemplate.create({ data: studioTpl(teacherId, 13) });
+    await expect(
+      prisma.classTemplate.update({ where: { id: t.id }, data: { isArchived: false } }),
+    ).rejects.toThrow(/YG001/);
+  });
+
+  it('does not block another teacher on the same dayOfWeek and startTime', async () => {
+    await prisma.classTemplate.create({ data: tpl(teacherId, 14) });
+    const st = await prisma.studioClassTemplate.create({ data: studioTpl(otherTeacherId, 14) });
+    expect(st.id).toBeTruthy();
+  });
+});
