@@ -1078,3 +1078,115 @@ describe('/api/studio-classes', () => {
     });
   });
 });
+
+describe('DELETE /api/studio-classes/[id]', () => {
+  const makeClass = (data: {
+    templateId?: string | null;
+    date: Date;
+    startTime: string;
+    cancelledAt?: Date | null;
+  }) =>
+    prisma.studioClass.create({
+      data: {
+        teacherId: ownerId,
+        classType: 'Removable',
+        durationMinutes: 60,
+        location: 'Community Studio',
+        hourlyRate: 45,
+        ...data,
+      },
+    });
+
+  const FUTURE = new Date('2099-07-01T00:00:00.000Z');
+  const PAST = new Date('2020-07-01T00:00:00.000Z');
+
+  it('refuses without a session', async () => {
+    const sc = await makeClass({ date: PAST, startTime: '05:00' });
+    const res = await fetch(`${BASE_URL}/api/studio-classes/${sc.id}`, { method: 'DELETE' });
+    expect(res.status).toBe(401);
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).not.toBeNull();
+  });
+
+  it("refuses another teacher's class with 403", async () => {
+    const sc = await makeClass({ date: PAST, startTime: '05:15' });
+    const res = await send('DELETE', otherToken, `/api/studio-classes/${sc.id}`);
+    expect(res.status).toBe(403);
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).not.toBeNull();
+  });
+
+  it('answers 404 for an id that is not there', async () => {
+    const res = await send(
+      'DELETE',
+      ownerToken,
+      '/api/studio-classes/00000000-0000-4000-8000-000000000000',
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it('refuses a future generated class, naming cancel and the code', async () => {
+    const tpl = await makeTemplate(ownerId, 'Del Future', '05:30');
+    const sc = await makeClass({ templateId: tpl.id, date: FUTURE, startTime: '05:30' });
+
+    const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { message: string; code?: string } };
+    expect(body.error.code).toBe('STUDIO_CLASS_REGENERATES');
+    expect(body.error.message).toContain('Cancel it instead.');
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).not.toBeNull();
+  });
+
+  /**
+   * The behavioural half of the predicate's §4.2 guard. The parameter type
+   * already makes reading `isArchived` a compile error; this case is what
+   * catches someone who widens the type properly and then adds the read.
+   * Template state is reversible — un-archive, resume, and the date is refilled.
+   */
+  it('still refuses a future generated class when its template is archived', async () => {
+    const tpl = await makeTemplate(ownerId, 'Del Archived', '05:45', {
+      isArchived: true,
+      isActive: false,
+    });
+    const sc = await makeClass({ templateId: tpl.id, date: FUTURE, startTime: '05:45' });
+
+    const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
+    expect(res.status).toBe(409);
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).not.toBeNull();
+  });
+
+  it('removes a future manual class, because nothing regenerates it', async () => {
+    const sc = await makeClass({ templateId: null, date: FUTURE, startTime: '06:00' });
+    const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
+    expect(res.status).toBe(200);
+    // respondOk wraps in `data` — the plan's predicted bare `{ deleted: true }`
+    // did not match the helper's actual shape.
+    expect(await res.json()).toEqual({ data: { deleted: true } });
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).toBeNull();
+  });
+
+  it('removes a past generated class', async () => {
+    const tpl = await makeTemplate(ownerId, 'Del Past', '06:15');
+    const sc = await makeClass({ templateId: tpl.id, date: PAST, startTime: '06:15' });
+    const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
+    expect(res.status).toBe(200);
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).toBeNull();
+  });
+
+  /** Cancellation is orthogonal to removability — the predicate cannot read it. */
+  it('removes a cancelled past class', async () => {
+    const sc = await makeClass({
+      date: PAST,
+      startTime: '06:30',
+      cancelledAt: new Date('2020-07-01T10:00:00.000Z'),
+    });
+    const res = await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`);
+    expect(res.status).toBe(200);
+    expect(await prisma.studioClass.findUnique({ where: { id: sc.id } })).toBeNull();
+  });
+
+  /** The double-click. P2025 must read as 404, not as a 500. */
+  it('answers the second removal with 404 rather than a 500', async () => {
+    const sc = await makeClass({ date: PAST, startTime: '06:45' });
+    expect((await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`)).status).toBe(200);
+    expect((await send('DELETE', ownerToken, `/api/studio-classes/${sc.id}`)).status).toBe(404);
+  });
+});
