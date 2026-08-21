@@ -487,11 +487,11 @@ model StudioClassTemplate {
   /// and every uncancelled future studio class the boundary reaches is
   /// withdrawn. An already-cancelled one survives — NOT because it is an
   /// income record, which it is not: the sole `studioClass.findMany` in
-  /// `settings/reporting/page.tsx` queries with `cancelledAt: null` and excludes
-  /// it from earnings and from the month rollup outright. It survives because it holds `(templateId, date)`, and a
-  /// date the teacher cancelled deliberately must not be refilled on the next
-  /// resume. Corrected under issue 279, which inherited the wrong reason from
-  /// this sentence.
+  /// `settings/reporting/page.tsx` queries with `cancelledAt: null` and
+  /// excludes it from earnings and from the month rollup outright. It survives
+  /// because it holds `(templateId, date)`, and a date the teacher cancelled
+  /// deliberately must not be refilled on the next resume. Corrected under
+  /// issue 279, which inherited the wrong reason from this sentence.
   ///
   /// What is still scheduled is deliberately not stored beside it. The archive
   /// PATCH returns a `remaining` count once, for the confirmation message

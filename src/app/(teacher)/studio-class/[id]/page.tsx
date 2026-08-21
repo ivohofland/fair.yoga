@@ -44,12 +44,14 @@ export default async function StudioClassDetailPage({
   // flag gets each of those wrong, which is what
   // `tests/integration/studio-class-page.test.ts` pins.
   //
-  // The predicate is handed a fresh literal carrying only the removal facts —
-  // never `studioClass` itself. This page fetches the template alongside the
-  // row, and passing the whole row is what let a widened predicate read
-  // template state HERE while the route's narrower `select` left it undefined:
-  // the page offered a Remove button the API answered 409. One projection,
-  // `STUDIO_CLASS_REMOVAL_FACTS_SELECT`, now defines what either may see.
+  // The predicate is handed a FRESH LITERAL carrying only the removal facts —
+  // never `studioClass` itself, and that is the whole protection. This page's
+  // query is legitimately wider than the route's: it renders the template's name
+  // and link below, so it fetches the template and cannot use the route's
+  // `STUDIO_CLASS_REMOVAL_FACTS_SELECT`. Passing the whole row is what once let
+  // a widened predicate read template state HERE while the route's narrower
+  // `select` left it undefined — the page offered a Remove button the API
+  // answered 409. Two queries of different widths, one two-field literal.
   const { deletable } = studioClassDeletability(
     { templateId: studioClass.templateId, date: studioClass.date },
     new Date(),

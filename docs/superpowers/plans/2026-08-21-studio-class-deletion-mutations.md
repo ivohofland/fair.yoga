@@ -81,14 +81,21 @@ state. This is stronger than a red test — a red test can be deleted or
 skipped; this signature cannot be satisfied without threading reversible state
 through every caller.
 
-Result: **RED** — recorded at the time as "7 errors, one per call site". That
-was an **undercount, and the reason is a trap worth more than the number**: 7 is
-the test file's call sites only. The real figure is **9 errors across 3 files** —
-the 7 tests plus `route.ts` and `page.tsx` — reproduced under review. `tsconfig`
-sets `"incremental": true`, so a warm `tsconfig.tsbuildinfo` suppresses errors in
-files the mutation did not itself touch. **Score any typecheck-gated mutation
-with `tsc --noEmit --incremental false`**, or a surviving mutant can read as
-caught. The original transcript follows unedited:
+Result: **RED** — 7 errors, one per call site:
+
+> **A correction, and then its withdrawal — both left standing, because the
+> second is the more useful lesson.** PR #295's review re-ran this mutation at
+> branch HEAD and measured **9** errors across 3 files, so this entry was
+> "corrected" to 9 and blamed on a warm `tsconfig.tsbuildinfo` under
+> `"incremental": true`. **That correction was wrong.** M4 was scored at
+> `a7e0b0a`, where the predicate's only caller was its own test file — 7 call
+> sites, verified with `git grep studioClassDeletability a7e0b0a`. `route.ts`
+> gained its call in `b23b8c0` and `page.tsx` in `e50ef24`. So 7 was right when
+> captured and 9 is right now; the codebase grew between the measurements. The
+> `tsbuildinfo` story was a mechanism invented to explain a number, which is
+> exactly the failure this skill warns about — a hypothesis that explains the
+> shape of a discrepancy is not a diagnosis until its arithmetic closes.
+> **A mutation count is only meaningful with the commit it was taken at.**
 
 ```
 src/services/studio-class-deletion.test.ts(18,11): error TS2345: Argument of type '{ templateId: null; date: Date; startTime: string; }' is not assignable to parameter of type '{ templateId: string | null; date: Date; startTime: string; template: { isArchived: boolean; }; }'.
@@ -209,11 +216,21 @@ Fixtures via Prisma; session seeded with the suite's own helper.
    integration case 4 (today at local midnight → action present).
 2. **The schedule DID list a just-removed class after landing — transiently.**
    With the plan's original `router.push('/')`, the landed schedule rendered
-   the removed row, then revalidated itself shortly after (Next 16 refetches
-   dynamic payloads post-navigation) — the visible list self-healed within the
-   settle window, while the stale flight data stayed embedded in the document.
-   On a slow mobile connection that flash reads as "the removal failed", the
-   exact confirm-then-silence family the cancel button's comments document.
+   the removed row, then revalidated itself (Next 16 refetches dynamic payloads
+   post-navigation), while the stale flight data stayed embedded in the
+   document. On a slow mobile connection that flash reads as "the removal
+   failed", the exact confirm-then-silence family the cancel button's comments
+   document.
+
+   **How long the flash lasted is recorded two different ways, and neither has
+   been re-measured.** This paragraph said the visible list "self-healed within
+   the settle window"; `delete-studio-class-button.tsx`'s docblock, written in
+   the same commit, says the removed row "kept rendering past a 4s settle
+   window". Flagged in PR #295's review. The discrepancy is left visible rather
+   than silently resolved, because picking one without re-running the probe
+   would be inventing a measurement. What both agree on is what the fix rests
+   on: the landed schedule rendered a row the server had already deleted, and
+   a full navigation cannot.
 3. **`router.refresh()` beside the push does NOT reliably fix it.** Both
    orderings were tried; refresh revalidates whichever route is current when
    it fires — the one being left, or a race with the in-flight navigation.
@@ -221,10 +238,12 @@ Fixtures via Prisma; session seeded with the suite's own helper.
    serve a pre-removal payload. Verified clean (row absent, no residue in the
    final DOM). Trade-off recorded in the component's docblock: SPA smoothness
    is traded for a landing that is correct by construction.
-4. **DeleteRoomButton observation (not this branch's defect):** it exits with
-   a bare `router.push('/settings/rooms')` and inherits the same transient
-   staleness on Next 16. Left untouched — different surface — flagged here for
-   the owner.
+4. **DeleteRoomButton observation:** it exits with a bare
+   `router.push('/settings/rooms')` and inherits the same transient staleness on
+   Next 16. Recorded here as "left untouched — different surface"; **that is no
+   longer true.** It was folded into this branch during PR review (`e69be64`),
+   whose message rejects the different-surface framing: it is the same defect on
+   a second surface, not a different one.
 
 **Probe-methodology lessons, recorded because they cost two false verdicts:**
 
@@ -286,9 +305,21 @@ the 14th in New York must not be able to remove the 14th, and `>=` lets them.
 
 Restored → 11 passed, 50 passed.
 
-**Not scored, and named so the gap is visible:** the optional-widening edit
-(`template?: { isArchived: boolean }`) is a mutation that **survives** — `tsc`
-clean, lint clean, whole suite green. It is documented in
-`studio-class-deletion.ts`'s docblock rather than hidden, and the
-`@ts-expect-error` case in the test file is the one site that now catches it.
+**M9 — the optional widening, and what finally catches it.** Adding
+`template?: { isArchived: boolean }` plus a fail-open branch **survived** the
+branch as first written: `tsc` clean, lint clean, whole suite green, because an
+optional field is legal to supply and legal to omit at every call site. Excess
+-property checking never fires on it, at a literal or at a variable.
+
+It does **not** survive now. The `@ts-expect-error` case added to
+`studio-class-deletion.test.ts` stops being an error under the widening, and an
+unused directive is itself an error:
+
+```
+src/services/studio-class-deletion.test.ts(162,5): error TS2578: Unused '@ts-expect-error' directive.
+```
+
+Measured under review: that is the **only** error the widening produces. No
+production call site catches it. Delete that one test case and the guard is
+gone — which is why the case says so in its own docblock.
 

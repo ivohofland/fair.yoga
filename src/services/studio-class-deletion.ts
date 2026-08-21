@@ -76,16 +76,17 @@ import { startOfLocalDay } from '@/lib/timezone';
  * false in review and is worth no reader's trust:
  *
  *   - A REQUIRED new field breaks both production call sites and every test.
- *   - An OPTIONAL one (`template?: …`) breaks NOTHING. TypeScript's
- *     excess-property check fires only on fresh object literals, and both
- *     production sites pass a variable. It compiles, lints, and the suite stays
- *     green — measured, not supposed.
+ *   - An OPTIONAL one (`template?: …`) breaks none of them. Excess-property
+ *     checking cannot help: an optional field IS part of the widened type, so
+ *     supplying it is legal and omitting it is legal, at a literal as much as at
+ *     a variable. Every production call site stays green by construction.
  *
- * So the type is a speed bump, not a wall, and two things carry the rest:
- * `STUDIO_CLASS_REMOVAL_FACTS_SELECT` below, which both call sites use so
- * neither can quietly supply more than the predicate should see; and the
- * `@ts-expect-error` case in the test file, which is the one site where a
- * literal makes the widening a compile error. Watch for a `?` in review.
+ * So the type is a speed bump, not a wall, and ONE thing carries the rest: the
+ * `@ts-expect-error` case at the end of the test file. Under a widening it stops
+ * being an error, and an unused directive is itself `TS2578` — so `tsc` fails
+ * there and nowhere else. Measured: widening this parameter produces exactly one
+ * error, and it is that line. **Watch for a `?` in review, and never delete that
+ * case.**
  *
  * ── AFTER WEEK-KEYED GENERATION (issue 284) ────────────────────────────────
  *
@@ -113,14 +114,20 @@ export type StudioClassDeletability =
 /**
  * The only facts removability may rest on, as a Prisma `select`.
  *
- * BOTH call sites use it — `api/studio-classes/[id]/route.ts` and
- * `(teacher)/studio-class/[id]/page.tsx`. That is not tidiness. The page used
- * to fetch with `include: { template: true }` and hand the whole row to the
- * predicate, so a widening that read template state was inert in the route
- * (whose `select` omitted it) and LIVE on the page: the page offered "Remove
- * this class" and the API refused it 409, a dead-end control no test could see.
- * Feeding both from one projection means a future widening either breaks both
- * or neither.
+ * USED BY THE ROUTE, which needs a projection anyway and should fetch nothing
+ * more. **The page does NOT use it, and cannot**: it renders the template's
+ * name and link, so its query is legitimately wider
+ * (`include: { template: true }`).
+ *
+ * That asymmetry is the hazard this file has to name rather than paper over.
+ * The page once handed its whole row to the predicate, so a widening that read
+ * template state was inert in the route (whose `select` omitted it) and LIVE on
+ * the page — the page offered "Remove this class" and the API refused it 409, a
+ * dead-end control no test could see. What prevents that now is NOT this
+ * constant: it is that both call sites build a fresh two-field literal and pass
+ * that, never the row. Keep it that way. A future field added here reaches the
+ * route only, so read the call sites, not this list, to know what the predicate
+ * can see.
  */
 export const STUDIO_CLASS_REMOVAL_FACTS_SELECT = {
   templateId: true,
@@ -159,11 +166,16 @@ export function studioClassDeletability(
 ): StudioClassDeletability {
   if (sc.templateId === null) return { deletable: true };
 
-  // FAIL CLOSED, EXPLICITLY. Without this the refusal is still correct, but
-  // only by the polarity of the comparison below — `NaN > date` is false, so an
-  // unreadable date falls through to the refusal. That is a property a refactor
-  // inverts while looking equivalent (`if (today <= sc.date) refuse; else
-  // allow;` reads the same and removes the class instead). Pinned by a test.
+  // FAIL CLOSED, EXPLICITLY — and this line is REDUNDANT TODAY, on purpose.
+  // Without it the refusal is still correct, but only by the polarity of the
+  // comparison below: `NaN > date` is false, so an unreadable date falls through
+  // to the refusal. Delete this line alone and no test reddens, because the
+  // outcome is unchanged. What it defends against is the INVERSION — rewriting
+  // the tail as `if (today <= sc.date) refuse; return allow;`, which reads as
+  // equivalent and silently removes classes with an unreadable date. With this
+  // guard the inversion stays safe; without it, the NaN test catches it. So the
+  // test pins the OUTCOME and this line pins it under a refactor — neither pins
+  // the other, which is why both are here.
   if (Number.isNaN(sc.date.getTime())) return { deletable: false, reason: 'regenerates' };
 
   // Two calendar dates, which is the only sound comparison against a `@db.Date`

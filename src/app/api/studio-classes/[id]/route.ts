@@ -114,9 +114,10 @@ export const DELETE = withErrorHandler(async (
   if (isErrorResponse(session)) return session;
 
   // `STUDIO_CLASS_REMOVAL_FACTS_SELECT` rather than a hand-written projection,
-  // and the same one the page uses: it is what stops the two call sites feeding
-  // the predicate different rows. `teacherId` is added for gate 4 only, and is
-  // never passed on.
+  // so this handler fetches nothing the predicate should not see. The PAGE does
+  // not share it — it renders the template and so queries wider; what keeps the
+  // two call sites honest is that both build a fresh two-field literal below.
+  // `teacherId` is added for gate 4 only, and is never passed on.
   const studioClass = await prisma.studioClass.findUnique({
     where: { id },
     select: { teacherId: true, ...STUDIO_CLASS_REMOVAL_FACTS_SELECT },
@@ -124,9 +125,10 @@ export const DELETE = withErrorHandler(async (
   if (!studioClass) return respondError('Studio class not found', 404);
   if (studioClass.teacherId !== session.teacherId) return respondError('Access denied', 403);
 
-  // A fresh literal, not `studioClass` — an object literal is the one thing
-  // TypeScript excess-property-checks, so this call site refuses a widened
-  // parameter that a variable would silently satisfy.
+  // A fresh two-field literal, not `studioClass`. Not for excess-property
+  // checking — an optional widening defeats that — but so the predicate is
+  // physically handed only what it may read, whatever this handler's `select`
+  // grows to later.
   const verdict = studioClassDeletability(
     { templateId: studioClass.templateId, date: studioClass.date },
     new Date(),

@@ -149,13 +149,17 @@ describe('studioClassDeletability', () => {
   });
 
   /**
-   * THE PARAMETER TYPE IS THE GUARD, and this is the only place that can prove
-   * it — see the docblock in `studio-class-deletion.ts`. Both production call
-   * sites pass a variable, and TypeScript's excess-property check applies only
-   * to fresh object literals, so a widening is refused HERE and nowhere else.
+   * THE PARAMETER TYPE IS THE GUARD, and this is the ONLY place that can prove
+   * it — see the docblock in `studio-class-deletion.ts`.
    *
-   * If the parameter ever grows a `template` field, `@ts-expect-error` finds no
-   * error and `tsc` fails on this line. That is the intended alarm.
+   * Not because of excess-property checking: an OPTIONAL widening
+   * (`template?: …`) is legal to supply and legal to omit, so every production
+   * call site compiles either way, literal or variable. What catches it is this
+   * directive. Under a widening the line below stops being an error, and an
+   * unused `@ts-expect-error` is itself `TS2578` — so `tsc` fails here, and
+   * measurably nowhere else.
+   *
+   * DO NOT DELETE THIS CASE. It is the entire alarm.
    */
   it('refuses template state at the type level', () => {
     studioClassDeletability(
