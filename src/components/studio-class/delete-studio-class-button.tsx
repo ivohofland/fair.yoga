@@ -11,11 +11,13 @@ interface DeleteStudioClassButtonProps {
    * the class is outside reporting's window.
    *
    * COMPUTED BY THE PAGE, from REPORTING'S predicate — `cancelledAt === null`
-   * and `date <= endOfToday` (`settings/reporting/page.tsx:36`) — NOT from the
-   * removability one. The two overlap heavily and are not the same: a
-   * future-dated manual class is removable and counts nothing, and a class
-   * dated today whose start has passed is removable and counts. Deriving this
-   * from `deletable` would be wrong in both of those directions.
+   * and `date <= endOfToday` (the sole `studioClass.findMany` in
+   * `settings/reporting/page.tsx`) — NOT from the removability one. The two
+   * overlap heavily and are not the same, in both directions: a future-dated
+   * MANUAL class is removable and counts nothing, while a MANUAL class dated
+   * today counts and is removable. A cancelled past class is removable and
+   * counts nothing either. Deriving this figure from `deletable` would be wrong
+   * in every one of those cases.
    */
   earningsAtRisk: number | null;
 }

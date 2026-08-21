@@ -121,6 +121,16 @@ export default async function StudioClassDetailPage({
             />
           </section>
 
+          {/*
+            KNOWN-OPEN: each button owns its own `confirming` state, so a
+            teacher who clicks "Cancel class" and then "Remove this class" gets
+            two destructive confirm blocks stacked in this column. Cosmetic, and
+            it reads badly at 640px. Coordinating them needs a client wrapper
+            holding one "which confirm is open" state, which is more structure
+            than issue 279 should introduce and would ship without coverage.
+            Raised in PR #295's review and recorded here rather than filed, so
+            the next person to touch this section meets it.
+          */}
           <section className="mt-8 pt-6 border-t border-border flex flex-col items-start gap-3">
             <CancelStudioClassButton studioClassId={studioClass.id} />
             {deletable && (

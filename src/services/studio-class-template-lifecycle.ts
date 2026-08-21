@@ -12,8 +12,9 @@
  *   - Where the class family's deletable predicate spreads a `status: {
  *     in: ['draft', 'open'] }` clause, the studio predicate has no status to
  *     filter on. It uses `cancelledAt: null` instead — an already-cancelled
- *     future class is *not* an income record: `settings/reporting/page.tsx:36`
- *     queries with `cancelledAt: null` and excludes it from earnings outright.
+ *     future class is *not* an income record: the sole `studioClass.findMany`
+ *     in `settings/reporting/page.tsx` queries with `cancelledAt: null` and
+ *     excludes it from earnings outright.
  *     It survives because it holds `(templateId, date)`, and a date the
  *     teacher cancelled deliberately must not be refilled on the next resume.
  *     Archiving leaves it standing for that reason — structurally like the
