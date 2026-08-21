@@ -83,6 +83,16 @@ test.describe('Recurring classes', () => {
   test.afterAll(async () => {
     await prisma.class.deleteMany({ where: { teacherId } });
     await prisma.classTemplate.deleteMany({ where: { teacherId } });
+    // Again, after the templates are gone. This spec fires the *global*
+    // generate-classes cron (see below) — `generateClassInstances` takes no
+    // teacher scope — so a concurrently-running group can top this teacher's
+    // template back up in the window between the two deletes above. The
+    // template delete then succeeds (`Class.template` is SetNull) and the
+    // regenerated classes survive to make the `teacherRoom` delete below fail
+    // with P2003 (`Class.teacherRoom` has no onDelete, so Restrict), stranding
+    // the room, session and teacher rows under a cleanup error. `workers: 1`
+    // closes the window today; this closes the hole (#290).
+    await prisma.class.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
     await prisma.session.deleteMany({ where: { accountId: await accountIdOfTeacher(prisma, teacherId) } });

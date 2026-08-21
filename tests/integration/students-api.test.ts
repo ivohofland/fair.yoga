@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, waitFor } from '../helpers';
 
@@ -1151,12 +1151,31 @@ describe('POST /api/students — response disclosure (#162)', () => {
     // to leave the row stranded.
   });
 
-  // Fixture creation sits inside the `try` in the three tests below so a throw
-  // in `teacher.create` or `seedSession` cannot strand a Teacher and Account —
-  // and the finally deletes the Student before the Teacher, so a failing
-  // teacher delete cannot leave the student row behind (and replace the real
-  // assertion failure with a cleanup error).
+  // The three tests below sweep their fixtures from `afterEach`, not from a
+  // `finally` of their own. Vitest does not abort a timed-out callback — it
+  // stops awaiting it and lets the body run on as an orphan — so a `finally`
+  // at the end of the burst test races the runway left in this file (the two
+  // tests after it, ~1.4s) and loses in exactly the case that produced the
+  // timeout: a server slow enough to need tens of seconds for the rest of the
+  // loop. What is stranded then is a Teacher, its Account and a 24h Session,
+  // and because every run's fixture is suffixed nothing ever collides on it —
+  // a silent, cumulative leak in the shared dev database. A hook runs however
+  // the test ended and carries its own budget. This is the `afterAll` argument
+  // above, one scope down.
+  //
+  // Each test registers its sweep the moment `teacher.create` resolves and
+  // before `seedSession` runs, so a throw in between cannot strand a Teacher
+  // and Account — the invariant the old `try` gave, without the `finally`.
+  // Each sweep still deletes rows before the Teacher they hang off, so a
+  // failing teacher delete cannot leave them behind.
   type Fixture = { id: string; accountId: string };
+  const sweeps: Array<() => Promise<void>> = [];
+
+  afterEach(async () => {
+    // `splice(0)` drains the queue as it reads it, so a sweep that throws
+    // cannot replay against the next test's hook.
+    for (const sweep of sweeps.splice(0)) await sweep();
+  });
 
   // 51 DISTINCT addresses, deliberately. Repeating one address would now be
   // refused by `inviteContact`'s ALREADY_INVITED branch from the second
@@ -1170,39 +1189,22 @@ describe('POST /api/students — response disclosure (#162)', () => {
       { length: 51 },
       (_, i) => `crm-burst-target-${i}-${suffix}@test.local`,
     );
-    let burst: Fixture | undefined;
-
-    try {
-      burst = await prisma.teacher.create({
-        data: {
-          firstName: 'Burst',
-          lastName: 'Teacher',
-          email: `crm-burst-${suffix}@test.local`,
-          account: { create: { email: `crm-burst-${suffix}@test.local` } },
-          bio: 'Fresh limiter bucket',
-          pageSlug: `crm-burst-${suffix}`,
-        },
-      });
-      const burstToken = await seedSession(prisma, burst.accountId);
-
-      const statuses: number[] = [];
-      for (const email of targets) {
-        const res = await fetch(`${BASE_URL}/api/students`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...cookie(burstToken) },
-          body: JSON.stringify({ firstName: 'Burst', lastName: 'Target', email }),
-        });
-        statuses.push(res.status);
-      }
-
-      expect(statuses.slice(0, 50)).toEqual(Array(50).fill(201));
-      expect(statuses[50]).toBe(429);
-    } finally {
-      // These rows only exist if the regression this test guards has returned:
-      // POST /api/students has created no Student since #166. Clean them up
-      // anyway so a reappearing regression can't strand them in the shared dev
-      // database. The burst teacher's invitations need no sweep — Invitation
-      // cascades on teacher delete.
+    const burst: Fixture = await prisma.teacher.create({
+      data: {
+        firstName: 'Burst',
+        lastName: 'Teacher',
+        email: `crm-burst-${suffix}@test.local`,
+        account: { create: { email: `crm-burst-${suffix}@test.local` } },
+        bio: 'Fresh limiter bucket',
+        pageSlug: `crm-burst-${suffix}`,
+      },
+    });
+    sweeps.push(async () => {
+      // The Student rows only exist if the regression this test guards has
+      // returned: POST /api/students has created no Student since #166. Sweep
+      // them anyway so a reappearing regression can't strand them in the
+      // shared dev database. The burst teacher's invitations need no sweep —
+      // Invitation cascades on teacher delete.
       const created = await prisma.student.findMany({
         where: { email: { in: targets } },
         select: { id: true },
@@ -1212,19 +1214,42 @@ describe('POST /api/students — response disclosure (#162)', () => {
         await prisma.teacherStudent.deleteMany({ where: { studentId: { in: ids } } });
         await prisma.student.deleteMany({ where: { id: { in: ids } } });
       }
-      if (burst) {
-        await prisma.teacherStudent.deleteMany({ where: { teacherId: burst.id } });
-        await prisma.session.deleteMany({ where: { accountId: burst.accountId } });
-        await prisma.teacher.delete({ where: { id: burst.id } });
-        await prisma.account.deleteMany({ where: { id: burst.accountId } });
-      }
+      await prisma.teacherStudent.deleteMany({ where: { teacherId: burst.id } });
+      await prisma.session.deleteMany({ where: { accountId: burst.accountId } });
+      await prisma.teacher.delete({ where: { id: burst.id } });
+      await prisma.account.deleteMany({ where: { id: burst.accountId } });
+    });
+    const burstToken = await seedSession(prisma, burst.accountId);
+
+    const statuses: number[] = [];
+    for (const email of targets) {
+      const res = await fetch(`${BASE_URL}/api/students`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(burstToken) },
+        body: JSON.stringify({ firstName: 'Burst', lastName: 'Target', email }),
+      });
+      statuses.push(res.status);
     }
-    // 51 sequential round trips ≈ 9s through next dev (measured 2026-08-21,
-    // idle server): over vitest's 5s default with nothing else running, so
-    // the default budget failed this test for reasons unrelated to any
-    // change (#290). 30s absorbs contention on a busy dev server, not just
-    // solo latency. Sequential stays load-bearing — see the limiter note
-    // above; the 429 must land on request 51, deterministically.
+
+    expect(statuses.slice(0, 50)).toEqual(Array(50).fill(201));
+    expect(statuses[50]).toBe(429);
+    // The longest fetch loop in the integration suite by an order of magnitude
+    // — 51 sequential round trips where the next-largest is 2 — so this is the
+    // most contention-sensitive test here, and it gets headroom the others do
+    // not need. Steady state is ~0.8s (measured 2026-08-21 against a warm dev
+    // server; the two sibling tests below make the same 51 round trips and
+    // pass on the untouched 5s default). The budget is for a loaded or
+    // cold-compiling server, not for solo latency — and a cold route is what
+    // the warm-up protocol in AGENTS.md exists to remove, so this is the belt
+    // to that braces (#290).
+    //
+    // Sequential is load-bearing independently of the budget: `statuses[50]`
+    // is positional and `Promise.all` resolves in input order, so a concurrent
+    // burst would leave the 429 at an unpredictable index. (The *count* would
+    // stay exact — `checkRateLimit` is synchronous between its length check
+    // and its push — so a count-based assertion would survive concurrency.
+    // There is just nothing to buy: at ~0.8s the sequential form costs
+    // nothing, and it says what it means.)
   }, 30_000);
 
   // Used to be shared with the teacher branch of PUT /api/students/[id] —
@@ -1236,122 +1261,88 @@ describe('POST /api/students — response disclosure (#162)', () => {
   // ALREADY_INVITED by `inviteContact`, well after the limiter has already
   // run, and still spend a hit apiece.
   it('spends its budget on POST alone, refusals included', async () => {
-    let shared: Fixture | undefined;
+    const shared: Fixture = await prisma.teacher.create({
+      data: {
+        firstName: 'Shared',
+        lastName: 'Teacher',
+        email: `crm-shared-${suffix}@test.local`,
+        account: { create: { email: `crm-shared-${suffix}@test.local` } },
+        bio: 'Fresh limiter bucket',
+        pageSlug: `crm-shared-${suffix}`,
+      },
+    });
+    sweeps.push(async () => {
+      await prisma.invitation.deleteMany({ where: { teacherId: shared.id } });
+      await prisma.session.deleteMany({ where: { accountId: shared.accountId } });
+      await prisma.teacher.delete({ where: { id: shared.id } });
+      await prisma.account.deleteMany({ where: { id: shared.accountId } });
+    });
 
-    try {
-      shared = await prisma.teacher.create({
-        data: {
-          firstName: 'Shared',
-          lastName: 'Teacher',
-          email: `crm-shared-${suffix}@test.local`,
-          account: { create: { email: `crm-shared-${suffix}@test.local` } },
-          bio: 'Fresh limiter bucket',
-          pageSlug: `crm-shared-${suffix}`,
-        },
-      });
-      const headers = {
-        'Content-Type': 'application/json',
-        ...cookie(await seedSession(prisma, shared.accountId)),
-      };
-      const repeatEmail = `crm-shared-repeat-${suffix}@test.local`;
+    const headers = {
+      'Content-Type': 'application/json',
+      ...cookie(await seedSession(prisma, shared.accountId)),
+    };
+    const repeatEmail = `crm-shared-repeat-${suffix}@test.local`;
 
-      // Hit 1: a fresh invitation.
-      const first = await fetch(`${BASE_URL}/api/students`, {
+    // Hit 1: a fresh invitation.
+    const first = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ firstName: 'Shared', lastName: 'First', email: repeatEmail }),
+    });
+    expect(first.status).toBe(201);
+
+    // Hits 2..49: the same address every time, refused as ALREADY_INVITED
+    // — and still metered, since the limiter runs before `inviteContact`
+    // ever sees the body.
+    for (let i = 0; i < 48; i++) {
+      const res = await fetch(`${BASE_URL}/api/students`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ firstName: 'Shared', lastName: 'First', email: repeatEmail }),
+        body: JSON.stringify({ firstName: 'Shared', lastName: 'Repeat', email: repeatEmail }),
       });
-      expect(first.status).toBe(201);
-
-      // Hits 2..49: the same address every time, refused as ALREADY_INVITED
-      // — and still metered, since the limiter runs before `inviteContact`
-      // ever sees the body.
-      for (let i = 0; i < 48; i++) {
-        const res = await fetch(`${BASE_URL}/api/students`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ firstName: 'Shared', lastName: 'Repeat', email: repeatEmail }),
-        });
-        expect(res.status).toBe(409);
-      }
-
-      // Hit 50: a fresh address still succeeds — the budget isn't exhausted
-      // by refusals alone.
-      const fiftieth = await fetch(`${BASE_URL}/api/students`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          firstName: 'Shared', lastName: 'Fiftieth',
-          email: `crm-shared-fiftieth-${suffix}@test.local`,
-        }),
-      });
-      expect(fiftieth.status).toBe(201);
-
-      // Hit 51: refused regardless of whether this particular request would
-      // otherwise have succeeded.
-      const refused = await fetch(`${BASE_URL}/api/students`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          firstName: 'Shared', lastName: 'FiftyFirst',
-          email: `crm-shared-fiftyfirst-${suffix}@test.local`,
-        }),
-      });
-      expect(refused.status).toBe(429);
-    } finally {
-      if (shared) {
-        await prisma.invitation.deleteMany({ where: { teacherId: shared.id } });
-        await prisma.session.deleteMany({ where: { accountId: shared.accountId } });
-        await prisma.teacher.delete({ where: { id: shared.id } });
-        await prisma.account.deleteMany({ where: { id: shared.accountId } });
-      }
+      expect(res.status).toBe(409);
     }
+
+    // Hit 50: a fresh address still succeeds — the budget isn't exhausted
+    // by refusals alone.
+    const fiftieth = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        firstName: 'Shared', lastName: 'Fiftieth',
+        email: `crm-shared-fiftieth-${suffix}@test.local`,
+      }),
+    });
+    expect(fiftieth.status).toBe(201);
+
+    // Hit 51: refused regardless of whether this particular request would
+    // otherwise have succeeded.
+    const refused = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        firstName: 'Shared', lastName: 'FiftyFirst',
+        email: `crm-shared-fiftyfirst-${suffix}@test.local`,
+      }),
+    });
+    expect(refused.status).toBe(429);
   });
 
   it('spends budget on invalid bodies, because the limiter runs before parseBody', async () => {
     const targetEmail = `crm-gate-target-${suffix}@test.local`;
-    let gate: Fixture | undefined;
 
-    try {
-      gate = await prisma.teacher.create({
-        data: {
-          firstName: 'Gate',
-          lastName: 'Teacher',
-          email: `crm-gate-${suffix}@test.local`,
-          account: { create: { email: `crm-gate-${suffix}@test.local` } },
-          bio: 'Fresh limiter bucket',
-          pageSlug: `crm-gate-${suffix}`,
-        },
-      });
-      const headers = {
-        'Content-Type': 'application/json',
-        ...cookie(await seedSession(prisma, gate.accountId)),
-      };
-
-      // 50 rejected bodies. Each 400s without creating anything, and each still
-      // consumes a hit — that is the whole claim under test.
-      for (let i = 0; i < 50; i++) {
-        const res = await fetch(`${BASE_URL}/api/students`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ firstName: '', lastName: '', email: 'not-an-email' }),
-        });
-        expect(res.status).toBe(400);
-      }
-
-      // A flawless 51st request is refused anyway. Move the limiter below
-      // parseBody and this returns 201 instead.
-      const res = await fetch(`${BASE_URL}/api/students`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          firstName: 'Valid',
-          lastName: 'Payload',
-          email: targetEmail,
-        }),
-      });
-      expect(res.status).toBe(429);
-    } finally {
+    const gate: Fixture = await prisma.teacher.create({
+      data: {
+        firstName: 'Gate',
+        lastName: 'Teacher',
+        email: `crm-gate-${suffix}@test.local`,
+        account: { create: { email: `crm-gate-${suffix}@test.local` } },
+        bio: 'Fresh limiter bucket',
+        pageSlug: `crm-gate-${suffix}`,
+      },
+    });
+    sweeps.push(async () => {
       // Nothing keyed on `targetEmail` should exist: under correct behaviour
       // the 51st request is refused before `parseBody`, so no invitation is
       // written. Sweep anyway so a reappearing regression can't strand rows in
@@ -1363,12 +1354,38 @@ describe('POST /api/students — response disclosure (#162)', () => {
         await prisma.student.delete({ where: { id: created.id } });
       }
       await prisma.invitation.deleteMany({ where: { email: targetEmail } });
-      if (gate) {
-        await prisma.teacherStudent.deleteMany({ where: { teacherId: gate.id } });
-        await prisma.session.deleteMany({ where: { accountId: gate.accountId } });
-        await prisma.teacher.delete({ where: { id: gate.id } });
-        await prisma.account.deleteMany({ where: { id: gate.accountId } });
-      }
+      await prisma.teacherStudent.deleteMany({ where: { teacherId: gate.id } });
+      await prisma.session.deleteMany({ where: { accountId: gate.accountId } });
+      await prisma.teacher.delete({ where: { id: gate.id } });
+      await prisma.account.deleteMany({ where: { id: gate.accountId } });
+    });
+    const headers = {
+      'Content-Type': 'application/json',
+      ...cookie(await seedSession(prisma, gate.accountId)),
+    };
+
+    // 50 rejected bodies. Each 400s without creating anything, and each still
+    // consumes a hit — that is the whole claim under test.
+    for (let i = 0; i < 50; i++) {
+      const res = await fetch(`${BASE_URL}/api/students`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ firstName: '', lastName: '', email: 'not-an-email' }),
+      });
+      expect(res.status).toBe(400);
     }
+
+    // A flawless 51st request is refused anyway. Move the limiter below
+    // parseBody and this returns 201 instead.
+    const res = await fetch(`${BASE_URL}/api/students`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        firstName: 'Valid',
+        lastName: 'Payload',
+        email: targetEmail,
+      }),
+    });
+    expect(res.status).toBe(429);
   });
 });
