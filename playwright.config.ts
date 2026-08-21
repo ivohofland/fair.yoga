@@ -5,6 +5,14 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
+  // A fail-then-pass exits 0 by default, which is the last place a red can
+  // become green without anyone deciding to (#293). Retries stay: with this
+  // on they are purely diagnostic — the run fails either way, but the report
+  // still says "flaky" rather than "failed", which is the difference between
+  // an intermittent fault and a deterministic one. Unconditional, not
+  // `!!process.env.CI`: locally `retries` is 0, so nothing can ever be
+  // classified flaky and a ternary would be decoration.
+  failOnFlakyTests: true,
   // Serialized unconditionally (#290): every extra worker drives another
   // browser against the same single dev server on :3000 this checkout
   // serves, and four parallel full runs during #285's gates produced four
