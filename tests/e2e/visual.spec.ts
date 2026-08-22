@@ -140,20 +140,25 @@ function rewriteDates(source: string): boolean {
 }
 
 // Runs in the browser via page.evaluate. `Element.innerText` includes every
-// <option> in a <select>, selected or not — CSS visibility on an <option>
-// does not change this, confirmed empirically against Chromium while
-// building this check. A day-of-week picker's own selected value (e.g.
-// "Wednesday") is exactly the weekday-shaped text DATE_SMELL exists to
-// catch, but it is not a date: it never varies with wall-clock time, only
-// with which day the fixture chose, so it carries no drift risk to guard
-// against. Stripping every option's own label out of the text (not the DOM,
-// so nothing a screenshot could see is touched) removes it along with the
-// unselected options. On a page with no <select> this is a no-op — nothing
-// narrows for the six screens that came before it.
+// <option> in a closed <select> — selected or not — even though a
+// screenshot only ever rasterizes the one currently showing. Hiding an
+// <option> directly does not remove it from `innerText`; hiding the
+// <select> itself does, the same as it would for any other element, and
+// restoring `display` afterward reproduces the original text exactly.
+// Scoped to <select> elements themselves, not to any text they contain, so
+// a bare weekday elsewhere on the page is unaffected and still reaches the
+// check below.
 function bodyTextForSmellCheck(): string {
-  let text = document.body.innerText;
-  document.querySelectorAll('option').forEach((opt) => {
-    text = text.split(opt.text).join('');
+  const hidden = Array.from(document.querySelectorAll('select')).map((select) => ({
+    select,
+    previousDisplay: select.style.display,
+  }));
+  hidden.forEach(({ select }) => {
+    select.style.display = 'none';
+  });
+  const text = document.body.innerText;
+  hidden.forEach(({ select, previousDisplay }) => {
+    select.style.display = previousDisplay;
   });
   return text;
 }
@@ -368,7 +373,10 @@ test.describe('Visual regression', () => {
 
   test('studio template detail (paused)', async ({ page, context }) => {
     await signIn(context);
+    const hydrated = hydrationSignal(page);
     await page.goto(`/settings/studio-classes/${studioTemplateId}`);
+    await expect(page.getByText('Resume studio class')).toBeVisible();
+    await hydrated;
     await freezeDates(page);
     await expect(page).toHaveScreenshot('studio-template.png', {
       fullPage: true,
