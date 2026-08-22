@@ -908,25 +908,27 @@ export type PauseTemplateResult =
       /** Rows this resume created. */
       added: number;
       /**
-       * `& SkipCounts` rather than two re-listed `number`s, and the difference
-       * is a guarantee that did not exist before #116.
+       * One nested field rather than re-listed `number`s, and the difference is
+       * a guarantee that did not exist before #116.
        *
        * `countSkipReasons`' docblock says a sixth `SkipReason` fails the build
        * rather than vanishing, and that is true of the REASON — its exhaustive
        * `switch` catches it. It was not true of the COUNT: measured, adding a
        * fifth reason, handling it, and adding its count to `SkipCounts`
        * compiled clean repo-wide, and the new number vanished at every site
-       * that re-lists the fields by hand. Intersecting instead means this arm
-       * gains the field automatically and the hand-written mapping below fails
-       * with `Property '…' is missing … but required in type 'SkipCounts'`.
+       * that re-lists the fields by hand.
        *
-       * Covers this arm and `ResumeTransactionOutcome`'s. The studio family's
-       * destructure and `api/class-templates/route.ts` still re-list by hand
-       * and would still drop a new count — same fix, deliberately not
-       * smuggled into a class-family locking PR. (`template-sync.ts` was a
-       * third such site; #194 deleted it.)
+       * This was `& SkipCounts` until #296 — an intersection, which bought the
+       * same compile-time guarantee HERE and nothing downstream: the route
+       * still mapped the members one by one onto the wire, the wire type still
+       * named them one by one, and the form still read them one by one. Four
+       * hops, three of which an intersection cannot reach. Nesting reaches all
+       * four, because every hop now moves one field whose type is
+       * `SkipCounts` — which is what makes the next count's arrival free rather
+       * than merely loud. Covers this arm and `ResumeTransactionOutcome`'s.
        */
-    } & SkipCounts)
+      counts: SkipCounts;
+    })
   | { ok: true; action: 'unchanged'; template: ClassTemplate }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
@@ -1087,7 +1089,8 @@ type ResumeTransactionOutcome =
       template: ClassTemplate;
       scheduled: number;
       added: number;
-    } & SkipCounts);
+      counts: SkipCounts;
+    });
 
 /**
  * Pause or resume generation. Deletes nothing: pausing means "no new classes",
@@ -1391,7 +1394,7 @@ export async function pauseOrResumeTemplate(
           template: bareT,
           scheduled,
           added: generation.created,
-          ...skipCounts,
+          counts: skipCounts,
         };
       },
       // Each individual WAIT is bounded at 2s by the `setLockTimeout` at the
@@ -1497,9 +1500,7 @@ export async function pauseOrResumeTemplate(
         template: result.template,
         scheduled: result.scheduled,
         added: result.added,
-        blockedByCancelled: result.blockedByCancelled,
-        slotTaken: result.slotTaken,
-        alreadyThisWeek: result.alreadyThisWeek,
+        counts: result.counts,
       };
     default: {
       // Throws rather than returning `unhandled`, converging on

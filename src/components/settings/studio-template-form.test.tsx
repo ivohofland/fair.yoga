@@ -161,7 +161,11 @@ describe('StudioTemplateForm', () => {
     fetchMock.mockResolvedValue({
       ok: true,
       json: async () => ({
-        data: { id: 'tpl-short', added: 2, blockedByCancelled: 1, slotTaken: 0 },
+        data: {
+          id: 'tpl-short',
+          added: 2,
+          counts: { blockedByCancelled: 1, slotTaken: 0, alreadyThisWeek: 0 },
+        },
       }),
     });
     vi.stubGlobal('fetch', fetchMock);

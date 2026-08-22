@@ -383,7 +383,11 @@ describe('TemplateForm', () => {
         return {
           ok: true,
           json: async () => ({
-            data: { id: 'tpl-short', added: 3, blockedByCancelled: 0, slotTaken: 1 },
+            data: {
+              id: 'tpl-short',
+              added: 3,
+              counts: { blockedByCancelled: 0, slotTaken: 1, alreadyThisWeek: 0 },
+            },
           }),
         };
       }

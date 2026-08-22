@@ -54,9 +54,7 @@ describe('ToggleStudioTemplateButton', () => {
         templateKind: 'studio',
         scheduled: 4,
         added: 0,
-        blockedByCancelled: 0,
-        slotTaken: 0,
-        alreadyThisWeek: 0,
+        counts: { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0 },
       },
     }),
   };

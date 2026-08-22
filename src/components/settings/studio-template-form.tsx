@@ -10,6 +10,7 @@ import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { SettledNotice } from '@/components/ui/settled-notice';
 import { resumeStudioMessage } from '@/components/settings/template-action-messages';
+import type { SkipCounts } from '@/lib/generation';
 
 /**
  * #136. The one enumeration of this form's fields. It replaced three that
@@ -157,8 +158,8 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         // resume button renders — `scheduled` is exactly `added` here, since
         // nothing existed under this brand-new template before this create.
         //
-        // `alreadyThisWeek` rides along as `resumeMessage`'s fifth ARGUMENT —
-        // the fourth field on this payload, not the fifth — and the GATE below
+        // `alreadyThisWeek` rides along inside `counts` — it is not a field of
+        // this payload in its own right (#296) — and the GATE below
         // deliberately does not test it. It is structurally 0 on create twice
         // over: a brand-new template holds no week of its own yet, and the
         // studio generator has no week key to produce the reason with until
@@ -172,26 +173,16 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         // not. Without the term a short window would navigate away in
         // silence, which is the #196 failure this branch of the code exists
         // to answer.
-        const json: {
-          data?: {
-            added: number;
-            blockedByCancelled: number;
-            slotTaken: number;
-            alreadyThisWeek: number;
-          };
-        } = await res.json();
-        const counts = json.data;
+        // `counts` is optional in this parse shape even though the route always
+        // sends it: this is untrusted JSON, and nesting means a payload without
+        // the object would THROW on the first member read rather than compare
+        // `undefined > 0` and fall through. The same distinction
+        // `hasIntegerCounts` (`template-action-messages.ts`) exists for.
+        const json: { data?: { added: number; counts?: SkipCounts } } = await res.json();
+        const result = json.data;
         setCreated(true);
-        if (counts && (counts.blockedByCancelled > 0 || counts.slotTaken > 0)) {
-          setSuccess(
-            resumeStudioMessage(
-              counts.added,
-              counts.added,
-              counts.blockedByCancelled,
-              counts.slotTaken,
-              counts.alreadyThisWeek,
-            ),
-          );
+        if (result?.counts && (result.counts.blockedByCancelled > 0 || result.counts.slotTaken > 0)) {
+          setSuccess(resumeStudioMessage(result.added, result.added, result.counts));
         } else {
           router.push(STUDIO_CLASSES_PATH);
         }

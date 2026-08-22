@@ -1009,7 +1009,7 @@ describe('pauseOrResumeStudioTemplate (DB)', () => {
       action: 'active',
       added: 0,
       scheduled: 0,
-      blockedByCancelled: 4,
+      counts: { blockedByCancelled: 4 },
     });
   });
 

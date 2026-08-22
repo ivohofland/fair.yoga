@@ -48,7 +48,7 @@ import { startOfLocalDay } from '@/lib/timezone';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isRecordNotFound, isTransientDbError } from '@/lib/api-errors';
 import { setLockTimeout } from '@/lib/db-locks';
-import { countSkipReasons } from '@/lib/generation';
+import { countSkipReasons, type SkipCounts } from '@/lib/generation';
 // Server-only (pino). Safe here: this module's sole importer is
 // `api/studio-class-templates/[id]/route.ts`, and it already pulls `@/lib/log`
 // transitively through `studio-class-generator`. No `'use client'` component
@@ -576,44 +576,39 @@ export type PauseStudioTemplateResult =
        */
       added: number;
       /**
-       * Candidate dates a cancelled instance of this template holds (#192).
-       * The count that makes the `scheduled === 0` operator warn, and the
-       * resume copy, a measured number rather than an inference.
+       * The skip breakdown, whole (#296). One field rather than its members
+       * re-listed, which is what the class family's twin had already reached
+       * for as `& SkipCounts` — see that arm's own note for the measurement
+       * behind it: adding a count to `SkipCounts` compiled clean repo-wide and
+       * vanished at every site that named the fields by hand.
        *
-       * These THREE counts — this one, `slotTaken` and `alreadyThisWeek`
-       * below — do **not** sum with `added` to the window: they are three of
-       * the five `SkipReason` members (`src/lib/generation.ts`), and they omit
-       * two, `already_generated` (the common case) and `raced`. Named rather
-       * than measured: a line-distance in a comment is falsified by any edit
-       * above it and nothing checks, which is how the first correction to this
-       * sentence arrived with a wrong number of its own — and the second said
-       * "these two counts" and then "all three of these numbers" in one
+       * These counts do **not** sum with `added` to the window: they are three
+       * of the five `SkipReason` members (`src/lib/generation.ts`), and they
+       * omit two, `already_generated` (the common case) and `raced`. Named
+       * rather than measured: a line-distance in a comment is falsified by any
+       * edit above it and nothing checks, which is how the first correction to
+       * this sentence arrived with a wrong number of its own — and the second
+       * said "these two counts" and then "all three of these numbers" in one
        * paragraph, over sets that overlap without matching. On a steady-state
        * hourly sweep all three are zero while the window still has four
        * candidate dates. The invariant that does hold is `GenerationResult`'s
        * own: `created + skipped.length` is the candidate count.
-       */
-      blockedByCancelled: number;
-      /**
-       * Candidate dates another of this teacher's studio classes holds (#196).
-       */
-      slotTaken: number;
-      /**
-       * Candidate dates whose week a class from this template already holds
-       * (#194).
        *
-       * **Always 0 on this side today, and that is not a bug.**
-       * `countSkipReasons` returns all three counts for both families, so this
-       * one flows through the studio chain by exactly the route the other two
+       * `blockedByCancelled` (#192) is the count that makes the
+       * `scheduled === 0` operator warn, and the resume copy, a measured number
+       * rather than an inference. `slotTaken` is #196.
+       *
+       * **`alreadyThisWeek` is always 0 on this side today, and that is not a
+       * bug.** `countSkipReasons` returns all three counts for both families,
+       * so it flows through the studio chain by exactly the route the other two
        * do — but nothing in the studio family PRODUCES `already_this_week`:
        * `generateStudioInstancesForTemplate` has no week key, which is #284.
-       *
-       * Carried rather than hard-coded to 0 for that reason. A literal here
-       * would be a claim about the studio generator that only stays true until
-       * #284 lands, and it would have to be found and unpicked at four sites
-       * when it does; this way the count arrives on its own.
+       * Carried rather than hard-coded to 0 for that reason. A literal would be
+       * a claim about the studio generator that only stays true until #284
+       * lands, and it would have to be found and unpicked at four sites when it
+       * does; this way the count arrives on its own.
        */
-      alreadyThisWeek: number;
+      counts: SkipCounts;
     }
   | { ok: true; action: 'unchanged'; template: StudioClassTemplate }
   | { ok: false; reason: 'not_found' }
@@ -699,10 +694,8 @@ type ResumeTransactionOutcome =
       template: StudioClassTemplate;
       scheduled: number;
       added: number;
-      blockedByCancelled: number;
-      slotTaken: number;
-      /** 0 until #284 gives the studio generator a week key — see the public arm. */
-      alreadyThisWeek: number;
+      /** `alreadyThisWeek` is 0 until #284 gives the studio generator a week key — see the public arm. */
+      counts: SkipCounts;
     };
 
 /**
@@ -957,22 +950,21 @@ export async function pauseOrResumeStudioTemplate(
         // budget, and do not "correct" the 10s above to match it.
         const generation = await generateStudioInstancesForTemplate(tx, claimed);
         const added = generation.created;
-        // `countSkipReasons` (`@/lib/generation`) is the one place
-        // `blockedByCancelled`/`slotTaken`/`alreadyThisWeek` are reduced from
-        // `generation.skipped` — see its docblock for why a SIXTH
-        // `SkipReason` fails the build here instead of vanishing. That
-        // docblock says sixth, in those words; this line said fifth, pointing
-        // the reader at the very text that contradicts it. Five members exist
-        // today, so the one that would vanish is the next one.
+        // `countSkipReasons` (`@/lib/generation`) is the one place the skip
+        // counts are reduced from `generation.skipped` — see its docblock for
+        // why a SIXTH `SkipReason` fails the build here instead of vanishing.
+        // That docblock says sixth, in those words; this line said fifth,
+        // pointing the reader at the very text that contradicts it. Five
+        // members exist today, so the one that would vanish is the next one.
         //
-        // `alreadyThisWeek` is destructured and carried even though this
-        // family's generator cannot produce it until #284: it is the same
-        // helper for both families, so the value needs no special-casing here
-        // and must not be replaced with a literal 0 — see the public `active`
-        // arm's own note.
-        const { blockedByCancelled, slotTaken, alreadyThisWeek } = countSkipReasons(
-          generation.skipped,
-        );
+        // Kept whole rather than destructured (#296). The members were named
+        // here one by one, which is what made every count after the first a
+        // hand-thread through four hops; carrying the object means the next one
+        // needs no edit at this site at all. `alreadyThisWeek` in particular is
+        // carried even though this family's generator cannot produce it until
+        // #284 — it is the same helper for both families, and it must not be
+        // replaced with a literal 0. See the public `active` arm's own note.
+        const counts = countSkipReasons(generation.skipped);
 
         // Same helper and same boundary as `archiveOrUnarchiveStudioTemplate`'s
         // `remaining`, so archiving and resuming report on one basis. `gte`, not
@@ -1010,7 +1002,7 @@ export async function pauseOrResumeStudioTemplate(
         // empty.
         if (scheduled === 0) {
           log.warn(
-            { templateId, teacherId, added, blockedByCancelled, slotTaken, alreadyThisWeek },
+            { templateId, teacherId, added, ...counts },
             'studio template resumed live with an empty window',
           );
         }
@@ -1022,9 +1014,7 @@ export async function pauseOrResumeStudioTemplate(
           template: bareClaimed,
           scheduled,
           added,
-          blockedByCancelled,
-          slotTaken,
-          alreadyThisWeek,
+          counts,
         };
       },
       // Three 10s budgets: the claim's own transaction, this transaction, and
@@ -1076,9 +1066,7 @@ export async function pauseOrResumeStudioTemplate(
         template: result.template,
         scheduled: result.scheduled,
         added: result.added,
-        blockedByCancelled: result.blockedByCancelled,
-        slotTaken: result.slotTaken,
-        alreadyThisWeek: result.alreadyThisWeek,
+        counts: result.counts,
       };
     case 'paused':
       break;

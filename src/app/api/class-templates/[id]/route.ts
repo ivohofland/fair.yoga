@@ -238,14 +238,14 @@ export const PATCH = withErrorHandler(async (
           templateKind: 'class' as const,
           scheduled: result.scheduled,
           added: result.added,
-          blockedByCancelled: result.blockedByCancelled,
-          slotTaken: result.slotTaken,
-          // #194. Without this hop the resume after a day edit still reports
-          // "4 classes on your schedule. Nothing needed adding." about four
-          // classes on the weekday the teacher just stopped using — the count
-          // is measured by the generator and reaches the service, and this is
-          // where it used to stop.
-          alreadyThisWeek: result.alreadyThisWeek,
+          // Passed whole, not mapped member by member (#296). This hop is where
+          // `alreadyThisWeek` used to stop: without it the resume after a day
+          // edit still reported "4 classes on your schedule. Nothing needed
+          // adding." about four classes on the weekday the teacher had just
+          // stopped using (#194). A count that travels as part of an object
+          // cannot be dropped here by omission — only by someone rebuilding the
+          // object, which is the edit this shape exists to make unnecessary.
+          counts: result.counts,
         });
       case 'unchanged':
         return respondOk({ ...result.template, action: result.action });

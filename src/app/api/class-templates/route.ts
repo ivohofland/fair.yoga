@@ -236,7 +236,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     {
       ...created,
       added: template.generation.created,
-      ...countSkipReasons(template.generation.skipped),
+      // One field rather than a spread, matching the PATCH `active` arm. The
+      // spread already carried a new count automatically; nesting means the
+      // FORM that reads this payload does too, which the spread did not give.
+      counts: countSkipReasons(template.generation.skipped),
     },
     201,
   );

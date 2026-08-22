@@ -5,6 +5,10 @@ import type { LastScheduledClass } from '@/services/class-template-lifecycle';
 // itself is evaluated on the server and arrives here as a string on the wire —
 // this file must never re-derive it from `isActive`/`isArchived`.
 import type { TemplateGenerationState } from '@/lib/template-selection';
+// Type-only, and safe as a value import too for the same reason as the line
+// above: `generation.ts` is import-free on purpose. See its header docblock,
+// which keeps a grep for exactly this question.
+import type { SkipCounts } from '@/lib/generation';
 
 /**
  * Confirmation shown after pausing a template. Only ever called on the pause
@@ -140,9 +144,7 @@ export function archiveStudioMessage(deleted: number, remaining: number): string
 export function resumeStudioMessage(
   added: number,
   scheduled: number,
-  blockedByCancelled: number,
-  slotTaken: number,
-  alreadyThisWeek: number,
+  counts: SkipCounts,
 ): string {
   // Delegates rather than duplicates. The two families' resume sentences are
   // identical word for word — unlike `archiveMessage`/`archiveStudioMessage`,
@@ -151,7 +153,7 @@ export function resumeStudioMessage(
   // basis. Kept as a separate export so the studio resolver's call site stays
   // family-specific and a future divergence has somewhere to land; delegating
   // so that until it does, the two cannot drift apart unnoticed.
-  return resumeMessage(added, scheduled, blockedByCancelled, slotTaken, alreadyThisWeek);
+  return resumeMessage(added, scheduled, counts);
 }
 
 /**
@@ -202,13 +204,8 @@ export function resumeStudioMessage(
  * query or a guess, and this file's rule is that a clause says only what its
  * arguments measure.
  */
-export function resumeMessage(
-  added: number,
-  scheduled: number,
-  blockedByCancelled: number,
-  slotTaken: number,
-  alreadyThisWeek: number,
-): string {
+export function resumeMessage(added: number, scheduled: number, counts: SkipCounts): string {
+  const { blockedByCancelled, slotTaken, alreadyThisWeek } = counts;
   // Assembled before the `scheduled === 0` branch, deliberately. An earlier
   // version built the causes only on the non-empty branch, so a teacher whose
   // every candidate date was taken by another class — `slotTaken: 4`, measured
@@ -376,10 +373,16 @@ export type TemplateToggleResponse =
       templateKind: 'class';
       scheduled: number;
       added: number;
-      blockedByCancelled: number;
-      slotTaken: number;
-      /** Candidate dates whose week a class from this template already holds (#194). */
-      alreadyThisWeek: number;
+      /**
+       * One field rather than three re-listed `number`s, and the difference is
+       * the same guarantee `class-template-lifecycle.ts` documents at its own
+       * `counts`: a fourth `SkipCounts` member reaches this payload with no
+       * edit here, at the route that builds it, or at the form that reads it.
+       * `alreadyThisWeek` (#194) is the count that arrived after this arm was
+       * first written, and it had to be threaded through by hand at every hop —
+       * which is how it came to stop at the route for a while.
+       */
+      counts: SkipCounts;
     }
   | { action: 'unarchived' | 'unchanged' };
 
@@ -395,10 +398,11 @@ export type TemplateToggleResponse =
  * button silently discarded `remaining` — and the one #136's pins exist to
  * prevent.
  *
- * `scheduled`/`added`/`blockedByCancelled`/`slotTaken`/`alreadyThisWeek` are
- * required, not optional. The route sends all five on every `active` response;
- * a type that allowed their absence would be describing a payload the server
- * cannot produce. `templateKind: 'studio'` is the literal that keeps this type
+ * `scheduled`, `added` and `counts` are required, not optional. The route
+ * sends all three on every `active` response; a type that allowed their
+ * absence would be describing a payload the server cannot produce. (It was
+ * five fields until the counts became one — the count members themselves are
+ * required by `SkipCounts`, unchanged.) `templateKind: 'studio'` is the literal that keeps this type
  * and `TemplateToggleResponse` non-interchangeable — see that type's docblock.
  */
 export type StudioTemplateToggleResponse =
@@ -409,18 +413,20 @@ export type StudioTemplateToggleResponse =
       templateKind: 'studio';
       scheduled: number;
       added: number;
-      blockedByCancelled: number;
-      slotTaken: number;
       /**
-       * Always 0 today, and that is not a bug. `countSkipReasons` returns all
-       * three counts for both families, so this value flows through the studio
-       * chain by the same route the other two do — but nothing on the studio
-       * side PRODUCES `already_this_week` yet: `generateStudioInstancesForTemplate`
-       * has no week key, which is #284. Carried rather than hard-coded to 0
-       * precisely so that when #284 lands, the count arrives here with no wiring
-       * left to remember.
+       * `counts.alreadyThisWeek` is always 0 today, and that is not a bug.
+       * `countSkipReasons` returns all three counts for both families, so the
+       * value flows through the studio chain by the same route the other two
+       * do — but nothing on the studio side PRODUCES `already_this_week` yet:
+       * `generateStudioInstancesForTemplate` has no week key, which is #284.
+       * Carried rather than hard-coded to 0 precisely so that when #284 lands,
+       * the count arrives here with no wiring left to remember.
+       *
+       * Carrying the whole `SkipCounts` rather than its members one by one is
+       * that same argument generalised: it is what makes the next count's
+       * arrival free instead of merely cheap.
        */
-      alreadyThisWeek: number;
+      counts: SkipCounts;
     }
   | { action: 'unarchived' | 'unchanged' };
 
@@ -442,6 +448,42 @@ export type StudioTemplateToggleResponse =
  * and the button silently discarded `remaining`), and it was caught by review
  * rather than by a test because nothing here was testable.
  */
+/**
+ * True when `counts` is a `SkipCounts` whose every member is really an integer.
+ *
+ * Both resolvers below reach their `active` arm through an unchecked `as` on
+ * `res.json()`, so the type constrains the SERVER and nothing constrains the
+ * WIRE: a tab holding this bundle against a rolled-back server receives
+ * `{ action: 'active' }` with no counts, and a template literal then renders
+ * "undefined classes on your schedule." Saying nothing is the honest fallback —
+ * `resolveTemplateConfirmation`'s whole contract is that `null` means "say
+ * nothing".
+ *
+ * Nesting the counts (#296) added a failure mode the three flat fields did not
+ * have, and it is why this is a function rather than three more `||` clauses:
+ * a payload with no `counts` object at all makes every member read THROW a
+ * TypeError, where a missing flat field merely read `undefined` and failed
+ * `Number.isInteger`. The object check has to come first, and a type guard is
+ * what lets it narrow for the call rather than being re-asserted with a cast.
+ *
+ * One guard for both families, replacing the same three-member check written
+ * out twice. That is also where a fourth `SkipCounts` member's validation
+ * lands — one edit, not two.
+ */
+function hasIntegerCounts(counts: unknown): counts is SkipCounts {
+  if (typeof counts !== 'object' || counts === null) return false;
+  const c = counts as Record<string, unknown>;
+  return (
+    Number.isInteger(c.blockedByCancelled) &&
+    Number.isInteger(c.slotTaken) &&
+    // Checked like the rest even though the studio generator cannot produce it
+    // until #284 — the guard is about what the WIRE carries, not about what the
+    // server currently counts, and an `active` payload missing this field is a
+    // payload from a bundle-vs-server mismatch either way.
+    Number.isInteger(c.alreadyThisWeek)
+  );
+}
+
 export function resolveTemplateConfirmation(data: TemplateToggleResponse): string | null {
   switch (data.action) {
     case 'paused': {
@@ -451,26 +493,17 @@ export function resolveTemplateConfirmation(data: TemplateToggleResponse): strin
     case 'archived':
       return archiveMessage(data.deleted, data.remaining);
     case 'active': {
-      // Checked rather than trusted, for the reason `resolveStudioConfirmation`'s
-      // own `active` case records below — the type constrains the server and
-      // nothing constrains the wire, so a counts-less `{ action: 'active' }`
-      // must be answered with silence, not a sentence about undefined.
+      // Checked rather than trusted — see `hasIntegerCounts` above for why the
+      // wire is distrusted here and what a counts-less payload would otherwise
+      // render.
       if (
         !Number.isInteger(data.added) ||
         !Number.isInteger(data.scheduled) ||
-        !Number.isInteger(data.blockedByCancelled) ||
-        !Number.isInteger(data.slotTaken) ||
-        !Number.isInteger(data.alreadyThisWeek)
+        !hasIntegerCounts(data.counts)
       ) {
         return null;
       }
-      return resumeMessage(
-        data.added,
-        data.scheduled,
-        data.blockedByCancelled,
-        data.slotTaken,
-        data.alreadyThisWeek,
-      );
+      return resumeMessage(data.added, data.scheduled, data.counts);
     }
     case 'unarchived':
       return UNARCHIVE_MESSAGE;
@@ -536,34 +569,16 @@ export function resolveStudioConfirmation(data: StudioTemplateToggleResponse): s
     case 'archived':
       return archiveStudioMessage(data.deleted, data.remaining);
     case 'active':
-      // Checked rather than trusted, even though the type says `number`. Both
-      // buttons reach this through an unchecked `as` on `res.json()`, so the
-      // type constrains the server and nothing constrains the wire: a tab
-      // holding this bundle against a rolled-back server receives
-      // `{ action: 'active' }` with no counts, and `resumeStudioMessage`'s
-      // template literal then renders "undefined classes on your schedule."
-      // Saying nothing is the honest fallback — this function's whole contract
-      // is that `null` means "say nothing".
+      // Checked rather than trusted, even though the type says `number` — see
+      // `hasIntegerCounts` above, which both families share.
       if (
         !Number.isInteger(data.added) ||
         !Number.isInteger(data.scheduled) ||
-        !Number.isInteger(data.blockedByCancelled) ||
-        !Number.isInteger(data.slotTaken) ||
-        // Checked like the rest even though the studio generator cannot produce
-        // it until #284 — the guard is about what the WIRE carries, not about
-        // what the server currently counts, and an `active` payload missing this
-        // field is a payload from a bundle-vs-server mismatch either way.
-        !Number.isInteger(data.alreadyThisWeek)
+        !hasIntegerCounts(data.counts)
       ) {
         return null;
       }
-      return resumeStudioMessage(
-        data.added,
-        data.scheduled,
-        data.blockedByCancelled,
-        data.slotTaken,
-        data.alreadyThisWeek,
-      );
+      return resumeStudioMessage(data.added, data.scheduled, data.counts);
     case 'unarchived':
       return UNARCHIVE_STUDIO_MESSAGE;
     case 'unchanged':

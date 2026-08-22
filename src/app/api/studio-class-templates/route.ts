@@ -105,7 +105,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     {
       ...created,
       added: template.generation.created,
-      ...countSkipReasons(template.generation.skipped),
+      // One field rather than a spread — see the class family's twin for why
+      // nesting buys something the spread did not.
+      counts: countSkipReasons(template.generation.skipped),
     },
     201,
   );

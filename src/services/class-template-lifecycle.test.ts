@@ -2039,10 +2039,15 @@ describe('pauseOrResumeTemplate (DB)', () => {
 
     const result = await pauseOrResumeTemplate(prisma, t.id, teacherId, 'active');
 
-    expect(result).toMatchObject({ ok: true, action: 'active', added: 3, slotTaken: 1 });
+    expect(result).toMatchObject({
+      ok: true,
+      action: 'active',
+      added: 3,
+      counts: { slotTaken: 1 },
+    });
     if (result.ok && result.action === 'active') {
       expect(result.scheduled).toBe(3);
-      expect(result.blockedByCancelled).toBe(0);
+      expect(result.counts.blockedByCancelled).toBe(0);
     }
   });
 
@@ -2080,13 +2085,18 @@ describe('pauseOrResumeTemplate (DB)', () => {
     await pauseOrResumeTemplate(prisma, t.id, teacherId, 'paused');
     const result = await pauseOrResumeTemplate(prisma, t.id, teacherId, 'active');
 
-    expect(result).toMatchObject({ ok: true, action: 'active', added: 0, blockedByCancelled: 3 });
+    expect(result).toMatchObject({
+      ok: true,
+      action: 'active',
+      added: 0,
+      counts: { blockedByCancelled: 3 },
+    });
     if (result.ok && result.action === 'active') {
       // One survivor, still draft/open — cancelled rows are excluded from
       // `scheduled` by SCHEDULED_STATUSES. Also the `already_generated` count,
       // which is what a mis-wired filter would report instead of 3.
       expect(result.scheduled).toBe(1);
-      expect(result.slotTaken).toBe(0);
+      expect(result.counts.slotTaken).toBe(0);
     }
   });
 

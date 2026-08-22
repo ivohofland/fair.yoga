@@ -18,6 +18,7 @@ import {
   templateUpdatedMessage,
 } from '@/components/settings/template-action-messages';
 import type { TemplateGenerationState } from '@/lib/template-selection';
+import type { SkipCounts } from '@/lib/generation';
 
 interface TeacherRoomOption {
   id: string;
@@ -328,8 +329,8 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         // `scheduled` is exactly `added` here, since nothing existed under
         // this brand-new template before this create.
         //
-        // `alreadyThisWeek` rides along as `resumeMessage`'s fifth ARGUMENT —
-        // the fourth field on this payload, not the fifth — and the GATE below
+        // `alreadyThisWeek` rides along inside `counts` — it is not a field of
+        // this payload in its own right (#296) — and the GATE below
         // deliberately does not test it. On create that count is structurally
         // 0: `already_this_week` requires a class of THIS template already
         // holding the week, and the template was created moments earlier in
@@ -343,26 +344,14 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         // this is a measurement. If create ever CAN produce the reason, this
         // gate must gain the term in the same change — otherwise the window
         // comes back short and the page navigates away without saying so.
-        const json: {
-          data?: {
-            added: number;
-            blockedByCancelled: number;
-            slotTaken: number;
-            alreadyThisWeek: number;
-          };
-        } = await res.json();
-        const counts = json.data;
+        // `counts` is optional in this parse shape even though the route always
+        // sends it — see `studio-template-form.tsx`'s twin for why nesting makes
+        // that distinction load-bearing rather than pedantic.
+        const json: { data?: { added: number; counts?: SkipCounts } } = await res.json();
+        const result = json.data;
         setCreated(true);
-        if (counts && (counts.blockedByCancelled > 0 || counts.slotTaken > 0)) {
-          setSuccess(
-            resumeMessage(
-              counts.added,
-              counts.added,
-              counts.blockedByCancelled,
-              counts.slotTaken,
-              counts.alreadyThisWeek,
-            ),
-          );
+        if (result?.counts && (result.counts.blockedByCancelled > 0 || result.counts.slotTaken > 0)) {
+          setSuccess(resumeMessage(result.added, result.added, result.counts));
         } else {
           router.push(RECURRING_LIST_PATH);
         }

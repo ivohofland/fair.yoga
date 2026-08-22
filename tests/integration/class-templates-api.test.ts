@@ -1884,17 +1884,15 @@ describe('PUT /api/class-templates/[id]', () => {
       data: {
         scheduled: number;
         added: number;
-        blockedByCancelled: number;
-        slotTaken: number;
-        alreadyThisWeek: number;
+        counts: { blockedByCancelled: number; slotTaken: number; alreadyThisWeek: number };
       };
     };
 
     // Non-zero, and different from every other count on the body. A hop wired
     // to `slotTaken`, `blockedByCancelled` or `added` reports 0 here.
-    expect(resumed.alreadyThisWeek).toBe(4);
-    expect(resumed.slotTaken).toBe(0);
-    expect(resumed.blockedByCancelled).toBe(0);
+    expect(resumed.counts.alreadyThisWeek).toBe(4);
+    expect(resumed.counts.slotTaken).toBe(0);
+    expect(resumed.counts.blockedByCancelled).toBe(0);
     // Nothing was created: all four candidate weeks are held by the old day's
     // classes, which is the state that produces the count above.
     expect(resumed.added).toBe(0);
