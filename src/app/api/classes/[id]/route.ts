@@ -94,6 +94,17 @@ export const PUT = withErrorHandler(async (
       'DUPLICATE_CLASS_SLOT',
     );
   }
+  // The OTHER family holds it (#296). Same status as the branch above and a
+  // deliberately different sentence: that clash is fixed among this teacher's
+  // classes, this one sends them to their studio classes. A shared message
+  // would be the same status for two different remedies.
+  if (result.reason === 'cross_family_slot_conflict') {
+    return respondError(
+      'You already have a studio class at that date and time.',
+      409,
+      'CROSS_FAMILY_STUDIO_SLOT',
+    );
+  }
   // The older `@@unique([templateId, date])` key, not the slot key above —
   // reachable only from a reschedule, and only when the class carries a
   // `templateId` (`updateClass`'s own comment names why). Distinct message

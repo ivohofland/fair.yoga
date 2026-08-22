@@ -383,7 +383,18 @@ describe('TemplateForm', () => {
         return {
           ok: true,
           json: async () => ({
-            data: { id: 'tpl-short', added: 3, blockedByCancelled: 0, slotTaken: 1 },
+            data: {
+              id: 'tpl-short',
+              added: 3,
+              // All FOUR members — see the studio twin; the create path is
+              // gated on `hasIntegerCounts` and refuses a short payload.
+              counts: {
+                blockedByCancelled: 0,
+                slotTaken: 1,
+                alreadyThisWeek: 0,
+                blockedByOtherFamily: 0,
+              },
+            },
           }),
         };
       }
@@ -409,6 +420,139 @@ describe('TemplateForm', () => {
     // to read the sentence above instead of landing on the list with no
     // explanation for what they see there.
     expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  /**
+   * PR #300 review, C2 — the bug this file's own sibling case above was
+   * written to prevent, reproduced one reason later.
+   *
+   * The gate enumerated `blockedByCancelled > 0 || slotTaken > 0`. #296 added
+   * `blockedByOtherFamily`, the first reason reachable on CREATE that is not
+   * structurally 0, and the gate did not gain the term — so a teacher whose
+   * whole window is held by the OTHER family navigated away in silence. The
+   * path is ordinary: a manually logged studio class at that day and time does not
+   * block creating this template (the template trigger reads the sibling
+   * TEMPLATE table), so the create succeeds and the generator then declines
+   * every date.
+   *
+   * The gate is now `anyBlocked(counts)` (`@/lib/generation`), which reduces
+   * over the object instead of listing members. Note what that does and does
+   * not buy HERE: the GATE is covered for a fifth count structurally, but this
+   * test is not — the fixture below hard-codes four members inside an untyped
+   * `json: async () => ({...})`, so a fifth would neither fail nor be
+   * exercised. `anyBlocked`'s own unit tests in `src/lib/generation.test.ts`
+   * are what cover the reduction per member.
+   */
+  it('reports a window the OTHER family holds, instead of navigating away', async () => {
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url === '/api/teacher-rooms') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{
+              id: '11111111-1111-4111-8111-111111111111',
+              capacityOverride: 30,
+              rentalRate: 20,
+              room: { roomName: 'Studio A', venueName: 'Main Venue' },
+            }],
+          }),
+        };
+      }
+      if (url === '/api/class-templates' && init?.method === 'POST') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              id: 'tpl-other-family',
+              added: 0,
+              counts: {
+                blockedByCancelled: 0,
+                slotTaken: 0,
+                alreadyThisWeek: 0,
+                blockedByOtherFamily: 4,
+              },
+            },
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TemplateForm mode="create" />);
+    const roomSelect = await screen.findByLabelText('Room');
+    fireEvent.change(roomSelect, {
+      target: { value: '11111111-1111-4111-8111-111111111111' },
+    });
+    fireEvent.change(screen.getByLabelText('Class type'), {
+      target: { value: 'Vinyasa' },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    expect(
+      await screen.findByText(/4 dates are held by studio classes\./i),
+    ).toBeInTheDocument();
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  /**
+   * PR #300 third pass. The boundary `anyBlocked` could not defend.
+   *
+   * `anyBlocked` reduces over the PAYLOAD's own values, so a truncated `counts`
+   * reduces to `false` and takes the clean-window path — measured,
+   * `anyBlocked(JSON.parse('{}'))` is `false`. That made a malformed 201
+   * navigate away in silence, which is #296's own failure mode surviving at the
+   * one place its type cannot reach: `res.json()` is untrusted, and the parse
+   * shape only ASSERTS it.
+   *
+   * The create path is now gated on `hasIntegerCounts`, which reduces over the
+   * SCHEMA's members instead. Navigation is unchanged — there is genuinely
+   * nothing true to say about a payload that will not parse — but it is no
+   * longer unobservable.
+   */
+  it('warns rather than silently deciding, when the counts payload is unreadable', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url === '/api/teacher-rooms') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{
+              id: '11111111-1111-4111-8111-111111111111',
+              capacityOverride: 30,
+              rentalRate: 20,
+              room: { roomName: 'Studio A', venueName: 'Main Venue' },
+            }],
+          }),
+        };
+      }
+      if (url === '/api/class-templates' && init?.method === 'POST') {
+        // A stale bundle against a rolled-back server: `counts` present but
+        // short. Under the old gate this reduced to `false` and navigated.
+        return {
+          ok: true,
+          json: async () => ({
+            data: { id: 'tpl-short-payload', added: 0, counts: { blockedByCancelled: 0 } },
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TemplateForm mode="create" />);
+    fireEvent.change(await screen.findByLabelText('Room'), {
+      target: { value: '11111111-1111-4111-8111-111111111111' },
+    });
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/settings/recurring'));
+    expect(warn).toHaveBeenCalled();
+    expect(String(warn.mock.calls[0]?.[0])).toMatch(/unreadable counts/i);
+    warn.mockRestore();
   });
 
   /**

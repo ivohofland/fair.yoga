@@ -754,6 +754,176 @@ lock-taking node to the ordering `template-lock-order.test.ts` defends, for a
 few seconds in a window that needs a concurrent template creation — the same
 trade `room-archive.ts:146-147` refused.
 
+## The cross-family slot guard reads, and does not lock (#296)
+
+Eight triggers — two each on `Class`, `StudioClass`, `ClassTemplate` and
+`StudioClassTemplate` — enforce that one teacher holds at most one live row per
+slot ACROSS the two class families. The four SLOT partial unique indexes in
+`20260811202634` each enforce it within ONE table (that migration declares six;
+the other two are the `Room` identity pair), and nothing spanned them.
+
+That clarification lives here rather than beside the indexes it describes, and
+the reason is worth one line: it was briefly added as a comment inside
+`20260821120000_cross_family_slot_guard/migration.sql`, which is an APPLIED
+migration. A comment-only edit still changes the file's SHA-256, and
+`_prisma_migrations` stores that checksum — measured, `861bd46…` against
+`3867657…`. `prisma migrate status` compares NAMES and passes regardless, so
+nothing catches it until the next `prisma migrate dev` reports the migration as
+modified and demands a reset. Applied migrations are immutable including their
+comments; prose about a migration belongs in prose. The invariant spans two tables, so no
+unique index can express it; a trigger is what is left.
+
+Each `BEFORE INSERT`/`BEFORE UPDATE` function runs a plain
+`SELECT … LIMIT 1` against the SIBLING table and raises `YG001` if it finds a
+live row. **No source line in `src/` issues that `SELECT`**, which is the
+property the #103 section above is about — so the check that finds it is a grep
+of `prisma/migrations/`, not of `src/`:
+
+    grep -rn "cross_family_slot" prisma/migrations/
+
+**It adds no node to the ordering above, and that is a claim about the locking
+clause rather than about triggers in general.** The `SELECT` carries none — no
+`FOR SHARE`, no `FOR KEY SHARE` — so under READ COMMITTED it takes nothing that
+is held to commit and cannot be half of a cycle. Contrast the RESTRICT trigger
+one section up, whose `SELECT 1 … FOR KEY SHARE` is a real wait edge and did
+produce a `40P01`. The difference is one clause.
+
+**The `UPDATE` triggers are narrowed by a `WHEN`, which is a lock-order fact
+and not only a performance one.** They fire only when the row is live AND the
+slot moved or the row became live. An unrelated update — `spotBroadcastAt`, the
+completion totals, `settingsLocked` — pays for no sibling read at all, so the
+overwhelming majority of writes to these four tables touch the sibling table
+zero times.
+
+### What it costs: a residual race, measured
+
+An unlocked read cannot see an uncommitted sibling insert, so two transactions
+writing opposite tables at one slot may both commit.
+
+Measured against `ethical_yoga_test` on the real trigger functions: 200 runs,
+each opening two interactive transactions at one identical
+`(teacherId, date, startTime)` — one `Class.create`, one `StudioClass.create` —
+each holding 40ms after its `INSERT` so both triggers' sibling `SELECT`s
+necessarily run before either commits. **Both committed in 200 of 200 runs.** A
+control with the two guards dropped also measured 200 of 200: under a forced
+overlap the guard makes no measurable difference, which is exactly what an
+unlocked `SELECT`'s inability to see an uncommitted row predicts.
+
+**Read that number for what it is.** The harness FORCES the overlap, so
+`200/200` is a rate conditional on two writes racing, not a rate of races. How
+often two slot writes for one teacher actually overlap was never measured, and
+nothing here should be read as if it were. What is established is narrower and
+still worth stating: once two such writes overlap, the guard contributes
+nothing.
+
+### Why no advisory lock, and what would change that
+
+Both forms were derived and rejected — see
+`docs/superpowers/specs/2026-08-21-cross-family-slot-exclusivity-design.md`
+§4.2.1 for the full argument. In this document's terms:
+
+- **At the call sites.** Four of the claiming sites issue no transaction at all
+  (`prisma.class.create`, `prisma.studioClass.create`,
+  `prisma.studioClass.update`, and `updateClass`'s bare `db.class.updateMany`,
+  whose first parameter is a full `PrismaClient`), and an `xact` advisory lock
+  in autocommit is taken and released by its own implicit transaction before
+  the caller's next statement runs. So this design means introducing an
+  interactive transaction at four hot paths — one of which is already half of
+  the 32-of-100 `40P01` in "The slot key is a wait edge" above. It would also
+  add a second advisory namespace beside `lockAnnouncementSlot`'s, whose own
+  section warns that **"the thing to check is a second call site"**; this would
+  add roughly ten.
+- **Inside the trigger functions.** Cheaper, and it works in autocommit because
+  the statement's implicit transaction is exactly the right scope. Rejected on
+  the ordering derivation rather than the lines: the lock would be taken by a
+  line no `grep` over `src/` can find, which is this document's own #103
+  lesson, and a `BEFORE UPDATE` trigger fires with the row lock ALREADY held —
+  so it would order `Class → advisory` where a call-site design orders
+  `advisory → Class`. The two cannot coexist.
+
+**Neither is dormant work.** #298's recorded decision extracts `CalendarEntry`
+and makes this invariant a composite foreign key, at which point the second
+writer blocks on an uncommitted INDEX ENTRY — the `ShareLock` "The slot key is
+a wait edge" describes — and gets `23505` rather than racing past an unlocked
+read. That is why the residual is accepted rather than bridged: an index-backed
+constraint is race-free by construction, which is why within-family exclusivity
+has never needed a lock either.
+
+**Reopen this section if #298 slips materially past #283 and #276**, which is
+the sequencing recorded on that issue. The trigger-internal form is the one to
+take.
+
+### What keeps the realistic path away from the guard
+
+Both generators pre-check the sibling table and decline the date as
+`blocked_by_other_family` (`class-generator.ts`, `studio-class-generator.ts`),
+and **ten endpoints across eight route files** answer 409:
+
+| How it reaches the 409 | Endpoints |
+|---|---|
+| a `catch` beside their own `isUniqueConflictOn` branch | `POST /api/classes`, `POST /api/studio-classes`, `PUT /api/studio-classes/[id]`, `POST /api/class-templates`, `POST /api/studio-class-templates` |
+| a `cross_family_slot_conflict` reason their service returns, because they issue no write of their own | `PUT /api/classes/[id]`, `PUT /api/class-templates/[id]`, `PUT /api/studio-class-templates/[id]`, `PATCH /api/class-templates/[id]?state=unarchived`, `PATCH /api/studio-class-templates/[id]?state=unarchived` |
+
+Five and five. An earlier version of this paragraph said "all eight routes …
+five catch, three return", counting FILES on one side of the sentence and
+ENDPOINTS on the other, and so undercounted the reason-based side by the two
+`PATCH` unarchive arms this same issue added. It closed by saying "named rather
+than counted", which is the right instinct and was defeated by naming an
+incomplete set — so the table above is the naming.
+
+**The grep does not agree with the table, and should not.**
+`grep -rn "CROSS_FAMILY_" src/app/api/ | wc -l` returns **12**: ten endpoints,
+of which the two template `POST`s carry TWO branches each. Those two are the
+only endpoints where a cross-family `YG001` can arrive from two different
+triggers meaning two different things — the template insert's (which reads the
+sibling TEMPLATE table) and generation's (which reads the sibling INSTANCE
+table, since generation shares the transaction). They answer
+`CROSS_FAMILY_*_TEMPLATE_SLOT` and `CROSS_FAMILY_*_SLOT` respectively, chosen
+by a `conflictLevel` flag set on the failure path. Answering both with the
+template sentence would send a teacher hunting for a recurring studio class
+that does not exist, which is what they did until review caught it.
+
+So: 12 branches, 10 endpoints, 8 files. Three numbers, none of them derivable
+from either of the others, which is why all three are written down.
+
+That is the same division of labour `countRoomDeleteBlockers` has with the
+RESTRICT trigger one section up: the guard is the backstop, the pre-check is
+what means it almost never fires.
+
+### How the pre-check must be tested, and the mutation that lied
+
+Removing the pre-check makes the batch insert hit the trigger, which aborts the
+statement — so the generator THROWS. There is no longer a `result` to read a
+count from at all, which is a stronger failure than the count moving: every
+assertion in the case fails, not just the one about the reason. (An earlier
+draft of this paragraph said "`created` drops to 0 **and** the generator
+throws"; those are mutually exclusive, and only the second happens.) The suite
+asserts the reason regardless, which is the stricter assertion in the cases
+where the generator does return.
+
+**That is not what this section said first, and the way it was wrong is the
+part worth keeping.** #296 originally shipped a `catch` around
+`createManyAndReturn` that retried per date, and the mutation was recorded as
+*masked*: the trigger fires, the fallback retries, the date is reclassified
+`'raced'`, `result.created` does not move. Every word of that was observed —
+in the **unit tests**, which call both generators with a bare `PrismaClient`,
+where each statement is its own transaction and a retry after an abort is
+perfectly legal.
+
+Every PRODUCTION caller passes a transaction client (both sweeps, both POST
+routes, both pause/resume services). Prisma takes no savepoint per statement,
+so `RAISE EXCEPTION` leaves the transaction aborted and the first retried
+`create` returns `25P02`, which `isCrossFamilySlotConflict` correctly declines
+— costing the whole window, and turning the `YG001` those ten endpoints match
+into a `25P02` they cannot, so a wordable 409 became a 500. The fallback was
+deleted in review.
+
+The lesson generalises past this issue: **a mutation is only evidence about the
+configuration it ran in.** The guard reported honestly; the harness asked it
+the wrong question, because the test client and the production client differ in
+exactly the property under test. `generation-transaction.test.ts` now drives
+both generators through a real `$transaction` for that reason.
+
 ## Known conformance
 
 - **`unlinkTeacher`** (`src/services/invitations.ts`) — `Class`/`WaitlistEntry`

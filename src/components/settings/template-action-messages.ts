@@ -5,6 +5,10 @@ import type { LastScheduledClass } from '@/services/class-template-lifecycle';
 // itself is evaluated on the server and arrives here as a string on the wire —
 // this file must never re-derive it from `isActive`/`isArchived`.
 import type { TemplateGenerationState } from '@/lib/template-selection';
+// Type-only, and safe as a value import too for the same reason as the line
+// above: `generation.ts` is import-free on purpose. See its header docblock,
+// which keeps a grep for exactly this question.
+import type { SkipCounts } from '@/lib/generation';
 
 /**
  * Confirmation shown after pausing a template. Only ever called on the pause
@@ -140,18 +144,23 @@ export function archiveStudioMessage(deleted: number, remaining: number): string
 export function resumeStudioMessage(
   added: number,
   scheduled: number,
-  blockedByCancelled: number,
-  slotTaken: number,
-  alreadyThisWeek: number,
+  counts: SkipCounts,
 ): string {
-  // Delegates rather than duplicates. The two families' resume sentences are
-  // identical word for word — unlike `archiveMessage`/`archiveStudioMessage`,
-  // which are split because their wording genuinely differs — and this file
-  // already shares `pauseMessage` between both resolvers on exactly that
-  // basis. Kept as a separate export so the studio resolver's call site stays
-  // family-specific and a future divergence has somewhere to land; delegating
-  // so that until it does, the two cannot drift apart unnoticed.
-  return resumeMessage(added, scheduled, blockedByCancelled, slotTaken, alreadyThisWeek);
+  // Shares an implementation rather than duplicating one. The two families'
+  // resume sentences were identical word for word until #296, and this
+  // docblock's promise that "a future divergence has somewhere to land" is now
+  // spent: `blockedByOtherFamily` is that divergence, because each family has
+  // to name the OPPOSITE half of the teacher's schedule.
+  //
+  // Note what this is NOT. Delegating to `resumeMessage` with
+  // `blockedByOtherFamily` zeroed and appending a clause afterwards was tried
+  // and is wrong: with `scheduled > 0 && added === 0` and no other cause, the
+  // delegate takes its "Nothing needed adding." branch, and the appended clause
+  // then contradicts it in the same breath — "4 classes on your schedule.
+  // Nothing needed adding. 2 dates are held by your own classes." The clause
+  // has to be part of the cause list BEFORE that branch is chosen, which means
+  // passing it in rather than bolting it on.
+  return buildResumeSentence(added, scheduled, counts, STUDIO_FAMILY_OTHER_CLAUSE);
 }
 
 /**
@@ -186,7 +195,8 @@ export function resumeStudioMessage(
  * inflecting family too, and doubly so — "is/are" AND "a class/classes" both
  * change with number.
  *
- * `alreadyThisWeek` (#194) is last of the three causes, and the order is not
+ * `alreadyThisWeek` (#194) is THIRD of the four causes — `blockedByOtherFamily`
+ * (#296) was appended after it — and the order is not
  * arbitrary: every sentence pinned before it keeps the prefix it already had,
  * so the existing tests stay meaningful rather than being rewritten around a
  * new clause. It is also the reason the count is carried at all. A teacher who
@@ -202,13 +212,53 @@ export function resumeStudioMessage(
  * query or a guess, and this file's rule is that a clause says only what its
  * arguments measure.
  */
-export function resumeMessage(
+export function resumeMessage(added: number, scheduled: number, counts: SkipCounts): string {
+  return buildResumeSentence(added, scheduled, counts, CLASS_FAMILY_OTHER_CLAUSE);
+}
+
+/**
+ * The `blockedByOtherFamily` clause, which is the ONE thing the two families
+ * do not share (#296).
+ *
+ * Each names the opposite half of the teacher's schedule: a class template's
+ * slot is held by a *studio* class, and a studio template's by one of their
+ * ordinary classes. Getting these two the wrong way round is the mistake this
+ * split exists to make possible to test — and note that on the studio side the
+ * neighbouring `slotTaken` clause ("N dates already had a class") means another
+ * STUDIO class, so "one of your own classes" is doing real work distinguishing
+ * the two rather than restating them.
+ *
+ * Number agreement follows `alreadyThisWeek`'s clause, the nearest neighbour in
+ * shape: singular pluralises the subject AND the agent, and switches is/are.
+ * Matching it rather than inventing a second convention is this file's rule.
+ */
+type OtherFamilyClause = (count: number) => string;
+
+const CLASS_FAMILY_OTHER_CLAUSE: OtherFamilyClause = (count) =>
+  count === 1
+    ? '1 date is held by a studio class.'
+    : `${count} dates are held by studio classes.`;
+
+const STUDIO_FAMILY_OTHER_CLAUSE: OtherFamilyClause = (count) =>
+  count === 1
+    ? '1 date is held by one of your own classes.'
+    : `${count} dates are held by your own classes.`;
+
+/**
+ * Everything the two families' resume sentences share, which is all of it bar
+ * the clause passed in.
+ *
+ * Private: the two exported entry points above are what callers use, so a
+ * resolver's call site stays family-specific and cannot silently be handed the
+ * wrong family's copy.
+ */
+function buildResumeSentence(
   added: number,
   scheduled: number,
-  blockedByCancelled: number,
-  slotTaken: number,
-  alreadyThisWeek: number,
+  counts: SkipCounts,
+  otherFamilyClause: OtherFamilyClause,
 ): string {
+  const { blockedByCancelled, slotTaken, alreadyThisWeek, blockedByOtherFamily } = counts;
   // Assembled before the `scheduled === 0` branch, deliberately. An earlier
   // version built the causes only on the non-empty branch, so a teacher whose
   // every candidate date was taken by another class — `slotTaken: 4`, measured
@@ -234,6 +284,11 @@ export function resumeMessage(
         ? '1 date is still held by a class on your previous day.'
         : `${alreadyThisWeek} dates are still held by classes on your previous day.`,
     );
+  }
+  // Last, after the three that predate it (#296). The order is a copy decision
+  // and is pinned by a test, not left to how the `if`s happen to be stacked.
+  if (blockedByOtherFamily > 0) {
+    causes.push(otherFamilyClause(blockedByOtherFamily));
   }
 
   const head =
@@ -376,10 +431,16 @@ export type TemplateToggleResponse =
       templateKind: 'class';
       scheduled: number;
       added: number;
-      blockedByCancelled: number;
-      slotTaken: number;
-      /** Candidate dates whose week a class from this template already holds (#194). */
-      alreadyThisWeek: number;
+      /**
+       * One field rather than three re-listed `number`s, and the difference is
+       * the same guarantee `class-template-lifecycle.ts` documents at its own
+       * `counts`: a fourth `SkipCounts` member reaches this payload with no
+       * edit here, at the route that builds it, or at the form that reads it.
+       * `alreadyThisWeek` (#194) is the count that arrived after this arm was
+       * first written, and it had to be threaded through by hand at every hop —
+       * which is how it came to stop at the route for a while.
+       */
+      counts: SkipCounts;
     }
   | { action: 'unarchived' | 'unchanged' };
 
@@ -395,10 +456,11 @@ export type TemplateToggleResponse =
  * button silently discarded `remaining` — and the one #136's pins exist to
  * prevent.
  *
- * `scheduled`/`added`/`blockedByCancelled`/`slotTaken`/`alreadyThisWeek` are
- * required, not optional. The route sends all five on every `active` response;
- * a type that allowed their absence would be describing a payload the server
- * cannot produce. `templateKind: 'studio'` is the literal that keeps this type
+ * `scheduled`, `added` and `counts` are required, not optional. The route
+ * sends all three on every `active` response; a type that allowed their
+ * absence would be describing a payload the server cannot produce. (It was
+ * five fields until the counts became one — the count members themselves are
+ * required by `SkipCounts`, unchanged.) `templateKind: 'studio'` is the literal that keeps this type
  * and `TemplateToggleResponse` non-interchangeable — see that type's docblock.
  */
 export type StudioTemplateToggleResponse =
@@ -409,20 +471,91 @@ export type StudioTemplateToggleResponse =
       templateKind: 'studio';
       scheduled: number;
       added: number;
-      blockedByCancelled: number;
-      slotTaken: number;
       /**
-       * Always 0 today, and that is not a bug. `countSkipReasons` returns all
-       * three counts for both families, so this value flows through the studio
-       * chain by the same route the other two do — but nothing on the studio
-       * side PRODUCES `already_this_week` yet: `generateStudioInstancesForTemplate`
-       * has no week key, which is #284. Carried rather than hard-coded to 0
-       * precisely so that when #284 lands, the count arrives here with no wiring
-       * left to remember.
+       * `counts.alreadyThisWeek` is always 0 today, and that is not a bug.
+       * `countSkipReasons` returns all four counts for both families, so the
+       * value flows through the studio chain by the same route the other three
+       * do — but nothing on the studio side PRODUCES `already_this_week` yet:
+       * `generateStudioInstancesForTemplate` has no week key, which is #284.
+       * Carried rather than hard-coded to 0 precisely so that when #284 lands,
+       * the count arrives here with no wiring left to remember.
+       *
+       * Carrying the whole `SkipCounts` rather than its members one by one is
+       * that same argument generalised: it is what makes the next count's
+       * arrival free instead of merely cheap.
        */
-      alreadyThisWeek: number;
+      counts: SkipCounts;
     }
   | { action: 'unarchived' | 'unchanged' };
+
+/**
+ * The `SkipCounts` members, tethered so a new one cannot be forgotten here.
+ *
+ * `satisfies Record<keyof SkipCounts, true>` binds in both directions — the
+ * same tether `ROOM_SEARCH_SELECT` (`api/rooms/route.ts`) uses, and for the
+ * same reason. Add a member to `SkipCounts` and this object is missing a key;
+ * remove one and the extra key is not in `keyof SkipCounts`. Either way the
+ * build fails HERE rather than the guard below silently validating a subset.
+ *
+ * That is not hypothetical. This was a hand-written three-term `&&` chain, and
+ * its docblock promised "that is also where a fourth `SkipCounts` member's
+ * validation lands — one edit, not two". #296 added the fourth member and the
+ * edit did not happen, leaving a type predicate that asserted
+ * `counts is SkipCounts` while checking three quarters of it.
+ */
+const COUNT_KEYS = {
+  blockedByCancelled: true,
+  slotTaken: true,
+  alreadyThisWeek: true,
+  blockedByOtherFamily: true,
+} satisfies Record<keyof SkipCounts, true>;
+
+/**
+ * True when `counts` is a `SkipCounts` whose every member is really an integer
+ * — every member, enforced by `COUNT_KEYS` above rather than by a list kept in
+ * step by hand.
+ *
+ * Both resolvers below reach their `active` arm through an unchecked `as` on
+ * `res.json()`, so the type constrains the SERVER and nothing constrains the
+ * WIRE: a tab holding this bundle against a rolled-back server receives
+ * `{ action: 'active' }` with no counts, and a template literal then renders
+ * "undefined classes on your schedule." Saying nothing is the honest fallback —
+ * `resolveTemplateConfirmation`'s whole contract is that `null` means "say
+ * nothing".
+ *
+ * Nesting the counts (#296) added a failure mode the three flat fields did not
+ * have, and it is why this is a function rather than more `||` clauses: a
+ * payload with no `counts` object at all makes every member read THROW a
+ * TypeError, where a missing flat field merely read `undefined` and failed
+ * `Number.isInteger`. The object check has to come first, and a type guard is
+ * what lets it narrow for the call rather than being re-asserted with a cast.
+ *
+ * Members are checked even where the server cannot currently produce them —
+ * `alreadyThisWeek` until #284 gives the studio generator a week key. The guard
+ * is about what the WIRE carries, not about what the server counts today, and
+ * an `active` payload missing a field is a bundle-vs-server mismatch either
+ * way. One guard for both families.
+ *
+ * EXPORTED since PR #300's third review pass, and the reason is a measurement
+ * rather than tidiness. It was module-private, so the CREATE path — which reads
+ * the same untrusted `res.json()` from a different route — could not reach it
+ * and validated nothing. Measured against the real `anyBlocked`:
+ * `anyBlocked(JSON.parse('{}'))` returns `false`, so a truncated payload made
+ * both create forms navigate away in silence: the #296 failure this whole
+ * issue exists to fix, surviving at the one boundary its type does not cover.
+ *
+ * Note the direction the two guards reduce in, because it is the difference
+ * that matters. This one iterates `COUNT_KEYS` — the SCHEMA's members — so a
+ * payload missing one fails. `anyBlocked` iterates the PAYLOAD's own values, so
+ * `{}` reduces to `false` and an unknown extra member would count. Only the
+ * first survives untrusted input, which is why the create path is gated on this
+ * before `anyBlocked` is consulted at all.
+ */
+export function hasIntegerCounts(counts: unknown): counts is SkipCounts {
+  if (typeof counts !== 'object' || counts === null) return false;
+  const candidate = counts as Record<string, unknown>;
+  return Object.keys(COUNT_KEYS).every((key) => Number.isInteger(candidate[key]));
+}
 
 /**
  * Decides whether the button says anything, and what.
@@ -451,26 +584,17 @@ export function resolveTemplateConfirmation(data: TemplateToggleResponse): strin
     case 'archived':
       return archiveMessage(data.deleted, data.remaining);
     case 'active': {
-      // Checked rather than trusted, for the reason `resolveStudioConfirmation`'s
-      // own `active` case records below — the type constrains the server and
-      // nothing constrains the wire, so a counts-less `{ action: 'active' }`
-      // must be answered with silence, not a sentence about undefined.
+      // Checked rather than trusted — see `hasIntegerCounts` above for why the
+      // wire is distrusted here and what a counts-less payload would otherwise
+      // render.
       if (
         !Number.isInteger(data.added) ||
         !Number.isInteger(data.scheduled) ||
-        !Number.isInteger(data.blockedByCancelled) ||
-        !Number.isInteger(data.slotTaken) ||
-        !Number.isInteger(data.alreadyThisWeek)
+        !hasIntegerCounts(data.counts)
       ) {
         return null;
       }
-      return resumeMessage(
-        data.added,
-        data.scheduled,
-        data.blockedByCancelled,
-        data.slotTaken,
-        data.alreadyThisWeek,
-      );
+      return resumeMessage(data.added, data.scheduled, data.counts);
     }
     case 'unarchived':
       return UNARCHIVE_MESSAGE;
@@ -536,34 +660,16 @@ export function resolveStudioConfirmation(data: StudioTemplateToggleResponse): s
     case 'archived':
       return archiveStudioMessage(data.deleted, data.remaining);
     case 'active':
-      // Checked rather than trusted, even though the type says `number`. Both
-      // buttons reach this through an unchecked `as` on `res.json()`, so the
-      // type constrains the server and nothing constrains the wire: a tab
-      // holding this bundle against a rolled-back server receives
-      // `{ action: 'active' }` with no counts, and `resumeStudioMessage`'s
-      // template literal then renders "undefined classes on your schedule."
-      // Saying nothing is the honest fallback — this function's whole contract
-      // is that `null` means "say nothing".
+      // Checked rather than trusted, even though the type says `number` — see
+      // `hasIntegerCounts` above, which both families share.
       if (
         !Number.isInteger(data.added) ||
         !Number.isInteger(data.scheduled) ||
-        !Number.isInteger(data.blockedByCancelled) ||
-        !Number.isInteger(data.slotTaken) ||
-        // Checked like the rest even though the studio generator cannot produce
-        // it until #284 — the guard is about what the WIRE carries, not about
-        // what the server currently counts, and an `active` payload missing this
-        // field is a payload from a bundle-vs-server mismatch either way.
-        !Number.isInteger(data.alreadyThisWeek)
+        !hasIntegerCounts(data.counts)
       ) {
         return null;
       }
-      return resumeStudioMessage(
-        data.added,
-        data.scheduled,
-        data.blockedByCancelled,
-        data.slotTaken,
-        data.alreadyThisWeek,
-      );
+      return resumeStudioMessage(data.added, data.scheduled, data.counts);
     case 'unarchived':
       return UNARCHIVE_STUDIO_MESSAGE;
     case 'unchanged':

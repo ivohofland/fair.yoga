@@ -18,6 +18,8 @@ import {
   templateUpdatedMessage,
 } from '@/components/settings/template-action-messages';
 import type { TemplateGenerationState } from '@/lib/template-selection';
+import { anyBlocked } from '@/lib/generation';
+import { hasIntegerCounts } from '@/components/settings/template-action-messages';
 
 interface TeacherRoomOption {
   id: string;
@@ -318,8 +320,8 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         // form from inviting the click that resends the same create and now
         // earns a 409 instead of duplicating the teacher's whole schedule.
         //
-        // The POST also returns `added`, `blockedByCancelled` and `slotTaken`
-        // — the same counts the PATCH `active` arm carries. #196 made
+        // The POST also returns `added` and `counts` — the same shape the PATCH
+        // `active` arm carries (#296 nested them). #196 made
         // `slotTaken` reachable here for the first time: a teacher creating a
         // recurring class onto a day/time they already occupy gets a live
         // template whose window came back short. A clean window navigates
@@ -328,8 +330,8 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         // `scheduled` is exactly `added` here, since nothing existed under
         // this brand-new template before this create.
         //
-        // `alreadyThisWeek` rides along as `resumeMessage`'s fifth ARGUMENT —
-        // the fourth field on this payload, not the fifth — and the GATE below
+        // `alreadyThisWeek` rides along inside `counts` — it is not a field of
+        // this payload in its own right (#296) — and the GATE below
         // deliberately does not test it. On create that count is structurally
         // 0: `already_this_week` requires a class of THIS template already
         // holding the week, and the template was created moments earlier in
@@ -343,27 +345,35 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         // this is a measurement. If create ever CAN produce the reason, this
         // gate must gain the term in the same change — otherwise the window
         // comes back short and the page navigates away without saying so.
-        const json: {
-          data?: {
-            added: number;
-            blockedByCancelled: number;
-            slotTaken: number;
-            alreadyThisWeek: number;
-          };
-        } = await res.json();
-        const counts = json.data;
+        // `counts` is optional in this parse shape even though the route always
+        // sends it — see `studio-template-form.tsx`'s twin for why nesting makes
+        // that distinction load-bearing rather than pedantic.
+        const json: { data?: { added: number; counts?: unknown } } = await res.json();
+        const result = json.data;
         setCreated(true);
-        if (counts && (counts.blockedByCancelled > 0 || counts.slotTaken > 0)) {
-          setSuccess(
-            resumeMessage(
-              counts.added,
-              counts.added,
-              counts.blockedByCancelled,
-              counts.slotTaken,
-              counts.alreadyThisWeek,
-            ),
-          );
+        // `anyBlocked` rather than a hand-listed pair (`@/lib/generation`). This
+        // gate enumerated its terms until #296 added `blockedByOtherFamily` —
+        // the first such reason THE GATE DID NOT ALREADY LIST (`slotTaken` has
+        // been reachable on create since #196, and the gate listed it) — and
+        // then navigated away from a short window in silence. See that
+        // function's docblock; the paragraph ABOVE is the rule it broke.
+        if (result && Number.isInteger(result.added) && hasIntegerCounts(result.counts)) {
+          if (anyBlocked(result.counts)) {
+            setSuccess(resumeMessage(result.added, result.added, result.counts));
+          } else {
+            router.push(RECURRING_LIST_PATH);
+          }
         } else {
+          // The payload did not survive the guard, so nothing here is known: not
+          // whether the window is short, not what to say about it. Navigating is
+          // the same thing this branch always did — what changes is that it is
+          // no longer SILENT. Measured before this gate existed:
+          // `anyBlocked(JSON.parse('{}'))` is `false`, so a truncated `counts`
+          // took the clean-window path and this page navigated away from a short
+          // window with no sentence, which is the #296 failure at the one
+          // boundary its type cannot reach. `console.warn` rather than `log`:
+          // this is a `'use client'` file and `lib/log.ts` says so.
+          console.warn('recurring class create: unreadable counts on a 201, short-window check skipped', json);
           router.push(RECURRING_LIST_PATH);
         }
       } else {

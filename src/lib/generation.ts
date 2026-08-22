@@ -1,47 +1,76 @@
 /**
  * The result shape both instance generators return.
  *
- * This module is import-free on purpose — it declares no dependency of its
- * own — but note what that claim rests on: it is not, at present, load-bearing
- * for any client bundle, unlike `src/lib/tiers.ts` and `src/lib/class-fields.ts`,
- * which each name real `'use client'` files that *value*-import them. Today's
- * importers are two server-side generators (`import type` only —
- * `class-generator.ts`, `studio-class-generator.ts`) and, since
- * `countSkipReasons` below, four more server-only services and routes that
- * *value*-import it: `api/class-templates/route.ts`,
- * `api/studio-class-templates/route.ts`, `class-template-lifecycle.ts`,
- * `studio-class-template-lifecycle.ts`. (`generation.test.ts` value-imports it
- * too, by relative path; a test is not a bundle.) There was a fifth,
- * `template-sync.ts`, until #194 deleted it. None of those is a `'use client'`
- * file, so the client-bundle conclusion still holds — but the "only importers"
- * half of this sentence should be re-checked before being trusted, the same
- * way this paragraph corrects it now. The check is
- * `grep -rn "/generation'" src/ --include="*.ts" --include="*.tsx"`.
+ * This module is import-free on purpose, and since #296 that is a REQUIREMENT
+ * rather than the precaution it used to be. Two `'use client'` files now
+ * VALUE-import it — `template-form.tsx` and `studio-template-form.tsx`, both
+ * for `anyBlocked` — so this module is in the client bundle, and anything it
+ * imported would ride along. `src/lib/tiers.ts`, `src/lib/class-fields.ts`,
+ * `src/lib/client-errors.ts` and `src/lib/room-identity.ts` are in the same
+ * position (`room-search.ts` says so about the last of those). Named as
+ * EXAMPLES, not as a roster: an earlier version of this sentence said they
+ * "were previously the only members of that category", which upgraded an
+ * exemplar into an exhaustive list and was wrong within one commit — the exact
+ * move the rest of this docblock exists to prevent. The membership is a check,
+ * not a list: a module is in this category when a `'use client'` file
+ * value-imports it and it VALUE-imports nothing itself.
+ *
+ * "Value-imports", not "imports", and the correction is itself worth a line.
+ * The first version of this check said "imports nothing itself" and was
+ * falsified by the first example under it — `tiers.ts:1` is
+ * `import type { NoneOf } from '@/lib/type-pins'`. A type-only import is
+ * erased at build, so the bundle conclusion held and only the predicate was
+ * wrong. That is the third consecutive form this one sentence has failed in:
+ * a roster, then a check too strict for its own examples.
+ *
+ * The census, re-derived rather than carried, with the check that produces it:
+ *
+ *   grep -rn "/generation'" src/ --include="*.ts" --include="*.tsx"
+ *
+ * NINE non-test importers outside this file, split three ways — plus
+ * `generation.test.ts` by relative path, for ten in all. Stated as nine-plus-one
+ * rather than ten, because the parenthetical counts below add to nine and a
+ * reader doing the arithmetic the docblock invites should not land short:
+ *
+ *   VALUE, client (2)  `template-form.tsx`, `studio-template-form.tsx`
+ *   VALUE, server (4)  `api/class-templates/route.ts`,
+ *                      `api/studio-class-templates/route.ts`,
+ *                      `class-template-lifecycle.ts`,
+ *                      `studio-class-template-lifecycle.ts`
+ *   TYPE-ONLY (3)      `class-generator.ts`, `studio-class-generator.ts`,
+ *                      `template-action-messages.ts` (erased at build, so it
+ *                      adds nothing to any bundle)
+ *
+ * plus `generation.test.ts`, by relative path; a test is not a bundle. There
+ * was an eleventh, `template-sync.ts`, until #194 deleted it.
+ *
+ * An earlier version of this paragraph concluded "None of those is a
+ * `'use client'` file, so the client-bundle conclusion still holds" — the
+ * sentence it also instructs the reader to re-check. #296 falsified it twice
+ * over: first by adding two type-only client importers, then by turning both
+ * into value importers when `anyBlocked` landed. The conclusion did not change
+ * (this module still pulls in nothing), but the REASON did, from "no client
+ * file imports it" to "client files import it and it imports nothing".
  *
  * The needle starts at the SLASH, and that is the whole of it. This line used
  * to prescribe `"lib/generation'"` and claim it was "wide enough to see the
  * relative-path importer" — it is not, and was not: `generation.test.ts`
  * imports `from './generation'`, which contains no `lib/` at all, so the
- * prescribed grep returned eight lines and silently omitted the one importer
- * that does not go through the `@/` alias. A docblock whose whole purpose is
+ * prescribed grep returned eight lines AT THAT TIME (it returns more now, and
+ * the point survives) and silently omitted the one importer that does not go
+ * through the `@/` alias. A docblock whose whole purpose is
  * "re-check this rather than trusting it" is worse than useless with a check
  * that cannot find what it is checking for.
  *
  * A leading `/` catches both spellings and still excludes `'class-generation'`
  * — `scheduler.ts`'s job name, which has no slash. Every hit outside this
- * docblock is an import; the hits inside it are this paragraph quoting both
- * the grep and the two module specifiers back at itself, and are the only
- * false positives the check has.
- *
- * The import-free rule is kept anyway because these names are meant to reach
- * the copy layer — `template-action-messages.ts` takes the counts as bare
- * numbers now, and a later change that hands it a `SkipReason` should not have
- * to relocate this module first. Being import-free is what keeps that option
- * open; it is a precaution, not a fix for an existing bundle problem.
+ * docblock is an import; the hits inside it are this paragraph quoting the
+ * grep and the two module specifiers back at itself, and are the only false
+ * positives the check has.
  */
 
 /**
- * Why a candidate date produced no row. Five reasons, five distinct origins —
+ * Why a candidate date produced no row. Six reasons, six distinct origins —
  * they are not interchangeable and the copy layer treats them differently.
  */
 export type SkipReason =
@@ -65,6 +94,22 @@ export type SkipReason =
    * produces. Do not "fix" it for consistency with `Class_teacher_slot_unique`.
    */
   | 'already_this_week'
+  /**
+   * A LIVE class from the OTHER family holds this teacher's slot (#296).
+   *
+   * Distinct from `slot_taken`, which means one of this teacher's own
+   * SAME-family classes holds it. Kept separate because the remedy differs:
+   * `slot_taken` is answered inside this family, and this one sends the
+   * teacher to the other half of their schedule. Folding the two would make
+   * one member carry two situations with two remedies — the conflation #288
+   * is open about.
+   *
+   * It is the one member whose copy is not shared between the families, since
+   * each has to name the opposite half: see `resumeMessage` and
+   * `resumeStudioMessage` (`components/settings/template-action-messages.ts`),
+   * which delegated wholesale until this member existed.
+   */
+  | 'blocked_by_other_family'
   /** The pre-check said free and `ON CONFLICT DO NOTHING` skipped it anyway — a concurrent insert landed in between (#164). */
   | 'raced';
 
@@ -81,8 +126,11 @@ export interface GenerationResult {
 
 /**
  * The `SkipReason` counts `SkipCounts` carries for a caller to surface to a
- * teacher — `blockedByCancelled`, `slotTaken`, and `alreadyThisWeek`. The
- * third is the newest (#194) and is now read the whole way through:
+ * teacher — `blockedByCancelled`, `slotTaken`, `alreadyThisWeek` and
+ * `blockedByOtherFamily`. The fourth is the newest (#296) and is the only one
+ * whose sentence differs between the two families, because each names the
+ * opposite half of the teacher's schedule. The third (#194) is read the whole
+ * way through:
  * `resumeMessage` names it as "N dates are still held by classes on your
  * previous day", which is what stops a resume after a day edit reporting
  * "4 classes on your schedule. Nothing needed adding." about four classes on
@@ -96,13 +144,72 @@ export interface GenerationResult {
  * race whose date will simply be picked up on the next run, and today
  * reaches no user anywhere.
  */
-export interface SkipCounts {
+/**
+ * A `type` rather than an `interface`, and the one word is load-bearing.
+ *
+ * An interface has no implicit index signature, so `Object.values(counts)` does
+ * not match `values<T>(o: { [s: string]: T }): T[]` and falls through to the
+ * `values(o: {}): any[]` overload — which made `anyBlocked` below reduce over
+ * `any`, against CLAUDE.md's "no `any`, non-negotiable", and silently compare a
+ * hypothetical non-numeric member against `0`. Measured: adding a `string`
+ * member to this shape failed the build at `COUNT_KEYS`
+ * (`template-action-messages.ts`) and at `countSkipReasons` below, and NOT at
+ * `anyBlocked`, whose docblock claims to cover every count there will ever be.
+ *
+ * As a `type` alias the object literal type does get the index signature, the
+ * overload matches, and the same mutation now fails at `anyBlocked` itself with
+ * `TS2365: Operator '>' cannot be applied to types 'string | number' and
+ * 'number'`. Nothing else in the tree changed.
+ */
+export type SkipCounts = {
   /** Candidate dates a cancelled instance of this template holds (#192). */
   blockedByCancelled: number;
   /** Candidate dates another of this teacher's classes holds (#196). */
   slotTaken: number;
   /** Candidate dates whose week this template already occupies (#194). */
   alreadyThisWeek: number;
+  /** Candidate dates a live class from the OTHER family holds (#296). */
+  blockedByOtherFamily: number;
+};
+
+/**
+ * True when any count in the window is a date the teacher should be told about.
+ *
+ * Exists because the create gates in `template-form.tsx` and
+ * `studio-template-form.tsx` were the one hop #296's nesting refactor did not
+ * reach, and the reason is worth keeping: nesting protects a count that is
+ * PASSED, and those two sites INSPECT. They hand-listed
+ * `blockedByCancelled > 0 || slotTaken > 0`, and when
+ * `blockedByOtherFamily` arrived — the first such reason THE GATE DID NOT
+ * ALREADY LIST — both gates silently kept navigating away from a short window.
+ * Not the first REACHABLE one: `slotTaken` has been reachable on create since
+ * #196 and the gate listed it; `blockedByCancelled` and `alreadyThisWeek` are
+ * the structurally-zero pair. That is #196's own silence, reproduced one reason later inside
+ * the branch written to end it, and `template-form.tsx`'s comment had stated
+ * the rule it broke: "If create ever CAN produce the reason, this gate must
+ * gain the term in the same change."
+ *
+ * A fourth `||` would have closed that and reopened it at the fifth count.
+ * Reducing over the object closes it for every count there will ever be.
+ *
+ * `alreadyThisWeek` is included and is provably 0 on create — a brand-new
+ * template holds no week of its own. That costs nothing: a term that is
+ * provably zero is free, where a term that is provably MISSING is this bug.
+ */
+export function anyBlocked(counts: SkipCounts): boolean {
+  // `Object.values<number>`, with the type argument spelled out, and it is not
+  // decoration. Without it the call resolves by overload: a `type` alias gets an
+  // implicit index signature and matches `values<T>(o: { [s: string]: T }): T[]`,
+  // an `interface` does not and falls through to `values(o: {}): any[]` — so
+  // `count` silently becomes `any` and the comparison below stops meaning
+  // anything. That made the fix for it a single KEYWORD on the declaration
+  // above, which any tidy-the-conventions pass reverts without failing a thing
+  // (`SkippedSlot` and `GenerationResult` twenty lines up are both still
+  // `interface`). The explicit argument removes the `any[]` overload from
+  // consideration, so the same revert now fails HERE, loudly: `TS2345 …
+  // Index signature for type 'string' is missing in type 'SkipCounts'` — an
+  // error that names the mechanism rather than hiding it.
+  return Object.values<number>(counts).some((count) => count > 0);
 }
 
 /**
@@ -129,16 +236,31 @@ export interface SkipCounts {
  * Today, for the avoidance of exactly that: FOUR value-importing call sites
  * (#194 deleted `template-sync.ts` — check with the grep in this file's header
  * docblock, which is also where its hits are split into value-imports,
- * type-only imports and the one test), FIVE `SkipReason` members and THREE
+ * type-only imports and the one test — note that is FOUR CALL SITES OF THIS
+ * FUNCTION, not the six value importers the header now counts, since the two
+ * forms value-import `anyBlocked` and never call this), SIX `SkipReason`
+ * members and FOUR
  * `SkipCounts` fields. So the member that would vanish without the `switch`
- * below is now the SIXTH, and
+ * below is now the SEVENTH, and
  * `class-template-lifecycle.ts`'s `PauseTemplateResult` cites this docblock
  * for that number.
+ *
+ * #296 added the sixth member (`blocked_by_other_family`) and the fourth
+ * count, and both halves of this paragraph's warning played out as written.
+ * The `switch` below failed the build at its `never` arm — measured by
+ * mutation, `Type '"blocked_by_other_family"' is not assignable to type
+ * 'never'` — which is the half that works. The COUNT reached the wire, both
+ * routes, both forms and the copy layer without a single one of them failing,
+ * and that is NOT this guard working: it is #296's task 4a, which had already
+ * made every one of those hops carry `SkipCounts` whole rather than its
+ * members by name. Before that task the new count would have vanished at all
+ * four, exactly as this paragraph predicts.
  */
 export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
   let blockedByCancelled = 0;
   let slotTaken = 0;
   let alreadyThisWeek = 0;
+  let blockedByOtherFamily = 0;
   for (const { reason } of skipped) {
     switch (reason) {
       case 'blocked_by_cancelled':
@@ -150,6 +272,9 @@ export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
       case 'already_this_week':
         alreadyThisWeek += 1;
         break;
+      case 'blocked_by_other_family':
+        blockedByOtherFamily += 1;
+        break;
       case 'already_generated':
       case 'raced':
         // Deliberately excluded — see `SkipCounts`'s own docblock.
@@ -160,5 +285,5 @@ export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
       }
     }
   }
-  return { blockedByCancelled, slotTaken, alreadyThisWeek };
+  return { blockedByCancelled, slotTaken, alreadyThisWeek, blockedByOtherFamily };
 }

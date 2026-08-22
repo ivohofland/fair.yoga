@@ -12,6 +12,7 @@ import {
 import { createClassTemplateSchema } from '@/lib/schemas';
 import { generateInstancesForTemplate } from '@/services/class-generator';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { countSkipReasons, type GenerationResult } from '@/lib/generation';
 import { log } from '@/lib/log';
 
@@ -72,6 +73,52 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // starts — so `generateInstancesForTemplate`'s `createManyAndReturn`
   // (`skipDuplicates: true`, a bare `ON CONFLICT DO NOTHING`) never gets a
   // chance to raise anything here even though it shares this transaction.
+  //
+  // TRUE OF P2002, FALSE OF `YG001` (#296), which is why `conflict.level`
+  // exists below. Generation shares this transaction, and its `Class` insert
+  // fires a DIFFERENT trigger from the one the template insert fires: the
+  // template's reads `StudioClassTemplate`, generation's reads `StudioClass`.
+  // So this catch can now be reached by two conflicts that mean different
+  // things to a teacher — "you have a recurring studio class on Tuesdays at
+  // 09:00" and "you have a studio class on one of those Tuesdays" — and only
+  // the statement that raised knows which. Answering both with the template
+  // sentence sends a teacher hunting for a recurring studio class that does
+  // not exist.
+  // An OBJECT, not a `let`, and that is the whole of why. TypeScript does not
+  // track assignments made inside a closure, so a mutable local read in the
+  // outer `catch` narrows to its initialiser — measured: with a
+  // `let conflictLevel: 'template' | 'instance' | null`, a TYPO AT THE READ
+  // (`=== 'instancez'`) compiled clean and silently took the other branch,
+  // shipping the wrong 409 sentence forever. The union guarded the assignment
+  // and nothing at the read, and it only compiled at all because `null` is
+  // exempt from the no-overlap check — narrowing the union to two members
+  // turned the read into a build error, which is the tell that the type was
+  // inert by accident.
+  //
+  // Sharper than that, measured: the two-member `let` does not merely fail to
+  // catch the typo — it rejects the CORRECT comparison too. CFA pins the read
+  // to the initialiser, so `=== 'instance'` is itself `TS2367 … types
+  // '"template"' and '"instance"' have no overlap`. The `let` is not the
+  // weakest of the three candidate shapes; it is the only one that cannot
+  // express this at all.
+  //
+  // A `const` object keeps its property's declared type across the closure, so
+  // the comparison below is checked: the same typo is `TS2367 … types
+  // '"template" | "instance"' and '"instancez"' have no overlap`. Measured
+  // against all three candidate shapes before choosing this one.
+  // THREE states, not two, and the third is the one that carries information.
+  // `'untagged'` means no statement claimed this error — which today implies
+  // the template insert, because it runs first and generation is the only other
+  // raiser. That implication is an INFERENCE, and the log below must not
+  // present it as a measurement: an earlier version defaulted to `'template'`,
+  // so a race and a template conflict emitted the same field value and the one
+  // number this design leaves unmeasured stayed unmeasurable. The response copy
+  // still treats untagged as template — that inference is sound today — but the
+  // log says what was actually observed.
+  //
+  // It stops being sound the moment a third `YG001`-capable statement joins
+  // this transaction, which #228 (move this into a service) would do.
+  const conflict = { level: 'untagged' as 'untagged' | 'template' | 'instance' };
   let template: {
     created: Prisma.ClassTemplateGetPayload<{
       include: { teacher: { select: { defaultTimezone: true } } };
@@ -99,7 +146,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         },
         include: { teacher: { select: { defaultTimezone: true } } },
       });
-      const generation = await generateInstancesForTemplate(tx, created);
+      const generation = await generateInstancesForTemplate(tx, created).catch((err: unknown) => {
+        // Set on the failure path only, immediately before rethrowing, so the
+        // catch below can word the 409 for the statement that actually raised.
+        if (isCrossFamilySlotConflict(err)) conflict.level = 'instance';
+        throw err;
+      });
       return { created, generation };
     },
       // FOUR sequential statements on a 2GB VPS — the create, generation's two
@@ -208,6 +260,41 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         'DUPLICATE_TEMPLATE_SLOT',
       );
     }
+    // The OTHER family holds it (#296) — a `YG001` from the cross-family
+    // trigger, which is not a P2002 and so passes straight through the branch
+    // above. Same status, deliberately different sentence: that clash is fixed
+    // within this family, this one sends the teacher to the other half of
+    // their schedule.
+    // LOGGED before responding, and this one earns it twice over. Besides the
+    // rule above, the `instance` arm is reachable ONLY through the cross-family
+    // race this design knowingly accepts: the pre-checks mirror the trigger
+    // predicates exactly, so nothing else can raise here. `docs/lock-order.md`
+    // records that race as "measured at 200 of 200 runs under a FORCED overlap
+    // — a rate conditional on racing, not a rate of races, which was never
+    // measured". A silent 409 would guarantee it stays unmeasured forever,
+    // because production would emit nothing when one happened. `conflictLevel`
+    // is logged so the race arm is greppable and countable.
+    if (isCrossFamilySlotConflict(err)) {
+      log.warn(
+        { err, teacherId: session.teacherId, conflictLevel: conflict.level },
+        'recurring class create refused: the studio family holds that slot',
+      );
+      // Which sentence depends on which statement raised — see `conflict` and
+      // the note above the transaction. `'template'` is the default rather than
+      // a measured value: the template insert runs FIRST, so anything that
+      // reaches here without generation having tagged it came from that insert.
+      return conflict.level === 'instance'
+        ? respondError(
+            'You already have a studio class on one of those dates at that time.',
+            409,
+            'CROSS_FAMILY_STUDIO_SLOT',
+          )
+        : respondError(
+            'You already have a recurring studio class on that day at that time.',
+            409,
+            'CROSS_FAMILY_STUDIO_TEMPLATE_SLOT',
+          );
+    }
     throw err;
   }
 
@@ -221,14 +308,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // live template whose every candidate date is taken. That used to be
   // impossible, so 201 with no counts was a complete answer; it no longer is.
   // The same counts the PATCH `active` arm carries — `countSkipReasons`
-  // (`@/lib/generation`) is the one place both reductions live, so a SIXTH
-  // `SkipReason` fails the build here rather than vanishing silently. Sixth,
-  // not fifth: the union has had five members since #194 added
-  // `already_this_week`, and the number is `countSkipReasons`' own docblock's
-  // — cited rather than recounted here, so the two do not drift. This line
-  // still said fifth after the branch's own correction pass, because the
-  // phrase WRAPS ACROSS A LINE BREAK: the line-oriented grep that found the
-  // sibling in `class-template-lifecycle.ts` could not match it.
+  // (`@/lib/generation`) is the one place both reductions live, so a SEVENTH
+  // `SkipReason` fails the build here rather than vanishing silently. Seventh,
+  // not sixth: the union has had six members since #296 added
+  // `blocked_by_other_family`, and the number is `countSkipReasons`' own
+  // docblock's — cited rather than recounted here, so the two do not drift.
+  // This line said fifth after the #194 branch's own correction pass, because
+  // the phrase WRAPS ACROSS A LINE BREAK: the line-oriented grep that found the
+  // sibling in `class-template-lifecycle.ts` could not match it. It is wrapped
+  // the same way now, so the grep that finds this one is
+  // `grep -rn -A1 'SIXTH\|SEVENTH' src/` or a `tr -d '\n'` first — the hazard
+  // did not go away by being written down.
   //
   // The create form reads these and stays on the page to say so when the
   // window isn't full (`template-form.tsx`); see the note at that read.
@@ -236,7 +326,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     {
       ...created,
       added: template.generation.created,
-      ...countSkipReasons(template.generation.skipped),
+      // One field rather than a spread, matching the PATCH `active` arm. The
+      // spread already carried a new count automatically; nesting means the
+      // FORM that reads this payload does too, which the spread did not give.
+      counts: countSkipReasons(template.generation.skipped),
     },
     201,
   );

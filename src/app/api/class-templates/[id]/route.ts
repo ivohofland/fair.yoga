@@ -118,6 +118,15 @@ export const PUT = withErrorHandler(async (
       'DUPLICATE_TEMPLATE_SLOT',
     );
   }
+  // The OTHER template family holds it (#296) — see the classes route for why
+  // the sentence differs from the branch above rather than being shared.
+  if (result.reason === 'cross_family_slot_conflict') {
+    return respondError(
+      'You already have a recurring studio class on that day at that time.',
+      409,
+      'CROSS_FAMILY_STUDIO_TEMPLATE_SLOT',
+    );
+  }
   // This transaction lost a contention race (#100/#209) on the `ClassTemplate`
   // row itself — a generation claim, an archive, or a pause/resume holding it.
   // It can no longer be lost on a `Class` row: #194 deleted the sync, so this
@@ -201,6 +210,15 @@ export const PATCH = withErrorHandler(async (
         'DUPLICATE_TEMPLATE_SLOT',
       );
     }
+    // Un-archiving re-enters the slot, so it can be refused by the OTHER
+    // family's live template too (#296).
+    if (result.reason === 'cross_family_slot_conflict') {
+      return respondError(
+        'You already have a recurring studio class on that day at that time.',
+        409,
+        'CROSS_FAMILY_STUDIO_TEMPLATE_SLOT',
+      );
+    }
     if (result.reason === 'busy') {
       return respondError(
         `The system was busy and could not ${state === 'archived' ? 'archive' : 'unarchive'} this recurring class. Nothing was changed. Wait a moment, then try again.`,
@@ -238,14 +256,14 @@ export const PATCH = withErrorHandler(async (
           templateKind: 'class' as const,
           scheduled: result.scheduled,
           added: result.added,
-          blockedByCancelled: result.blockedByCancelled,
-          slotTaken: result.slotTaken,
-          // #194. Without this hop the resume after a day edit still reports
-          // "4 classes on your schedule. Nothing needed adding." about four
-          // classes on the weekday the teacher just stopped using — the count
-          // is measured by the generator and reaches the service, and this is
-          // where it used to stop.
-          alreadyThisWeek: result.alreadyThisWeek,
+          // Passed whole, not mapped member by member (#296). This hop is where
+          // `alreadyThisWeek` used to stop: without it the resume after a day
+          // edit still reported "4 classes on your schedule. Nothing needed
+          // adding." about four classes on the weekday the teacher had just
+          // stopped using (#194). A count that travels as part of an object
+          // cannot be dropped here by omission — only by someone rebuilding the
+          // object, which is the edit this shape exists to make unnecessary.
+          counts: result.counts,
         });
       case 'unchanged':
         return respondOk({ ...result.template, action: result.action });

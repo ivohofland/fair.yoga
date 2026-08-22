@@ -89,6 +89,14 @@ export const PUT = withErrorHandler(async (
       'DUPLICATE_STUDIO_TEMPLATE_SLOT',
     );
   }
+  // The OTHER template family holds it (#296).
+  if (result.reason === 'cross_family_slot_conflict') {
+    return respondError(
+      'You already have a recurring class on that day at that time.',
+      409,
+      'CROSS_FAMILY_CLASS_TEMPLATE_SLOT',
+    );
+  }
   if (result.reason === 'busy') {
     return respondError(
       'The system was busy and could not edit this recurring studio class. Nothing was changed. Wait a moment, then try again.',
@@ -173,6 +181,15 @@ export const PATCH = withErrorHandler(async (
         'DUPLICATE_STUDIO_TEMPLATE_SLOT',
       );
     }
+    // Un-archiving re-enters the slot, so it can be refused by the OTHER
+    // family's live template too (#296).
+    if (result.reason === 'cross_family_slot_conflict') {
+      return respondError(
+        'You already have a recurring class on that day at that time.',
+        409,
+        'CROSS_FAMILY_CLASS_TEMPLATE_SLOT',
+      );
+    }
     if (result.reason === 'busy') {
       return respondError(
         `The system was busy and could not ${state === 'archived' ? 'archive' : 'unarchive'} this recurring studio class. Nothing was changed. Wait a moment, then try again.`,
@@ -211,13 +228,12 @@ export const PATCH = withErrorHandler(async (
           templateKind: 'studio' as const,
           scheduled: result.scheduled,
           added: result.added,
-          blockedByCancelled: result.blockedByCancelled,
-          slotTaken: result.slotTaken,
-          // 0 on every response until #284 gives the studio generator a week
+          // Passed whole, not mapped member by member (#296). `alreadyThisWeek`
+          // is 0 on every response until #284 gives the studio generator a week
           // key — carried anyway, so the wire and the class family's stay one
           // shape and the copy layer needs no branch. See the service's
           // `active` arm for the full note.
-          alreadyThisWeek: result.alreadyThisWeek,
+          counts: result.counts,
         });
       case 'unchanged':
         return respondOk({ ...result.template, action: result.action });

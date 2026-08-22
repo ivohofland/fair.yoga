@@ -10,6 +10,7 @@ import {
 } from '@/lib/api-utils';
 import { updateStudioClassSchema } from '@/lib/schemas';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { isRecordNotFound } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 import {
@@ -79,6 +80,32 @@ export const PUT = withErrorHandler(async (
         'You already have a studio class at that date and time.',
         409,
         'DUPLICATE_STUDIO_SLOT',
+      );
+    }
+    // The OTHER family holds it (#296) — a `YG001` from the cross-family
+    // trigger, which is not a P2002 and so passes straight through the branch
+    // above. Same status, deliberately different sentence: that clash is fixed
+    // within this family, this one sends the teacher to the other half of
+    // their schedule.
+    // LOGGED before responding, for the reason the five SERVICE sites now carry:
+    // `respondError` does not log and `withErrorHandler` never sees a response
+    // that was RETURNED rather than thrown, so catching here is what removes
+    // the server-side record. The first fix for this asymmetry moved it rather
+    // than closing it — it logged the two service returns and left five route
+    // catches silent.
+    if (isCrossFamilySlotConflict(err)) {
+      log.warn(
+        // `studioClassId` too: this is the only one of the five route sites
+        // where a row identifier is in scope, and every service-side sibling
+        // logs one. The stated purpose of these lines is making a teacher's
+        // report traceable, which wants the row.
+        { err, studioClassId: id, teacherId: session.teacherId },
+        'studio class edit refused: the class family holds that slot',
+      );
+      return respondError(
+        'You already have a class at that date and time.',
+        409,
+        'CROSS_FAMILY_CLASS_SLOT',
       );
     }
     throw err;

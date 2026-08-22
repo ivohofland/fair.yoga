@@ -1059,6 +1059,11 @@ describe('generateClassInstances (DB)', () => {
 
     afterEach(async () => {
       await prisma.class.deleteMany({ where: { teacherId } });
+      // #296: the cross-family cases create `StudioClass` rows, and the
+      // generator now READS that table — so a leftover one occupies the next
+      // test's slot exactly the way a leftover `Class` does. Without this line
+      // the two new cases turn eight later tests in this block red.
+      await prisma.studioClass.deleteMany({ where: { teacherId } });
     });
 
     it('reports an already-generated date rather than counting it', async () => {
@@ -1126,6 +1131,67 @@ describe('generateClassInstances (DB)', () => {
     });
 
     /**
+     * #296, the mirror of the studio generator's pair. The other family holds
+     * the slot — a `StudioClass`, not a `Class` — so `slot_taken` is the wrong
+     * answer even though both mean "occupied": that one is answered among the
+     * teacher's own classes, this one sends them to the studio half of their
+     * schedule.
+     *
+     * Asserts the skipped DATE as well as the reason. A count alone passes if
+     * the generator blocks the wrong date.
+     */
+    it('skips a date held by a live class from the other family', async () => {
+      const now = new Date();
+      const dates = candidates(now);
+      const blocked = dates[1]!;
+      await prisma.studioClass.create({
+        data: {
+          teacherId,
+          templateId: null,
+          classType: 'Cross Family',
+          date: blocked,
+          startTime: '09:00',
+          durationMinutes: 60,
+          location: 'Elsewhere',
+          hourlyRate: 50,
+        },
+      });
+
+      const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+
+      expect(result.created).toBe(3);
+      expect(result.skipped).toEqual([{ date: blocked, reason: 'blocked_by_other_family' }]);
+      expect(await prisma.class.count({ where: { templateId } })).toBe(3);
+    });
+
+    it('does not skip a date held by a CANCELLED class from the other family', async () => {
+      // Pins the same predicate the trigger carries on this side
+      // (`cancelledAt IS NULL`). Widen the pre-check past liveness and this
+      // goes red — the mutation the task report records.
+      const now = new Date();
+      const dates = candidates(now);
+      const notBlocked = dates[1]!;
+      await prisma.studioClass.create({
+        data: {
+          teacherId,
+          templateId: null,
+          classType: 'Cross Family Cancelled',
+          date: notBlocked,
+          startTime: '09:00',
+          durationMinutes: 60,
+          location: 'Elsewhere',
+          hourlyRate: 50,
+          cancelledAt: new Date(),
+        },
+      });
+
+      const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+
+      expect(result.created).toBe(4);
+      expect(result.skipped.map((slot) => slot.reason)).not.toContain('blocked_by_other_family');
+    });
+
+    /**
      * The occupancy read is scoped `where: { teacherId }`, and dropping that
      * scope passed the entire suite — this file's fixture has one teacher, so
      * nothing here could have failed. It is §4.1's asymmetry in the direction
@@ -1137,6 +1203,64 @@ describe('generateClassInstances (DB)', () => {
      * `slot_taken`, this teacher's window comes back empty, and the log line
      * names the wrong teacher's schedule.
      */
+    /**
+     * PR #300 review, G6 — the cross-family twin of the case below, and the
+     * same omission it exists to close, reintroduced one table over.
+     *
+     * That case seeds another teacher's `Class` rows, so it exercises the
+     * SAME-family `occupants` read only. Nothing seeded another teacher's
+     * `StudioClass`, so dropping `teacherId` from the new `foreign` read
+     * (`class-generator.ts`) left the whole suite green — while every
+     * candidate date another teacher happened to hold read
+     * `blocked_by_other_family`, this teacher's window came back short, and
+     * nothing raised. §4.1 calls a pre-check STRICTER than the guard the only
+     * real defect, and this is that direction.
+     *
+     * The docblock on that read warns about exactly this ("Widen or narrow one
+     * without the other…") and had no test behind the warning.
+     */
+    it('ignores another teacher holding the same slot in the other family', async () => {
+      const now = new Date();
+      const dates = candidates(now);
+
+      const other = await prisma.teacher.create({
+        data: {
+          firstName: 'OtherCross',
+          lastName: 'Teacher',
+          email: `other-cross-${uniqueSuffix}@test.local`,
+          account: { create: { email: `other-cross-${uniqueSuffix}@test.local` } },
+          bio: 'second teacher for the cross-family scoping guard',
+          pageSlug: `other-cross-${uniqueSuffix}`,
+        },
+      });
+
+      try {
+        for (const date of dates) {
+          await prisma.studioClass.create({
+            data: {
+              teacherId: other.id,
+              templateId: null,
+              classType: 'Someone else, studio',
+              date,
+              startTime: '09:00',
+              durationMinutes: 60,
+              location: 'Their studio',
+              hourlyRate: 50,
+            },
+          });
+        }
+
+        const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+
+        expect(result.created).toBe(4);
+        expect(result.skipped).toEqual([]);
+      } finally {
+        await prisma.studioClass.deleteMany({ where: { teacherId: other.id } });
+        await prisma.teacher.delete({ where: { id: other.id } });
+        await prisma.account.delete({ where: { id: other.accountId } });
+      }
+    });
+
     it('ignores another teacher holding the same date and time', async () => {
       const now = new Date();
       const dates = candidates(now);
@@ -1964,6 +2088,14 @@ describe('generateClassInstances (per-template isolation)', () => {
         // row to re-read, so it just hands back the same fixture the findMany
         // above already produced, keyed by the id the claim was given.
         findUniqueOrThrow: async ({ where: { id } }: { where: { id: string } }) => tmpl(id, 't1'),
+      },
+      // #296: the generator now reads the OTHER family's occupancy too. Empty,
+      // because this test is about error isolation between templates and not
+      // about occupancy — but it has to EXIST, or every template fails on
+      // `Cannot read properties of undefined (reading 'findMany')` and the test
+      // passes its `rejects.toThrow` for a reason unrelated to what it pins.
+      studioClass: {
+        findMany: async () => [],
       },
       class: {
         // The generator reads the whole window in one query; an empty result

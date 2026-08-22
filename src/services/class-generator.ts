@@ -323,6 +323,38 @@ export async function generateInstancesForTemplate(
     ).map((c) => mondayOf(c.date)),
   );
 
+  // The OTHER family (#296). Mirrors the predicate
+  // `class_reject_cross_family_slot` carries (`cancelledAt IS NULL`); the
+  // trigger is what enforces it, this is what names the reason. Widen or narrow
+  // one without the other and this pre-check starts disagreeing with the guard
+  // that backs it — the same tripwire the same-family check below carries.
+  //
+  // `StudioClass` gained `@@index([teacherId, date])` in this issue's migration
+  // (#205, folded in) precisely so this read does not scan.
+  //
+  // known-open (#296): this pre-check and the trigger behind it are both
+  // unlocked reads, so two transactions writing opposite families at one slot
+  // can still both commit. Measured at 200 of 200 runs under a FORCED overlap
+  // — a rate conditional on racing, not a rate of races, which was never
+  // measured. Accepted rather than closed with an advisory lock because #298's
+  // recorded decision turns this invariant into a composite foreign key on an
+  // extracted `CalendarEntry`, where the second writer blocks on an
+  // uncommitted index entry instead. `docs/lock-order.md`, "The cross-family
+  // slot guard reads, and does not lock", carries the full argument and the
+  // condition for reopening it.
+  //
+  // Carried here as well as on the studio twin deliberately: the exposure is
+  // identical on both sides, and a reader who lands on this file first should
+  // not have to find the other one to learn the guard is not airtight.
+  const foreign = await db.studioClass.findMany({
+    where: {
+      teacherId: template.teacherId,
+      date: { in: dates },
+      cancelledAt: null,
+    },
+    select: { date: true, startTime: true },
+  });
+
   const skipped: SkippedSlot[] = [];
   const free: Date[] = [];
 
@@ -386,9 +418,68 @@ export async function generateInstancesForTemplate(
       continue;
     }
 
+    // AFTER `slot_taken`, deliberately: when this teacher holds the slot in
+    // BOTH families, the same-family cause is the one worth reporting, because
+    // it is the one they can act on without leaving this half of their
+    // schedule. A reporting preference like the week-versus-slot one above —
+    // but unlike that one it costs nothing to state, since both branches
+    // `continue` and no row is created either way. The studio generator orders
+    // its own pair the same way.
+    if (
+      foreign.some(
+        (c) => c.date.getTime() === date.getTime() && c.startTime === template.startTime,
+      )
+    ) {
+      skipped.push({ date, reason: 'blocked_by_other_family' });
+      continue;
+    }
+
     free.push(date);
   }
 
+  // ONE STATEMENT, NO CATCH, and #296 is the second issue to reach for one here
+  // and be wrong. THIS FUNCTION'S OWN docblock already says it — not a sibling
+  // function's, which makes the objection stronger rather than weaker: "Do not
+  // reintroduce a `catch` here; there is nothing it can do that the constraint
+  // does not." (An earlier version of this comment credited the sentence to
+  // `claimTemplateForGeneration`, which does not contain it.)
+  //
+  // A `catch` with a per-date retry shipped on this branch and was measured
+  // non-functional. Every production caller of the two generators passes a
+  // TRANSACTION client — six across the pair, three per generator, which is
+  // the number this file's own function docblock states at its narrower scope
+  // — Prisma takes no
+  // savepoint per statement, and a `RAISE EXCEPTION` aborts the Postgres
+  // transaction — so the first retried `create` returns `25P02 current
+  // transaction is aborted`, which `isCrossFamilySlotConflict` correctly
+  // declines, and the rethrow costs the whole window anyway. It also cost more
+  // than that: the escaping error stopped being the `YG001` that the TWO
+  // template POST catches match. Two, not the ten endpoints answering a
+  // cross-family 409 overall — and NOT because those two are the only callers
+  // that wrap generation, which is false: six do, including both sweeps and
+  // both pause/resume services, as the sentence four lines up says. They are
+  // the only generation-wrapping callers that CATCH `YG001`. The other four
+  // let it reach `withErrorHandler`, where `classifyApiError` has no arm for
+  // it and answers 500 — filed as #301. So a 409 the app knew how to word
+  // became a 500 here too. (Earlier versions said "the eight route branches",
+  // the FILE count — the files-versus-endpoints conflation
+  // `docs/lock-order.md` was rewritten to diagnose, written straight back into
+  // new code by the commit that rewrote it.)
+  //
+  // The mutation could not see it. The CROSS-FAMILY tests call this function
+  // with a bare client, where every statement is its own transaction and the
+  // retry works, so the mutation came back green in a configuration production
+  // never uses. Other tests in these files DO drive the generators through
+  // `$transaction`; none of them staged a cross-family collision inside one,
+  // which is the gap rather than transactions being untested generally. `generation-transaction.test.ts` now drives this
+  // path through a real `$transaction` for that reason.
+  //
+  // What the loss costs, stated rather than waved past: a cross-family row
+  // committing between the pre-check above and this insert costs this
+  // template its whole window for THIS run. The next sweep's pre-check sees
+  // the now-committed row and skips exactly that date, so it self-corrects
+  // within the hour — and on the two POST routes the same `YG001` becomes the
+  // 409 those routes were given a branch for.
   const inserted =
     free.length === 0
       ? []

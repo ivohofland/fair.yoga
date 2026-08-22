@@ -35,6 +35,7 @@ import type { NoneOf } from '@/lib/type-pins';
 import { startOfLocalDay, mondayOf, classStartInstant } from '@/lib/timezone';
 import { formatDayHeader } from '@/lib/format';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { isTransientDbError } from '@/lib/api-errors';
 import { lockClassRowsOrdered, setLockTimeout } from '@/lib/db-locks';
 // Server-only (pino). Safe here: this module's sole importer is
@@ -342,6 +343,15 @@ export type UpdateClassTemplateResult =
   | { ok: false; reason: 'room_archived' }
   | { ok: false; reason: 'slot_conflict' }
   /**
+   * A LIVE row of the OTHER class family holds this slot (#296) — enforced by
+   * trigger, since no unique index can span two tables. A sibling of
+   * `slot_taken`/`slot_conflict` rather than a widening of it: the remedy is
+   * in the other half of the teacher's schedule, so the two cannot share a
+   * sentence.
+   */
+  | { ok: false; reason: 'cross_family_slot_conflict' }
+
+  /**
    * This transaction lost a contention race and rolled back whole, so nothing
    * was applied and the identical request can win the next attempt.
    *
@@ -399,8 +409,8 @@ export type UpdateClassTemplateResult =
  *
  * ## Which of the generator's refusals this reproduces, and which it does not
  *
- * The generator declines a candidate date on five named grounds (`SkipReason`,
- * `@/lib/generation`, whose own header says "Five reasons, five distinct
+ * The generator declines a candidate date on six named grounds (`SkipReason`,
+ * `@/lib/generation`, whose own header says "Six reasons, six distinct
  * origins" — one number, derived from the type, not two conventions counting
  * the same union). Stated one at a time rather than as a parity claim, because
  * the parity claim is what this docblock said before `slot_taken` was found
@@ -426,6 +436,12 @@ export type UpdateClassTemplateResult =
  *     dishonest direction: rule 1 of #194 leaves a moved-off template's
  *     instances standing, so a second template edited onto that day and time
  *     finds its own weeks empty and every date occupied.
+ *   - `blocked_by_other_family` (#296) — a LIVE class of the other family at
+ *     this teacher's `(date, startTime)`. Reproduced by a THIRD read, added in
+ *     the same change that gave the generator the reason. Adding one without
+ *     the other is what would make this probe name a week the sweep then
+ *     skips — the same shape as the `slot_taken` omission above, and the
+ *     reason that omission is written down rather than quietly fixed.
  *   - `raced` — **not reproduced, and not reproducible.** It is a concurrent
  *     insert landing between the generator's pre-check and its write, so at
  *     probe time it has not happened yet and there is nothing to read. Its
@@ -438,9 +454,10 @@ export type UpdateClassTemplateResult =
  * are not the same fact: a WEEK this template already occupies versus a single
  * DATE whose slot another class holds. Slot-taken dates are removed from the
  * candidate list; `firstFreeWeek` then answers the week question over what is
- * left. Both reads are bounded by `horizon` itself — its first and last weeks
- * for the week read, its own members for the slot read — so nothing here can
- * disagree with anything else about which dates are in play.
+ * left. All THREE reads are bounded by `horizon` itself — its first and last
+ * weeks for the week read, its own members for the two slot reads (this
+ * family's, and since #296 the other family's) — so nothing here can disagree
+ * with anything else about which dates are in play.
  *
  * Answers `null` rather than throwing when a read fails. The edit has already
  * committed by the time this runs, so a probe failure must not turn a saved
@@ -461,7 +478,7 @@ async function probeFirstEffectiveWeek(
   if (first === undefined || last === undefined) return null;
 
   try {
-    const [ownRows, slotHolders] = await Promise.all([
+    const [ownRows, slotHolders, foreignHolders] = await Promise.all([
       // The weeks this template already occupies. Keyed on `templateId`, which
       // rides `@@unique([templateId, date])`, and bounded by the horizon's own
       // first and last weeks. No status filter — see the docblock.
@@ -493,10 +510,40 @@ async function probeFirstEffectiveWeek(
         },
         select: { date: true },
       }),
+      // The OTHER family (#296), mirroring the same predicate one table over:
+      // `cancelledAt IS NULL` is `StudioClass`'s spelling of the liveness
+      // `status <> 'cancelled'` expresses above.
+      //
+      // This read is not an extension of the probe, it is a REPAIR of it. Once
+      // the generator declines a cross-family date (`blocked_by_other_family`),
+      // a probe blind to the studio table counts that date as a free candidate
+      // and names a week the sweep will then skip — landing EARLIER than
+      // delivered, which this function's own docblock calls the dishonest
+      // direction and which is exactly the defect `slot_taken` was found
+      // missing for. Adding the reason without adding this read would have
+      // reproduced that defect one family over, in the same function, three
+      // issues later.
+      db.studioClass.findMany({
+        where: {
+          teacherId: template.teacherId,
+          startTime: template.startTime,
+          cancelledAt: null,
+          date: { in: [...horizon] },
+        },
+        select: { date: true },
+      }),
     ]);
 
     const heldWeeks = new Set(ownRows.map((c) => mondayOf(c.date)));
-    const takenDates = new Set(slotHolders.map((c) => c.date.getTime()));
+    // Both families' slot holders in one set. They are not told apart here, and
+    // deliberately: this function answers "which week can the new schedule
+    // first reach", and a date is unreachable for the same reason whichever
+    // family holds it. The GENERATOR tells them apart, because its two reasons
+    // carry two different remedies for the teacher.
+    const takenDates = new Set([
+      ...slotHolders.map((c) => c.date.getTime()),
+      ...foreignHolders.map((c) => c.date.getTime()),
+    ]);
 
     // Removed from the candidates rather than folded into `heldWeeks`. Folding
     // would be shorter and would say something false: a taken slot does not
@@ -767,6 +814,23 @@ export async function updateClassTemplate(
     if (isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime'])) {
       return { ok: false, reason: 'slot_conflict' };
     }
+    // #296. `YG001`, not a P2002 — it would otherwise rethrow to a 500.
+    //
+    // LOGGED for the reason `archiveOrUnarchiveTemplate`'s own branch below
+    // gives: a returned failure never reaches `withErrorHandler`, so catching
+    // here is what would remove the server-side record. Its studio-family
+    // mirror (`updateStudioClassTemplate`) logs the same event mirrored — the
+    // two sentences name opposite families, so parallel rather than identical;
+    // without
+    // this line a teacher's report of a refused Tuesday edit would have a trace
+    // in one direction and none in the other.
+    if (isCrossFamilySlotConflict(err)) {
+      log.warn(
+        { err, templateId, teacherId },
+        'recurring class edit refused: the studio family holds that slot',
+      );
+      return { ok: false, reason: 'cross_family_slot_conflict' };
+    }
     throw err;
   }
 
@@ -861,24 +925,31 @@ export type LastScheduledClass = { date: Date; startTime: string };
 /**
  * Outcome of a pause/resume PATCH. `paused` carries the furthest-out class
  * still on the schedule, for the pause confirmation; `active` reports what the
- * window holds and why it is not fuller — `scheduled`, `added`,
- * `blockedByCancelled`, `slotTaken` and `alreadyThisWeek`; `unchanged` reports
- * nothing beyond the template itself, because it describes a request that
- * changed nothing.
+ * window holds and why it is not fuller — `scheduled`, `added`, and `counts`
+ * (a whole `SkipCounts`); `unchanged` reports nothing beyond the template
+ * itself, because it describes a request that changed nothing.
  *
- * This paragraph used to say "resuming needs no explanation", directly above
- * the arm that now carries five counts. That is exactly the shape #164 was
- * caused by — a header disagreeing with the declaration beneath it — so it is
- * worth stating why it survived: it was true when resuming only flipped a flag,
- * and nothing forces a docblock to be re-read when the type under it grows.
+ * This paragraph used to say "resuming needs no explanation", directly above an
+ * arm that had grown counts. That is exactly the shape #164 was caused by — a
+ * header disagreeing with the declaration beneath it — so it is worth stating
+ * why it survived: it was true when resuming only flipped a flag, and nothing
+ * forces a docblock to be re-read when the type under it grows.
  *
- * It then became one again, which is the more useful half of the record. #194
- * added `alreadyThisWeek` to `SkipCounts`, the arm gained it through the `&`
- * without either name being written here, and the sentence above kept naming
- * four counts and listing four. Both numbers here are now DERIVED from the
- * declaration below — two named fields plus `SkipCounts`' three — rather than
- * incremented, which is the only way this stays true through the next one.
- * `api/class-templates/[id]/route.ts` sends all five.
+ * It has now been wrong twice more, and the second time is the instructive one.
+ * #194 added `alreadyThisWeek` to `SkipCounts`, the arm gained it through the
+ * old `& SkipCounts` without either name being written here, and this sentence
+ * kept naming four. The response was to DERIVE the numbers from the
+ * declaration "rather than incremented, which is the only way this stays true
+ * through the next one".
+ *
+ * #296 was the next one, and deriving did not save it: the arm stopped
+ * intersecting `SkipCounts` and started nesting it, so the sentence's whole
+ * SHAPE — a list of member names — became wrong rather than its count. A
+ * derived number survives a member being added; nothing survives the members
+ * ceasing to be fields of this arm at all. Hence the naming stops here: this
+ * header now says "a whole `SkipCounts`" and points at that type, which is the
+ * only spelling that cannot drift, and the count lives in `SkipCounts`' own
+ * docblock where the members do.
  */
 export type PauseTemplateResult =
   | {
@@ -908,25 +979,29 @@ export type PauseTemplateResult =
       /** Rows this resume created. */
       added: number;
       /**
-       * `& SkipCounts` rather than two re-listed `number`s, and the difference
-       * is a guarantee that did not exist before #116.
+       * One nested field rather than re-listed `number`s, and the difference is
+       * a guarantee that did not exist before #116.
        *
-       * `countSkipReasons`' docblock says a sixth `SkipReason` fails the build
-       * rather than vanishing, and that is true of the REASON — its exhaustive
-       * `switch` catches it. It was not true of the COUNT: measured, adding a
-       * fifth reason, handling it, and adding its count to `SkipCounts`
-       * compiled clean repo-wide, and the new number vanished at every site
-       * that re-lists the fields by hand. Intersecting instead means this arm
-       * gains the field automatically and the hand-written mapping below fails
-       * with `Property '…' is missing … but required in type 'SkipCounts'`.
+       * `countSkipReasons`' docblock says a SEVENTH `SkipReason` fails the
+       * build rather than vanishing, and that is true of the REASON — its
+       * exhaustive `switch` catches it, measured by mutation at #296. It was
+       * not true of the COUNT: measured, adding a fifth reason, handling it,
+       * and adding its count to `SkipCounts` compiled clean repo-wide, and the
+       * new number vanished at every site that re-listed the fields by hand.
+       * #296 added a fourth count and it vanished nowhere, which is the change
+       * below rather than the guard above.
        *
-       * Covers this arm and `ResumeTransactionOutcome`'s. The studio family's
-       * destructure and `api/class-templates/route.ts` still re-list by hand
-       * and would still drop a new count — same fix, deliberately not
-       * smuggled into a class-family locking PR. (`template-sync.ts` was a
-       * third such site; #194 deleted it.)
+       * This was `& SkipCounts` until #296 — an intersection, which bought the
+       * same compile-time guarantee HERE and nothing downstream: the route
+       * still mapped the members one by one onto the wire, the wire type still
+       * named them one by one, and the form still read them one by one. Four
+       * hops, three of which an intersection cannot reach. Nesting reaches all
+       * four, because every hop now moves one field whose type is
+       * `SkipCounts` — which is what makes the next count's arrival free rather
+       * than merely loud. Covers this arm and `ResumeTransactionOutcome`'s.
        */
-    } & SkipCounts)
+      counts: SkipCounts;
+    })
   | { ok: true; action: 'unchanged'; template: ClassTemplate }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
@@ -972,6 +1047,14 @@ export type ArchiveTemplateResult =
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'slot_conflict' }
+  /**
+   * A LIVE row of the OTHER class family holds this slot (#296) — enforced by
+   * trigger, since no unique index can span two tables. A sibling of
+   * `slot_taken`/`slot_conflict` rather than a widening of it: the remedy is
+   * in the other half of the teacher's schedule, so the two cannot share a
+   * sentence.
+   */
+  | { ok: false; reason: 'cross_family_slot_conflict' }
   /**
    * This transaction lost a contention race and rolled back whole, so nothing
    * was applied and the identical request can win the next attempt.
@@ -1087,7 +1170,8 @@ type ResumeTransactionOutcome =
       template: ClassTemplate;
       scheduled: number;
       added: number;
-    } & SkipCounts);
+      counts: SkipCounts;
+    });
 
 /**
  * Pause or resume generation. Deletes nothing: pausing means "no new classes",
@@ -1391,7 +1475,7 @@ export async function pauseOrResumeTemplate(
           template: bareT,
           scheduled,
           added: generation.created,
-          ...skipCounts,
+          counts: skipCounts,
         };
       },
       // Each individual WAIT is bounded at 2s by the `setLockTimeout` at the
@@ -1497,9 +1581,7 @@ export async function pauseOrResumeTemplate(
         template: result.template,
         scheduled: result.scheduled,
         added: result.added,
-        blockedByCancelled: result.blockedByCancelled,
-        slotTaken: result.slotTaken,
-        alreadyThisWeek: result.alreadyThisWeek,
+        counts: result.counts,
       };
     default: {
       // Throws rather than returning `unhandled`, converging on
@@ -2082,6 +2164,17 @@ export async function archiveOrUnarchiveTemplate(
       // not be what removes that.
       log.warn({ err, templateId, teacherId }, 'recurring class un-archive refused: slot already held');
       return { ok: false, reason: 'slot_conflict' };
+    }
+    // #296. Un-archiving makes the template live again at its slot, which is
+    // what fires the cross-family trigger — logged for the same reason the
+    // branch above is: a 409 with no server-side record is how this class of
+    // refusal became invisible before.
+    if (isCrossFamilySlotConflict(err)) {
+      log.warn(
+        { err, templateId, teacherId },
+        'recurring class un-archive refused: the studio family holds that slot',
+      );
+      return { ok: false, reason: 'cross_family_slot_conflict' };
     }
     throw err;
   }
