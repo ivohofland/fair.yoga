@@ -35,9 +35,16 @@ const templateDayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday',
 // (`studio-template-form.tsx:53-61`) while `getUTCDay()` is 0=Sunday, and the
 // label sidesteps the mismatch entirely.
 
+// The same 0=Monday mapping `studio-template-form.tsx`'s DAY_OPTIONS uses,
+// needed here only because the second fixture template below is seeded
+// through Prisma rather than the form and so has no label to select.
+const STUDIO_DAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const otherTemplateDayOfWeek = (STUDIO_DAY_LABELS.indexOf(templateDayName) + 1) % 7;
+
 let teacherId: string;
 let teacherToken: string;
 let templateId: string;
+let otherTemplateId: string;
 
 test.describe('Studio class templates', () => {
   test.describe.configure({ mode: 'serial' });
@@ -58,6 +65,32 @@ test.describe('Studio class templates', () => {
     teacherToken = await seedSession(prisma, await accountIdOfTeacher(prisma, teacherId));
     // No Room and no TeacherRoom: StudioClass is disconnected from Room by
     // design (CLAUDE.md, Data Model).
+
+    // A second template, seeded directly rather than through the UI, so the
+    // archived-list arc below has something to fail against: a page with no
+    // `isArchived` filter at all would still pass a test that only checks the
+    // one template it archives. `isActive: false` so it is never picked up by
+    // any generator and never appears among the four counted classes in the
+    // next test. A different `(dayOfWeek, startTime)` keeps this insert clear
+    // of `StudioClassTemplate_teacher_slot_unique`, which both rows are
+    // `isArchived: false` under. A `classType` that is not a substring of
+    // "Studio Flow" and does not contain it keeps every `getByText`/`getByRole`
+    // locator below single-match.
+    otherTemplateId = (
+      await prisma.studioClassTemplate.create({
+        data: {
+          teacherId,
+          classType: 'Yin Retreat',
+          location: 'Riverside Loft',
+          dayOfWeek: otherTemplateDayOfWeek,
+          startTime: '19:00',
+          durationMinutes: 60,
+          hourlyRate: 30,
+          isActive: false,
+          isArchived: false,
+        },
+      })
+    ).id;
   });
 
   test.afterAll(async () => {
@@ -107,6 +140,10 @@ test.describe('Studio class templates', () => {
     const cards = page.getByRole('link', { name: /Studio Flow · Community Studio · Studio class/ });
     await expect(cards).toHaveCount(4);
 
+    // Confirmed, not assumed: the second fixture template is `isActive:
+    // false` and generates nothing, so it never inflates the count above.
+    expect(await prisma.studioClass.count({ where: { templateId: otherTemplateId } })).toBe(0);
+
     // A generated class dated today or later cannot be removed — the sweep
     // would recreate it within the hour, so the page draws no Remove control
     // (`studio-class-deletion.ts`, issue 279). Asserted HERE, before the
@@ -146,7 +183,10 @@ test.describe('Studio class templates', () => {
     await page.goto('/settings/studio-classes');
     await expect(page.getByText('Studio Flow')).toBeVisible();
     await expect(page.getByText(/Community Studio · €45\.00\/hr/)).toBeVisible();
-    await expect(page.getByText('paused')).toBeVisible();
+    // Scoped to this row: the second fixture template is paused throughout
+    // this whole spec, so a bare `page.getByText('paused')` would match both.
+    const row = page.getByRole('link', { name: /Studio Flow/ });
+    await expect(row.getByText('paused')).toBeVisible();
   });
 
   test('resuming reports the window it already has', async ({ page }) => {
@@ -189,14 +229,16 @@ test.describe('Studio class templates', () => {
   test('an archived template leaves the live list for the archived one', async ({ page }) => {
     await page.goto('/settings/studio-classes');
     await expect(page.getByText('Studio Flow')).toHaveCount(0);
+    // The still-live second template stays on this list — the same filter
+    // that dropped the archived one (`settings/studio-classes/page.tsx:11`)
+    // leaves an unarchived one in place.
+    await expect(page.getByText('Yin Retreat')).toBeVisible();
 
-    // `/settings/studio-classes` queries `isArchived: false`
-    // (`settings/studio-classes/page.tsx:11`) and `/settings/studio-classes/archived`
-    // queries `isArchived: true` (`settings/studio-classes/archived/page.tsx:10`),
-    // so the archived page is the only route back to an archived template's
-    // detail page.
     await page.goto('/settings/studio-classes/archived');
     await expect(page.getByText('Studio Flow')).toBeVisible();
+    // ...and the reverse: the second template, never archived, does not
+    // appear here either.
+    await expect(page.getByText('Yin Retreat')).toHaveCount(0);
 
     await page.getByRole('link', { name: /Studio Flow/ }).click();
     await page.waitForURL(`**/settings/studio-classes/${templateId}`);
@@ -227,9 +269,13 @@ test.describe('Studio class templates', () => {
     expect(t.isActive).toBe(false);
     expect(t.archivedAt).toBeNull();
 
-    // Back on the live list, marked paused, still named.
+    // Back on the live list, marked paused, still named. Scoped to this row
+    // for the same reason as the earlier paused-list test: the second fixture
+    // template is paused throughout and would double-match a bare
+    // `page.getByText('paused')`.
     await page.goto('/settings/studio-classes');
     await expect(page.getByText('Studio Flow')).toBeVisible();
-    await expect(page.getByText('paused')).toBeVisible();
+    const row = page.getByRole('link', { name: /Studio Flow/ });
+    await expect(row.getByText('paused')).toBeVisible();
   });
 });
