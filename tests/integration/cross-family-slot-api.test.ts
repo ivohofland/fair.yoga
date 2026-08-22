@@ -22,6 +22,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { getNextOccurrences } from '@/services/class-generator';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -294,6 +295,102 @@ describe('the studio family refuses a slot the class family holds', () => {
     const res = await send('PATCH', `/api/studio-class-templates/${template.id}?state=unarchived`);
 
     await expect409(res, 'CROSS_FAMILY_CLASS_TEMPLATE_SLOT', /recurring class/i);
+  });
+});
+
+describe('the count reaches the teacher, not just the reducer', () => {
+  /**
+   * PR #300 review, G8 + G5. `blockedByOtherFamily` was asserted in exactly two
+   * places — the pure reducer (`generation.test.ts`) and the pure copy layer
+   * (`template-action-messages.test.ts`), both hand-fed. No service result, no
+   * HTTP body and no rendered component ever carried a non-zero value, so the
+   * one path where this count reaches a teacher had no test at any hop in the
+   * middle. That is the same chain #194 shipped broken at exactly this hop.
+   *
+   * G5 rides along: `respondOk<T>` is generic and both buttons read through an
+   * unchecked `as`, so nothing pins the wire shape at compile time. Three of
+   * the four `counts` producers had no runtime assertion either — revert any of
+   * them to the pre-#296 flat spread and the suite stayed green while the copy
+   * layer fell to `null` and the teacher got silence.
+   */
+  const DAY = 5; // Saturday, clear of the fixtures above
+  const TIME = '06:30';
+
+  /** The same dates the generator will choose, computed the same way it does. */
+  const window = () => getNextOccurrences(DAY, new Date(), 6).slice(0, 6);
+
+  async function holdWholeWindowWithStudioClasses() {
+    for (const date of window()) {
+      await prisma.studioClass.create({
+        data: {
+          teacherId,
+          templateId: null,
+          classType: 'Window Holder',
+          date,
+          startTime: TIME,
+          durationMinutes: 60,
+          location: 'Elsewhere',
+          hourlyRate: 40,
+        },
+      });
+    }
+  }
+
+  it('POST /api/class-templates carries a non-zero blockedByOtherFamily on the wire', async () => {
+    await holdWholeWindowWithStudioClasses();
+
+    const res = await send('POST', '/api/class-templates', templateBody(DAY, TIME));
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      data: { added: number; counts: Record<string, number> };
+    };
+    // Nested under `counts`, which is the shape the forms and both resolvers
+    // read. A flat `blockedByOtherFamily` on the body would leave this
+    // undefined and the copy layer silent.
+    expect(body.data.counts).toBeDefined();
+    expect(body.data.counts.blockedByOtherFamily).toBeGreaterThan(0);
+    // Distinct from its neighbours at a DIFFERENT value, so a hop wired to the
+    // wrong member cannot pass by coincidence.
+    expect(body.data.counts.slotTaken).toBe(0);
+    expect(body.data.counts.blockedByCancelled).toBe(0);
+    expect(body.data.added).toBe(0);
+  });
+
+  it('PATCH ?state=active carries it too, through the resume path', async () => {
+    // The hop #194 shipped broken: measured by the generator, reaching the
+    // service, and stopping at the route.
+    const template = await prisma.classTemplate.create({
+      data: { teacherId, ...templateBody(DAY, TIME), isActive: false },
+    });
+    await holdWholeWindowWithStudioClasses();
+
+    const res = await send('PATCH', `/api/class-templates/${template.id}?state=active`);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { action: string; counts: Record<string, number> };
+    };
+    expect(body.data.action).toBe('active');
+    expect(body.data.counts.blockedByOtherFamily).toBeGreaterThan(0);
+    expect(body.data.counts.slotTaken).toBe(0);
+  });
+
+  it('POST /api/studio-class-templates carries the mirror', async () => {
+    for (const date of window()) {
+      await prisma.class.create({
+        data: { teacherId, ...classBody(TIME), date },
+      });
+    }
+
+    const res = await send('POST', '/api/studio-class-templates', studioTemplateBody(DAY, TIME));
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      data: { added: number; counts: Record<string, number> };
+    };
+    expect(body.data.counts.blockedByOtherFamily).toBeGreaterThan(0);
+    expect(body.data.added).toBe(0);
   });
 });
 

@@ -1203,6 +1203,64 @@ describe('generateClassInstances (DB)', () => {
      * `slot_taken`, this teacher's window comes back empty, and the log line
      * names the wrong teacher's schedule.
      */
+    /**
+     * PR #300 review, G6 — the cross-family twin of the case below, and the
+     * same omission it exists to close, reintroduced one table over.
+     *
+     * That case seeds another teacher's `Class` rows, so it exercises the
+     * SAME-family `occupants` read only. Nothing seeded another teacher's
+     * `StudioClass`, so dropping `teacherId` from the new `foreign` read
+     * (`class-generator.ts`) left the whole suite green — while every
+     * candidate date another teacher happened to hold read
+     * `blocked_by_other_family`, this teacher's window came back short, and
+     * nothing raised. §4.1 calls a pre-check STRICTER than the guard the only
+     * real defect, and this is that direction.
+     *
+     * The docblock on that read warns about exactly this ("Widen or narrow one
+     * without the other…") and had no test behind the warning.
+     */
+    it('ignores another teacher holding the same slot in the other family', async () => {
+      const now = new Date();
+      const dates = candidates(now);
+
+      const other = await prisma.teacher.create({
+        data: {
+          firstName: 'OtherCross',
+          lastName: 'Teacher',
+          email: `other-cross-${uniqueSuffix}@test.local`,
+          account: { create: { email: `other-cross-${uniqueSuffix}@test.local` } },
+          bio: 'second teacher for the cross-family scoping guard',
+          pageSlug: `other-cross-${uniqueSuffix}`,
+        },
+      });
+
+      try {
+        for (const date of dates) {
+          await prisma.studioClass.create({
+            data: {
+              teacherId: other.id,
+              templateId: null,
+              classType: 'Someone else, studio',
+              date,
+              startTime: '09:00',
+              durationMinutes: 60,
+              location: 'Their studio',
+              hourlyRate: 50,
+            },
+          });
+        }
+
+        const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+
+        expect(result.created).toBe(4);
+        expect(result.skipped).toEqual([]);
+      } finally {
+        await prisma.studioClass.deleteMany({ where: { teacherId: other.id } });
+        await prisma.teacher.delete({ where: { id: other.id } });
+        await prisma.account.delete({ where: { id: other.accountId } });
+      }
+    });
+
     it('ignores another teacher holding the same date and time', async () => {
       const now = new Date();
       const dates = candidates(now);

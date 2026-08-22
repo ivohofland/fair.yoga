@@ -377,6 +377,47 @@ describe('cross-family slot exclusivity (#296)', () => {
     ).rejects.toThrow(/YG001/);
   });
 
+  /**
+   * PR #300 review, G2. The pair above is one-sided: the `Class` side is
+   * covered in BOTH fields (`date` above, `startTime` at
+   * `cross-family-slot-api.test.ts`), while the `StudioClass` side only ever
+   * moves `startTime` — here and in the integration suite. So
+   * `studio_class_cross_family_slot_update_guard`'s
+   * `OLD."date" IS DISTINCT FROM NEW."date"` disjunct had no test at any layer,
+   * and `PUT /api/studio-classes/[id]` is a live door onto it.
+   *
+   * The comment above says the two tests exist "one per disjunct… covering the
+   * same field twice would leave the other permanently unproven" — which is
+   * right, and was applied per-FAMILY where it needed to be applied per-family-
+   * per-field.
+   */
+  it('moving a studio class by DATE into an occupied cross-family slot is rejected', async () => {
+    const D12 = new Date(Date.UTC(2027, 5, 13)); // resident Class's date
+    const D13 = new Date(Date.UTC(2027, 5, 14)); // mover StudioClass's date
+    await prisma.class.create({ data: { ...cls(teacherId, 1), date: D12, startTime: '08:15' } });
+    const s = await prisma.studioClass.create({
+      data: { ...studio(teacherId, 1), date: D13, startTime: '08:15' },
+    });
+    await expect(
+      prisma.studioClass.update({ where: { id: s.id }, data: { date: D12 } }),
+    ).rejects.toThrow(/YG001/);
+  });
+
+  it('moving a class by startTime into an occupied cross-family slot is rejected', async () => {
+    // The fourth cell of the family x field matrix, so no disjunct on either
+    // instance trigger is left resting on the other family's coverage.
+    const D14 = new Date(Date.UTC(2027, 5, 15));
+    await prisma.studioClass.create({
+      data: { ...studio(teacherId, 1), date: D14, startTime: '08:30' },
+    });
+    const c = await prisma.class.create({
+      data: { ...cls(teacherId, 1), date: D14, startTime: '08:45' },
+    });
+    await expect(
+      prisma.class.update({ where: { id: c.id }, data: { startTime: '08:30' } }),
+    ).rejects.toThrow(/YG001/);
+  });
+
   // PR #296 review, I4 (the `Class` half — the `StudioClass` half already had
   // "un-cancelling a studio class..." above). A direct `status: 'cancelled'`
   // insert is used, as the "a cancelled class does not block..." test above
@@ -558,6 +599,80 @@ describe('cross-family template slot exclusivity (#296)', () => {
     });
     await expect(
       prisma.studioClassTemplate.update({ where: { id: st.id }, data: { dayOfWeek: 2 } }),
+    ).rejects.toThrow(/YG001/);
+  });
+
+  /**
+   * PR #300 review, G1 — the highest-value gap the review found.
+   *
+   * Both template UPDATE `WHEN` clauses carry
+   * `OLD."startTime" IS DISTINCT FROM NEW."startTime"`, and NOTHING exercised
+   * it: the two cases above both move `dayOfWeek`, and so do both integration
+   * cases. Deleting that disjunct from either trigger left the whole suite
+   * green while a `startTime` move onto an occupied cross-family slot was
+   * accepted — and templates have no route pre-check, so the trigger is the
+   * only guard there. Moving a recurring class's TIME is also the more ordinary
+   * teacher edit of the two.
+   *
+   * The instance block above already understood this hazard and wrote it down
+   * ("Two tests, one per disjunct… covering the same field twice would leave
+   * the other permanently unproven"); the template block then covered the same
+   * field twice. `startTime` '13:00'/'13:30' here: a fourth and fifth reserved
+   * pair, clear of '09:00', '10:00', '11:00' and '12:00'.
+   */
+  it('moving a class template by startTime into an occupied cross-family slot is rejected', async () => {
+    await prisma.studioClassTemplate.create({
+      data: { ...studioTpl(teacherId, 5), startTime: '13:00' },
+    });
+    const t = await prisma.classTemplate.create({
+      data: { ...tpl(teacherId, 5), startTime: '13:30' },
+    });
+    await expect(
+      prisma.classTemplate.update({ where: { id: t.id }, data: { startTime: '13:00' } }),
+    ).rejects.toThrow(/YG001/);
+  });
+
+  it('moving a studio template by startTime into an occupied cross-family slot is rejected', async () => {
+    await prisma.classTemplate.create({
+      data: { ...tpl(teacherId, 6), startTime: '13:00' },
+    });
+    const st = await prisma.studioClassTemplate.create({
+      data: { ...studioTpl(teacherId, 6), startTime: '13:30' },
+    });
+    await expect(
+      prisma.studioClassTemplate.update({ where: { id: st.id }, data: { startTime: '13:00' } }),
+    ).rejects.toThrow(/YG001/);
+  });
+
+  /**
+   * PR #300 review, G7. The migration states the decision — "`isActive`
+   * (paused) is NOT consulted: a paused template goes on holding its slot" —
+   * and all four template lookups filter on `isArchived` alone. Nothing pinned
+   * it: every template fixture in this file is `isActive: true` by default.
+   *
+   * Adding `AND "isActive" = true` to a lookup reddens nothing today, and the
+   * consequence is not a transient one: `isActive` is not in the `WHEN` clause
+   * either, so RESUMING the paused template never re-fires the guard. You land
+   * on two live templates at one slot, permanently — a state the migration's
+   * own pre-flight check would have refused to install over.
+   */
+  it('a PAUSED but unarchived class template still holds its slot against the other family', async () => {
+    await prisma.classTemplate.create({
+      data: { ...tpl(teacherId, 0), startTime: '14:00', isActive: false, isArchived: false },
+    });
+    await expect(
+      prisma.studioClassTemplate.create({
+        data: { ...studioTpl(teacherId, 0), startTime: '14:00' },
+      }),
+    ).rejects.toThrow(/YG001/);
+  });
+
+  it('a PAUSED but unarchived studio template still holds its slot against the other family', async () => {
+    await prisma.studioClassTemplate.create({
+      data: { ...studioTpl(teacherId, 1), startTime: '14:00', isActive: false, isArchived: false },
+    });
+    await expect(
+      prisma.classTemplate.create({ data: { ...tpl(teacherId, 1), startTime: '14:00' } }),
     ).rejects.toThrow(/YG001/);
   });
 
