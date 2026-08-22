@@ -540,9 +540,16 @@ const COUNT_KEYS = {
  * rather than tidiness. It was module-private, so the CREATE path — which reads
  * the same untrusted `res.json()` from a different route — could not reach it
  * and validated nothing. Measured against the real `anyBlocked`:
- * `anyBlocked(JSON.parse('{}'))` returns `false`, so a truncated payload made
- * both create forms navigate away in silence: the #296 failure this whole
- * issue exists to fix, surviving at the one boundary its type does not cover.
+ * `anyBlocked(JSON.parse('{}'))` returns `false`, so a payload whose `counts`
+ * arrived without members made both create forms navigate away in silence: the
+ * #296 failure this whole issue exists to fix, surviving at the one boundary
+ * its type does not cover.
+ *
+ * That said "a truncated payload" until PR #300's fourth pass, contradicting
+ * this docblock's own second paragraph: a body that will not parse throws
+ * inside `res.json()` in both callers and is caught as "Network error" without
+ * reaching this guard. The rolled-back-server mismatch named up there is the
+ * whole of what it defends against.
  *
  * Note the direction the two guards reduce in, because it is the difference
  * that matters. This one iterates `COUNT_KEYS` — the SCHEMA's members — so a

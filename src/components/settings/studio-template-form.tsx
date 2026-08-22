@@ -199,11 +199,22 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
           // whether the window is short, not what to say about it. Navigating is
           // the same thing this branch always did — what changes is that it is
           // no longer SILENT. Measured before this gate existed:
-          // `anyBlocked(JSON.parse('{}'))` is `false`, so a truncated `counts`
-          // took the clean-window path and this page navigated away from a short
-          // window with no sentence, which is the #296 failure at the one
-          // boundary its type cannot reach. `console.warn` rather than `log`:
-          // this is a `'use client'` file and `lib/log.ts` says so.
+          // `anyBlocked(JSON.parse('{}'))` is `false`, so a `counts` that
+          // arrived without its members took the clean-window path and this page
+          // navigated away from a short window with no sentence, which is the
+          // #296 failure at the one boundary its type cannot reach.
+          //
+          // WHICH payload that is: one that parses cleanly into the wrong shape
+          // — a tab holding this bundle against a rolled-back server. NOT a
+          // truncated body, which this comment named until PR #300's fourth
+          // pass: `res.json()` sits inside the `try`, so a body that will not
+          // parse throws to the outer `catch` and the teacher reads "Network
+          // error" (`class-edit-form.tsx` records the same route) without ever
+          // reaching this arm. A test pins the difference, because the first
+          // version of this sentence was wrong and nothing could tell.
+          //
+          // `console.warn` rather than `log`: this is a `'use client'` file and
+          // `lib/log.ts` says so.
           console.warn('recurring studio class create: unreadable counts on a 201, short-window check skipped', json);
           router.push(STUDIO_CLASSES_PATH);
         }
