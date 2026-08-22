@@ -184,6 +184,47 @@ describe('StudioTemplateForm', () => {
   });
 
   /**
+   * PR #300 review, C2 — the studio mirror. The gate enumerated
+   * `blockedByCancelled > 0 || slotTaken > 0`; #296's `blockedByOtherFamily` is
+   * reachable on create here too (a manually logged `Class` at that day and
+   * time does not block creating a studio TEMPLATE, since the template trigger
+   * reads `ClassTemplate`), and the window came back short in silence.
+   *
+   * Note the sentence names the OTHER family — "your own classes" — where the
+   * class family's twin says "studio classes". On this side the neighbouring
+   * `slotTaken` clause already means another STUDIO class, so the distinction
+   * is doing real work rather than restating.
+   */
+  it('reports a window the OTHER family holds, instead of navigating away', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: {
+          id: 'tpl-other-family',
+          added: 0,
+          counts: {
+            blockedByCancelled: 0,
+            slotTaken: 0,
+            alreadyThisWeek: 0,
+            blockedByOtherFamily: 2,
+          },
+        },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<StudioTemplateForm mode="create" />);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    expect(
+      await screen.findByText(/2 dates are held by your own classes\./i),
+    ).toBeInTheDocument();
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
+  /**
    * Review F4, the studio twin. The `if (created) return;` guard is
    * unreachable through the UI — no submit button survives settling, and
    * implicit submission needs one or a single blocking field, where this form

@@ -162,19 +162,62 @@ describe('resolveTemplateConfirmation', () => {
    * have a test against. Silence is the contract for a payload this resolver
    * cannot read.
    */
-  it('says nothing rather than rendering undefined when the newest count is missing', () => {
-    // The count is missing from INSIDE `counts`, which is what this case is
-    // about. Nesting (#296) made that distinct from the case below, and a
-    // fixture that simply dropped `counts` would pass this test while no longer
-    // exercising the newest-count path at all.
+  it('says nothing rather than rendering undefined when the NEWEST count is missing', () => {
+    // The newest count is `blockedByOtherFamily` (#296), not `alreadyThisWeek`
+    // (#194) — this fixture dropped the latter until PR review, so it stopped
+    // testing the newest-count path the moment a newer count existed, while its
+    // title went on claiming it did. That is the whole failure mode: a fixture
+    // pinned to an ordinal rather than to a name.
+    //
+    // It is also the case that was BROKEN when review found it:
+    // `hasIntegerCounts` checked three of four members, so this payload passed
+    // the guard and narrowed to `SkipCounts` on a lie.
     const wire = {
       action: 'active',
       templateKind: 'class',
       scheduled: 4,
       added: 0,
-      counts: { blockedByCancelled: 0, slotTaken: 0 },
+      counts: { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0 },
     } as unknown as TemplateToggleResponse;
     expect(resolveTemplateConfirmation(wire)).toBeNull();
+  });
+
+  it('says nothing when any OTHER single count is missing', () => {
+    // One case per member, so no member can be the untested one — the ordinal
+    // trap above, closed structurally. `COUNT_KEYS` makes the guard exhaustive
+    // at compile time; this makes it exhaustive at runtime too.
+    const full = {
+      blockedByCancelled: 0,
+      slotTaken: 0,
+      alreadyThisWeek: 0,
+      blockedByOtherFamily: 0,
+    };
+    for (const missing of Object.keys(full)) {
+      const counts = Object.fromEntries(
+        Object.entries(full).filter(([key]) => key !== missing),
+      );
+      const wire = {
+        action: 'active',
+        templateKind: 'class',
+        scheduled: 4,
+        added: 0,
+        counts,
+      } as unknown as TemplateToggleResponse;
+      expect(resolveTemplateConfirmation(wire), `missing ${missing}`).toBeNull();
+    }
+  });
+
+  it('says nothing for the studio resolver on the same partial payload', () => {
+    // The studio side had no partial-payload case at all — only a
+    // counts-absent one — so the shared guard was pinned from one family only.
+    const wire = {
+      action: 'active',
+      templateKind: 'studio',
+      scheduled: 4,
+      added: 0,
+      counts: { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0 },
+    } as unknown as StudioTemplateToggleResponse;
+    expect(resolveStudioConfirmation(wire)).toBeNull();
   });
 
   /**

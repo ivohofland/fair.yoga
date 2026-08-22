@@ -54,7 +54,16 @@ describe('ToggleStudioTemplateButton', () => {
         templateKind: 'studio',
         scheduled: 4,
         added: 0,
-        counts: { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0 },
+        // All FOUR members. `hasIntegerCounts` is exhaustive over
+        // `keyof SkipCounts` since PR #300 review, so a fixture short one
+        // member is refused and this button correctly renders nothing —
+        // which is how these two fixtures were found stale.
+        counts: {
+          blockedByCancelled: 0,
+          slotTaken: 0,
+          alreadyThisWeek: 0,
+          blockedByOtherFamily: 0,
+        },
       },
     }),
   };

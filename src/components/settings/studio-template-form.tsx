@@ -10,7 +10,7 @@ import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { SettledNotice } from '@/components/ui/settled-notice';
 import { resumeStudioMessage } from '@/components/settings/template-action-messages';
-import type { SkipCounts } from '@/lib/generation';
+import { anyBlocked, type SkipCounts } from '@/lib/generation';
 
 /**
  * #136. The one enumeration of this form's fields. It replaced three that
@@ -148,8 +148,8 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         // resends the same create and now earns a 409 instead of a silent
         // duplicate.
         //
-        // The POST also returns `added`, `blockedByCancelled` and
-        // `slotTaken` — the same counts the PATCH `active` arm carries.
+        // The POST also returns `added` and `counts` — the same shape the PATCH
+        // `active` arm carries (#296 nested them). #196 made
         // #196 made `slotTaken` reachable here for the first time: a teacher
         // creating a recurring studio class onto a day/time they already
         // occupy gets a live template whose window came back short. A clean
@@ -181,7 +181,12 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         const json: { data?: { added: number; counts?: SkipCounts } } = await res.json();
         const result = json.data;
         setCreated(true);
-        if (result?.counts && (result.counts.blockedByCancelled > 0 || result.counts.slotTaken > 0)) {
+        // `anyBlocked` rather than a hand-listed pair (`@/lib/generation`). This
+        // gate enumerated its terms until #296 added `blockedByOtherFamily` —
+        // the first reason reachable on CREATE that is not structurally 0 — and
+        // then navigated away from a short window in silence. See that
+        // function's docblock; the paragraph below is the rule it broke.
+        if (result?.counts && anyBlocked(result.counts)) {
           setSuccess(resumeStudioMessage(result.added, result.added, result.counts));
         } else {
           router.push(STUDIO_CLASSES_PATH);

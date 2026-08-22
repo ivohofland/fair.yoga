@@ -415,6 +415,77 @@ describe('TemplateForm', () => {
     expect(routerPush).not.toHaveBeenCalled();
   });
 
+
+  /**
+   * PR #300 review, C2 — the bug this file's own sibling case above was
+   * written to prevent, reproduced one reason later.
+   *
+   * The gate enumerated `blockedByCancelled > 0 || slotTaken > 0`. #296 added
+   * `blockedByOtherFamily`, the first reason reachable on CREATE that is not
+   * structurally 0, and the gate did not gain the term — so a teacher whose
+   * whole window is held by the OTHER family navigated away in silence. The
+   * path is ordinary: a manually logged studio class at that day and time does not
+   * block creating this template (the template trigger reads the sibling
+   * TEMPLATE table), so the create succeeds and the generator then declines
+   * every date.
+   *
+   * The gate is now `anyBlocked(counts)` (`@/lib/generation`), which reduces
+   * over the object instead of listing members — so the fifth count is covered
+   * by this test too, without this test being edited.
+   */
+  it('reports a window the OTHER family holds, instead of navigating away', async () => {
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url === '/api/teacher-rooms') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{
+              id: '11111111-1111-4111-8111-111111111111',
+              capacityOverride: 30,
+              rentalRate: 20,
+              room: { roomName: 'Studio A', venueName: 'Main Venue' },
+            }],
+          }),
+        };
+      }
+      if (url === '/api/class-templates' && init?.method === 'POST') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              id: 'tpl-other-family',
+              added: 0,
+              counts: {
+                blockedByCancelled: 0,
+                slotTaken: 0,
+                alreadyThisWeek: 0,
+                blockedByOtherFamily: 4,
+              },
+            },
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TemplateForm mode="create" />);
+    const roomSelect = await screen.findByLabelText('Room');
+    fireEvent.change(roomSelect, {
+      target: { value: '11111111-1111-4111-8111-111111111111' },
+    });
+    fireEvent.change(screen.getByLabelText('Class type'), {
+      target: { value: 'Vinyasa' },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    expect(
+      await screen.findByText(/4 dates are held by studio classes\./i),
+    ).toBeInTheDocument();
+    expect(routerPush).not.toHaveBeenCalled();
+  });
+
   /**
    * #194, the wire→copy seam on the EDIT branch. The service predicts the
    * first week the new schedule reaches and the route sends its Monday back as

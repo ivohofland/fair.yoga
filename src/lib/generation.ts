@@ -1,22 +1,38 @@
 /**
  * The result shape both instance generators return.
  *
- * This module is import-free on purpose — it declares no dependency of its
- * own — but note what that claim rests on: it is not, at present, load-bearing
- * for any client bundle, unlike `src/lib/tiers.ts` and `src/lib/class-fields.ts`,
- * which each name real `'use client'` files that *value*-import them. Today's
- * importers are two server-side generators (`import type` only —
- * `class-generator.ts`, `studio-class-generator.ts`) and, since
- * `countSkipReasons` below, four more server-only services and routes that
- * *value*-import it: `api/class-templates/route.ts`,
- * `api/studio-class-templates/route.ts`, `class-template-lifecycle.ts`,
- * `studio-class-template-lifecycle.ts`. (`generation.test.ts` value-imports it
- * too, by relative path; a test is not a bundle.) There was a fifth,
- * `template-sync.ts`, until #194 deleted it. None of those is a `'use client'`
- * file, so the client-bundle conclusion still holds — but the "only importers"
- * half of this sentence should be re-checked before being trusted, the same
- * way this paragraph corrects it now. The check is
- * `grep -rn "/generation'" src/ --include="*.ts" --include="*.tsx"`.
+ * This module is import-free on purpose, and since #296 that is a REQUIREMENT
+ * rather than the precaution it used to be. Two `'use client'` files now
+ * VALUE-import it — `template-form.tsx` and `studio-template-form.tsx`, both
+ * for `anyBlocked` — so this module is in the client bundle, and anything it
+ * imported would ride along. `src/lib/tiers.ts` and `src/lib/class-fields.ts`
+ * were previously the only members of that category; this one has joined them.
+ *
+ * The census, re-derived rather than carried, with the check that produces it:
+ *
+ *   grep -rn "/generation'" src/ --include="*.ts" --include="*.tsx"
+ *
+ * TEN importers outside this file, split three ways:
+ *
+ *   VALUE, client (2)  `template-form.tsx`, `studio-template-form.tsx`
+ *   VALUE, server (4)  `api/class-templates/route.ts`,
+ *                      `api/studio-class-templates/route.ts`,
+ *                      `class-template-lifecycle.ts`,
+ *                      `studio-class-template-lifecycle.ts`
+ *   TYPE-ONLY (3)      `class-generator.ts`, `studio-class-generator.ts`,
+ *                      `template-action-messages.ts` (erased at build, so it
+ *                      adds nothing to any bundle)
+ *
+ * plus `generation.test.ts`, by relative path; a test is not a bundle. There
+ * was an eleventh, `template-sync.ts`, until #194 deleted it.
+ *
+ * An earlier version of this paragraph concluded "None of those is a
+ * `'use client'` file, so the client-bundle conclusion still holds" — the
+ * sentence it also instructs the reader to re-check. #296 falsified it twice
+ * over: first by adding two type-only client importers, then by turning both
+ * into value importers when `anyBlocked` landed. The conclusion did not change
+ * (this module still pulls in nothing), but the REASON did, from "no client
+ * file imports it" to "client files import it and it imports nothing".
  *
  * The needle starts at the SLASH, and that is the whole of it. This line used
  * to prescribe `"lib/generation'"` and claim it was "wide enough to see the
@@ -29,18 +45,9 @@
  *
  * A leading `/` catches both spellings and still excludes `'class-generation'`
  * — `scheduler.ts`'s job name, which has no slash. Every hit outside this
- * docblock is an import; the hits inside it are this paragraph quoting both
- * the grep and the two module specifiers back at itself, and are the only
- * false positives the check has.
- *
- * The import-free rule is kept anyway because these names are meant to reach
- * the copy layer, and since #296 they DO: `template-action-messages.ts` now
- * type-imports `SkipCounts` from here, so this module is reached from a file
- * the client bundle includes. Type-only, so nothing rides in at runtime — but
- * that is now a property of the import KIND rather than of the import graph,
- * and a later change that hands the copy layer a `SkipReason` as a value would
- * make it load-bearing for real. Being import-free is what keeps that option
- * open; it is a precaution, not a fix for an existing bundle problem.
+ * docblock is an import; the hits inside it are this paragraph quoting the
+ * grep and the two module specifiers back at itself, and are the only false
+ * positives the check has.
  */
 
 /**
@@ -127,6 +134,32 @@ export interface SkipCounts {
   alreadyThisWeek: number;
   /** Candidate dates a live class from the OTHER family holds (#296). */
   blockedByOtherFamily: number;
+}
+
+/**
+ * True when any count in the window is a date the teacher should be told about.
+ *
+ * Exists because the create gates in `template-form.tsx` and
+ * `studio-template-form.tsx` were the one hop #296's nesting refactor did not
+ * reach, and the reason is worth keeping: nesting protects a count that is
+ * PASSED, and those two sites INSPECT. They hand-listed
+ * `blockedByCancelled > 0 || slotTaken > 0`, and when
+ * `blockedByOtherFamily` arrived — the first reason reachable on CREATE that
+ * is not structurally 0 — both gates silently kept navigating away from a
+ * short window. That is #196's own silence, reproduced one reason later inside
+ * the branch written to end it, and `template-form.tsx`'s comment had stated
+ * the rule it broke: "If create ever CAN produce the reason, this gate must
+ * gain the term in the same change."
+ *
+ * A fourth `||` would have closed that and reopened it at the fifth count.
+ * Reducing over the object closes it for every count there will ever be.
+ *
+ * `alreadyThisWeek` is included and is provably 0 on create — a brand-new
+ * template holds no week of its own. That costs nothing: a term that is
+ * provably zero is free, where a term that is provably MISSING is this bug.
+ */
+export function anyBlocked(counts: SkipCounts): boolean {
+  return Object.values(counts).some((count) => count > 0);
 }
 
 /**

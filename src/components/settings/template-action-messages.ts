@@ -195,7 +195,8 @@ export function resumeStudioMessage(
  * inflecting family too, and doubly so — "is/are" AND "a class/classes" both
  * change with number.
  *
- * `alreadyThisWeek` (#194) is last of the three causes, and the order is not
+ * `alreadyThisWeek` (#194) is THIRD of the four causes — `blockedByOtherFamily`
+ * (#296) was appended after it — and the order is not
  * arbitrary: every sentence pinned before it keeps the prefix it already had,
  * so the existing tests stay meaningful rather than being rewritten around a
  * new clause. It is also the reason the count is carried at all. A teacher who
@@ -472,8 +473,8 @@ export type StudioTemplateToggleResponse =
       added: number;
       /**
        * `counts.alreadyThisWeek` is always 0 today, and that is not a bug.
-       * `countSkipReasons` returns all three counts for both families, so the
-       * value flows through the studio chain by the same route the other two
+       * `countSkipReasons` returns all four counts for both families, so the
+       * value flows through the studio chain by the same route the other three
        * do — but nothing on the studio side PRODUCES `already_this_week` yet:
        * `generateStudioInstancesForTemplate` has no week key, which is #284.
        * Carried rather than hard-coded to 0 precisely so that when #284 lands,
@@ -486,6 +487,60 @@ export type StudioTemplateToggleResponse =
       counts: SkipCounts;
     }
   | { action: 'unarchived' | 'unchanged' };
+
+/**
+ * The `SkipCounts` members, tethered so a new one cannot be forgotten here.
+ *
+ * `satisfies Record<keyof SkipCounts, true>` binds in both directions — the
+ * same tether `ROOM_SEARCH_SELECT` (`api/rooms/route.ts`) uses, and for the
+ * same reason. Add a member to `SkipCounts` and this object is missing a key;
+ * remove one and the extra key is not in `keyof SkipCounts`. Either way the
+ * build fails HERE rather than the guard below silently validating a subset.
+ *
+ * That is not hypothetical. This was a hand-written three-term `&&` chain, and
+ * its docblock promised "that is also where a fourth `SkipCounts` member's
+ * validation lands — one edit, not two". #296 added the fourth member and the
+ * edit did not happen, leaving a type predicate that asserted
+ * `counts is SkipCounts` while checking three quarters of it.
+ */
+const COUNT_KEYS = {
+  blockedByCancelled: true,
+  slotTaken: true,
+  alreadyThisWeek: true,
+  blockedByOtherFamily: true,
+} satisfies Record<keyof SkipCounts, true>;
+
+/**
+ * True when `counts` is a `SkipCounts` whose every member is really an integer
+ * — every member, enforced by `COUNT_KEYS` above rather than by a list kept in
+ * step by hand.
+ *
+ * Both resolvers below reach their `active` arm through an unchecked `as` on
+ * `res.json()`, so the type constrains the SERVER and nothing constrains the
+ * WIRE: a tab holding this bundle against a rolled-back server receives
+ * `{ action: 'active' }` with no counts, and a template literal then renders
+ * "undefined classes on your schedule." Saying nothing is the honest fallback —
+ * `resolveTemplateConfirmation`'s whole contract is that `null` means "say
+ * nothing".
+ *
+ * Nesting the counts (#296) added a failure mode the three flat fields did not
+ * have, and it is why this is a function rather than more `||` clauses: a
+ * payload with no `counts` object at all makes every member read THROW a
+ * TypeError, where a missing flat field merely read `undefined` and failed
+ * `Number.isInteger`. The object check has to come first, and a type guard is
+ * what lets it narrow for the call rather than being re-asserted with a cast.
+ *
+ * Members are checked even where the server cannot currently produce them —
+ * `alreadyThisWeek` until #284 gives the studio generator a week key. The guard
+ * is about what the WIRE carries, not about what the server counts today, and
+ * an `active` payload missing a field is a bundle-vs-server mismatch either
+ * way. One guard for both families.
+ */
+function hasIntegerCounts(counts: unknown): counts is SkipCounts {
+  if (typeof counts !== 'object' || counts === null) return false;
+  const candidate = counts as Record<string, unknown>;
+  return Object.keys(COUNT_KEYS).every((key) => Number.isInteger(candidate[key]));
+}
 
 /**
  * Decides whether the button says anything, and what.
@@ -505,42 +560,6 @@ export type StudioTemplateToggleResponse =
  * and the button silently discarded `remaining`), and it was caught by review
  * rather than by a test because nothing here was testable.
  */
-/**
- * True when `counts` is a `SkipCounts` whose every member is really an integer.
- *
- * Both resolvers below reach their `active` arm through an unchecked `as` on
- * `res.json()`, so the type constrains the SERVER and nothing constrains the
- * WIRE: a tab holding this bundle against a rolled-back server receives
- * `{ action: 'active' }` with no counts, and a template literal then renders
- * "undefined classes on your schedule." Saying nothing is the honest fallback —
- * `resolveTemplateConfirmation`'s whole contract is that `null` means "say
- * nothing".
- *
- * Nesting the counts (#296) added a failure mode the three flat fields did not
- * have, and it is why this is a function rather than three more `||` clauses:
- * a payload with no `counts` object at all makes every member read THROW a
- * TypeError, where a missing flat field merely read `undefined` and failed
- * `Number.isInteger`. The object check has to come first, and a type guard is
- * what lets it narrow for the call rather than being re-asserted with a cast.
- *
- * One guard for both families, replacing the same three-member check written
- * out twice. That is also where a fourth `SkipCounts` member's validation
- * lands — one edit, not two.
- */
-function hasIntegerCounts(counts: unknown): counts is SkipCounts {
-  if (typeof counts !== 'object' || counts === null) return false;
-  const c = counts as Record<string, unknown>;
-  return (
-    Number.isInteger(c.blockedByCancelled) &&
-    Number.isInteger(c.slotTaken) &&
-    // Checked like the rest even though the studio generator cannot produce it
-    // until #284 — the guard is about what the WIRE carries, not about what the
-    // server currently counts, and an `active` payload missing this field is a
-    // payload from a bundle-vs-server mismatch either way.
-    Number.isInteger(c.alreadyThisWeek)
-  );
-}
-
 export function resolveTemplateConfirmation(data: TemplateToggleResponse): string | null {
   switch (data.action) {
     case 'paused': {

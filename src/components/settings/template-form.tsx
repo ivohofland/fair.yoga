@@ -18,7 +18,7 @@ import {
   templateUpdatedMessage,
 } from '@/components/settings/template-action-messages';
 import type { TemplateGenerationState } from '@/lib/template-selection';
-import type { SkipCounts } from '@/lib/generation';
+import { anyBlocked, type SkipCounts } from '@/lib/generation';
 
 interface TeacherRoomOption {
   id: string;
@@ -319,8 +319,8 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         // form from inviting the click that resends the same create and now
         // earns a 409 instead of duplicating the teacher's whole schedule.
         //
-        // The POST also returns `added`, `blockedByCancelled` and `slotTaken`
-        // — the same counts the PATCH `active` arm carries. #196 made
+        // The POST also returns `added` and `counts` — the same shape the PATCH
+        // `active` arm carries (#296 nested them). #196 made
         // `slotTaken` reachable here for the first time: a teacher creating a
         // recurring class onto a day/time they already occupy gets a live
         // template whose window came back short. A clean window navigates
@@ -350,7 +350,12 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         const json: { data?: { added: number; counts?: SkipCounts } } = await res.json();
         const result = json.data;
         setCreated(true);
-        if (result?.counts && (result.counts.blockedByCancelled > 0 || result.counts.slotTaken > 0)) {
+        // `anyBlocked` rather than a hand-listed pair (`@/lib/generation`). This
+        // gate enumerated its terms until #296 added `blockedByOtherFamily` —
+        // the first reason reachable on CREATE that is not structurally 0 — and
+        // then navigated away from a short window in silence. See that
+        // function's docblock; the paragraph below is the rule it broke.
+        if (result?.counts && anyBlocked(result.counts)) {
           setSuccess(resumeMessage(result.added, result.added, result.counts));
         } else {
           router.push(RECURRING_LIST_PATH);
