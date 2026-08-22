@@ -186,4 +186,48 @@ test.describe('Studio class templates', () => {
     expect(t.isArchived).toBe(true);
     expect(t.withdrawnCount).toBe(4);
   });
+
+  test('an archived template leaves the live list for the archived one', async ({ page }) => {
+    await page.goto('/settings/studio-classes');
+    await expect(page.getByText('Studio Flow')).toHaveCount(0);
+
+    // `/settings/studio-classes` queries `isArchived: false`, so this page is
+    // the only route back to an archived template's detail page.
+    await page.goto('/settings/studio-classes/archived');
+    await expect(page.getByText('Studio Flow')).toBeVisible();
+
+    await page.getByRole('link', { name: /Studio Flow/ }).click();
+    await page.waitForURL(`**/settings/studio-classes/${templateId}`);
+
+    // Archived: Toggle is gated off by `!isArchived`, and Archive renders in
+    // its un-archive direction. Exactly one control, and no dead end.
+    await expect(page.getByRole('button', { name: 'Pause studio class' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Resume studio class' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Unarchive studio class' })).toBeVisible();
+  });
+
+  test('un-archiving returns the template paused, not active', async ({ page }) => {
+    await page.goto(`/settings/studio-classes/${templateId}`);
+    await page.getByRole('button', { name: 'Unarchive studio class' }).click();
+
+    await expect(
+      page.getByText('Un-archived. This template is paused — resume it to put classes back on your schedule.'),
+    ).toBeVisible();
+
+    // The screen agreeing with the sentence: both controls, because
+    // `isArchived` is false again and `isActive` was forced false in the same
+    // write (`studio-class-template-lifecycle.ts:1226`).
+    await expect(page.getByRole('button', { name: 'Resume studio class' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Archive studio class' })).toBeVisible();
+
+    const t = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: templateId } });
+    expect(t.isArchived).toBe(false);
+    expect(t.isActive).toBe(false);
+    expect(t.archivedAt).toBeNull();
+
+    // Back on the live list, marked paused, still named.
+    await page.goto('/settings/studio-classes');
+    await expect(page.getByText('Studio Flow')).toBeVisible();
+    await expect(page.getByText('paused')).toBeVisible();
+  });
 });
