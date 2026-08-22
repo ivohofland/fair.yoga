@@ -5,8 +5,15 @@
  * rather than the precaution it used to be. Two `'use client'` files now
  * VALUE-import it — `template-form.tsx` and `studio-template-form.tsx`, both
  * for `anyBlocked` — so this module is in the client bundle, and anything it
- * imported would ride along. `src/lib/tiers.ts` and `src/lib/class-fields.ts`
- * were previously the only members of that category; this one has joined them.
+ * imported would ride along. `src/lib/tiers.ts`, `src/lib/class-fields.ts`,
+ * `src/lib/client-errors.ts` and `src/lib/room-identity.ts` are in the same
+ * position (`room-search.ts` says so about the last of those). Named as
+ * EXAMPLES, not as a roster: an earlier version of this sentence said they
+ * "were previously the only members of that category", which upgraded an
+ * exemplar into an exhaustive list and was wrong within one commit — the exact
+ * move the rest of this docblock exists to prevent. The membership is a check,
+ * not a list: a module is in this category when a `'use client'` file
+ * value-imports it and it imports nothing itself.
  *
  * The census, re-derived rather than carried, with the check that produces it:
  *
@@ -38,8 +45,9 @@
  * to prescribe `"lib/generation'"` and claim it was "wide enough to see the
  * relative-path importer" — it is not, and was not: `generation.test.ts`
  * imports `from './generation'`, which contains no `lib/` at all, so the
- * prescribed grep returned eight lines and silently omitted the one importer
- * that does not go through the `@/` alias. A docblock whose whole purpose is
+ * prescribed grep returned eight lines AT THAT TIME (it returns more now, and
+ * the point survives) and silently omitted the one importer that does not go
+ * through the `@/` alias. A docblock whose whole purpose is
  * "re-check this rather than trusting it" is worse than useless with a check
  * that cannot find what it is checking for.
  *
@@ -125,7 +133,24 @@ export interface GenerationResult {
  * race whose date will simply be picked up on the next run, and today
  * reaches no user anywhere.
  */
-export interface SkipCounts {
+/**
+ * A `type` rather than an `interface`, and the one word is load-bearing.
+ *
+ * An interface has no implicit index signature, so `Object.values(counts)` does
+ * not match `values<T>(o: { [s: string]: T }): T[]` and falls through to the
+ * `values(o: {}): any[]` overload — which made `anyBlocked` below reduce over
+ * `any`, against CLAUDE.md's "no `any`, non-negotiable", and silently compare a
+ * hypothetical non-numeric member against `0`. Measured: adding a `string`
+ * member to this shape failed the build at `COUNT_KEYS`
+ * (`template-action-messages.ts`) and at `countSkipReasons` below, and NOT at
+ * `anyBlocked`, whose docblock claims to cover every count there will ever be.
+ *
+ * As a `type` alias the object literal type does get the index signature, the
+ * overload matches, and the same mutation now fails at `anyBlocked` itself with
+ * `TS2365: Operator '>' cannot be applied to types 'string | number' and
+ * 'number'`. Nothing else in the tree changed.
+ */
+export type SkipCounts = {
   /** Candidate dates a cancelled instance of this template holds (#192). */
   blockedByCancelled: number;
   /** Candidate dates another of this teacher's classes holds (#196). */
@@ -134,7 +159,7 @@ export interface SkipCounts {
   alreadyThisWeek: number;
   /** Candidate dates a live class from the OTHER family holds (#296). */
   blockedByOtherFamily: number;
-}
+};
 
 /**
  * True when any count in the window is a date the teacher should be told about.
@@ -144,9 +169,11 @@ export interface SkipCounts {
  * reach, and the reason is worth keeping: nesting protects a count that is
  * PASSED, and those two sites INSPECT. They hand-listed
  * `blockedByCancelled > 0 || slotTaken > 0`, and when
- * `blockedByOtherFamily` arrived — the first reason reachable on CREATE that
- * is not structurally 0 — both gates silently kept navigating away from a
- * short window. That is #196's own silence, reproduced one reason later inside
+ * `blockedByOtherFamily` arrived — the first such reason THE GATE DID NOT
+ * ALREADY LIST — both gates silently kept navigating away from a short window.
+ * Not the first REACHABLE one: `slotTaken` has been reachable on create since
+ * #196 and the gate listed it; `blockedByCancelled` and `alreadyThisWeek` are
+ * the structurally-zero pair. That is #196's own silence, reproduced one reason later inside
  * the branch written to end it, and `template-form.tsx`'s comment had stated
  * the rule it broke: "If create ever CAN produce the reason, this gate must
  * gain the term in the same change."
@@ -186,7 +213,10 @@ export function anyBlocked(counts: SkipCounts): boolean {
  * Today, for the avoidance of exactly that: FOUR value-importing call sites
  * (#194 deleted `template-sync.ts` — check with the grep in this file's header
  * docblock, which is also where its hits are split into value-imports,
- * type-only imports and the one test), SIX `SkipReason` members and FOUR
+ * type-only imports and the one test — note that is FOUR CALL SITES OF THIS
+ * FUNCTION, not the six value importers the header now counts, since the two
+ * forms value-import `anyBlocked` and never call this), SIX `SkipReason`
+ * members and FOUR
  * `SkipCounts` fields. So the member that would vanish without the `switch`
  * below is now the SEVENTH, and
  * `class-template-lifecycle.ts`'s `PauseTemplateResult` cites this docblock

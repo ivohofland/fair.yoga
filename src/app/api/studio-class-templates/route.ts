@@ -13,6 +13,7 @@ import { createStudioClassTemplateSchema } from '@/lib/schemas';
 import { generateStudioInstancesForTemplate } from '@/services/studio-class-generator';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
+import { log } from '@/lib/log';
 import { countSkipReasons, type GenerationResult } from '@/lib/generation';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
@@ -57,7 +58,22 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // before generation starts, so `generateStudioInstancesForTemplate`'s
   // `createManyAndReturn` (`skipDuplicates: true`) never gets a chance to
   // raise anything here even though it shares this transaction.
-  let conflictLevel: 'template' | 'instance' | null = null;
+  // An OBJECT, not a `let`, and that is the whole of why. TypeScript does not
+  // track assignments made inside a closure, so a mutable local read in the
+  // outer `catch` narrows to its initialiser — measured: with a
+  // `let conflictLevel: 'template' | 'instance' | null`, a TYPO AT THE READ
+  // (`=== 'instancez'`) compiled clean and silently took the other branch,
+  // shipping the wrong 409 sentence forever. The union guarded the assignment
+  // and nothing at the read, and it only compiled at all because `null` is
+  // exempt from the no-overlap check — narrowing the union to two members
+  // turned the read into a build error, which is the tell that the type was
+  // inert by accident.
+  //
+  // A `const` object keeps its property's declared type across the closure, so
+  // the comparison below is checked: the same typo is `TS2367 … types
+  // '"template" | "instance"' and '"instancez"' have no overlap`. Measured
+  // against all three candidate shapes before choosing this one.
+  const conflict = { level: 'template' as 'template' | 'instance' };
   let template: {
     created: Prisma.StudioClassTemplateGetPayload<{
       include: { teacher: { select: { defaultTimezone: true } } };
@@ -76,7 +92,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       const generation = await generateStudioInstancesForTemplate(tx, created).catch((err: unknown) => {
         // Set on the failure path only, immediately before rethrowing, so the
         // catch below can word the 409 for the statement that actually raised.
-        if (isCrossFamilySlotConflict(err)) conflictLevel = 'instance';
+        if (isCrossFamilySlotConflict(err)) conflict.level = 'instance';
         throw err;
       });
       return { created, generation };
@@ -101,12 +117,25 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // above. Same status, deliberately different sentence: that clash is fixed
     // within this family, this one sends the teacher to the other half of
     // their schedule.
+    // LOGGED before responding, and this one earns it twice over. Besides the
+    // rule above, the `instance` arm is reachable ONLY through the cross-family
+    // race this design knowingly accepts: the pre-checks mirror the trigger
+    // predicates exactly, so nothing else can raise here. `docs/lock-order.md`
+    // records that race as "measured at 200 of 200 runs under a FORCED overlap
+    // — a rate conditional on racing, not a rate of races, which was never
+    // measured". A silent 409 would guarantee it stays unmeasured forever,
+    // because production would emit nothing when one happened. `conflictLevel`
+    // is logged so the race arm is greppable and countable.
     if (isCrossFamilySlotConflict(err)) {
-      // Which sentence depends on which statement raised — see `conflictLevel`
-      // and the note above the transaction. `'template'` is the default rather
-      // than a measured value: the template insert runs FIRST, so anything that
+      log.warn(
+        { err, teacherId: session.teacherId, conflictLevel: conflict.level },
+        'recurring studio class create refused: the class family holds that slot',
+      );
+      // Which sentence depends on which statement raised — see `conflict` and
+      // the note above the transaction. `'template'` is the default rather than
+      // a measured value: the template insert runs FIRST, so anything that
       // reaches here without generation having tagged it came from that insert.
-      return conflictLevel === 'instance'
+      return conflict.level === 'instance'
         ? respondError(
             'You already have a class on one of those dates at that time.',
             409,

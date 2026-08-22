@@ -1,9 +1,45 @@
 import { describe, it, expect } from 'vitest';
-import { countSkipReasons, type SkippedSlot } from './generation';
+import { anyBlocked, countSkipReasons, type SkipCounts, type SkippedSlot } from './generation';
 
 const at = (iso: string, reason: SkippedSlot['reason']): SkippedSlot => ({
   date: new Date(iso),
   reason,
+});
+
+const NONE: SkipCounts = {
+  blockedByCancelled: 0,
+  slotTaken: 0,
+  alreadyThisWeek: 0,
+  blockedByOtherFamily: 0,
+};
+
+/**
+ * PR #300 review. `anyBlocked` was added to fix the two create gates and had no
+ * direct test — it was exercised only through the two form tests, each with a
+ * single non-zero member. A revert to the old hand-listed pair would have been
+ * caught, but nothing pinned the per-member behaviour the function exists for.
+ */
+describe('anyBlocked', () => {
+  it('is false when the window came back whole', () => {
+    expect(anyBlocked(NONE)).toBe(false);
+  });
+
+  it('is true for ANY single non-zero member, one case per member', () => {
+    // Looped over the object's own keys rather than a hand-written list, so a
+    // fifth `SkipCounts` member is covered here the moment it is declared —
+    // which is the property the function was written for, tested the same way
+    // the function works.
+    for (const key of Object.keys(NONE) as (keyof SkipCounts)[]) {
+      expect(anyBlocked({ ...NONE, [key]: 1 }), key).toBe(true);
+    }
+  });
+
+  it('ignores a negative count rather than reading it as blocked', () => {
+    // `> 0`, not `!== 0`. No producer emits a negative — `countSkipReasons`
+    // only increments — so this pins the comparison rather than a behaviour,
+    // and it is the one a `!== 0` "simplification" would change.
+    expect(anyBlocked({ ...NONE, slotTaken: -1 })).toBe(false);
+  });
 });
 
 describe('countSkipReasons', () => {
