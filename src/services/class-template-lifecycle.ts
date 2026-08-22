@@ -399,10 +399,12 @@ export type UpdateClassTemplateResult =
  *
  * ## Which of the generator's refusals this reproduces, and which it does not
  *
- * The generator declines a candidate date on five named grounds (`SkipReason`,
- * `@/lib/generation`, whose own header says "Five reasons, five distinct
- * origins" — one number, derived from the type, not two conventions counting
- * the same union). Stated one at a time rather than as a parity claim, because
+ * The generator declines a candidate date on five named grounds. `SkipReason`
+ * (`@/lib/generation`) has had SIX members since #296, and the two numbers are
+ * different on purpose: `blocked_by_other_family` is a member of the union that
+ * this probe's own family does not yet produce — see the last bullet below.
+ * Until it does, "five grounds" is a claim about the GENERATOR and "six
+ * reasons" is a claim about the TYPE, and neither is the other's typo. Stated one at a time rather than as a parity claim, because
  * the parity claim is what this docblock said before `slot_taken` was found
  * missing — and a reader who trusted it had no way to check it. Named rather
  * than numbered, because "the Nth ground" resolves against no ordering anyone
@@ -911,12 +913,14 @@ export type PauseTemplateResult =
        * One nested field rather than re-listed `number`s, and the difference is
        * a guarantee that did not exist before #116.
        *
-       * `countSkipReasons`' docblock says a sixth `SkipReason` fails the build
-       * rather than vanishing, and that is true of the REASON — its exhaustive
-       * `switch` catches it. It was not true of the COUNT: measured, adding a
-       * fifth reason, handling it, and adding its count to `SkipCounts`
-       * compiled clean repo-wide, and the new number vanished at every site
-       * that re-lists the fields by hand.
+       * `countSkipReasons`' docblock says a SEVENTH `SkipReason` fails the
+       * build rather than vanishing, and that is true of the REASON — its
+       * exhaustive `switch` catches it, measured by mutation at #296. It was
+       * not true of the COUNT: measured, adding a fifth reason, handling it,
+       * and adding its count to `SkipCounts` compiled clean repo-wide, and the
+       * new number vanished at every site that re-listed the fields by hand.
+       * #296 added a fourth count and it vanished nowhere, which is the change
+       * below rather than the guard above.
        *
        * This was `& SkipCounts` until #296 — an intersection, which bought the
        * same compile-time guarantee HERE and nothing downstream: the route

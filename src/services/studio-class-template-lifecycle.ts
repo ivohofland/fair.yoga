@@ -582,8 +582,8 @@ export type PauseStudioTemplateResult =
        * behind it: adding a count to `SkipCounts` compiled clean repo-wide and
        * vanished at every site that named the fields by hand.
        *
-       * These counts do **not** sum with `added` to the window: they are three
-       * of the five `SkipReason` members (`src/lib/generation.ts`), and they
+       * These counts do **not** sum with `added` to the window: they are four
+       * of the six `SkipReason` members (`src/lib/generation.ts`), and they
        * omit two, `already_generated` (the common case) and `raced`. Named
        * rather than measured: a line-distance in a comment is falsified by any
        * edit above it and nothing checks, which is how the first correction to
@@ -952,10 +952,10 @@ export async function pauseOrResumeStudioTemplate(
         const added = generation.created;
         // `countSkipReasons` (`@/lib/generation`) is the one place the skip
         // counts are reduced from `generation.skipped` — see its docblock for
-        // why a SIXTH `SkipReason` fails the build here instead of vanishing.
-        // That docblock says sixth, in those words; this line said fifth,
-        // pointing the reader at the very text that contradicts it. Five
-        // members exist today, so the one that would vanish is the next one.
+        // why a SEVENTH `SkipReason` fails the build here instead of
+        // vanishing. That docblock says seventh, in those words; this line said
+        // fifth, pointing the reader at the very text that contradicts it. Six
+        // members exist since #296, so the one that would vanish is the next.
         //
         // Kept whole rather than destructured (#296). The members were named
         // here one by one, which is what made every count after the first a

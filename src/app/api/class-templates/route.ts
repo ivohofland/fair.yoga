@@ -221,14 +221,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // live template whose every candidate date is taken. That used to be
   // impossible, so 201 with no counts was a complete answer; it no longer is.
   // The same counts the PATCH `active` arm carries — `countSkipReasons`
-  // (`@/lib/generation`) is the one place both reductions live, so a SIXTH
-  // `SkipReason` fails the build here rather than vanishing silently. Sixth,
-  // not fifth: the union has had five members since #194 added
-  // `already_this_week`, and the number is `countSkipReasons`' own docblock's
-  // — cited rather than recounted here, so the two do not drift. This line
-  // still said fifth after the branch's own correction pass, because the
-  // phrase WRAPS ACROSS A LINE BREAK: the line-oriented grep that found the
-  // sibling in `class-template-lifecycle.ts` could not match it.
+  // (`@/lib/generation`) is the one place both reductions live, so a SEVENTH
+  // `SkipReason` fails the build here rather than vanishing silently. Seventh,
+  // not sixth: the union has had six members since #296 added
+  // `blocked_by_other_family`, and the number is `countSkipReasons`' own
+  // docblock's — cited rather than recounted here, so the two do not drift.
+  // This line said fifth after the #194 branch's own correction pass, because
+  // the phrase WRAPS ACROSS A LINE BREAK: the line-oriented grep that found the
+  // sibling in `class-template-lifecycle.ts` could not match it. It is wrapped
+  // the same way now, so the grep that finds this one is
+  // `grep -rn -A1 'SIXTH\|SEVENTH' src/` or a `tr -d '\n'` first — the hazard
+  // did not go away by being written down.
   //
   // The create form reads these and stays on the page to say so when the
   // window isn't full (`template-form.tsx`); see the note at that read.

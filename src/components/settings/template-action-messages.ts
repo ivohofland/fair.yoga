@@ -146,14 +146,21 @@ export function resumeStudioMessage(
   scheduled: number,
   counts: SkipCounts,
 ): string {
-  // Delegates rather than duplicates. The two families' resume sentences are
-  // identical word for word — unlike `archiveMessage`/`archiveStudioMessage`,
-  // which are split because their wording genuinely differs — and this file
-  // already shares `pauseMessage` between both resolvers on exactly that
-  // basis. Kept as a separate export so the studio resolver's call site stays
-  // family-specific and a future divergence has somewhere to land; delegating
-  // so that until it does, the two cannot drift apart unnoticed.
-  return resumeMessage(added, scheduled, counts);
+  // Shares an implementation rather than duplicating one. The two families'
+  // resume sentences were identical word for word until #296, and this
+  // docblock's promise that "a future divergence has somewhere to land" is now
+  // spent: `blockedByOtherFamily` is that divergence, because each family has
+  // to name the OPPOSITE half of the teacher's schedule.
+  //
+  // Note what this is NOT. Delegating to `resumeMessage` with
+  // `blockedByOtherFamily` zeroed and appending a clause afterwards was tried
+  // and is wrong: with `scheduled > 0 && added === 0` and no other cause, the
+  // delegate takes its "Nothing needed adding." branch, and the appended clause
+  // then contradicts it in the same breath — "4 classes on your schedule.
+  // Nothing needed adding. 2 dates are held by your own classes." The clause
+  // has to be part of the cause list BEFORE that branch is chosen, which means
+  // passing it in rather than bolting it on.
+  return buildResumeSentence(added, scheduled, counts, STUDIO_FAMILY_OTHER_CLAUSE);
 }
 
 /**
@@ -205,7 +212,52 @@ export function resumeStudioMessage(
  * arguments measure.
  */
 export function resumeMessage(added: number, scheduled: number, counts: SkipCounts): string {
-  const { blockedByCancelled, slotTaken, alreadyThisWeek } = counts;
+  return buildResumeSentence(added, scheduled, counts, CLASS_FAMILY_OTHER_CLAUSE);
+}
+
+/**
+ * The `blockedByOtherFamily` clause, which is the ONE thing the two families
+ * do not share (#296).
+ *
+ * Each names the opposite half of the teacher's schedule: a class template's
+ * slot is held by a *studio* class, and a studio template's by one of their
+ * ordinary classes. Getting these two the wrong way round is the mistake this
+ * split exists to make possible to test — and note that on the studio side the
+ * neighbouring `slotTaken` clause ("N dates already had a class") means another
+ * STUDIO class, so "one of your own classes" is doing real work distinguishing
+ * the two rather than restating them.
+ *
+ * Number agreement follows `alreadyThisWeek`'s clause, the nearest neighbour in
+ * shape: singular pluralises the subject AND the agent, and switches is/are.
+ * Matching it rather than inventing a second convention is this file's rule.
+ */
+type OtherFamilyClause = (count: number) => string;
+
+const CLASS_FAMILY_OTHER_CLAUSE: OtherFamilyClause = (count) =>
+  count === 1
+    ? '1 date is held by a studio class.'
+    : `${count} dates are held by studio classes.`;
+
+const STUDIO_FAMILY_OTHER_CLAUSE: OtherFamilyClause = (count) =>
+  count === 1
+    ? '1 date is held by one of your own classes.'
+    : `${count} dates are held by your own classes.`;
+
+/**
+ * Everything the two families' resume sentences share, which is all of it bar
+ * the clause passed in.
+ *
+ * Private: the two exported entry points above are what callers use, so a
+ * resolver's call site stays family-specific and cannot silently be handed the
+ * wrong family's copy.
+ */
+function buildResumeSentence(
+  added: number,
+  scheduled: number,
+  counts: SkipCounts,
+  otherFamilyClause: OtherFamilyClause,
+): string {
+  const { blockedByCancelled, slotTaken, alreadyThisWeek, blockedByOtherFamily } = counts;
   // Assembled before the `scheduled === 0` branch, deliberately. An earlier
   // version built the causes only on the non-empty branch, so a teacher whose
   // every candidate date was taken by another class — `slotTaken: 4`, measured
@@ -231,6 +283,11 @@ export function resumeMessage(added: number, scheduled: number, counts: SkipCoun
         ? '1 date is still held by a class on your previous day.'
         : `${alreadyThisWeek} dates are still held by classes on your previous day.`,
     );
+  }
+  // Last, after the three that predate it (#296). The order is a copy decision
+  // and is pinned by a test, not left to how the `if`s happen to be stacked.
+  if (blockedByOtherFamily > 0) {
+    causes.push(otherFamilyClause(blockedByOtherFamily));
   }
 
   const head =

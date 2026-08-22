@@ -34,14 +34,17 @@
  * false positives the check has.
  *
  * The import-free rule is kept anyway because these names are meant to reach
- * the copy layer — `template-action-messages.ts` takes the counts as bare
- * numbers now, and a later change that hands it a `SkipReason` should not have
- * to relocate this module first. Being import-free is what keeps that option
+ * the copy layer, and since #296 they DO: `template-action-messages.ts` now
+ * type-imports `SkipCounts` from here, so this module is reached from a file
+ * the client bundle includes. Type-only, so nothing rides in at runtime — but
+ * that is now a property of the import KIND rather than of the import graph,
+ * and a later change that hands the copy layer a `SkipReason` as a value would
+ * make it load-bearing for real. Being import-free is what keeps that option
  * open; it is a precaution, not a fix for an existing bundle problem.
  */
 
 /**
- * Why a candidate date produced no row. Five reasons, five distinct origins —
+ * Why a candidate date produced no row. Six reasons, six distinct origins —
  * they are not interchangeable and the copy layer treats them differently.
  */
 export type SkipReason =
@@ -65,6 +68,22 @@ export type SkipReason =
    * produces. Do not "fix" it for consistency with `Class_teacher_slot_unique`.
    */
   | 'already_this_week'
+  /**
+   * A LIVE class from the OTHER family holds this teacher's slot (#296).
+   *
+   * Distinct from `slot_taken`, which means one of this teacher's own
+   * SAME-family classes holds it. Kept separate because the remedy differs:
+   * `slot_taken` is answered inside this family, and this one sends the
+   * teacher to the other half of their schedule. Folding the two would make
+   * one member carry two situations with two remedies — the conflation #288
+   * is open about.
+   *
+   * It is the one member whose copy is not shared between the families, since
+   * each has to name the opposite half: see `resumeMessage` and
+   * `resumeStudioMessage` (`components/settings/template-action-messages.ts`),
+   * which delegated wholesale until this member existed.
+   */
+  | 'blocked_by_other_family'
   /** The pre-check said free and `ON CONFLICT DO NOTHING` skipped it anyway — a concurrent insert landed in between (#164). */
   | 'raced';
 
@@ -81,8 +100,11 @@ export interface GenerationResult {
 
 /**
  * The `SkipReason` counts `SkipCounts` carries for a caller to surface to a
- * teacher — `blockedByCancelled`, `slotTaken`, and `alreadyThisWeek`. The
- * third is the newest (#194) and is now read the whole way through:
+ * teacher — `blockedByCancelled`, `slotTaken`, `alreadyThisWeek` and
+ * `blockedByOtherFamily`. The fourth is the newest (#296) and is the only one
+ * whose sentence differs between the two families, because each names the
+ * opposite half of the teacher's schedule. The third (#194) is read the whole
+ * way through:
  * `resumeMessage` names it as "N dates are still held by classes on your
  * previous day", which is what stops a resume after a day edit reporting
  * "4 classes on your schedule. Nothing needed adding." about four classes on
@@ -103,6 +125,8 @@ export interface SkipCounts {
   slotTaken: number;
   /** Candidate dates whose week this template already occupies (#194). */
   alreadyThisWeek: number;
+  /** Candidate dates a live class from the OTHER family holds (#296). */
+  blockedByOtherFamily: number;
 }
 
 /**
@@ -129,16 +153,28 @@ export interface SkipCounts {
  * Today, for the avoidance of exactly that: FOUR value-importing call sites
  * (#194 deleted `template-sync.ts` — check with the grep in this file's header
  * docblock, which is also where its hits are split into value-imports,
- * type-only imports and the one test), FIVE `SkipReason` members and THREE
+ * type-only imports and the one test), SIX `SkipReason` members and FOUR
  * `SkipCounts` fields. So the member that would vanish without the `switch`
- * below is now the SIXTH, and
+ * below is now the SEVENTH, and
  * `class-template-lifecycle.ts`'s `PauseTemplateResult` cites this docblock
  * for that number.
+ *
+ * #296 added the sixth member (`blocked_by_other_family`) and the fourth
+ * count, and both halves of this paragraph's warning played out as written.
+ * The `switch` below failed the build at its `never` arm — measured by
+ * mutation, `Type '"blocked_by_other_family"' is not assignable to type
+ * 'never'` — which is the half that works. The COUNT reached the wire, both
+ * routes, both forms and the copy layer without a single one of them failing,
+ * and that is NOT this guard working: it is #296's task 4a, which had already
+ * made every one of those hops carry `SkipCounts` whole rather than its
+ * members by name. Before that task the new count would have vanished at all
+ * four, exactly as this paragraph predicts.
  */
 export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
   let blockedByCancelled = 0;
   let slotTaken = 0;
   let alreadyThisWeek = 0;
+  let blockedByOtherFamily = 0;
   for (const { reason } of skipped) {
     switch (reason) {
       case 'blocked_by_cancelled':
@@ -150,6 +186,9 @@ export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
       case 'already_this_week':
         alreadyThisWeek += 1;
         break;
+      case 'blocked_by_other_family':
+        blockedByOtherFamily += 1;
+        break;
       case 'already_generated':
       case 'raced':
         // Deliberately excluded — see `SkipCounts`'s own docblock.
@@ -160,5 +199,5 @@ export function countSkipReasons(skipped: readonly SkippedSlot[]): SkipCounts {
       }
     }
   }
-  return { blockedByCancelled, slotTaken, alreadyThisWeek };
+  return { blockedByCancelled, slotTaken, alreadyThisWeek, blockedByOtherFamily };
 }

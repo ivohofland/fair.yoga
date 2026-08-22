@@ -147,7 +147,7 @@ describe('resolveTemplateConfirmation', () => {
         templateKind: 'class',
         scheduled: 4,
         added: 3,
-        counts: { blockedByCancelled: 2, slotTaken: 1, alreadyThisWeek: 5 },
+        counts: { blockedByCancelled: 2, slotTaken: 1, alreadyThisWeek: 5, blockedByOtherFamily: 0 },
       }),
     ).toBe(
       '4 classes on your schedule. 1 date already had a class. 2 cancelled classes still hold those dates. 5 dates are still held by classes on your previous day.',
@@ -266,7 +266,7 @@ describe('resolveStudioConfirmation', () => {
         templateKind: 'studio',
         scheduled: 4,
         added: 3,
-        counts: { blockedByCancelled: 2, slotTaken: 1, alreadyThisWeek: 5 },
+        counts: { blockedByCancelled: 2, slotTaken: 1, alreadyThisWeek: 5, blockedByOtherFamily: 0 },
       }),
     ).toBe(
       '4 classes on your schedule. 1 date already had a class. 2 cancelled classes still hold those dates. 5 dates are still held by classes on your previous day.',
@@ -304,40 +304,40 @@ describe('resolveStudioConfirmation', () => {
 
 describe('resumeStudioMessage', () => {
   it('reports the window when the resume filled it', () => {
-    expect(resumeStudioMessage(4, 4, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0 })).toBe('4 classes on your schedule.');
+    expect(resumeStudioMessage(4, 4, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe('4 classes on your schedule.');
   });
 
   it('says nothing needed adding when the window was already full', () => {
-    expect(resumeStudioMessage(0, 4, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0 })).toBe(
+    expect(resumeStudioMessage(0, 4, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe(
       '4 classes on your schedule. Nothing needed adding.',
     );
   });
 
   it('reports a short window without claiming why it is short', () => {
-    expect(resumeStudioMessage(2, 2, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0 })).toBe('2 classes on your schedule.');
+    expect(resumeStudioMessage(2, 2, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe('2 classes on your schedule.');
   });
 
   it('agrees in number at one class', () => {
-    expect(resumeStudioMessage(1, 1, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0 })).toBe('1 class on your schedule.');
-    expect(resumeStudioMessage(0, 1, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0 })).toBe(
+    expect(resumeStudioMessage(1, 1, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe('1 class on your schedule.');
+    expect(resumeStudioMessage(0, 1, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe(
       '1 class on your schedule. Nothing needed adding.',
     );
   });
 
   it('names a taken slot rather than leaving a smaller number unexplained', () => {
-    expect(resumeStudioMessage(3, 4, { blockedByCancelled: 0, slotTaken: 1, alreadyThisWeek: 0 })).toBe(
+    expect(resumeStudioMessage(3, 4, { blockedByCancelled: 0, slotTaken: 1, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe(
       '4 classes on your schedule. 1 date already had a class.',
     );
   });
 
   it('names the cancelled classes still holding an empty window', () => {
-    expect(resumeStudioMessage(0, 0, { blockedByCancelled: 4, slotTaken: 0, alreadyThisWeek: 0 })).toBe(
+    expect(resumeStudioMessage(0, 0, { blockedByCancelled: 4, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe(
       'Nothing is scheduled from this template. 4 cancelled classes still hold those dates.',
     );
   });
 
   it('stays silent about cause when there is none to name', () => {
-    expect(resumeStudioMessage(0, 0, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0 })).toBe('Nothing is scheduled from this template.');
+    expect(resumeStudioMessage(0, 0, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe('Nothing is scheduled from this template.');
   });
 
   // The argument order is delta-first to match `archiveStudioMessage` even
@@ -350,36 +350,36 @@ describe('resumeStudioMessage', () => {
   // this test and every other one. The guard that does bite is the unequal
   // fixture in `resolveStudioConfirmation`'s own test above.
   it('distinguishes its two arguments', () => {
-    expect(resumeStudioMessage(0, 4, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0 })).not.toBe(resumeStudioMessage(4, 0, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0 }));
+    expect(resumeStudioMessage(0, 4, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).not.toBe(resumeStudioMessage(4, 0, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 0 }));
   });
 });
 
 describe('resumeMessage (class)', () => {
   it('says nothing extra when the window filled', () => {
-    expect(resumeMessage(4, 4, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0 })).toBe('4 classes on your schedule.');
+    expect(resumeMessage(4, 4, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe('4 classes on your schedule.');
   });
 
   it('names a taken slot rather than leaving a smaller number unexplained', () => {
-    expect(resumeMessage(3, 4, { blockedByCancelled: 0, slotTaken: 1, alreadyThisWeek: 0 })).toBe(
+    expect(resumeMessage(3, 4, { blockedByCancelled: 0, slotTaken: 1, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe(
       '4 classes on your schedule. 1 date already had a class.',
     );
   });
 
   it('names the cancelled classes still holding an empty window', () => {
-    expect(resumeMessage(0, 0, { blockedByCancelled: 4, slotTaken: 0, alreadyThisWeek: 0 })).toBe(
+    expect(resumeMessage(0, 0, { blockedByCancelled: 4, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe(
       'Nothing is scheduled from this template. 4 cancelled classes still hold those dates.',
     );
   });
 
   it('stays silent about cause when there is none to name', () => {
-    expect(resumeMessage(0, 0, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0 })).toBe('Nothing is scheduled from this template.');
+    expect(resumeMessage(0, 0, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe('Nothing is scheduled from this template.');
   });
 
   // The singular was unreachable by the pins above, which only ever passed 4.
   // It read "1 cancelled class still hold those dates" — a verb after the
   // count, the shape `archiveMessage`'s docblock warns about.
   it('agrees with its verb when a single cancelled class holds a date', () => {
-    expect(resumeMessage(0, 0, { blockedByCancelled: 1, slotTaken: 0, alreadyThisWeek: 0 })).toBe(
+    expect(resumeMessage(0, 0, { blockedByCancelled: 1, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe(
       'Nothing is scheduled from this template. 1 cancelled class still holds that date.',
     );
   });
@@ -388,13 +388,13 @@ describe('resumeMessage (class)', () => {
   // one window. Naming only the taken slot here is the silence #192 was filed
   // about.
   it('names both causes on a window that has each', () => {
-    expect(resumeMessage(0, 2, { blockedByCancelled: 1, slotTaken: 1, alreadyThisWeek: 0 })).toBe(
+    expect(resumeMessage(0, 2, { blockedByCancelled: 1, slotTaken: 1, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe(
       '2 classes on your schedule. 1 date already had a class. 1 cancelled class still holds that date.',
     );
   });
 
   it('names the cancelled dates even when some classes are scheduled', () => {
-    expect(resumeMessage(0, 2, { blockedByCancelled: 2, slotTaken: 0, alreadyThisWeek: 0 })).toBe(
+    expect(resumeMessage(0, 2, { blockedByCancelled: 2, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe(
       '2 classes on your schedule. 2 cancelled classes still hold those dates.',
     );
   });
@@ -403,13 +403,13 @@ describe('resumeMessage (class)', () => {
   // empty-window branch: every candidate date held by another of this teacher's
   // classes. `slotTaken` was measured correctly and then discarded.
   it('names the taken slots on an empty window, not just the cancelled ones', () => {
-    expect(resumeMessage(0, 0, { blockedByCancelled: 0, slotTaken: 4, alreadyThisWeek: 0 })).toBe(
+    expect(resumeMessage(0, 0, { blockedByCancelled: 0, slotTaken: 4, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe(
       'Nothing is scheduled from this template. 4 dates already had a class.',
     );
   });
 
   it('names both causes on an empty window that has each', () => {
-    expect(resumeMessage(0, 0, { blockedByCancelled: 2, slotTaken: 2, alreadyThisWeek: 0 })).toBe(
+    expect(resumeMessage(0, 0, { blockedByCancelled: 2, slotTaken: 2, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe(
       'Nothing is scheduled from this template. 2 dates already had a class. 2 cancelled classes still hold those dates.',
     );
   });
@@ -417,7 +417,7 @@ describe('resumeMessage (class)', () => {
   // `slotTaken > 1` was unreached — every fixture used 0 or 1 — so replacing
   // the plural branch with a bare 'date' shipped "2 date already had a class."
   it('pluralises the taken-slot count', () => {
-    expect(resumeMessage(1, 4, { blockedByCancelled: 0, slotTaken: 3, alreadyThisWeek: 0 })).toBe(
+    expect(resumeMessage(1, 4, { blockedByCancelled: 0, slotTaken: 3, alreadyThisWeek: 0, blockedByOtherFamily: 0 })).toBe(
       '4 classes on your schedule. 3 dates already had a class.',
     );
   });
@@ -428,7 +428,7 @@ describe('resumeMessage (class)', () => {
   // "4 classes on your schedule. Nothing needed adding." about four classes on
   // the weekday they just abandoned.
   it('names the weeks the previous day still holds', () => {
-    expect(resumeMessage(0, 4, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 4 })).toBe(
+    expect(resumeMessage(0, 4, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 4, blockedByOtherFamily: 0 })).toBe(
       '4 classes on your schedule. 4 dates are still held by classes on your previous day.',
     );
   });
@@ -437,7 +437,7 @@ describe('resumeMessage (class)', () => {
   // "is/are" and "a class/classes" both change with number, where "had" does
   // not. That is the trap this file's `resumeMessage` docblock records.
   it('agrees with its verb when a single date is held by the previous day', () => {
-    expect(resumeMessage(0, 4, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 1 })).toBe(
+    expect(resumeMessage(0, 4, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 1, blockedByOtherFamily: 0 })).toBe(
       '4 classes on your schedule. 1 date is still held by a class on your previous day.',
     );
   });
@@ -446,7 +446,7 @@ describe('resumeMessage (class)', () => {
   // distinct: slotTaken, blockedByCancelled, alreadyThisWeek. The new one is
   // last so every sentence pinned above keeps the prefix it already had.
   it('orders the three causes: taken slots, cancelled holds, previous day', () => {
-    expect(resumeMessage(0, 4, { blockedByCancelled: 2, slotTaken: 1, alreadyThisWeek: 3 })).toBe(
+    expect(resumeMessage(0, 4, { blockedByCancelled: 2, slotTaken: 1, alreadyThisWeek: 3, blockedByOtherFamily: 0 })).toBe(
       '4 classes on your schedule. 1 date already had a class. 2 cancelled classes still hold those dates. 3 dates are still held by classes on your previous day.',
     );
   });
@@ -454,16 +454,109 @@ describe('resumeMessage (class)', () => {
   // The empty-window head takes the clause too — the causes are assembled
   // before the `scheduled === 0` branch, for the reason that branch records.
   it('names the previous day on an empty window as well', () => {
-    expect(resumeMessage(0, 0, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 2 })).toBe(
+    expect(resumeMessage(0, 0, { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 2, blockedByOtherFamily: 0 })).toBe(
       'Nothing is scheduled from this template. 2 dates are still held by classes on your previous day.',
+    );
+  });
+
+  /**
+   * #296. The first clause the two families do NOT share: each names the
+   * OTHER half of the teacher's schedule, so the class family says "a studio
+   * class" and the studio family says "one of your own classes".
+   *
+   * Asserted as whole sentences rather than `toContain`, because the thing
+   * that can go wrong here is the two families getting each other's sentence —
+   * a swap that every substring check in the obvious shape ("contains
+   * 'studio'") would pass.
+   */
+  it('names the studio family when it holds a class-family slot', () => {
+    expect(
+      resumeMessage(0, 4, {
+        blockedByCancelled: 0,
+        slotTaken: 0,
+        alreadyThisWeek: 0,
+        blockedByOtherFamily: 2,
+      }),
+    ).toBe('4 classes on your schedule. 2 dates are held by studio classes.');
+  });
+
+  it('says it in the singular for one date', () => {
+    expect(
+      resumeMessage(0, 4, {
+        blockedByCancelled: 0,
+        slotTaken: 0,
+        alreadyThisWeek: 0,
+        blockedByOtherFamily: 1,
+      }),
+    ).toBe('4 classes on your schedule. 1 date is held by a studio class.');
+  });
+
+  it('orders the other-family clause after the three that predate it', () => {
+    // The cause order is `slotTaken`, `blockedByCancelled`, `alreadyThisWeek`,
+    // then this one. Pinned because the order is a copy decision, not an
+    // accident of how the `if`s happen to be stacked.
+    expect(
+      resumeMessage(0, 4, {
+        blockedByCancelled: 2,
+        slotTaken: 1,
+        alreadyThisWeek: 3,
+        blockedByOtherFamily: 4,
+      }),
+    ).toBe(
+      '4 classes on your schedule. 1 date already had a class. 2 cancelled classes still hold those dates. 3 dates are still held by classes on your previous day. 4 dates are held by studio classes.',
     );
   });
 });
 
-describe('the two families resume with one sentence', () => {
-  // They are word-for-word identical, and `resumeStudioMessage` delegates so
-  // they cannot drift. If a future change makes them differ on purpose, delete
-  // this test in the same commit — do not let it rot into a false claim.
+describe('resumeStudioMessage names the class family, where resumeMessage names the studio one', () => {
+  it('names the class family when it holds a studio-family slot', () => {
+    expect(
+      resumeStudioMessage(0, 4, {
+        blockedByCancelled: 0,
+        slotTaken: 0,
+        alreadyThisWeek: 0,
+        blockedByOtherFamily: 2,
+      }),
+    ).toBe('4 classes on your schedule. 2 dates are held by your own classes.');
+  });
+
+  it('says it in the singular for one date', () => {
+    expect(
+      resumeStudioMessage(0, 4, {
+        blockedByCancelled: 0,
+        slotTaken: 0,
+        alreadyThisWeek: 0,
+        blockedByOtherFamily: 1,
+      }),
+    ).toBe('4 classes on your schedule. 1 date is held by one of your own classes.');
+  });
+
+  it('does not use the class family sentence', () => {
+    // The swap this whole split exists to prevent: telling a teacher resuming
+    // a STUDIO template that a studio class holds the slot, which is what
+    // `slot_taken` already means on that side.
+    const msg = resumeStudioMessage(0, 4, {
+      blockedByCancelled: 0,
+      slotTaken: 0,
+      alreadyThisWeek: 0,
+      blockedByOtherFamily: 2,
+    });
+    expect(msg).not.toContain('studio class');
+  });
+});
+
+describe('the two families resume with one sentence, except where they must not', () => {
+  // NARROWED at #296, not deleted. The two sentences WERE word-for-word
+  // identical and `resumeStudioMessage` delegated wholesale; they now differ in
+  // exactly one clause — the one naming the other family — because each has to
+  // name the opposite half of the teacher's schedule. So this claim is still
+  // true and still worth pinning, over the counts that predate that clause.
+  //
+  // `blockedByOtherFamily` is deliberately 0 in every case below, and that is
+  // the whole narrowing: the divergent clause has its own tests above, which
+  // assert the two families produce DIFFERENT sentences for a non-zero value.
+  // Widening these cases to a non-zero sixth column would not strengthen this
+  // test, it would falsify it.
   it('answers identically for every case pinned above', () => {
     // The fifth column is `alreadyThisWeek` (#194). It is 0 in production on
     // the studio side until #284 gives that generator a producer for the
@@ -486,8 +579,14 @@ describe('the two families resume with one sentence', () => {
       [0, 0, 0, 0, 2],
     ];
     for (const [added, scheduled, blocked, taken, thisWeek] of cases) {
-      expect(resumeStudioMessage(added, scheduled, { blockedByCancelled: blocked, slotTaken: taken, alreadyThisWeek: thisWeek })).toBe(
-        resumeMessage(added, scheduled, { blockedByCancelled: blocked, slotTaken: taken, alreadyThisWeek: thisWeek }),
+      const counts = {
+        blockedByCancelled: blocked,
+        slotTaken: taken,
+        alreadyThisWeek: thisWeek,
+        blockedByOtherFamily: 0,
+      };
+      expect(resumeStudioMessage(added, scheduled, counts)).toBe(
+        resumeMessage(added, scheduled, counts),
       );
     }
   });
@@ -561,7 +660,7 @@ describe('the two toggle payloads are not interchangeable', () => {
       templateKind: 'studio',
       scheduled: 4,
       added: 0,
-      counts: { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0 },
+      counts: { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 0 },
     };
     // @ts-expect-error studio payloads must never satisfy the class resolver
     resolveTemplateConfirmation(studio);
@@ -571,7 +670,7 @@ describe('the two toggle payloads are not interchangeable', () => {
       templateKind: 'class',
       scheduled: 4,
       added: 0,
-      counts: { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0 },
+      counts: { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOtherFamily: 0 },
     };
     // @ts-expect-error class payloads must never satisfy the studio resolver
     resolveStudioConfirmation(cls);
