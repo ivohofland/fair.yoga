@@ -73,6 +73,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // starts — so `generateInstancesForTemplate`'s `createManyAndReturn`
   // (`skipDuplicates: true`, a bare `ON CONFLICT DO NOTHING`) never gets a
   // chance to raise anything here even though it shares this transaction.
+  //
+  // TRUE OF P2002, FALSE OF `YG001` (#296), which is why `conflictLevel`
+  // exists below. Generation shares this transaction, and its `Class` insert
+  // fires a DIFFERENT trigger from the one the template insert fires: the
+  // template's reads `StudioClassTemplate`, generation's reads `StudioClass`.
+  // So this catch can now be reached by two conflicts that mean different
+  // things to a teacher — "you have a recurring studio class on Tuesdays at
+  // 09:00" and "you have a studio class on one of those Tuesdays" — and only
+  // the statement that raised knows which. Answering both with the template
+  // sentence sends a teacher hunting for a recurring studio class that does
+  // not exist.
+  let conflictLevel: 'template' | 'instance' | null = null;
   let template: {
     created: Prisma.ClassTemplateGetPayload<{
       include: { teacher: { select: { defaultTimezone: true } } };
@@ -100,7 +112,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         },
         include: { teacher: { select: { defaultTimezone: true } } },
       });
-      const generation = await generateInstancesForTemplate(tx, created);
+      const generation = await generateInstancesForTemplate(tx, created).catch((err: unknown) => {
+        // Set on the failure path only, immediately before rethrowing, so the
+        // catch below can word the 409 for the statement that actually raised.
+        if (isCrossFamilySlotConflict(err)) conflictLevel = 'instance';
+        throw err;
+      });
       return { created, generation };
     },
       // FOUR sequential statements on a 2GB VPS — the create, generation's two
@@ -215,11 +232,21 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // within this family, this one sends the teacher to the other half of
     // their schedule.
     if (isCrossFamilySlotConflict(err)) {
-      return respondError(
-        'You already have a recurring studio class on that day at that time.',
-        409,
-        'CROSS_FAMILY_STUDIO_TEMPLATE_SLOT',
-      );
+      // Which sentence depends on which statement raised — see `conflictLevel`
+      // and the note above the transaction. `'template'` is the default rather
+      // than a measured value: the template insert runs FIRST, so anything that
+      // reaches here without generation having tagged it came from that insert.
+      return conflictLevel === 'instance'
+        ? respondError(
+            'You already have a studio class on one of those dates at that time.',
+            409,
+            'CROSS_FAMILY_STUDIO_SLOT',
+          )
+        : respondError(
+            'You already have a recurring studio class on that day at that time.',
+            409,
+            'CROSS_FAMILY_STUDIO_TEMPLATE_SLOT',
+          );
     }
     throw err;
   }

@@ -10,7 +10,6 @@ import type { PrismaClient } from '@prisma/client';
 import type { GenerationResult, SkippedSlot } from '@/lib/generation';
 import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
 import { classStartInstant, mondayOf } from '@/lib/timezone';
-import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { ACTIVE_TEMPLATE_WHERE } from '@/lib/template-selection';
 import { log } from '@/lib/log';
 
@@ -332,6 +331,21 @@ export async function generateInstancesForTemplate(
   //
   // `StudioClass` gained `@@index([teacherId, date])` in this issue's migration
   // (#205, folded in) precisely so this read does not scan.
+  //
+  // known-open (#296): this pre-check and the trigger behind it are both
+  // unlocked reads, so two transactions writing opposite families at one slot
+  // can still both commit. Measured at 200 of 200 runs under a FORCED overlap
+  // — a rate conditional on racing, not a rate of races, which was never
+  // measured. Accepted rather than closed with an advisory lock because #298's
+  // recorded decision turns this invariant into a composite foreign key on an
+  // extracted `CalendarEntry`, where the second writer blocks on an
+  // uncommitted index entry instead. `docs/lock-order.md`, "The cross-family
+  // slot guard reads, and does not lock", carries the full argument and the
+  // condition for reopening it.
+  //
+  // Carried here as well as on the studio twin deliberately: the exposure is
+  // identical on both sides, and a reader who lands on this file first should
+  // not have to find the other one to learn the guard is not airtight.
   const foreign = await db.studioClass.findMany({
     where: {
       teacherId: template.teacherId,
@@ -423,56 +437,58 @@ export async function generateInstancesForTemplate(
     free.push(date);
   }
 
-  const rowFor = (date: Date) => ({
-    teacherId: template.teacherId,
-    teacherRoomId: template.teacherRoomId,
-    templateId: template.id,
-    classType: template.classType,
-    description: template.description,
-    date,
-    startTime: template.startTime,
-    durationMinutes: template.durationMinutes,
-    roomCost: template.roomCost,
-    minRate: template.minRate,
-    targetRate: template.targetRate,
-    minStudents: template.minStudents,
-    maxStudents: template.maxStudents,
-    cancelDeadline: template.cancelDeadline,
-    autoCancelCheck: template.autoCancelCheck,
-    status: 'open' as const,
-  });
-
-  // `skipDuplicates` absorbs a unique violation; it does NOT absorb a RAISEd
-  // exception, which aborts the whole statement — so one date lost to the
-  // cross-family guard between the pre-check above and this insert would cost
-  // all four. Measured on the studio twin before this fallback existed: the
-  // batch came back `PrismaClientUnknownRequestError … code: "YG001"` and the
-  // generator THREW rather than skipping one date.
+  // ONE STATEMENT, NO CATCH, and #296 is the second issue to reach for one here
+  // and be wrong. `class-generator.ts`'s own `claimTemplateForGeneration`
+  // already says it: "Do not reintroduce a `catch` here; there is nothing it
+  // can do that the constraint does not."
   //
-  // The retry is per date so the losers can be told apart from the winners. It
-  // adds nothing to `skipped` itself: the `landed` reconciliation below already
-  // turns every date that did not come back into `'raced'`, which is the honest
-  // reason — the pre-check said free and something landed in between.
-  let inserted: Array<{ date: Date }> = [];
-  if (free.length > 0) {
-    try {
-      inserted = await db.class.createManyAndReturn({
-        data: free.map(rowFor),
-        skipDuplicates: true,
-        select: { date: true },
-      });
-    } catch (err) {
-      if (!isCrossFamilySlotConflict(err)) throw err;
-      inserted = [];
-      for (const date of free) {
-        try {
-          inserted.push(await db.class.create({ data: rowFor(date), select: { date: true } }));
-        } catch (perDate) {
-          if (!isCrossFamilySlotConflict(perDate)) throw perDate;
-        }
-      }
-    }
-  }
+  // A `catch` with a per-date retry shipped on this branch and was measured
+  // non-functional. Every production caller passes a TRANSACTION client (both
+  // sweeps, both POST routes, both pause/resume services), Prisma takes no
+  // savepoint per statement, and a `RAISE EXCEPTION` aborts the Postgres
+  // transaction — so the first retried `create` returns `25P02 current
+  // transaction is aborted`, which `isCrossFamilySlotConflict` correctly
+  // declines, and the rethrow costs the whole window anyway. It also cost more
+  // than that: the escaping error stopped being the `YG001` the eight route
+  // branches match, so a 409 the app knew how to word became a 500.
+  //
+  // The unit tests could not see it. They call this function with a BARE
+  // client, where every statement is its own transaction and the retry works —
+  // so the mutation recorded for it came back green in a configuration
+  // production never uses. `generation-transaction.test.ts` now drives this
+  // path through a real `$transaction` for that reason.
+  //
+  // What the loss costs, stated rather than waved past: a cross-family row
+  // committing between the pre-check above and this insert costs this
+  // template its whole window for THIS run. The next sweep's pre-check sees
+  // the now-committed row and skips exactly that date, so it self-corrects
+  // within the hour — and on the two POST routes the same `YG001` becomes the
+  // 409 those routes were given a branch for.
+  const inserted =
+    free.length === 0
+      ? []
+      : await db.class.createManyAndReturn({
+          data: free.map((date) => ({
+            teacherId: template.teacherId,
+            teacherRoomId: template.teacherRoomId,
+            templateId: template.id,
+            classType: template.classType,
+            description: template.description,
+            date,
+            startTime: template.startTime,
+            durationMinutes: template.durationMinutes,
+            roomCost: template.roomCost,
+            minRate: template.minRate,
+            targetRate: template.targetRate,
+            minStudents: template.minStudents,
+            maxStudents: template.maxStudents,
+            cancelDeadline: template.cancelDeadline,
+            autoCancelCheck: template.autoCancelCheck,
+            status: 'open' as const,
+          })),
+          skipDuplicates: true,
+          select: { date: true },
+        });
 
   // A free date that did not come back lost a race with a concurrent insert.
   // Before #164 this was the P2002 that poisoned the transaction; it is now an

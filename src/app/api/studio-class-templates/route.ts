@@ -57,6 +57,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // before generation starts, so `generateStudioInstancesForTemplate`'s
   // `createManyAndReturn` (`skipDuplicates: true`) never gets a chance to
   // raise anything here even though it shares this transaction.
+  let conflictLevel: 'template' | 'instance' | null = null;
   let template: {
     created: Prisma.StudioClassTemplateGetPayload<{
       include: { teacher: { select: { defaultTimezone: true } } };
@@ -72,7 +73,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         },
         include: { teacher: { select: { defaultTimezone: true } } },
       });
-      const generation = await generateStudioInstancesForTemplate(tx, created);
+      const generation = await generateStudioInstancesForTemplate(tx, created).catch((err: unknown) => {
+        // Set on the failure path only, immediately before rethrowing, so the
+        // catch below can word the 409 for the statement that actually raised.
+        if (isCrossFamilySlotConflict(err)) conflictLevel = 'instance';
+        throw err;
+      });
       return { created, generation };
     },
       // Same reasoning as the class family's POST — both or neither. Raising
@@ -96,11 +102,21 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // within this family, this one sends the teacher to the other half of
     // their schedule.
     if (isCrossFamilySlotConflict(err)) {
-      return respondError(
-        'You already have a recurring class on that day at that time.',
-        409,
-        'CROSS_FAMILY_CLASS_TEMPLATE_SLOT',
-      );
+      // Which sentence depends on which statement raised — see `conflictLevel`
+      // and the note above the transaction. `'template'` is the default rather
+      // than a measured value: the template insert runs FIRST, so anything that
+      // reaches here without generation having tagged it came from that insert.
+      return conflictLevel === 'instance'
+        ? respondError(
+            'You already have a class on one of those dates at that time.',
+            409,
+            'CROSS_FAMILY_CLASS_SLOT',
+          )
+        : respondError(
+            'You already have a recurring class on that day at that time.',
+            409,
+            'CROSS_FAMILY_CLASS_TEMPLATE_SLOT',
+          );
     }
     throw err;
   }
