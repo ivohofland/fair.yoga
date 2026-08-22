@@ -11,6 +11,7 @@ import {
 import { createStudioClassSchema } from '@/lib/schemas';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
+import { log } from '@/lib/log';
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const session = await requireTeacher(request);
@@ -68,7 +69,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // above. Same status, deliberately different sentence: that clash is fixed
     // within this family, this one sends the teacher to the other half of
     // their schedule.
+    // LOGGED before responding, for the reason the five SERVICE sites now carry:
+    // `respondError` does not log and `withErrorHandler` never sees a response
+    // that was RETURNED rather than thrown, so catching here is what removes
+    // the server-side record. The first fix for this asymmetry moved it rather
+    // than closing it — it logged the two service returns and left five route
+    // catches silent.
     if (isCrossFamilySlotConflict(err)) {
+      log.warn(
+        { err, teacherId: session.teacherId },
+        'studio class create refused: the class family holds that slot',
+      );
       return respondError(
         'You already have a class at that date and time.',
         409,
