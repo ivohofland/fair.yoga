@@ -338,13 +338,9 @@ test.describe('One-off studio classes', () => {
     await page.getByLabel('Hourly rate').fill('40');
     await page.getByRole('button', { name: 'Log class' }).click();
 
-    // On success this page both renders a `SettledNotice` ("Created") and
-    // fires `router.push` to the same destination in the same tick — the
-    // notice is the fallback for when the push does not commit, and the
-    // push "normally unmounts this page" first (`studio-class/new/page.tsx`,
-    // comment above the `router.push` call). Whether a given run paints the
-    // notice or the push lands first is a genuine race, so wait on the
-    // destination both paths share rather than the transient notice.
+    // Wait on the destination, not the `Created` notice: asserting the
+    // notice and clicking its button races the page's own navigation — see
+    // `docs/superpowers/specs/2026-08-22-studio-family-e2e-design.md:182`.
     await page.waitForURL(/\/studio-class\/(?!new$)[\w-]+$/, { timeout: 10_000 });
 
     const created = await prisma.studioClass.findFirstOrThrow({
