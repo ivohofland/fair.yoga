@@ -98,4 +98,26 @@ test.describe('Studio class templates', () => {
     // Creation itself filled the window — no cron has fired.
     expect(await prisma.studioClass.count({ where: { templateId } })).toBe(4);
   });
+
+  test('the four generated classes are on the schedule, and refuse removal', async ({ page }) => {
+    await page.goto('/');
+
+    // `StudioClassCard` renders "<classType> · <location> · Studio class"
+    // (`class-list.tsx:140`). All four dates (+3, +10, +17, +24 days) sit
+    // inside the schedule's 28-day window.
+    const cards = page.getByRole('link', { name: /Studio Flow · Community Studio · Studio class/ });
+    await expect(cards).toHaveCount(4);
+
+    // A generated class dated today or later cannot be removed — the sweep
+    // would recreate it within the hour, so the page draws no Remove control
+    // (`studio-class-deletion.ts`, issue 279). Asserted HERE, before the
+    // archive below deletes all four.
+    const first = await prisma.studioClass.findFirstOrThrow({
+      where: { templateId },
+      orderBy: { date: 'asc' },
+    });
+    await page.goto(`/studio-class/${first.id}`);
+    await expect(page.getByRole('button', { name: 'Cancel class' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Remove this class' })).toHaveCount(0);
+  });
 });
