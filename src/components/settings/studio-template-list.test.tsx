@@ -1,21 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen, getNodeText } from '@testing-library/react';
 import type { StudioClassTemplate } from '@prisma/client';
-// The pure-JS Decimal, the same import `class-list.test.tsx:5` uses — a
-// component test must not pull in the query engine.
+// The pure-JS Decimal — a component test must not pull in the query engine.
 import { Decimal } from '@prisma/client/runtime/library';
 import { StudioTemplateList } from './studio-template-list';
 
 /**
- * #281. Three sections are rendered from one array, and they drifted: the
- * active row titled itself with the class type and kept the location in its
- * caption, while the paused and archived rows did neither — so pausing a
- * template visibly renamed it, on the same page, in the section directly below
- * the one it had just left.
+ * #281. `StudioTemplateList` renders its active, paused, and archived
+ * sections from one array, each with its own title expression and its own
+ * caption expression — this file is what holds those three in agreement.
  *
  * Every case here renders ONE template so the query is unambiguous, and every
- * case asserts the same two things, because the risk is divergence between the
- * sections rather than any single section being wrong.
+ * case asserts the same two things, because the risk this guards against is
+ * divergence *between* the sections rather than any single section being
+ * wrong.
  */
 const base = {
   id: 't1',
