@@ -193,6 +193,72 @@ restored trigger was rejected as expected, confirming the harness exercised a
 live, correctly-restored guard rather than a bypassed one. 200/200 is common
 by this section's own stated criterion, not rare: this section is reopened.
 
+**What that number is, and what it is not.** The harness holds each transaction
+open for 40ms after its `INSERT` precisely so that the two overlap, so
+`200 / 200` is a rate **conditional on an overlap**, not a rate of overlaps.
+What it establishes is that the guard contributes nothing once two writes
+genuinely race — which the dropped-trigger control confirms from the other
+side. How often two slot writes for one teacher actually overlap was **not**
+measured, and no number in this document should be read as though it were.
+Stated plainly because this section exists to punish exactly that substitution.
+
+### 4.2.1 Resolved: the residual is accepted, and #298 deletes it
+
+The reopening asked for the advisory lock to return. Two forms were derived;
+both are rejected, recorded here so neither is re-proposed.
+
+- **At the call sites** — `pg_advisory_xact_lock(<ns>, hash32(slot))` as the
+  first statement of every claiming transaction, ordered `slot -> Class` like
+  `lockAnnouncementSlot`. Rejected on cost and on durability. **Four of the
+  claiming sites issue no transaction at all**: `prisma.class.create`
+  (`api/classes/route.ts:64`), `prisma.studioClass.create`
+  (`api/studio-classes/route.ts:39`), `prisma.studioClass.update`
+  (`api/studio-classes/[id]/route.ts:71`), and `updateClass`'s bare
+  `db.class.updateMany` (`class-lifecycle.ts:1220`, whose first parameter is a
+  full `PrismaClient`). An `xact` advisory lock in autocommit is taken and
+  released by its own implicit transaction before the next statement runs — the
+  reason `db-locks.ts` brands `TransactionClientOnly` at all — so this design
+  means **introducing an interactive transaction at four hot paths**, one of
+  which `docs/lock-order.md` already measures as half of a 32-of-100 `40P01`.
+  It also lands a new ordering section in a document that has been wrong about
+  its own membership four separate times, to be unwound a few issues later.
+- **Inside the four trigger functions** — the same lock taken before the
+  sibling `SELECT`. Cheaper: it works in autocommit, because the statement's
+  implicit transaction is exactly the right scope, and it cannot be forgotten
+  by a door nobody enumerated, which is the property §4.1 values above closing
+  a race. Rejected anyway, and not on the four lines: its real cost is an
+  ordering derivation for a wait edge **no line in `src/` issues** — the #103
+  failure mode `docs/lock-order.md` records under "The RESTRICT trigger is a
+  wait edge" — and that derivation is discarded on the same day the triggers
+  are. Note for anyone re-reading the argument that reopened this section:
+  `docs/lock-order.md` does **not** rule this design out. It warns about
+  invisible trigger wait edges; it does not prohibit authoring one.
+
+**Both are deleted by #298, which is decided rather than pending.** That
+issue's recorded decision (C and D together, both as extraction) pulls the
+calendar identity out into `CalendarEntry` and enforces disjoint occupancy with
+a **composite foreign key** — `UNIQUE(id, kind)` on the parent, each child
+holding `(entryId, kind)` under a `CHECK` pinning its own literal — with the
+slot constraint partial on `cancelledAt`. Its consequences table reads:
+*"#296 | withdrawn — the invariant becomes a composite FK."*
+
+That does not defer this race, it **removes** it, by a mechanism this project
+has already written down. `docs/lock-order.md`, "The slot key is a wait edge":
+two transactions writing the same key make the second wait on the first's
+uncommitted index entry, as a `ShareLock` on the first's transaction id. An
+index entry creates precisely the wait an unlocked `SELECT` cannot see — which
+is why within-family exclusivity has never needed a lock, and why cross-family
+exclusivity will not need one either once a single table holds the slot.
+
+**The window, stated so it can be checked rather than assumed.** #298 is
+sequenced after #283 (the studio family's page wiring has coverage at no level,
+and an extraction rewrites those six screens) and #276 (whether a studio class's
+`date` is editable at all decides whether `CalendarEntry.date` is mutable for
+`kind = 'studio'`). Three issues, on an app #298 records as pre-production, so
+no teacher is racing anything meanwhile. The residual is accepted for that
+window and no longer. If #298 slips materially past it, this section is
+reopened a second time and the trigger-internal form above is the one to take.
+
 ### 4.3 Rejected: a shared `TeacherSlot` table
 
 Two forms, both rejected, recorded so neither is re-proposed:

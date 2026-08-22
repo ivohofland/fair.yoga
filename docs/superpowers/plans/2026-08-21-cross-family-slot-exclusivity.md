@@ -552,6 +552,24 @@ Run over 200 iterations. Record `both / 200` — the double-booking rate — in 
 - **Rare** (single digits per 200 or lower): §4.2 stands. Continue to Task 3, and carry the number into the `known-open` comment (Task 7) and the PR body.
 - **Common:** STOP. Report to the maintainer. §4.2 is reopened and the advisory lock returns with a proper `docs/lock-order.md` ordering section — which is a different plan, not a patch to this one.
 
+**OUTCOME (measured 200/200, gate failed, decided 2026-08-22).** Reported, and
+the maintainer's decision is to **accept the residual** rather than take either
+advisory-lock form. Recorded in full in spec §4.2.1; the short version is that
+#298's recorded decision extracts `CalendarEntry` and makes this invariant a
+composite foreign key, so the race is deleted by an index-backed constraint
+rather than bridged by a lock — and #298 is sequenced next, after #283 and
+#276, rather than after the whole studio arc. Two things follow for this plan:
+
+- **Tasks 3–7 proceed unchanged.** They are not wasted under #298: the
+  `SkipReason` member becomes the overlap reason (a rename, per #298's own
+  comment), the routes' 409 copy survives the change of detection, and Task 4a
+  is a pure refactor either way. Task 3's matcher is the one piece with a short
+  life, and it is needed regardless or the trigger's exception reaches
+  `withErrorHandler` as a 500.
+- **Task 7 carries the residual into the `known-open` comment** as §4.2.1
+  frames it — conditional on an overlap, not a rate of overlaps, with the
+  unconditional figure explicitly never taken.
+
 - [ ] **Step 4: Record the measurement in the spec**
 
 Replace §4.2's "measured before it is documented (§6.3)" sentence with the measured figure and the method in one paragraph. Show the arithmetic so it can be re-derived.
