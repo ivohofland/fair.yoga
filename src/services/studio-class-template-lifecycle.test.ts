@@ -1395,6 +1395,62 @@ describe('updateStudioClassTemplate (DB)', () => {
   });
 
   /**
+   * PR #300 third pass. The third arm of the SAME catch block.
+   *
+   * That block has three arms — the P2002 above, this `YG001`, and `busy`
+   * below — and until now the first and third each had an "and logs it" test
+   * while the one #296 added, sitting between them, had none. The ARM is pinned
+   * end-to-end by the integration suite (delete it and a 409 becomes a 500),
+   * but the log line inside it was free to be deleted silently. That is the
+   * same shape as the defect this whole issue's review found: catching is what
+   * removes the record, and nothing checked that the record gets written.
+   */
+  it('returns cross_family_slot_conflict when the class family holds the slot, and logs it', async () => {
+    const mover = await makeTemplate(teacherId, 'Cross Family Mover');
+    // The OTHER family at the slot the edit moves onto. A live `ClassTemplate`,
+    // so the cross-family trigger raises `YG001` rather than the slot index
+    // raising P2002 — the two arms are distinguished by which one fires.
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Cross Venue', address: `${mover.id} Cross Street`, city: 'Amsterdam',
+        postcode: '1011AB', floor: '1', roomName: 'Main', maxCapacity: 12,
+        isPublic: false, createdById: teacherId,
+      },
+    });
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId: room.id, rentalRate: 20, capacityOverride: 12 },
+    });
+    await prisma.classTemplate.create({
+      data: {
+        teacherId, teacherRoomId: teacherRoom.id, classType: 'Cross Family Holder',
+        dayOfWeek: mover.dayOfWeek, startTime: '21:45', durationMinutes: 60,
+        roomCost: 20, minRate: 30, targetRate: 60, minStudents: 3, maxStudents: 10,
+      },
+    });
+
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    try {
+      const result = await updateStudioClassTemplate(prisma, mover.id, teacherId, {
+        startTime: '21:45',
+      });
+
+      expect(result).toEqual({ ok: false, reason: 'cross_family_slot_conflict' });
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ templateId: mover.id, teacherId }),
+        'studio template edit refused: the class family holds that slot',
+      );
+    } finally {
+      warn.mockRestore();
+      await prisma.classTemplate.deleteMany({ where: { teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+      await prisma.room.deleteMany({ where: { createdById: teacherId } });
+    }
+
+    const after = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: mover.id } });
+    expect(after.startTime).toBe(mover.startTime);
+  });
+
+  /**
    * The bound, proved the way `studio-class-generator.test.ts`'s twin proves
    * the archive's: a second transaction holds the row — that twin holds it
    * through the generation claim, this one with a raw `SELECT … FOR UPDATE`,
