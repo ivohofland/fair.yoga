@@ -758,7 +758,19 @@ trade `room-archive.ts:146-147` refused.
 
 Eight triggers — two each on `Class`, `StudioClass`, `ClassTemplate` and
 `StudioClassTemplate` — enforce that one teacher holds at most one live row per
-slot ACROSS the two class families. The invariant spans two tables, so no
+slot ACROSS the two class families. The four SLOT partial unique indexes in
+`20260811202634` each enforce it within ONE table (that migration declares six;
+the other two are the `Room` identity pair), and nothing spanned them.
+
+That clarification lives here rather than beside the indexes it describes, and
+the reason is worth one line: it was briefly added as a comment inside
+`20260821120000_cross_family_slot_guard/migration.sql`, which is an APPLIED
+migration. A comment-only edit still changes the file's SHA-256, and
+`_prisma_migrations` stores that checksum — measured, `861bd46…` against
+`3867657…`. `prisma migrate status` compares NAMES and passes regardless, so
+nothing catches it until the next `prisma migrate dev` reports the migration as
+modified and demands a reset. Applied migrations are immutable including their
+comments; prose about a migration belongs in prose. The invariant spans two tables, so no
 unique index can express it; a trigger is what is left.
 
 Each `BEFORE INSERT`/`BEFORE UPDATE` function runs a plain
@@ -881,9 +893,13 @@ what means it almost never fires.
 ### How the pre-check must be tested, and the mutation that lied
 
 Removing the pre-check makes the batch insert hit the trigger, which aborts the
-statement — so `created` drops to 0 and the generator throws. A test asserting
-only the count DOES move, and the suite asserts the reason anyway, which is the
-stricter of the two.
+statement — so the generator THROWS. There is no longer a `result` to read a
+count from at all, which is a stronger failure than the count moving: every
+assertion in the case fails, not just the one about the reason. (An earlier
+draft of this paragraph said "`created` drops to 0 **and** the generator
+throws"; those are mutually exclusive, and only the second happens.) The suite
+asserts the reason regardless, which is the stricter assertion in the cases
+where the generator does return.
 
 **That is not what this section said first, and the way it was wrong is the
 part worth keeping.** #296 originally shipped a `catch` around
