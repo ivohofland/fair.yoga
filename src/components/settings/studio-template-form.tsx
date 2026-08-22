@@ -10,7 +10,8 @@ import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { SettledNotice } from '@/components/ui/settled-notice';
 import { resumeStudioMessage } from '@/components/settings/template-action-messages';
-import { anyBlocked, type SkipCounts } from '@/lib/generation';
+import { anyBlocked } from '@/lib/generation';
+import { hasIntegerCounts } from '@/components/settings/template-action-messages';
 
 /**
  * #136. The one enumeration of this form's fields. It replaced three that
@@ -178,7 +179,7 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         // the object would THROW on the first member read rather than compare
         // `undefined > 0` and fall through. The same distinction
         // `hasIntegerCounts` (`template-action-messages.ts`) exists for.
-        const json: { data?: { added: number; counts?: SkipCounts } } = await res.json();
+        const json: { data?: { added: number; counts?: unknown } } = await res.json();
         const result = json.data;
         setCreated(true);
         // `anyBlocked` rather than a hand-listed pair (`@/lib/generation`). This
@@ -187,9 +188,23 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         // been reachable on create since #196, and the gate listed it) — and
         // then navigated away from a short window in silence. See that
         // function's docblock; the paragraph ABOVE is the rule it broke.
-        if (result?.counts && anyBlocked(result.counts)) {
-          setSuccess(resumeStudioMessage(result.added, result.added, result.counts));
+        if (result && Number.isInteger(result.added) && hasIntegerCounts(result.counts)) {
+          if (anyBlocked(result.counts)) {
+            setSuccess(resumeStudioMessage(result.added, result.added, result.counts));
+          } else {
+            router.push(STUDIO_CLASSES_PATH);
+          }
         } else {
+          // The payload did not survive the guard, so nothing here is known: not
+          // whether the window is short, not what to say about it. Navigating is
+          // the same thing this branch always did — what changes is that it is
+          // no longer SILENT. Measured before this gate existed:
+          // `anyBlocked(JSON.parse('{}'))` is `false`, so a truncated `counts`
+          // took the clean-window path and this page navigated away from a short
+          // window with no sentence, which is the #296 failure at the one
+          // boundary its type cannot reach. `console.warn` rather than `log`:
+          // this is a `'use client'` file and `lib/log.ts` says so.
+          console.warn('recurring studio class create: unreadable counts on a 201, short-window check skipped', json);
           router.push(STUDIO_CLASSES_PATH);
         }
       } else {

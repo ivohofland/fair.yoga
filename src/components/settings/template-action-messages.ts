@@ -535,8 +535,23 @@ const COUNT_KEYS = {
  * is about what the WIRE carries, not about what the server counts today, and
  * an `active` payload missing a field is a bundle-vs-server mismatch either
  * way. One guard for both families.
+ *
+ * EXPORTED since PR #300's third review pass, and the reason is a measurement
+ * rather than tidiness. It was module-private, so the CREATE path — which reads
+ * the same untrusted `res.json()` from a different route — could not reach it
+ * and validated nothing. Measured against the real `anyBlocked`:
+ * `anyBlocked(JSON.parse('{}'))` returns `false`, so a truncated payload made
+ * both create forms navigate away in silence: the #296 failure this whole
+ * issue exists to fix, surviving at the one boundary its type does not cover.
+ *
+ * Note the direction the two guards reduce in, because it is the difference
+ * that matters. This one iterates `COUNT_KEYS` — the SCHEMA's members — so a
+ * payload missing one fails. `anyBlocked` iterates the PAYLOAD's own values, so
+ * `{}` reduces to `false` and an unknown extra member would count. Only the
+ * first survives untrusted input, which is why the create path is gated on this
+ * before `anyBlocked` is consulted at all.
  */
-function hasIntegerCounts(counts: unknown): counts is SkipCounts {
+export function hasIntegerCounts(counts: unknown): counts is SkipCounts {
   if (typeof counts !== 'object' || counts === null) return false;
   const candidate = counts as Record<string, unknown>;
   return Object.keys(COUNT_KEYS).every((key) => Number.isInteger(candidate[key]));

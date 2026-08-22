@@ -164,7 +164,16 @@ describe('StudioTemplateForm', () => {
         data: {
           id: 'tpl-short',
           added: 2,
-          counts: { blockedByCancelled: 1, slotTaken: 0, alreadyThisWeek: 0 },
+          // All FOUR members: the create path is gated on `hasIntegerCounts`
+          // since PR #300's third pass, so a three-member fixture is refused
+          // and the page navigates instead — which is how this fixture was
+          // found stale, the same way the two toggle-button ones were.
+          counts: {
+            blockedByCancelled: 1,
+            slotTaken: 0,
+            alreadyThisWeek: 0,
+            blockedByOtherFamily: 0,
+          },
         },
       }),
     });
