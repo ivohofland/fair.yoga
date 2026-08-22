@@ -10,6 +10,7 @@ import type { PrismaClient } from '@prisma/client';
 import type { GenerationResult, SkippedSlot } from '@/lib/generation';
 import { LOCK_TIMEOUT_SQL, type TransactionClientOnly } from '@/lib/db-locks';
 import { classStartInstant, mondayOf } from '@/lib/timezone';
+import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { ACTIVE_TEMPLATE_WHERE } from '@/lib/template-selection';
 import { log } from '@/lib/log';
 
@@ -323,6 +324,23 @@ export async function generateInstancesForTemplate(
     ).map((c) => mondayOf(c.date)),
   );
 
+  // The OTHER family (#296). Mirrors the predicate
+  // `class_reject_cross_family_slot` carries (`cancelledAt IS NULL`); the
+  // trigger is what enforces it, this is what names the reason. Widen or narrow
+  // one without the other and this pre-check starts disagreeing with the guard
+  // that backs it — the same tripwire the same-family check below carries.
+  //
+  // `StudioClass` gained `@@index([teacherId, date])` in this issue's migration
+  // (#205, folded in) precisely so this read does not scan.
+  const foreign = await db.studioClass.findMany({
+    where: {
+      teacherId: template.teacherId,
+      date: { in: dates },
+      cancelledAt: null,
+    },
+    select: { date: true, startTime: true },
+  });
+
   const skipped: SkippedSlot[] = [];
   const free: Date[] = [];
 
@@ -386,34 +404,75 @@ export async function generateInstancesForTemplate(
       continue;
     }
 
+    // AFTER `slot_taken`, deliberately: when this teacher holds the slot in
+    // BOTH families, the same-family cause is the one worth reporting, because
+    // it is the one they can act on without leaving this half of their
+    // schedule. A reporting preference like the week-versus-slot one above —
+    // but unlike that one it costs nothing to state, since both branches
+    // `continue` and no row is created either way. The studio generator orders
+    // its own pair the same way.
+    if (
+      foreign.some(
+        (c) => c.date.getTime() === date.getTime() && c.startTime === template.startTime,
+      )
+    ) {
+      skipped.push({ date, reason: 'blocked_by_other_family' });
+      continue;
+    }
+
     free.push(date);
   }
 
-  const inserted =
-    free.length === 0
-      ? []
-      : await db.class.createManyAndReturn({
-          data: free.map((date) => ({
-            teacherId: template.teacherId,
-            teacherRoomId: template.teacherRoomId,
-            templateId: template.id,
-            classType: template.classType,
-            description: template.description,
-            date,
-            startTime: template.startTime,
-            durationMinutes: template.durationMinutes,
-            roomCost: template.roomCost,
-            minRate: template.minRate,
-            targetRate: template.targetRate,
-            minStudents: template.minStudents,
-            maxStudents: template.maxStudents,
-            cancelDeadline: template.cancelDeadline,
-            autoCancelCheck: template.autoCancelCheck,
-            status: 'open' as const,
-          })),
-          skipDuplicates: true,
-          select: { date: true },
-        });
+  const rowFor = (date: Date) => ({
+    teacherId: template.teacherId,
+    teacherRoomId: template.teacherRoomId,
+    templateId: template.id,
+    classType: template.classType,
+    description: template.description,
+    date,
+    startTime: template.startTime,
+    durationMinutes: template.durationMinutes,
+    roomCost: template.roomCost,
+    minRate: template.minRate,
+    targetRate: template.targetRate,
+    minStudents: template.minStudents,
+    maxStudents: template.maxStudents,
+    cancelDeadline: template.cancelDeadline,
+    autoCancelCheck: template.autoCancelCheck,
+    status: 'open' as const,
+  });
+
+  // `skipDuplicates` absorbs a unique violation; it does NOT absorb a RAISEd
+  // exception, which aborts the whole statement — so one date lost to the
+  // cross-family guard between the pre-check above and this insert would cost
+  // all four. Measured on the studio twin before this fallback existed: the
+  // batch came back `PrismaClientUnknownRequestError … code: "YG001"` and the
+  // generator THREW rather than skipping one date.
+  //
+  // The retry is per date so the losers can be told apart from the winners. It
+  // adds nothing to `skipped` itself: the `landed` reconciliation below already
+  // turns every date that did not come back into `'raced'`, which is the honest
+  // reason — the pre-check said free and something landed in between.
+  let inserted: Array<{ date: Date }> = [];
+  if (free.length > 0) {
+    try {
+      inserted = await db.class.createManyAndReturn({
+        data: free.map(rowFor),
+        skipDuplicates: true,
+        select: { date: true },
+      });
+    } catch (err) {
+      if (!isCrossFamilySlotConflict(err)) throw err;
+      inserted = [];
+      for (const date of free) {
+        try {
+          inserted.push(await db.class.create({ data: rowFor(date), select: { date: true } }));
+        } catch (perDate) {
+          if (!isCrossFamilySlotConflict(perDate)) throw perDate;
+        }
+      }
+    }
+  }
 
   // A free date that did not come back lost a race with a concurrent insert.
   // Before #164 this was the P2002 that poisoned the transaction; it is now an

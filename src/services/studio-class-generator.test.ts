@@ -613,6 +613,9 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
   let eastAccountId: string;
   let westAccountId: string;
   const templateIds: string[] = [];
+  /** #296's cross-family fixtures need a `Class`, which needs a room. */
+  let eastRoomId: string;
+  let eastTeacherRoomId: string;
 
   const seedTeacher = async (label: string, defaultTimezone: string) => {
     const email = `studio-pertpl-${label}-${uniqueSuffix}@test.local`;
@@ -670,6 +673,13 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     await prisma.studioClass.deleteMany({
       where: { teacherId: { in: [eastTeacherId, westTeacherId] } },
     });
+    // #296: the cross-family cases create `Class` rows, and a leftover one
+    // occupies the next test's slot exactly the way a leftover StudioClass
+    // does — the whole point of the reason being added is that the generator
+    // now reads that table too.
+    await prisma.class.deleteMany({
+      where: { teacherId: { in: [eastTeacherId, westTeacherId] } },
+    });
   });
 
   beforeAll(async () => {
@@ -680,11 +690,33 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     const west = await seedTeacher('west', WEST);
     westTeacherId = west.teacherId;
     westAccountId = west.accountId;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Studio Gen Cross Venue',
+        address: `${uniqueSuffix} Cross Street`,
+        city: 'Amsterdam',
+        postcode: '1011AB',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 12,
+        isPublic: false,
+        createdById: eastTeacherId,
+      },
+    });
+    eastRoomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: eastTeacherId, roomId: eastRoomId, rentalRate: 20, capacityOverride: 12 },
+    });
+    eastTeacherRoomId = teacherRoom.id;
   });
 
   afterAll(async () => {
     await prisma.studioClass.deleteMany({ where: { templateId: { in: templateIds } } });
     await prisma.studioClassTemplate.deleteMany({ where: { id: { in: templateIds } } });
+    await prisma.class.deleteMany({ where: { teacherId: { in: [eastTeacherId, westTeacherId] } } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: eastTeacherId } });
+    await prisma.room.deleteMany({ where: { createdById: eastTeacherId } });
     await prisma.teacher.deleteMany({ where: { id: { in: [eastTeacherId, westTeacherId] } } });
     // Teacher.accountId is a required FK into Account, so the teacher rows
     // above must be gone before these accounts can be deleted without
@@ -974,6 +1006,94 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
     expect(result.skipped).toEqual([{ date: dates[1]!, reason: 'slot_taken' }]);
   });
 
+  /**
+   * #296. The other family holds the slot — a `Class`, not a `StudioClass` —
+   * so `slot_taken` is the WRONG answer here even though both mean "occupied".
+   * The remedy differs: `slot_taken` is answered among the teacher's studio
+   * classes, this one sends them to the other half of their schedule.
+   *
+   * Asserts the skipped DATE as well as the reason. A count alone passes if the
+   * generator blocks the wrong date, which the mutation of the pre-check would
+   * not catch either.
+   */
+  it('skips a date held by a live class from the other family', async () => {
+    const now = new Date();
+    const id = await makeTemplate(eastTeacherId, 3, '09:10');
+    const tpl = await withZone(id);
+
+    const first = await generateStudioInstancesForTemplate(prisma, tpl, now);
+    const dates = (
+      await prisma.studioClass.findMany({
+        where: { templateId: tpl.id },
+        orderBy: { date: 'asc' },
+        select: { date: true },
+      })
+    ).map((r) => r.date);
+    expect(first.created).toBe(4);
+    await prisma.studioClass.deleteMany({ where: { templateId: tpl.id } });
+
+    await prisma.class.create({
+      data: {
+        teacherId: tpl.teacherId,
+        teacherRoomId: eastTeacherRoomId,
+        classType: 'Cross Family',
+        date: dates[1]!,
+        startTime: tpl.startTime,
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 30,
+        targetRate: 60,
+        minStudents: 3,
+        maxStudents: 10,
+      },
+    });
+
+    const result = await generateStudioInstancesForTemplate(prisma, tpl, now);
+    expect(result.created).toBe(3);
+    expect(result.skipped).toEqual([{ date: dates[1]!, reason: 'blocked_by_other_family' }]);
+  });
+
+  it('does not skip a date held by a CANCELLED class from the other family', async () => {
+    // The mirror of the same-family cancelled case below, and it pins the same
+    // predicate the trigger carries (`status <> 'cancelled'`). Widen the
+    // pre-check past liveness and this goes red.
+    const now = new Date();
+    const id = await makeTemplate(eastTeacherId, 3, '09:11');
+    const tpl = await withZone(id);
+
+    const first = await generateStudioInstancesForTemplate(prisma, tpl, now);
+    const dates = (
+      await prisma.studioClass.findMany({
+        where: { templateId: tpl.id },
+        orderBy: { date: 'asc' },
+        select: { date: true },
+      })
+    ).map((r) => r.date);
+    expect(first.created).toBe(4);
+    await prisma.studioClass.deleteMany({ where: { templateId: tpl.id } });
+
+    await prisma.class.create({
+      data: {
+        teacherId: tpl.teacherId,
+        teacherRoomId: eastTeacherRoomId,
+        classType: 'Cross Family Cancelled',
+        date: dates[1]!,
+        startTime: tpl.startTime,
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 30,
+        targetRate: 60,
+        minStudents: 3,
+        maxStudents: 10,
+        status: 'cancelled',
+      },
+    });
+
+    const result = await generateStudioInstancesForTemplate(prisma, tpl, now);
+    expect(result.created).toBe(4);
+    expect(result.skipped.map((slot) => slot.reason)).not.toContain('blocked_by_other_family');
+  });
+
   it('does not treat a cancelled neighbour as occupying the slot', async () => {
     const now = new Date();
     // 09:03: see the comment on the same slot in the "names a cancelled own
@@ -1046,6 +1166,15 @@ describe('generateStudioClassInstances (per-template isolation)', () => {
         // row to re-read, so it just hands back the same fixture the findMany
         // above already produced, keyed by the id the claim was given.
         findUniqueOrThrow: async ({ where: { id } }: { where: { id: string } }) => tmpl(id, 't1'),
+      },
+      // #296: the generator now reads the OTHER family's occupancy too. Empty,
+      // because this test is about error isolation between templates and not
+      // about occupancy — but it has to EXIST, or every template fails on
+      // `Cannot read properties of undefined (reading 'findMany')` and the test
+      // passes its `rejects.toThrow` for a reason that has nothing to do with
+      // what it pins.
+      class: {
+        findMany: async () => [],
       },
       studioClass: {
         findMany: async () => [],

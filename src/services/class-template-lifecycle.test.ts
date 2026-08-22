@@ -390,6 +390,123 @@ describe('updateClassTemplate (DB)', () => {
    * startTime)` slot cannot collide with this block's other templates on the
    * one day in seven when today is a Thursday.
    */
+  /**
+   * #296. The probe must decline a date the OTHER family holds, for the same
+   * reason it declines one this family holds: the generator will skip it
+   * (`blocked_by_other_family`), so naming its week promises a class the sweep
+   * does not deliver.
+   *
+   * This is the `slot_taken` omission one table over. That one made the
+   * prediction land EARLIER than the sweep delivers — the dishonest direction —
+   * and adding the generator's reason without adding the probe's third read
+   * would have reproduced it exactly.
+   *
+   * `23:59` so today's occurrence is never dropped by the probe's own
+   * already-started filter, which would move the answer a week for a reason
+   * that has nothing to do with what this pins. Both halves asserted: the week
+   * it IS and the week it is NOT.
+   */
+  it('declines a date a live studio class holds, and names the week after', async () => {
+    const solo = await seedTeacher('cross-family-probe');
+    const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;
+    const template = await prisma.classTemplate.create({
+      data: {
+        teacherId: solo.teacherId,
+        teacherRoomId: solo.teacherRoomId,
+        classType: 'Cross Family Probe',
+        dayOfWeek: todaySchemaDay,
+        startTime: '23:59',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+      },
+    });
+
+    const occurrences = getNextOccurrences(todaySchemaDay, new Date(), 2);
+    const blocked = occurrences[0]!;
+    const nextWeek = occurrences[1]!;
+
+    await prisma.studioClass.create({
+      data: {
+        teacherId: solo.teacherId,
+        templateId: null,
+        classType: 'Cross Family Holder',
+        date: blocked,
+        startTime: '23:59',
+        durationMinutes: 60,
+        location: 'Elsewhere',
+        hourlyRate: 50,
+      },
+    });
+
+    const result = await updateClassTemplate(prisma, template.id, solo.teacherId, {
+      classType: 'Cross Family Probe, Renamed',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.firstEffective).not.toBeNull();
+    expect(result.firstEffective!.getTime()).toBe(mondayOf(nextWeek));
+    expect(result.firstEffective!.getTime()).not.toBe(mondayOf(blocked));
+
+    await prisma.studioClass.deleteMany({ where: { teacherId: solo.teacherId } });
+    await prisma.classTemplate.deleteMany({ where: { teacherId: solo.teacherId } });
+  });
+
+  it('does not decline a date a CANCELLED studio class holds', async () => {
+    // The liveness half: `cancelledAt IS NULL` is `StudioClass`'s spelling of
+    // the `status <> 'cancelled'` the same-family read uses. Widen the probe's
+    // third read past liveness and this goes red.
+    const solo = await seedTeacher('cross-family-probe-cancelled');
+    const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;
+    const template = await prisma.classTemplate.create({
+      data: {
+        teacherId: solo.teacherId,
+        teacherRoomId: solo.teacherRoomId,
+        classType: 'Cross Family Probe Cancelled',
+        dayOfWeek: todaySchemaDay,
+        startTime: '23:58',
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+      },
+    });
+
+    const occurrences = getNextOccurrences(todaySchemaDay, new Date(), 2);
+    const notBlocked = occurrences[0]!;
+
+    await prisma.studioClass.create({
+      data: {
+        teacherId: solo.teacherId,
+        templateId: null,
+        classType: 'Cross Family Cancelled Holder',
+        date: notBlocked,
+        startTime: '23:58',
+        durationMinutes: 60,
+        location: 'Elsewhere',
+        hourlyRate: 50,
+        cancelledAt: new Date(),
+      },
+    });
+
+    const result = await updateClassTemplate(prisma, template.id, solo.teacherId, {
+      classType: 'Cross Family Probe Cancelled, Renamed',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.firstEffective!.getTime()).toBe(mondayOf(notBlocked));
+
+    await prisma.studioClass.deleteMany({ where: { teacherId: solo.teacherId } });
+    await prisma.classTemplate.deleteMany({ where: { teacherId: solo.teacherId } });
+  });
+
   it('drops an occurrence whose start has already passed, exactly as the sweep does', async () => {
     const solo = await seedTeacher('past-start');
     const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;

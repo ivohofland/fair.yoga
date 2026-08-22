@@ -399,12 +399,10 @@ export type UpdateClassTemplateResult =
  *
  * ## Which of the generator's refusals this reproduces, and which it does not
  *
- * The generator declines a candidate date on five named grounds. `SkipReason`
- * (`@/lib/generation`) has had SIX members since #296, and the two numbers are
- * different on purpose: `blocked_by_other_family` is a member of the union that
- * this probe's own family does not yet produce — see the last bullet below.
- * Until it does, "five grounds" is a claim about the GENERATOR and "six
- * reasons" is a claim about the TYPE, and neither is the other's typo. Stated one at a time rather than as a parity claim, because
+ * The generator declines a candidate date on six named grounds (`SkipReason`,
+ * `@/lib/generation`, whose own header says "Six reasons, six distinct
+ * origins" — one number, derived from the type, not two conventions counting
+ * the same union). Stated one at a time rather than as a parity claim, because
  * the parity claim is what this docblock said before `slot_taken` was found
  * missing — and a reader who trusted it had no way to check it. Named rather
  * than numbered, because "the Nth ground" resolves against no ordering anyone
@@ -428,6 +426,12 @@ export type UpdateClassTemplateResult =
  *     dishonest direction: rule 1 of #194 leaves a moved-off template's
  *     instances standing, so a second template edited onto that day and time
  *     finds its own weeks empty and every date occupied.
+ *   - `blocked_by_other_family` (#296) — a LIVE class of the other family at
+ *     this teacher's `(date, startTime)`. Reproduced by a THIRD read, added in
+ *     the same change that gave the generator the reason. Adding one without
+ *     the other is what would make this probe name a week the sweep then
+ *     skips — the same shape as the `slot_taken` omission above, and the
+ *     reason that omission is written down rather than quietly fixed.
  *   - `raced` — **not reproduced, and not reproducible.** It is a concurrent
  *     insert landing between the generator's pre-check and its write, so at
  *     probe time it has not happened yet and there is nothing to read. Its
@@ -463,7 +467,7 @@ async function probeFirstEffectiveWeek(
   if (first === undefined || last === undefined) return null;
 
   try {
-    const [ownRows, slotHolders] = await Promise.all([
+    const [ownRows, slotHolders, foreignHolders] = await Promise.all([
       // The weeks this template already occupies. Keyed on `templateId`, which
       // rides `@@unique([templateId, date])`, and bounded by the horizon's own
       // first and last weeks. No status filter — see the docblock.
@@ -495,10 +499,40 @@ async function probeFirstEffectiveWeek(
         },
         select: { date: true },
       }),
+      // The OTHER family (#296), mirroring the same predicate one table over:
+      // `cancelledAt IS NULL` is `StudioClass`'s spelling of the liveness
+      // `status <> 'cancelled'` expresses above.
+      //
+      // This read is not an extension of the probe, it is a REPAIR of it. Once
+      // the generator declines a cross-family date (`blocked_by_other_family`),
+      // a probe blind to the studio table counts that date as a free candidate
+      // and names a week the sweep will then skip — landing EARLIER than
+      // delivered, which this function's own docblock calls the dishonest
+      // direction and which is exactly the defect `slot_taken` was found
+      // missing for. Adding the reason without adding this read would have
+      // reproduced that defect one family over, in the same function, three
+      // issues later.
+      db.studioClass.findMany({
+        where: {
+          teacherId: template.teacherId,
+          startTime: template.startTime,
+          cancelledAt: null,
+          date: { in: [...horizon] },
+        },
+        select: { date: true },
+      }),
     ]);
 
     const heldWeeks = new Set(ownRows.map((c) => mondayOf(c.date)));
-    const takenDates = new Set(slotHolders.map((c) => c.date.getTime()));
+    // Both families' slot holders in one set. They are not told apart here, and
+    // deliberately: this function answers "which week can the new schedule
+    // first reach", and a date is unreachable for the same reason whichever
+    // family holds it. The GENERATOR tells them apart, because its two reasons
+    // carry two different remedies for the teacher.
+    const takenDates = new Set([
+      ...slotHolders.map((c) => c.date.getTime()),
+      ...foreignHolders.map((c) => c.date.getTime()),
+    ]);
 
     // Removed from the candidates rather than folded into `heldWeeks`. Folding
     // would be shorter and would say something false: a taken slot does not

@@ -1059,6 +1059,11 @@ describe('generateClassInstances (DB)', () => {
 
     afterEach(async () => {
       await prisma.class.deleteMany({ where: { teacherId } });
+      // #296: the cross-family cases create `StudioClass` rows, and the
+      // generator now READS that table — so a leftover one occupies the next
+      // test's slot exactly the way a leftover `Class` does. Without this line
+      // the two new cases turn eight later tests in this block red.
+      await prisma.studioClass.deleteMany({ where: { teacherId } });
     });
 
     it('reports an already-generated date rather than counting it', async () => {
@@ -1123,6 +1128,67 @@ describe('generateClassInstances (DB)', () => {
       expect(result.created).toBe(3);
       expect(result.skipped).toEqual([{ date: taken, reason: 'slot_taken' }]);
       expect(await prisma.class.count({ where: { templateId } })).toBe(3);
+    });
+
+    /**
+     * #296, the mirror of the studio generator's pair. The other family holds
+     * the slot — a `StudioClass`, not a `Class` — so `slot_taken` is the wrong
+     * answer even though both mean "occupied": that one is answered among the
+     * teacher's own classes, this one sends them to the studio half of their
+     * schedule.
+     *
+     * Asserts the skipped DATE as well as the reason. A count alone passes if
+     * the generator blocks the wrong date.
+     */
+    it('skips a date held by a live class from the other family', async () => {
+      const now = new Date();
+      const dates = candidates(now);
+      const blocked = dates[1]!;
+      await prisma.studioClass.create({
+        data: {
+          teacherId,
+          templateId: null,
+          classType: 'Cross Family',
+          date: blocked,
+          startTime: '09:00',
+          durationMinutes: 60,
+          location: 'Elsewhere',
+          hourlyRate: 50,
+        },
+      });
+
+      const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+
+      expect(result.created).toBe(3);
+      expect(result.skipped).toEqual([{ date: blocked, reason: 'blocked_by_other_family' }]);
+      expect(await prisma.class.count({ where: { templateId } })).toBe(3);
+    });
+
+    it('does not skip a date held by a CANCELLED class from the other family', async () => {
+      // Pins the same predicate the trigger carries on this side
+      // (`cancelledAt IS NULL`). Widen the pre-check past liveness and this
+      // goes red — the mutation the task report records.
+      const now = new Date();
+      const dates = candidates(now);
+      const notBlocked = dates[1]!;
+      await prisma.studioClass.create({
+        data: {
+          teacherId,
+          templateId: null,
+          classType: 'Cross Family Cancelled',
+          date: notBlocked,
+          startTime: '09:00',
+          durationMinutes: 60,
+          location: 'Elsewhere',
+          hourlyRate: 50,
+          cancelledAt: new Date(),
+        },
+      });
+
+      const result = await generateInstancesForTemplate(prisma, await freshTemplate(), now);
+
+      expect(result.created).toBe(4);
+      expect(result.skipped.map((slot) => slot.reason)).not.toContain('blocked_by_other_family');
     });
 
     /**
@@ -1964,6 +2030,14 @@ describe('generateClassInstances (per-template isolation)', () => {
         // row to re-read, so it just hands back the same fixture the findMany
         // above already produced, keyed by the id the claim was given.
         findUniqueOrThrow: async ({ where: { id } }: { where: { id: string } }) => tmpl(id, 't1'),
+      },
+      // #296: the generator now reads the OTHER family's occupancy too. Empty,
+      // because this test is about error isolation between templates and not
+      // about occupancy — but it has to EXIST, or every template fails on
+      // `Cannot read properties of undefined (reading 'findMany')` and the test
+      // passes its `rejects.toThrow` for a reason unrelated to what it pins.
+      studioClass: {
+        findMany: async () => [],
       },
       class: {
         // The generator reads the whole window in one query; an empty result
