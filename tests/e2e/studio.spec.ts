@@ -120,4 +120,33 @@ test.describe('Studio class templates', () => {
     await expect(page.getByRole('button', { name: 'Cancel class' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Remove this class' })).toHaveCount(0);
   });
+
+  test('pausing says what stays scheduled, and reveals Archive', async ({ page }) => {
+    await page.goto(`/settings/studio-classes/${templateId}`);
+
+    // An ACTIVE template offers Pause and nothing else: Archive is gated on
+    // `!isActive` (`settings/studio-classes/[id]/page.tsx:55`).
+    await expect(page.getByRole('button', { name: 'Archive studio class' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Pause studio class' }).click();
+
+    // `pauseMessage` names the last class still standing — pause deletes
+    // nothing, so all four survive and the fourth is the one named.
+    await expect(page.getByText(/No new classes will be added to your schedule\./)).toBeVisible();
+    await expect(page.getByText(/The last one still scheduled is .* · 08:15\./)).toBeVisible();
+
+    // `router.refresh()` re-rendered the server component with new props.
+    await expect(page.getByRole('button', { name: 'Resume studio class' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Archive studio class' })).toBeVisible();
+
+    expect(await prisma.studioClass.count({ where: { templateId } })).toBe(4);
+  });
+
+  test('the paused row keeps its name on the list', async ({ page }) => {
+    // Issue 281: the paused section used to title itself with the location, so
+    // pausing renamed the template on the page it returns you to.
+    await page.goto('/settings/studio-classes');
+    await expect(page.getByText('Studio Flow')).toBeVisible();
+    await expect(page.getByText(/Community Studio · €45\.00\/hr/)).toBeVisible();
+    await expect(page.getByText('paused')).toBeVisible();
+  });
 });
