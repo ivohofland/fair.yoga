@@ -497,19 +497,94 @@ describe('TemplateForm', () => {
   });
 
   /**
+   * PR #300 fourth pass. The arm this file stopped covering.
+   *
+   * Splitting one `else` into two — clean window versus unreadable payload —
+   * moved three existing tests off the arm they were covering without failing
+   * any of them. `stubFetch()` returns no usable `data`, which the OLD gate
+   * read as falsy and sent down the single `else` that carried both cases; the
+   * new gate sends it to the diagnostic arm instead. No fixture supplied a
+   * full four-integer all-zeros `counts`, so the primary success path of
+   * creating a template — 201, full window, navigate to the list — had zero
+   * coverage, and had coverage before that change.
+   *
+   * Mutation-proved: deleting the clean-window `router.push` failed nothing at
+   * that commit, and failed two tests at its parent.
+   *
+   * Asserts `console.warn` was NOT called as well as the push, because half of
+   * what needs pinning is that a WELL-FORMED clean payload does not take the
+   * diagnostic branch — the regression that produced this test.
+   */
+  it('navigates on a clean window, without warning', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url === '/api/teacher-rooms') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{
+              id: '11111111-1111-4111-8111-111111111111',
+              capacityOverride: 30,
+              rentalRate: 20,
+              room: { roomName: 'Studio A', venueName: 'Main Venue' },
+            }],
+          }),
+        };
+      }
+      if (url === '/api/class-templates' && init?.method === 'POST') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              id: 'tpl-clean',
+              added: 4,
+              counts: {
+                blockedByCancelled: 0,
+                slotTaken: 0,
+                alreadyThisWeek: 0,
+                blockedByOtherFamily: 0,
+              },
+            },
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TemplateForm mode="create" />);
+    fireEvent.change(await screen.findByLabelText('Room'), {
+      target: { value: '11111111-1111-4111-8111-111111111111' },
+    });
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/settings/recurring'));
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  /**
    * PR #300 third pass. The boundary `anyBlocked` could not defend.
    *
-   * `anyBlocked` reduces over the PAYLOAD's own values, so a truncated `counts`
-   * reduces to `false` and takes the clean-window path — measured,
-   * `anyBlocked(JSON.parse('{}'))` is `false`. That made a malformed 201
-   * navigate away in silence, which is #296's own failure mode surviving at the
-   * one place its type cannot reach: `res.json()` is untrusted, and the parse
-   * shape only ASSERTS it.
+   * `anyBlocked` reduces over the PAYLOAD's own values, so a `counts` arriving
+   * without its members reduces to `false` and takes the clean-window path —
+   * measured, `anyBlocked(JSON.parse('{}'))` is `false`. That made a malformed
+   * 201 navigate away in silence, which is #296's own failure mode surviving at
+   * the one place its type cannot reach: `res.json()` is untrusted, and the
+   * parse shape only ASSERTS it.
    *
    * The create path is now gated on `hasIntegerCounts`, which reduces over the
    * SCHEMA's members instead. Navigation is unchanged — there is genuinely
-   * nothing true to say about a payload that will not parse — but it is no
+   * nothing true to say about a payload of the wrong shape — but it is no
    * longer unobservable.
+   *
+   * "Truncated" and "will not parse" is how this docblock described that
+   * payload until PR #300's fourth pass, and both name something that cannot
+   * arrive at the gate at all: it throws inside `res.json()` and is caught as
+   * "Network error". `'reports a network error, not an unreadable payload, when
+   * the body will not parse'` below pins that boundary.
    */
   it('warns rather than silently deciding, when the counts payload is unreadable', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -552,6 +627,146 @@ describe('TemplateForm', () => {
     await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/settings/recurring'));
     expect(warn).toHaveBeenCalled();
     expect(String(warn.mock.calls[0]?.[0])).toMatch(/unreadable counts/i);
+    warn.mockRestore();
+  });
+
+  /**
+   * PR #300 fourth pass. The gate's OTHER term, which nothing could break.
+   *
+   * The test above pins `hasIntegerCounts`; this one pins
+   * `Number.isInteger(result.added)`. Measured: deleting that term from the
+   * gate failed nothing across both form suites, because every fixture that
+   * reached the diagnostic arm carried a well-formed integer `added` and was
+   * refused on its `counts` alone. A term no fixture can fail is a term the
+   * next reader may delete as redundant.
+   *
+   * The fixture is the shape that makes it not redundant: `counts` whole and
+   * four-membered, `added` absent. That is not a hypothetical — nesting the
+   * counts under `counts` (#296) MOVED fields on this very payload, so a
+   * bundle one deploy out of step with its server is exactly how one half of
+   * a shape arrives intact and the other does not.
+   *
+   * A SHORT window deliberately, not a clean one, because `added` is only
+   * read on the short arm: `resumeMessage(result.added, result.added, …)`
+   * builds its head with a template literal, so an ungated `undefined` is not
+   * a silent wrong number but the word "undefined" rendered into a sentence
+   * the teacher reads — which is the damage the last assertion names, and the
+   * same one `hasIntegerCounts`'s own docblock records for the PATCH path.
+   */
+  it('refuses a payload whose counts survive but whose added does not', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url === '/api/teacher-rooms') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{
+              id: '11111111-1111-4111-8111-111111111111',
+              capacityOverride: 30,
+              rentalRate: 20,
+              room: { roomName: 'Studio A', venueName: 'Main Venue' },
+            }],
+          }),
+        };
+      }
+      if (url === '/api/class-templates' && init?.method === 'POST') {
+        // No `added` at all. `counts` is whole, so `hasIntegerCounts` passes
+        // and this payload reaches the diagnostic arm on the `added` term or
+        // not at all.
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              id: 'tpl-no-added',
+              counts: {
+                blockedByCancelled: 1,
+                slotTaken: 0,
+                alreadyThisWeek: 0,
+                blockedByOtherFamily: 0,
+              },
+            },
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TemplateForm mode="create" />);
+    fireEvent.change(await screen.findByLabelText('Room'), {
+      target: { value: '11111111-1111-4111-8111-111111111111' },
+    });
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/settings/recurring'));
+    expect(warn).toHaveBeenCalled();
+    expect(screen.queryByText(/undefined/)).toBeNull();
+    warn.mockRestore();
+  });
+
+  /**
+   * PR #300 fourth pass. Pins the sentence the two arms above are JUSTIFIED
+   * by, because the first version of that sentence was wrong.
+   *
+   * The diagnostic arm's comment named "a truncated body" as its motivating
+   * case. A truncated body never gets there: `await res.json()` is inside the
+   * `try`, so a body that will not parse throws and lands in the outer
+   * `catch` as "Network error. Please try again." — the same route
+   * `class-edit-form.tsx` already records for "a truncated body or a 502 with
+   * no JSON". The case the gate actually defends is a body that parses
+   * cleanly into the WRONG SHAPE: a tab holding this bundle against a
+   * rolled-back server, which is what `hasIntegerCounts`'s own docblock says
+   * and what the two fixtures above use.
+   *
+   * Worth a test rather than a corrected comment alone: an unpinned claim
+   * about which code path a failure takes is exactly the kind that was wrong
+   * here in the first place. If someone gives `res.json()` a `.catch(() => ({}))`,
+   * truncation starts reaching the gate, this test fails, and that comment
+   * needs rewriting again.
+   */
+  it('reports a network error, not an unreadable payload, when the body will not parse', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+      const url = String(input);
+      if (url === '/api/teacher-rooms') {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{
+              id: '11111111-1111-4111-8111-111111111111',
+              capacityOverride: 30,
+              rentalRate: 20,
+              room: { roomName: 'Studio A', venueName: 'Main Venue' },
+            }],
+          }),
+        };
+      }
+      if (url === '/api/class-templates' && init?.method === 'POST') {
+        // What a 201 with a truncated body does at this seam: `res.json()`
+        // rejects. Real `Response.json()` throws a `SyntaxError`.
+        return {
+          ok: true,
+          json: async () => {
+            throw new SyntaxError('Unexpected end of JSON input');
+          },
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TemplateForm mode="create" />);
+    fireEvent.change(await screen.findByLabelText('Room'), {
+      target: { value: '11111111-1111-4111-8111-111111111111' },
+    });
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
+    expect(warn).not.toHaveBeenCalled();
+    expect(routerPush).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
