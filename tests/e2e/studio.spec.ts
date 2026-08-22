@@ -149,4 +149,41 @@ test.describe('Studio class templates', () => {
     await expect(page.getByText(/Community Studio · €45\.00\/hr/)).toBeVisible();
     await expect(page.getByText('paused')).toBeVisible();
   });
+
+  test('resuming reports the window it already has', async ({ page }) => {
+    await page.goto(`/settings/studio-classes/${templateId}`);
+    await page.getByRole('button', { name: 'Resume studio class' }).click();
+
+    // `added: 0, scheduled: 4` — pause deleted nothing, so the window was
+    // already full and this resume adds none. That asymmetric pair is exactly
+    // what `template-action-messages.ts` asks a test to drive, because equal
+    // arguments cannot detect a transposition.
+    await expect(page.getByText('4 classes on your schedule. Nothing needed adding.')).toBeVisible();
+
+    // Active again, so Archive is gated off again.
+    await expect(page.getByRole('button', { name: 'Pause studio class' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Archive studio class' })).toHaveCount(0);
+  });
+
+  test('archiving withdraws the window and says how much', async ({ page }) => {
+    await page.goto(`/settings/studio-classes/${templateId}`);
+
+    // Archiving needs a paused template — this second pause is the
+    // composition, not a workaround.
+    await page.getByRole('button', { name: 'Pause studio class' }).click();
+    await expect(page.getByRole('button', { name: 'Archive studio class' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Archive studio class' }).click();
+
+    // `archiveStudioMessage(4, 0)`: four future uncancelled classes deleted,
+    // none dated today to spare.
+    await expect(
+      page.getByText('Deleted 4 scheduled studio classes. Nothing from this template is scheduled any more.'),
+    ).toBeVisible();
+
+    expect(await prisma.studioClass.count({ where: { templateId } })).toBe(0);
+    const t = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: templateId } });
+    expect(t.isArchived).toBe(true);
+    expect(t.withdrawnCount).toBe(4);
+  });
 });
