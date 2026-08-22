@@ -118,6 +118,15 @@ export const PUT = withErrorHandler(async (
       'DUPLICATE_TEMPLATE_SLOT',
     );
   }
+  // The OTHER template family holds it (#296) — see the classes route for why
+  // the sentence differs from the branch above rather than being shared.
+  if (result.reason === 'cross_family_slot_conflict') {
+    return respondError(
+      'You already have a recurring studio class on that day at that time.',
+      409,
+      'CROSS_FAMILY_STUDIO_TEMPLATE_SLOT',
+    );
+  }
   // This transaction lost a contention race (#100/#209) on the `ClassTemplate`
   // row itself — a generation claim, an archive, or a pause/resume holding it.
   // It can no longer be lost on a `Class` row: #194 deleted the sync, so this
@@ -199,6 +208,15 @@ export const PATCH = withErrorHandler(async (
         'You already have a recurring class on that day at that time.',
         409,
         'DUPLICATE_TEMPLATE_SLOT',
+      );
+    }
+    // Un-archiving re-enters the slot, so it can be refused by the OTHER
+    // family's live template too (#296).
+    if (result.reason === 'cross_family_slot_conflict') {
+      return respondError(
+        'You already have a recurring studio class on that day at that time.',
+        409,
+        'CROSS_FAMILY_STUDIO_TEMPLATE_SLOT',
       );
     }
     if (result.reason === 'busy') {

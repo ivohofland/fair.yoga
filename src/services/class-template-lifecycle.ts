@@ -35,6 +35,7 @@ import type { NoneOf } from '@/lib/type-pins';
 import { startOfLocalDay, mondayOf, classStartInstant } from '@/lib/timezone';
 import { formatDayHeader } from '@/lib/format';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { isTransientDbError } from '@/lib/api-errors';
 import { lockClassRowsOrdered, setLockTimeout } from '@/lib/db-locks';
 // Server-only (pino). Safe here: this module's sole importer is
@@ -341,6 +342,15 @@ export type UpdateClassTemplateResult =
    */
   | { ok: false; reason: 'room_archived' }
   | { ok: false; reason: 'slot_conflict' }
+  /**
+   * A LIVE row of the OTHER class family holds this slot (#296) — enforced by
+   * trigger, since no unique index can span two tables. A sibling of
+   * `slot_taken`/`slot_conflict` rather than a widening of it: the remedy is
+   * in the other half of the teacher's schedule, so the two cannot share a
+   * sentence.
+   */
+  | { ok: false; reason: 'cross_family_slot_conflict' }
+
   /**
    * This transaction lost a contention race and rolled back whole, so nothing
    * was applied and the identical request can win the next attempt.
@@ -803,6 +813,10 @@ export async function updateClassTemplate(
     if (isUniqueConflictOn(err, ['teacherId', 'dayOfWeek', 'startTime'])) {
       return { ok: false, reason: 'slot_conflict' };
     }
+    // #296. `YG001`, not a P2002 — it would otherwise rethrow to a 500.
+    if (isCrossFamilySlotConflict(err)) {
+      return { ok: false, reason: 'cross_family_slot_conflict' };
+    }
     throw err;
   }
 
@@ -1012,6 +1026,14 @@ export type ArchiveTemplateResult =
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'slot_conflict' }
+  /**
+   * A LIVE row of the OTHER class family holds this slot (#296) — enforced by
+   * trigger, since no unique index can span two tables. A sibling of
+   * `slot_taken`/`slot_conflict` rather than a widening of it: the remedy is
+   * in the other half of the teacher's schedule, so the two cannot share a
+   * sentence.
+   */
+  | { ok: false; reason: 'cross_family_slot_conflict' }
   /**
    * This transaction lost a contention race and rolled back whole, so nothing
    * was applied and the identical request can win the next attempt.
@@ -2121,6 +2143,17 @@ export async function archiveOrUnarchiveTemplate(
       // not be what removes that.
       log.warn({ err, templateId, teacherId }, 'recurring class un-archive refused: slot already held');
       return { ok: false, reason: 'slot_conflict' };
+    }
+    // #296. Un-archiving makes the template live again at its slot, which is
+    // what fires the cross-family trigger — logged for the same reason the
+    // branch above is: a 409 with no server-side record is how this class of
+    // refusal became invisible before.
+    if (isCrossFamilySlotConflict(err)) {
+      log.warn(
+        { err, templateId, teacherId },
+        'recurring class un-archive refused: the studio family holds that slot',
+      );
+      return { ok: false, reason: 'cross_family_slot_conflict' };
     }
     throw err;
   }

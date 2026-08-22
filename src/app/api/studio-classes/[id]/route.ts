@@ -10,6 +10,7 @@ import {
 } from '@/lib/api-utils';
 import { updateStudioClassSchema } from '@/lib/schemas';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { isRecordNotFound } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 import {
@@ -79,6 +80,18 @@ export const PUT = withErrorHandler(async (
         'You already have a studio class at that date and time.',
         409,
         'DUPLICATE_STUDIO_SLOT',
+      );
+    }
+    // The OTHER family holds it (#296) — a `YG001` from the cross-family
+    // trigger, which is not a P2002 and so passes straight through the branch
+    // above. Same status, deliberately different sentence: that clash is fixed
+    // within this family, this one sends the teacher to the other half of
+    // their schedule.
+    if (isCrossFamilySlotConflict(err)) {
+      return respondError(
+        'You already have a class at that date and time.',
+        409,
+        'CROSS_FAMILY_CLASS_SLOT',
       );
     }
     throw err;

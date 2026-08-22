@@ -89,6 +89,14 @@ export const PUT = withErrorHandler(async (
       'DUPLICATE_STUDIO_TEMPLATE_SLOT',
     );
   }
+  // The OTHER template family holds it (#296).
+  if (result.reason === 'cross_family_slot_conflict') {
+    return respondError(
+      'You already have a recurring class on that day at that time.',
+      409,
+      'CROSS_FAMILY_CLASS_TEMPLATE_SLOT',
+    );
+  }
   if (result.reason === 'busy') {
     return respondError(
       'The system was busy and could not edit this recurring studio class. Nothing was changed. Wait a moment, then try again.',
@@ -171,6 +179,15 @@ export const PATCH = withErrorHandler(async (
         'You already have a recurring studio class on that day at that time.',
         409,
         'DUPLICATE_STUDIO_TEMPLATE_SLOT',
+      );
+    }
+    // Un-archiving re-enters the slot, so it can be refused by the OTHER
+    // family's live template too (#296).
+    if (result.reason === 'cross_family_slot_conflict') {
+      return respondError(
+        'You already have a recurring class on that day at that time.',
+        409,
+        'CROSS_FAMILY_CLASS_TEMPLATE_SLOT',
       );
     }
     if (result.reason === 'busy') {

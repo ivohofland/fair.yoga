@@ -12,6 +12,7 @@ import {
 import { createClassTemplateSchema } from '@/lib/schemas';
 import { generateInstancesForTemplate } from '@/services/class-generator';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { countSkipReasons, type GenerationResult } from '@/lib/generation';
 import { log } from '@/lib/log';
 
@@ -206,6 +207,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         'You already have a recurring class on that day at that time.',
         409,
         'DUPLICATE_TEMPLATE_SLOT',
+      );
+    }
+    // The OTHER family holds it (#296) — a `YG001` from the cross-family
+    // trigger, which is not a P2002 and so passes straight through the branch
+    // above. Same status, deliberately different sentence: that clash is fixed
+    // within this family, this one sends the teacher to the other half of
+    // their schedule.
+    if (isCrossFamilySlotConflict(err)) {
+      return respondError(
+        'You already have a recurring studio class on that day at that time.',
+        409,
+        'CROSS_FAMILY_STUDIO_TEMPLATE_SLOT',
       );
     }
     throw err;

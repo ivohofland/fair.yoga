@@ -49,6 +49,7 @@ import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { isRecordNotFound, isTransientDbError } from '@/lib/api-errors';
 import { setLockTimeout } from '@/lib/db-locks';
 import { countSkipReasons, type SkipCounts } from '@/lib/generation';
+import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 // Server-only (pino). Safe here: this module's sole importer is
 // `api/studio-class-templates/[id]/route.ts`, and it already pulls `@/lib/log`
 // transitively through `studio-class-generator`. No `'use client'` component
@@ -299,6 +300,13 @@ export type UpdateStudioClassTemplateResult =
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'no_fields' }
   | { ok: false; reason: 'slot_conflict' }
+  /**
+   * A LIVE row of the OTHER class family holds this slot (#296) — enforced by
+   * trigger, since no unique index can span two tables. A sibling of
+   * `slot_conflict` rather than a widening of it: the remedy is in the other
+   * half of the teacher's schedule, so the two cannot share a sentence.
+   */
+  | { ok: false; reason: 'cross_family_slot_conflict' }
   | { ok: false; reason: 'busy' };
 
 /**
@@ -498,6 +506,14 @@ export async function updateStudioClassTemplate(
       );
       return { ok: false, reason: 'slot_conflict' };
     }
+    // #296. `YG001`, not a P2002 — it would otherwise rethrow to a 500.
+    if (isCrossFamilySlotConflict(err)) {
+      log.warn(
+        { err, templateId, teacherId },
+        'studio template edit refused: the class family holds that slot',
+      );
+      return { ok: false, reason: 'cross_family_slot_conflict' };
+    }
 
     throw err;
   }
@@ -641,6 +657,13 @@ export type ArchiveStudioTemplateResult =
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'slot_conflict' }
+  /**
+   * A LIVE row of the OTHER class family holds this slot (#296) — enforced by
+   * trigger, since no unique index can span two tables. A sibling of
+   * `slot_conflict` rather than a widening of it: the remedy is in the other
+   * half of the teacher's schedule, so the two cannot share a sentence.
+   */
+  | { ok: false; reason: 'cross_family_slot_conflict' }
   /**
    * See `ArchiveTemplateResult`'s `busy` arm (`class-template-lifecycle.ts`)
    * for what it guarantees and for the full range of causes behind it — a
@@ -1339,6 +1362,16 @@ export async function archiveOrUnarchiveStudioTemplate(
       // trace at all.
       log.warn({ err, templateId, teacherId }, 'studio class un-archive refused: slot already held');
       return { ok: false, reason: 'slot_conflict' };
+    }
+    // #296. Un-archiving makes the template live again at its slot, which is
+    // what fires the cross-family trigger. Logged for the reason above: a
+    // returned failure never reaches `withErrorHandler`.
+    if (isCrossFamilySlotConflict(err)) {
+      log.warn(
+        { err, templateId, teacherId },
+        'studio class un-archive refused: the class family holds that slot',
+      );
+      return { ok: false, reason: 'cross_family_slot_conflict' };
     }
     throw err;
   }

@@ -16,6 +16,7 @@ import { ECONOMIC_FIELDS, type EconomicField } from '@/lib/class-fields';
 import { toIncomeTierOrThrow } from '@/lib/tiers.server';
 import { lockClassRow, setLockTimeout } from '@/lib/db-locks';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { isCrossFamilySlotConflict } from '@/lib/cross-family-conflict';
 import { calculateClassPricing } from './pricing';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { closeQueueOnStart } from './waitlist';
@@ -896,6 +897,14 @@ export type UpdateClassResult =
   | { ok: false; reason: 'terminal'; status: ClassStatus }
   | { ok: false; reason: 'no_fields' }
   | { ok: false; reason: 'slot_conflict' }
+  /**
+   * A LIVE row of the OTHER class family holds this slot (#296) — enforced by
+   * trigger, since no unique index can span two tables. A sibling of
+   * `slot_taken`/`slot_conflict` rather than a widening of it: the remedy is
+   * in the other half of the teacher's schedule, so the two cannot share a
+   * sentence.
+   */
+  | { ok: false; reason: 'cross_family_slot_conflict' }
   | { ok: false; reason: 'template_date_conflict' }
   | { ok: false; reason: 'past_start' };
 
@@ -1221,6 +1230,12 @@ export async function updateClass(
   } catch (err) {
     if (isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])) {
       return { ok: false, reason: 'slot_conflict' };
+    }
+    // #296. The cross-family guard raises `YG001`, which is not a P2002 at all,
+    // so without this arm it rethrows past every branch here and reaches the
+    // teacher as a 500.
+    if (isCrossFamilySlotConflict(err)) {
+      return { ok: false, reason: 'cross_family_slot_conflict' };
     }
     // `Class_templateId_date_key` — see the comment above the write for why
     // this is reachable here and nowhere else. Without this arm the error
