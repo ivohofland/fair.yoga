@@ -375,7 +375,8 @@ export async function updateStudioClassTemplate(
   //     answering it for the family at once. An earlier revision of this
   //     comment claimed #231 had allowed it, which inverted the issue.
   //
-  // The `catch` below has three returns and logs all three.
+  // The `catch` below has FOUR returns and logs all four — the fourth is
+  // #296's `cross_family_slot_conflict`.
   if (!template) return { ok: false, reason: 'not_found' };
   if (template.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
 
@@ -526,24 +527,22 @@ export async function updateStudioClassTemplate(
  * beyond the template itself.
  *
  * `active` reports the same FIELDS as `PauseTemplateResult`'s own `active`
- * arm: both families now report `scheduled`, `added`, `blockedByCancelled`,
- * `slotTaken` and `alreadyThisWeek`. Five, not four — re-derived from the arm
- * below rather than copied from the sentence's previous version, which named
- * four and still said "exactly", turning an omission into a false equivalence.
+ * arm: both families report `scheduled`, `added`, and `counts` — a whole
+ * `SkipCounts`, not its members re-listed.
  *
- * It does not mirror that arm EXACTLY, and correcting the field COUNT left
- * that word standing over a second difference it was also hiding. The class
- * arm spells its last three fields as
- * `& SkipCounts`, so a new count added to that type lands there on its own and
- * fails the build at every site that maps the fields by hand; this arm
- * hand-lists all five, so a new count would simply not appear here at all.
- * `class-template-lifecycle.ts` says so at its own `& SkipCounts`, naming this
- * family as one of the two sites that still re-list. Same fields today, and a
- * different guarantee about tomorrow — which is the half a reader who stops at
- * this docblock was being told the opposite of.
+ * It now mirrors that arm EXACTLY, and the history of this paragraph is why
+ * that is worth writing down rather than assuming. It used to record a real
+ * asymmetry: the class arm spelled its counts as `& SkipCounts`, so a new
+ * member landed there on its own, while this arm hand-listed them and would
+ * simply have dropped one. #296 removed the asymmetry by giving BOTH arms
+ * `counts: SkipCounts` — and left this paragraph standing, still arguing for a
+ * difference that no longer existed and still pointing at a sentence in
+ * `class-template-lifecycle.ts` that the same change had deleted. A docblock
+ * describing a distinction, in a codebase that keeps fixing distinctions, is
+ * the shape most likely to outlive its subject.
  *
- * The fifth is always 0 on this side until #284; carried, not special-cased,
- * and documented at its own field.
+ * `counts.alreadyThisWeek` is always 0 on this side until #284; carried, not
+ * special-cased, and documented at its own field.
  *
  * This used to say the class family was "deliberately not fixed alongside
  * this", because its resume generates *without* taking the claim and a count
@@ -593,10 +592,11 @@ export type PauseStudioTemplateResult =
       added: number;
       /**
        * The skip breakdown, whole (#296). One field rather than its members
-       * re-listed, which is what the class family's twin had already reached
-       * for as `& SkipCounts` — see that arm's own note for the measurement
-       * behind it: adding a count to `SkipCounts` compiled clean repo-wide and
-       * vanished at every site that named the fields by hand.
+       * re-listed — the shape BOTH families now carry. The class twin reached
+       * for it first as `& SkipCounts` and #296 moved it here, so see that
+       * arm's own note for the measurement behind both: adding a count to
+       * `SkipCounts` compiled clean repo-wide and vanished at every site that
+       * named the fields by hand.
        *
        * These counts do **not** sum with `added` to the window: they are four
        * of the six `SkipReason` members (`src/lib/generation.ts`), and they
@@ -606,7 +606,7 @@ export type PauseStudioTemplateResult =
        * this sentence arrived with a wrong number of its own — and the second
        * said "these two counts" and then "all three of these numbers" in one
        * paragraph, over sets that overlap without matching. On a steady-state
-       * hourly sweep all three are zero while the window still has four
+       * hourly sweep all four are zero while the window still has four
        * candidate dates. The invariant that does hold is `GenerationResult`'s
        * own: `created + skipped.length` is the candidate count.
        *
@@ -615,9 +615,9 @@ export type PauseStudioTemplateResult =
        * rather than an inference. `slotTaken` is #196.
        *
        * **`alreadyThisWeek` is always 0 on this side today, and that is not a
-       * bug.** `countSkipReasons` returns all three counts for both families,
-       * so it flows through the studio chain by exactly the route the other two
-       * do — but nothing in the studio family PRODUCES `already_this_week`:
+       * bug.** `countSkipReasons` returns all four counts for both families,
+       * so it flows through the studio chain by exactly the route the other
+       * three do — but nothing in the studio family PRODUCES `already_this_week`:
        * `generateStudioInstancesForTemplate` has no week key, which is #284.
        * Carried rather than hard-coded to 0 for that reason. A literal would be
        * a claim about the studio generator that only stays true until #284

@@ -1234,7 +1234,20 @@ export async function updateClass(
     // #296. The cross-family guard raises `YG001`, which is not a P2002 at all,
     // so without this arm it rethrows past every branch here and reaches the
     // teacher as a 500.
+    //
+    // LOGGED, because catching is what would otherwise remove the record. A
+    // returned failure never reaches `withErrorHandler` (`api-utils.ts`), which
+    // logs every error that escapes with its `err`, method and path — so before
+    // this arm existed a `YG001` here left a server-side trace, and adding the
+    // arm without the line would have deleted it. `studio-class-template-
+    // lifecycle.ts` states the same rule above its own catch (#231). A
+    // reschedule onto a studio slot is the door a teacher hits repeatedly, so
+    // this is the one worth being able to see.
     if (isCrossFamilySlotConflict(err)) {
+      log.warn(
+        { err, classId, teacherId: cls.teacherId },
+        'class reschedule refused: the studio family holds that slot',
+      );
       return { ok: false, reason: 'cross_family_slot_conflict' };
     }
     // `Class_templateId_date_key` — see the comment above the write for why

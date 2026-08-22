@@ -454,9 +454,10 @@ export type UpdateClassTemplateResult =
  * are not the same fact: a WEEK this template already occupies versus a single
  * DATE whose slot another class holds. Slot-taken dates are removed from the
  * candidate list; `firstFreeWeek` then answers the week question over what is
- * left. Both reads are bounded by `horizon` itself — its first and last weeks
- * for the week read, its own members for the slot read — so nothing here can
- * disagree with anything else about which dates are in play.
+ * left. All THREE reads are bounded by `horizon` itself — its first and last
+ * weeks for the week read, its own members for the two slot reads (this
+ * family's, and since #296 the other family's) — so nothing here can disagree
+ * with anything else about which dates are in play.
  *
  * Answers `null` rather than throwing when a read fails. The edit has already
  * committed by the time this runs, so a probe failure must not turn a saved
@@ -814,7 +815,18 @@ export async function updateClassTemplate(
       return { ok: false, reason: 'slot_conflict' };
     }
     // #296. `YG001`, not a P2002 — it would otherwise rethrow to a 500.
+    //
+    // LOGGED for the reason `archiveOrUnarchiveTemplate`'s own branch below
+    // gives: a returned failure never reaches `withErrorHandler`, so catching
+    // here is what would remove the server-side record. Its studio-family
+    // mirror (`updateStudioClassTemplate`) logs the identical event; without
+    // this line a teacher's report of a refused Tuesday edit would have a trace
+    // in one direction and none in the other.
     if (isCrossFamilySlotConflict(err)) {
+      log.warn(
+        { err, templateId, teacherId },
+        'recurring class edit refused: the studio family holds that slot',
+      );
       return { ok: false, reason: 'cross_family_slot_conflict' };
     }
     throw err;
@@ -911,24 +923,31 @@ export type LastScheduledClass = { date: Date; startTime: string };
 /**
  * Outcome of a pause/resume PATCH. `paused` carries the furthest-out class
  * still on the schedule, for the pause confirmation; `active` reports what the
- * window holds and why it is not fuller — `scheduled`, `added`,
- * `blockedByCancelled`, `slotTaken` and `alreadyThisWeek`; `unchanged` reports
- * nothing beyond the template itself, because it describes a request that
- * changed nothing.
+ * window holds and why it is not fuller — `scheduled`, `added`, and `counts`
+ * (a whole `SkipCounts`); `unchanged` reports nothing beyond the template
+ * itself, because it describes a request that changed nothing.
  *
- * This paragraph used to say "resuming needs no explanation", directly above
- * the arm that now carries five counts. That is exactly the shape #164 was
- * caused by — a header disagreeing with the declaration beneath it — so it is
- * worth stating why it survived: it was true when resuming only flipped a flag,
- * and nothing forces a docblock to be re-read when the type under it grows.
+ * This paragraph used to say "resuming needs no explanation", directly above an
+ * arm that had grown counts. That is exactly the shape #164 was caused by — a
+ * header disagreeing with the declaration beneath it — so it is worth stating
+ * why it survived: it was true when resuming only flipped a flag, and nothing
+ * forces a docblock to be re-read when the type under it grows.
  *
- * It then became one again, which is the more useful half of the record. #194
- * added `alreadyThisWeek` to `SkipCounts`, the arm gained it through the `&`
- * without either name being written here, and the sentence above kept naming
- * four counts and listing four. Both numbers here are now DERIVED from the
- * declaration below — two named fields plus `SkipCounts`' three — rather than
- * incremented, which is the only way this stays true through the next one.
- * `api/class-templates/[id]/route.ts` sends all five.
+ * It has now been wrong twice more, and the second time is the instructive one.
+ * #194 added `alreadyThisWeek` to `SkipCounts`, the arm gained it through the
+ * old `& SkipCounts` without either name being written here, and this sentence
+ * kept naming four. The response was to DERIVE the numbers from the
+ * declaration "rather than incremented, which is the only way this stays true
+ * through the next one".
+ *
+ * #296 was the next one, and deriving did not save it: the arm stopped
+ * intersecting `SkipCounts` and started nesting it, so the sentence's whole
+ * SHAPE — a list of member names — became wrong rather than its count. A
+ * derived number survives a member being added; nothing survives the members
+ * ceasing to be fields of this arm at all. Hence the naming stops here: this
+ * header now says "a whole `SkipCounts`" and points at that type, which is the
+ * only spelling that cannot drift, and the count lives in `SkipCounts`' own
+ * docblock where the members do.
  */
 export type PauseTemplateResult =
   | {
