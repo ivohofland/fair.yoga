@@ -35,9 +35,14 @@ describe('anyBlocked', () => {
   });
 
   it('ignores a negative count rather than reading it as blocked', () => {
-    // `> 0`, not `!== 0`. No producer emits a negative — `countSkipReasons`
-    // only increments — so this pins the comparison rather than a behaviour,
-    // and it is the one a `!== 0` "simplification" would change.
+    // `> 0`, not `!== 0`. `countSkipReasons` only increments, so no SERVER
+    // producer emits a negative — but that is not where `anyBlocked` gets its
+    // input. Both production callers read it from `res.json()` under a bare
+    // annotation, and `template-action-messages.ts`'s guard docblock states
+    // the rule: "the type constrains the SERVER and nothing constrains the
+    // WIRE." So a negative is representable at this function's actual
+    // boundary, and this pins a behaviour there rather than merely pinning a
+    // comparison. It is also the case a `!== 0` "simplification" would flip.
     expect(anyBlocked({ ...NONE, slotTaken: -1 })).toBe(false);
   });
 });

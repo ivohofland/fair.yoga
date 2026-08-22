@@ -69,11 +69,30 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // turned the read into a build error, which is the tell that the type was
   // inert by accident.
   //
+  // Sharper than that, measured: the two-member `let` does not merely fail to
+  // catch the typo — it rejects the CORRECT comparison too. CFA pins the read
+  // to the initialiser, so `=== 'instance'` is itself `TS2367 … types
+  // '"template"' and '"instance"' have no overlap`. The `let` is not the
+  // weakest of the three candidate shapes; it is the only one that cannot
+  // express this at all.
+  //
   // A `const` object keeps its property's declared type across the closure, so
   // the comparison below is checked: the same typo is `TS2367 … types
   // '"template" | "instance"' and '"instancez"' have no overlap`. Measured
   // against all three candidate shapes before choosing this one.
-  const conflict = { level: 'template' as 'template' | 'instance' };
+  // THREE states, not two, and the third is the one that carries information.
+  // `'untagged'` means no statement claimed this error — which today implies
+  // the template insert, because it runs first and generation is the only other
+  // raiser. That implication is an INFERENCE, and the log below must not
+  // present it as a measurement: an earlier version defaulted to `'template'`,
+  // so a race and a template conflict emitted the same field value and the one
+  // number this design leaves unmeasured stayed unmeasurable. The response copy
+  // still treats untagged as template — that inference is sound today — but the
+  // log says what was actually observed.
+  //
+  // It stops being sound the moment a third `YG001`-capable statement joins
+  // this transaction, which #228 (move this into a service) would do.
+  const conflict = { level: 'untagged' as 'untagged' | 'template' | 'instance' };
   let template: {
     created: Prisma.StudioClassTemplateGetPayload<{
       include: { teacher: { select: { defaultTimezone: true } } };

@@ -13,13 +13,24 @@
  * exemplar into an exhaustive list and was wrong within one commit — the exact
  * move the rest of this docblock exists to prevent. The membership is a check,
  * not a list: a module is in this category when a `'use client'` file
- * value-imports it and it imports nothing itself.
+ * value-imports it and it VALUE-imports nothing itself.
+ *
+ * "Value-imports", not "imports", and the correction is itself worth a line.
+ * The first version of this check said "imports nothing itself" and was
+ * falsified by the first example under it — `tiers.ts:1` is
+ * `import type { NoneOf } from '@/lib/type-pins'`. A type-only import is
+ * erased at build, so the bundle conclusion held and only the predicate was
+ * wrong. That is the third consecutive form this one sentence has failed in:
+ * a roster, then a check too strict for its own examples.
  *
  * The census, re-derived rather than carried, with the check that produces it:
  *
  *   grep -rn "/generation'" src/ --include="*.ts" --include="*.tsx"
  *
- * TEN importers outside this file, split three ways:
+ * NINE non-test importers outside this file, split three ways — plus
+ * `generation.test.ts` by relative path, for ten in all. Stated as nine-plus-one
+ * rather than ten, because the parenthetical counts below add to nine and a
+ * reader doing the arithmetic the docblock invites should not land short:
  *
  *   VALUE, client (2)  `template-form.tsx`, `studio-template-form.tsx`
  *   VALUE, server (4)  `api/class-templates/route.ts`,
@@ -186,7 +197,19 @@ export type SkipCounts = {
  * provably zero is free, where a term that is provably MISSING is this bug.
  */
 export function anyBlocked(counts: SkipCounts): boolean {
-  return Object.values(counts).some((count) => count > 0);
+  // `Object.values<number>`, with the type argument spelled out, and it is not
+  // decoration. Without it the call resolves by overload: a `type` alias gets an
+  // implicit index signature and matches `values<T>(o: { [s: string]: T }): T[]`,
+  // an `interface` does not and falls through to `values(o: {}): any[]` — so
+  // `count` silently becomes `any` and the comparison below stops meaning
+  // anything. That made the fix for it a single KEYWORD on the declaration
+  // above, which any tidy-the-conventions pass reverts without failing a thing
+  // (`SkippedSlot` and `GenerationResult` twenty lines up are both still
+  // `interface`). The explicit argument removes the `any[]` overload from
+  // consideration, so the same revert now fails HERE, loudly: `TS2345 …
+  // Index signature for type 'string' is missing in type 'SkipCounts'` — an
+  // error that names the mechanism rather than hiding it.
+  return Object.values<number>(counts).some((count) => count > 0);
 }
 
 /**

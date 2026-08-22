@@ -95,7 +95,11 @@ export const PUT = withErrorHandler(async (
     // catches silent.
     if (isCrossFamilySlotConflict(err)) {
       log.warn(
-        { err, teacherId: session.teacherId },
+        // `studioClassId` too: this is the only one of the five route sites
+        // where a row identifier is in scope, and every service-side sibling
+        // logs one. The stated purpose of these lines is making a teacher's
+        // report traceable, which wants the row.
+        { err, studioClassId: id, teacherId: session.teacherId },
         'studio class edit refused: the class family holds that slot',
       );
       return respondError(
