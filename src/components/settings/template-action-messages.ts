@@ -546,10 +546,16 @@ const COUNT_KEYS = {
  * its type does not cover.
  *
  * That said "a truncated payload" until PR #300's fourth pass, contradicting
- * this docblock's own second paragraph: a body that will not parse throws
- * inside `res.json()` in both callers and is caught as "Network error" without
- * reaching this guard. The rolled-back-server mismatch named up there is the
- * whole of what it defends against.
+ * the rolled-back-server paragraph above. A body that will not parse reaches
+ * this guard from nowhere: `res.json()` sits inside a `try` in all six
+ * components that lead here — the two create forms, which call this directly,
+ * and the four toggle/archive buttons, which reach it through the two
+ * resolvers below — and every one of those six catches sets "Network error".
+ * That mismatch is the whole of what this guard defends against.
+ *
+ * "Both callers" is what this paragraph said when it was first corrected, and
+ * it was wrong in the same direction as the sentence it was fixing: this
+ * function has FOUR direct call sites, not two. Counted, not assumed.
  *
  * Note the direction the two guards reduce in, because it is the difference
  * that matters. This one iterates `COUNT_KEYS` — the SCHEMA's members — so a
