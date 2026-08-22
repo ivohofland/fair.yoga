@@ -179,7 +179,7 @@ no Prisma seeding needed for this arc.
 
 | # | Step | Asserted |
 |---|---|---|
-| 1 | `/` → `Log a studio class` → fill six fields with a **past** date → `Log class` | the `Created` notice appears with `Go to the studio class`; clicking it lands on `/studio-class/{id}` |
+| 1 | `/` → `Log a studio class` → fill six fields with a **past** date → `Log class` | the browser lands on `/studio-class/{id}` and the row exists. The submit handler pushes there itself; the `Created` notice is the fallback for a push that does not commit, so asserting the notice and clicking its button races the navigation |
 | 2 | Set a student count | `Saved` appears beside the field |
 | 3 | Cancel | the page reads `This class was cancelled.` |
 | 4 | Remove | the Remove control is offered (past + manual ⇒ `deletable`), and after confirming, `/studio-class/{id}` no longer resolves and the class is gone from Prisma |

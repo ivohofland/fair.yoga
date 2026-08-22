@@ -620,7 +620,16 @@ git commit -m "test: the archived list as the only door, and what un-archive ret
 **Facts this task depends on:**
 
 - `createStudioClassSchema.date` is `isoDate` with **no lower bound** (`schemas.ts:467-474`), so a past-dated one-off is creatable through the form.
-- `/studio-class/new` does **not** redirect on success: it shows a `SettledNotice` labelled `Created` with an action button `Go to the studio class` (`studio-class/new/page.tsx:168-174`).
+- `/studio-class/new` **does** navigate on success. The submit handler calls
+  `setCreatedId(id)` and `router.push(studioClassPath(id))` back to back
+  (`studio-class/new/page.tsx:138-139`), and that file's own comment says the
+  push "normally unmounts this page". The `SettledNotice` labelled `Created`
+  with its `Go to the studio class` button is the **fallback for when the push
+  does not commit** — not the normal path. A spec that asserts the notice and
+  then clicks its button is racing the navigation: measured at roughly one
+  failure per 12-40 runs, which `failOnFlakyTests: true` turns into a red
+  suite. Wait on the destination URL, which both paths reach, and pair it with
+  a positive database check.
 - `StudentCountEditor` renders only when `cancelledAt === null` (`studio-class/[id]/page.tsx:102` ternary, editor at `:120`). **Set the count before cancelling.**
 - Both destructive controls are two-click: `Cancel class` → `Cancel this studio class?` → `Cancel`; `Remove this class` → `Remove this class? …` → `Remove` (`cancel-studio-class-button.tsx:44-68`, `delete-studio-class-button.tsx:97-121`). The confirm button reads `Cancel`, which is a **prefix of** `Cancel class` — use `{ exact: true }`.
 - Removal ends in `window.location.assign('/')` — a hard navigation, not `router.push` (`delete-studio-class-button.tsx:90`). Wait for the URL, not for a soft transition.
