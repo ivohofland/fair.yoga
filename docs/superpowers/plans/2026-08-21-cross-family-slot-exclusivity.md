@@ -1056,7 +1056,17 @@ Expected: "does not skip a date held by a CANCELLED class" goes RED. Record the 
 Delete the `blocked_by_other_family` branch from the per-date loop, leaving the
 `foreign` query unused. Re-run.
 
-Expected: `created` is **still 3** and the test fails **only** on the reason —
+**OUTCOME (review, #300): this step's premise was false in production.** It was
+run as written and reported exactly what it predicts below — in the unit tests,
+which call both generators with a bare `PrismaClient`. Every production caller
+passes a transaction client, where the batch's `RAISE EXCEPTION` aborts the
+transaction and Step 4's per-date fallback cannot execute at all (`25P02`). The
+fallback was deleted in review; with it gone this mutation moves the count too.
+Keep asserting the reason, which is the stricter assertion either way. Recorded
+rather than rewritten because the failure mode — a mutation run in a
+configuration production never uses — is the reusable part.
+
+Expected (as written, and true only on a bare client): `created` is **still 3** and the test fails **only** on the reason —
 `'raced'` where `'blocked_by_other_family'` was expected. The trigger still
 fires, the batch still aborts, and Step 4's fallback silently reclassifies the
 date.

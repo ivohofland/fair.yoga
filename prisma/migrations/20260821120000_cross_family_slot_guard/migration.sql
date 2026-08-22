@@ -3,8 +3,9 @@
 -- The same at the template level, across ClassTemplate and StudioClassTemplate.
 --
 -- Why a trigger and not an index: PostgreSQL has no cross-table unique index.
--- The four partial indexes in 20260811202634 each enforce this within one
--- table, and nothing spanned them, so neither create route, neither edit route
+-- The four SLOT partial indexes in 20260811202634 each enforce this within one
+-- table (that migration declares six; the other two are the Room identity
+-- pair), and nothing spanned them, so neither create route, neither edit route
 -- and neither hourly sweep could see the other family.
 --
 -- Why NO LOCK is taken here, which is deliberate and was the design's first

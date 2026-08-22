@@ -78,8 +78,8 @@ Classes move through states: `draft → open → in_progress → completed → c
   cross-table unique key. The triggers take no lock, so a residual race
   survives — documented in `docs/lock-order.md` and dissolved by #298, which
   makes this a composite foreign key. Both generators pre-check and skip
-  (`blocked_by_other_family`); all eight write routes answer 409 naming which
-  family holds the slot
+  (`blocked_by_other_family`); ten write endpoints across eight route files
+  answer 409 naming which family holds the slot
 - Auto-cancel: system checks at configured time, cancels if below min_students
 - Walk-ins can exceed max_students — teacher rate stays capped at target, extra students lower everyone's price
 - After completion: pricing engine runs → payments created → notifications sent

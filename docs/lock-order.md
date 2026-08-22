@@ -845,23 +845,68 @@ take.
 
 Both generators pre-check the sibling table and decline the date as
 `blocked_by_other_family` (`class-generator.ts`, `studio-class-generator.ts`),
-and all eight routes answer 409 — five from a `catch` beside their own
-`isUniqueConflictOn` branch, three (`PUT /api/classes/[id]`, `PUT
-/api/class-templates/[id]`, `PUT /api/studio-class-templates/[id]`) from a
-`cross_family_slot_conflict` reason their service returns, because those routes
-issue no write of their own. Named rather than counted: "all eight answer 409"
-is true and "all eight catch" is not, and the difference is where a ninth door
-would have to put its branch. That is the same division of
-labour `countRoomDeleteBlockers` has with the RESTRICT trigger one section up:
-the guard is the backstop, the pre-check is what means it almost never fires.
+and **ten endpoints across eight route files** answer 409:
 
-One difference from #103 worth stating, because it changes how the pre-check
-must be tested. There, removing the pre-check reopened a measurable deadlock.
-Here, removing it is **masked**: the trigger still fires, the batch insert
-aborts, the per-date fallback retries, and the date is reclassified as
-`'raced'`. `result.created` does not move. Measured by mutation on both
-generators — a test asserting only the count stays green through the removal of
-the entire feature, so the suite asserts the REASON.
+| How it reaches the 409 | Endpoints |
+|---|---|
+| a `catch` beside their own `isUniqueConflictOn` branch | `POST /api/classes`, `POST /api/studio-classes`, `PUT /api/studio-classes/[id]`, `POST /api/class-templates`, `POST /api/studio-class-templates` |
+| a `cross_family_slot_conflict` reason their service returns, because they issue no write of their own | `PUT /api/classes/[id]`, `PUT /api/class-templates/[id]`, `PUT /api/studio-class-templates/[id]`, `PATCH /api/class-templates/[id]?state=unarchived`, `PATCH /api/studio-class-templates/[id]?state=unarchived` |
+
+Five and five. An earlier version of this paragraph said "all eight routes …
+five catch, three return", counting FILES on one side of the sentence and
+ENDPOINTS on the other, and so undercounted the reason-based side by the two
+`PATCH` unarchive arms this same issue added. It closed by saying "named rather
+than counted", which is the right instinct and was defeated by naming an
+incomplete set — so the table above is the naming.
+
+**The grep does not agree with the table, and should not.**
+`grep -rn "CROSS_FAMILY_" src/app/api/ | wc -l` returns **12**: ten endpoints,
+of which the two template `POST`s carry TWO branches each. Those two are the
+only endpoints where a cross-family `YG001` can arrive from two different
+triggers meaning two different things — the template insert's (which reads the
+sibling TEMPLATE table) and generation's (which reads the sibling INSTANCE
+table, since generation shares the transaction). They answer
+`CROSS_FAMILY_*_TEMPLATE_SLOT` and `CROSS_FAMILY_*_SLOT` respectively, chosen
+by a `conflictLevel` flag set on the failure path. Answering both with the
+template sentence would send a teacher hunting for a recurring studio class
+that does not exist, which is what they did until review caught it.
+
+So: 12 branches, 10 endpoints, 8 files. Three numbers, none of them derivable
+from either of the others, which is why all three are written down.
+
+That is the same division of labour `countRoomDeleteBlockers` has with the
+RESTRICT trigger one section up: the guard is the backstop, the pre-check is
+what means it almost never fires.
+
+### How the pre-check must be tested, and the mutation that lied
+
+Removing the pre-check makes the batch insert hit the trigger, which aborts the
+statement — so `created` drops to 0 and the generator throws. A test asserting
+only the count DOES move, and the suite asserts the reason anyway, which is the
+stricter of the two.
+
+**That is not what this section said first, and the way it was wrong is the
+part worth keeping.** #296 originally shipped a `catch` around
+`createManyAndReturn` that retried per date, and the mutation was recorded as
+*masked*: the trigger fires, the fallback retries, the date is reclassified
+`'raced'`, `result.created` does not move. Every word of that was observed —
+in the **unit tests**, which call both generators with a bare `PrismaClient`,
+where each statement is its own transaction and a retry after an abort is
+perfectly legal.
+
+Every PRODUCTION caller passes a transaction client (both sweeps, both POST
+routes, both pause/resume services). Prisma takes no savepoint per statement,
+so `RAISE EXCEPTION` leaves the transaction aborted and the first retried
+`create` returns `25P02`, which `isCrossFamilySlotConflict` correctly declines
+— costing the whole window, and turning the `YG001` those ten endpoints match
+into a `25P02` they cannot, so a wordable 409 became a 500. The fallback was
+deleted in review.
+
+The lesson generalises past this issue: **a mutation is only evidence about the
+configuration it ran in.** The guard reported honestly; the harness asked it
+the wrong question, because the test client and the production client differ in
+exactly the property under test. `generation-transaction.test.ts` now drives
+both generators through a real `$transaction` for that reason.
 
 ## Known conformance
 
