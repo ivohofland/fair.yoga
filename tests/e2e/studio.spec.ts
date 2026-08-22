@@ -57,8 +57,7 @@ test.describe('Studio class templates', () => {
     teacherId = teacher.id;
     teacherToken = await seedSession(prisma, await accountIdOfTeacher(prisma, teacherId));
     // No Room and no TeacherRoom: StudioClass is disconnected from Room by
-    // design (CLAUDE.md, Data Model), which is the one way this fixture is
-    // simpler than `recurring.spec.ts`'s.
+    // design (CLAUDE.md, Data Model).
   });
 
   test.afterAll(async () => {
@@ -191,8 +190,11 @@ test.describe('Studio class templates', () => {
     await page.goto('/settings/studio-classes');
     await expect(page.getByText('Studio Flow')).toHaveCount(0);
 
-    // `/settings/studio-classes` queries `isArchived: false`, so this page is
-    // the only route back to an archived template's detail page.
+    // `/settings/studio-classes` queries `isArchived: false`
+    // (`settings/studio-classes/page.tsx:11`) and `/settings/studio-classes/archived`
+    // queries `isArchived: true` (`settings/studio-classes/archived/page.tsx:10`),
+    // so the archived page is the only route back to an archived template's
+    // detail page.
     await page.goto('/settings/studio-classes/archived');
     await expect(page.getByText('Studio Flow')).toBeVisible();
 
