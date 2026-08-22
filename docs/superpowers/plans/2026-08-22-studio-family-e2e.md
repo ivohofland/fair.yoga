@@ -35,7 +35,7 @@
 | `src/components/settings/studio-template-list.test.tsx` | create | Renders one template in each of the three states, asserts the title and caption agree |
 | `tests/e2e/studio.spec.ts` | create | The two arcs |
 | `tests/e2e/visual.spec.ts` | modify | Seventh screen: the paused template detail page |
-| `tests/e2e/visual.spec.ts-snapshots/` | create ×2 | `studio-template-chromium-darwin.png`, `studio-template-Mobile Chrome-darwin.png` |
+| `tests/e2e/visual.spec.ts-snapshots/` | create ×2 | `studio-template-chromium-darwin.png`, `studio-template-Mobile-Chrome-darwin.png` |
 | `docs/superpowers/plans/2026-08-22-studio-family-e2e-mutations.md` | create | The mutation ledger |
 
 ---
@@ -783,7 +783,7 @@ git commit -m "test: a one-off studio class logged, counted, cancelled and remov
 **Files:**
 - Modify: `tests/e2e/visual.spec.ts`
 - Create: `tests/e2e/visual.spec.ts-snapshots/studio-template-chromium-darwin.png`
-- Create: `tests/e2e/visual.spec.ts-snapshots/studio-template-Mobile Chrome-darwin.png`
+- Create: `tests/e2e/visual.spec.ts-snapshots/studio-template-Mobile-Chrome-darwin.png`
 
 **Interfaces:**
 - Consumes: the existing `visual.spec.ts` fixture (`teacherId`, `teacherToken`, `signIn`, `hideDevOverlay`).
@@ -880,7 +880,7 @@ Expected: **PASS**, 14 tests (7 × two projects).
 - [ ] **Step 7: Commit**
 
 ```bash
-git add tests/e2e/visual.spec.ts 'tests/e2e/visual.spec.ts-snapshots/studio-template-chromium-darwin.png' 'tests/e2e/visual.spec.ts-snapshots/studio-template-Mobile Chrome-darwin.png'
+git add tests/e2e/visual.spec.ts 'tests/e2e/visual.spec.ts-snapshots/studio-template-chromium-darwin.png' tests/e2e/visual.spec.ts-snapshots/studio-template-Mobile-Chrome-darwin.png
 git commit -m "test: a seventh visual screen, the paused studio template (issue 283)"
 ```
 
