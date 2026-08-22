@@ -5,9 +5,11 @@ import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 
 /**
  * The studio class family, end to end — the first browser coverage it has had
- * (issue 283). Two arcs over one teacher: a TEMPLATE through create → pause →
- * resume → archive → un-archive, and a ONE-OFF class through log → count →
- * cancel → remove.
+ * (issue 283). Two describes, each seeding its own teacher — Playwright runs
+ * `beforeAll`/`afterAll` per describe, so sharing a teacher would tie the
+ * second block's setup to the first block's teardown having already run: a
+ * TEMPLATE through create → pause → resume → archive → un-archive, and a
+ * ONE-OFF class through log → count → cancel → remove.
  *
  * Why a browser rather than the two cheaper page-level techniques this repo
  * already has (a jsdom `src/app/**` test, an integration HTTP fetch): the two
@@ -277,5 +279,109 @@ test.describe('Studio class templates', () => {
     await expect(page.getByText('Studio Flow')).toBeVisible();
     const row = page.getByRole('link', { name: /Studio Flow/ });
     await expect(row.getByText('paused')).toBeVisible();
+  });
+});
+
+test.describe('One-off studio classes', () => {
+  test.describe.configure({ mode: 'serial' });
+
+  let soloTeacherId: string;
+  let soloToken: string;
+
+  // Yesterday, so the class is manual AND past-dated — the two independent
+  // grounds on which `studioClassDeletability` allows removal. `date` has no
+  // lower bound in `createStudioClassSchema`, so the form accepts it.
+  const past = new Date();
+  past.setUTCDate(past.getUTCDate() - 1);
+  const pastIso = past.toISOString().slice(0, 10);
+
+  test.beforeAll(async () => {
+    await prisma.$connect();
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Oneoff',
+        lastName: 'Teacher',
+        email: `e2e-studio-solo-${suffix}@test.local`,
+        account: { create: { email: `e2e-studio-solo-${suffix}@test.local` } },
+        bio: 'One-off studio e2e fixtures',
+        pageSlug: `e2e-studio-solo-${suffix}`,
+      },
+    });
+    soloTeacherId = teacher.id;
+    soloToken = await seedSession(prisma, await accountIdOfTeacher(prisma, soloTeacherId));
+  });
+
+  test.afterAll(async () => {
+    await prisma.studioClass.deleteMany({ where: { teacherId: soloTeacherId } });
+    await prisma.session.deleteMany({
+      where: { accountId: await accountIdOfTeacher(prisma, soloTeacherId) },
+    });
+    await prisma.teacher.delete({ where: { id: soloTeacherId } });
+    await prisma.$disconnect();
+  });
+
+  test.beforeEach(async ({ context }) => {
+    await context.addCookies([sessionCookie(soloToken)]);
+  });
+
+  test('log, count, cancel, remove', async ({ page }) => {
+    // LOG — from the schedule, the way a teacher reaches it.
+    await page.goto('/');
+    await page.getByRole('link', { name: 'Log a studio class' }).click();
+    await page.waitForURL('**/studio-class/new');
+
+    await page.getByLabel('Class type').fill('Cover Class');
+    await page.getByLabel('Location').fill('Guest Studio');
+    await page.getByLabel('Date').fill(pastIso);
+    await page.getByLabel('Start time').fill('19:30');
+    await page.getByLabel('Duration (minutes)').fill('75');
+    await page.getByLabel('Hourly rate').fill('40');
+    await page.getByRole('button', { name: 'Log class' }).click();
+
+    // On success this page both renders a `SettledNotice` ("Created") and
+    // fires `router.push` to the same destination in the same tick — the
+    // notice is the fallback for when the push does not commit, and the
+    // push "normally unmounts this page" first (`studio-class/new/page.tsx`,
+    // comment above the `router.push` call). Whether a given run paints the
+    // notice or the push lands first is a genuine race, so wait on the
+    // destination both paths share rather than the transient notice.
+    await page.waitForURL(/\/studio-class\/(?!new$)[\w-]+$/, { timeout: 10_000 });
+
+    const created = await prisma.studioClass.findFirstOrThrow({
+      where: { teacherId: soloTeacherId, classType: 'Cover Class' },
+    });
+    expect(page.url()).toBe(`http://localhost:3000/studio-class/${created.id}`);
+    expect(created.templateId).toBeNull();
+
+    // COUNT — before cancelling: the editor lives in the `cancelledAt === null`
+    // branch and is gone from the cancelled page entirely.
+    await page.getByLabel('Student count').fill('11');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.getByText('Saved')).toBeVisible();
+    await expect
+      .poll(async () =>
+        (await prisma.studioClass.findUniqueOrThrow({ where: { id: created.id } })).studentCount,
+      )
+      .toBe(11);
+
+    // CANCEL — two clicks. The confirm button reads `Cancel`, which is a prefix
+    // of `Cancel class`, so it needs `exact`.
+    await page.getByRole('button', { name: 'Cancel class' }).click();
+    await expect(page.getByText('Cancel this studio class?')).toBeVisible();
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+
+    await expect(page.getByText('This class was cancelled.')).toBeVisible();
+    await expect(page.getByLabel('Student count')).toHaveCount(0);
+
+    // REMOVE — offered because the class is manual and past-dated. A cancelled
+    // class is not an income record, so the confirm claims no cost.
+    await page.getByRole('button', { name: 'Remove this class' }).click();
+    await expect(page.getByText('Remove this class? This cannot be undone.')).toBeVisible();
+    await page.getByRole('button', { name: 'Remove', exact: true }).click();
+
+    // A hard navigation, not a soft push — see the comment at
+    // `delete-studio-class-button.tsx:76-90`.
+    await page.waitForURL('http://localhost:3000/', { timeout: 10_000 });
+    expect(await prisma.studioClass.count({ where: { id: created.id } })).toBe(0);
   });
 });
