@@ -118,7 +118,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   //
   // It stops being sound the moment a third `YG001`-capable statement joins
   // this transaction, which #228 (move this into a service) would do.
-  const conflict = { level: 'untagged' as 'untagged' | 'template' | 'instance' };
+  const conflict = { level: 'untagged' as 'untagged' | 'instance' };
   let template: {
     created: Prisma.ClassTemplateGetPayload<{
       include: { teacher: { select: { defaultTimezone: true } } };
@@ -280,9 +280,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         'recurring class create refused: the studio family holds that slot',
       );
       // Which sentence depends on which statement raised — see `conflict` and
-      // the note above the transaction. `'template'` is the default rather than
-      // a measured value: the template insert runs FIRST, so anything that
-      // reaches here without generation having tagged it came from that insert.
+      // the note above the transaction. `'untagged'` is the fall-through, and
+      // the RESPONSE reads it as the template case: the template insert runs
+      // FIRST, so anything untagged came from it. The LOG keeps the two apart
+      // on purpose, which is the whole reason the third state exists.
+      //
+      // This comment said "`'template'` is the default" until PR #300's fourth
+      // pass — fifteen lines below the note explaining that an earlier version
+      // defaulted to `'template'` and no longer does, in both parallel files
+      // identically. `'template'` is not in the union at all now: nothing
+      // assigned it and nothing compared against it, so a reader following the
+      // sentence would grep the logs for a value that can never appear.
       return conflict.level === 'instance'
         ? respondError(
             'You already have a studio class on one of those dates at that time.',
