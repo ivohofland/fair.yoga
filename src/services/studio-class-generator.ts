@@ -229,26 +229,37 @@ export async function generateStudioInstancesForTemplate(
   // ONE STATEMENT, NO CATCH, and #296 is the second issue to reach for one here
   // and be wrong. THIS FUNCTION'S OWN docblock already says it — not a sibling
   // function's, which makes the objection stronger rather than weaker: "Do not
-  // reintroduce a `catch` here; there is nothing it can do that the constraint
-  // does not." (An earlier version of this comment credited the sentence to
-  // `claimTemplateForGeneration`, which does not contain it.)
+  // reintroduce a `catch` here." The class twin's docblock adds the reason —
+  // "there is nothing it can do that the constraint does not" — and this file
+  // carries only the instruction, so the quote stops where its source does.
+  // (Two earlier versions got this wrong in two different ways: one credited
+  // the sentence to `claimTemplateForGeneration`, which contains it nowhere;
+  // the correction then quoted the CLASS file's longer wording as though it
+  // were this file's. Both were the same mistake — a claim about one of two
+  // parallel files asserted about both.)
   //
   // A `catch` with a per-date retry shipped on this branch and was measured
   // non-functional. Every production caller of the two generators passes a
-  // TRANSACTION client — six across the pair, three per generator, which is
-  // the number this file's own function docblock states at its narrower scope
-  // — Prisma takes no
+  // TRANSACTION client — six across the pair, three per generator;
+  // `class-generator.ts`'s function docblock states its own three, and this
+  // file's states no caller count at all, so do not read the number as coming
+  // from here. Prisma takes no
   // savepoint per statement, and a `RAISE EXCEPTION` aborts the Postgres
   // transaction — so the first retried `create` returns `25P02 current
   // transaction is aborted`, which `isCrossFamilySlotConflict` correctly
   // declines, and the rethrow costs the whole window anyway. It also cost more
   // than that: the escaping error stopped being the `YG001` that the TWO
   // template POST catches match. Two, not the ten endpoints answering a
-  // cross-family 409 overall, because those two are the only ones that wrap
-  // generation — so a 409 the app knew how to word became a 500. (An earlier
-  // version said "the eight route branches", which is the FILE count. That is
-  // the files-versus-endpoints conflation `docs/lock-order.md` was rewritten
-  // to diagnose, written straight back into new code by the same commit.)
+  // cross-family 409 overall — and NOT because those two are the only callers
+  // that wrap generation, which is false: six do, including both sweeps and
+  // both pause/resume services, as the sentence four lines up says. They are
+  // the only generation-wrapping callers that CATCH `YG001`. The other four
+  // let it reach `withErrorHandler`, where `classifyApiError` has no arm for
+  // it and answers 500 — filed as #301. So a 409 the app knew how to word
+  // became a 500 here too. (Earlier versions said "the eight route branches",
+  // the FILE count — the files-versus-endpoints conflation
+  // `docs/lock-order.md` was rewritten to diagnose, written straight back into
+  // new code by the commit that rewrote it.)
   //
   // The mutation could not see it. The CROSS-FAMILY tests call this function
   // with a bare client, where every statement is its own transaction and the

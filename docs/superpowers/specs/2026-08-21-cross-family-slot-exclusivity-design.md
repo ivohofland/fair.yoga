@@ -473,9 +473,13 @@ the two POST routes the same error becomes the 409 those routes have a branch
 for. Per-template failure isolation (#55) still bounds the blast radius to one
 template.
 
-The `'raced'` classification is likewise gone from this path: with no swallow,
-`skipDuplicates` can only absorb a same-family unique index, so a cross-family
-collision can no longer be relabelled as a transient race — which it never was.
+The `'raced'` classification no longer covers a CROSS-FAMILY collision. It
+survives, correctly, for the same-family unique-index losses `skipDuplicates`
+absorbs — both generators still assign it in the `landed` reconciliation, and
+that label is honest there: a `free` date that did not come back lost a race
+with a concurrent same-family insert, and the next sweep picks it up. What
+changed is that a cross-family collision now raises instead of being swallowed,
+so it can no longer be relabelled as a transient race — which it never was.
 
 §6.2's mutation row and the plan's Task 5 step 7 carry the same correction, and
 `docs/lock-order.md` carries why the mutation that blessed this design reported
@@ -524,7 +528,7 @@ signal the within-family rules moved, which this spec forbids.
 | Drop the `BEFORE UPDATE` declaration, keep `BEFORE INSERT` | the un-cancel and unarchive cases |
 | Change `ERRCODE` to `23505` | the 409-mapping test — proves §5.3's reasoning rather than asserting it |
 | Remove a **route's** catch | that route's copy assertion — the status also moves (409 to 500), so this one is visible either way |
-| Remove a **generator's** cross-family pre-check | the skip-reason assertion **and** the created count: the trigger fires, the batch aborts as a statement, and generation throws. Assert the reason regardless — it is the stricter of the two. **This row said the opposite until review** ("masked by the fallback beneath it… only the reason moves"), and it was observed rather than guessed — in the unit tests, which pass a bare `PrismaClient` where a retry after an abort is legal. Every production caller passes a TRANSACTION client, where the retry hits `25P02` and the fallback made things worse than its absence. The fallback is gone; the lesson is that a mutation is evidence only about the configuration it ran in |
+| Remove a **generator's** cross-family pre-check | the skip-reason assertion **and** the created count: the trigger fires, the batch aborts as a statement, and generation throws. Assert the reason regardless — it is the stricter assertion in the cases where the generator does RETURN; where it throws, every assertion in the case fails and the distinction is moot. (`docs/lock-order.md` carries the same qualifier; the two hedged differently until PR #300's third pass.) **This row said the opposite until review** ("masked by the fallback beneath it… only the reason moves"), and it was observed rather than guessed — in the unit tests, which pass a bare `PrismaClient` where a retry after an abort is legal. Every production caller passes a TRANSACTION client, where the retry hits `25P02` and the fallback made things worse than its absence. The fallback is gone; the lesson is that a mutation is evidence only about the configuration it ran in |
 
 That last row is the one to get right. It is the exact defect #103 shipped past
 review, and a status-code assertion cannot see it.

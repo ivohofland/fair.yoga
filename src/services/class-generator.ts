@@ -455,11 +455,16 @@ export async function generateInstancesForTemplate(
   // declines, and the rethrow costs the whole window anyway. It also cost more
   // than that: the escaping error stopped being the `YG001` that the TWO
   // template POST catches match. Two, not the ten endpoints answering a
-  // cross-family 409 overall, because those two are the only ones that wrap
-  // generation — so a 409 the app knew how to word became a 500. (An earlier
-  // version said "the eight route branches", which is the FILE count. That is
-  // the files-versus-endpoints conflation `docs/lock-order.md` was rewritten
-  // to diagnose, written straight back into new code by the same commit.)
+  // cross-family 409 overall — and NOT because those two are the only callers
+  // that wrap generation, which is false: six do, including both sweeps and
+  // both pause/resume services, as the sentence four lines up says. They are
+  // the only generation-wrapping callers that CATCH `YG001`. The other four
+  // let it reach `withErrorHandler`, where `classifyApiError` has no arm for
+  // it and answers 500 — filed as #301. So a 409 the app knew how to word
+  // became a 500 here too. (Earlier versions said "the eight route branches",
+  // the FILE count — the files-versus-endpoints conflation
+  // `docs/lock-order.md` was rewritten to diagnose, written straight back into
+  // new code by the commit that rewrote it.)
   //
   // The mutation could not see it. The CROSS-FAMILY tests call this function
   // with a bare client, where every statement is its own transaction and the

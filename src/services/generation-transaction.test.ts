@@ -177,8 +177,11 @@ describe('generation inside a real $transaction (DB)', () => {
 
     // THE assertion. `25P02` also fails `toBeUndefined`, so a count-based or
     // truthiness-based check would pass against the defect this file exists
-    // for — what matters is that the escaping error is still the one the ten
-    // route branches recognise.
+    // for — what matters is that the escaping error is still the one the two
+    // template POST catches recognise. (Two, not ten: pass 2 corrected that
+    // conflation in this file's header and in both generators and missed this
+    // body comment, which is why the header now states the number once and
+    // this line points at it.)
     expect(caught).toBeDefined();
     expect(isCrossFamilySlotConflict(caught)).toBe(true);
     expect((caught as Error).message).not.toContain('25P02');
