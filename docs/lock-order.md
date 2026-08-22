@@ -754,6 +754,115 @@ lock-taking node to the ordering `template-lock-order.test.ts` defends, for a
 few seconds in a window that needs a concurrent template creation — the same
 trade `room-archive.ts:146-147` refused.
 
+## The cross-family slot guard reads, and does not lock (#296)
+
+Eight triggers — two each on `Class`, `StudioClass`, `ClassTemplate` and
+`StudioClassTemplate` — enforce that one teacher holds at most one live row per
+slot ACROSS the two class families. The invariant spans two tables, so no
+unique index can express it; a trigger is what is left.
+
+Each `BEFORE INSERT`/`BEFORE UPDATE` function runs a plain
+`SELECT … LIMIT 1` against the SIBLING table and raises `YG001` if it finds a
+live row. **No source line in `src/` issues that `SELECT`**, which is the
+property the #103 section above is about — so the check that finds it is a grep
+of `prisma/migrations/`, not of `src/`:
+
+    grep -rn "cross_family_slot" prisma/migrations/
+
+**It adds no node to the ordering above, and that is a claim about the locking
+clause rather than about triggers in general.** The `SELECT` carries none — no
+`FOR SHARE`, no `FOR KEY SHARE` — so under READ COMMITTED it takes nothing that
+is held to commit and cannot be half of a cycle. Contrast the RESTRICT trigger
+one section up, whose `SELECT 1 … FOR KEY SHARE` is a real wait edge and did
+produce a `40P01`. The difference is one clause.
+
+**The `UPDATE` triggers are narrowed by a `WHEN`, which is a lock-order fact
+and not only a performance one.** They fire only when the row is live AND the
+slot moved or the row became live. An unrelated update — `spotBroadcastAt`, the
+completion totals, `settingsLocked` — pays for no sibling read at all, so the
+overwhelming majority of writes to these four tables touch the sibling table
+zero times.
+
+### What it costs: a residual race, measured
+
+An unlocked read cannot see an uncommitted sibling insert, so two transactions
+writing opposite tables at one slot may both commit.
+
+Measured against `ethical_yoga_test` on the real trigger functions: 200 runs,
+each opening two interactive transactions at one identical
+`(teacherId, date, startTime)` — one `Class.create`, one `StudioClass.create` —
+each holding 40ms after its `INSERT` so both triggers' sibling `SELECT`s
+necessarily run before either commits. **Both committed in 200 of 200 runs.** A
+control with the two guards dropped also measured 200 of 200: under a forced
+overlap the guard makes no measurable difference, which is exactly what an
+unlocked `SELECT`'s inability to see an uncommitted row predicts.
+
+**Read that number for what it is.** The harness FORCES the overlap, so
+`200/200` is a rate conditional on two writes racing, not a rate of races. How
+often two slot writes for one teacher actually overlap was never measured, and
+nothing here should be read as if it were. What is established is narrower and
+still worth stating: once two such writes overlap, the guard contributes
+nothing.
+
+### Why no advisory lock, and what would change that
+
+Both forms were derived and rejected — see
+`docs/superpowers/specs/2026-08-21-cross-family-slot-exclusivity-design.md`
+§4.2.1 for the full argument. In this document's terms:
+
+- **At the call sites.** Four of the claiming sites issue no transaction at all
+  (`prisma.class.create`, `prisma.studioClass.create`,
+  `prisma.studioClass.update`, and `updateClass`'s bare `db.class.updateMany`,
+  whose first parameter is a full `PrismaClient`), and an `xact` advisory lock
+  in autocommit is taken and released by its own implicit transaction before
+  the caller's next statement runs. So this design means introducing an
+  interactive transaction at four hot paths — one of which is already half of
+  the 32-of-100 `40P01` in "The slot key is a wait edge" above. It would also
+  add a second advisory namespace beside `lockAnnouncementSlot`'s, whose own
+  section warns that **"the thing to check is a second call site"**; this would
+  add roughly ten.
+- **Inside the trigger functions.** Cheaper, and it works in autocommit because
+  the statement's implicit transaction is exactly the right scope. Rejected on
+  the ordering derivation rather than the lines: the lock would be taken by a
+  line no `grep` over `src/` can find, which is this document's own #103
+  lesson, and a `BEFORE UPDATE` trigger fires with the row lock ALREADY held —
+  so it would order `Class → advisory` where a call-site design orders
+  `advisory → Class`. The two cannot coexist.
+
+**Neither is dormant work.** #298's recorded decision extracts `CalendarEntry`
+and makes this invariant a composite foreign key, at which point the second
+writer blocks on an uncommitted INDEX ENTRY — the `ShareLock` "The slot key is
+a wait edge" describes — and gets `23505` rather than racing past an unlocked
+read. That is why the residual is accepted rather than bridged: an index-backed
+constraint is race-free by construction, which is why within-family exclusivity
+has never needed a lock either.
+
+**Reopen this section if #298 slips materially past #283 and #276**, which is
+the sequencing recorded on that issue. The trigger-internal form is the one to
+take.
+
+### What keeps the realistic path away from the guard
+
+Both generators pre-check the sibling table and decline the date as
+`blocked_by_other_family` (`class-generator.ts`, `studio-class-generator.ts`),
+and all eight routes answer 409 — five from a `catch` beside their own
+`isUniqueConflictOn` branch, three (`PUT /api/classes/[id]`, `PUT
+/api/class-templates/[id]`, `PUT /api/studio-class-templates/[id]`) from a
+`cross_family_slot_conflict` reason their service returns, because those routes
+issue no write of their own. Named rather than counted: "all eight answer 409"
+is true and "all eight catch" is not, and the difference is where a ninth door
+would have to put its branch. That is the same division of
+labour `countRoomDeleteBlockers` has with the RESTRICT trigger one section up:
+the guard is the backstop, the pre-check is what means it almost never fires.
+
+One difference from #103 worth stating, because it changes how the pre-check
+must be tested. There, removing the pre-check reopened a measurable deadlock.
+Here, removing it is **masked**: the trigger still fires, the batch insert
+aborts, the per-date fallback retries, and the date is reclassified as
+`'raced'`. `result.created` does not move. Measured by mutation on both
+generators — a test asserting only the count stays green through the removal of
+the entire feature, so the suite asserts the REASON.
+
 ## Known conformance
 
 - **`unlinkTeacher`** (`src/services/invitations.ts`) — `Class`/`WaitlistEntry`

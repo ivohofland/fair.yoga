@@ -317,6 +317,15 @@ model TeacherRoom {
 /// diff`, so it will not appear as drift and will not be dropped — and
 /// equally will not appear in this file unless someone keeps this comment
 /// true.
+///
+/// Since #296 it also carries TWO TRIGGERS, invisible for the same reason and
+/// worse: `migrate diff` cannot see a trigger at all, so they will never show
+/// as drift. `class_template_cross_family_slot_insert_guard` and
+/// `class_template_cross_family_slot_update_guard` reject a row that would make this
+/// teacher live at a slot the OTHER class family already holds — the invariant
+/// no unique index can express, because it spans two tables. They read the
+/// sibling table with a plain unlocked `SELECT` and take no lock; see
+/// `docs/lock-order.md`, "The cross-family slot guard".
 model ClassTemplate {
   id              String          @id @default(uuid())
   teacherId       String
@@ -381,6 +390,15 @@ model ClassTemplate {
 /// status <> 'cancelled' (#196). It is invisible to `migrate diff`, so it
 /// will not appear as drift and will not be dropped — and equally will not
 /// appear in this file unless someone keeps this comment true.
+///
+/// Since #296 it also carries TWO TRIGGERS, invisible for the same reason and
+/// worse: `migrate diff` cannot see a trigger at all, so they will never show
+/// as drift. `class_cross_family_slot_insert_guard` and
+/// `class_cross_family_slot_update_guard` reject a row that would make this
+/// teacher live at a slot the OTHER class family already holds — the invariant
+/// no unique index can express, because it spans two tables. They read the
+/// sibling table with a plain unlocked `SELECT` and take no lock; see
+/// `docs/lock-order.md`, "The cross-family slot guard".
 model Class {
   id                   String          @id @default(uuid())
   teacherId            String
@@ -445,6 +463,15 @@ model Class {
 /// diff`, so it will not appear as drift and will not be dropped — and
 /// equally will not appear in this file unless someone keeps this comment
 /// true.
+///
+/// Since #296 it also carries TWO TRIGGERS, invisible for the same reason and
+/// worse: `migrate diff` cannot see a trigger at all, so they will never show
+/// as drift. `studio_class_template_cross_family_slot_insert_guard` and
+/// `studio_class_template_cross_family_slot_update_guard` reject a row that would make this
+/// teacher live at a slot the OTHER class family already holds — the invariant
+/// no unique index can express, because it spans two tables. They read the
+/// sibling table with a plain unlocked `SELECT` and take no lock; see
+/// `docs/lock-order.md`, "The cross-family slot guard".
 model StudioClassTemplate {
   id              String   @id @default(uuid())
   teacherId       String
@@ -520,6 +547,15 @@ model StudioClassTemplate {
 /// treats as the uncancelled filter everywhere else on this model. `Class`
 /// spells the same idea as `status <> 'cancelled'` because that is the column
 /// it has.
+///
+/// Since #296 it also carries TWO TRIGGERS, invisible for the same reason and
+/// worse: `migrate diff` cannot see a trigger at all, so they will never show
+/// as drift. `studio_class_cross_family_slot_insert_guard` and
+/// `studio_class_cross_family_slot_update_guard` reject a row that would make this
+/// teacher live at a slot the OTHER class family already holds — the invariant
+/// no unique index can express, because it spans two tables. They read the
+/// sibling table with a plain unlocked `SELECT` and take no lock; see
+/// `docs/lock-order.md`, "The cross-family slot guard".
 model StudioClass {
   id              String    @id @default(uuid())
   teacherId       String

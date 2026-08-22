@@ -66,6 +66,20 @@ Classes move through states: `draft → open → in_progress → completed → c
   so nothing about keeping one is about money; a *generated* one survives
   because it holds its template's date (a cancelled **manual** class holds no
   template date and is freely removable).
+- **One teacher, one slot, across both families** (#296): a teacher holds at
+  most one LIVE class per `(date, startTime)` counting `Class` and
+  `StudioClass` together, and at most one live template per
+  `(dayOfWeek, startTime)` counting `ClassTemplate` and `StudioClassTemplate`
+  together. Cancelled classes and archived templates do not participate — each
+  family keeps its own spelling of "live" (`status <> 'cancelled'` versus
+  `cancelledAt IS NULL`; `isArchived = false` for both template families), and
+  a PAUSED template still holds its slot. Enforced by eight triggers rather
+  than an index, because the rule spans two tables and PostgreSQL has no
+  cross-table unique key. The triggers take no lock, so a residual race
+  survives — documented in `docs/lock-order.md` and dissolved by #298, which
+  makes this a composite foreign key. Both generators pre-check and skip
+  (`blocked_by_other_family`); all eight write routes answer 409 naming which
+  family holds the slot
 - Auto-cancel: system checks at configured time, cancels if below min_students
 - Walk-ins can exceed max_students — teacher rate stays capped at target, extra students lower everyone's price
 - After completion: pricing engine runs → payments created → notifications sent

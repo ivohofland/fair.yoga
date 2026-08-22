@@ -159,6 +159,17 @@ export async function generateStudioInstancesForTemplate(
   // `(teacherId, date)` is indexed on `Class` already (`schema.prisma`); the
   // studio side gained its equivalent in this issue's migration, for the
   // mirror-image read in `class-generator.ts`.
+  //
+  // known-open (#296): this pre-check and the trigger behind it are both
+  // unlocked reads, so two transactions writing opposite families at one slot
+  // can still both commit. Measured at 200 of 200 runs under a FORCED overlap
+  // — a rate conditional on racing, not a rate of races, which was never
+  // measured. Accepted rather than closed with an advisory lock because #298's
+  // recorded decision turns this invariant into a composite foreign key on an
+  // extracted `CalendarEntry`, where the second writer blocks on an
+  // uncommitted index entry instead. `docs/lock-order.md`, "The cross-family
+  // slot guard reads, and does not lock", carries the full argument and the
+  // condition for reopening it.
   const foreign = await db.class.findMany({
     where: {
       teacherId: template.teacherId,
