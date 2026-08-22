@@ -33,6 +33,7 @@ let teacherId: string;
 let teacherToken: string;
 let roomId: string;
 let classId: string;
+let studioTemplateId: string;
 
 async function signIn(context: BrowserContext): Promise<void> {
   await context.addCookies([sessionCookie(teacherToken)]);
@@ -138,6 +139,25 @@ function rewriteDates(source: string): boolean {
   return found;
 }
 
+// Runs in the browser via page.evaluate. `Element.innerText` includes every
+// <option> in a <select>, selected or not — CSS visibility on an <option>
+// does not change this, confirmed empirically against Chromium while
+// building this check. A day-of-week picker's own selected value (e.g.
+// "Wednesday") is exactly the weekday-shaped text DATE_SMELL exists to
+// catch, but it is not a date: it never varies with wall-clock time, only
+// with which day the fixture chose, so it carries no drift risk to guard
+// against. Stripping every option's own label out of the text (not the DOM,
+// so nothing a screenshot could see is touched) removes it along with the
+// unselected options. On a page with no <select> this is a no-op — nothing
+// narrows for the six screens that came before it.
+function bodyTextForSmellCheck(): string {
+  let text = document.body.innerText;
+  document.querySelectorAll('option').forEach((opt) => {
+    text = text.split(opt.text).join('');
+  });
+  return text;
+}
+
 async function freezeDates(page: Page): Promise<void> {
   // React's hydration pass reverts DOM rewrites it didn't render (and, in
   // dev, pops the error-overlay badge), so a single rewrite races it.
@@ -150,7 +170,7 @@ async function freezeDates(page: Page): Promise<void> {
   }
   // Any date-shaped text that escapes the freeze would silently drift the
   // baseline weeks from now — fail loudly today instead.
-  expect(await page.locator('body').innerText()).not.toMatch(DATE_SMELL);
+  expect(await page.evaluate(bodyTextForSmellCheck)).not.toMatch(DATE_SMELL);
 }
 
 /**
@@ -245,10 +265,29 @@ test.describe('Visual regression', () => {
         relatedClassId: classId,
       },
     });
+
+    // Paused, deliberately: `!isActive` is what draws BOTH controls, and a
+    // paused template generates nothing, so `schedule.png` is untouched.
+    // Wednesday 18:00 — a different (dayOfWeek, startTime) from the fixture
+    // class at Tuesday 09:00, so nothing can brush #296's slot guards.
+    const studioTemplate = await prisma.studioClassTemplate.create({
+      data: {
+        teacherId,
+        classType: 'Visual Studio Flow',
+        dayOfWeek: 2, // 0 = Monday in this schema, so 2 is Wednesday
+        startTime: '18:00',
+        durationMinutes: 75,
+        location: 'Visual Community Studio',
+        hourlyRate: 42,
+        isActive: false,
+      },
+    });
+    studioTemplateId = studioTemplate.id;
   });
 
   test.afterAll(async () => {
     await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    await prisma.studioClassTemplate.deleteMany({ where: { teacherId } });
     await prisma.class.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
@@ -325,5 +364,15 @@ test.describe('Visual regression', () => {
     await hydrated;
     await freezeDates(page);
     await expect(page).toHaveScreenshot('settings.png', { fullPage: true, stylePath: hideDevOverlay });
+  });
+
+  test('studio template detail (paused)', async ({ page, context }) => {
+    await signIn(context);
+    await page.goto(`/settings/studio-classes/${studioTemplateId}`);
+    await freezeDates(page);
+    await expect(page).toHaveScreenshot('studio-template.png', {
+      fullPage: true,
+      stylePath: hideDevOverlay,
+    });
   });
 });
