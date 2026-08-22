@@ -438,24 +438,35 @@ export async function generateInstancesForTemplate(
   }
 
   // ONE STATEMENT, NO CATCH, and #296 is the second issue to reach for one here
-  // and be wrong. `class-generator.ts`'s own `claimTemplateForGeneration`
-  // already says it: "Do not reintroduce a `catch` here; there is nothing it
-  // can do that the constraint does not."
+  // and be wrong. THIS FUNCTION'S OWN docblock already says it — not a sibling
+  // function's, which makes the objection stronger rather than weaker: "Do not
+  // reintroduce a `catch` here; there is nothing it can do that the constraint
+  // does not." (An earlier version of this comment credited the sentence to
+  // `claimTemplateForGeneration`, which does not contain it.)
   //
   // A `catch` with a per-date retry shipped on this branch and was measured
-  // non-functional. Every production caller passes a TRANSACTION client (both
-  // sweeps, both POST routes, both pause/resume services), Prisma takes no
+  // non-functional. Every production caller of the two generators passes a
+  // TRANSACTION client — six across the pair, three per generator, which is
+  // the number this file's own function docblock states at its narrower scope
+  // — Prisma takes no
   // savepoint per statement, and a `RAISE EXCEPTION` aborts the Postgres
   // transaction — so the first retried `create` returns `25P02 current
   // transaction is aborted`, which `isCrossFamilySlotConflict` correctly
   // declines, and the rethrow costs the whole window anyway. It also cost more
-  // than that: the escaping error stopped being the `YG001` the eight route
-  // branches match, so a 409 the app knew how to word became a 500.
+  // than that: the escaping error stopped being the `YG001` that the TWO
+  // template POST catches match. Two, not the ten endpoints answering a
+  // cross-family 409 overall, because those two are the only ones that wrap
+  // generation — so a 409 the app knew how to word became a 500. (An earlier
+  // version said "the eight route branches", which is the FILE count. That is
+  // the files-versus-endpoints conflation `docs/lock-order.md` was rewritten
+  // to diagnose, written straight back into new code by the same commit.)
   //
-  // The unit tests could not see it. They call this function with a BARE
-  // client, where every statement is its own transaction and the retry works —
-  // so the mutation recorded for it came back green in a configuration
-  // production never uses. `generation-transaction.test.ts` now drives this
+  // The mutation could not see it. The CROSS-FAMILY tests call this function
+  // with a bare client, where every statement is its own transaction and the
+  // retry works, so the mutation came back green in a configuration production
+  // never uses. Other tests in these files DO drive the generators through
+  // `$transaction`; none of them staged a cross-family collision inside one,
+  // which is the gap rather than transactions being untested generally. `generation-transaction.test.ts` now drives this
   // path through a real `$transaction` for that reason.
   //
   // What the loss costs, stated rather than waved past: a cross-family row

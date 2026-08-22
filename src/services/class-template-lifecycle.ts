@@ -819,7 +819,9 @@ export async function updateClassTemplate(
     // LOGGED for the reason `archiveOrUnarchiveTemplate`'s own branch below
     // gives: a returned failure never reaches `withErrorHandler`, so catching
     // here is what would remove the server-side record. Its studio-family
-    // mirror (`updateStudioClassTemplate`) logs the identical event; without
+    // mirror (`updateStudioClassTemplate`) logs the same event mirrored — the
+    // two sentences name opposite families, so parallel rather than identical;
+    // without
     // this line a teacher's report of a refused Tuesday edit would have a trace
     // in one direction and none in the other.
     if (isCrossFamilySlotConflict(err)) {

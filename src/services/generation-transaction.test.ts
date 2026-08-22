@@ -1,6 +1,14 @@
 /**
  * Both generators, driven through a REAL `$transaction` — the configuration
- * every production caller uses and no other test in this repo exercises.
+ * every production caller uses — at a CROSS-FAMILY collision, which is the
+ * combination no other test in this repo exercises.
+ *
+ * Both halves matter, and the first draft of this sentence overstated it.
+ * Other tests in `class-generator.test.ts` and `studio-class-generator.test.ts`
+ * DO drive the generators through `$transaction` — the sweep entry points
+ * always do. What none of them did was stage a cross-family collision inside
+ * one: every cross-family case uses a bare `prisma`. The collision is what
+ * raises, so the transaction semantics only bite where the two overlap.
  *
  * This file exists because of a defect that shipped on #296's branch and was
  * caught in PR review. A `catch` around `createManyAndReturn` retried the
@@ -13,8 +21,11 @@
  *   - so the trigger's `RAISE EXCEPTION` leaves the Postgres transaction
  *     aborted, and the first retried `create` returns `25P02`, which
  *     `isCrossFamilySlotConflict` correctly declines — costing the whole
- *     window anyway AND replacing the `YG001` that ten route branches match
- *     with a `25P02` that none of them do. A wordable 409 became a 500.
+ *     window anyway AND replacing the `YG001` that the two template POST
+ *     catches match with a `25P02` that neither does. A wordable 409 became a
+ *     500. Two, not the ten endpoints answering a cross-family 409 overall:
+ *     those two are the only ones that wrap generation, so they are the only
+ *     ones an error escaping a generator can reach.
  *
  * The mutation had reported healthy because the unit tests call the generators
  * with a bare `PrismaClient`, where every statement is its own transaction and

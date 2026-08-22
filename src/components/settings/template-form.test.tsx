@@ -415,7 +415,6 @@ describe('TemplateForm', () => {
     expect(routerPush).not.toHaveBeenCalled();
   });
 
-
   /**
    * PR #300 review, C2 — the bug this file's own sibling case above was
    * written to prevent, reproduced one reason later.
@@ -430,8 +429,12 @@ describe('TemplateForm', () => {
    * every date.
    *
    * The gate is now `anyBlocked(counts)` (`@/lib/generation`), which reduces
-   * over the object instead of listing members — so the fifth count is covered
-   * by this test too, without this test being edited.
+   * over the object instead of listing members. Note what that does and does
+   * not buy HERE: the GATE is covered for a fifth count structurally, but this
+   * test is not — the fixture below hard-codes four members inside an untyped
+   * `json: async () => ({...})`, so a fifth would neither fail nor be
+   * exercised. `anyBlocked`'s own unit tests in `src/lib/generation.test.ts`
+   * are what cover the reduction per member.
    */
   it('reports a window the OTHER family holds, instead of navigating away', async () => {
     fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {

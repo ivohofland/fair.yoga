@@ -150,7 +150,7 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         //
         // The POST also returns `added` and `counts` — the same shape the PATCH
         // `active` arm carries (#296 nested them). #196 made
-        // #196 made `slotTaken` reachable here for the first time: a teacher
+        // `slotTaken` reachable here for the first time: a teacher
         // creating a recurring studio class onto a day/time they already
         // occupy gets a live template whose window came back short. A clean
         // window navigates straight to the list as before; a short one stays
@@ -183,9 +183,10 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
         setCreated(true);
         // `anyBlocked` rather than a hand-listed pair (`@/lib/generation`). This
         // gate enumerated its terms until #296 added `blockedByOtherFamily` —
-        // the first reason reachable on CREATE that is not structurally 0 — and
+        // the first such reason THE GATE DID NOT ALREADY LIST (`slotTaken` has
+        // been reachable on create since #196, and the gate listed it) — and
         // then navigated away from a short window in silence. See that
-        // function's docblock; the paragraph below is the rule it broke.
+        // function's docblock; the paragraph ABOVE is the rule it broke.
         if (result?.counts && anyBlocked(result.counts)) {
           setSuccess(resumeStudioMessage(result.added, result.added, result.counts));
         } else {

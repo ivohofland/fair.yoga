@@ -352,9 +352,10 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
         setCreated(true);
         // `anyBlocked` rather than a hand-listed pair (`@/lib/generation`). This
         // gate enumerated its terms until #296 added `blockedByOtherFamily` —
-        // the first reason reachable on CREATE that is not structurally 0 — and
+        // the first such reason THE GATE DID NOT ALREADY LIST (`slotTaken` has
+        // been reachable on create since #196, and the gate listed it) — and
         // then navigated away from a short window in silence. See that
-        // function's docblock; the paragraph below is the rule it broke.
+        // function's docblock; the paragraph ABOVE is the rule it broke.
         if (result?.counts && anyBlocked(result.counts)) {
           setSuccess(resumeMessage(result.added, result.added, result.counts));
         } else {

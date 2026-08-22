@@ -450,10 +450,37 @@ point.
 violation silently. **It cannot absorb a raised exception** — that aborts the
 whole statement, so one cross-family collision would cost all four dates.
 
-Design: keep the batch. On `YG001`, fall back to inserting the free dates one at
-a time, classifying the loser as the existing `'raced'`. The pre-check makes
-this rare, per-template failure isolation (#55) bounds it, and the next hourly
-sweep recovers regardless.
+**That design was implemented and then deleted in PR review. Do not restore it,
+and this paragraph is kept rather than rewritten so nobody re-derives it.**
+
+The rejected design was: keep the batch, and on `YG001` fall back to inserting
+the free dates one at a time, classifying the loser as the existing `'raced'`.
+It cannot work. Every production caller passes a TRANSACTION client — both
+sweeps, both template POSTs, both pause/resume services — Prisma takes no
+savepoint per statement, and a `RAISE EXCEPTION` leaves the Postgres
+transaction aborted. Measured: the first retried `create` returns `25P02
+current transaction is aborted`, which `isCrossFamilySlotConflict` correctly
+declines, so the rethrow costs the whole window anyway. It also cost more than
+the window — the escaping error stopped being the `YG001` the two template POST
+catches match, so a 409 the app knew how to word became a 500. The fallback was
+strictly worse than its absence.
+
+**Design as shipped: one statement, no catch.** `YG001` propagates. A
+cross-family row committing between the pre-check and the insert costs that
+template its window for THAT run; the next sweep's pre-check sees the committed
+row and skips exactly that date, so it self-corrects within the hour, and on
+the two POST routes the same error becomes the 409 those routes have a branch
+for. Per-template failure isolation (#55) still bounds the blast radius to one
+template.
+
+The `'raced'` classification is likewise gone from this path: with no swallow,
+`skipDuplicates` can only absorb a same-family unique index, so a cross-family
+collision can no longer be relabelled as a transient race — which it never was.
+
+§6.2's mutation row and the plan's Task 5 step 7 carry the same correction, and
+`docs/lock-order.md` carries why the mutation that blessed this design reported
+green: it ran against a bare `PrismaClient`, where every statement is its own
+transaction and the retry is legal.
 
 ### 5.7 `docs/lock-order.md`
 
