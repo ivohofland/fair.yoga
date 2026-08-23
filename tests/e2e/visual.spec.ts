@@ -150,23 +150,26 @@ function rewriteDates(source: string): boolean {
 // a bare weekday elsewhere on the page is unaffected and still reaches the
 // check below.
 //
-// KNOWN-OPEN: hiding a <select> removes its selected option's text from
-// `text` along with every unselected one, so a <select> whose selected
-// value is a real, drifting date is not checked here — that baseline could
-// drift silently instead of failing this check.
-function bodyTextForSmellCheck(): string {
-  const hidden = Array.from(document.querySelectorAll('select')).map((select) => ({
-    select,
-    previousDisplay: select.style.display,
-  }));
-  hidden.forEach(({ select }) => {
+// Hiding takes the SELECTED option's text out too, and that one is really on
+// the screenshot — so it is returned separately rather than dropped, and the
+// caller checks it against the stricter pattern. Read before hiding: a hidden
+// <select> still reports `selectedOptions`, but reading first keeps the two
+// steps independent of that.
+function bodyTextForSmellCheck(): { text: string; selectedLabels: string[] } {
+  const selects = Array.from(document.querySelectorAll('select'));
+  const selectedLabels = selects.map((s) => s.selectedOptions[0]?.textContent?.trim() ?? '');
+  const hidden = selects.map((select) => {
+    const previousDisplay = select.style.display;
     select.style.display = 'none';
+    return { select, previousDisplay };
   });
-  const text = document.body.innerText;
-  hidden.forEach(({ select, previousDisplay }) => {
-    select.style.display = previousDisplay;
-  });
-  return text;
+  try {
+    return { text: document.body.innerText, selectedLabels };
+  } finally {
+    hidden.forEach(({ select, previousDisplay }) => {
+      select.style.display = previousDisplay;
+    });
+  }
 }
 
 async function freezeDates(page: Page): Promise<void> {
@@ -181,7 +184,22 @@ async function freezeDates(page: Page): Promise<void> {
   }
   // Any date-shaped text that escapes the freeze would silently drift the
   // baseline weeks from now — fail loudly today instead.
-  expect(await page.evaluate(bodyTextForSmellCheck)).not.toMatch(DATE_SMELL);
+  const { text, selectedLabels } = await page.evaluate(bodyTextForSmellCheck);
+  expect(text).not.toMatch(DATE_SMELL);
+  // A closed <select> rasterizes its SELECTED option, and hiding the select
+  // took that text out of `text` above — so it is checked separately here.
+  //
+  // Narrow on purpose, and worth being exact about what it can find: the
+  // freeze walks every text node, <option> included, so once the loop above
+  // converges there is no DATE_PATTERN match left anywhere and this passes
+  // unconditionally. What it catches is the loop GIVING UP — 40 attempts
+  // without three stable passes — with a date still sitting in a select,
+  // which is the one case DATE_SMELL cannot see, because the select is
+  // hidden from it. DATE_PATTERN rather than DATE_SMELL because a bare
+  // weekday is a legitimate day-picker label and DATE_SMELL matches one.
+  for (const label of selectedLabels) {
+    expect(label).not.toMatch(DATE_PATTERN);
+  }
 }
 
 const hideDevOverlay = path.join(__dirname, 'visual-hide-dev-overlay.css');

@@ -26,10 +26,44 @@ export function hydrationSignal(page: Page): Promise<unknown> {
 }
 
 /**
- * The budget for an assertion that crosses from client state into state only
- * a `router.refresh()` can produce. That commit can be slow — or dropped — on
- * a loaded runner; `teacher-journey.spec.ts`'s publish test carries the #40
- * investigation into it and reloads instead. Both of `studio.spec.ts`'s CI
- * flakes sat on this boundary, where the 5 s default was not enough.
+ * The budget for a server-rendered assertion made after a `page.reload()`.
+ *
+ * A post-action `router.refresh()` commit can be DROPPED on a loaded runner —
+ * the write lands and the repaint never arrives. `teacher-journey.spec.ts`'s
+ * publish test carries the #40 investigation and reloads for that reason, and
+ * `studio.spec.ts` now does the same: raising this budget to 10 s was tried
+ * first and CI still reported `element(s) not found` at the full 10 s, which
+ * is what rules out "slow" and leaves "dropped". No timeout fixes a commit
+ * that never comes; only re-asking the server does.
+ *
+ * The budget is still needed after the reload, because the reload itself is
+ * what is slow on a loaded runner.
  */
-export const REFRESH_TIMEOUT = { timeout: 10_000 };
+export const SERVER_RENDER_TIMEOUT = { timeout: 10_000 };
+
+/**
+ * `page.reload()` that waits for the fresh tree to hydrate.
+ *
+ * A reload throws hydration away, so a click on the reloaded page has the same
+ * lost-click hazard as a click after `goto`. Used unconditionally rather than
+ * only where a click follows: the SSE request fires on every teacher page, so
+ * waiting costs one round-trip and removes the question.
+ */
+export async function reloadHydrated(page: Page): Promise<void> {
+  const hydrated = hydrationSignal(page);
+  await page.reload();
+  await hydrated;
+}
+
+/**
+ * Resolves when a PATCH to `path` comes back OK. Arm before the click.
+ *
+ * This is the reload's precondition, not a substitute for it: reloading
+ * before the write commits would read the old state back and pass for the
+ * wrong reason.
+ */
+export function patchOk(page: Page, path: string): Promise<unknown> {
+  return page.waitForResponse(
+    (r) => r.url().includes(path) && r.request().method() === 'PATCH' && r.ok(),
+  );
+}

@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import { accountIdOfTeacher } from './account-helpers';
-import { hydrationSignal, REFRESH_TIMEOUT } from './page-helpers';
+import { hydrationSignal, patchOk, reloadHydrated, SERVER_RENDER_TIMEOUT } from './page-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 
 /**
@@ -14,10 +14,21 @@ import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
  *
  * Why a browser rather than the two cheaper page-level techniques this repo
  * already has (a jsdom `src/app/**` test, an integration HTTP fetch): the two
- * controls on the template detail page are gated on SERVER-rendered props and
- * re-gated by `router.refresh()` after each PATCH. A mocked render can assert
- * either state and never the transition; a single fetch stops before it. Only
- * a browser sees the refresh actually change which control is drawn.
+ * controls on the template detail page are gated on SERVER-rendered props, so
+ * which one is drawn is a function of what the previous step WROTE. A mocked
+ * render asserts a state someone chose; a single fetch sees one state and
+ * stops. This drives the whole arc through real clicks on the real controls
+ * and re-reads the server after each one, so every step's props are the
+ * previous step's writes.
+ *
+ * What it deliberately does NOT assert is that `router.refresh()` commits.
+ * That was the original justification for this file and it did not survive
+ * CI: the commit is dropped often enough on a loaded runner that asserting it
+ * is a flake, not a test — `element(s) not found` at a full 10 s budget,
+ * which is the same fault `teacher-journey.spec.ts` records under #40. Each
+ * mutating click therefore waits for its PATCH and then RELOADS, and the
+ * assertions that follow are about server truth. The refresh wiring itself is
+ * held by the components' own tests.
  */
 
 const prisma = new PrismaClient();
@@ -31,20 +42,37 @@ const suffix = uniqueSuffix();
 // same reason.
 const templateDate = new Date();
 templateDate.setUTCDate(templateDate.getUTCDate() + 3);
-const templateDayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][
-  templateDate.getUTCDay()
-]!;
 
-// The same 0=Monday mapping `studio-template-form.tsx`'s DAY_OPTIONS uses,
-// needed here only because the second fixture template below is seeded
-// through Prisma rather than the form and so has no label to select.
-const STUDIO_DAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-const otherTemplateDayOfWeek = (STUDIO_DAY_LABELS.indexOf(templateDayName) + 1) % 7;
+// One table, in the schema's 0=Monday order (the same order
+// `studio-template-form.tsx`'s DAY_OPTIONS uses). `getUTCDay()` is 0=Sunday,
+// so shift by six to index this one — Sunday 0 -> 6, Monday 1 -> 0.
+//
+// Deliberately not two tables agreeing through `indexOf`: a typo in either
+// returned -1, which `% 7` turned into a silent Monday rather than a failure.
+const DAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const templateDayOfWeek = (templateDate.getUTCDay() + 6) % 7;
+const templateDayName = DAY_LABELS[templateDayOfWeek]!;
+
+// The day after, so the second fixture template — seeded through Prisma
+// rather than the form, and so with no label to select — sits on a different
+// (dayOfWeek, startTime) from the one the form creates.
+const otherTemplateDayOfWeek = (templateDayOfWeek + 1) % 7;
 
 let teacherId: string;
 let teacherToken: string;
 let templateId: string;
 let otherTemplateId: string;
+
+/**
+ * `templateId` is assigned by the first test. Serial mode SKIPS the rest when
+ * that one fails, so this is not for that case — it is for running one of them
+ * alone (`playwright test -g`), where the id is `undefined`, the goto lands on
+ * `/settings/studio-classes/undefined`, the page redirects, and the real cause
+ * surfaces five seconds later as "element(s) not found".
+ */
+function requireTemplateId(): void {
+  expect(templateId, 'templateId comes from the first test — run the whole describe').toBeTruthy();
+}
 
 test.describe('Studio class templates', () => {
   test.describe.configure({ mode: 'serial' });
@@ -125,9 +153,9 @@ test.describe('Studio class templates', () => {
 
     await page.getByLabel('Class type').fill('Studio Flow');
     await page.getByLabel('Location').fill('Community Studio');
-    // Selected by LABEL, never by integer. Studio `dayOfWeek` is 0=Monday
-    // (`studio-template-form.tsx`'s `DAY_OPTIONS`) while `getUTCDay()` is 0=Sunday, and
-    // the label sidesteps the mismatch entirely.
+    // Selected by LABEL, never by integer — the label sidesteps the two
+    // day-numbering conventions reconciled at the top of this file. What the
+    // form then STORES is checked on the list, further down the arc.
     await page.getByLabel('Day').selectOption(templateDayName);
     await page.getByLabel('Start time').fill('08:15');
     await page.getByLabel('Duration (minutes)').fill('60');
@@ -149,6 +177,7 @@ test.describe('Studio class templates', () => {
   });
 
   test('the four generated classes are on the schedule, and refuse removal', async ({ page }) => {
+    requireTemplateId();
     await page.goto('/');
 
     // `StudioClassCard` (`schedule/class-list.tsx`) renders
@@ -183,6 +212,7 @@ test.describe('Studio class templates', () => {
   });
 
   test('pausing says what stays scheduled, and reveals Archive', async ({ page }) => {
+    requireTemplateId();
     // Read the two ends of the window BEFORE pausing, so the assertion below
     // can tell "last" from "first". Every one of the four shares 08:15, so
     // the date is the only field that distinguishes them.
@@ -203,27 +233,31 @@ test.describe('Studio class templates', () => {
     // behind `{!template.isActive && …}` in `settings/studio-classes/[id]/page.tsx`.
     await expect(page.getByRole('button', { name: 'Pause studio class' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Archive studio class' })).toHaveCount(0);
+
+    const paused = patchOk(page, `/api/studio-class-templates/${templateId}`);
     await page.getByRole('button', { name: 'Pause studio class' }).click();
+    await paused;
 
     // `pauseMessage` names the last class still standing — pause deletes
     // nothing, so all four survive and the FOURTH is the one named. The day
     // number is matched rather than the whole rendered date so this does not
     // reimplement `formatDayHeader`; matching only its shape would let a
     // regression that names the first class through.
+    //
+    // Asserted BEFORE the reload below: this sentence is client state and the
+    // reload discards it.
     await expect(page.getByText(/No new classes will be added to your schedule\./)).toBeVisible();
     await expect(
       page.getByText(new RegExp(`The last one still scheduled is \\w+, ${lastDay} \\w{3} · 08:15\\.`)),
     ).toBeVisible();
     expect(lastDay).not.toBe(firstDay);
 
-    // Past here the assertions read state only `router.refresh()` produces,
-    // so they carry the refresh budget rather than the 5 s default. The
-    // message above already proves the PATCH resolved — waiting on it would
-    // add nothing; the refresh COMMIT is what this is waiting for.
-    await expect(page.getByRole('button', { name: 'Resume studio class' })).toBeVisible(REFRESH_TIMEOUT);
+    // Server truth, re-read rather than waited for — see the file docblock.
+    await reloadHydrated(page);
+    await expect(page.getByRole('button', { name: 'Resume studio class' })).toBeVisible(SERVER_RENDER_TIMEOUT);
     await expect(
       page.getByRole('button', { name: 'Archive studio class', exact: true }),
-    ).toBeVisible(REFRESH_TIMEOUT);
+    ).toBeVisible(SERVER_RENDER_TIMEOUT);
 
     expect(await prisma.studioClass.count({ where: { templateId } })).toBe(4);
   });
@@ -234,6 +268,13 @@ test.describe('Studio class templates', () => {
     await page.goto('/settings/studio-classes');
     await expect(page.getByText('Studio Flow')).toBeVisible();
     await expect(page.getByText(/Community Studio · €45\.00\/hr/)).toBeVisible();
+
+    // The weekday the form stored, read back — the only place this arc pins
+    // the 0=Monday convention. The form is driven by LABEL, so a re-indexed
+    // DAY_OPTIONS would still select the right label and still generate four
+    // classes inside the window; it would just store the wrong day, and a
+    // rendered weekday is the only thing that shows it.
+    await expect(page.getByText(`${templateDayName} 08:15 · 60 min`)).toBeVisible();
     // Scoped to this row: the second fixture template is paused throughout
     // this whole spec, so a bare `page.getByText('paused')` would match both.
     const row = page.getByRole('link', { name: /Studio Flow/ });
@@ -241,10 +282,13 @@ test.describe('Studio class templates', () => {
   });
 
   test('resuming reports the window it already has', async ({ page }) => {
+    requireTemplateId();
     const hydrated = hydrationSignal(page);
     await page.goto(`/settings/studio-classes/${templateId}`);
     await hydrated;
+    const resumed = patchOk(page, `/api/studio-class-templates/${templateId}`);
     await page.getByRole('button', { name: 'Resume studio class' }).click();
+    await resumed;
 
     // `added: 0, scheduled: 4` — pause deleted nothing, so the window was
     // already full and this resume adds none. That asymmetric pair is exactly
@@ -252,28 +296,33 @@ test.describe('Studio class templates', () => {
     // arguments cannot detect a transposition.
     await expect(page.getByText('4 classes on your schedule. Nothing needed adding.')).toBeVisible();
 
-    // Active again, so Archive is gated off again — post-refresh state, so
-    // both carry the refresh budget. Left inexact deliberately: for a
-    // `toHaveCount(0)`, substring matching is the STRICTER reading, because
-    // it also fails on an "Unarchive studio class" button appearing here.
-    await expect(page.getByRole('button', { name: 'Pause studio class' })).toBeVisible(REFRESH_TIMEOUT);
-    await expect(page.getByRole('button', { name: 'Archive studio class' })).toHaveCount(0, REFRESH_TIMEOUT);
+    // Active again, so Archive is gated off again. Left inexact deliberately:
+    // for a `toHaveCount(0)`, substring matching is the STRICTER reading,
+    // because it also fails on an "Unarchive studio class" button appearing.
+    await reloadHydrated(page);
+    await expect(page.getByRole('button', { name: 'Pause studio class' })).toBeVisible(SERVER_RENDER_TIMEOUT);
+    await expect(page.getByRole('button', { name: 'Archive studio class' })).toHaveCount(0, SERVER_RENDER_TIMEOUT);
   });
 
   test('archiving withdraws the window and says how much', async ({ page }) => {
+    requireTemplateId();
     const hydrated = hydrationSignal(page);
     await page.goto(`/settings/studio-classes/${templateId}`);
     await hydrated;
 
     // Archiving needs a paused template — this second pause is the
-    // composition, not a workaround. Archive appears only once the refresh
-    // that follows the pause has committed, hence the budget.
+    // composition, not a workaround.
+    const paused = patchOk(page, `/api/studio-class-templates/${templateId}`);
     await page.getByRole('button', { name: 'Pause studio class' }).click();
+    await paused;
+    await reloadHydrated(page);
     await expect(
       page.getByRole('button', { name: 'Archive studio class', exact: true }),
-    ).toBeVisible(REFRESH_TIMEOUT);
+    ).toBeVisible(SERVER_RENDER_TIMEOUT);
 
+    const archived = patchOk(page, `/api/studio-class-templates/${templateId}`);
     await page.getByRole('button', { name: 'Archive studio class', exact: true }).click();
+    await archived;
 
     // `archiveStudioMessage(4, 0)`: four future uncancelled classes deleted,
     // none dated today to spare.
@@ -288,12 +337,15 @@ test.describe('Studio class templates', () => {
   });
 
   test('an archived template leaves the live list for the archived one', async ({ page }) => {
+    requireTemplateId();
     await page.goto('/settings/studio-classes');
-    await expect(page.getByText('Studio Flow')).toHaveCount(0);
     // The still-live second template stays on this list — the same filter
     // that dropped the archived one (its `isArchived: false` filter)
-    // leaves an unarchived one in place.
+    // leaves an unarchived one in place. Asserted FIRST, so it anchors the
+    // negative below: a session that had been bounced to /login would satisfy
+    // a `toHaveCount(0)` on its own.
     await expect(page.getByText('Yin Retreat')).toBeVisible();
+    await expect(page.getByText('Studio Flow')).toHaveCount(0);
 
     await page.goto('/settings/studio-classes/archived');
     await expect(page.getByText('Studio Flow')).toBeVisible();
@@ -318,11 +370,15 @@ test.describe('Studio class templates', () => {
   });
 
   test('un-archiving returns the template paused, not active', async ({ page }) => {
+    requireTemplateId();
     const hydrated = hydrationSignal(page);
     await page.goto(`/settings/studio-classes/${templateId}`);
     await hydrated;
+    const unarchived = patchOk(page, `/api/studio-class-templates/${templateId}`);
     await page.getByRole('button', { name: 'Unarchive studio class' }).click();
+    await unarchived;
 
+    // Client state, so before the reload.
     await expect(
       page.getByText('Un-archived. This template is paused — resume it to put classes back on your schedule.'),
     ).toBeVisible();
@@ -336,10 +392,11 @@ test.describe('Studio class templates', () => {
     // "Unarchive studio class" CONTAINS "Archive studio class". Without it
     // this assertion is satisfied by the button it is meant to prove was
     // replaced, and says nothing at all.
-    await expect(page.getByRole('button', { name: 'Resume studio class' })).toBeVisible(REFRESH_TIMEOUT);
+    await reloadHydrated(page);
+    await expect(page.getByRole('button', { name: 'Resume studio class' })).toBeVisible(SERVER_RENDER_TIMEOUT);
     await expect(
       page.getByRole('button', { name: 'Archive studio class', exact: true }),
-    ).toBeVisible(REFRESH_TIMEOUT);
+    ).toBeVisible(SERVER_RENDER_TIMEOUT);
 
     const t = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: templateId } });
     expect(t.isArchived).toBe(false);
@@ -453,8 +510,8 @@ test.describe('One-off studio classes', () => {
 
     // Unlike the template buttons, this one sets no message — the confirm
     // prompt is client state from BEFORE the click, so nothing between the
-    // click and the assertion proves the PUT resolved. Wait for it, then give
-    // the refresh that follows it the same budget the template arcs use.
+    // click and the assertion proves the PUT resolved. Wait for it, then read
+    // the server back, for the same reason as the template arcs above.
     const cancelled = page.waitForResponse(
       (r) =>
         r.url().includes(`/api/studio-classes/${created.id}`) &&
@@ -464,8 +521,9 @@ test.describe('One-off studio classes', () => {
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
     await cancelled;
 
-    await expect(page.getByText('This class was cancelled.')).toBeVisible(REFRESH_TIMEOUT);
-    await expect(page.getByLabel('Student count')).toHaveCount(0, REFRESH_TIMEOUT);
+    await reloadHydrated(page);
+    await expect(page.getByText('This class was cancelled.')).toBeVisible(SERVER_RENDER_TIMEOUT);
+    await expect(page.getByLabel('Student count')).toHaveCount(0, SERVER_RENDER_TIMEOUT);
 
     // REMOVE — offered because the class is manual and past-dated. A cancelled
     // class is not an income record, so the confirm claims no cost.
