@@ -202,6 +202,11 @@ test.describe('Studio class templates', () => {
     await expect(page.getByRole('button', { name: 'Cancel class' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Remove this class' })).toHaveCount(0);
 
+    // Issue 304: the page this card opens must head with what the card led
+    // with — the class type, not the venue. The arc created both values, so
+    // this is the exact pairing a teacher taps through.
+    await expect(page.getByRole('heading', { name: 'Studio Flow' })).toBeVisible();
+
     // The Template link is labelled with the same expression as the header of
     // the page it opens, so following it cannot land the teacher on a
     // differently-named screen. Not an edge case: `classType` is a non-null
@@ -490,6 +495,12 @@ test.describe('One-off studio classes', () => {
     });
     expect(page.url()).toBe(`http://localhost:3000/studio-class/${created.id}`);
     expect(created.templateId).toBeNull();
+
+    // Issue 304, manual half: the page the log form lands on heads with the
+    // class type just typed and keeps the venue on screen — both facts the
+    // form itself collected.
+    await expect(page.getByRole('heading', { name: 'Cover Class' })).toBeVisible();
+    await expect(page.getByText('Guest Studio')).toBeVisible();
 
     // COUNT — before cancelling: the editor lives in the `cancelledAt === null`
     // branch and is gone from the cancelled page entirely.
