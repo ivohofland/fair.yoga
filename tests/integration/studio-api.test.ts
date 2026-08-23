@@ -971,6 +971,81 @@ describe('/api/studio-classes', () => {
     ).toBeNull();
   });
 
+  // #276's cheapest true claim, pinned before this branch changes anything:
+  // `updateStudioClassSchema` accepts six fields, yet `location`,
+  // `durationMinutes` and `hourlyRate` had no persistence test through this
+  // route at all — validated, then offered to no one. One field per test so a
+  // schema regression names its field, and the assertion is a Prisma
+  // read-back, because a 200 alone proves nothing about persistence. These
+  // must pass unchanged against main's behaviour — they record today's
+  // contract, they do not add one.
+  describe('PUT /api/studio-classes/[id] persists the fields it already accepts (#276)', () => {
+    const PIN_DATE = new Date('2099-06-10');
+
+    // Manual (templateId left null), future-dated fixtures built directly,
+    // like the slot-conflict block below. Every value here — classType,
+    // date, startTime, location, duration, rate — belongs to this block
+    // alone, so the read-backs below cannot be satisfied by any other
+    // fixture's leftover state.
+    const makeStudioClass = (startTime: string) =>
+      prisma.studioClass.create({
+        data: {
+          teacherId: ownerId,
+          classType: 'PUT Persistence',
+          date: PIN_DATE,
+          startTime,
+          durationMinutes: 75,
+          location: 'Harbour Studio',
+          hourlyRate: 80,
+        },
+      });
+
+    // Scoped to this block's own classType, mirroring the slot-conflict
+    // block's teardown; it can run before the top-level afterAll without
+    // touching studioClassId or any other fixture.
+    afterAll(async () => {
+      await prisma.studioClass.deleteMany({
+        where: { teacherId: ownerId, classType: 'PUT Persistence' },
+      });
+    });
+
+    it('persists a location change', async () => {
+      const sc = await makeStudioClass('07:05');
+
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
+        location: 'Lighthouse Studio',
+      });
+      expect(res.status).toBe(200);
+
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      expect(after.location).toBe('Lighthouse Studio');
+    });
+
+    it('persists a durationMinutes change', async () => {
+      const sc = await makeStudioClass('07:15');
+
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
+        durationMinutes: 105,
+      });
+      expect(res.status).toBe(200);
+
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      expect(after.durationMinutes).toBe(105);
+    });
+
+    it('persists an hourlyRate change', async () => {
+      const sc = await makeStudioClass('07:25');
+
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
+        hourlyRate: 62.5,
+      });
+      expect(res.status).toBe(200);
+
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      expect(Number(after.hourlyRate)).toBe(62.5);
+    });
+  });
+
   // `StudioClass_teacher_slot_unique` is (teacherId, date, startTime) WHERE
   // cancelledAt IS NULL — the six indexes #196 added constrain every write,
   // not just creates (Task 6b). This route's own `prisma.studioClass.update`
