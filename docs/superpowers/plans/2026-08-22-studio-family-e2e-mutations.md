@@ -6,16 +6,23 @@ Sources: `.superpowers/sdd/2026-08-22-studio-family-e2e/task-{1,2,3,4}-report.md
 each read in full including its appended fix-round sections — several
 mutations were scored during review rounds and live only there.
 
-Fourteen mutations are documented below: 3 in Task 1, 6 in Task 2, 2 in Task 3,
-1 in Task 4, 2 in the review fix wave (3+6+2+1+2, one heading per entry —
-re-derive the entry count with `grep -c '^### ' docs/superpowers/plans/2026-08-22-studio-family-e2e-mutations.md`).
+Eighteen mutations are documented below: 3 in Task 1, 6 in Task 2, 2 in Task 3,
+1 in Task 4, 2 in the review fix wave, 4 in the multi-agent PR review wave
+(3+6+2+1+2+4, one heading per entry — re-derive the entry count with
+`grep -c '^### ' docs/superpowers/plans/2026-08-22-studio-family-e2e-mutations.md`).
 Mutation labels are copied as each report scored them, not renumbered into one
 global sequence — Task 1's fix round and Task 2's original pass each
 independently number their first new mutation `M3`, so that label appears
-twice below (flagged where Task 2's section starts). Every one of the
-fourteen came back RED as predicted, or RED on a different case than
-predicted with the discrepancy explained (M6); none came back an unexplained
-GREEN.
+twice below (flagged where Task 2's section starts). Every one came back RED
+as predicted, or RED on a different case than predicted with the discrepancy
+explained (M6); none came back an unexplained GREEN.
+
+The last four differ in kind from the rest and it is worth saying why. M1-M13
+were scored to prove a NEW test could fail. M14-M17 were scored against
+assertions that already existed and had already been reviewed: each one was
+GREEN under its mutation, which is to say the assertion could not fail and
+nobody had noticed. Reading a guard confirms it; breaking it is what finds
+out whether it is one.
 
 ## Task 1 — the paused/archived title and caption fix (issue 281, commit `32b276c`)
 
@@ -618,3 +625,85 @@ targets is the intended rendering, so the baseline captured before it was the
 stale one. Both `studio-template-*.png` baselines were regenerated in
 `d436dd8` once the mutation was reverted, which is why the diff no longer
 reproduces.
+
+## Multi-agent PR review wave (PR #303, 2026-08-23)
+
+Four more, all covering assertions the review found could not fail. Each was
+run on `--project=chromium` and reverted immediately after; the "before"
+column is what the same mutation did on the pre-review spec.
+
+### M14 — the archive button's label hard-coded to one direction
+
+The review found that Playwright matches an accessible name as a
+case-insensitive **substring**, so `'Archive studio class'` also matches
+`'Unarchive studio class'`. Five locators relied on the difference. Nothing
+else pinned either string: the label lives in one line, and
+`archive-studio-template-button.test.tsx` and its toggle sibling query
+`screen.getByRole('button')` with no name at all twelve sites between them.
+
+Mutation: in `src/components/settings/archive-studio-template-button.tsx`,
+replaced the ternary `(isArchived ? 'Unarchive studio class' : 'Archive studio
+class')` with the constant `'Unarchive studio class'` — a template that is not
+archived then offers an "Unarchive" control.
+
+Result: **RED on test 3**, the first site carrying `exact: true`.
+
+```
+  1 failed
+    [chromium] › … › pausing says what stays scheduled, and reveals Archive
+  5 did not run
+  3 passed
+```
+
+Before the review fix: **GREEN, all nine.** The only thing that caught it was
+the `studio-template.png` baseline, in one of the two directions — a pixel
+diff standing in for an assertion about what a button says.
+
+Re-run after the reload restructure (commit `1fa7166`) to confirm the
+restructure had not weakened it: still red, same test.
+
+### M15 — `lastScheduled` ordering reversed
+
+`pauseMessage` names the **last** class still scheduled. The assertion was
+`/The last one still scheduled is .* · 08:15\./`, and all four generated
+classes share `08:15`, so `.*` swallowed the only field that distinguishes
+them.
+
+Mutation: in `src/services/studio-class-template-lifecycle.ts`, changed the
+`lastScheduled` query's `orderBy` from `[{ date: 'desc' }, { startTime:
+'desc' }]` to `asc` — the message then names the first class.
+
+Result: **RED on test 3.** Before the fix (which reads both ends of the window
+from the database and pins the last one's day number): **GREEN.**
+
+### M16 — the studio class page's Template link reverted
+
+The header fix in `0329cab` retitled the template detail page with its
+`classType` and left the link that opens it, on `studio-class/[id]`, reading
+`location` — so following it landed on a differently-named screen.
+
+Mutation: reverted `src/app/(teacher)/studio-class/[id]/page.tsx`'s link back
+to `{studioClass.template.location}`.
+
+Result: **RED on test 2**, the new `toHaveAttribute` assertion. Before that
+assertion existed the mismatch had no coverage anywhere — it is the defect the
+review found by reading, not by running.
+
+### M17 — `DAY_OPTIONS` re-indexed to 0=Sunday
+
+The form is driven by LABEL, deliberately, so that the spec never has to
+reconcile the schema's 0=Monday with `getUTCDay()`'s 0=Sunday. The cost is
+that the stored day was then never read back, and the label sidesteps a
+re-indexing too.
+
+Mutation: in `src/components/settings/studio-template-form.tsx`, shifted
+`DAY_OPTIONS` so value 0 is `'Sunday'` — every teacher's studio classes land
+on the wrong weekday.
+
+Result: **RED on test 4**, the list row's day caption. Note what stays green
+under it and why the other assertions cannot catch it: `selectOption` still
+finds the right label, generation still produces four classes inside the
+28-day window (they shift by one day), and the pause sentence's date is the
+one M15 just pinned to the *last* class, which shifts with them.
+
+Before the fix: **GREEN, all nine.**
