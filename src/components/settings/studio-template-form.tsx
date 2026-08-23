@@ -98,6 +98,10 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
     // a synthetic `fireEvent.submit` is what keeps it a guard rather than a
     // decoration.
     if (created) return;
+    if (!form.classType.trim()) {
+      setError('Class type is required');
+      return;
+    }
     if (!form.location.trim()) {
       setError('Location is required');
       return;

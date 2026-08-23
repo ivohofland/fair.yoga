@@ -116,6 +116,30 @@ describe('StudioTemplateForm', () => {
   });
 
   /**
+   * #282. `classType` is the only wire-required field of this form with
+   * neither a valid default nor a client check — every other required value
+   * ships a default (`INITIAL_VALUES`) or is guarded (`location`) — so an
+   * empty one reached the server as `''` and came back as raw Zod developer
+   * copy, where the class-family twin (`template-form.tsx`) already refuses
+   * client-side with product copy.
+   *
+   * Both assertions matter independently: the banner alone would pass against
+   * a guard that fires but lets submission continue; the spy alone says
+   * nothing about copy. Asserted against a stubbed `fetch` because
+   * `tests/setup/components.ts` does not mock it — "not called" must be a spy
+   * fact, not an inference from absent network noise.
+   */
+  it('refuses an empty class type before any request, with product copy', async () => {
+    stubFetch();
+    render(<StudioTemplateForm mode="create" />);
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText('Class type is required')).toBeInTheDocument();
+  });
+
+  /**
    * #40, the studio twin of the class-template guard. POST
    * /api/studio-class-templates is not idempotent: a second request creates a
    * second template and a second generated window, double-counting studio
