@@ -98,6 +98,8 @@ describe('the studio class page: which classes offer removal', () => {
     // Anchored: without a string only this page can render, the negative
     // assertion below would pass against a page that rendered nothing useful.
     expect(html).toContain('Community Studio');
+    expect(html).toContain('>Location</span>');
+    expect(html).toContain('Page Case</h1>');
     expect(html).not.toContain('Remove this class');
   });
 
@@ -129,6 +131,7 @@ describe('the studio class page: which classes offer removal', () => {
     });
     const html = await page(sc.id);
     expect(html).toContain('Community Studio');
+    expect(html).toContain('>Location</span>');
     expect(html).not.toContain('Remove this class');
   });
 

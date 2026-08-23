@@ -68,7 +68,11 @@ export default async function StudioClassDetailPage({
 
   return (
     <>
-      <PageHeader title={studioClass.location} backHref="/" backLabel="Schedule" />
+      <PageHeader
+        title={studioClass.classType || studioClass.location}
+        backHref="/"
+        backLabel="Schedule"
+      />
 
       <div className="mb-6">
         <div className="min-h-14 py-2 border-b border-border">
@@ -79,6 +83,11 @@ export default async function StudioClassDetailPage({
         <div className="min-h-14 py-2 border-b border-border">
           <span className="type-label">Time</span>
           <p className="text-base text-ink">{studioClass.startTime} &middot; {studioClass.durationMinutes} min</p>
+        </div>
+
+        <div className="min-h-14 py-2 border-b border-border">
+          <span className="type-label">Location</span>
+          <p className="text-base text-ink">{studioClass.location}</p>
         </div>
 
         <div className="min-h-14 py-2 border-b border-border">
