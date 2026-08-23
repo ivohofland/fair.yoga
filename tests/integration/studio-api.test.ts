@@ -1111,6 +1111,202 @@ describe('/api/studio-classes', () => {
     });
   });
 
+  /**
+   * #276's stated policy at the wire. A studio class whose calendar date is
+   * strictly past is an income record: only `studentCount` and `cancelledAt`
+   * remain writable, and a payload carrying anything else is refused WHOLE —
+   * never partially applied. `date` itself moves, but only on a manual
+   * (`templateId: null`) not-yet-past row; moving it re-enters the same two
+   * guards the startTime path always had, which is what the last two cases
+   * here prove.
+   *
+   * Sits BELOW the #196 slot-collision block on purpose: that block's
+   * afterAll releases 2027-05-10 12:00-12:30 before this one claims
+   * 2027-05-10/11 at 12:00, so the two fixture sets can never hold each
+   * other's slots regardless of run order.
+   */
+  describe('PUT /api/studio-classes/[id] — the editability policy (#276)', () => {
+    const makePolicyRow = (date: Date, startTime: string, extra: Record<string, unknown> = {}) =>
+      prisma.studioClass.create({
+        data: {
+          teacherId: ownerId,
+          classType: 'PUT Policy',
+          date,
+          startTime,
+          durationMinutes: 60,
+          location: 'Policy Studio',
+          hourlyRate: 45,
+          ...extra,
+        },
+      });
+
+    // Scoped to this block's own classType, like every sibling block above;
+    // the room/class family below is this run's teacher's alone.
+    afterAll(async () => {
+      await prisma.studioClass.deleteMany({
+        where: { teacherId: ownerId, classType: 'PUT Policy' },
+      });
+      await prisma.class.deleteMany({ where: { teacherId: ownerId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: ownerId } });
+      await prisma.room.deleteMany({ where: { createdById: ownerId } });
+    });
+
+    it('persists a classType change on a manual future row', async () => {
+      const sc = await makePolicyRow(new Date('2099-06-20'), '08:10');
+
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
+        classType: 'Renamed Via Policy',
+      });
+      expect(res.status).toBe(200);
+
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      expect(after.classType).toBe('Renamed Via Policy');
+    });
+
+    it('moves a manual row to another date', async () => {
+      const sc = await makePolicyRow(new Date('2099-06-01'), '08:20');
+
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
+        date: '2099-06-02',
+      });
+      expect(res.status).toBe(200);
+
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      expect(after.date.getTime()).toBe(new Date('2099-06-02').getTime());
+    });
+
+    it('refuses a schedule edit on a past row — it is an income record', async () => {
+      const sc = await makePolicyRow(new Date('2020-01-01'), '08:30');
+
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
+        hourlyRate: 99,
+      });
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as { error: { code: string; message: string } };
+      expect(json.error.code).toBe('STUDIO_CLASS_INCOME_RECORD');
+      expect(json.error.message).toContain('student count and cancellation');
+
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      expect(Number(after.hourlyRate)).toBe(45);
+    });
+
+    it('refuses whole — studentCount in the same body must not partially apply', async () => {
+      const sc = await makePolicyRow(new Date('2020-01-01'), '08:40');
+
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
+        hourlyRate: 99,
+        studentCount: 7,
+      });
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as { error: { code: string } };
+      expect(json.error.code).toBe('STUDIO_CLASS_INCOME_RECORD');
+
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      expect(after.studentCount).toBeNull();
+      expect(Number(after.hourlyRate)).toBe(45);
+    });
+
+    it('still writes the student count on a past row — the count IS the record', async () => {
+      const sc = await makePolicyRow(new Date('2020-01-01'), '08:50');
+
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
+        studentCount: 3,
+      });
+      expect(res.status).toBe(200);
+
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      expect(after.studentCount).toBe(3);
+    });
+
+    it("refuses a date move on a generated row, naming cancel-plus-manual", async () => {
+      const tpl = await makeTemplate(ownerId, 'Policy Generated', '08:55');
+      const sc = await makePolicyRow(new Date('2099-06-21'), '08:55', { templateId: tpl.id });
+
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
+        date: '2099-06-28',
+      });
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as { error: { code: string; message: string } };
+      expect(json.error.code).toBe('STUDIO_CLASS_GENERATED_DATE');
+      expect(json.error.message).toContain('recurring template');
+
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      expect(after.date.getTime()).toBe(new Date('2099-06-21').getTime());
+    });
+
+    it('refuses a date move onto a slot another live studio class already holds', async () => {
+      await makePolicyRow(new Date('2027-05-10'), '12:00');
+      const mover = await makePolicyRow(new Date('2027-05-11'), '12:00');
+
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${mover.id}`, {
+        date: '2027-05-10',
+      });
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as { error: { code: string } };
+      expect(json.error.code).toBe('DUPLICATE_STUDIO_SLOT');
+
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: mover.id } });
+      expect(after.date.getTime()).toBe(new Date('2027-05-11').getTime());
+    });
+
+    // Fixture mirrors cross-family-slot-api.test.ts's "studio family refuses a
+    // slot the class family holds" setup: a Room + TeacherRoom so a Class row
+    // can be planted directly, then a pure `date` move onto it. The guard is
+    // a trigger (SQLSTATE YG001), so this fires through the DB, not through
+    // any pre-check the route could have.
+    it('refuses a date move onto a slot the class family already holds', async () => {
+      const room = await prisma.room.create({
+        data: {
+          venueName: 'Policy Cross Venue',
+          address: `${suffix} Policy Cross Street`,
+          city: 'Amsterdam',
+          postcode: '1011AB',
+          floor: '1',
+          roomName: 'Main',
+          maxCapacity: 12,
+          createdById: ownerId,
+        },
+      });
+      const teacherRoom = await prisma.teacherRoom.create({
+        data: { teacherId: ownerId, roomId: room.id, rentalRate: 20, capacityOverride: 12 },
+      });
+      await prisma.class.create({
+        data: {
+          teacherId: ownerId,
+          teacherRoomId: teacherRoom.id,
+          classType: 'Policy Cross Family Holder',
+          date: new Date('2031-05-06'),
+          startTime: '09:00',
+          durationMinutes: 60,
+          roomCost: 20,
+          minRate: 30,
+          targetRate: 60,
+          minStudents: 3,
+          maxStudents: 10,
+        },
+      });
+
+      const mover = await makePolicyRow(new Date('2031-05-07'), '09:00');
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${mover.id}`, {
+        date: '2031-05-06',
+      });
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as { error: { code: string; message: string } };
+      expect(json.error.code).toBe('CROSS_FAMILY_CLASS_SLOT');
+      expect(json.error.message).toMatch(/already have a class/i);
+
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: mover.id } });
+      expect(after.date.getTime()).toBe(new Date('2031-05-07').getTime());
+    });
+
+    it('rejects an empty PUT rather than issuing a no-op write', async () => {
+      const sc = await makePolicyRow(new Date('2099-06-22'), '08:58');
+
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {});
+      expect(res.status).toBe(400);
+    });
+  });
+
   describe('POST /api/studio-classes is retry-safe on the slot key (#196)', () => {
     // '2027-04-12' is a date no fixture above touches, so ownerId's slot
     // uniqueness ((teacherId, date, startTime) WHERE cancelledAt IS NULL) has
