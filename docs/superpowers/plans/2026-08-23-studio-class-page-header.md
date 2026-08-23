@@ -49,7 +49,7 @@ Coverage lands in the existing integration file and the existing e2e arc.
 | File | Change |
 |---|---|
 | `src/app/(teacher)/studio-class/[id]/page.tsx` | Header title becomes `classType \|\| location`; Location row inserted between Time and Hourly rate |
-| `tests/integration/studio-class-page.test.ts` | Heading assertion in case 1; `>Location</span>` anchor beside both venue assertions |
+| `tests/integration/studio-class-page.test.ts` | Heading assertion in case 1; `>Location</span>` anchor beside both venue assertions; heading + Location row pinned on the cancelled case, which nothing else covers |
 | `tests/e2e/studio.spec.ts` | Heading assert in generated-class arc; heading + venue-row assert in manual-log arc |
 
 Nothing else. If an implementer finds itself touching anything else, stop and report.
@@ -128,9 +128,13 @@ is proven afterwards by mutation (step 2.5), which needs warm routes (constraint
       'Guest Studio' getByText still passes via the NEW row — which is why 2.1/2.2's
       heading half is the load-bearing one.
 - [ ] 2.5 **Mutation proof, M3 (header revert again, e2e side):** apply M1's revert,
-      curl `/` and one `/studio-class/[id]` to warm, run ONLY the two touched tests
-      (`npx playwright test tests/e2e/studio.spec.ts -g "generated classes|log, count"`)
-      → both heading asserts RED. Record text. Restore, warm again, re-run GREEN.
+      curl `/` and one `/studio-class/[id]` to warm, then run the **whole file**:
+      `npx playwright test tests/e2e/studio.spec.ts` → both heading asserts RED at their own
+      lines (208 and 502), on both browser projects. Record text. Restore, warm, re-run GREEN.
+      Do **not** scope this with `-g`. The template describe is serial and `templateId` is
+      set by its first test, so any filter excluding that test makes the generated-class arc
+      bail at `requireTemplateId()` long before the heading assertion — a run that reports
+      failures while never executing the guard under test.
 - [ ] 2.6 Commit: `test: e2e pins the studio class page heading to the class its card named (#304 groundwork)`
       Stage exactly: `tests/e2e/studio.spec.ts`.
 
@@ -140,9 +144,14 @@ is proven afterwards by mutation (step 2.5), which needs warm routes (constraint
       three per-project files/tests counts and show them reconciling (files sum, tests sum)
       for the PR body.
 - [ ] 3.2 Re-derive spec §6's claims:
-      `grep -rn "classType || " src/ --include='*.tsx'` → expect five sites (three template
-      surfaces via shared row + template detail header + this header) plus the card's
-      ternary nearby; and no remaining bare `title={.*\.location}` on a studio class page.
+      `grep -rn "classType || " src/ --include='*.tsx'` → **four** matching lines, because
+      the three list sections render through one shared `StudioTemplateRow`: that row
+      (`studio-template-list.tsx:46`), the template detail header, the Template link on this
+      page, and this header. Four code sites, six surfaces. The card's ternary
+      (`class-list.tsx:140`) is a different expression and matches nothing in this grep —
+      check it separately. Then confirm no bare title survives:
+      `grep -rnE 'title=\{[a-zA-Z.]+\.location\}' src/ --include='*.tsx'` → the only two
+      hits are the `classType || location` headers themselves.
 - [ ] 3.3 Confirm no doc claims went stale: grep `docs/` for "titles by location"-class
       phrases about the studio class page (the roadmap's #281/#304 entries describe the
       defect historically — those stay).

@@ -15,7 +15,7 @@ Every claim in the issue was checked against the merge base before designing.
 | Detail header titles by location alone | `src/app/(teacher)/studio-class/[id]/page.tsx:71` — `<PageHeader title={studioClass.location} … />`. **Live defect**: on a day with two classes at one venue, both pages head identically with the venue and neither names the class |
 | `StudioClassCard` is the only list entry into `/studio-class/[id]` | `class-list.tsx:128`; the other references are `/studio-class/new` links and the delete button leaving the route |
 | `studio-class/new` pushes there after logging | `new/page.tsx:140,173` |
-| PR #303's four template surfaces use `classType \|\| location` | Three sections via the shared `StudioTemplateRow` (`studio-template-list.tsx:46`), template detail header (`settings/studio-classes/[id]/page.tsx:39`), Template link on the class page (`studio-class/[id]/page.tsx:94`) |
+| PR #303's five template surfaces use `classType \|\| location` | Three sections via the shared `StudioTemplateRow` (`studio-template-list.tsx:46`), template detail header (`settings/studio-classes/[id]/page.tsx:39`), Template link on the class page (`studio-class/[id]/page.tsx:94`) |
 | Coverage gap | `tests/integration/studio-class-page.test.ts` seeds typed fixtures ('Page Case', 'Page Template', 'Page Template Today', 'Solo Case') and never asserts a heading; `tests/e2e/studio.spec.ts` visits `/studio-class/[id]` at :201 and lands there at :491 asserting buttons and URL, never the h1 |
 
 ### Wrong
@@ -51,7 +51,7 @@ Chosen at the direction gate over:
   entirely for a typed class — the issue itself calls this "probably not what is wanted" —
   and leaves the two venue assertions passing only if re-pointed at nothing.
 - **B, `classType · location` in the h1** (verbatim card match): diverges from all five
-  other sites' expression and puts a separator inside an h1, which has no precedent in
+  other surfaces' expression and puts a separator inside an h1, which has no precedent in
   this codebase.
 
 C reproduces the *outcome* of both sibling families:
@@ -69,7 +69,7 @@ C reproduces the *outcome* of both sibling families:
 <PageHeader title={studioClass.classType || studioClass.location} backHref="/" backLabel="Schedule" />
 ```
 
-The same expression four other surfaces already use.
+The same expression five other surfaces already use.
 
 ### 3.2 New Location row in the details block
 
@@ -101,7 +101,7 @@ detail page (`studio-template.png`), so nothing needs regenerating.
 
 ### Integration — `tests/integration/studio-class-page.test.ts`
 
-Two additions, both anchored so they cannot pass against a page that renders nothing:
+Three additions, each anchored so it cannot pass against a page that renders nothing:
 
 1. In the first case ("offers no removal on a future generated class"), assert the heading
    carries the fixture's classType: `toContain('Page Case</h1>')` — anchored to the closing
@@ -111,6 +111,10 @@ Two additions, both anchored so they cannot pass against a page that renders not
    `toContain('>Location</span>')` alongside the existing `toContain('Community Studio')`,
    in both places (:100-area and :131-area), so the venue's presence is pinned to the row,
    not incidental.
+3. In the cancelled case ("offers removal on a cancelled past class"), assert both the
+   heading and the Location row. This is the only case exercising the cancelled branch, and
+   without it §3.2's claim that the details block renders there is pinned by nothing: a
+   change gating that block on the live branch passes every other assertion in the file.
 
 ### e2e — `tests/e2e/studio.spec.ts`
 
@@ -147,11 +151,14 @@ produce" rule does not apply; the rule that does apply is warm-routes-before-sco
 ## 6. Re-derivables
 
 - Sites titling a studio *class*: two — the schedule card (`class-list.tsx:140`) and this
-  header. Sites titling a studio *template* with `classType || location`: three code sites
-  rendering five surfaces (three list sections via one shared row, the template detail
-  header, the Template link). After this branch every surface in both families uses the
-  same expression. Re-derive with:
-  `grep -rn "classType || " src/ --include='*.tsx'`
+  header. After this branch every surface in both families uses the same expression.
+  Re-derive with `grep -rn "classType || " src/ --include='*.tsx'`, which returns **four
+  lines, not six**: the shared `StudioTemplateRow` (`studio-template-list.tsx:46`) is one
+  line rendered from three call sites, so `3 + 1 + 1 + 1 = 6` surfaces come from 4 code
+  sites — that row, the template detail header, the Template link, and this header. The
+  card's ternary is a different expression and matches none of them. Count lines when
+  reading the grep and surfaces when reasoning about the UI; conflating the two is what
+  put a wrong expected count in this issue's plan.
 - Blank-classType reachability: `grep -rn "classType" src/lib/schemas.ts` — every studio
   schema line reads `.min(1)` except none; the column default lives at
   `prisma/schema.prisma:563`.

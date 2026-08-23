@@ -143,6 +143,11 @@ describe('the studio class page: which classes offer removal', () => {
     });
     const html = await page(sc.id);
     expect(html).toContain('This class was cancelled.');
+    // A cancelled page keeps its heading and its Location row: the editor and
+    // the cost sentence are both gone by here, so those two are all that name
+    // what was cancelled and where it would have been.
+    expect(html).toContain('Page Case</h1>');
+    expect(html).toContain('>Location</span>');
     expect(html).toContain('Remove this class');
   });
 });
