@@ -7,6 +7,7 @@ import { StudentCountEditor } from '@/components/studio-class/student-count-edit
 import { CancelStudioClassButton } from '@/components/studio-class/cancel-studio-class-button';
 import { DeleteStudioClassButton } from '@/components/studio-class/delete-studio-class-button';
 import { studioClassDeletability } from '@/services/studio-class-deletion';
+import { studioClassEditability } from '@/services/studio-class-editability';
 import { startOfLocalDay } from '@/lib/timezone';
 import { formatDateWithYear } from '@/lib/format';
 
@@ -52,8 +53,16 @@ export default async function StudioClassDetailPage({
   // a widened predicate read template state HERE while the route's narrower
   // `select` left it undefined — the page offered a Remove button the API
   // answered 409. Two queries of different widths, one two-field literal.
-  const { deletable } = studioClassDeletability(
-    { templateId: studioClass.templateId, date: studioClass.date },
+  //
+  // Both predicates now read exactly those two fields, so they share the one
+  // literal — it carries nothing either predicate must not see, and a future
+  // widening of either signature has to name its extra fact here in plain
+  // sight. (issue 276 added EDITABLE: not an income record ⇒ the whole schedule
+  // may change, cancelled included.)
+  const editFacts = { templateId: studioClass.templateId, date: studioClass.date };
+  const { deletable } = studioClassDeletability(editFacts, new Date(), session.defaultTimezone);
+  const { scheduleEditable } = studioClassEditability(
+    editFacts,
     new Date(),
     session.defaultTimezone,
   );
@@ -105,6 +114,21 @@ export default async function StudioClassDetailPage({
             This class was cancelled.
           </div>
 
+          {/* D4 (issue 276): the edit link stays on cancelled NON-past rows.
+              A cancellation is recoverable and gates nothing — hiding the door
+              here while the API still accepts would re-create this issue's own
+              defect shape one state over. */}
+          {scheduleEditable && (
+            <section className="mt-2 pt-6 border-t border-border">
+              <Link
+                href={`/studio-class/${studioClass.id}/edit`}
+                className="text-teal text-sm no-underline"
+              >
+                Edit class<span className="inline-block ml-1.5">&rarr;</span>
+              </Link>
+            </section>
+          )}
+
           {deletable && (
             <section className="mt-2 pt-6 border-t border-border">
               <DeleteStudioClassButton
@@ -134,6 +158,14 @@ export default async function StudioClassDetailPage({
             the next person to touch this section meets it.
           */}
           <section className="mt-8 pt-6 border-t border-border flex flex-col items-start gap-3">
+            {scheduleEditable && (
+              <Link
+                href={`/studio-class/${studioClass.id}/edit`}
+                className="text-teal text-sm no-underline"
+              >
+                Edit class<span className="inline-block ml-1.5">&rarr;</span>
+              </Link>
+            )}
             <CancelStudioClassButton studioClassId={studioClass.id} />
             {deletable && (
               <DeleteStudioClassButton

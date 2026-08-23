@@ -203,6 +203,94 @@ describe('the studio class page: what the removal claims it costs', () => {
 });
 
 /**
+ * Issue 276 D4 — the entry link to `/studio-class/[id]/edit`. The API accepts
+ * gated schedule fields on exactly the rows whose `scheduleEditable` is true,
+ * so the link must render on precisely those rows: present on cancelled
+ * non-past rows too (a cancellation is recoverable; hiding the door while the
+ * API still answers would re-create this issue's own defect shape one state
+ * over), gone on past rows, which are income records.
+ */
+describe('the studio class page: which classes offer editing', () => {
+  let otherId: string;
+  let otherToken: string;
+
+  beforeAll(async () => {
+    const email = `studiopage-other-${suffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Studio',
+        lastName: 'Other',
+        email,
+        account: { create: { email } },
+        bio: 'Studio edit link gating',
+        pageSlug: `studiopage-other-${suffix}`,
+      },
+    });
+    otherId = teacher.id;
+    otherToken = await seedSession(prisma, teacher.accountId);
+  });
+
+  afterAll(async () => {
+    await prisma.studioClass.deleteMany({ where: { teacherId: otherId } });
+  });
+
+  it('offers editing on a live non-past row', async () => {
+    const sc = await makeClass({
+      templateId: null,
+      date: new Date('2099-08-07T00:00:00.000Z'),
+      startTime: '08:00',
+    });
+    const html = await page(sc.id);
+    // Removable AND editable — a future manual row is inside both predicates.
+    expect(html).toContain('Remove this class');
+    expect(html).toContain('Edit class');
+  });
+
+  it('offers editing on a cancelled non-past row, beside the cancellation notice', async () => {
+    const sc = await makeClass({
+      templateId: null,
+      date: new Date('2099-08-08T00:00:00.000Z'),
+      startTime: '08:15',
+      cancelledAt: new Date('2026-08-01T10:00:00.000Z'),
+    });
+    const html = await page(sc.id);
+    expect(html).toContain('This class was cancelled.');
+    expect(html).toContain('Edit class');
+  });
+
+  it('offers no editing on a past row, whose schedule is an income record', async () => {
+    const sc = await makeClass({
+      templateId: null,
+      date: new Date('2020-08-06T00:00:00.000Z'),
+      startTime: '08:30',
+    });
+    const html = await page(sc.id);
+    expect(html).toContain('Community Studio');
+    expect(html).not.toContain('Edit class');
+  });
+
+  it('offers no editing to another teacher, whom the page redirects home', async () => {
+    const sc = await makeClass({
+      templateId: null,
+      date: new Date('2099-08-09T00:00:00.000Z'),
+      startTime: '08:45',
+    });
+    const res = await fetch(`${BASE_URL}/studio-class/${sc.id}`, {
+      headers: cookie(otherToken),
+    });
+    // The ownership redirect streams as a client-side navigation: fetch lands
+    // 200 at the ORIGINAL url with none of the page's own strings in the body
+    // (measured, which is also why no `res.url` assertion can sit here). Same
+    // contract this file's header documents for the non-owner — assert the
+    // action strings are gone.
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).not.toContain('Edit class');
+    expect(html).not.toContain(sc.location);
+  });
+});
+
+/**
  * The end-to-end proof of the spec's §1.5 — the claim issue 279 inherited from
  * the `withdrawnCount` docblock on `StudioClassTemplate`, which read "an
  * already-cancelled one is an income record and survives" until this branch
