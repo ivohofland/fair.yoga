@@ -539,6 +539,13 @@ Running 9 tests using 1 worker
 Restored `resumeStudioMessage(data.added, data.scheduled, data.counts)`;
 `git diff --stat` on the source file empty. Re-warmed, re-ran: 9/9 passed.
 
+The capture above is verbatim and was taken at `0329cab`. `354c131` later
+added comment lines above this test, so the `studio.spec.ts:194` in the
+capture is `:201` at branch head — re-derive with
+`grep -n "resuming reports the window it already has" tests/e2e/studio.spec.ts`.
+The mutation was re-run against branch head during review and reddened the
+same test and no other.
+
 ### M13 — the studio template detail header, reverted to the location-only expression it used to have
 
 Issue #281 fixed the three list sections; the detail page's own
@@ -593,6 +600,11 @@ Running 9 tests using 1 worker
 
 Restored `title={template.classType || template.location}`; `git diff --stat`
 on the source file empty. Re-warmed, re-ran: 9/9 passed.
+
+Same provenance as M12: captured at `0329cab`, so the capture's
+`studio.spec.ts:231` is `:238` at branch head — re-derive with
+`grep -n "an archived template leaves the live list" tests/e2e/studio.spec.ts`.
+Re-run against branch head during review, same locus.
 
 **Collateral this fix has on `visual.spec.ts`, recorded rather than acted
 on.** The `studio template detail (paused)` baseline's fixture uses distinct
