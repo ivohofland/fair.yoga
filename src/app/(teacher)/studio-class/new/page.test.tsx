@@ -100,14 +100,46 @@ describe('NewStudioClassPage', () => {
   });
 
   /**
-   * Fills only what `handleSubmit` gates before the request — location and
-   * date — so the settled-state tests below reach the POST for the same reason
-   * the body tests above do.
+   * Fills everything `handleSubmit` gates before the request — class type,
+   * location, and date — so the settled-state tests below reach the POST for
+   * the same reason the body tests above do.
    */
   function fillRequired() {
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
     fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
   }
+
+  /**
+   * #282. `classType` is the only wire-required field of this form with
+   * neither a valid default nor a client check — every other required value
+   * ships a default (`startTime` '09:00', `durationMinutes` 60,
+   * `hourlyRate` 0) or is guarded (`location`, `date`) — so an empty one
+   * reached the server as `''` and came back as raw Zod developer copy,
+   * where the class-family twin (`template-form.tsx`) already refuses
+   * client-side with product copy.
+   *
+   * Both assertions matter independently: the banner alone would pass against
+   * a guard that fires but lets submission continue; the spy alone says
+   * nothing about copy. Asserted against a stubbed `fetch` because
+   * `tests/setup/components.ts` does not mock it — "not called" must be a spy
+   * fact, not an inference from absent network noise.
+   */
+  it('refuses an empty class type before any request, with product copy', () => {
+    stubFetch();
+    render(<NewStudioClassPage />);
+    // `Class type` is deliberately left empty; everything else that gates the
+    // request is filled so only the missing class type can be the reason.
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+
+    // The handler is synchronous up to its own `await`: with no guard it calls
+    // `fetch` during this click, so neither assertion below needs waiting.
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText('Class type is required')).toBeInTheDocument();
+  });
 
   /**
    * #40, whole-branch review F1. This page was outside the branch's census,
