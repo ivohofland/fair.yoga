@@ -13,6 +13,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { startOfLocalDay } from '@/lib/timezone';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { STUDIO_CLASS_EDIT_REFUSALS } from '@/services/studio-class-edit-refusals';
 
 const prisma = new PrismaClient();
 const suffix = uniqueSuffix();
@@ -355,5 +356,157 @@ describe('the reporting page, which is where the income claim is settled', () =>
     expect(res.status).toBe(200);
 
     expect(await reporting()).not.toContain('90.00');
+  });
+});
+
+/**
+ * `/(teacher)/studio-class/[id]/edit` — the editor page itself, which shipped
+ * with no coverage at any level.
+ *
+ * Three of its four behaviours are guards, and the fourth is the one a unit
+ * test structurally cannot see: `dateEditable` and `scheduleEditable` are both
+ * `boolean`, so passing the wrong one to the form compiles clean, and neither
+ * the component test (handed the prop directly) nor the API tests (which never
+ * render a page) would notice. What it costs is every save of a generated
+ * class 409ing on an edit that only touched the rate — this issue's own defect
+ * shape, one door over.
+ */
+describe('the studio class edit page', () => {
+  let strangerToken: string;
+  let templateId: string;
+
+  const editPage = (id: string, as = token) =>
+    fetch(`${BASE_URL}/studio-class/${id}/edit`, { headers: cookie(as) });
+
+  const makeEditCase = (data: { templateId?: string | null; date: Date; startTime: string }) =>
+    prisma.studioClass.create({
+      data: {
+        teacherId,
+        classType: 'Edit Page Case',
+        durationMinutes: 60,
+        location: 'Editable Studio',
+        hourlyRate: 45,
+        ...data,
+      },
+    });
+
+  beforeAll(async () => {
+    const email = `studioedit-stranger-${suffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Studio',
+        lastName: 'Stranger',
+        email,
+        account: { create: { email } },
+        bio: 'Edit page ownership',
+        pageSlug: `studioedit-stranger-${suffix}`,
+      },
+    });
+    strangerToken = await seedSession(prisma, teacher.accountId);
+
+    // Thursday 07:15 — a slot no other fixture in this file holds, since the
+    // cross-family trigger (#296) refuses a teacher two live templates at one
+    // (dayOfWeek, startTime).
+    const template = await prisma.studioClassTemplate.create({
+      data: {
+        teacherId,
+        classType: 'Edit Page Case',
+        dayOfWeek: 4,
+        startTime: '07:15',
+        durationMinutes: 60,
+        location: 'Editable Studio',
+        hourlyRate: 45,
+      },
+    });
+    templateId = template.id;
+  });
+
+  // Scoped to this block's own fixtures — the classType it plants and the one
+  // template it owns — rather than every studio row this teacher has, which
+  // the surrounding describes are still using.
+  afterAll(async () => {
+    await prisma.studioClass.deleteMany({ where: { teacherId, classType: 'Edit Page Case' } });
+    await prisma.studioClassTemplate.deleteMany({ where: { id: templateId } });
+  });
+
+  it('renders the editor for a manual future row, date picker open', async () => {
+    const sc = await makeEditCase({
+      templateId: null,
+      date: new Date('2099-09-01T00:00:00.000Z'),
+      startTime: '07:00',
+    });
+    const res = await editPage(sc.id);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+
+    expect(html).toContain('Edit class');
+    expect(html).toContain('Class type');
+    expect(html).toContain('Hourly rate');
+    // `date` may move, so no refusal explainer and no disabled picker.
+    expect(html).not.toContain(STUDIO_CLASS_EDIT_REFUSALS.generated_date.message);
+  });
+
+  /**
+   * THE PROP-SWAP CASE. A generated row is `scheduleEditable` but not
+   * `dateEditable`; hand the form the former and the picker opens, the payload
+   * regains its `date` key, and gate 2 refuses every save.
+   */
+  it('closes the date picker on a generated row and says why', async () => {
+    const sc = await makeEditCase({
+      templateId,
+      date: new Date('2099-09-03T00:00:00.000Z'),
+      startTime: '07:15',
+    });
+    const res = await editPage(sc.id);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+
+    expect(html).toContain('Class type');
+    expect(html).toContain(STUDIO_CLASS_EDIT_REFUSALS.generated_date.message);
+    expect(html).toContain('disabled');
+  });
+
+  it('turns a past row away — an income record has no editor', async () => {
+    const sc = await makeEditCase({
+      templateId: null,
+      date: new Date('2020-09-01T00:00:00.000Z'),
+      startTime: '07:30',
+    });
+    const res = await editPage(sc.id);
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    // Redirected to the detail page, which renders neither the form's inputs
+    // nor its own Edit link for a row this frozen.
+    expect(html).not.toContain('Hourly rate');
+    expect(html).not.toContain('Edit class');
+  });
+
+  it('turns another teacher away from a row they do not own', async () => {
+    const sc = await makeEditCase({
+      templateId: null,
+      date: new Date('2099-09-02T00:00:00.000Z'),
+      startTime: '07:45',
+    });
+    const res = await editPage(sc.id, strangerToken);
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).not.toContain('Hourly rate');
+    expect(html).not.toContain('Editable Studio');
+  });
+
+  it('offers the detail page link on a generated row, which edits all but its date', async () => {
+    const sc = await makeEditCase({
+      templateId,
+      date: new Date('2099-09-10T00:00:00.000Z'),
+      startTime: '07:15',
+    });
+    const html = await page(sc.id);
+
+    // `scheduleEditable`, not `dateEditable`, gates the link (D4). Conflating
+    // them here silently drops the door for the MAJORITY of studio classes,
+    // since templates generate on a rolling 4-week basis.
+    expect(html).toContain('Edit class');
   });
 });

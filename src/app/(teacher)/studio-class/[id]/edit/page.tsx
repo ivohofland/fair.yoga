@@ -20,9 +20,10 @@ export default async function StudioClassEditPage({
   if (!studioClass || studioClass.teacherId !== session.teacherId) redirect('/');
 
   // Full-scope rows only. A fresh two-field literal, not `studioClass` — the
-  // predicate is handed only what it may read, same discipline as every other
-  // call site of this family. A past row is an income record and has an editor
-  // nowhere; its page still reaches the count and the cancellation.
+  // predicate is handed only what it may read, and passing the literal
+  // directly keeps excess-property checking on. A past row is an income record
+  // and has an editor nowhere; its page still reaches the count and the
+  // cancellation.
   const verdict = studioClassEditability(
     { templateId: studioClass.templateId, date: studioClass.date },
     new Date(),

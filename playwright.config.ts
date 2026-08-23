@@ -33,7 +33,13 @@ export default defineConfig({
   workers: 1,
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:3000',
+    // Shares one override with the integration suite (`tests/helpers.ts`),
+    // which mints its session cookie for the same origin — pointing only one
+    // of them elsewhere leaves every spec unauthenticated against a host it
+    // holds no cookie for. Unset in CI and locally by default, so both sides
+    // fall back to :3000 byte-identically; it exists for a worktree dev server
+    // on another port.
+    baseURL: process.env.INTEGRATION_BASE_URL ?? 'http://localhost:3000',
     // Not 'on-first-retry' (#290): with `retries: 2` in CI that recorded the
     // *retry*, so a contention failure that passed on attempt 2 uploaded a
     // trace of the healthy run and none of the failing one — the artifact
@@ -46,7 +52,7 @@ export default defineConfig({
   ],
   webServer: {
     command: 'npm run dev',
-    url: 'http://localhost:3000',
+    url: process.env.INTEGRATION_BASE_URL ?? 'http://localhost:3000',
     // CI pre-starts the production build on :3000 before the e2e step;
     // locally this reuses the running dev server.
     reuseExistingServer: true,

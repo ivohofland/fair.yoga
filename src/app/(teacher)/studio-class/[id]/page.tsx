@@ -54,20 +54,26 @@ export default async function StudioClassDetailPage({
   // `select` left it undefined — the page offered a Remove button the API
   // answered 409. Two queries of different widths, one two-field literal.
   //
-  // Both predicates now read exactly those two fields, so they share the one
-  // literal — it carries nothing either predicate must not see. A REQUIRED
-  // field added to either signature breaks compilation right here; an
-  // OPTIONAL one compiles past excess-property checking, so widening either
-  // predicate still takes a deliberate edit at this literal, not an invisible
-  // one. (issue 276 added EDITABLE: not an income record ⇒ the whole schedule
-  // may change, cancelled included.)
-  const editFacts = { templateId: studioClass.templateId, date: studioClass.date };
-  const { deletable } = studioClassDeletability(editFacts, new Date(), session.defaultTimezone);
-  const { scheduleEditable } = studioClassEditability(
-    editFacts,
-    new Date(),
-    session.defaultTimezone,
-  );
+  // Both predicates read exactly those two fields, so they share one object.
+  // ANNOTATED, not inferred, and that is load-bearing: excess-property
+  // checking applies to a fresh literal passed directly at a call site, and
+  // hoisting to a `const` turns it off. The annotation moves the check onto
+  // the initialiser, so an extra field here is TS2353 again — which is the
+  // check that would have caught this page handing the predicate its whole
+  // row in the first place.
+  //
+  // A speed bump, not a wall, either way: a REQUIRED new field on either
+  // signature breaks this call, an OPTIONAL one compiles silently at every
+  // call site in the repo (measured). The alarms are the `@ts-expect-error`
+  // cases in both predicates' test files. (issue 276 added EDITABLE: not an
+  // income record ⇒ the whole schedule may change, cancelled included.)
+  const editFacts: Parameters<typeof studioClassEditability>[0] = {
+    templateId: studioClass.templateId,
+    date: studioClass.date,
+  };
+  const now = new Date();
+  const { deletable } = studioClassDeletability(editFacts, now, session.defaultTimezone);
+  const { scheduleEditable } = studioClassEditability(editFacts, now, session.defaultTimezone);
 
   const endOfToday = startOfLocalDay(new Date(), session.defaultTimezone);
   endOfToday.setUTCHours(23, 59, 59, 999);
