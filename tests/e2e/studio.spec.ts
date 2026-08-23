@@ -245,6 +245,11 @@ test.describe('Studio class templates', () => {
     await page.getByRole('link', { name: /Studio Flow/ }).click();
     await page.waitForURL(`**/settings/studio-classes/${templateId}`);
 
+    // The header titles with the same expression the list does
+    // (`studio-template-list.tsx:30,52,76`), so the two screens can't
+    // disagree.
+    await expect(page.getByRole('heading', { name: 'Studio Flow' })).toBeVisible();
+
     // Archived: Toggle is gated off by `!isArchived`, and Archive renders in
     // its un-archive direction. Exactly one control, and no dead end.
     await expect(page.getByRole('button', { name: 'Pause studio class' })).toHaveCount(0);

@@ -35,7 +35,11 @@ export default async function EditStudioTemplatePage({
 
   return (
     <>
-      <PageHeader title={template.location} backHref="/settings/studio-classes" backLabel="Studio classes" />
+      <PageHeader
+        title={template.classType || template.location}
+        backHref="/settings/studio-classes"
+        backLabel="Studio classes"
+      />
 
       <StudioTemplateForm
         mode="edit"
