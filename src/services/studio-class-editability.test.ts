@@ -161,10 +161,43 @@ describe('studioClassEditability', () => {
     );
   });
 
-  it('carries the refusal codes Tasks 3 and 4 answer with', () => {
+  it('carries the refusal codes the route answers with', () => {
+    // Codes only. The MESSAGES are asserted through the wire in
+    // `tests/integration/studio-api.test.ts`, where a substring match proves
+    // the teacher receives them; `length > 0` here proved nothing a one-letter
+    // string would not also pass.
     expect(STUDIO_CLASS_EDIT_REFUSALS.income_record.code).toBe('STUDIO_CLASS_INCOME_RECORD');
     expect(STUDIO_CLASS_EDIT_REFUSALS.generated_date.code).toBe('STUDIO_CLASS_GENERATED_DATE');
-    expect(STUDIO_CLASS_EDIT_REFUSALS.income_record.message.length).toBeGreaterThan(0);
-    expect(STUDIO_CLASS_EDIT_REFUSALS.generated_date.message.length).toBeGreaterThan(0);
+    expect(STUDIO_CLASS_EDIT_REFUSALS.past_date.code).toBe('STUDIO_CLASS_PAST_DATE');
+  });
+
+  /**
+   * THE ENTIRE ALARM — DO NOT DELETE THIS CASE. The same directive the sibling
+   * `studio-class-deletion.test.ts` carries, for the identical reason.
+   *
+   * The predicate's docblock says callers hand it only what it may read. The
+   * parameter type cannot enforce that alone: an OPTIONAL new field compiles
+   * at every call site in this repo — measured — so a widening that made the
+   * verdict read cancellation or template state would ship silently. This
+   * directive is what fails `tsc` when the signature widens, as TS2578
+   * (unused '@ts-expect-error') pointing here.
+   */
+  it('refuses a widened row at the type level', () => {
+    studioClassEditability(
+      // @ts-expect-error cancellation is recoverable and must not reach the verdict
+      { templateId: null, date: d('2026-06-16'), cancelledAt: new Date() },
+      now,
+      AMS,
+    );
   });
 });
+
+/**
+ * The union's own pin. `dateEditable ⇒ scheduleEditable` is held by the TYPE,
+ * not merely by the one producer — the matrix sweep above still runs because
+ * it also pins zone behaviour, but it is no longer the only thing standing
+ * between a second producer and an illegal verdict.
+ */
+// @ts-expect-error dateEditable cannot stand without scheduleEditable
+const _illegalVerdict: StudioClassEditVerdict = { scheduleEditable: false, dateEditable: true };
+void _illegalVerdict;
