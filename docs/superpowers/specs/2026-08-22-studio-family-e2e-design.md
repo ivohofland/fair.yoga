@@ -57,7 +57,8 @@ the screen.
 
 ### The measured baseline
 
-Studio coverage today — **174 tests across 12 files, none of them e2e**:
+Studio coverage at the merge base (`f9c9e69`) — **174 tests across 12
+files, none of them e2e**:
 
 ```
 unit          3 files   79 tests   lifecycle 41, generator 27, deletion 11
@@ -72,10 +73,30 @@ e2e           0 files    0 tests
 Re-derive with:
 
 ```bash
-for f in $(find src tests -iname '*studio*test*'); do
-  printf "%4d  %s\n" "$(grep -cE '^\s*(it|test)\(' "$f")" "$f"
-done | sort -rn
+for f in $(find src tests \( -name '*.test.ts' -o -name '*.test.tsx' \) | grep -i studio); do
+  n=$(npx vitest run "$f" 2>&1 | grep -E "Tests\s+[0-9]+ passed" | tail -1)
+  printf '%-70s %s\n' "$f" "$n"
+done
 ```
+
+Path-based, directories included, and counted by vitest rather than by
+`grep -cE '^\s*(it|test)\('` — a line-count grep is blind to loop-generated
+tests, undercounting `studio-template-list.test.tsx` (7 tests, added later on
+this branch by issue 281's fix) as 3. The old `find -iname '*studio*test*'`
+matched basenames only, so it silently dropped
+`src/app/(teacher)/studio-class/new/page.test.tsx` and
+`src/components/studio-class/student-count-editor.test.tsx` — both counted in
+the table above — and reproduced neither 12 (10 at this merge base, 11 once
+`studio-template-list.test.tsx` existed).
+
+Verified against the table: `git diff --stat f9c9e69..HEAD -- src tests`
+touches none of these 12 files (its only studio-related additions are
+`studio-template-list.test.tsx` and `tests/e2e/studio.spec.ts`), so counting
+them at the branch tip stands in for counting at the merge base. Per-file
+vitest counts reconcile exactly: unit 41 + 27 + 11 = 79; components
+10 + 6 + 6 + 6 + 4 + 4 + 3 = 39; integration 50 + 6 = 56; 79 + 39 + 56 = 174.
+The 12/174 figures were already correct — the defect was only in the command
+offered to reproduce them.
 
 So the uncovered surface is **four screens, not six**:
 `/settings/studio-classes`, `/settings/studio-classes/[id]`,
@@ -141,14 +162,21 @@ currently proves the screen agrees with the sentence.
 
 ### 4.1 `tests/e2e/studio.spec.ts` — new
 
-One file, two `describe` blocks, `mode: 'serial'`, one teacher fixture, modelled
-on `recurring.spec.ts`.
+One file, two `describe` blocks, `mode: 'serial'`, **two teacher fixtures** —
+one per `describe`, since Playwright runs `beforeAll`/`afterAll` per describe
+and sharing a teacher would tie the second block's setup to the first
+block's teardown having already run — modelled on `recurring.spec.ts`.
 
-**Fixture.** A `Teacher` + `Account` + `Session` seeded through Prisma
-(`seedSession`, `sessionCookie`, `accountIdOfTeacher` from the existing
-helpers), with a `uniqueSuffix()`. **No `Room` or `TeacherRoom`** — the studio
-family is disconnected from `Room` by design (`CLAUDE.md`, Data Model), which
-is the one structural way this fixture is *simpler* than `recurring.spec.ts`'s.
+**Fixture.** Each describe seeds its own `Teacher` + `Account` + `Session`
+through Prisma (`seedSession`, `sessionCookie`, `accountIdOfTeacher` from the
+existing helpers), with a `uniqueSuffix()`. **No `Room` or `TeacherRoom`** —
+the studio family is disconnected from `Room` by design (`CLAUDE.md`, Data
+Model), which is the one structural way this fixture is *simpler* than
+`recurring.spec.ts`'s. The template describe's teacher also owns a second
+template ("Yin Retreat", seeded directly through Prisma rather than the form,
+`isActive: false`) so the archived-list arc has a live template to prove the
+archived filter excludes, and a never-archived one to prove the live filter
+excludes it back.
 
 **Day-of-week choice.** Three days from the run day, exactly as
 `recurring.spec.ts` does and for the same reason: `generateStudioInstancesForTemplate`
@@ -205,7 +233,7 @@ pair template-with-template and class-with-class), but the fixture should pick a
 different `(dayOfWeek, startTime)` regardless. `afterAll` must delete it.
 
 Two new baselines: `studio-template-chromium-darwin.png` and
-`studio-template-Mobile Chrome-darwin.png`. Note that `visual.spec.ts`
+`studio-template-Mobile-Chrome-darwin.png`. Note that `visual.spec.ts`
 `test.skip`s itself in CI where no `-linux` baselines exist, so this — like the
 existing six — is local-only coverage.
 
