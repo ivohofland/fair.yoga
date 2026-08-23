@@ -89,7 +89,11 @@ export const PUT = withErrorHandler(async (
   // sweep (D2): moving it would free the date and the hourly sweep would
   // recreate the class there. Cancel plus manual re-create is the remedy the
   // refusal names. Presence, not difference: re-sending the unchanged date of
-  // a generated row refuses too, which is what keeps the form honest.
+  // a generated row refuses too, which is what keeps the form honest. A manual
+  // past row also lands here — its `dateEditable` is false by D1's invariant,
+  // not by template — so its refusal carries template wording for a row that
+  // has none. Unreachable through the UI: the edit form omits `date` whenever
+  // `dateEditable` is false, and a past row never renders the form at all.
   if (dateString !== undefined && !verdict.dateEditable) {
     return respondError(
       STUDIO_CLASS_EDIT_REFUSALS.generated_date.message,
@@ -117,9 +121,9 @@ export const PUT = withErrorHandler(async (
   // that still leaves two ways this write re-enters the partial index and
   // collides with another live row at this teacher's (date, startTime):
   // changing `startTime` alone, or clearing `cancelledAt` back to null on a
-  // previously cancelled class. Since #276 a pure `date` move is a third —
-  // gated above to manual rows, whose keys the index treats as distinct from
-  // any generated row's.
+   // previously cancelled class. Since #276 a pure `date` move is a third,
+   // gated above to manual rows — the index itself does not care which kind
+   // of row moved; any live row holding the slot collides.
   //
   // NO TEMPLATE-KEY CATCH ARM, deliberately (spec §D2): `templateId` is absent
   // from `updateStudioClassSchema`, so nothing this route writes ever touches
