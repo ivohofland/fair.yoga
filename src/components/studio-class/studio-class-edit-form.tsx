@@ -7,6 +7,7 @@ import type { updateStudioClassSchema } from '@/lib/schemas';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { readErrorMessage } from '@/lib/client-errors';
+import { STUDIO_CLASS_EDIT_REFUSALS } from '@/services/studio-class-edit-refusals';
 
 export interface StudioClassEditInitial {
   classType: string;
@@ -111,8 +112,7 @@ export function StudioClassEditForm({
         </div>
         {!dateEditable && (
           <p className="type-caption max-w-[420px]">
-            This class comes from a recurring template, so it cannot move to another
-            date. Cancel it and log a manual class on the new date instead.
+            {STUDIO_CLASS_EDIT_REFUSALS.generated_date.message}
           </p>
         )}
         <div className="grid grid-cols-2 gap-3">

@@ -121,9 +121,9 @@ export const PUT = withErrorHandler(async (
   // that still leaves two ways this write re-enters the partial index and
   // collides with another live row at this teacher's (date, startTime):
   // changing `startTime` alone, or clearing `cancelledAt` back to null on a
-   // previously cancelled class. Since #276 a pure `date` move is a third,
-   // gated above to manual rows — the index itself does not care which kind
-   // of row moved; any live row holding the slot collides.
+  // previously cancelled class. Since #276 a pure `date` move is a third,
+  // gated above to manual rows — the index itself does not care which kind
+  // of row moved; any live row holding the slot collides.
   //
   // NO TEMPLATE-KEY CATCH ARM, deliberately (spec §D2): `templateId` is absent
   // from `updateStudioClassSchema`, so nothing this route writes ever touches

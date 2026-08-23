@@ -88,7 +88,11 @@ already written off, and only the count and the cancellation remain negotiable.
 ### D2 — `date` is admitted; generated classes may not move
 
 `date` joins `updateStudioClassSchema`. The route refuses it with 409
-`STUDIO_CLASS_GENERATED_DATE` when the row's `templateId` is not null.
+`STUDIO_CLASS_GENERATED_DATE` whenever `dateEditable` is false — a generated
+row (its `templateId` is not null), and, by D1's invariant, any past row. A
+past row receiving nothing but a `date` therefore gets this refusal's
+template-worded message; unreachable from the edit surface, which omits the
+field whenever the verdict says it may not move.
 
 Why generated classes may not move: moving the row frees its
 `(templateId, date)` key, and the hourly sweep — which counts any row,
@@ -115,7 +119,8 @@ through the *date* path, not just the `startTime` path they were built for.
 ### D3 — `classType` is admitted
 
 `classType: z.string().min(1).optional()`, mirroring create. It renders on the
-schedule card (`class-list.tsx:140`) and nowhere else; it feeds no pricing or
+schedule card (`class-list.tsx:140`) and, since D4 shipped, as the edit form's
+class-type input; it feeds no pricing or
 reporting arithmetic, so it is editable wherever the rest of the schedule
 fields are.
 
@@ -132,7 +137,10 @@ parallel-but-separate like everything else in this mirror family.
 - For a generated class the date input renders disabled with an explainer
   naming the cancel-plus-manual remedy — the settingsLocked-explainer pattern
   from the class form, applied to a per-row rather than per-class lock.
-- Submit: single `PUT` with every field; success stays on the page with a
+- Submit: single `PUT` with every writable field except `date`, which is
+  omitted from the payload entirely whenever the verdict says it may not move —
+  the API refuses the field's PRESENCE, not a change to it, so re-sending a
+  generated row's unchanged date would 409; success stays on the page with a
   `Saved` caption (TemplateForm pattern) and refreshes the router; errors
   surface the API message verbatim in the standard danger slot — including
   both 409 codes, whose messages are written to be actionable.

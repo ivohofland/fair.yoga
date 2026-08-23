@@ -5,6 +5,7 @@ import {
   type StudioClassEditInitial,
 } from './studio-class-edit-form';
 import { routerRefresh } from '../../../tests/setup/components';
+import { STUDIO_CLASS_EDIT_REFUSALS } from '@/services/studio-class-edit-refusals';
 
 /**
  * The payload discipline is what this file exists to hold. The API refuses a
@@ -90,10 +91,10 @@ describe('StudioClassEditForm', () => {
   });
 
   it('shows the server message verbatim instead of "Saved" when the save is refused', async () => {
-    // Gate 2's own words — the refusal is written for the teacher, and this
-    // form is one of the surfaces that must deliver it unedited (#197).
-    const refusal =
-      'This class comes from a recurring template, so it cannot move to another date. Cancel it and log a manual class on the new date instead.';
+    // Gate 2's own words, imported — not a second copy: this form is one of
+    // the surfaces that must deliver the refusal unedited (#197), so the
+    // stub and the assertion both read the constant the API answers with.
+    const refusal = STUDIO_CLASS_EDIT_REFUSALS.generated_date.message;
     fetchMock.mockResolvedValue({
       ok: false,
       status: 409,
@@ -115,11 +116,7 @@ describe('StudioClassEditForm', () => {
     );
 
     expect(screen.getByLabelText('Date')).toBeDisabled();
-    expect(
-      screen.getByText(
-        'This class comes from a recurring template, so it cannot move to another date. Cancel it and log a manual class on the new date instead.',
-      ),
-    ).toBeInTheDocument();
+    expect(screen.getByText(STUDIO_CLASS_EDIT_REFUSALS.generated_date.message)).toBeInTheDocument();
   });
 
   it('leaves the date input enabled with no explainer when the date may move', () => {

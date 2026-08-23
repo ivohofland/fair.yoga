@@ -1126,6 +1126,11 @@ describe('/api/studio-classes', () => {
    * other's slots regardless of run order.
    */
   describe('PUT /api/studio-classes/[id] — the editability policy (#276)', () => {
+    // The class-family fixture planted by the cross-family test below. The
+    // afterAll deletes exactly these ids, not every family row this teacher
+    // owns — a future block above this one must not lose its fixtures here.
+    const crossFamilyIds: { classId: string; teacherRoomId: string; roomId: string }[] = [];
+
     const makePolicyRow = (date: Date, startTime: string, extra: Record<string, unknown> = {}) =>
       prisma.studioClass.create({
         data: {
@@ -1140,15 +1145,17 @@ describe('/api/studio-classes', () => {
         },
       });
 
-    // Scoped to this block's own classType, like every sibling block above;
-    // the room/class family below is this run's teacher's alone.
+    // Scoped to this block's own classType and the ids it actually planted,
+    // like every sibling block above.
     afterAll(async () => {
       await prisma.studioClass.deleteMany({
         where: { teacherId: ownerId, classType: 'PUT Policy' },
       });
-      await prisma.class.deleteMany({ where: { teacherId: ownerId } });
-      await prisma.teacherRoom.deleteMany({ where: { teacherId: ownerId } });
-      await prisma.room.deleteMany({ where: { createdById: ownerId } });
+      for (const ids of crossFamilyIds) {
+        await prisma.class.delete({ where: { id: ids.classId } });
+        await prisma.teacherRoom.delete({ where: { id: ids.teacherRoomId } });
+        await prisma.room.delete({ where: { id: ids.roomId } });
+      }
     });
 
     it('persists a classType change on a manual future row', async () => {
@@ -1270,7 +1277,7 @@ describe('/api/studio-classes', () => {
       const teacherRoom = await prisma.teacherRoom.create({
         data: { teacherId: ownerId, roomId: room.id, rentalRate: 20, capacityOverride: 12 },
       });
-      await prisma.class.create({
+      const holder = await prisma.class.create({
         data: {
           teacherId: ownerId,
           teacherRoomId: teacherRoom.id,
@@ -1284,6 +1291,11 @@ describe('/api/studio-classes', () => {
           minStudents: 3,
           maxStudents: 10,
         },
+      });
+      crossFamilyIds.push({
+        classId: holder.id,
+        teacherRoomId: teacherRoom.id,
+        roomId: room.id,
       });
 
       const mover = await makePolicyRow(new Date('2031-05-07'), '09:00');

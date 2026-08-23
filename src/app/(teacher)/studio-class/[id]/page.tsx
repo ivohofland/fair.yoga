@@ -55,9 +55,11 @@ export default async function StudioClassDetailPage({
   // answered 409. Two queries of different widths, one two-field literal.
   //
   // Both predicates now read exactly those two fields, so they share the one
-  // literal — it carries nothing either predicate must not see, and a future
-  // widening of either signature has to name its extra fact here in plain
-  // sight. (issue 276 added EDITABLE: not an income record ⇒ the whole schedule
+  // literal — it carries nothing either predicate must not see. A REQUIRED
+  // field added to either signature breaks compilation right here; an
+  // OPTIONAL one compiles past excess-property checking, so widening either
+  // predicate still takes a deliberate edit at this literal, not an invisible
+  // one. (issue 276 added EDITABLE: not an income record ⇒ the whole schedule
   // may change, cancelled included.)
   const editFacts = { templateId: studioClass.templateId, date: studioClass.date };
   const { deletable } = studioClassDeletability(editFacts, new Date(), session.defaultTimezone);
