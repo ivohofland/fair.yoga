@@ -105,6 +105,23 @@ Classes move through states: `draft → open → in_progress → completed → c
   so nothing about keeping one is about money; a *generated* one survives
   because it holds its template's date (a cancelled **manual** class holds no
   template date and is freely removable).
+- **Editing, and the date that moves only one way** (#276): a studio class
+  whose **calendar date is strictly before the teacher's today** is an income
+  record — only `studentCount` and `cancelledAt` stay writable, and the PUT
+  refuses the whole body rather than partially applying a count smuggled in
+  beside a gated field. Today or later the whole schedule is editable,
+  cancelled or not: a studio cancellation is recoverable, so it gates nothing.
+  `date` is narrower still — it moves only on a **manual** row (a generated one
+  holds its `(templateId, date)` against the sweep, which would otherwise
+  recreate the class on the freed date within the hour) and only **forwards**,
+  because a move landing before today freezes the row on arrival and the typo
+  that caused it could not then be undone through the editor. Same shape as the
+  `Class` family's #249 rule; logging a class that already happened stays open
+  at `/studio-class/new`, which bounds its date field at neither end. The
+  predicate is `studio-class-editability.ts`, sibling to the removal one, and
+  it answers about the STORED row — the forward-only rule is the route's own
+  third gate, because nothing reading the stored row can see a write that ends
+  that row's editability
 - **One teacher, one slot, across both families** (#296): a teacher holds at
   most one LIVE class per `(date, startTime)` counting `Class` and
   `StudioClass` together, and at most one live template per

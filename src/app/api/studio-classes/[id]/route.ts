@@ -20,6 +20,7 @@ import {
 } from '@/services/studio-class-deletion';
 import {
   studioClassEditability,
+  studioClassDateIsPast,
   STUDIO_CLASS_EDIT_REFUSALS,
 } from '@/services/studio-class-editability';
 
@@ -64,9 +65,14 @@ export const PUT = withErrorHandler(async (
   // student count and the cancellation remain writable); `date` moves only on
   // a manual row that is not an income record. A fresh two-field literal, not
   // `studioClass` — the predicate is handed only what it may read.
+  //
+  // One `now` for all three gates below. Reading the clock per gate would let a
+  // request that straddles local midnight answer two gates from two different
+  // todays, which is a state no test could reproduce and no reader expects.
+  const now = new Date();
   const verdict = studioClassEditability(
     { templateId: studioClass.templateId, date: studioClass.date },
-    new Date(),
+    now,
     session.defaultTimezone,
   );
 
@@ -89,16 +95,38 @@ export const PUT = withErrorHandler(async (
   // sweep (D2): moving it would free the date and the hourly sweep would
   // recreate the class there. Cancel plus manual re-create is the remedy the
   // refusal names. Presence, not difference: re-sending the unchanged date of
-  // a generated row refuses too, which is what keeps the form honest. A manual
-  // past row also lands here — its `dateEditable` is false by D1's invariant,
-  // not by template — so its refusal carries template wording for a row that
-  // has none. Unreachable through the UI: the edit form omits `date` whenever
-  // `dateEditable` is false, and a past row never renders the form at all.
+  // a generated row refuses too, which is what keeps the form honest.
+  //
+  // WHICH refusal depends on WHY `dateEditable` is false, and both reasons
+  // reach here. A past MANUAL row fails it by D1's invariant, not by template,
+  // and telling that teacher their hand-logged class "comes from a recurring
+  // template" is a false sentence — one rendered verbatim, since `(teacher)`
+  // pages print `error.message` (#197). Gate 1 does not cover it: a body of
+  // `{ date }` alone leaves `gated` empty and falls through to here.
   if (dateString !== undefined && !verdict.dateEditable) {
+    const refusal = verdict.scheduleEditable
+      ? STUDIO_CLASS_EDIT_REFUSALS.generated_date
+      : STUDIO_CLASS_EDIT_REFUSALS.income_record;
+    return respondError(refusal.message, 409, refusal.code);
+  }
+
+  // Gate 3 — a date may not move BACKWARDS across today. The verdict above
+  // reads the stored row and so cannot see this: the row is legitimately
+  // editable, and the write is what ends that. Landing before today makes it an
+  // income record on arrival, so gate 1 freezes the very typo that caused
+  // it — the teacher cannot undo a mistyped year through this editor, only by
+  // removing the row and re-logging it.
+  //
+  // The mirror of the `Class` family's #249 rule ("a write may not newly place
+  // a class's start in the past", `class-lifecycle.ts`). Nothing is taken away:
+  // logging a class that already happened stays open at `/studio-class/new`,
+  // which bounds its date field at neither end.
+  if (dateString !== undefined
+      && studioClassDateIsPast(new Date(dateString), now, session.defaultTimezone)) {
     return respondError(
-      STUDIO_CLASS_EDIT_REFUSALS.generated_date.message,
+      STUDIO_CLASS_EDIT_REFUSALS.past_date.message,
       409,
-      STUDIO_CLASS_EDIT_REFUSALS.generated_date.code,
+      STUDIO_CLASS_EDIT_REFUSALS.past_date.code,
     );
   }
 
@@ -117,20 +145,18 @@ export const PUT = withErrorHandler(async (
   }
 
   // `StudioClass_teacher_slot_unique` is (teacherId, date, startTime) WHERE
-  // cancelledAt IS NULL (#196). `updateStudioClassSchema` has no `date`, but
-  // that still leaves two ways this write re-enters the partial index and
-  // collides with another live row at this teacher's (date, startTime):
-  // changing `startTime` alone, or clearing `cancelledAt` back to null on a
-  // previously cancelled class. Since #276 a pure `date` move is a third,
-  // gated above to manual rows — the index itself does not care which kind
-  // of row moved; any live row holding the slot collides.
+  // cancelledAt IS NULL (#196). Three writes here re-enter that partial index
+  // and can collide with another live row at this teacher's (date, startTime):
+  // changing `startTime`, clearing `cancelledAt` back to null on a previously
+  // cancelled class, or moving `date`. The index does not care which kind of
+  // row moved; any live row holding the slot collides.
   //
-  // NO TEMPLATE-KEY CATCH ARM, deliberately (spec §D2): `templateId` is absent
-  // from `updateStudioClassSchema`, so nothing this route writes ever touches
-  // half of `@@unique([templateId, date])` — and PostgreSQL unique indexes
-  // treat NULLs as distinct, so two manual rows cannot collide on it either.
-  // A P2002 on that index is unreachable here; an arm that cannot fire
-  // certifies nothing.
+  // NO TEMPLATE-KEY CATCH ARM, deliberately (spec §D2) — but note WHICH
+  // premise carries that. `templateId` is never written here, and gate 2 lets
+  // `date` move only on rows whose `templateId` is null, which PostgreSQL
+  // treats as distinct. Both together are what make a P2002 on
+  // `@@unique([templateId, date])` unreachable; relax gate 2 and this arm
+  // becomes necessary, or a real collision escapes as a 500.
   try {
     const updated = await prisma.studioClass.update({
       where: { id },
@@ -139,6 +165,15 @@ export const PUT = withErrorHandler(async (
     return respondOk(updated);
   } catch (err) {
     if (isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])) {
+      // LOGGED for the reason the cross-family arm below states in full:
+      // `respondError` does not log, and `withErrorHandler` never sees a
+      // response that was RETURNED rather than thrown, so catching here is
+      // what removes the server-side record — the `classifyApiError` warn this
+      // P2002 would otherwise have produced on its way out.
+      log.warn(
+        { err, studioClassId: id, teacherId: session.teacherId },
+        'studio class edit refused: another studio class holds that slot',
+      );
       return respondError(
         'You already have a studio class at that date and time.',
         409,

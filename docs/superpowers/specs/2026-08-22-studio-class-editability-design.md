@@ -171,9 +171,22 @@ explicit NaN stance, for the same inversion-proofing reason documented there.
 ### D6 — Route mechanics
 
 Gate order in `PUT`: ownership → parse → empty-body check (unchanged) →
-past-gate (any gated field present on a past row → 409 `income_record`;
-whole request refused, never partially applied) → date-gate (present +
-generated → 409 `generated_date`) → update. `date` transforms like the class
+**gate 1**, past (any gated field present on a past row → 409 `income_record`;
+whole request refused, never partially applied) → **gate 2**, immovable date
+(`date` present on a row whose `dateEditable` is false → 409, carrying
+`generated_date` when the row is a template child and `income_record` when it
+is a past manual row, because the generated wording would be a false sentence
+about a row with no template) → **gate 3**, backward move (`date` present and
+landing strictly before the teacher's today → 409 `past_date`) → update.
+
+Gate 3 is not derivable from the verdict, and that is the point: the predicate
+reads the STORED row and answers whether it is editable now, never whether it
+stays editable after a given write. A backward move is the one case where
+those differ — the row arrives already frozen by gate 1, so the mistyped year
+cannot be undone through the editor. It mirrors the `Class` family's #249 rule
+(`class-lifecycle.ts`), and takes nothing away: `/studio-class/new` bounds its
+date field at neither end, so logging a class that already happened is
+unaffected. `date` transforms like the class
 route's (`new Date(isoString)`, `src/app/api/classes/[id]/route.ts:54-57`);
 it therefore joins `cancelledAt` in the server-owned-fields pin
 (`src/lib/schemas.test.ts`, `SERVER_OWNED_FIELDS`), whose entry becomes
@@ -190,7 +203,7 @@ it therefore joins `cancelledAt` in the server-owned-fields pin
 | `startTime` | frozen | writable | UI only |
 | `durationMinutes` | frozen | writable | UI only |
 | `hourlyRate` | frozen | writable | UI only |
-| `date` | frozen | manual only | schema + UI + route gate |
+| `date` | frozen | manual only, forwards only | schema + UI + route gates 2 and 3 |
 
 Every API-accepted field is reachable from the page; every unreachable field
 was either surfaced or is named above with the reason it stayed out.

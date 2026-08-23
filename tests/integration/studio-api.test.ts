@@ -20,6 +20,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { generateStudioInstancesForTemplate } from '@/services/studio-class-generator';
+import { startOfLocalDay } from '@/lib/timezone';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 
 const prisma = new PrismaClient();
@@ -972,9 +973,9 @@ describe('/api/studio-classes', () => {
   });
 
   // #276's cheapest true claim, pinned before this branch changes anything:
-  // `updateStudioClassSchema` accepts six fields, yet `location`,
-  // `durationMinutes` and `hourlyRate` had no persistence test through this
-  // route at all — validated, then offered to no one. One field per test so a
+  // `location`, `durationMinutes` and `hourlyRate` are all in
+  // `updateStudioClassSchema` yet had no persistence test through this route
+  // at all — validated, then offered to no one. One field per test so a
   // schema regression names its field, and the assertion is a Prisma
   // read-back, because a 200 alone proves nothing about persistence. These
   // must pass unchanged against main's behaviour — they record today's
@@ -1051,9 +1052,10 @@ describe('/api/studio-classes', () => {
   // not just creates (Task 6b). This route's own `prisma.studioClass.update`
   // has two independent ways back into that partial scope: changing
   // `startTime` on an already-live row, or clearing `cancelledAt` back to
-  // null on a row that was cancelled. `updateStudioClassSchema` has no
-  // `date`, so both cases below share one fixed date and only vary
-  // `startTime`/`cancelledAt`.
+  // null on a row that was cancelled. Both cases below hold one fixed date and
+  // vary only `startTime`/`cancelledAt`, so each isolates its own door; the
+  // THIRD way in — a `date` move, opened by #276 — is exercised in that
+  // issue's own block below.
   describe('PUT /api/studio-classes/[id] collides on the slot key (#196)', () => {
     const SLOT_DATE = new Date('2027-05-10');
 
@@ -1316,6 +1318,117 @@ describe('/api/studio-classes', () => {
 
       const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {});
       expect(res.status).toBe(400);
+    });
+
+    /**
+     * PRESENCE, NOT DIFFERENCE. Gate 2 refuses any `date` on a row that may not
+     * move one — the row's own unchanged date included. That asymmetry is the
+     * only reason the edit form omits the key rather than sending it, so
+     * narrowing this gate to a difference check would leave the form's omission
+     * logic guarding nothing, with every other test in this block still green.
+     */
+    it('refuses a generated row its OWN date, unchanged — the gate reads presence', async () => {
+      const tpl = await makeTemplate(ownerId, 'Policy Unchanged Date', '09:05');
+      const sc = await makePolicyRow(new Date('2099-06-23'), '09:05', { templateId: tpl.id });
+
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
+        date: '2099-06-23',
+      });
+      expect(res.status).toBe(409);
+      expect((await res.json()).error.code).toBe('STUDIO_CLASS_GENERATED_DATE');
+    });
+
+    /**
+     * The refusal must describe the row it refuses. A past MANUAL row fails
+     * `dateEditable` by D1's invariant, not by template, and gate 1 does not
+     * cover it — a body of `{ date }` alone leaves `gated` empty and falls
+     * through to gate 2. Telling that teacher their hand-logged class comes
+     * from a recurring template is a false sentence, rendered verbatim (#197).
+     */
+    it('tells a past manual row it is an income record, not a template child', async () => {
+      const sc = await makePolicyRow(new Date('2020-02-01'), '09:10');
+
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
+        date: '2020-02-02',
+      });
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as { error: { code: string; message: string } };
+      expect(json.error.code).toBe('STUDIO_CLASS_INCOME_RECORD');
+      expect(json.error.message).not.toMatch(/recurring template/);
+
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      expect(after.date.getTime()).toBe(new Date('2020-02-01').getTime());
+    });
+
+    /**
+     * GATE 3 — the backdating trapdoor. The other two gates read the STORED
+     * row, so neither can see a write that ends the row's own editability: the
+     * move lands the class in the past, gate 1 freezes it on arrival, and the
+     * mistyped year cannot be undone through this editor. Mirrors the `Class`
+     * family's #249 rule. Logging a class that already happened stays open at
+     * `/studio-class/new`, so nothing is taken away.
+     */
+    it('refuses a manual row a move into the past — it would freeze on arrival', async () => {
+      const sc = await makePolicyRow(new Date('2099-06-24'), '09:15');
+
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
+        date: '2020-06-24',
+      });
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as { error: { code: string; message: string } };
+      expect(json.error.code).toBe('STUDIO_CLASS_PAST_DATE');
+      expect(json.error.message).toMatch(/cannot move to a date in the past/i);
+
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      expect(after.date.getTime()).toBe(new Date('2099-06-24').getTime());
+    });
+
+    /**
+     * Cancellation stays writable on an income record — the `income_record`
+     * refusal PROMISES it ("only its student count and cancellation"), and
+     * until now only the student-count half was pinned. Both directions, since
+     * un-cancelling re-enters the partial slot index. A studio cancellation is
+     * also what excludes a class from reporting, so a teacher who cannot cancel
+     * a past class that did not happen overstates their income permanently.
+     */
+    it('still cancels and un-cancels a past row — the other half of the promise', async () => {
+      const sc = await makePolicyRow(new Date('2020-03-01'), '09:20');
+
+      const cancel = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
+        cancelledAt: '2020-03-02T10:00:00.000Z',
+      });
+      expect(cancel.status).toBe(200);
+      expect(
+        (await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } })).cancelledAt,
+      ).not.toBeNull();
+
+      const restore = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
+        cancelledAt: null,
+      });
+      expect(restore.status).toBe(200);
+      expect(
+        (await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } })).cancelledAt,
+      ).toBeNull();
+    });
+
+    /**
+     * THE CLOCK AND THE ZONE, WIRED. Every other fixture in this block is dated
+     * 2020 or 2099 — unambiguous in every timezone, so hardcoding `'UTC'` or a
+     * fixed instant at the route's verdict call leaves them all green. This one
+     * is built from the real clock in the teacher's zone, and pins D1's central
+     * decision: today is not past, because the count is logged after class.
+     */
+    it("keeps today's class editable, reading the teacher's zone and not UTC", async () => {
+      const today = startOfLocalDay(new Date(), 'Europe/Amsterdam');
+      const sc = await makePolicyRow(today, '09:25');
+
+      const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, {
+        hourlyRate: 77,
+      });
+      expect(res.status).toBe(200);
+
+      const after = await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } });
+      expect(Number(after.hourlyRate)).toBe(77);
     });
   });
 
