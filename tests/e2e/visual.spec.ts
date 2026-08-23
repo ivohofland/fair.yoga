@@ -148,6 +148,11 @@ function rewriteDates(source: string): boolean {
 // Scoped to <select> elements themselves, not to any text they contain, so
 // a bare weekday elsewhere on the page is unaffected and still reaches the
 // check below.
+//
+// KNOWN-OPEN: hiding a <select> removes its selected option's text from
+// `text` along with every unselected one, so a <select> whose selected
+// value is a real, drifting date is not checked here — that baseline could
+// drift silently instead of failing this check.
 function bodyTextForSmellCheck(): string {
   const hidden = Array.from(document.querySelectorAll('select')).map((select) => ({
     select,
