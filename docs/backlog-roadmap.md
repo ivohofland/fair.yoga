@@ -664,7 +664,7 @@ force some of that order.
 | 4 | CI reliability & framework upkeep | ~~#185~~ ✓, ~~#41~~ ✓ (PR #188) — premise disproved; ~~#40~~ ✓ (PR #198) — nine components, not one, and its framework half closed unverified; then #127 (+#189) | none, but hard/uncertain |
 | 5 | Room lifecycle & admin (epic #60) | ~~#73~~ ✓ (PR #261) — rooms born private, sharing behind its own door; ~~#76~~ ✓ (PR #262) — `isArchived` given downstream meaning by five doors; then #52 + **#259** + **#260** | **product decision** (the lock itself stands) |
 | 6 | Feature backlog | ~~#119 + #120~~ ✓; ~~#112~~ ✓; #47, then #46 / #48 / #49 / #51 | product priority |
-| 7 | **The studio class family, end to end** — un-triaged, see the header | #274 (tracking) + #275 #276 #277 #278 #279 #280 #281 #282 #283 #284 | **un-triaged**; two are decisions on their face (#279, #284) |
+| 7 | **The studio class family, end to end** — un-triaged, see the header | #274 (tracking) + #275 #276 #277 #278 ~~#279~~ ✓ (decision, closed) #280 ~~#281~~ ✓ ~~#283~~ ✓ (both PR #303) #282 #284, **#304** | **un-triaged**; one decision left on its face (#284) |
 | 3c | **This week's spin-outs** — see below | ~~#146 + #148~~ ✓ done together (PR #163); #145 + #157 + **#258** (together — one column failing at three layers, see #249's round), #164, #162, #154, #142, #143, #147, #158, #161 | three are decisions (#147, #164, #258) |
 
 - ~~**#170 — emails normalized only in the two tables #166 added.**~~ **DONE —
@@ -2519,6 +2519,90 @@ schema-plus-middleware job — so it settled the controls instead.
   got a **docblock instead of an issue**, because the failure mode is "someone
   greps `cleanup` and picks the wrong one of two", which a signpost beside the
   function fixes and a backlog entry does not.
+
+## This round's spin-outs (#283, PR #303) — one, and a fix that had to be wrong once before the fault was legible
+
+**One filing.** #304 — the studio class detail page is titled by `location`
+while the schedule card that opens it reads `classType · location`. Found by
+reading during review, not by running; it is the same defect class as #281,
+one door over, and pre-existing rather than introduced, so it was filed rather
+than widened into the branch.
+
+**The branch was red on CI and had never once been green — through
+twenty-five commits, a build, and a review round.** Nobody had looked. The
+first thing the review did was open the run.
+
+**A ten-second timeout is what identified the fault, by failing.** The two
+flakes both sat where an assertion crosses from client state into state only a
+post-action `router.refresh()` produces, so the first fix read them as slow and
+raised the budget. CI came back *worse* — 1 failed, 4 flaky, chromium now too —
+and, decisively, still `element(s) not found` at the full ten seconds. That
+number is the finding: a commit that has not arrived in ten seconds is not
+slow, it is dropped, and no budget reaches it. The second fix waits for the
+write and reloads, which is what `teacher-journey.spec.ts` has done since #40,
+with the reason written down: *"the router can drop a post-action refresh
+commit, so the state change lands and the client repaint does not."* **The
+prior art was in the repo, in a sibling spec, and the branch reinvented the
+wrong half of it.**
+
+**The premise was defended over the evidence, and that is why the wrong fix was
+chosen.** The spec's docblock justified its own existence as *"only a browser
+sees the refresh actually change which control is drawn"*, and `reload()`
+voids that claim. Avoiding the reload preserved the sentence at the cost of the
+suite. The sentence was the thing that had to go: the file now says what the
+arc actually proves, that each step's server-rendered props are the previous
+step's writes. Worth generalising — **when a fix is rejected because it would
+falsify a comment, the comment is the suspect.**
+
+**Four assertions that had already passed a review round were green under
+mutation.** The branch shipped a fourteen-entry mutation ledger, and none of
+those fourteen touched these. Hard-coding the archive button's label gave an
+un-archived template an "Unarchive" control and passed all nine e2e tests,
+because Playwright matches an accessible name as a case-insensitive
+**substring** and `"Unarchive studio class"` contains `"Archive studio class"`
+— a rule the same file applies correctly two hundred lines further down.
+Reversing `lastScheduled`'s ordering made the pause sentence name the first
+class and passed, because `.*` swallowed the only field distinguishing four
+classes that share a start time. Re-indexing `DAY_OPTIONS` put every teacher's
+classes on the wrong weekday and passed, because the form is driven by label
+and the stored day was never read back. **Writing your own mutation list tests
+the failures you already imagined** — the same lesson #114's round paid for,
+recurring one bundle later.
+
+**Two verification claims were unfalsifiable as measured, and both looked like
+diligence.** The PR body claimed "nothing flaky under `failOnFlakyTests: true`",
+measured locally — where `retries: 0` makes "flaky" an unreachable verdict, as
+`playwright.config.ts`'s own comment says. And the ledger's 25× flake loop was
+scoped `--project=chromium`; both flakes were Mobile Chrome. Neither was
+dishonest; both were run somewhere the fault could not appear. **Mutation-test
+the verification, not only the code.**
+
+**The comment-drift failure recurred a dozen times in twenty-five commits,
+including inside the commit that was fixing it.** Four artifacts carried a
+`page.tsx:55` that this branch's own header fix had moved to `:59` — an edit in
+a different file, four lines above, which the author had no reason to connect.
+Worse, a citation into the design spec rotted 28 lines *after being introduced
+as the fix* for restating a cross-file fact: the review-round commit
+`850ab96` swapped prose for a line-number pointer, which is the textbook move,
+and two doc commits later the pointer was wrong. **The eight citations that
+survived all pointed at stable names** (`DAY_OPTIONS`, `pauseMessage`, a
+constraint name); the two that rotted were bare offsets. CLAUDE.md's rule is
+"link to the owner" — this round is the argument that the link must be
+greppable, because a `:NN` into a file you do not own is the most rot-prone
+link available.
+
+**A suggested fix was measured and withdrawn.** The review proposed closing
+`bodyTextForSmellCheck`'s recorded gap — a `<select>` whose selected option is
+a drifting date escaping `DATE_SMELL`. Implemented, it caught nothing:
+`rewriteDates` walks `<option>` text like every other node, so a converged
+freeze leaves no `DATE_PATTERN` match anywhere and the new check passes
+unconditionally. It would have shipped as exactly the class of dead assertion
+the same review had just found four of. Kept only for the case that is real —
+the freeze loop giving up with a date still inside a hidden select — and the
+comment narrowed to claim only that. **The recorded gap was overstated, and
+only running the fix showed it.**
+
+---
 
 ## This round's spin-outs (#114, PR #271) — one, and a review that found nineteen things, none of them behaviour
 
