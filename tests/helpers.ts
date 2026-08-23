@@ -21,7 +21,7 @@ import { encodeHexLowerCase } from '@oslojs/encoding';
 import type { PrismaClient } from '@prisma/client';
 
 /** The app under test — the dev server locally, the built app in CI. */
-export const BASE_URL = 'http://localhost:3000';
+export const BASE_URL = process.env.INTEGRATION_BASE_URL ?? 'http://localhost:3000';
 
 /**
  * The keys `TeacherVisibleStudent` carries, sorted — #167's whole point, as a
