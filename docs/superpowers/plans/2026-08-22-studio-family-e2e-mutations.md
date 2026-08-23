@@ -176,7 +176,7 @@ Restored, re-warmed, re-ran: 2/2 passed.
 
 ### M4 — the archive gate short-circuited
 
-Mutation: in `src/app/(teacher)/settings/studio-classes/[id]/page.tsx:55`,
+Mutation: in `src/app/(teacher)/settings/studio-classes/[id]/page.tsx`, at the `{!template.isActive && (` gate,
 changed `{!template.isActive && (` to `{false && (`.
 
 Result: **RED**, exactly as predicted (test 3 fails; test 4 "did not run" —
@@ -611,7 +611,10 @@ on.** The `studio template detail (paused)` baseline's fixture uses distinct
 `classType` ('Visual Studio Flow') and `location` ('Visual Community Studio')
 values, so the corrected header renders different text than the frozen
 baseline expects — `npx playwright test visual --grep "studio template"`
-fails on a 654-pixel screenshot diff, not on `DATE_SMELL`. No snapshot file
-was regenerated (`git status --short tests/e2e/visual.spec.ts-snapshots/`
-stays empty); this is flagged for a human decision on updating the baseline,
-per the instruction not to regenerate silently.
+fails on a 654-pixel screenshot diff, not on `DATE_SMELL`.
+
+That diff was the mutation's collateral, not a defect: the header fix it
+targets is the intended rendering, so the baseline captured before it was the
+stale one. Both `studio-template-*.png` baselines were regenerated in
+`d436dd8` once the mutation was reverted, which is why the diff no longer
+reproduces.

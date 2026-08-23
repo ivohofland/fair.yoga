@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import { accountIdOfTeacher } from './account-helpers';
+import { hydrationSignal, REFRESH_TIMEOUT } from './page-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 
 /**
@@ -25,9 +26,9 @@ const suffix = uniqueSuffix();
 // Three days out, so the template's weekday is never the run day. On the run
 // day the counts turn time-of-day-dependent: the generator filters candidates
 // on `classStartInstant(date, startTime, tz) > startDate`
-// (`studio-class-generator.ts:138-143`), so today's occurrence disappears
-// once its start time has passed. `recurring.spec.ts` stays off the run day
-// for the same reason.
+// (`studio-class-generator.ts`), so today's occurrence disappears once its
+// start time has passed. `recurring.spec.ts` stays off the run day for the
+// same reason.
 const templateDate = new Date();
 templateDate.setUTCDate(templateDate.getUTCDate() + 3);
 const templateDayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][
@@ -96,14 +97,20 @@ test.describe('Studio class templates', () => {
     // Order doesn't matter here the way it does in recurring.spec.ts: this
     // fixture creates no Room, so #290's hazard (a regenerated class
     // stranding TeacherRoom under Restrict) cannot arise. StudioClass.templateId
-    // is SetNull (prisma/migrations/20260411100000_add_studio_class_template/migration.sql:25)
-    // and Teacher -> StudioClass is Cascade, and this spec fires no cron and
-    // leaves both templates paused, so nothing can regenerate a class behind
-    // this teardown either.
-    await prisma.studioClass.deleteMany({ where: { teacherId } });
-    await prisma.studioClassTemplate.deleteMany({ where: { teacherId } });
-    await prisma.session.deleteMany({ where: { accountId: await accountIdOfTeacher(prisma, teacherId) } });
-    await prisma.teacher.delete({ where: { id: teacherId } });
+    // is SetNull (`StudioClass_templateId_fkey`) and Teacher -> StudioClass is
+    // Cascade, and this spec fires no cron and leaves both templates paused,
+    // so nothing can regenerate a class behind this teardown either.
+    //
+    // Guarded because an unset `teacherId` is not a filter that matches
+    // nothing — Prisma DROPS an `undefined` where-clause, making this
+    // `DELETE FROM "StudioClass"`. Playwright runs afterAll even when
+    // beforeAll threw, which is exactly when `teacherId` is unset.
+    if (teacherId) {
+      await prisma.studioClass.deleteMany({ where: { teacherId } });
+      await prisma.studioClassTemplate.deleteMany({ where: { teacherId } });
+      await prisma.session.deleteMany({ where: { accountId: await accountIdOfTeacher(prisma, teacherId) } });
+      await prisma.teacher.delete({ where: { id: teacherId } });
+    }
     await prisma.$disconnect();
   });
 
@@ -112,12 +119,14 @@ test.describe('Studio class templates', () => {
   });
 
   test('creates a template through settings and fills the window', async ({ page }) => {
+    const hydrated = hydrationSignal(page);
     await page.goto('/settings/studio-classes/new');
+    await hydrated;
 
     await page.getByLabel('Class type').fill('Studio Flow');
     await page.getByLabel('Location').fill('Community Studio');
     // Selected by LABEL, never by integer. Studio `dayOfWeek` is 0=Monday
-    // (`studio-template-form.tsx:53-61`) while `getUTCDay()` is 0=Sunday, and
+    // (`studio-template-form.tsx`'s `DAY_OPTIONS`) while `getUTCDay()` is 0=Sunday, and
     // the label sidesteps the mismatch entirely.
     await page.getByLabel('Day').selectOption(templateDayName);
     await page.getByLabel('Start time').fill('08:15');
@@ -142,9 +151,9 @@ test.describe('Studio class templates', () => {
   test('the four generated classes are on the schedule, and refuse removal', async ({ page }) => {
     await page.goto('/');
 
-    // `StudioClassCard` renders "<classType> · <location> · Studio class"
-    // (`class-list.tsx:140`). All four dates (+3, +10, +17, +24 days) sit
-    // inside the schedule's 28-day window.
+    // `StudioClassCard` (`schedule/class-list.tsx`) renders
+    // "<classType> · <location> · Studio class". All four dates
+    // (+3, +10, +17, +24 days) sit inside the schedule's 28-day window.
     const cards = page.getByRole('link', { name: /Studio Flow · Community Studio · Studio class/ });
     await expect(cards).toHaveCount(4);
 
@@ -163,25 +172,58 @@ test.describe('Studio class templates', () => {
     await page.goto(`/studio-class/${first.id}`);
     await expect(page.getByRole('button', { name: 'Cancel class' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Remove this class' })).toHaveCount(0);
+
+    // The Template link is labelled with the same expression as the header of
+    // the page it opens, so following it cannot land the teacher on a
+    // differently-named screen. Not an edge case: `classType` is a non-null
+    // column that every write path validates as `.min(1)`, so the location
+    // fallback never fires for a template and the two must agree every time.
+    const templateLink = page.getByRole('link', { name: /Studio Flow/ });
+    await expect(templateLink).toHaveAttribute('href', `/settings/studio-classes/${templateId}`);
   });
 
   test('pausing says what stays scheduled, and reveals Archive', async ({ page }) => {
-    await page.goto(`/settings/studio-classes/${templateId}`);
+    // Read the two ends of the window BEFORE pausing, so the assertion below
+    // can tell "last" from "first". Every one of the four shares 08:15, so
+    // the date is the only field that distinguishes them.
+    const scheduled = await prisma.studioClass.findMany({
+      where: { templateId },
+      orderBy: { date: 'asc' },
+      select: { date: true },
+    });
+    expect(scheduled).toHaveLength(4);
+    const lastDay = scheduled[3]!.date.getUTCDate();
+    const firstDay = scheduled[0]!.date.getUTCDate();
 
-    // An ACTIVE template offers Pause and nothing else: Archive is gated on
-    // `!isActive` (`settings/studio-classes/[id]/page.tsx:55`).
+    const hydrated = hydrationSignal(page);
+    await page.goto(`/settings/studio-classes/${templateId}`);
+    await hydrated;
+
+    // An ACTIVE template offers Pause and nothing else: Archive is drawn
+    // behind `{!template.isActive && …}` in `settings/studio-classes/[id]/page.tsx`.
     await expect(page.getByRole('button', { name: 'Pause studio class' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Archive studio class' })).toHaveCount(0);
     await page.getByRole('button', { name: 'Pause studio class' }).click();
 
     // `pauseMessage` names the last class still standing — pause deletes
-    // nothing, so all four survive and the fourth is the one named.
+    // nothing, so all four survive and the FOURTH is the one named. The day
+    // number is matched rather than the whole rendered date so this does not
+    // reimplement `formatDayHeader`; matching only its shape would let a
+    // regression that names the first class through.
     await expect(page.getByText(/No new classes will be added to your schedule\./)).toBeVisible();
-    await expect(page.getByText(/The last one still scheduled is .* · 08:15\./)).toBeVisible();
+    await expect(
+      page.getByText(new RegExp(`The last one still scheduled is \\w+, ${lastDay} \\w{3} · 08:15\\.`)),
+    ).toBeVisible();
+    expect(lastDay).not.toBe(firstDay);
 
-    // `router.refresh()` re-rendered the server component with new props.
-    await expect(page.getByRole('button', { name: 'Resume studio class' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Archive studio class' })).toBeVisible();
+    // Past here the assertions read state only `router.refresh()` produces,
+    // so they carry the refresh budget rather than the 5 s default. The
+    // message above already proves the PATCH resolved — waiting on it would
+    // add nothing; the refresh COMMIT is what this is waiting for.
+    await expect(page.getByRole('button', { name: 'Resume studio class' })).toBeVisible(REFRESH_TIMEOUT);
+    await expect(
+      page.getByRole('button', { name: 'Archive studio class', exact: true }),
+    ).toBeVisible(REFRESH_TIMEOUT);
 
     expect(await prisma.studioClass.count({ where: { templateId } })).toBe(4);
   });
@@ -199,7 +241,9 @@ test.describe('Studio class templates', () => {
   });
 
   test('resuming reports the window it already has', async ({ page }) => {
+    const hydrated = hydrationSignal(page);
     await page.goto(`/settings/studio-classes/${templateId}`);
+    await hydrated;
     await page.getByRole('button', { name: 'Resume studio class' }).click();
 
     // `added: 0, scheduled: 4` — pause deleted nothing, so the window was
@@ -208,20 +252,28 @@ test.describe('Studio class templates', () => {
     // arguments cannot detect a transposition.
     await expect(page.getByText('4 classes on your schedule. Nothing needed adding.')).toBeVisible();
 
-    // Active again, so Archive is gated off again.
-    await expect(page.getByRole('button', { name: 'Pause studio class' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Archive studio class' })).toHaveCount(0);
+    // Active again, so Archive is gated off again — post-refresh state, so
+    // both carry the refresh budget. Left inexact deliberately: for a
+    // `toHaveCount(0)`, substring matching is the STRICTER reading, because
+    // it also fails on an "Unarchive studio class" button appearing here.
+    await expect(page.getByRole('button', { name: 'Pause studio class' })).toBeVisible(REFRESH_TIMEOUT);
+    await expect(page.getByRole('button', { name: 'Archive studio class' })).toHaveCount(0, REFRESH_TIMEOUT);
   });
 
   test('archiving withdraws the window and says how much', async ({ page }) => {
+    const hydrated = hydrationSignal(page);
     await page.goto(`/settings/studio-classes/${templateId}`);
+    await hydrated;
 
     // Archiving needs a paused template — this second pause is the
-    // composition, not a workaround.
+    // composition, not a workaround. Archive appears only once the refresh
+    // that follows the pause has committed, hence the budget.
     await page.getByRole('button', { name: 'Pause studio class' }).click();
-    await expect(page.getByRole('button', { name: 'Archive studio class' })).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Archive studio class', exact: true }),
+    ).toBeVisible(REFRESH_TIMEOUT);
 
-    await page.getByRole('button', { name: 'Archive studio class' }).click();
+    await page.getByRole('button', { name: 'Archive studio class', exact: true }).click();
 
     // `archiveStudioMessage(4, 0)`: four future uncancelled classes deleted,
     // none dated today to spare.
@@ -239,7 +291,7 @@ test.describe('Studio class templates', () => {
     await page.goto('/settings/studio-classes');
     await expect(page.getByText('Studio Flow')).toHaveCount(0);
     // The still-live second template stays on this list — the same filter
-    // that dropped the archived one (`settings/studio-classes/page.tsx:11`)
+    // that dropped the archived one (its `isArchived: false` filter)
     // leaves an unarchived one in place.
     await expect(page.getByText('Yin Retreat')).toBeVisible();
 
@@ -253,7 +305,8 @@ test.describe('Studio class templates', () => {
     await page.waitForURL(`**/settings/studio-classes/${templateId}`);
 
     // The header titles with the same expression the list does
-    // (`studio-template-list.tsx:30,52,76`), so the two screens can't
+    // (`{t.classType || t.location}`, in all three of
+    // `studio-template-list.tsx`'s sections), so the two screens can't
     // disagree.
     await expect(page.getByRole('heading', { name: 'Studio Flow' })).toBeVisible();
 
@@ -265,7 +318,9 @@ test.describe('Studio class templates', () => {
   });
 
   test('un-archiving returns the template paused, not active', async ({ page }) => {
+    const hydrated = hydrationSignal(page);
     await page.goto(`/settings/studio-classes/${templateId}`);
+    await hydrated;
     await page.getByRole('button', { name: 'Unarchive studio class' }).click();
 
     await expect(
@@ -274,9 +329,17 @@ test.describe('Studio class templates', () => {
 
     // The screen agreeing with the sentence: both controls, because
     // `isArchived` is false again and `isActive` was forced false in the same
-    // write (`studio-class-template-lifecycle.ts:1226`).
-    await expect(page.getByRole('button', { name: 'Resume studio class' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Archive studio class' })).toBeVisible();
+    // write — the un-archive branch of `archiveOrUnarchiveStudioTemplate`.
+    //
+    // `exact` on the second one is load-bearing, not decoration: Playwright
+    // matches an accessible name as a case-insensitive SUBSTRING, and
+    // "Unarchive studio class" CONTAINS "Archive studio class". Without it
+    // this assertion is satisfied by the button it is meant to prove was
+    // replaced, and says nothing at all.
+    await expect(page.getByRole('button', { name: 'Resume studio class' })).toBeVisible(REFRESH_TIMEOUT);
+    await expect(
+      page.getByRole('button', { name: 'Archive studio class', exact: true }),
+    ).toBeVisible(REFRESH_TIMEOUT);
 
     const t = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: templateId } });
     expect(t.isArchived).toBe(false);
@@ -324,11 +387,15 @@ test.describe('One-off studio classes', () => {
   });
 
   test.afterAll(async () => {
-    await prisma.studioClass.deleteMany({ where: { teacherId: soloTeacherId } });
-    await prisma.session.deleteMany({
-      where: { accountId: await accountIdOfTeacher(prisma, soloTeacherId) },
-    });
-    await prisma.teacher.delete({ where: { id: soloTeacherId } });
+    // Guarded for the same reason as the template block's teardown: an unset
+    // id makes the where-clause vanish rather than match nothing.
+    if (soloTeacherId) {
+      await prisma.studioClass.deleteMany({ where: { teacherId: soloTeacherId } });
+      await prisma.session.deleteMany({
+        where: { accountId: await accountIdOfTeacher(prisma, soloTeacherId) },
+      });
+      await prisma.teacher.delete({ where: { id: soloTeacherId } });
+    }
     await prisma.$disconnect();
   });
 
@@ -337,8 +404,13 @@ test.describe('One-off studio classes', () => {
   });
 
   test('log, count, cancel, remove', async ({ page }) => {
-    // LOG — from the schedule, the way a teacher reaches it.
+    // LOG — from the schedule, the way a teacher reaches it. Waiting for
+    // hydration here covers the whole test: the link click is then a client
+    // push within the same layout, so `/studio-class/new` arrives already
+    // hydrated and its submit handler is attached before the click below.
+    const hydrated = hydrationSignal(page);
     await page.goto('/');
+    await hydrated;
     await page.getByRole('link', { name: 'Log a studio class' }).click();
     await page.waitForURL('**/studio-class/new');
 
@@ -352,7 +424,8 @@ test.describe('One-off studio classes', () => {
 
     // Wait on the destination, not the `Created` notice: asserting the
     // notice and clicking its button races the page's own navigation — see
-    // `docs/superpowers/specs/2026-08-22-studio-family-e2e-design.md:182`.
+    // the Task 3 walkthrough table in
+    // `docs/superpowers/specs/2026-08-22-studio-family-e2e-design.md`, row 1.
     await page.waitForURL(/\/studio-class\/(?!new$)[\w-]+$/, { timeout: 10_000 });
 
     const created = await prisma.studioClass.findFirstOrThrow({
@@ -372,14 +445,27 @@ test.describe('One-off studio classes', () => {
       )
       .toBe(11);
 
-    // CANCEL — two clicks. The confirm button reads `Cancel`, which is a prefix
-    // of `Cancel class`, so it needs `exact`.
+    // CANCEL — two clicks. `exact` pins the confirm button to its whole name:
+    // it shares the block with `Keep`, and `Cancel class` is already unmounted
+    // by the time it renders, so the two never coexist.
     await page.getByRole('button', { name: 'Cancel class' }).click();
     await expect(page.getByText('Cancel this studio class?')).toBeVisible();
-    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
 
-    await expect(page.getByText('This class was cancelled.')).toBeVisible();
-    await expect(page.getByLabel('Student count')).toHaveCount(0);
+    // Unlike the template buttons, this one sets no message — the confirm
+    // prompt is client state from BEFORE the click, so nothing between the
+    // click and the assertion proves the PUT resolved. Wait for it, then give
+    // the refresh that follows it the same budget the template arcs use.
+    const cancelled = page.waitForResponse(
+      (r) =>
+        r.url().includes(`/api/studio-classes/${created.id}`) &&
+        r.request().method() === 'PUT' &&
+        r.ok(),
+    );
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await cancelled;
+
+    await expect(page.getByText('This class was cancelled.')).toBeVisible(REFRESH_TIMEOUT);
+    await expect(page.getByLabel('Student count')).toHaveCount(0, REFRESH_TIMEOUT);
 
     // REMOVE — offered because the class is manual and past-dated. A cancelled
     // class is not an income record, so the confirm claims no cost.
@@ -388,7 +474,8 @@ test.describe('One-off studio classes', () => {
     await page.getByRole('button', { name: 'Remove', exact: true }).click();
 
     // A hard navigation, not a soft push — see the comment at
-    // `delete-studio-class-button.tsx:76-90`.
+    // the `window.location.assign` comment in
+    // `delete-studio-class-button.tsx`.
     await page.waitForURL('http://localhost:3000/', { timeout: 10_000 });
     expect(await prisma.studioClass.count({ where: { id: created.id } })).toBe(0);
   });

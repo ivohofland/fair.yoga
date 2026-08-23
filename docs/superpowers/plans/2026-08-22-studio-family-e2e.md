@@ -225,7 +225,7 @@ git commit -m "fix: three sections of one list, two spellings (issue 281)"
 - `DEFAULT_WEEKS = 4` (`studio-class-generator.ts:15`); candidates are `getNextOccurrences(dayOfWeek, startDate, 5)` filtered on `classStartInstant(...) > startDate` then `.slice(0, 4)` (`:138-143`). With the template three days out, the four dates fall at +3, +10, +17 and +24 days.
 - The schedule window is the current local week's start through **28 days ahead** (`(teacher)/page.tsx:15-22`), so all four are on `/`.
 - On a clean window the create form navigates: `router.push(STUDIO_CLASSES_PATH)` (`studio-template-form.tsx:195`). A *short* window stays on the page and speaks instead — a fresh teacher's window is clean, so expect the navigation.
-- `ArchiveStudioTemplateButton` renders only when `!isActive` (`settings/studio-classes/[id]/page.tsx:55`); `ToggleStudioTemplateButton` only when `!isArchived` (`:52`).
+- `ArchiveStudioTemplateButton` renders only when `!isActive`; `ToggleStudioTemplateButton` only when `!isArchived`. Both gates are in `settings/studio-classes/[id]/page.tsx` — grep the component names rather than a line number, which this branch's own header fix shifted by four.
 - Both archive directions force `isActive: false` (`studio-class-template-lifecycle.ts:1226`).
 
 **The four confirmation sentences, as the resolvers produce them.** Assert on
@@ -426,7 +426,8 @@ git commit -m "test: the generated window on the schedule, and the door it keeps
     await page.goto(`/settings/studio-classes/${templateId}`);
 
     // An ACTIVE template offers Pause and nothing else: Archive is gated on
-    // `!isActive` (`settings/studio-classes/[id]/page.tsx:55`).
+    // `!isActive` (the `{!template.isActive && …}` gate in
+    // `settings/studio-classes/[id]/page.tsx`).
     await expect(page.getByRole('button', { name: 'Archive studio class' })).toHaveCount(0);
     await page.getByRole('button', { name: 'Pause studio class' }).click();
 
@@ -622,7 +623,7 @@ git commit -m "test: the archived list as the only door, and what un-archive ret
 - `createStudioClassSchema.date` is `isoDate` with **no lower bound** (`schemas.ts:467-474`), so a past-dated one-off is creatable through the form.
 - `/studio-class/new` **does** navigate on success. The submit handler calls
   `setCreatedId(id)` and `router.push(studioClassPath(id))` back to back
-  (`studio-class/new/page.tsx:138-139`), and that file's own comment says the
+  (`studio-class/new/page.tsx`, the `setCreatedId` / `router.push` pair), and that file's own comment says the
   push "normally unmounts this page". The `SettledNotice` labelled `Created`
   with its `Go to the studio class` button is the **fallback for when the push
   does not commit** — not the normal path. A spec that asserts the notice and
@@ -631,7 +632,7 @@ git commit -m "test: the archived list as the only door, and what un-archive ret
   suite. Wait on the destination URL, which both paths reach, and pair it with
   a positive database check.
 - `StudentCountEditor` renders only when `cancelledAt === null` (`studio-class/[id]/page.tsx:102` ternary, editor at `:120`). **Set the count before cancelling.**
-- Both destructive controls are two-click: `Cancel class` → `Cancel this studio class?` → `Cancel`; `Remove this class` → `Remove this class? …` → `Remove` (`cancel-studio-class-button.tsx:44-68`, `delete-studio-class-button.tsx:97-121`). The confirm button reads `Cancel`, which is a **prefix of** `Cancel class` — use `{ exact: true }`.
+- Both destructive controls are two-click: `Cancel class` → `Cancel this studio class?` → `Cancel`; `Remove this class` → `Remove this class? …` → `Remove` (`cancel-studio-class-button.tsx:44-68`, `delete-studio-class-button.tsx:97-121`). Use `{ exact: true }` on the confirm button: it shares its block with `Keep`, and `exact` pins it to its whole name. (Not because `Cancel class` is still on screen — that component early-returns, so the two never coexist.)
 - Removal ends in `window.location.assign('/')` — a hard navigation, not `router.push` (`delete-studio-class-button.tsx:90`). Wait for the URL, not for a soft transition.
 
 - [ ] **Step 1: Write the whole arc as one test**
@@ -694,9 +695,11 @@ test.describe('One-off studio classes', () => {
     await page.getByLabel('Hourly rate').fill('40');
     await page.getByRole('button', { name: 'Log class' }).click();
 
-    // No redirect: a `SettledNotice` with an action button.
-    await expect(page.getByText('Created')).toBeVisible();
-    await page.getByRole('button', { name: 'Go to the studio class' }).click();
+    // The page pushes to the destination itself; the `Created` notice is the
+    // fallback for a push that does not commit. Wait on the URL, which both
+    // paths reach — asserting the notice and clicking its button races the
+    // navigation (see the facts above).
+    await page.waitForURL(/\/studio-class\/(?!new$)[\w-]+$/, { timeout: 10_000 });
 
     const created = await prisma.studioClass.findFirstOrThrow({
       where: { teacherId: soloTeacherId, classType: 'Cover Class' },
@@ -893,7 +896,7 @@ git commit -m "test: a seventh visual screen, the paused studio template (issue 
 
 - [ ] **Step 1: Write the mutation ledger**
 
-Collect M1–M8 into `docs/superpowers/plans/2026-08-22-studio-family-e2e-mutations.md`,
+Collect every mutation into `docs/superpowers/plans/2026-08-22-studio-family-e2e-mutations.md`,
 following `2026-08-21-studio-class-deletion-mutations.md`: for each, the exact
 mutation, the verbatim failure output from a real run, and the restore
 confirmation. **A mutation that came back GREEN is the most valuable line in the
@@ -921,7 +924,7 @@ a fail-then-pass a failure).
 
 ```bash
 git add docs/superpowers/plans/2026-08-22-studio-family-e2e-mutations.md
-git commit -m "docs: the eight mutations, and what each proved (issue 283)"
+git commit -m "docs: the mutation ledger for this branch (issue 283)"
 ```
 
 - [ ] **Step 5: Push and open the PR**
@@ -935,7 +938,7 @@ The PR body must carry:
 - Which suites ran: `npm run verify` (all three vitest projects) **and**
   `npx playwright test` (both browser projects) — naming
   `tests/e2e/studio.spec.ts` and `tests/e2e/visual.spec.ts` by path.
-- The eight mutations and their verdicts, with any GREEN called out.
+- Every mutation and its verdict, with any GREEN called out. The count is whatever `grep -c '^### '` on the ledger returns — do not restate it here.
 - Any predicted confirmation sentence in this plan that turned out wrong, and
   what the real text was.
 - **Scope, phrased safely.** Write "**#284 is unaffected**", "**leaves #275

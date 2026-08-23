@@ -91,7 +91,7 @@ export default async function StudioClassDetailPage({
             <span className="type-label">Template</span>
             <p>
               <Link href={`/settings/studio-classes/${studioClass.template.id}`} className="text-teal text-sm">
-                {studioClass.template.location}
+                {studioClass.template.classType || studioClass.template.location}
                 <span className="inline-block ml-1.5">&rarr;</span>
               </Link>
             </p>

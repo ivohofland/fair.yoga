@@ -239,14 +239,16 @@ existing six — is local-only coverage.
 
 ### 4.3 #281, folded whole
 
-`src/components/settings/studio-template-list.tsx` renders three sections from
+**As measured against the merge base `f9c9e69`** — the state this section is
+written to fix, not the state at branch head.
+`src/components/settings/studio-template-list.tsx` rendered three sections from
 one array with two different spellings:
 
 | section | title | caption line 2 |
 |---|---|---|
-| active (title `:30`, caption `:35`) | `{t.classType \|\| t.location}` | `{t.location} · €{rate}/hr` |
-| paused (title `:52`, caption `:57`) | `{t.location}` | `€{rate}/hr` |
-| archived (title `:76`, caption `:81`) | `{t.location}` | `€{rate}/hr` |
+| active | `{t.classType \|\| t.location}` | `{t.location} · €{rate}/hr` |
+| paused | `{t.location}` | `€{rate}/hr` |
+| archived | `{t.location}` | `€{rate}/hr` |
 
 Both divergences are fixed — all three sections to one title expression and one
 caption expression — and the component gains

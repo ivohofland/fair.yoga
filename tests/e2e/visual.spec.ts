@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import fs from 'fs';
 import path from 'path';
 import { accountIdOfTeacher } from './account-helpers';
+import { hydrationSignal } from './page-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 
 /**
@@ -183,27 +184,6 @@ async function freezeDates(page: Page): Promise<void> {
   expect(await page.evaluate(bodyTextForSmellCheck)).not.toMatch(DATE_SMELL);
 }
 
-/**
- * Teacher pages: resolve once the LiveUpdates effect opens the SSE stream.
- * Effects run only after hydration, so the request doubles as a reliable
- * "hydration finished" signal. Must be armed before page.goto.
- *
- * `waitForResponse` resolves on response HEADERS, so this says the
- * stream OPENED — never that it stayed open. Do not read it, or a
- * trace, as evidence about the stream's lifetime: a trace's `time`
- * for an unfinished SSE response is the wait for headers, nothing
- * more (`receive: -1`). In the measured trace an open stream reported
- * `time: 18.7ms` — that number is what issue #41 read as the stream
- * dying. Full measurement:
- * docs/superpowers/specs/2026-08-08-sse-stream-liveness-design.md
- *
- * The property this cannot check is checked by
- * `tests/integration/notifications-stream.test.ts`.
- */
-function hydrationSignal(page: Page): Promise<unknown> {
-  return page.waitForResponse((r) => r.url().includes('/api/notifications/stream'));
-}
-
 const hideDevOverlay = path.join(__dirname, 'visual-hide-dev-overlay.css');
 
 test.describe('Visual regression', () => {
@@ -276,8 +256,12 @@ test.describe('Visual regression', () => {
       },
     });
 
-    // Paused, deliberately: `!isActive` is what draws BOTH controls, and a
-    // paused template generates nothing, so `schedule.png` is untouched.
+    // Paused, deliberately: `!isActive && !isArchived` is what draws BOTH
+    // controls — `!isArchived` gates the Toggle, `!isActive` gates the
+    // Archive, so neither alone is enough. `isArchived` is left to its
+    // schema default of false to satisfy the second half. Nothing here
+    // generates classes either way (no generator runs in this spec), so
+    // `schedule.png` is untouched.
     // Wednesday 18:00 — a different (dayOfWeek, startTime) from the fixture
     // class at Tuesday 09:00, picked regardless of the fact that #296's
     // guards couldn't collide here even on a match: they pair
@@ -300,7 +284,11 @@ test.describe('Visual regression', () => {
 
   test.afterAll(async () => {
     await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
-    await prisma.studioClassTemplate.deleteMany({ where: { teacherId } });
+    // No explicit studioClassTemplate delete: Teacher -> StudioClassTemplate
+    // is Cascade, so `teacher.delete` below already takes it. An explicit one
+    // would add only a failure mode — Prisma drops an `undefined` where-clause
+    // rather than matching nothing, and this hook still runs when beforeAll
+    // threw before `teacherId` was assigned.
     await prisma.class.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
     await prisma.room.delete({ where: { id: roomId } });
