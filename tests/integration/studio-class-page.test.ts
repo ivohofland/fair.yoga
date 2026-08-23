@@ -8,6 +8,10 @@
  * whether the button is drawn, REPORTING'S WINDOW decides whether the confirm
  * claims a cost. A single shared predicate passes the first two cases below and
  * fails the last two.
+ *
+ * Since issue 304 it also pins how the page TITLES itself — the h1 leads with
+ * the class type, and a Location row carries the venue in both the live and
+ * the cancelled branch.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
@@ -36,6 +40,7 @@ const page = async (id: string) => {
 
 const makeClass = (data: {
   templateId?: string | null;
+  classType?: string;
   date: Date;
   startTime: string;
   cancelledAt?: Date | null;
@@ -85,7 +90,7 @@ describe('the studio class page: which classes offer removal', () => {
         dayOfWeek: 3,
         startTime: '07:00',
         durationMinutes: 60,
-        location: 'Community Studio',
+        location: 'Template Venue',
         hourlyRate: 45,
       },
     });
@@ -99,7 +104,7 @@ describe('the studio class page: which classes offer removal', () => {
     // assertion below would pass against a page that rendered nothing useful.
     expect(html).toContain('Community Studio');
     expect(html).toContain('>Location</span>');
-    expect(html).toContain('Page Case</h1>');
+    expect(html).toMatch(/<h1[^>]*>Page Case<\/h1>/);
     expect(html).not.toContain('Remove this class');
   });
 
@@ -120,7 +125,7 @@ describe('the studio class page: which classes offer removal', () => {
         dayOfWeek: 4,
         startTime: '23:30',
         durationMinutes: 60,
-        location: 'Community Studio',
+        location: 'Template Venue',
         hourlyRate: 45,
       },
     });
@@ -143,12 +148,31 @@ describe('the studio class page: which classes offer removal', () => {
     });
     const html = await page(sc.id);
     expect(html).toContain('This class was cancelled.');
-    // A cancelled page keeps its heading and its Location row: the editor and
-    // the cost sentence are both gone by here, so those two are all that name
-    // what was cancelled and where it would have been.
-    expect(html).toContain('Page Case</h1>');
-    expect(html).toContain('>Location</span>');
+    // The only case reaching the cancelled branch. Without these, a change
+    // gating the details block on the live branch passes every other
+    // assertion in this file.
+    expect(html).toMatch(/<h1[^>]*>Page Case<\/h1>/);
+    expect(html).toMatch(/>Location<\/span>\s*<p[^>]*>Community Studio<\/p>/);
     expect(html).toContain('Remove this class');
+  });
+});
+
+describe('the studio class page: how it titles itself', () => {
+  /**
+   * The `|| location` half of the header, which nothing else reaches. Every
+   * studio write schema validates `.min(1)`, so only a row written straight to
+   * the database — as this file does — can carry an empty class type. The
+   * column permits it (`String @default("")`), which is why the fallback is
+   * there at all.
+   */
+  it('falls back to the location when the class type is empty', async () => {
+    const sc = await makeClass({
+      classType: '',
+      date: new Date('2099-09-09T00:00:00.000Z'),
+      startTime: '19:45',
+    });
+    const html = await page(sc.id);
+    expect(html).toMatch(/<h1[^>]*>Community Studio<\/h1>/);
   });
 });
 

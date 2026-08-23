@@ -35,10 +35,8 @@ Coverage lands in the existing integration file and the existing e2e arc.
 
 - Dev server :3000 answering (HTTP 307 from `/`). DB container `fairyoga-db-1` healthy.
 - `npx vitest run --project integration tests/integration/studio-class-page.test.ts`
-  → **6 passed**. After Task 1: **8** (two new assertions live inside two *existing* cases,
-  so the count moves only if a case splits — predict 8 only if the venue-row anchor goes in
-  its own case; as planned it does not, so predict **6 still**, with two assertions added).
-  Measure, don't trust the prediction.
+  → **6 passed** at the merge base. New assertions inside existing cases do not move that
+  number; only a new `it()` block does. Measure it, don't predict it.
 - No visual baselines cover `/studio-class/[id]` (`visual.spec.ts` snapshots the template
   detail page only) — nothing to regenerate.
 
@@ -49,8 +47,8 @@ Coverage lands in the existing integration file and the existing e2e arc.
 | File | Change |
 |---|---|
 | `src/app/(teacher)/studio-class/[id]/page.tsx` | Header title becomes `classType \|\| location`; Location row inserted between Time and Hourly rate |
-| `tests/integration/studio-class-page.test.ts` | Heading assertion in case 1; `>Location</span>` anchor beside both venue assertions; heading + Location row pinned on the cancelled case, which nothing else covers |
-| `tests/e2e/studio.spec.ts` | Heading assert in generated-class arc; heading + venue-row assert in manual-log arc |
+| `tests/integration/studio-class-page.test.ts` | Whole-string h1 anchor in case 1; `>Location</span>` beside both venue assertions, with the fixture templates moved off the class's venue so those assertions distinguish the two records; heading + row pinned as a unit on the cancelled case; a new case for the empty-classType fallback |
+| `tests/e2e/studio.spec.ts` | Heading assert (`exact: true`) plus a card `href` assert in the generated-class arc; heading + venue assert in the manual-log arc |
 
 Nothing else. If an implementer finds itself touching anything else, stop and report.
 
@@ -150,8 +148,9 @@ is proven afterwards by mutation (step 2.5), which needs warm routes (constraint
       page, and this header. Four code sites, six surfaces. The card's ternary
       (`class-list.tsx:140`) is a different expression and matches nothing in this grep —
       check it separately. Then confirm no bare title survives:
-      `grep -rnE 'title=\{[a-zA-Z.]+\.location\}' src/ --include='*.tsx'` → the only two
-      hits are the `classType || location` headers themselves.
+      `grep -rnE 'title=\{[a-zA-Z.]+\.location\}' src/ --include='*.tsx'` → **no hits**.
+      The regex deliberately admits no `||`, so a surviving bare title is the only thing it
+      can match; the two fallback headers are found by the first grep, not this one.
 - [ ] 3.3 Confirm no doc claims went stale: grep `docs/` for "titles by location"-class
       phrases about the studio class page (the roadmap's #281/#304 entries describe the
       defect historically — those stay).

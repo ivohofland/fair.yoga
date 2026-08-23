@@ -198,17 +198,22 @@ test.describe('Studio class templates', () => {
       where: { templateId },
       orderBy: { date: 'asc' },
     });
+    // The card asserted above and the page opened here are meant to be one
+    // door. Nothing else in the suite pins `StudioClassCard`'s target, so
+    // without this the two assertions only happen to agree.
+    await expect(cards.first()).toHaveAttribute('href', `/studio-class/${first.id}`);
     await page.goto(`/studio-class/${first.id}`);
     await expect(page.getByRole('button', { name: 'Cancel class' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Remove this class' })).toHaveCount(0);
 
-    // Issue 304: the page this card opens must head with what the card led
-    // with — the class type, not the venue. The arc created both values, so
-    // this is the exact pairing a teacher taps through.
-    await expect(page.getByRole('heading', { name: 'Studio Flow' })).toBeVisible();
+    // Issue 304: the h1 leads with the class type, not the venue. Both
+    // strings are this arc's own fixtures, so a header reading the location
+    // renders 'Community Studio' and reds here. `exact` matters — the default
+    // matches a substring, which a venue-led composite would satisfy.
+    await expect(page.getByRole('heading', { name: 'Studio Flow', exact: true })).toBeVisible();
 
     // The Template link is labelled with the same expression as the header of
-    // the page it opens, so following it cannot land the teacher on a
+    // the template detail page it opens, so following it cannot land the teacher on a
     // differently-named screen. Not an edge case: `classType` is a non-null
     // column that every write path validates as `.min(1)`, so the location
     // fallback never fires for a template and the two must agree every time.
@@ -364,8 +369,8 @@ test.describe('Studio class templates', () => {
     // The header titles with the same expression the list does
     // (`{t.classType || t.location}`, in all three of
     // `studio-template-list.tsx`'s sections), so the two screens can't
-    // disagree.
-    await expect(page.getByRole('heading', { name: 'Studio Flow' })).toBeVisible();
+    // disagree. `exact` because the default matches a substring.
+    await expect(page.getByRole('heading', { name: 'Studio Flow', exact: true })).toBeVisible();
 
     // Archived: Toggle is gated off by `!isArchived`, and Archive renders in
     // its un-archive direction. Exactly one control, and no dead end.
@@ -499,7 +504,7 @@ test.describe('One-off studio classes', () => {
     // Issue 304, manual half: the page the log form lands on heads with the
     // class type just typed and keeps the venue on screen — both facts the
     // form itself collected.
-    await expect(page.getByRole('heading', { name: 'Cover Class' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Cover Class', exact: true })).toBeVisible();
     await expect(page.getByText('Guest Studio')).toBeVisible();
 
     // COUNT — before cancelling: the editor lives in the `cancelledAt === null`
