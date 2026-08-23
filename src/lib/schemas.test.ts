@@ -407,7 +407,7 @@ describe('updateTeacherSchema.pageSlug', () => {
  */
 const SERVER_OWNED_FIELDS = [
   'accountId', 'archivedAt', 'cancelledAt', 'claimedAt', 'createdAt',
-  'createdById', 'effectiveTeacherRate', 'id', 'isActive', 'isArchived',
+  'createdById', 'date', 'effectiveTeacherRate', 'id', 'isActive', 'isArchived',
   'isPublic', 'paidAt', 'photoUrl', 'settingsLocked', 'status', 'studentId',
   'teacherId', 'templateId', 'tierAtBooking', 'tierSelectedAt', 'totalRevenue',
   'totalStudents', 'updatedAt', 'withdrawnCount',
@@ -452,15 +452,27 @@ void _serverOwnedNamesExist;
  * rediscovering it.
  */
 const EXPECTED: Record<string, readonly string[]> = {
+  // The client books the class onto a calendar day. `date` is `@db.Date`:
+  // the schema validates the YYYY-MM-DD string, and the create handler passes
+  // it through `new Date(...)` (UTC midnight) before Prisma sees it.
+  createClassSchema: ['date'],
   // A teacher registers a student from their own roster; ownership is checked
   // in src/app/api/registrations/route.ts:87-92 (the TeacherStudent link is
   // looked up and a missing link 403s before the registration is created).
   createRegistrationSchema: ['studentId'],
   // Whether a newly created room is shared is legitimately the creator's call.
   createRoomSchema: ['isPublic'],
+  // A manual studio row is booked onto a calendar day, same shape as the
+  // class family above: validated as a string, handed to Prisma as UTC
+  // midnight by the create route.
+  createStudioClassSchema: ['date'],
   // This schema *is* the state machine's input. 'completed' is deliberately
   // absent so completion must go through the route that runs pricing.
   transitionClassSchema: ['status'],
+  // Admitted with #194's edit screen: moving a class to another day is the
+  // point of the screen. Same transform as its create twin — the route turns
+  // the validated string into a Date before the service write.
+  updateClassSchema: ['date'],
   // The student chooses which teacher's settings to change. The TeacherStudent
   // link is checked in the route as of this branch.
   updatePrivacySchema: ['teacherId'],
@@ -469,7 +481,13 @@ const EXPECTED: Record<string, readonly string[]> = {
   // KNOWN GAP: a client can backdate, forward-date or null a cancellation
   // timestamp. Ownership is checked, so the blast radius is the teacher's own
   // bookkeeping.
-  updateStudioClassSchema: ['cancelledAt'],
+  //
+  // Both names here are TRANSFORMED SERVER-SIDE: each arrives over HTTP as a
+  // string and becomes a Date only inside the PUT route
+  // (`cancelledAt ? new Date(cancelledAt) : null`; `new Date(dateString)`),
+  // which is why neither can be validated at rest against the column. `date`
+  // joined under #276/D2, gated there to manual, not-yet-past rows.
+  updateStudioClassSchema: ['cancelledAt', 'date'],
   // KNOWN GAP: no form sends it and nothing renders it. Latent until someone
   // adds the <img>. Blocked on #46.
   updateTeacherSchema: ['photoUrl'],
@@ -489,6 +507,7 @@ describe('server-owned fields', () => {
       'claimedAt',
       'createdAt',
       'createdById',
+      'date',
       'effectiveTeacherRate',
       'id',
       'isActive',

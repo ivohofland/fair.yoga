@@ -18,6 +18,10 @@ import {
   STUDIO_CLASS_REFUSALS,
   STUDIO_CLASS_REMOVAL_FACTS_SELECT,
 } from '@/services/studio-class-deletion';
+import {
+  studioClassEditability,
+  STUDIO_CLASS_EDIT_REFUSALS,
+} from '@/services/studio-class-editability';
 
 export const GET = withErrorHandler(async (
   request: NextRequest,
@@ -56,8 +60,54 @@ export const PUT = withErrorHandler(async (
     return respondError('No valid fields to update', 400);
   }
 
-  const { cancelledAt, ...rest } = parsed.data;
-  const updateData: Record<string, unknown> = { ...rest };
+  // The editability verdict (issue 276, D1): past ⇒ income record (only the
+  // student count and the cancellation remain writable); `date` moves only on
+  // a manual row that is not an income record. A fresh two-field literal, not
+  // `studioClass` — the predicate is handed only what it may read.
+  const verdict = studioClassEditability(
+    { templateId: studioClass.templateId, date: studioClass.date },
+    new Date(),
+    session.defaultTimezone,
+  );
+
+  const { cancelledAt, studentCount, date: dateString, ...gated } = parsed.data;
+
+  // Gate 1 — the past freezes the schedule. `studentCount` and `cancelledAt`
+  // are destructured above and so never sit in `gated`; anything else present
+  // refuses the WHOLE request, so a count smuggled into the same body cannot
+  // partially apply. `.strict()` makes `Object.keys(gated)` total: every key
+  // the client sent is either in this destructure or in `gated`.
+  if (!verdict.scheduleEditable && Object.keys(gated).length > 0) {
+    return respondError(
+      STUDIO_CLASS_EDIT_REFUSALS.income_record.message,
+      409,
+      STUDIO_CLASS_EDIT_REFUSALS.income_record.code,
+    );
+  }
+
+  // Gate 2 — a generated row holds its `(templateId, date)` key against the
+  // sweep (D2): moving it would free the date and the hourly sweep would
+  // recreate the class there. Cancel plus manual re-create is the remedy the
+  // refusal names. Presence, not difference: re-sending the unchanged date of
+  // a generated row refuses too, which is what keeps the form honest.
+  if (dateString !== undefined && !verdict.dateEditable) {
+    return respondError(
+      STUDIO_CLASS_EDIT_REFUSALS.generated_date.message,
+      409,
+      STUDIO_CLASS_EDIT_REFUSALS.generated_date.code,
+    );
+  }
+
+  const updateData: Record<string, unknown> = {
+    ...gated,
+    // The schema validates `date` as a YYYY-MM-DD string; Prisma needs a Date
+    // (UTC midnight, same as creation). Same transform as
+    // src/app/api/classes/[id]/route.ts.
+    ...(dateString !== undefined ? { date: new Date(dateString) } : {}),
+  };
+  if (studentCount !== undefined) {
+    updateData.studentCount = studentCount;
+  }
   if (cancelledAt !== undefined) {
     updateData.cancelledAt = cancelledAt ? new Date(cancelledAt) : null;
   }
@@ -67,7 +117,16 @@ export const PUT = withErrorHandler(async (
   // that still leaves two ways this write re-enters the partial index and
   // collides with another live row at this teacher's (date, startTime):
   // changing `startTime` alone, or clearing `cancelledAt` back to null on a
-  // previously cancelled class.
+  // previously cancelled class. Since #276 a pure `date` move is a third —
+  // gated above to manual rows, whose keys the index treats as distinct from
+  // any generated row's.
+  //
+  // NO TEMPLATE-KEY CATCH ARM, deliberately (spec §D2): `templateId` is absent
+  // from `updateStudioClassSchema`, so nothing this route writes ever touches
+  // half of `@@unique([templateId, date])` — and PostgreSQL unique indexes
+  // treat NULLs as distinct, so two manual rows cannot collide on it either.
+  // A P2002 on that index is unreachable here; an arm that cannot fire
+  // certifies nothing.
   try {
     const updated = await prisma.studioClass.update({
       where: { id },

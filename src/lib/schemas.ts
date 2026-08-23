@@ -475,7 +475,9 @@ export const createStudioClassSchema = z.object({
 
 export const updateStudioClassSchema = z.object({
   studentCount: z.number().int().nonnegative().nullable().optional(),
+  classType: z.string().min(1).optional(),
   location: z.string().min(1).optional(),
+  date: isoDate.optional(),
   startTime: timeHHmm.optional(),
   durationMinutes: z.number().int().positive().optional(),
   hourlyRate: z.number().nonnegative().optional(),
