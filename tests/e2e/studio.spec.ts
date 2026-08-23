@@ -24,18 +24,15 @@ const suffix = uniqueSuffix();
 
 // Three days out, so the template's weekday is never the run day. On the run
 // day the counts turn time-of-day-dependent: the generator filters candidates
-// on `classStartInstant(date, startTime, tz) > startDate`, so today's
-// occurrence disappears once its start time has passed. `recurring.spec.ts`
-// stays off the run day for the same reason.
+// on `classStartInstant(date, startTime, tz) > startDate`
+// (`studio-class-generator.ts:138-143`), so today's occurrence disappears
+// once its start time has passed. `recurring.spec.ts` stays off the run day
+// for the same reason.
 const templateDate = new Date();
 templateDate.setUTCDate(templateDate.getUTCDate() + 3);
 const templateDayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][
   templateDate.getUTCDay()
 ]!;
-
-// Selected by LABEL, never by integer. Studio `dayOfWeek` is 0=Monday
-// (`studio-template-form.tsx:53-61`) while `getUTCDay()` is 0=Sunday, and the
-// label sidesteps the mismatch entirely.
 
 // The same 0=Monday mapping `studio-template-form.tsx`'s DAY_OPTIONS uses,
 // needed here only because the second fixture template below is seeded
@@ -96,7 +93,13 @@ test.describe('Studio class templates', () => {
   });
 
   test.afterAll(async () => {
-    // Classes before templates: `StudioClass.template` is a real FK.
+    // Order doesn't matter here the way it does in recurring.spec.ts: this
+    // fixture creates no Room, so #290's hazard (a regenerated class
+    // stranding TeacherRoom under Restrict) cannot arise. StudioClass.templateId
+    // is SetNull (prisma/migrations/20260411100000_add_studio_class_template/migration.sql:25)
+    // and Teacher -> StudioClass is Cascade, and this spec fires no cron and
+    // leaves both templates paused, so nothing can regenerate a class behind
+    // this teardown either.
     await prisma.studioClass.deleteMany({ where: { teacherId } });
     await prisma.studioClassTemplate.deleteMany({ where: { teacherId } });
     await prisma.session.deleteMany({ where: { accountId: await accountIdOfTeacher(prisma, teacherId) } });
@@ -113,6 +116,9 @@ test.describe('Studio class templates', () => {
 
     await page.getByLabel('Class type').fill('Studio Flow');
     await page.getByLabel('Location').fill('Community Studio');
+    // Selected by LABEL, never by integer. Studio `dayOfWeek` is 0=Monday
+    // (`studio-template-form.tsx:53-61`) while `getUTCDay()` is 0=Sunday, and
+    // the label sidesteps the mismatch entirely.
     await page.getByLabel('Day').selectOption(templateDayName);
     await page.getByLabel('Start time').fill('08:15');
     await page.getByLabel('Duration (minutes)').fill('60');
@@ -164,6 +170,7 @@ test.describe('Studio class templates', () => {
 
     // An ACTIVE template offers Pause and nothing else: Archive is gated on
     // `!isActive` (`settings/studio-classes/[id]/page.tsx:55`).
+    await expect(page.getByRole('button', { name: 'Pause studio class' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Archive studio class' })).toHaveCount(0);
     await page.getByRole('button', { name: 'Pause studio class' }).click();
 

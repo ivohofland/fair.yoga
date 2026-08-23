@@ -274,7 +274,10 @@ test.describe('Visual regression', () => {
     // Paused, deliberately: `!isActive` is what draws BOTH controls, and a
     // paused template generates nothing, so `schedule.png` is untouched.
     // Wednesday 18:00 — a different (dayOfWeek, startTime) from the fixture
-    // class at Tuesday 09:00, so nothing can brush #296's slot guards.
+    // class at Tuesday 09:00, picked regardless of the fact that #296's
+    // guards couldn't collide here even on a match: they pair
+    // template-with-template and class-with-class, and a
+    // StudioClassTemplate never pairs against a Class.
     const studioTemplate = await prisma.studioClassTemplate.create({
       data: {
         teacherId,
