@@ -6,14 +6,16 @@ Sources: `.superpowers/sdd/2026-08-22-studio-family-e2e/task-{1,2,3,4}-report.md
 each read in full including its appended fix-round sections — several
 mutations were scored during review rounds and live only there.
 
-Twelve mutations are documented below: 3 in Task 1, 6 in Task 2, 2 in Task 3,
-1 in Task 4 (3+6+2+1, one heading per entry). Mutation labels are copied as
-each report scored them, not renumbered into one global sequence — Task 1's
-fix round and Task 2's original pass each independently number their first
-new mutation `M3`, so that label appears twice below (flagged where Task 2's
-section starts). Every one of the twelve came back RED as predicted, or RED
-on a different case than predicted with the discrepancy explained (M6); none
-came back an unexplained GREEN.
+Fourteen mutations are documented below: 3 in Task 1, 6 in Task 2, 2 in Task 3,
+1 in Task 4, 2 in the review fix wave (3+6+2+1+2, one heading per entry —
+re-derive the entry count with `grep -c '^### ' docs/superpowers/plans/2026-08-22-studio-family-e2e-mutations.md`).
+Mutation labels are copied as each report scored them, not renumbered into one
+global sequence — Task 1's fix round and Task 2's original pass each
+independently number their first new mutation `M3`, so that label appears
+twice below (flagged where Task 2's section starts). Every one of the
+fourteen came back RED as predicted, or RED on a different case than
+predicted with the discrepancy explained (M6); none came back an unexplained
+GREEN.
 
 ## Task 1 — the paused/archived title and caption fix (issue 281, commit `32b276c`)
 
@@ -476,3 +478,128 @@ re-run: `npx playwright test visual` — 14 passed (7 screens × 2 projects);
 `npm run typecheck` clean; `npx eslint tests/e2e/visual.spec.ts` clean;
 `git status --short tests/e2e/visual.spec.ts-snapshots/` empty — no baseline
 moved.
+
+## Review fix wave — whole-branch review findings I3/I4 (issue 283, 2026-08-23)
+
+Two more mutations, added while addressing the whole-branch review's
+Important findings I3 and I4. Scored the same way as Tasks 1-4: mutate, warm,
+run, capture the verbatim failure, restore, re-verify green.
+
+### M12 — `resolveStudioConfirmation`'s `active` arm, proving the resolver routes real counts to the screen
+
+`template-action-messages.test.ts` already pins the sentence strings
+`resolveStudioConfirmation` produces, but nothing had proved the resolver's
+`active` arm carries the PATCH response's own `added`/`scheduled` values
+through to the screen, rather than merely being reachable. Mutation: in
+`resolveStudioConfirmation`'s `active` case
+(`src/components/settings/template-action-messages.ts`), changed
+`resumeStudioMessage(data.added, data.scheduled, data.counts)` to
+`resumeStudioMessage(data.scheduled, data.scheduled, data.counts)`. Warmed
+`GET /settings/studio-classes/warm-id` (307), then ran
+`npx playwright test studio --project=chromium` (9 e2e cases).
+
+Result: **RED on test 5 and nothing earlier — exactly as predicted.**
+
+```
+Running 9 tests using 1 worker
+
+[1/9] … creates a template through settings and fills the window
+[2/9] … the four generated classes are on the schedule, and refuse removal
+[3/9] … pausing says what stays scheduled, and reveals Archive
+[4/9] … the paused row keeps its name on the list
+[5/9] … resuming reports the window it already has
+  1) [chromium] › tests/e2e/studio.spec.ts:194:7 › Studio class templates › resuming reports the window it already has
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByText('4 classes on your schedule. Nothing needed adding.')
+    Expected: visible
+    Timeout: 5000ms
+    Error: element(s) not found
+
+      200 |     // what `template-action-messages.ts` asks a test to drive, because equal
+      201 |     // arguments cannot detect a transposition.
+    > 202 |     await expect(page.getByText('4 classes on your schedule. Nothing needed adding.')).toBeVisible();
+          |                                                                                        ^
+      203 |
+      204 |     // Active again, so Archive is gated off again.
+      205 |     await expect(page.getByRole('button', { name: 'Pause studio class' })).toBeVisible();
+        at /Users/ivohofland/Projects/fair.yoga/tests/e2e/studio.spec.ts:202:88
+
+[6/9] … archiving withdraws the window and says how much
+[7/9] … an archived template leaves the live list for the archived one
+[8/9] … un-archiving returns the template paused, not active
+[9/9] … log, count, cancel, remove
+  1 failed
+    [chromium] › tests/e2e/studio.spec.ts:194:7 › Studio class templates › resuming reports the window it already has
+  3 did not run
+  5 passed (12.3s)
+```
+
+Restored `resumeStudioMessage(data.added, data.scheduled, data.counts)`;
+`git diff --stat` on the source file empty. Re-warmed, re-ran: 9/9 passed.
+
+### M13 — the studio template detail header, reverted to the location-only expression it used to have
+
+Issue #281 fixed the three list sections; the detail page's own
+`<PageHeader>` still titled itself with `template.location` alone
+(`settings/studio-classes/[id]/page.tsx`), so a teacher who tapped a row
+titled by class type could land on a header naming something else entirely.
+The fix titles the header with the same expression the list uses
+(`template.classType || template.location`), and `studio.spec.ts` gained an
+assertion at the archived-list-to-detail hop (`getByRole('heading', { name:
+'Studio Flow' })`) to pin it. Mutation: reverted the header back to
+`title={template.location}`. Warmed `GET /settings/studio-classes/warm-id`
+(307), then ran `npx playwright test studio --project=chromium`.
+
+Result: **RED on test 7 and nothing earlier — exactly as predicted**, the one
+test that makes the archived-list-to-detail hop.
+
+```
+Running 9 tests using 1 worker
+
+[1/9] … creates a template through settings and fills the window
+[2/9] … the four generated classes are on the schedule, and refuse removal
+[3/9] … pausing says what stays scheduled, and reveals Archive
+[4/9] … the paused row keeps its name on the list
+[5/9] … resuming reports the window it already has
+[6/9] … archiving withdraws the window and says how much
+[7/9] … an archived template leaves the live list for the archived one
+  1) [chromium] › tests/e2e/studio.spec.ts:231:7 › Studio class templates › an archived template leaves the live list for the archived one
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByRole('heading', { name: 'Studio Flow' })
+    Expected: visible
+    Timeout: 5000ms
+    Error: element(s) not found
+
+      249 |     // (`studio-template-list.tsx:30,52,76`), so the two screens can't
+      250 |     // disagree.
+    > 251 |     await expect(page.getByRole('heading', { name: 'Studio Flow' })).toBeVisible();
+          |                                                                      ^
+      252 |
+      253 |     // Archived: Toggle is gated off by `!isArchived`, and Archive renders in
+      254 |     // its un-archive direction. Exactly one control, and no dead end.
+        at /Users/ivohofland/Projects/fair.yoga/tests/e2e/studio.spec.ts:251:70
+
+[8/9] … un-archiving returns the template paused, not active
+[9/9] … log, count, cancel, remove
+  1 failed
+    [chromium] › tests/e2e/studio.spec.ts:231:7 › Studio class templates › an archived template leaves the live list for the archived one
+  1 did not run
+  7 passed (13.4s)
+```
+
+Restored `title={template.classType || template.location}`; `git diff --stat`
+on the source file empty. Re-warmed, re-ran: 9/9 passed.
+
+**Collateral this fix has on `visual.spec.ts`, recorded rather than acted
+on.** The `studio template detail (paused)` baseline's fixture uses distinct
+`classType` ('Visual Studio Flow') and `location` ('Visual Community Studio')
+values, so the corrected header renders different text than the frozen
+baseline expects — `npx playwright test visual --grep "studio template"`
+fails on a 654-pixel screenshot diff, not on `DATE_SMELL`. No snapshot file
+was regenerated (`git status --short tests/e2e/visual.spec.ts-snapshots/`
+stays empty); this is flagged for a human decision on updating the baseline,
+per the instruction not to regenerate silently.
