@@ -205,9 +205,12 @@ Which job runs what, and what each actually needs:
 | job | runs | Postgres | build + running app |
 |---|---|---|---|
 | `test-components` | `--project components` | no | no |
-| `test-unit` | `--project unit --fileParallelism`, then `--project unit-sweeps` | yes | no |
+| `test-unit` | `--project unit`, then `--project unit-sweeps` | yes | no |
 | `test-integration-e2e` | `--project integration`, then Playwright | yes | yes |
 | `test` | nothing — fan-in gate | no | no |
+
+No `--fileParallelism` flag appears in any of these: after D1 the setting
+lives on the projects, so a flag here would be a second place to change it.
 
 `test-components` therefore needs neither the `services: postgres` block
 nor `migrate deploy` nor `npm run build`, which is most of what it waits
