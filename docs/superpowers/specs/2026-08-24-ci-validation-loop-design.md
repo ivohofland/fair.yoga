@@ -109,6 +109,13 @@ not three problems:
   `autoCompleteClasses` are each `(db, now?)` — no scope parameter exists
   to pass. Whole-database by construction.
 
+**Correction, post-execution (#321):** this framing was right about these
+three files, but wrong about the tier as a whole. D2b found a fourth
+unscoped mutation by scanning rather than failing, and the acceptance gate
+(Acceptance #2) then forced a systematic scan (D2c's correction) that found
+several more sweep families beyond these three. "Two problems, not three"
+held for this file set; it did not hold for the tier.
+
 ### D2b — One more global mutation, found by scanning rather than by failing
 
 `src/lib/auth/magic-link.test.ts:19-21` runs, in an `afterEach`:
@@ -128,6 +135,16 @@ unscoped `deleteMany`/`updateMany`, and it is the reason that scan belongs
 in the work rather than trusting a green run: the probe's own lesson is that
 this suite can be green and wrong at the same time.
 
+**Correction, post-execution (#321):** "no reproducible red" is FALSE for
+this collision, and the sentence above should be read as narrower than it
+sounds — "did not fail in any probe run" stays true, but the collision
+reproduces **10 out of 10** runs once the pool is narrowed to only
+`magic-link.test.ts` and `auth-cleanup.test.ts`. The original probe missed
+it because these two files sat among 65 and their runtime windows rarely
+overlapped; narrowing the pool turned a rare collision into a deterministic
+one. Lesson: a smaller, targeted pool can be a *more* sensitive collision
+detector than a large one, not a less sensitive one.
+
 The two files' identifiers are already disjoint — magic-link uses
 `*@example.com` throughout (10 addresses), auth-cleanup uses
 `cleanup-${uniqueSuffix}@test.local` — so scoping the `afterEach` to
@@ -136,14 +153,29 @@ auth-cleanup. The same scan found `class-terminal-status.test.ts`,
 `waitlist-reconciliation.test.ts`, `gdpr.test.ts` and
 `template-lock-order.test.ts` already scoped by row id; they need nothing.
 
-### D2c — Only one file is quarantined
+### D2c — Correction, post-execution (#321): the quarantine is not one file
 
-So one file, not three, genuinely cannot be scoped without a production
-signature change. It runs 5.95s alone
+This section originally concluded "one file, not three, genuinely cannot
+be scoped" and titled itself "Only one file is quarantined." Both are
+FALSE as of the finished work. The five-run acceptance gate (Acceptance #2)
+failed repeatedly against a one-file quarantine, and a systematic scan —
+every exported service function taking a Prisma client with no id/scope
+parameter, narrowed to those that write rows they were never handed —
+found several more such sweep families. Two of the tier's problem files
+were fixed by scoping instead of quarantine (`class-generator.test.ts`,
+`magic-link.test.ts` — see D2 and D2b's correction); the rest joined
+`class-transitions.test.ts` in quarantine.
+
+The reasoning below still holds for `class-transitions.test.ts` itself, and
+generalizes to the rest of the family: `autoTransitionToInProgress`,
+`autoCancelClasses` and `autoCompleteClasses` are each `(db, now?)` — no
+scope parameter exists to pass. It runs 5.95s alone
 (`npx vitest run --project unit src/services/class-transitions.test.ts`).
-Against a ~6s saving it is not worth putting an optional scope parameter
-through the lock and pre-filter logic that #290 and #296 already fought
-over. **It is quarantined; the other two are scoped.**
+Against a ~6s saving per file it was not worth putting an optional scope
+parameter through the lock and pre-filter logic that #290 and #296 already
+fought over, for this file or for the ones found afterward. The roster is
+`SWEEP_TESTS` in `vitest.config.ts` — read it rather than trusting a count
+in this document.
 
 ### D3 — The quarantine is a second invocation, not a per-project flag
 
@@ -173,8 +205,15 @@ boundary at a cost of ~2s of startup.
 
 `npm test` becomes two passes:
 
-1. **parallel** — `unit` (67 files, scoped) + `components` (45 files)
-2. **serial** — `unit-sweeps` (`class-transitions.test.ts`) + `integration`
+1. **parallel** — `unit` (scoped) + `components`
+2. **serial** — `unit-sweeps` + `integration`
+
+**Correction, post-execution (#321):** this list originally named
+`unit-sweeps`'s membership as `class-transitions.test.ts` alone and gave
+`unit` a file count of 67. Both are stale for the reason D2c's correction
+gives — the roster is `SWEEP_TESTS` in `vitest.config.ts`, and it grew far
+past that one file. File counts belong to the code, not this prose; see
+`vitest.config.ts` for the current split.
 
 Pass 2 pairs two projects in one invocation, which by the finding above
 means they run **concurrently with each other** — deliberately, and safe
@@ -188,8 +227,12 @@ these two must be split into separate invocations**, or the whole-database
 sweeps will read integration's rows and D3's defect returns wearing a
 different hat.
 
-Projection, local: ~272s → ~125s. Projection, CI: 233s → ~90s. Both to be
-replaced with measurements at acceptance.
+**Measured, local (#321):** ~272s → **~147s**
+(`/usr/bin/time -p npm test`, full green run — 147.08s–157.95s across the
+runs that reached and then held the acceptance gate at 5/5, the spread
+being run-to-run noise rather than a config change). Projection, CI: 233s →
+~90s — still a projection; no CI run has happened on this branch yet, and
+replacing it with a measurement is the next task's job.
 
 ### D4 — Split the CI job behind a fan-in `test` gate
 
@@ -281,8 +324,24 @@ green in isolation. Nothing here revisits it.
    `slot-constraints.test.ts`, whose fix D2 predicts but does not
    demonstrate. If it still fails, it is a real second bug and gets its own
    diagnosis rather than joining the quarantine.
+
+   **Correction, post-execution (#321):** the count is stale — the final
+   `unit` project excludes the whole `SWEEP_TESTS` roster (D2c's
+   correction), not `class-transitions.test.ts` alone, so `--project unit`
+   no longer collects 67 files at this exclusion. The substance held:
+   `slot-constraints.test.ts` cleared exactly as D2 predicted, with no
+   second bug of its own.
 2. The new `npm test` runs green **five consecutive times** locally. Three
    runs would not have caught D3's defect; four barely did.
+
+   **Met, post-execution (#321) — but only after three fix rounds, and the
+   gate caught real defects along the way rather than passing on the first
+   try.** Round 0 (the one-file quarantine D2c originally described)
+   scored 3/5; round 1 (after D2b's file joined it) scored 4/5; round 2
+   (after the systematic scan quarantined the rest of the family) reached
+   5/5. Each of the first two rounds' failures was a genuine
+   previously-unquarantined sweep family surfacing under real scheduling
+   pressure, not noise — the gate did exactly the job it was built for.
 3. `npm test` still runs every test the old one did. Compared by count:
    1068 unit + 296 components + 513 integration = 1877, and no file
    collected by two projects.

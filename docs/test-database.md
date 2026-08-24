@@ -37,8 +37,26 @@ The interference runs both ways:
   server. Both talk to the app on `:3000`, and that app reads the dev
   database; pointing their fixtures elsewhere would break them. See §5.
 - Per-test-file database isolation or transactional rollbacks (heavier
-  machinery than this codebase needs; `fileParallelism: false` already
-  serializes suites).
+  machinery than this codebase needs). Since #321 `fileParallelism` is
+  per-project, not global: `unit` and `components` run their files in
+  parallel, `integration` and `unit-sweeps` do not. What keeps the parallel
+  `unit` pool honest is that each file mutates only rows it owns —
+  `class-generator.test.ts` and `magic-link.test.ts` were fixed by scoping
+  their calls/queries instead of being quarantined, and an unscoped
+  `deleteMany`/`updateMany` surfacing in that pool is a bug.
+
+  A file testing a service whose sweep writes rows it was never handed,
+  with no scope parameter to pass, belongs in `unit-sweeps` instead — the
+  roster is `SWEEP_TESTS` in `vitest.config.ts`, not a count in this
+  document, and it turned out to hold far more files than expected once
+  #321 went looking for the criterion systematically rather than one
+  failure at a time.
+
+  `unit-sweeps` must run as its own `vitest run` invocation, not merely a
+  project carrying `fileParallelism: false`: that setting serializes files
+  *within* a project and does not stop sibling projects running alongside.
+  Measured 2026-08-24 across four runs of exactly that arrangement —
+  green, green, one failure, two failures.
 
 ## 3. Design
 
