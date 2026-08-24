@@ -73,7 +73,92 @@ jobs:
         run: npm audit --audit-level=high
         continue-on-error: true
 
-  test:
+  # No database, no build: the components project is jsdom only
+  # (vitest.config.ts). This job exists because it used to queue behind 20s of
+  # container init and a 27s build it never touched.
+  test-components:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Nothing connects here. The value exists so that a transitive
+      # PrismaClient construction at import time resolves env("DATABASE_URL")
+      # rather than throwing — same reason the `checks` job sets it.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies # postinstall runs prisma generate
+        run: npm ci
+
+      - name: Component tests
+        run: npx vitest run --project components
+
+  test-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ethical_yoga
+          POSTGRES_USER: yoga
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # Copied verbatim from the pre-split `test` job — see that history for
+      # why DATABASE_URL_TEST must be set explicitly here.
+      DATABASE_URL: postgresql://yoga:test_password@localhost:5432/ethical_yoga
+      DATABASE_URL_TEST: postgresql://yoga:test_password@localhost:5432/ethical_yoga_test
+      PASSKEY_RP_ID: localhost
+      PASSKEY_RP_NAME: fair.yoga
+      CRON_SECRET: ci-cron-secret
+      CRON_SCHEDULER: 'off'
+      RESEND_API_KEY: re_test
+      EMAIL_DRY_RUN: '1'
+      EMAIL_FROM: noreply@test.local
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies # postinstall runs prisma generate
+        run: npm ci
+
+      - name: Run migrations
+        run: npx prisma migrate deploy
+
+      # Fails when schema.prisma and the migration history disagree —
+      # catches migrations amended after being applied, and schema edits
+      # committed without a migration. Lives here because it needs a live
+      # database and this is the cheapest job that has one.
+      - name: Check schema/migration drift
+        run: npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code
+
+      - name: Unit tests
+        run: npx vitest run --project unit
+
+      # A SEPARATE invocation, deliberately: per-project
+      # `fileParallelism: false` does not stop sibling projects running
+      # alongside, and these two share a database (#321, spec D3).
+      - name: Whole-database sweep tests
+        run: npx vitest run --project unit-sweeps
+
+  test-integration-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -132,12 +217,6 @@ jobs:
       - name: Run migrations
         run: npx prisma migrate deploy
 
-      # Fails when schema.prisma and the migration history disagree —
-      # catches migrations amended after being applied, and schema edits
-      # committed without a migration.
-      - name: Check schema/migration drift
-        run: npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code
-
       # Next.js incremental compile cache — cuts repeat builds roughly in half.
       - name: Cache Next.js build
         uses: actions/cache@v6
@@ -164,8 +243,8 @@ jobs:
           cat server.log
           exit 1
 
-      - name: Run tests
-        run: npm test
+      - name: Integration tests
+        run: npx vitest run --project integration
 
       - name: Get Playwright version
         id: playwright-version
@@ -202,3 +281,18 @@ jobs:
           name: server-log
           path: server.log
           retention-days: 7
+
+  # Steps intentionally absent. This job exists so the branch ruleset's
+  # required status check named `test` keeps reporting after the split:
+  # ruleset 19724469 requires the contexts `checks` and `test`, and a
+  # required check that never runs leaves the pull request pending with no
+  # way to merge (same argument as this file's header).
+  #
+  # No `if: always()`. `needs` fails this job when any dependency fails, and
+  # `always()` would let it report success over a red one.
+  test:
+    runs-on: ubuntu-latest
+    needs: [test-components, test-unit, test-integration-e2e]
+    steps:
+      - name: All test jobs passed
+        run: echo "test-components, test-unit and test-integration-e2e all succeeded"
