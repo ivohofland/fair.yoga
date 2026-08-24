@@ -245,7 +245,7 @@ export function TemplateForm({ mode, templateId, initial }: TemplateFormProps) {
       return;
     }
     if (!form.classType.trim()) {
-      setError('Class type is required');
+      setError('Class type is required.');
       return;
     }
     // Mirrors createClassTemplateSchema's and updateClassTemplateSchema's
