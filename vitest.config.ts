@@ -71,14 +71,21 @@ export default defineConfig(({ mode }) => {
           test: {
             name: 'unit',
             include: ['src/**/*.test.ts'],
-            // Files testing a service that sweeps the whole database with no
-            // scope parameter to pass move to `unit-sweeps` below instead —
-            // that project's `include` is the membership list, not this one.
+            // Files testing a service whose sweep writes rows it was never
+            // handed, with no scope parameter to pass, move to
+            // `unit-sweeps` below instead — that project's `include` is the
+            // membership list, not this one.
             exclude: [
               '**/node_modules/**',
               'src/services/class-transitions.test.ts',
               'src/services/waitlist-reconciliation.test.ts',
               'src/services/waitlist-retention.test.ts',
+              'src/services/auth-cleanup.test.ts',
+              'src/services/email-fallback.test.ts',
+              'src/services/email-fallback.consent.test.ts',
+              'src/services/notifications.test.ts',
+              'src/services/payment-reminders.test.ts',
+              'src/services/studio-class-generator.test.ts',
             ],
             fileParallelism: true,
             env: { DATABASE_URL: testUrl },
@@ -90,10 +97,10 @@ export default defineConfig(({ mode }) => {
           test: {
             name: 'unit-sweeps',
             // Every file in `include` below tests a service whose sweep
-            // takes the whole database with no scope parameter to pass
-            // (`(db, now?)` or equivalent) — so it cannot share a database
-            // with a concurrent test file. `include` is the membership
-            // list; nothing here repeats it.
+            // writes rows it was never handed, with no scope parameter to
+            // pass — so it cannot share a database with a concurrent test
+            // file. `include` is the membership list; nothing here repeats
+            // it.
             //
             // It MUST run in a separate `vitest run` invocation from `unit`,
             // not merely a separate project: per-project
@@ -106,6 +113,12 @@ export default defineConfig(({ mode }) => {
               'src/services/class-transitions.test.ts',
               'src/services/waitlist-reconciliation.test.ts',
               'src/services/waitlist-retention.test.ts',
+              'src/services/auth-cleanup.test.ts',
+              'src/services/email-fallback.test.ts',
+              'src/services/email-fallback.consent.test.ts',
+              'src/services/notifications.test.ts',
+              'src/services/payment-reminders.test.ts',
+              'src/services/studio-class-generator.test.ts',
             ],
             fileParallelism: false,
             env: { DATABASE_URL: testUrl },
