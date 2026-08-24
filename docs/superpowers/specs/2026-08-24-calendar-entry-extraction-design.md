@@ -75,10 +75,13 @@ Every figure in #298's body reproduces. `Class`-only 20, `StudioClass`-only 4
 (`location`, `studentCount`, `hourlyRate`, `cancelledAt`); `ClassTemplate`-only
 11, `StudioClassTemplate`-only 3 (`location`, `hourlyRate`, `studioClasses`).
 
-The reading of that census also holds. Of the 11 instance-level shared fields,
-three are bookkeeping (`id`, `createdAt`, `updatedAt`) and two are parallel
-rather than common (`template` / `templateId` point at two *different* tables).
-Five are substantive, and four of those five are the calendar slot:
+The reading of that census also holds, once its partition is made to close.
+Of the 11 instance-level shared fields, three are bookkeeping (`id`,
+`createdAt`, `updatedAt`) and two are parallel rather than common (`template` /
+`templateId` point at two *different* tables). The remaining **six** fields
+carry **five concepts**, because `teacher` and `teacherId` are one — a relation
+and its scalar. `3 + 2 + 6 = 11`. Four of the five concepts are the calendar
+slot:
 
 ```
 teacherId   date   startTime   durationMinutes        classType
@@ -104,11 +107,38 @@ adds a client-side check.
 grep -rn "durationMinutes" src/lib/schemas.ts | wc -l    # 8
 ```
 
-What is actually true is narrower and is the claim the design rests on:
-**nothing in this system computes when a class ends.** The only arithmetic on
-`durationMinutes` anywhere is `hourlyRate × durationMinutes / 60` — money, at
-`settings/reporting/page.tsx:53` and `studio-class/[id]/page.tsx:83`. Every
-other reference is display or transport.
+**And the narrower claim that replaced it was also wrong** — a correction of a
+correction, which is the shape CLAUDE.md warns about. An earlier draft of this
+section said "nothing in this system computes when a class ends". It does, twice:
+
+```
+grep -rn "durationMinutes \* 60 \* 1000" src --include='*.ts' | grep -v '\.test\.'
+src/services/class-transitions.ts:532
+src/services/class-lifecycle.ts:550
+```
+
+Both compute `classStartInstant(date, startTime, teacher.defaultTimezone) +
+durationMinutes`, and both are live. `class-lifecycle.ts:550` is
+`completeClass`'s authoritative `requireEndedBy` gate — the check that a class
+cannot be completed before it has ended — evaluated **under the row lock**.
+`class-transitions.ts:532` is `autoCompleteClasses`'s pre-filter, which its own
+comment marks as an optimisation whose staleness can only delay a completion.
+
+So what is true is narrower again, and this time scoped: **the `Class` family
+computes an end instant in two places; the `StudioClass` family computes none,
+and `durationMinutes` enters no key, constraint or index in either.** The last
+clause is what the exclusion constraint is new relative to; the first is a
+consequence for the implementation, recorded in §11.
+
+The wrong-producing method is worth naming, because it is subtle: the
+`durationMinutes` reference list was read by eye and paths shaped like
+`settings/…` and `…/page.tsx` were classified as display — which skips
+`src/services/` entirely, the one directory where the claim could fail.
+
+The rest of (a) holds: the two money sites are
+`settings/reporting/page.tsx:53` and `studio-class/[id]/page.tsx:83`, and
+`durationMinutes` appears in `prisma/migrations/` only as four `INTEGER NOT
+NULL` column declarations.
 
 **(b) The `'cancelled'` audit arithmetic is wrong; its headline is right.**
 The decision comment states: *"14 grep hits in `prisma/migrations/` = 2 comments
@@ -347,7 +377,7 @@ span tsrange GENERATED ALWAYS AS (
 ) STORED
 ```
 
-### 4.2 The constraint bites — ten mutations, each with a verdict
+### 4.2 The constraint bites — eleven mutations, each with a verdict
 
 Run against a scratch schema carrying the §3 shape. Baseline: teacher `T1`,
 2026-09-01, 19:00, 90 minutes (19:00–20:30).
@@ -383,7 +413,8 @@ constraint and must be revised, not left standing.
 The eighth and ninth rows are worth stating separately, because they are not a
 generalisation of the current rule — they are outside its reach entirely.
 
-All four of today's slot indexes key on `(teacherId, date, startTime)`. A class
+Both of today's **entry-level** slot indexes key on `(teacherId, date,
+startTime)` — the two rule-level ones key on `dayOfWeek` instead (§7.1). A class
 at 23:30 running 60 minutes ends at 00:30 **the next day**, on a different
 `date` value. No per-date key can see that collision, and no widening of one
 ever could. The range constraint catches it as an ordinary consequence of its
@@ -567,7 +598,7 @@ edited, and its cases fall into four groups:
   Their assertions survive unchanged in meaning: a second live entry on an
   occupied slot is still refused, a cancelled one still does not block, an
   archived rule still frees its slot, another teacher is still unaffected.
-- **Cross-family cases** (`:252`–`:700`+) — **ported and merged into the
+- **Cross-family cases** (`:252`–`:731`) — **ported and merged into the
   same-family ones.** Under one table the distinction stops existing, which is
   the point of the work. The mutations they encode (moving by date, moving by
   start time, un-cancelling into an occupied slot, un-archiving into an occupied
@@ -575,9 +606,17 @@ edited, and its cases fall into four groups:
   cases against the new constraint.
 - **`Room identity indexes`** (`:202`–`:251`) — **untouched.** They share the
   file, not the subject.
-- **The two "leaves a pre-existing violating pair editable on unrelated columns"
-  cases** (`:310`, `:461`) — **deleted, because the state they construct
-  becomes unconstructible.** See §7.2.
+- **The four "leaves a pre-existing violating pair editable on unrelated
+  columns" cases** (`:310`, `:461`, `:684`, `:708`) — **deleted, because the
+  state they construct becomes unconstructible.** See §7.2.
+
+  Four, not two: an earlier draft counted only the instance-level pair, because
+  it was written before §2.2(f) gave the **rule** layer an exclusion constraint
+  too. Under the exact-start unique index that §2.2(f) replaced, the two
+  template-level cases would have survived intact. The correction reached §4.4
+  and did not reach this census — the same fix-in-one-place-not-its-twin defect
+  `.claude/skills/solve-issue` §4 exists to catch, committed inside the document
+  that describes it.
 
 New cases the current file cannot express, and which the port must add:
 
@@ -655,6 +694,17 @@ The rule-layer query is the more likely of the two to start returning rows,
 because seeding and manual testing create templates far more freely than the 6
 live rows above suggest. It should be re-run immediately before the migration is
 written, not trusted from this document.
+
+**And its zero is much thinner than the entry layer's.** The entry query has
+something to chew on: 40 live rows, and two genuine same-teacher-same-day
+clusters (09:00 +75 against 11:00; 14:00 +90 against 18:00) that legitimately do
+not overlap — so a zero there is a result. Of the 6 live rules, only one teacher
+holds two, and those sit on different `dayOfWeek` values, so the overlap
+predicate is never actually exercised. **The rule-layer zero is close to
+vacuous** — it says the constraint will build, and almost nothing about whether
+the query would notice a violation. Seed a deliberate overlap and watch the
+query return it before relying on the clean run (the plan's Task 2 Step 3 does
+exactly this against the pre-flight `RAISE EXCEPTION`).
 
 **One consequence worth stating plainly:** a conforming row stays freely
 editable on unrelated columns. Measured — an `UPDATE` that does not change
@@ -747,3 +797,11 @@ remaining window.
    port: rule pairs that are legal today become refusals, so the two template
    forms need the 409 wording and a test that the refusal is reachable from the
    UI, not only from the database.
+9. **The two end-instant call sites** (§2.2a). `class-lifecycle.ts:550` and
+   `class-transitions.ts:532` each read `date`, `startTime`, `durationMinutes`
+   and `teacher.defaultTimezone` off a single `Class` row; the extraction moves
+   three of those four to `CalendarEntry`, so both need a join. The first is
+   evaluated **inside `completeClass`'s row lock**, which makes it a lock-order
+   question rather than a query rewrite — reading a second table while holding
+   `FOR UPDATE` on the first. `docs/lock-order.md` governs it, and it belongs to
+   the entry-layer plan, not the rule-layer one.
