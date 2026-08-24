@@ -148,7 +148,11 @@ and the block that opens `beforeAll` (lines 100-111):
 
 - [ ] **Step 5: Delete the matching restore from `afterAll`**
 
-Remove lines 179-185:
+Match on the text below, not the line number: Step 4 removed 14 lines above
+this point, so it now sits around line 165. Every line number in this task is
+stated as of the file before any edit in this task.
+
+Remove:
 
 ```ts
     // Restore previously active templates
