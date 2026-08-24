@@ -71,9 +71,15 @@ export default defineConfig(({ mode }) => {
           test: {
             name: 'unit',
             include: ['src/**/*.test.ts'],
-            // class-transitions is the one file whose service calls have no
-            // teacher scope to pass — see `unit-sweeps` below.
-            exclude: ['**/node_modules/**', 'src/services/class-transitions.test.ts'],
+            // Files testing a service that sweeps the whole database with no
+            // scope parameter to pass move to `unit-sweeps` below instead —
+            // that project's `include` is the membership list, not this one.
+            exclude: [
+              '**/node_modules/**',
+              'src/services/class-transitions.test.ts',
+              'src/services/waitlist-reconciliation.test.ts',
+              'src/services/waitlist-retention.test.ts',
+            ],
             fileParallelism: true,
             env: { DATABASE_URL: testUrl },
             globalSetup: ['./tests/setup/unit-db.ts'],
@@ -83,10 +89,11 @@ export default defineConfig(({ mode }) => {
           extends: true,
           test: {
             name: 'unit-sweeps',
-            // `autoTransitionToInProgress`, `autoCancelClasses` and
-            // `autoCompleteClasses` are each `(db, now?)` — whole-database by
-            // construction, so this file cannot share a database with a
-            // concurrent one.
+            // Every file in `include` below tests a service whose sweep
+            // takes the whole database with no scope parameter to pass
+            // (`(db, now?)` or equivalent) — so it cannot share a database
+            // with a concurrent test file. `include` is the membership
+            // list; nothing here repeats it.
             //
             // It MUST run in a separate `vitest run` invocation from `unit`,
             // not merely a separate project: per-project
@@ -95,7 +102,11 @@ export default defineConfig(({ mode }) => {
             // 2026-08-24 — that arrangement was green twice and red twice in
             // four runs (#321, spec D3). `package.json`'s `test` script is
             // what keeps the two invocations apart.
-            include: ['src/services/class-transitions.test.ts'],
+            include: [
+              'src/services/class-transitions.test.ts',
+              'src/services/waitlist-reconciliation.test.ts',
+              'src/services/waitlist-retention.test.ts',
+            ],
             fileParallelism: false,
             env: { DATABASE_URL: testUrl },
             globalSetup: ['./tests/setup/unit-db.ts'],
