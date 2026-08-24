@@ -133,8 +133,7 @@ skip, produced when a generator finds an occupied slot for a candidate
 | File | Responsibility |
 |---|---|
 | `prisma/migrations/<ts>_schedule_rule/migration.sql` | Create `ScheduleRule`, its generated `slot`, the exclusion constraint, `UNIQUE (id, kind)` |
-| `prisma/migrations/<ts>_schedule_rule_backfill/migration.sql` | One rule per live template; add + populate `scheduleRuleId`/`kind` on both children; composite FK; drop the nine moved columns from each child |
-| `prisma/migrations/<ts>_drop_template_slot_guards/migration.sql` | Drop the four template triggers, two functions, two partial unique indexes |
+| `prisma/migrations/<ts>_schedule_rule_backfill/migration.sql` | One rule per live template; add + populate `scheduleRuleId`/`kind` on both children; composite FK; drop the four template triggers and two functions; drop the nine moved columns from each child |
 | `src/services/schedule-rule-constraints.test.ts` | The exclusion constraint's mutation table (§4.4), driven through Prisma |
 | `src/lib/exclusion-conflict.ts` | Detect a 23P01 for a named constraint; `isUniqueConflictOn`'s sibling |
 | `src/lib/exclusion-conflict.test.ts` | Its tests, including one that proves the matcher can fail |
@@ -170,8 +169,18 @@ Name a file only where its *order* matters, which here is nowhere.
   `kind: RuleKind` (`'regular' | 'studio'`), `classType: string`,
   `dayOfWeek: number`, `startTime: Date` (`@db.Time`), `durationMinutes: number`,
   `isActive: boolean`, `isArchived: boolean`, `archivedAt: Date | null`,
-  `withdrawnCount: number`. The generated `slot` column is **not** in the Prisma
-  model — it is unmappable and never written.
+  `withdrawnCount: number | null`. The generated `slot` column is **not** in the
+  Prisma model — it is unmappable and never written.
+
+**`withdrawnCount` is nullable, and that is not a nullability oversight.** Both
+children declare it `Int?` (`schema.prisma:379`, `:529`) and **every live row is
+NULL** — 11 of 11 `ClassTemplate` and 1 of 1 `StudioClassTemplate` — because only
+an archive ever writes it. A `NOT NULL` column here would abort the backfill on
+the first row. `COALESCE(…, 0)` is the wrong fix: `archivedAt`'s docblock
+(`schema.prisma:348`–`:358`) establishes that `isArchived: true` with both
+columns null is reachable today — `gdpr.ts`'s bulk archive writes neither — and
+must stay distinguishable from a recorded zero. Read it as "the archive that
+recorded itself", never as "is it archived".
 
 **Why the matcher comes first.** `slot-constraints.test.ts`'s own docblock rules
 out the assertion style this task would otherwise reach for: *"The assertions
@@ -327,7 +336,7 @@ model ScheduleRule {
   isActive        Boolean   @default(true)
   isArchived      Boolean   @default(false)
   archivedAt      DateTime?
-  withdrawnCount  Int       @default(0)
+  withdrawnCount  Int?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -335,9 +344,16 @@ model ScheduleRule {
   classTemplate       ClassTemplate?
   studioClassTemplate StudioClassTemplate?
 
+  @@unique([id, kind])
   @@index([teacherId, dayOfWeek])
 }
 ```
+
+**`@@unique([id, kind])` is required, not decorative.** Prisma will not validate
+`references: [id, kind]` on the children's composite relation (Task 2) unless the
+referenced pair is a unique constraint it knows about. Declaring it here also
+means Prisma emits `ScheduleRule_id_kind_key` itself, so the hand-authored
+section below must **not** create it a second time.
 
 Add the back-relation to `Teacher`: `scheduleRules ScheduleRule[]`.
 
@@ -353,6 +369,12 @@ a `TeacherRoom` (`capacityOverride` is required and has no default), and the
 `afterAll` whose delete order matters: `Account` is removed **after** `Teacher`,
 because `Teacher.accountId` has no `onDelete: Cascade`. Do not invent a shared
 helpers module; that file has none, and neither should this one.
+
+**That copied teardown has a shelf life of one task.** Its two lines
+`prisma.classTemplate.deleteMany({ where: { teacherId … } })` and its studio
+twin stop type-checking the moment Task 2 moves `teacherId` off both children.
+Task 2 Step 5 rewrites them; copy it verbatim now anyway, so this task's
+failures are about the constraint rather than about a fixture you improvised.
 
 Then:
 
@@ -479,9 +501,9 @@ ALTER TABLE "ScheduleRule"
   EXCLUDE USING gist ("teacherId" WITH =, "dayOfWeek" WITH =, "slot" WITH &&)
   WHERE ("isArchived" = false);
 
--- Parent key for each child's composite foreign key. Without it one rule could
--- carry a template of each family, which is the defect being removed.
-ALTER TABLE "ScheduleRule" ADD CONSTRAINT "ScheduleRule_id_kind_key" UNIQUE ("id", "kind");
+-- `ScheduleRule_id_kind_key` — the parent key for each child's composite
+-- foreign key, without which one rule could carry a template of each family —
+-- is emitted by Prisma from `@@unique([id, kind])`. Do not add it here.
 
 ALTER TABLE "ScheduleRule" ADD CONSTRAINT "ScheduleRule_duration_positive"
   CHECK ("durationMinutes" > 0);
@@ -598,6 +620,12 @@ npx prisma migrate dev --create-only --name schedule_rule_backfill
 before the data moves. Hand-author, in this order:
 
 ```sql
+-- Explicit, rather than relying on the runner. Prisma wraps migration.sql in a
+-- transaction, but `psql` in autocommit and `prisma db execute` do not — and
+-- under those, a failure between blocks 1 and 4 leaves the schema half-moved.
+-- The file's own guarantee should not depend on who executes it.
+BEGIN;
+
 -- ---------------------------------------------------------------------------
 -- Pre-flight, against real rows this time. Design doc §7.2.
 -- `prisma db execute` surfaces RAISE EXCEPTION and swallows RAISE NOTICE.
@@ -655,15 +683,43 @@ ALTER TABLE "StudioClassTemplate" ALTER COLUMN "scheduleRuleId" SET NOT NULL, AL
 ALTER TABLE "ClassTemplate"       ADD CONSTRAINT "ClassTemplate_kind_check" CHECK ("kind" = 'regular');
 ALTER TABLE "StudioClassTemplate" ADD CONSTRAINT "StudioClassTemplate_kind_check" CHECK ("kind" = 'studio');
 
-ALTER TABLE "ClassTemplate" ADD CONSTRAINT "ClassTemplate_rule_fkey"
-  FOREIGN KEY ("scheduleRuleId","kind") REFERENCES "ScheduleRule"("id","kind") ON DELETE CASCADE;
-ALTER TABLE "StudioClassTemplate" ADD CONSTRAINT "StudioClassTemplate_rule_fkey"
-  FOREIGN KEY ("scheduleRuleId","kind") REFERENCES "ScheduleRule"("id","kind") ON DELETE CASCADE;
+-- Names and ON UPDATE follow Prisma's own conventions, so `prisma migrate dev`
+-- does not read this as drift and offer a corrective migration: every one of
+-- the generated foreign keys in prisma/migrations/ is `<Table>_<field…>_fkey`
+-- with ON UPDATE CASCADE, and every generated unique is `<Table>_<field>_key`.
+ALTER TABLE "ClassTemplate" ADD CONSTRAINT "ClassTemplate_scheduleRuleId_kind_fkey"
+  FOREIGN KEY ("scheduleRuleId","kind") REFERENCES "ScheduleRule"("id","kind")
+  ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "StudioClassTemplate" ADD CONSTRAINT "StudioClassTemplate_scheduleRuleId_kind_fkey"
+  FOREIGN KEY ("scheduleRuleId","kind") REFERENCES "ScheduleRule"("id","kind")
+  ON DELETE CASCADE ON UPDATE CASCADE;
 
-ALTER TABLE "ClassTemplate"       ADD CONSTRAINT "ClassTemplate_rule_unique" UNIQUE ("scheduleRuleId");
-ALTER TABLE "StudioClassTemplate" ADD CONSTRAINT "StudioClassTemplate_rule_unique" UNIQUE ("scheduleRuleId");
+ALTER TABLE "ClassTemplate"       ADD CONSTRAINT "ClassTemplate_scheduleRuleId_key" UNIQUE ("scheduleRuleId");
+ALTER TABLE "StudioClassTemplate" ADD CONSTRAINT "StudioClassTemplate_scheduleRuleId_key" UNIQUE ("scheduleRuleId");
 
--- 4. Only now drop the moved columns. Nine per table.
+-- 4. The four #296 template triggers HOLD four of the columns block 5 drops.
+--    PostgreSQL records a column dependency for every column a trigger's WHEN
+--    clause names, so the drops below fail without this:
+--
+--      ERROR: cannot drop column teacherId of table "ClassTemplate" because
+--             other objects depend on it
+--
+--    Measured: 10 dependencies across the four triggers, on teacherId,
+--    dayOfWeek, startTime and isArchived. Not `DROP … CASCADE`, which removes
+--    the triggers and leaves the two functions behind as broken orphans.
+--
+--    The exclusion constraint on ScheduleRule has enforced this invariant
+--    since the previous migration, so nothing is unguarded in between.
+DROP TRIGGER IF EXISTS class_template_cross_family_slot_insert_guard ON "ClassTemplate";
+DROP TRIGGER IF EXISTS class_template_cross_family_slot_update_guard ON "ClassTemplate";
+DROP TRIGGER IF EXISTS studio_class_template_cross_family_slot_insert_guard ON "StudioClassTemplate";
+DROP TRIGGER IF EXISTS studio_class_template_cross_family_slot_update_guard ON "StudioClassTemplate";
+DROP FUNCTION IF EXISTS class_template_reject_cross_family_slot();
+DROP FUNCTION IF EXISTS studio_class_template_reject_cross_family_slot();
+
+-- 5. Only now drop the moved columns. Nine per table. The two partial unique
+--    indexes from 20260811202634 are over columns dropped here, so PostgreSQL
+--    removes them silently as a consequence — there is no DROP INDEX to write.
 ALTER TABLE "ClassTemplate"
   DROP COLUMN "teacherId", DROP COLUMN "classType", DROP COLUMN "dayOfWeek",
   DROP COLUMN "startTime", DROP COLUMN "durationMinutes", DROP COLUMN "isActive",
@@ -672,11 +728,49 @@ ALTER TABLE "StudioClassTemplate"
   DROP COLUMN "teacherId", DROP COLUMN "classType", DROP COLUMN "dayOfWeek",
   DROP COLUMN "startTime", DROP COLUMN "durationMinutes", DROP COLUMN "isActive",
   DROP COLUMN "isArchived", DROP COLUMN "archivedAt", DROP COLUMN "withdrawnCount";
+
+COMMIT;
 ```
 
-**Order is load-bearing.** Block 4 must follow block 1, or the data is gone
-before it is copied. Block 3's `CHECK` must precede its FK, or a child could
-attach to a rule of the other kind in the window between.
+**Order is load-bearing, in two places and not a third.**
+
+- **Block 5 must follow block 1**, or the data is gone before it is copied.
+  Reversing them fails loudly rather than quietly — PostgreSQL refuses to
+  resolve the `SELECT` list against the `INSERT` target with
+  `42703 … there is a column named "teacherId" in table "ScheduleRule", but it
+  cannot be referenced from this part of the query` — so the reversal cannot
+  backfill garbage. Inside the transaction it rolls back with no loss.
+- **Block 4 must precede block 5**, for the column-dependency reason stated
+  above. This is the ordering that actually bites: without it the migration
+  cannot run at all.
+- **Block 3's `CHECK`-before-FK ordering does *not* protect a window.** An
+  earlier draft claimed a child could attach to a rule of the other kind
+  between the two statements. Measured: in autocommit the window is real but
+  self-correcting — the hostile row inserts and the migration then aborts on
+  `check constraint … is violated by some row`, losing nothing. Inside the
+  transaction this file now declares, the window does not exist at all: a
+  concurrent writer blocks on the FK's `ShareRowExclusiveLock` and meets the
+  `CHECK` on release. Keep the order — it is the right one to write, and it is
+  what makes a statement-by-statement replay safe — but do not defend it with a
+  hazard the execution model precludes.
+
+**One regression this migration causes, which is not visible in the SQL.**
+`ClassTemplate` loses its direct `teacherId → Teacher ON DELETE CASCADE` along
+with the column, so a `Teacher` hard-delete now reaches it only via
+`Teacher → ScheduleRule → ClassTemplate` — one hop further out than
+`Teacher → TeacherRoom`, whose `ClassTemplate_teacherRoomId_fkey` is
+`ON DELETE RESTRICT` and fires first:
+
+```
+POST-migration:  DELETE FROM "Teacher" WHERE id='…';
+ERROR:  update or delete on table "TeacherRoom" violates foreign key constraint
+        "ClassTemplate_teacherRoomId_fkey" on table "ClassTemplate"
+```
+
+Production is unaffected — `gdpr.ts` anonymises rather than hard-deletes — so the
+blast radius is test fixtures and any future hard-delete path. Teardowns must
+delete the `ScheduleRule` rows (letting the cascade take both children) *before*
+`teacherRoom.deleteMany`. Task 6 records it.
 
 - [ ] **Step 4: Update the Prisma schema to match**
 
@@ -699,8 +793,24 @@ npx prisma migrate dev && npx prisma generate
 npx vitest run --project unit src/services/schedule-rule-constraints.test.ts
 ```
 
-Expected: the two new cases pass. **Everything else in the repo now fails to
-compile.** That is Task 3, and it is the intended state.
+Expected: the two new cases pass — **after** you rewrite this file's own
+teardown, which Task 1 copied verbatim from `slot-constraints.test.ts` and which
+this task has just broken. `teacherId` no longer exists on either child, so:
+
+```typescript
+// before — copied from slot-constraints.test.ts:70-71
+await prisma.classTemplate.deleteMany({ where: { teacherId: { in: teachers } } });
+await prisma.studioClassTemplate.deleteMany({ where: { teacherId: { in: teachers } } });
+
+// after — delete the rules and let ON DELETE CASCADE take both children.
+// This MUST precede teacherRoom.deleteMany: ClassTemplate_teacherRoomId_fkey
+// is ON DELETE RESTRICT and a surviving template blocks the room.
+await prisma.scheduleRule.deleteMany({ where: { teacherId: { in: teachers } } });
+```
+
+Everything **else** in the repo now fails to compile. That is Task 3, and it is
+the intended state — but this file is the exception the previous sentence used
+to swallow, and it is the one file this task claims still passes.
 
 - [ ] **Step 6: Verify the backfill lost nothing**
 
@@ -993,50 +1103,27 @@ git commit -m "fix: an overlapping rule answers 409, not the 500 an unmapped 23P
 
 ---
 
-## Task 5: Delete the guards the constraint replaces
+## Task 5: Prove the constraint is the sole enforcement, and port the tests
 
 **Files:**
-- Create: `prisma/migrations/<timestamp>_drop_template_slot_guards/migration.sql`
 - Modify: `src/services/slot-constraints.test.ts`
 
 **Interfaces:** consumes Task 4; produces nothing new.
 
-- [ ] **Step 1: Write the migration**
+**This task has no migration.** An earlier draft gave it one — dropping the four
+template triggers, two functions and two partial unique indexes. All of that now
+happens inside Task 2, and not by preference: PostgreSQL records a column
+dependency for every column a trigger's `WHEN` clause names, so Task 2's column
+drops **cannot run** while the triggers stand. The two indexes then disappear on
+their own, because they are indexes over dropped columns. There is nothing left
+here to drop, and a `DROP INDEX IF EXISTS` at this point would match nothing
+while reading like it did something.
 
-```sql
--- The four template-level triggers and two functions from
--- 20260821120000_cross_family_slot_guard, and the two partial unique indexes
--- from 20260811202634. All four are subsumed by
--- ScheduleRule_teacher_slot_excl, which is strictly stronger: range rather
--- than instant, and cross-family by construction rather than by trigger.
---
--- The four CLASS-level triggers in that migration are deliberately left
--- standing — they belong to the entry layer, which is a separate plan.
+- [ ] **Step 1: Prove the exclusion constraint is now the sole enforcement**
 
-DROP TRIGGER IF EXISTS class_template_cross_family_slot_insert_guard ON "ClassTemplate";
-DROP TRIGGER IF EXISTS class_template_cross_family_slot_update_guard ON "ClassTemplate";
-DROP TRIGGER IF EXISTS studio_class_template_cross_family_slot_insert_guard ON "StudioClassTemplate";
-DROP TRIGGER IF EXISTS studio_class_template_cross_family_slot_update_guard ON "StudioClassTemplate";
-DROP FUNCTION IF EXISTS class_template_reject_cross_family_slot();
-DROP FUNCTION IF EXISTS studio_class_template_reject_cross_family_slot();
-
-DROP INDEX IF EXISTS "ClassTemplate_teacher_slot_unique";
-DROP INDEX IF EXISTS "StudioClassTemplate_teacher_slot_unique";
-```
-
-- [ ] **Step 2: Apply and run the constraint tests**
-
-```bash
-npx prisma migrate dev
-npx vitest run --project unit src/services/schedule-rule-constraints.test.ts
-```
-
-Expected: still 10 passed. If a case now passes only because a *trigger* was
-enforcing it, this is where that shows.
-
-- [ ] **Step 3: Prove the exclusion constraint is now the sole enforcement**
-
-Drop it in the test database and confirm the constraint tests go red:
+The triggers are gone. If any constraint test still passes because something
+*else* was enforcing it, this is where that shows. Drop the constraint in the
+test database and confirm the refusals go red:
 
 ```bash
 docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
@@ -1044,37 +1131,53 @@ docker exec -i fairyoga-db-1 psql -U yoga -d ethical_yoga_test \
 npx vitest run --project unit src/services/schedule-rule-constraints.test.ts
 ```
 
-Expected: the five refusal cases fail. Restore by re-running
-`npx prisma migrate reset` on the test database. Without this step the branch
-could ship a constraint nothing depends on.
+Expected: the five refusal cases fail; the five acceptance cases still pass.
+Restore with `npx prisma migrate reset` against the test database.
 
-- [ ] **Step 4: Port the template half of `slot-constraints.test.ts`**
+Without this step the branch could ship a constraint nothing depends on — which
+is exactly what the four now-deleted triggers were doing for the same invariant
+in the window between Task 2 and Task 4.
+
+- [ ] **Step 2: Port the template half of `slot-constraints.test.ts`**
 
 **Verify these line references before acting on them** — they were measured on
 2026-08-24 and Tasks 1–4 do not touch this file, but a rebase might. Confirm each
 `describe` opens where stated, and correct the reference if it has moved.
 
 Delete `ClassTemplate_teacher_slot_unique` (`:148`–`:170`),
-`StudioClassTemplate_teacher_slot_unique` (`:171`–`:201`) and
-`cross-family template slot exclusivity (#296)` (`:495`–end of that describe).
-Their coverage now lives in `schedule-rule-constraints.test.ts`, with the
-cross-family and same-family cases merged, because the distinction no longer
-exists.
+`StudioClassTemplate_teacher_slot_unique` (`:171`–`:201`) and the template half
+of `cross-family template slot exclusivity (#296)` (`:495` onward). Their
+coverage now lives in `schedule-rule-constraints.test.ts`, with the cross-family
+and same-family cases merged, because the distinction no longer exists.
 
-**Delete without porting:** the template half of *"leaves a pre-existing
-violating pair editable on unrelated columns"*. An exclusion constraint cannot
-be added over a violating pair and `NOT VALID` is refused outright, so the state
-that case constructs is unconstructible (design §7.2).
+**Delete without porting: the two template-level "leaves a pre-existing
+violating pair editable on unrelated columns" cases** (`:684`, `:708`). An
+exclusion constraint cannot be added over a violating pair and `NOT VALID` is
+refused outright, so the state they construct is unconstructible (design §7.2).
+Their two instance-level siblings (`:310`, `:461`) stay — the `Class` family is
+still trigger-guarded until the entry-layer plan lands.
 
 **Leave untouched:** `Room identity indexes` (`:202`–`:251`) and every
 `Class`/`StudioClass` case. They share the file, not the subject.
 
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 3: Fix the teardown this file shares with the fixture**
+
+`slot-constraints.test.ts:70`–`:71` delete templates by `teacherId`, which no
+longer exists on either child. Same fix as `schedule-rule-constraints.test.ts`
+took in Task 2 Step 5: delete the `ScheduleRule` rows and let the cascade take
+both children, **before** `teacherRoom.deleteMany`.
+
+If Task 3 already fixed this to keep the build green, confirm it took the
+cascade form rather than a nested `where: { scheduleRule: { teacherId } }` — both
+compile, but only the cascade form survives
+`ClassTemplate_teacherRoomId_fkey`'s `ON DELETE RESTRICT`.
+
+- [ ] **Step 4: Run and commit**
 
 ```bash
 npm run verify
-git add "prisma/migrations/"*_drop_template_slot_guards src/services/slot-constraints.test.ts
-git commit -m "refactor: four template triggers and two indexes give way to one constraint (issue 298)"
+git add src/services/slot-constraints.test.ts
+git commit -m "test: the template slot cases move to the constraint that now holds them (issue 298)"
 ```
 
 ---
@@ -1111,6 +1214,14 @@ two template tables hold only economics.
 
 Add `ScheduleRule`; remove the nine moved fields from both template entries,
 and note that a template now reaches its teacher through its rule.
+
+Record the delete-path change explicitly, because it is invisible in the schema
+and was found only by executing the migration: a `Teacher` hard-delete no longer
+cascades directly to `ClassTemplate`. It reaches it via `ScheduleRule`, one hop
+further out than `TeacherRoom`, whose `ClassTemplate_teacherRoomId_fkey` is
+`ON DELETE RESTRICT` and fires first. `gdpr.ts` anonymises rather than
+hard-deletes, so no production path changes — but any teardown or future hard
+delete must remove the rules first.
 
 - [ ] **Step 4: Verify no stale claim survives**
 
