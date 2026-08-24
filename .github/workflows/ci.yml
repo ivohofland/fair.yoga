@@ -13,8 +13,9 @@ name: CI
 #
 # So everything runs on everything. This is a public repo, so the minutes are
 # free; the cost is wall-clock on docs-only pull requests. If that becomes
-# annoying, short-circuit the expensive *steps* inside the `test-integration-e2e` job rather
-# than filtering the workflow trigger — the job must still run and report.
+# annoying, short-circuit the expensive *steps* inside the
+# `test-integration-e2e` job rather than filtering the workflow trigger —
+# the job must still run and report.
 on:
   push:
     branches: [main]
@@ -153,9 +154,10 @@ jobs:
       - name: Unit tests
         run: npx vitest run --project unit
 
-      # A SEPARATE invocation, deliberately: these two share a database
-      # (#321, spec D3) — see vitest.config.ts's `unit-sweeps` project for
-      # why a separate vitest project isn't enough on its own.
+      # A separate invocation, kept as defence in depth: these two share a
+      # database. What holds them apart is `unit-sweeps`'s
+      # `fileParallelism: false` (vitest.config.ts) — splitting the steps
+      # costs ~2s and survives someone flipping that flag.
       - name: Whole-database sweep tests
         run: npx vitest run --project unit-sweeps
 
@@ -268,18 +270,44 @@ jobs:
           path: server.log
           retention-days: 7
 
-  # Steps intentionally absent. This job exists so the branch ruleset's
-  # required status check named `test` keeps reporting after the split:
-  # ruleset 19724469 requires the contexts `checks` and `test`, and a
-  # required check that never runs leaves the pull request pending with no
-  # way to merge (same argument as this file's header).
+  # This job exists so the branch ruleset's required status check named
+  # `test` keeps reporting after the split: ruleset 19724469 requires the
+  # contexts `checks` and `test`, and a required check that never runs
+  # leaves the pull request pending with no way to merge (same argument as
+  # this file's header).
   #
-  # No `if: always()`. `needs` fails this job when any dependency fails, and
-  # `always()` would let it report success over a red one.
+  # Both halves below are load-bearing, and neither works alone.
+  #
+  # `if: always()`, because a failed dependency SKIPS a job rather than
+  # failing it, and GitHub counts a skipped required check as satisfied:
+  # "Required status checks must have a successful, skipped, or neutral
+  # status before collaborators can make changes to a protected branch."
+  # Without `always()` this context therefore goes green exactly when a
+  # test job goes red.
+  #
+  # The explicit verdict, because `always()` on its own runs the job and
+  # passes it whatever the dependencies did. The step re-derives the answer
+  # from `needs.*.result` instead, as an allowlist — anything that is not
+  # `success` fails, so a result state GitHub adds later fails closed.
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: [test-components, test-unit, test-integration-e2e]
+    if: always()
     steps:
-      - name: All test jobs passed
-        run: echo "test-components, test-unit and test-integration-e2e all succeeded"
+      - name: Verify every test job succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "dependency results: $RESULTS"
+          # An empty expansion would sail through the loop below untouched.
+          if [ -z "$RESULTS" ]; then
+            echo "::error::No dependency results to check - refusing to report success."
+            exit 1
+          fi
+          for result in $RESULTS; do
+            if [ "$result" != "success" ]; then
+              echo "::error::A test job concluded '$result' - failing the aggregate gate."
+              exit 1
+            fi
+          done
