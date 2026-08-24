@@ -87,6 +87,15 @@ not three problems:
   is already correctly scoped. Fix: pass the teacher id. No production
   change.
 
+  The same file then carries a **second, larger** hazard that the missing
+  argument caused: its `beforeAll` reads every `isActive: true` template in
+  the database and deactivates all of them, restoring them in `afterAll`
+  (lines 96-111 and 179-185). That is a global mutation of other files'
+  fixtures, and it exists *only* as a workaround for the unscoped call.
+  Passing the teacher id removes the reason for it, so the deactivation
+  dance is deleted in the same change rather than left as a parallel-safety
+  trap that happens to be inert.
+
 - **`src/services/slot-constraints.test.ts`** dies in teardown on
   `Class_teacherRoomId_fkey` (line 72). It deletes its own classes at line
   68 and its `teacherRoom` rows at line 72; in between, the other file's
@@ -99,6 +108,35 @@ not three problems:
   `autoTransitionToInProgress`, `autoCancelClasses` and
   `autoCompleteClasses` are each `(db, now?)` — no scope parameter exists
   to pass. Whole-database by construction.
+
+### D2b — One more global mutation, found by scanning rather than by failing
+
+`src/lib/auth/magic-link.test.ts:19-21` runs, in an `afterEach`:
+
+```ts
+await db.magicLinkToken.deleteMany();
+```
+
+No `where` clause: it truncates the table after every one of its tests.
+`src/services/auth-cleanup.test.ts` is the only other unit file touching
+`magicLinkToken`, and at lines 76-79 it asserts a specific token **survives**
+the cleanup sweep. Those two files in one parallel pool are a direct
+collision.
+
+It did not fail in any probe run. It was found by grepping the tier for
+unscoped `deleteMany`/`updateMany`, and it is the reason that scan belongs
+in the work rather than trusting a green run: the probe's own lesson is that
+this suite can be green and wrong at the same time.
+
+The two files' identifiers are already disjoint — magic-link uses
+`*@example.com` throughout (10 addresses), auth-cleanup uses
+`cleanup-${uniqueSuffix}@test.local` — so scoping the `afterEach` to
+`{ email: { endsWith: '@example.com' } }` resolves it without touching
+auth-cleanup. The same scan found `class-terminal-status.test.ts`,
+`waitlist-reconciliation.test.ts`, `gdpr.test.ts` and
+`template-lock-order.test.ts` already scoped by row id; they need nothing.
+
+### D2c — Only one file is quarantined
 
 So one file, not three, genuinely cannot be scoped without a production
 signature change. It runs 5.95s alone
@@ -250,7 +288,17 @@ green in isolation. Nothing here revisits it.
 5. A pull request opened after the split shows `checks` and `test` as its
    required contexts and can merge — verified on a real PR, not reasoned
    about.
-6. `docs/test-database.md` §2 is amended: its "`fileParallelism: false`
+6. No file in the parallel `unit` pool performs an unscoped
+   `deleteMany`/`updateMany`. Re-derive with:
+
+   ```
+   grep -rn "deleteMany()\|deleteMany({})\|updateMany({ where: { isActive" \
+     src --include="*.test.ts"
+   ```
+
+   Expected: no hits outside `class-transitions.test.ts`. This is a standing
+   check, not a one-off — D2b's collision was invisible to four probe runs.
+7. `docs/test-database.md` §2 is amended: its "`fileParallelism: false`
    already serializes suites" no longer describes the config, and D3's
    finding about per-project isolation is recorded where the next person to
    try it will look.
