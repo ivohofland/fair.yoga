@@ -34,11 +34,14 @@ Every claim checked against the merge base (`9cf17ec`) before designing.
    which settles the copy question and turns the issue's "asymmetry" into a rule worth
    one sentence: *client checks precisely the required fields that have no default;
    everything else arrives valid.*
-4. **The write surface is closed.** `updateStudioClassSchema` has no `classType` field at
-   all (`schemas.ts:476-483`), generation copies the template's value verbatim, and every
-   Prisma create sets it explicitly (#304's spec §1 re-derived the same census). Two
-   forms plus the shared edit path is the whole surface; no third place can produce the
-   400 for an end user.
+4. **The write surface, re-checked after the #276 rebase.** At this branch's original
+   merge base `updateStudioClassSchema` had no `classType` field at all; issue #276 has
+   since admitted `classType: z.string().min(1).optional()` and opened
+   `studio-class/[id]/edit` with its own form. That form already refuses an empty class
+   type client-side (`studio-class-edit-form.tsx` validates in `validate()` before any
+   request), so the surface stays covered — but it is three forms now, not two.
+   Generation copies the template's value verbatim and every Prisma create sets the
+   field explicitly (#304's spec §1 re-derived the same census).
 
 ### Wrong
 
@@ -92,19 +95,21 @@ matching how both payloads are built (`classType.trim()` at build time in both f
 
 ### Component tests (the pin)
 
-Both files exist: `studio-template-form.test.tsx` (15 tests) and
-`(teacher)/studio-class/new/page.test.tsx` (5 tests). One addition per file:
+Both files exist: `studio-template-form.test.tsx` (11 tests after this branch's
+addition, 10 at the merge base) and `(teacher)/studio-class/new/page.test.tsx`
+(5 after, 4 at the merge base). One addition per file:
 
 > Submit with `classType` left empty (and everything else filled) → expect the banner
 > 'Class type is required' **and** `fetch` not called.
 
 Stub `fetch` explicitly with `vi.fn()` (`tests/setup/components.ts` does not mock it) so
 "not called" is asserted against a spy rather than inferred from absence of network noise.
-The two assertions pin different things: the spy (`fetch` not called) is the half that
-catches a guard which fires but lets the request go out; the banner pins the exact copy.
-The banner cannot catch a continuing guard on its own, because both forms clear `error`
-with `setError('')` just before the request, so a guard that fires and continues hides its
-own banner — the spy is the load-bearing half.
+The two assertions pin different things — the request not being sent, and the exact copy.
+On the realistic continuing-guard mutant (the guard fires but its `return` is dropped),
+both assertions go red: `handleSubmit` clears `error` just before the request, so the
+banner assertion finds nothing and throws, but that red would read as a missing guard;
+the spy's red names the outgoing request. The spy also stays decisive if the pre-request
+clearing ever changes, which a banner-only pin would not.
 
 ### Proving the guards bite (explicit steps, per guard)
 
@@ -140,7 +145,9 @@ mutation values are deletions of real code, so the reserved-value rule does not 
 
 - Client-checked required fields across the app:
   `grep -rn "is required'" src/app src/components | grep -v test` — returns the API
-  state-guards (server side, different thing) plus nine client lines, of which the two
-  new ones land in this branch's two files.
+  state-guards (server side, different thing) plus **eleven** client lines at the
+  pre-branch merge base and **thirteen** after this branch (the two new ones land in this
+  branch's two files). #276's edit form contributes no hits — its copy ends in a period,
+  which the pattern does not match.
 - Wire requirements: `sed -n '445,483p' src/lib/schemas.ts`.
 - Empty-`classType` row count: the psql one-liner in §1.1, re-runnable verbatim.

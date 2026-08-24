@@ -45,8 +45,8 @@ Predicted after this branch: components 279 (+2), total **1817**, file counts un
 both additions are new `it()` blocks inside existing files. Measure it anyway; do not
 trust the prediction.
 
-Touched-file baselines: `studio-template-form.test.tsx` has 15 tests,
-`(teacher)/studio-class/new/page.test.tsx` has 5. If either shifts unexpectedly before
+Touched-file baselines: `studio-template-form.test.tsx` has 10 tests,
+`(teacher)/studio-class/new/page.test.tsx` has 4. If either shifts unexpectedly before
 your change, stop and report — that is shared-state leakage, not noise.
 
 ---
@@ -82,8 +82,10 @@ Nothing else. If an implementer finds itself touching anything else, stop and re
       expect(screen.getByText('Class type is required')).toBeInTheDocument();
       ```
 
-      Run the file → **expected RED**: the banner assertion fails (no such element; the
-      request goes out instead). Record the exact failure text in the task report.
+      Run the file → **expected RED**: the spy assertion fails first (`fetch` is called
+      synchronously on submit, so the request goes out); recorded truth from execution:
+      `expected "vi.fn()" to not be called at all, but actually been called 1 times`.
+      Record the exact failure text in the task report.
 - [ ] 1.2 Apply the guard in `handleSubmit`, above the location check at ~`:101`
       (field order — Class type renders first):
 
@@ -94,7 +96,7 @@ Nothing else. If an implementer finds itself touching anything else, stop and re
       }
       ```
 
-      Re-run → **GREEN, 16 passed**.
+      Re-run → **GREEN, 11 passed** (10 existing + 1 new).
 - [ ] 1.3 **Guard-biting proof:** comment out only the new `if` block → run → the spy
       assertion must fail (`fetch` called once; unstubbed it would instead surface as
       'Network error…' from the catch arm). Record the exact text. Restore → green.
@@ -113,7 +115,7 @@ Nothing else. If an implementer finds itself touching anything else, stop and re
 - [ ] 2.1 Failing test first, same shape as 1.1 adapted to this page: leave `classType`
       empty, fill BOTH `location` and `date` (this form checks those too, and the new
       guard sits ahead of them), stub `fetch` with `vi.fn()`, submit. Assert spy-not-called
-      and `'Class type is required'` present. Run → **expected RED** (5 existing + 1 new;
+      and `'Class type is required'` present. Run → **expected RED** (4 existing + 1 new;
       the new one fails). Record text.
 - [ ] 2.2 Apply the guard above the location check at ~`:92`:
 
@@ -124,7 +126,7 @@ Nothing else. If an implementer finds itself touching anything else, stop and re
       }
       ```
 
-      Re-run → **GREEN, 6 passed**.
+      Re-run → **GREEN, 5 passed** (4 existing + 1 new).
 - [ ] 2.3 Guard-biting proof exactly as 1.3: comment out the new block → spy RED → record → restore → green.
 - [ ] 2.4 Commit: `fix+test: studio class log refuses an empty class type with product copy (#282)`
       Stage exactly: `"src/app/(teacher)/studio-class/new/page.tsx"` and its test file.
@@ -135,8 +137,10 @@ Nothing else. If an implementer finds itself touching anything else, stop and re
       three per-project counts and show them reconciling for the PR body
       (predicted: `1051 + 279 + 487 = 1817`; measure, don't trust).
 - [ ] 3.2 Re-derive the spec §6 claims:
-      - `grep -rn "is required'" src/app src/components | grep -v test` → the nine
-        client lines now include the two new ones; API state-guards unchanged.
+      - `grep -rn "is required'" src/app src/components | grep -v test` → eleven
+        client lines at the merge base, thirteen after this branch (the two new ones
+        in this branch's two files); API state-guards unchanged. #276's edit form
+        adds no hits — its copy ends in a period.
       - `sed -n '445,483p' src/lib/schemas.ts` → untouched.
 - [ ] 3.3 Confirm no doc claim went stale: nothing in `docs/` describes the studio forms'
       validation behaviour, so expected clean; report either way.
