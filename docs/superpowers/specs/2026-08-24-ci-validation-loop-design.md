@@ -163,10 +163,16 @@ FALSE as of the finished work. The five-run acceptance gate (Acceptance #2)
 failed repeatedly against a one-file quarantine, and a systematic scan —
 every exported service function taking a Prisma client with no id/scope
 parameter, narrowed to those that write rows they were never handed —
-found several more such sweep families. Two of the tier's problem files
-were fixed by scoping instead of quarantine (`class-generator.test.ts`,
-`magic-link.test.ts` — see D2 and D2b's correction); the rest joined
-`class-transitions.test.ts` in quarantine.
+found several more such sweep families. `class-generator.test.ts` was fixed
+by scoping instead of quarantine (see D2 and D2b's correction); the rest
+joined `class-transitions.test.ts` in quarantine.
+
+**Correction, post-review (#321):** this paragraph also named
+`magic-link.test.ts` as a scoping success. It is not one. It calls
+`cleanupExpiredTokens(db)`, a whole-table sweep whose only parameter is the
+client, so the rows destroyed are a sibling's and no assertion inside the
+file can prevent that — scoping its `afterEach` addressed a different
+hazard. It is quarantined.
 
 The reasoning below still holds for `class-transitions.test.ts` itself, and
 generalizes to the rest of the family: `autoTransitionToInProgress`,
@@ -216,7 +222,14 @@ tests), the arrangement this section predicts is red about half the time.
 
 The red runs recorded above therefore had a different, still unidentified
 cause. What turned the suite green was completing the quarantine roster and
-scoping the fixtures, not the process boundary. The `&&` in `package.json`
+scoping the fixtures, not the process boundary.
+
+The "giveaway" was not one either. `recurring class pause/resume lost the
+template lock race` is emitted by `class-template-lifecycle.test.ts`, which
+establishes a lock hold on purpose and then asserts
+`{ ok: false, reason: 'busy' }` — the line is the expected output of that
+test passing. A green 68/68 run of `unit` + `unit-sweeps` prints it three
+times. It was never evidence of cross-project concurrency. The `&&` in `package.json`
 and the two steps in `ci.yml` stay as defence in depth; the guard that must
 not be flipped is `unit-sweeps`'s `fileParallelism: false`.
 
@@ -246,7 +259,7 @@ past that one file. File counts belong to the code, not this prose; see
 Pass 2 pairs two projects in one invocation, which by the finding above
 means they run **concurrently with each other** — deliberately, and safe
 only for a reason worth stating: they connect to different databases.
-`unit-sweeps` inherits the `unit` project's `DATABASE_URL` override and so
+`unit-sweeps` declares its own `DATABASE_URL` override, as `unit` does, and so
 reads `DATABASE_URL_TEST`, while `integration` must use `DATABASE_URL` —
 the database the app on :3000 reads (`vitest.config.ts`,
 `docs/test-database.md` §3.2). The sweeps therefore cannot see
@@ -259,8 +272,12 @@ different hat.
 (`/usr/bin/time -p npm test`, full green run — 147.08s–157.95s across the
 runs that reached and then held the acceptance gate at 5/5, the spread
 being run-to-run noise rather than a config change). Projection, CI: 233s →
-~90s — still a projection; no CI run has happened on this branch yet, and
-replacing it with a measurement is the next task's job.
+~90s. **Measured, CI (#321):** run 32774361793 — critical path 6m54 →
+**4m43** (`checks` 1m10, `test-components` 1m12, `test-unit` 2m11,
+`test-integration-e2e` 4m35, `test` 3s). `test-integration-e2e` is now the
+entire critical path: everything this issue parallelized finishes by +2m11
+and then waits. That run went green under the aggregate gate `42d8383` later
+fixed, so it is evidence about wall-clock only — not about the gate.
 
 ### D4 — Split the CI job behind a fan-in `test` gate
 
@@ -314,6 +331,19 @@ reports the aggregate under the name the ruleset expects, and the ruleset
 is not edited. `needs` already fails the dependent job when a dependency
 fails, so the gate needs no script — but it must not carry `if: always()`,
 which would let it report success over a failed dependency.
+
+**Correction, post-review (#321):** backwards, and this was the more
+dangerous of the two errors on this branch — it specified a merge gate that
+could not fail. `needs` does not fail a dependent job when a dependency
+fails; it **skips** it, and GitHub treats a skipped required check as
+satisfied. So the design above reports green exactly when a test job goes
+red, and with only `checks` and `test` required, every test failure would
+have been mergeable. Demonstrated on PR #324: `test-components` FAILURE,
+`test` SKIPPED, PR `mergeable: MERGEABLE` / `mergeStateStatus: UNSTABLE`.
+The shipped job therefore carries **both** `if: always()` and an explicit
+allowlist verdict over `needs.*.result` — `always()` alone would indeed pass
+regardless, which is the half this paragraph got right. The table row above
+(`test` | nothing — fan-in gate) is superseded with it.
 
 The duplicated `npm ci` across jobs (~20s each) is paid in parallel and
 costs only minutes, which the workflow header already notes are free on a
@@ -393,7 +423,7 @@ green in isolation. Nothing here revisits it.
      src --include="*.test.ts"
    ```
 
-   Expected: no hits outside `class-transitions.test.ts`. This is a standing
+   Expected: no hits at all. This is a standing
    check, not a one-off — D2b's collision was invisible to four probe runs.
 7. `docs/test-database.md` §2 is amended: its "`fileParallelism: false`
    already serializes suites" no longer describes the config, and D3's

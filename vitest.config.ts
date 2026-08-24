@@ -108,13 +108,12 @@ export default defineConfig(({ mode }) => {
             // never handed, with no scope parameter to pass — so it cannot
             // share a database with a concurrent test file.
             //
-            // `fileParallelism: false` is the guard, and it does more than
-            // its name says: it also keeps this project from running
-            // alongside the parallel ones. Flipping it to `true` breaks the
-            // isolation even while the tier keeps its own `vitest run`
-            // invocation — that invocation boundary is defence in depth, not
-            // the thing separating the tiers. Measured, and why:
-            // docs/test-database.md §2.
+            // `fileParallelism: false` is the guard here, not the separate
+            // `vitest run` invocation this tier also gets: flipping it to
+            // `true` reddens the tier while that invocation boundary stays
+            // intact. It carries two further preconditions the option's name
+            // does not cover, and breaking either re-parallelizes this tier
+            // with the flag still reading as set — docs/test-database.md §2.
             include: [...SWEEP_TESTS],
             fileParallelism: false,
             env: { DATABASE_URL: testUrl },

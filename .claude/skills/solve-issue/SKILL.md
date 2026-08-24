@@ -461,7 +461,7 @@ Two mechanical traps in that paragraph, both of which have fired:
   or the explanation fires the trap.** That has happened once already, five minutes after a
   reopen, in the commit written to document it.
 - **"`integration` is never run in full" is no longer true, and repeating it understates the
-  evidence.** `npm run verify` runs all three vitest projects, so a green `verify` *is* the
+  evidence.** `npm run verify` runs every vitest project (`vitest.config.ts`), so a green `verify` *is* the
   whole integration suite. Say so, with the arithmetic that proves it — on #191 that was
   `105 = 46 unit + 32 components + 27 integration`, which turns "every integration file ran"
   from a reassurance into a checkable claim. Still name the touched files by path, so a

@@ -30,9 +30,9 @@ npm run test:e2e            # Playwright (starts dev server if not running)
 | unit | `src/**/*.test.ts` minus `SWEEP_TESTS` | node | `DATABASE_URL_TEST` (auto-created in setup) |
 | unit-sweeps | `SWEEP_TESTS` (`vitest.config.ts`) — database-wide sweeps, serial | node | `DATABASE_URL_TEST` |
 | integration | `tests/integration/**/*.test.ts` | node, hits `:3000` | whatever app reads (dev DB locally) |
-| components | `src/components/**.test.tsx`, `src/app/**.test.tsx` | jsdom | none |
+| components | `src/components/**/*.test.tsx`, `src/app/**/*.test.tsx` | jsdom | none |
 
-- Unit setup (`tests/setup/unit-db.ts`) creates + migrates the test DB before running. It refuses only the case where `DATABASE_URL_TEST` *equals* `DATABASE_URL`; absent entirely, it logs and returns, leaving the tier on the dev database — so set `DATABASE_URL_TEST` in `.env`.
+- Unit setup (`tests/setup/unit-db.ts`) creates + migrates the test DB before running. It refuses the case where `DATABASE_URL_TEST` *equals* `DATABASE_URL`; absent entirely, it logs and returns, leaving the tier on the dev database — so set `DATABASE_URL_TEST` in `.env`.
 - Adding a test that calls a service sweep taking no scope argument? It goes in `SWEEP_TESTS`, not the parallel `unit` pool (`docs/test-database.md` §2).
 - Components mock `next/navigation` via `tests/setup/components.ts`. Exports `routerRefresh` / `routerPush` for assertions. `fetch` is NOT mocked — stub it per-test with `vi.stubGlobal('fetch', …)` when clicks trigger requests.
 - Timezone pinned to `America/New_York` in vitest config to catch UTC-vs-local date bugs. Removing the pin silently makes tests tautological on CI (UTC runner).

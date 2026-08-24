@@ -17,10 +17,9 @@ afterAll(async () => {
 });
 
 afterEach(async () => {
-  // Scoped, not a truncate: `auth-cleanup.test.ts` is the other unit suite
-  // holding `magicLinkToken` rows, and it asserts one SURVIVES its sweep.
-  // Every address this file mints is `*@example.com`; that file's are
-  // `cleanup-${uniqueSuffix}@test.local`, so the two never overlap.
+  // Scoped, not a truncate: sibling suites hold their own `magicLinkToken`
+  // rows and assert those survive their own sweeps. Every address this file
+  // mints is `*@example.com`, and this filter is what keeps it to those.
   await db.magicLinkToken.deleteMany({ where: { email: { endsWith: '@example.com' } } });
 });
 
@@ -151,8 +150,12 @@ describe('cleanupExpiredTokens', () => {
     const deleted = await cleanupExpiredTokens(db);
     expect(deleted).toBe(1);
 
-    // The non-expired one should still exist
-    const remaining = await db.magicLinkToken.count();
+    // The non-expired one should still exist. Scoped for the same reason the
+    // `afterEach` above is: a bare `.count()` counts sibling suites' rows too,
+    // and this database persists between local runs.
+    const remaining = await db.magicLinkToken.count({
+      where: { email: { endsWith: '@example.com' } },
+    });
     expect(remaining).toBe(1);
   });
 

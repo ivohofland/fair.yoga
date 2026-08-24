@@ -16,7 +16,7 @@ import { enforcedTerminalStatuses } from '../../tests/migration-sql';
  *
  * That is configuration, not a guard. `tests/setup/unit-db.ts` provisions and
  * migrates the test database; it does not force the switch. With
- * `DATABASE_URL_TEST` unset it logs "CI mode" and returns, and
+ * `DATABASE_URL_TEST` unset it returns early without provisioning, and
  * `vitest.config.ts` falls back to `DATABASE_URL` — dev. Worth stating because
  * `waitlist-retention.test.ts` shares this paragraph and is the case where it
  * matters: that suite runs a database-wide `deleteMany`, so it carries a

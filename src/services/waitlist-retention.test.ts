@@ -18,17 +18,17 @@ import {
  *
  * BUT THAT PROJECT IS NOT A GUARANTEE. `tests/setup/unit-db.ts`
  * PROVISIONS `DATABASE_URL_TEST`; it does not force this project onto it. When
- * that variable is absent the setup logs "CI mode" and returns, and
+ * that variable is absent the setup returns early without provisioning, and
  * `vitest.config.ts` resolves this project's `DATABASE_URL` to
  * `testUrl ?? devUrl` — the DEV database. Isolation here is a value in `.env`,
  * which is configuration and not a guard.
  *
- * THIS IS THE DESTRUCTIVE ONE of the two files that share that wording. Like
+ * THIS IS THE DESTRUCTIVE ONE of the files sharing that wording. Like
  * its `SWEEP_TESTS` siblings, this one calls `reapClosedWaitlistEntries`, whose
  * `groupBy` and `deleteMany` are deliberately NOT scoped to the fixtures below
  * — that is the function's whole job. Pointed at dev it would permanently
  * delete every unfulfilled entry on every terminal class past the cutoff.
- * `unit-db.ts`'s own docblock records that database-wide sweep tests have
+ * `docs/test-database.md` §1 records that database-wide sweep tests have
  * already caused one real incident: clock-injected sweeps completed the seed's
  * future classes AND MAILED THEIR PAYMENT REQUESTS — a sent email is no more
  * recoverable than a deleted row, so the comparison is between two bad

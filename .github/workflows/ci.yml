@@ -154,10 +154,9 @@ jobs:
       - name: Unit tests
         run: npx vitest run --project unit
 
-      # A separate invocation, kept as defence in depth: these two share a
-      # database. What holds them apart is `unit-sweeps`'s
-      # `fileParallelism: false` (vitest.config.ts) — splitting the steps
-      # costs ~2s and survives someone flipping that flag.
+      # A separate invocation, as defence in depth. What actually holds these
+      # apart is `unit-sweeps`'s `fileParallelism: false`, and the conditions
+      # that flag depends on: docs/test-database.md §2.
       - name: Whole-database sweep tests
         run: npx vitest run --project unit-sweeps
 
@@ -272,7 +271,8 @@ jobs:
 
   # This job exists so the branch ruleset's required status check named
   # `test` keeps reporting after the split: ruleset 19724469 requires the
-  # contexts `checks` and `test`, and a required check that never runs
+  # contexts `checks` and `test` (re-derive:
+  # `gh api repos/:owner/:repo/rulesets/19724469`), and a check that never runs
   # leaves the pull request pending with no way to merge (same argument as
   # this file's header).
   #
@@ -283,7 +283,9 @@ jobs:
   # "Required status checks must have a successful, skipped, or neutral
   # status before collaborators can make changes to a protected branch."
   # Without `always()` this context therefore goes green exactly when a
-  # test job goes red.
+  # test job goes red — demonstrated on PR #324, where a red `test-components`
+  # left this context SKIPPED and the pull request MERGEABLE.
+  # (docs.github.com/en/pull-requests/reference/status-checks, read 2026-08-24.)
   #
   # The explicit verdict, because `always()` on its own runs the job and
   # passes it whatever the dependencies did. The step re-derives the answer

@@ -10,12 +10,11 @@
  *
  * IT DOES NOT GUARANTEE THEY RUN THERE. The switch is made by
  * `vitest.config.ts`, which resolves both projects' `DATABASE_URL` to
- * `DATABASE_URL_TEST ?? devUrl`.
- * When `DATABASE_URL_TEST` is unset this function returns early and that
- * fallback is the DEV database — the isolation is a value in `.env`, i.e.
- * configuration, not a guard. Two suites correct this in their own headers
- * (`waitlist-retention.test.ts`, `class-terminal-status.test.ts`); stated here
- * too, because this is the source the next such file will copy from.
+ * `DATABASE_URL_TEST ?? devUrl`. When `DATABASE_URL_TEST` is unset this
+ * function returns early and that fallback is the DEV database — the
+ * isolation is a value in `.env`, i.e. configuration, not a guard. Suites
+ * taking an unscoped destructive write correct this in their own headers;
+ * stated here too, because this is the source they copy from.
  *
  * A suite that takes an UNSCOPED destructive write must therefore carry its own
  * runtime guard on the connected database's name, as

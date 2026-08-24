@@ -20,9 +20,6 @@ function prismaError(code: string, meta?: Record<string, unknown>) {
  * observed for an actual trigger fire, not a hand-written approximation —
  * `PrismaClientUnknownRequestError` carries no `code`/`meta`, so the
  * SQLSTATE and the trigger's own wording only exist inside this string.
- * (That file lived under `tests/integration/` when this comment was first
- * written; #174 moved it into the `unit` project, which is the one forced
- * onto the isolated test database.)
  */
 const terminalStatusErrorFixture = new Prisma.PrismaClientUnknownRequestError(
   `Invalid \`prisma.class.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "Class 824c3362-c21f-466e-a741-7301d469730f is cancelled, which is terminal; cannot change status to open", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,

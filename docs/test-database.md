@@ -1,7 +1,7 @@
 # Spec: dedicated test database for vitest
 
 Status: **implemented** · Owner: dev · Scope: local development; the CI
-half followed in #321 (see §3.1)
+half followed in #321 (see §2)
 
 ## 1. Problem
 
@@ -58,18 +58,38 @@ The interference runs both ways:
   failure at a time.
 
   `fileParallelism: false` on `unit-sweeps` is what isolates it, and it
-  isolates more than the option's name suggests. Vitest puts a project
-  resolving to `maxWorkers: 1` into a `sequential` group that runs after the
-  parallel projects, never beside them — measured on 4.1.10 by timing file
-  start/end across a parallel project and a serial one in a single
-  invocation: parallel files overlapped each other on every run, and no
-  serial file ever overlapped a parallel one. `unit` and `unit-sweeps` in one
-  invocation ran green 5/5 (68 files, 1068 tests).
+  isolates more than the option's name suggests: vitest routes such a project
+  into a `sequential` group appended after the parallel groups, so it never
+  runs beside them. Measured on vitest **4.1.10** by timing file start/end
+  across a parallel and a serial project in one invocation — parallel files
+  overlapped each other every run, no serial file ever overlapped a parallel
+  one, in either declaration order, against a control of two parallel
+  projects that overlapped freely. `unit` and `unit-sweeps` in one invocation
+  then ran green 5/5 (68 files, 1068 tests).
 
-  So the separate `vitest run` invocation in `package.json` and the two
-  separate steps in `ci.yml` are defence in depth, not the mechanism. The
-  guard to protect is the flag. Re-derive the above with a throwaway
-  two-project config before trusting either statement again.
+  **Three conditions gate that routing and the option's name covers only
+  one.** Re-derive them:
+
+  ```
+  grep -n "sequential.specs.push" node_modules/vitest/dist/chunks/cli-api.*.js
+  ```
+
+  which on 4.1.10 reads `isolate === true && order === 0 && maxWorkers === 1`.
+  `fileParallelism: false` is what sets `maxWorkers` to 1. The other two were
+  mutation-tested against this repo's own config, and neither is a silent
+  hazard: `isolate: false` makes vitest refuse the run outright ("Projects
+  ... have different 'maxWorkers' but same 'sequence.groupOrder'", zero tests
+  executed), and `sequence: { groupOrder: 1 }` stays green — the tier simply
+  gets its own group, still awaited after the parallel one. So the flag is
+  the only one of the three that can quietly stop protecting this tier. All
+  of this is vitest-internal with no compatibility promise; pin the version
+  when re-deriving.
+
+  Mutation-tested: flipping `unit-sweeps` to `fileParallelism: true` reddens
+  the tier (1 failed file, 2 runs of 2) with both invocation boundaries still
+  in place — so the flag is load-bearing and can fail, and the boundaries are
+  not what separates the tiers. The separate `vitest run` invocation in
+  `package.json` and the two separate steps in `ci.yml` are defence in depth.
 
 ## 3. Design
 
@@ -96,16 +116,19 @@ clock — are the `unit-sweeps` roster.
 - `.env` gains `DATABASE_URL_TEST` (same Postgres server, database
   `ethical_yoga_test`).
 - `vitest.config.ts` loads `.env` and sets
-  `env.DATABASE_URL = DATABASE_URL_TEST ?? DATABASE_URL` **for the unit
-  project only**. Fallback = current behavior, which is what CI wants
-  (one throwaway database for everything) — CI needs no edits.
+  `env.DATABASE_URL = DATABASE_URL_TEST ?? DATABASE_URL` on **both
+  database-backed unit projects** (`unit` and `unit-sweeps`, each declaring
+  it independently). CI sets `DATABASE_URL_TEST` explicitly — see §2 and
+  `.github/workflows/ci.yml` — so the runtime guard in
+  `waitlist-retention.test.ts` does not skip that suite on the merge gate.
 - Safety assertion in global setup: if `DATABASE_URL_TEST` is set, it
   must differ from `DATABASE_URL`; refuse to run otherwise (a typo must
   not silently reintroduce the shared-database hazard).
 
 ### 3.3 Provisioning + migrations (global setup)
 
-A `tests/setup/unit-db.ts` vitest `globalSetup` for the unit project:
+A `tests/setup/unit-db.ts` vitest `globalSetup` for the `unit` and
+`unit-sweeps` projects:
 
 1. Connect to the Postgres server (the `postgres` maintenance database)
    and `CREATE DATABASE ethical_yoga_test` if it doesn't exist —
