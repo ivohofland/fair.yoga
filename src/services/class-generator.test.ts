@@ -93,23 +93,8 @@ describe('generateClassInstances (DB)', () => {
   let roomId: string;
   let teacherRoomId: string;
   let templateId: string;
-  /** IDs of other active templates deactivated during setup, restored in teardown. */
-  let deactivatedTemplateIds: string[] = [];
 
   beforeAll(async () => {
-    // Deactivate any pre-existing active templates so they don't interfere
-    const existingActive = await prisma.classTemplate.findMany({
-      where: { isActive: true },
-      select: { id: true },
-    });
-    deactivatedTemplateIds = existingActive.map((t) => t.id);
-    if (deactivatedTemplateIds.length > 0) {
-      await prisma.classTemplate.updateMany({
-        where: { id: { in: deactivatedTemplateIds } },
-        data: { isActive: false },
-      });
-    }
-
     const teacher = await prisma.teacher.create({
       data: {
         firstName: 'Generator',
@@ -176,21 +161,13 @@ describe('generateClassInstances (DB)', () => {
     await prisma.room.delete({ where: { id: roomId } });
     await prisma.teacher.delete({ where: { id: teacherId } });
 
-    // Restore previously active templates
-    if (deactivatedTemplateIds.length > 0) {
-      await prisma.classTemplate.updateMany({
-        where: { id: { in: deactivatedTemplateIds } },
-        data: { isActive: true },
-      });
-    }
-
     await prisma.$disconnect();
   });
 
   it('generates 4 class instances from a template', async () => {
     // Use Monday 2026-04-06 as the starting date
     const from = new Date('2026-04-06T00:00:00.000Z');
-    const count = await generateClassInstances(prisma, from);
+    const count = await generateClassInstances(prisma, from, teacherId);
 
     expect(count).toBe(4);
 
@@ -222,7 +199,7 @@ describe('generateClassInstances (DB)', () => {
 
   it('is idempotent — running again creates no duplicates', async () => {
     const from = new Date('2026-04-06T00:00:00.000Z');
-    const count = await generateClassInstances(prisma, from);
+    const count = await generateClassInstances(prisma, from, teacherId);
 
     expect(count).toBe(0);
 
@@ -241,7 +218,7 @@ describe('generateClassInstances (DB)', () => {
     await prisma.class.deleteMany({ where: { templateId } });
 
     const from = new Date('2026-04-06T00:00:00.000Z');
-    const count = await generateClassInstances(prisma, from);
+    const count = await generateClassInstances(prisma, from, teacherId);
 
     expect(count).toBe(0);
 
@@ -268,7 +245,7 @@ describe('generateClassInstances (DB)', () => {
     await prisma.class.deleteMany({ where: { templateId } });
 
     const from = new Date('2026-04-06T00:00:00.000Z');
-    const count = await generateClassInstances(prisma, from);
+    const count = await generateClassInstances(prisma, from, teacherId);
 
     expect(count).toBe(0);
     expect(await prisma.class.count({ where: { templateId } })).toBe(0);
@@ -286,7 +263,7 @@ describe('generateClassInstances (DB)', () => {
     // day; the window slides to the next four Tuesdays instead.
     await prisma.class.deleteMany({ where: { templateId } });
     const from = new Date('2026-04-07T18:00:00.000Z');
-    const count = await generateClassInstances(prisma, from);
+    const count = await generateClassInstances(prisma, from, teacherId);
 
     expect(count).toBe(4);
     const classes = await prisma.class.findMany({
@@ -305,7 +282,7 @@ describe('generateClassInstances (DB)', () => {
     // Tuesday 2026-04-07 at 05:00 UTC — before the 09:00 Amsterdam start.
     await prisma.class.deleteMany({ where: { templateId } });
     const from = new Date('2026-04-07T05:00:00.000Z');
-    const count = await generateClassInstances(prisma, from);
+    const count = await generateClassInstances(prisma, from, teacherId);
 
     expect(count).toBe(4);
     const classes = await prisma.class.findMany({
@@ -862,7 +839,7 @@ describe('generateClassInstances (DB)', () => {
       // 2. Sweep. Its findMany reads the pre-archive row and includes the
       //    template; its claim then blocks on the lock.
       let sweepSettled = false;
-      const sweeping = generateClassInstances(prisma).then((n) => {
+      const sweeping = generateClassInstances(prisma, undefined, teacherId).then((n) => {
         sweepSettled = true;
         return n;
       });
@@ -933,7 +910,7 @@ describe('generateClassInstances (DB)', () => {
 
       // 2. Sweep. Its findMany reads the pre-edit row; its claim then blocks.
       let sweepSettled = false;
-      const sweeping = generateClassInstances(prisma).then((n) => {
+      const sweeping = generateClassInstances(prisma, undefined, teacherId).then((n) => {
         sweepSettled = true;
         return n;
       });
