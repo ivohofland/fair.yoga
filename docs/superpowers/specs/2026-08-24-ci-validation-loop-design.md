@@ -140,7 +140,9 @@ this collision, and the sentence above should be read as narrower than it
 sounds — "did not fail in any probe run" stays true, but the collision
 reproduces **10 out of 10** runs once the pool is narrowed to only
 `magic-link.test.ts` and `auth-cleanup.test.ts`. The original probe missed
-it because these two files sat among 65 and their runtime windows rarely
+it because these two files sat among 65 — the unit tier's 68 files minus
+the 3 already quarantined by the spec-phase probe that split it into a
+parallel project and a serial one — and their runtime windows rarely
 overlapped; narrowing the pool turned a rare collision into a deterministic
 one. Lesson: a smaller, targeted pool can be a *more* sensitive collision
 detector than a large one, not a less sensitive one.
@@ -171,9 +173,11 @@ generalizes to the rest of the family: `autoTransitionToInProgress`,
 `autoCancelClasses` and `autoCompleteClasses` are each `(db, now?)` — no
 scope parameter exists to pass. It runs 5.95s alone
 (`npx vitest run --project unit src/services/class-transitions.test.ts`).
-Against a ~6s saving per file it was not worth putting an optional scope
+Against that ~6s saving it was not worth putting an optional scope
 parameter through the lock and pre-filter logic that #290 and #296 already
-fought over, for this file or for the ones found afterward. The roster is
+fought over. That trade-off was measured only for this one file; it was not
+separately re-measured for the sweep families found afterward, which were
+quarantined directly rather than individually timed. The roster is
 `SWEEP_TESTS` in `vitest.config.ts` — read it rather than trusting a count
 in this document.
 
@@ -303,6 +307,13 @@ green in isolation. Nothing here revisits it.
   "scope everything" approach): buys ~6s over quarantining one 5.95s file,
   and spends it on production signatures whose lock ordering is governed by
   `docs/lock-order.md`. Wrong ratio.
+
+  **Correction, post-execution (#321):** "quarantining one 5.95s file"
+  restates the premise D2c corrects — the quarantine grew well past this one
+  file. The ~6s figure and the file it was measured against
+  (`class-transitions.test.ts`) are unchanged; what's stale is the "one
+  file" framing of what ended up in `unit-sweeps` beside it. The roster is
+  `SWEEP_TESTS` in `vitest.config.ts`, not this bullet.
 - **A `unit-serial` project with `fileParallelism: false`**: measured
   non-isolating, twice green and twice red across four runs. See D3.
 - **`paths-ignore` / docs-only skips**: already rejected in the workflow
