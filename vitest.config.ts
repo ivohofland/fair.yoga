@@ -28,7 +28,10 @@ export default defineConfig(({ mode }) => {
     test: {
       globals: true,
       environment: 'node',
-      fileParallelism: false,
+      // `fileParallelism` is per-project below, NOT here. Its reason
+      // (docs/test-database.md §2) is shared *database* state, which
+      // `components` does not have — it inherited 44s/run of serialization
+      // from this line for a constraint that was never about it (#321).
       // Pinned, not inherited from whatever machine happens to run the suite.
       //
       // The date formatters in `src/lib/format.ts` read their argument with
@@ -68,6 +71,32 @@ export default defineConfig(({ mode }) => {
           test: {
             name: 'unit',
             include: ['src/**/*.test.ts'],
+            // class-transitions is the one file whose service calls have no
+            // teacher scope to pass — see `unit-sweeps` below.
+            exclude: ['**/node_modules/**', 'src/services/class-transitions.test.ts'],
+            fileParallelism: true,
+            env: { DATABASE_URL: testUrl },
+            globalSetup: ['./tests/setup/unit-db.ts'],
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: 'unit-sweeps',
+            // `autoTransitionToInProgress`, `autoCancelClasses` and
+            // `autoCompleteClasses` are each `(db, now?)` — whole-database by
+            // construction, so this file cannot share a database with a
+            // concurrent one.
+            //
+            // It MUST run in a separate `vitest run` invocation from `unit`,
+            // not merely a separate project: per-project
+            // `fileParallelism: false` serializes files *within* a project and
+            // does NOT stop sibling projects running alongside. Measured
+            // 2026-08-24 — that arrangement was green twice and red twice in
+            // four runs (#321, spec D3). `package.json`'s `test` script is
+            // what keeps the two invocations apart.
+            include: ['src/services/class-transitions.test.ts'],
+            fileParallelism: false,
             env: { DATABASE_URL: testUrl },
             globalSetup: ['./tests/setup/unit-db.ts'],
           },
@@ -77,6 +106,10 @@ export default defineConfig(({ mode }) => {
           test: {
             name: 'integration',
             include: ['tests/integration/**/*.test.ts'],
+            // Serial, and load-bearing: this tier drives the one app on :3000
+            // over HTTP. #290 measured four parallel runs producing four
+            // different victims. Do not flip this to match its siblings.
+            fileParallelism: false,
           },
         },
         {
@@ -89,6 +122,7 @@ export default defineConfig(({ mode }) => {
             // collected by both.
             environment: 'jsdom',
             include: ['src/components/**/*.test.tsx', 'src/app/**/*.test.tsx'],
+            fileParallelism: true,
             setupFiles: ['./tests/setup/components.ts'],
           },
         },
