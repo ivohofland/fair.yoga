@@ -17,7 +17,11 @@ afterAll(async () => {
 });
 
 afterEach(async () => {
-  await db.magicLinkToken.deleteMany();
+  // Scoped, not a truncate: `auth-cleanup.test.ts` is the other unit suite
+  // holding `magicLinkToken` rows, and it asserts one SURVIVES its sweep.
+  // Every address this file mints is `*@example.com`; that file's are
+  // `cleanup-${uniqueSuffix}@test.local`, so the two never overlap.
+  await db.magicLinkToken.deleteMany({ where: { email: { endsWith: '@example.com' } } });
 });
 
 describe('generateMagicLinkToken', () => {
