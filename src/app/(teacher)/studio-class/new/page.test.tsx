@@ -151,8 +151,39 @@ describe('NewStudioClassPage', () => {
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: '   ' } });
     fireEvent.click(screen.getByRole('button', { name: /log class/i }));
 
+    // Only the request count is pinned on this second submit. `handleSubmit`
+    // clears `error` after its guards, never before, so the banner raised by
+    // the first submit is still mounted here and a copy assertion would pass
+    // on stale state — deleting this click leaves it green. The whitespace
+    // boundary is a request-count fact; the copy is pinned above.
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(screen.getByText('Class type is required.')).toBeInTheDocument();
+  });
+
+  /**
+   * #316. The banner validates sequentially, one message at a time, so a
+   * teacher walking an empty form reads every message in the same element
+   * seconds apart — which makes the three a single copy set rather than three
+   * independent strings. These pin the two the classType round left bare.
+   *
+   * Each submit fills only the fields ahead of the one under test: the guards
+   * run classType then location then date, and the first to fire wins. The
+   * second copy assertion is falsifiable here where it is not above, because
+   * the two submits raise different strings — stale state cannot satisfy it.
+   */
+  it('refuses a blank location, then a blank date, with punctuated copy', () => {
+    stubFetch();
+    render(<NewStudioClassPage />);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText('Location is required.')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+    fireEvent.click(screen.getByRole('button', { name: /log class/i }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText('Date is required.')).toBeInTheDocument();
   });
 
   /**

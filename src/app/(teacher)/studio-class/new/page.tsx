@@ -94,11 +94,11 @@ export default function NewStudioClassPage() {
       return;
     }
     if (!location.trim()) {
-      setError('Location is required');
+      setError('Location is required.');
       return;
     }
     if (!date) {
-      setError('Date is required');
+      setError('Date is required.');
       return;
     }
 
