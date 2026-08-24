@@ -1,80 +1,104 @@
-# #309 — one classType refusal string across the studio class family: `Class type is required.`
+# #309 — one refusal voice across the studio class family: punctuated sentences
 
 **Date:** 2026-08-24 · **Issue:** #309 · **Bundle:** 7 (the studio class family) ·
 **Prior art:** `2026-08-23-studio-class-type-validation-design.md` (#282, which added two of
-the three banner sites); `studio-class-edit-form.tsx`'s `validate()` docblock (#197/#276,
+the banner sites); `studio-class-edit-form.tsx`'s `validate()` docblock (#197/#276,
 the per-field prose standard)
 
-## 1. What was measured (and where the issue needed correction)
+**Revised 2026-08-24 after PR #316 review.** The first draft of this spec chose a
+different option on a premise the review falsified; §1.3 and §2 record what was
+measured the second time. The superseded reasoning is in the PR #316 thread.
 
-Census taken 2026-08-24 against `0a33e71`, by
-`rg -n "Class type is required|Enter a class type" src/ tests/` plus a mechanism read of
-each hit's file. Every occurrence of the copy lives in these nine lines; no e2e or
-integration file references any of it.
+## 1. What was measured
 
-### The four in-scope sites
+Census re-taken 2026-08-24 against `0a33e71`, by the §6 commands plus a mechanism read
+of each hit's file. No e2e or integration file references any of this copy — they assert
+the field *label* `'Class type'`, which every candidate string satisfies.
 
-| Site | Copy today | Mechanism | Pinned by |
+### The studio family, and the class-family form that is not in it
+
+| Site | Field refusals | Mechanism | Family |
 |---|---|---|---|
-| `src/components/settings/template-form.tsx:248` | `Class type is required` | banner, sequential first-missing | fetch-count only (`template-form.test.tsx:220`) — **no copy pin** |
-| `src/app/(teacher)/studio-class/new/page.tsx:93` | `Class type is required` | banner, sequential first-missing | copy at `page.test.tsx:149,155` (empty + whitespace) |
-| `src/components/settings/studio-template-form.tsx:102` | `Class type is required` | banner, sequential first-missing | copy at `studio-template-form.test.tsx:147,153` (empty + whitespace) |
-| `src/components/studio-class/studio-class-edit-form.tsx:104` | `Class type is required.` | per-field errors map, all-at-once | copy at `studio-class-edit-form.test.tsx:173` (whitespace only) |
+| `src/app/(teacher)/studio-class/new/page.tsx:93,97,101` | 3 | banner, sequential first-missing | studio |
+| `src/components/settings/studio-template-form.tsx:102,106` | 2 | banner, sequential first-missing | studio |
+| `src/components/studio-class/studio-class-edit-form.tsx:104-118` | 6 | per-field errors map, all-at-once | studio |
+| `src/components/settings/template-form.tsx:244-272` | 5 | banner, sequential first-missing | class |
+
+Before this branch every one of the four was internally uniform: the three studio banner
+forms and `template-form.tsx` entirely bare, the edit form entirely punctuated. The only
+divergence was *between* the studio banner forms and the studio edit form.
 
 ### Corrections the census adds to the issue
 
 1. **A fifth writing surface exists outside the issue's boundary:**
    `(teacher)/class/new/page.tsx:245` writes `'Enter a class type'` per-field,
-   unpunctuated, untested. It belongs to the regular class family, never co-renders with
-   any studio surface, and stays out of scope — recorded because "unify the family"
-   decisions keep getting re-litigated against surfaces nobody counted.
+   unpunctuated, untested. Class family; stays out of scope.
 2. **The issue's prose says "three forms"; its table lists four.** The three *studio*
-   surfaces are new-page, studio-template-form, edit form. `template-form.tsx` is the
-   recurring-template twin from the class family — and it cannot be left out regardless:
-   the two settings template forms sit in the same directory serving parallel screens, so
-   whichever string wins must apply to both twins or the divergence this issue exists to
-   remove survives between them.
-3. **The visibility asymmetry, which decides the punctuation direction.** The banner
-   forms validate sequentially — `setError(x); return;` — so exactly one validation
-   message is ever on screen; mixed punctuation *inside* those forms is code-level only,
-   invisible to users. The edit form collects all field errors up front and renders them
-   simultaneously — it is the only place a teacher can see two messages side by side, and
-   today all six of its messages are punctuated sentences.
+   surfaces are new-page, studio-template-form, edit form. The fourth,
+   `template-form.tsx`, is the recurring-template twin from the **class** family. The
+   first draft judged it un-leavable because the two settings template forms share a
+   directory; that is a code-reading adjacency, not a user-visible one — the two render
+   on different screens and never co-appear. It is out of scope, and left untouched.
+3. **There is no single "the simultaneous surface".** The first draft chose its direction
+   on the claim that the edit form is the only place a teacher sees two messages side by
+   side. Three forms render an all-at-once errors map (§6 command 3), and the other two
+   are entirely bare:
 
-## 2. Decision — option B: the period wins, everywhere
+   | All-at-once surface | Field messages | Punctuated |
+   |---|---|---|
+   | `studio-class/studio-class-edit-form.tsx` | 6 | all |
+   | `students/create-student-form.tsx:57-61` | 3 | none |
+   | `(teacher)/class/new/page.tsx:244-248` | 10 (5 per step) | none |
 
-All four sites read **`Class type is required.`** Chosen at the direction gate over:
+   So the app-wide simultaneous-render vote runs **against** punctuation, not for it. The
+   direction below is therefore argued per family, which is the only scope #309 asks about.
+4. **Sequential is not invisible.** The first draft held that mixed punctuation inside a
+   banner form is "code-level only" because one message shows at a time. A teacher
+   submitting an empty `/studio-class/new` reads all three refusals in the same element,
+   seconds apart. Intra-form consistency is user-visible on this axis; only
+   *simultaneity* is not.
 
-- **A, dropping the period in the edit form** (2 line-edits): cheapest, majority style
-  app-wide — but it puts an unpunctuated message beside five punctuated siblings in the
-  one form where teachers can actually see them together. The defect class the issue
-  complains about would be relocated into the only user-visible instance of it.
-- **C, re-punctuating every validation string in all five forms** (~15 strings): kills
-  the wizard's bare fragments too, but balloons a one-character decision into a
-  two-family sweep with no user-visible gain over B.
-- **D, let it go:** the words already match and the mechanisms differ deliberately — but
-  the issue was filed deliberately too, and B's cost is six extra lines.
+## 2. Decision — punctuate the studio family entire, leave the class family alone
 
-B's residual inconsistency — each banner form carrying one punctuated string among bare
-siblings (`Location is required`, …) — is never rendered next to those siblings, and it
-points in the direction the app's newer product prose already drifts (#197-era sentence
-copy). Mechanism unification stays rejected, per the issue's own note and both prior
-designs.
+Every field refusal in the three studio forms is a punctuated sentence; every field
+refusal in `template-form.tsx` stays bare. Both families end internally uniform, and the
+studio family additionally ends uniform across its three forms — the divergence #309 was
+filed about.
+
+Chosen over:
+
+- **Punctuate only the `classType` line in each form** (the first draft's option B): buys
+  cross-form agreement on one string by making three previously-uniform forms mixed.
+  Given correction 4 that cost is user-visible, and it is the same defect class the issue
+  complains about, relocated.
+- **Drop the period from the edit form** (2 line-edits): cheapest, and matches the
+  app-wide majority — but it moves the studio family away from the one form whose copy is
+  pinned and whose voice #197/#276 set deliberately, and it would put a bare fragment
+  beside five punctuated siblings inside a genuinely simultaneous render.
+- **Re-punctuate every validation string in all five forms:** correct app-wide, but it
+  rewrites the class-creation wizard and the CRM form on the back of a one-character
+  issue. Recorded as a house-copy question, not answered here (§5).
+- **Let it go:** the words already match — but the issue was filed deliberately, and the
+  cost here is five source lines.
 
 ## 3. Changes
 
-Copy-only. One string literal in three sources, four test assertions:
+Copy-only, studio family only. Five source literals, two of which already read as
+sentences and are untouched:
 
-1. `src/app/(teacher)/studio-class/new/page.tsx:93` → `'Class type is required.'`
-2. `src/components/settings/studio-template-form.tsx:102` → `'Class type is required.'`
-3. `src/components/settings/template-form.tsx:248` → `'Class type is required.'`
-4. `src/app/(teacher)/studio-class/new/page.test.tsx:149,155` → assert the period
-5. `src/components/settings/studio-template-form.test.tsx:147,153` → assert the period
+1. `src/app/(teacher)/studio-class/new/page.tsx:93,97,101` → `'Class type is required.'`,
+   `'Location is required.'`, `'Date is required.'`
+2. `src/components/settings/studio-template-form.tsx:102,106` →
+   `'Class type is required.'`, `'Location is required.'`
+3. `src/components/studio-class/studio-class-edit-form.tsx` — untouched, already the
+   reference voice.
+4. `src/components/settings/template-form.tsx` — untouched. Byte-identical to `main`.
 
-`studio-class-edit-form.tsx` and its test are untouched. No schema, service, API route,
-or migration change; nothing server-side reads these strings. The surrounding comments
-(#282 blocks in both test files) describe mechanism and rationale without quoting the
-literal, so they stand as written.
+Test changes: the four `classType` assertions take the period; two new tests pin the
+`location` and `date` refusals that had no pin in either form; two non-falsifiable
+assertions are removed (§4.3). No schema, service, API route, or migration change;
+nothing server-side reads these strings. The #282 docblocks in both test files describe
+mechanism and rationale without quoting the literal, so they stand as written.
 
 ## 4. Coverage
 
@@ -82,39 +106,58 @@ No new guard is introduced — this branch renames pinned copy, and the guards t
 were mutation-proven in their own rounds (#282: guard-deleted and return-dropped mutants;
 #276/#282: trim-dropped mutant). What must hold after the edit:
 
-1. The six updated/untouched copy pins go green together.
-2. **One bite-proof for the branch's own claim** (that the pins track the new string):
-   in `studio-template-form.tsx`, revert `:102` to the old literal, run that file alone.
-   Expected red: both assertions at `:147`/`:153` fail on the missing period while
-   `fetchMock` stays uncalled — i.e. the red names copy drift, not a broken guard.
-   Restore, re-run green. (The other two sources share the assertion shape; one
-   demonstration covers the class.)
-3. Component tests hit no dev server, so warm-route discipline does not apply to them;
+1. Every copy pin returned by §6 command 2 goes green together.
+2. **Bite-proof, run per new string.** The `location` and `date` refusals were previously
+   unpinned, so their tests were written first and observed red against the bare literals
+   (`Unable to find … "Location is required."` / `"Date is required."`) before the sources
+   were punctuated. The `classType` pins were re-proven the same way in
+   `studio-template-form.tsx`. Every red named copy drift with `fetchMock` still uncalled,
+   i.e. the guard was intact and only the string had moved.
+3. **Two assertions were removed because they could not fail.** The second `classType`
+   copy assertion in each banner test sat after a second submit, and `handleSubmit` clears
+   `error` only *after* its guards pass — so the banner from the first submit was still
+   mounted and satisfied it on stale state. Deleting the intervening click left both files
+   green. The request-count assertion on that second submit is the real pin for the
+   whitespace boundary and stays. Making the banner clear on edit (as the edit form does,
+   `studio-class-edit-form.test.tsx:177`) would make a copy assertion there meaningful;
+   that is a behaviour change, and is filed rather than done here.
+4. Component tests hit no dev server, so warm-route discipline does not apply to them;
    `npm run verify` afterwards runs the integration project and needs the app on :3000.
 
 ## 5. What this does not do
 
-- **`(teacher)/class/new/page.tsx`'s `'Enter a class type'` is unaffected** — different
-  family, imperative voice, never co-rendered; converging it is a house-copy question
-  #309 does not ask.
+- **`(teacher)/class/new/page.tsx` and `students/create-student-form.tsx` are unaffected**
+  — class family and CRM respectively. Whether the app should punctuate validation copy
+  everywhere is a house-copy question #309 does not ask; §1 correction 3 is the census a
+  future round would start from.
+- **`template-form.tsx` is unaffected** — class family, and its five refusals stay
+  uniformly bare.
 - **Mechanism unification stays off the table** — sequential banners and the all-at-once
   map are each deliberate (#282 §2, #197/#276).
 - **Server-side Zod copy is unaffected** — `min(1)` + `parseBody` developer strings were
   settled by #282 for non-UI clients.
-- **Three pre-existing pin gaps are recorded, not filled here**: `template-form`'s banner
-  has no copy pin (fetch-count only), the wizard's message has none at all, and the edit
-  form pins whitespace-only but not empty `''`. None were made worse by this branch;
-  filing or attaching them happens at fold/file time, outside the diff.
+- **Pin gaps recorded, not filled here.** `template-form.tsx:248`'s banner is not merely
+  copy-unpinned: deleting the whole guard leaves that file green, so nothing observes it.
+  The wizard's ten `validateStep` messages have no pin at all. Both are outside this
+  diff — this branch touches neither file — and are filed at fold time.
+- **The edit form's empty-`''` case stays unpinned, deliberately.** `''.trim()` and
+  `'   '.trim()` take the identical branch, so an empty-string test catches no mutant the
+  existing whitespace one misses, while the whitespace one catches the trim-dropped mutant
+  that empty-string cannot. Closing as WONTFIX beats filing it.
 
 ## 6. Re-derivables
 
-- Full census (should return exactly the nine lines of §1):
-  `rg -n "Class type is required|Enter a class type" src/`
-- Post-change tether — zero unpunctuated occurrences left in the family:
-  `rg -n "Class type is required[^.]" src/` → no hits.
-  (This supersedes #282's spec §6 count of `"is required'"` lines, which measured that
-  round's merge base and drops to zero under this branch.)
-- Boundary-pin structure unchanged: empty + whitespace pairs at
-  `(teacher)/studio-class/new/page.test.tsx:149,155` and
-  `studio-template-form.test.tsx:147,153`; whitespace-only at
-  `studio-class-edit-form.test.tsx:173`.
+1. Family tether — no bare field refusal left in the three studio forms:
+   `rg -n "setError\('[A-Z][^']*[^.]'\)|errors\.[a-zA-Z]+ = '[A-Z][^']*[^.]'" src/app/\(teacher\)/studio-class/new/page.tsx src/components/settings/studio-template-form.tsx src/components/studio-class/studio-class-edit-form.tsx`
+   → no hits.
+2. Copy pins for the studio `classType` string:
+   `rg -n 'Class type is required' src/` → 7 lines (3 sources, 4 assertions), every one
+   ending in a period. The narrower pattern is canonical; adding `|Enter a class type`
+   returns 8 by pulling in the out-of-scope wizard (§5).
+3. All-at-once surfaces, the census behind §1 correction 3:
+   `rg -ln "error=\{(errors|fieldErrors|errs)\." src/` → 3 files.
+4. `template-form.tsx` unchanged: `git diff main -- src/components/settings/template-form.tsx`
+   → empty.
+5. #282's spec §6 census of bare client refusals moves 18 → 13 under this branch, not to
+   zero: `git grep -c "is required'" main -- src/app src/components | grep -v test` versus
+   the same grep on this branch.
