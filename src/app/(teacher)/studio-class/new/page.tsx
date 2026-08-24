@@ -90,7 +90,7 @@ export default function NewStudioClassPage() {
     // `fireEvent.submit` is what keeps it a guard rather than a decoration.
     if (createdId) return;
     if (!classType.trim()) {
-      setError('Class type is required');
+      setError('Class type is required.');
       return;
     }
     if (!location.trim()) {
