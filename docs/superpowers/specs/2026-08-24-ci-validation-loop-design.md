@@ -202,6 +202,30 @@ were executing concurrently. Vitest's per-project `fileParallelism: false`
 serializes files *within* a project; it does not stop other projects
 running alongside.
 
+**Correction, post-review (#321):** the mechanism above is false, and the
+split does not rest on it. Probed on the installed Vitest (4.1.10): a
+project resolving to `maxWorkers: 1` — which `fileParallelism: false`
+produces — is placed in a `sequential` group that runs *after* the parallel
+projects, never beside them. Timing file start/end across one parallel and
+one serial project in a single invocation, parallel files overlapped each
+other on every run and no serial file ever overlapped a parallel one, in
+either declaration order; the control — two parallel projects — overlapped
+freely, so the probe can see overlap when there is some. `unit` and
+`unit-sweeps` then ran green **5/5** in a single invocation (68 files, 1068
+tests), the arrangement this section predicts is red about half the time.
+
+The red runs recorded above therefore had a different, still unidentified
+cause. What turned the suite green was completing the quarantine roster and
+scoping the fixtures, not the process boundary. The `&&` in `package.json`
+and the two steps in `ci.yml` stay as defence in depth; the guard that must
+not be flipped is `unit-sweeps`'s `fileParallelism: false`.
+
+This also falsifies the Pass 2 paragraph below: `unit-sweeps` and
+`integration` are both serial, so they do **not** run concurrently. Keeping
+them on different databases stays a correct invariant, and the warning about
+removing the `DATABASE_URL` override stays worth heeding — but not for the
+reason given there.
+
 Adopting that mechanism would have shipped a merge gate that is green
 about two times in four. Therefore: **the serial tier runs as its own
 `vitest run` invocation**, sequenced with `&&`, which isolates by process

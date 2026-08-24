@@ -1,6 +1,7 @@
 # Spec: dedicated test database for vitest
 
-Status: **implemented** · Owner: dev · Scope: local development (CI unchanged)
+Status: **implemented** · Owner: dev · Scope: local development; the CI
+half followed in #321 (see §3.1)
 
 ## 1. Problem
 
@@ -27,7 +28,9 @@ The interference runs both ways:
 1. `npm test` never mutates the dev database's seed/exploration data.
 2. Service/unit tests run against a deterministic, empty-by-default
    database.
-3. Zero changes to CI (its database is already throwaway).
+3. Zero changes to CI (its database is already throwaway). **Superseded
+   by #321**, which split CI's single `test` job into `test-components`,
+   `test-unit` and `test-integration-e2e`.
 4. Zero extra steps in the daily loop — no manual database creation, no
    separate migrate command to remember.
 
@@ -41,9 +44,11 @@ The interference runs both ways:
   per-project, not global: `unit` and `components` run their files in
   parallel, `integration` and `unit-sweeps` do not. What keeps the parallel
   `unit` pool honest is that each file mutates only rows it owns —
-  `class-generator.test.ts` and `magic-link.test.ts` were fixed by scoping
-  their calls/queries instead of being quarantined, and an unscoped
-  `deleteMany`/`updateMany` surfacing in that pool is a bug.
+  `class-generator.test.ts` was fixed by scoping its calls instead of being
+  quarantined, and an unscoped `deleteMany`/`updateMany` surfacing in that
+  pool is a bug. Scoping is only available when there is something to scope:
+  a file that calls an unscoped *service* sweep cannot fix itself that way,
+  because the damage lands on the sibling's rows rather than its own.
 
   A file testing a service whose sweep writes rows it was never handed,
   with no scope parameter to pass, belongs in `unit-sweeps` instead — the
@@ -52,26 +57,39 @@ The interference runs both ways:
   #321 went looking for the criterion systematically rather than one
   failure at a time.
 
-  `unit-sweeps` must run as its own `vitest run` invocation, not merely a
-  project carrying `fileParallelism: false`: that setting serializes files
-  *within* a project and does not stop sibling projects running alongside.
-  Measured 2026-08-24 across four runs of exactly that arrangement —
-  green, green, one failure, two failures.
+  `fileParallelism: false` on `unit-sweeps` is what isolates it, and it
+  isolates more than the option's name suggests. Vitest puts a project
+  resolving to `maxWorkers: 1` into a `sequential` group that runs after the
+  parallel projects, never beside them — measured on 4.1.10 by timing file
+  start/end across a parallel project and a serial one in a single
+  invocation: parallel files overlapped each other on every run, and no
+  serial file ever overlapped a parallel one. `unit` and `unit-sweeps` in one
+  invocation ran green 5/5 (68 files, 1068 tests).
+
+  So the separate `vitest run` invocation in `package.json` and the two
+  separate steps in `ci.yml` are defence in depth, not the mechanism. The
+  guard to protect is the flag. Re-derive the above with a throwaway
+  two-project config before trusting either statement again.
 
 ## 3. Design
 
-### 3.1 Two vitest projects
+### 3.1 The vitest projects
 
-Vitest 4's `projects` config splits the suite by blast radius:
+Vitest 4's `projects` config splits the suite by blast radius. The roster of
+each is in `vitest.config.ts`; this table is the shape, not the membership:
 
 | Project | Files | Database |
 |---|---|---|
-| `unit` | `src/**/*.test.ts` (services + lib) | **`ethical_yoga_test`** |
+| `unit` | `src/**/*.test.ts` minus `SWEEP_TESTS` | **`ethical_yoga_test`** |
+| `unit-sweeps` | `SWEEP_TESTS` | **`ethical_yoga_test`** |
 | `integration` | `tests/integration/**/*.test.ts` | dev `ethical_yoga` (unchanged — must match the running app) |
+| `components` | `src/**/*.test.tsx` | none (jsdom) |
 
-`npx vitest run` still runs everything; `--project unit` selects one tier.
-The dangerous tests — everything that instantiates a bare `PrismaClient`
-and calls services with injected clocks — are all in the `unit` project.
+`--project <name>` selects one tier. A bare `npx vitest run` runs all of
+them, `integration` included, which needs the app up on `:3000` — use
+`npm test`, which sequences the tiers, rather than running vitest directly.
+The dangerous tests — everything that calls a service sweep with an injected
+clock — are the `unit-sweeps` roster.
 
 ### 3.2 URL convention
 

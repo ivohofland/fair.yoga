@@ -12,19 +12,19 @@ import {
 
 /**
  * A pure DB-invariant suite — nothing here calls the app on `:3000` — so it
- * lives in the `unit` project. The same reasoning `class-terminal-status.test.ts`'s
+ * lives in the `unit-sweeps` project. The same reasoning `class-terminal-status.test.ts`'s
  * header sets out: an `integration` file would run against the DEV database by
  * design (`docs/test-database.md` §3.4), and this file DELETES rows.
  *
- * BUT THE `unit` PROJECT IS NOT A GUARANTEE. `tests/setup/unit-db.ts`
+ * BUT THAT PROJECT IS NOT A GUARANTEE. `tests/setup/unit-db.ts`
  * PROVISIONS `DATABASE_URL_TEST`; it does not force this project onto it. When
  * that variable is absent the setup logs "CI mode" and returns, and
  * `vitest.config.ts` resolves this project's `DATABASE_URL` to
  * `testUrl ?? devUrl` — the DEV database. Isolation here is a value in `.env`,
  * which is configuration and not a guard.
  *
- * THIS IS THE DESTRUCTIVE ONE of the two files that share that wording. Unlike
- * every other unit suite, this one calls `reapClosedWaitlistEntries`, whose
+ * THIS IS THE DESTRUCTIVE ONE of the two files that share that wording. Like
+ * its `SWEEP_TESTS` siblings, this one calls `reapClosedWaitlistEntries`, whose
  * `groupBy` and `deleteMany` are deliberately NOT scoped to the fixtures below
  * — that is the function's whole job. Pointed at dev it would permanently
  * delete every unfulfilled entry on every terminal class past the cutoff.

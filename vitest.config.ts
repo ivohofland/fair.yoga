@@ -6,6 +6,7 @@ import path from 'path';
 // no scope parameter to pass. One list, spliced into `unit-sweeps`'s
 // `include` and `unit`'s `exclude`, so the two cannot drift apart.
 const SWEEP_TESTS = [
+  'src/lib/auth/magic-link.test.ts',
   'src/services/class-transitions.test.ts',
   'src/services/waitlist-reconciliation.test.ts',
   'src/services/waitlist-retention.test.ts',
@@ -17,9 +18,11 @@ const SWEEP_TESTS = [
   'src/services/studio-class-generator.test.ts',
 ] as const;
 
-// Three projects with different blast radii (docs/test-database.md):
-// - unit: services + lib, runs against the dedicated test database so
-//   clock-injected sweeps can never touch dev/seed data
+// The projects below have different blast radii (docs/test-database.md):
+// - unit: services + lib minus `SWEEP_TESTS`, run in parallel against the
+//   dedicated test database. Every file here mutates only rows it owns
+// - unit-sweeps: `SWEEP_TESTS`, serial — the clock-injected, database-wide
+//   sweeps, kept off the dev/seed data and away from each other
 // - integration: talks to the HTTP app on :3000, so its fixtures must
 //   live in the same database that app reads (dev locally, CI's in CI)
 // - components: jsdom rendering with `next/navigation` mocked
@@ -70,7 +73,7 @@ export default defineConfig(({ mode }) => {
       // Deleting this line fails nothing. It silently makes those assertions
       // tautological again, which is why it is a comment and not a bare option.
       //
-      // Set at the root so all three projects inherit it — a project's own
+      // Set at the root so every project inherits it — a project's own
       // `env` (unit's `DATABASE_URL`) merges with this rather than replacing
       // it. The integration project's app process on :3000 keeps its own zone,
       // so that suite now runs cross-zone against the app; it was verified
@@ -105,15 +108,13 @@ export default defineConfig(({ mode }) => {
             // never handed, with no scope parameter to pass — so it cannot
             // share a database with a concurrent test file.
             //
-            // It MUST run in a separate `vitest run` invocation from `unit`,
-            // not merely a separate project: per-project
-            // `fileParallelism: false` serializes files *within* a project and
-            // does NOT stop sibling projects running alongside. Measured
-            // 2026-08-24 — that arrangement was green twice and red twice in
-            // four runs (#321, spec D3). Two independent places must each keep
-            // the two invocations apart: `package.json`'s `test` script (`&&`
-            // between them) and `.github/workflows/ci.yml`'s `test-unit` job
-            // (two separate steps).
+            // `fileParallelism: false` is the guard, and it does more than
+            // its name says: it also keeps this project from running
+            // alongside the parallel ones. Flipping it to `true` breaks the
+            // isolation even while the tier keeps its own `vitest run`
+            // invocation — that invocation boundary is defence in depth, not
+            // the thing separating the tiers. Measured, and why:
+            // docs/test-database.md §2.
             include: [...SWEEP_TESTS],
             fileParallelism: false,
             env: { DATABASE_URL: testUrl },
