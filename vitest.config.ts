@@ -2,6 +2,21 @@ import { defineConfig } from 'vitest/config';
 import { loadEnv } from 'vite';
 import path from 'path';
 
+// Files testing a service whose sweep writes rows it was never handed, with
+// no scope parameter to pass. One list, spliced into `unit-sweeps`'s
+// `include` and `unit`'s `exclude`, so the two cannot drift apart.
+const SWEEP_TESTS = [
+  'src/services/class-transitions.test.ts',
+  'src/services/waitlist-reconciliation.test.ts',
+  'src/services/waitlist-retention.test.ts',
+  'src/services/auth-cleanup.test.ts',
+  'src/services/email-fallback.test.ts',
+  'src/services/email-fallback.consent.test.ts',
+  'src/services/notifications.test.ts',
+  'src/services/payment-reminders.test.ts',
+  'src/services/studio-class-generator.test.ts',
+] as const;
+
 // Three projects with different blast radii (docs/test-database.md):
 // - unit: services + lib, runs against the dedicated test database so
 //   clock-injected sweeps can never touch dev/seed data
@@ -32,6 +47,7 @@ export default defineConfig(({ mode }) => {
       // (docs/test-database.md §2) is shared *database* state, which
       // `components` does not have — it inherited 44s/run of serialization
       // from this line for a constraint that was never about it (#321).
+      //
       // Pinned, not inherited from whatever machine happens to run the suite.
       //
       // The date formatters in `src/lib/format.ts` read their argument with
@@ -71,22 +87,9 @@ export default defineConfig(({ mode }) => {
           test: {
             name: 'unit',
             include: ['src/**/*.test.ts'],
-            // Files testing a service whose sweep writes rows it was never
-            // handed, with no scope parameter to pass, move to
-            // `unit-sweeps` below instead — that project's `include` is the
-            // membership list, not this one.
-            exclude: [
-              '**/node_modules/**',
-              'src/services/class-transitions.test.ts',
-              'src/services/waitlist-reconciliation.test.ts',
-              'src/services/waitlist-retention.test.ts',
-              'src/services/auth-cleanup.test.ts',
-              'src/services/email-fallback.test.ts',
-              'src/services/email-fallback.consent.test.ts',
-              'src/services/notifications.test.ts',
-              'src/services/payment-reminders.test.ts',
-              'src/services/studio-class-generator.test.ts',
-            ],
+            // `SWEEP_TESTS` (above) is the membership list — edit it, not
+            // this array, or `unit` and `unit-sweeps` drift apart.
+            exclude: ['**/node_modules/**', ...SWEEP_TESTS],
             fileParallelism: true,
             env: { DATABASE_URL: testUrl },
             globalSetup: ['./tests/setup/unit-db.ts'],
@@ -96,11 +99,11 @@ export default defineConfig(({ mode }) => {
           extends: true,
           test: {
             name: 'unit-sweeps',
-            // Every file in `include` below tests a service whose sweep
-            // writes rows it was never handed, with no scope parameter to
-            // pass — so it cannot share a database with a concurrent test
-            // file. `include` is the membership list; nothing here repeats
-            // it.
+            // `SWEEP_TESTS` (above) is the membership list — edit it, not
+            // this array, or `unit` and `unit-sweeps` drift apart. Every
+            // file in it tests a service whose sweep writes rows it was
+            // never handed, with no scope parameter to pass — so it cannot
+            // share a database with a concurrent test file.
             //
             // It MUST run in a separate `vitest run` invocation from `unit`,
             // not merely a separate project: per-project
@@ -109,17 +112,7 @@ export default defineConfig(({ mode }) => {
             // 2026-08-24 — that arrangement was green twice and red twice in
             // four runs (#321, spec D3). `package.json`'s `test` script is
             // what keeps the two invocations apart.
-            include: [
-              'src/services/class-transitions.test.ts',
-              'src/services/waitlist-reconciliation.test.ts',
-              'src/services/waitlist-retention.test.ts',
-              'src/services/auth-cleanup.test.ts',
-              'src/services/email-fallback.test.ts',
-              'src/services/email-fallback.consent.test.ts',
-              'src/services/notifications.test.ts',
-              'src/services/payment-reminders.test.ts',
-              'src/services/studio-class-generator.test.ts',
-            ],
+            include: [...SWEEP_TESTS],
             fileParallelism: false,
             env: { DATABASE_URL: testUrl },
             globalSetup: ['./tests/setup/unit-db.ts'],

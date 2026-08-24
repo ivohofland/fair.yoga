@@ -9,7 +9,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --project unit --project components && vitest run --project unit-sweeps --project integration",
-    "test:watch": "vitest",
+    "test:watch": "vitest --project unit --project components",
     "test:coverage": "vitest run --coverage --no-file-parallelism",
     "test:e2e": "playwright test",
     "verify": "npm run typecheck && npm run lint && npm test",
