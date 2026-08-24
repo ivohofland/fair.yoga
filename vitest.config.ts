@@ -110,8 +110,10 @@ export default defineConfig(({ mode }) => {
             // `fileParallelism: false` serializes files *within* a project and
             // does NOT stop sibling projects running alongside. Measured
             // 2026-08-24 — that arrangement was green twice and red twice in
-            // four runs (#321, spec D3). `package.json`'s `test` script is
-            // what keeps the two invocations apart.
+            // four runs (#321, spec D3). Two independent places must each keep
+            // the two invocations apart: `package.json`'s `test` script (`&&`
+            // between them) and `.github/workflows/ci.yml`'s `test-unit` job
+            // (two separate steps).
             include: [...SWEEP_TESTS],
             fileParallelism: false,
             env: { DATABASE_URL: testUrl },

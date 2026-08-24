@@ -13,7 +13,7 @@ name: CI
 #
 # So everything runs on everything. This is a public repo, so the minutes are
 # free; the cost is wall-clock on docs-only pull requests. If that becomes
-# annoying, short-circuit the expensive *steps* inside the `test` job rather
+# annoying, short-circuit the expensive *steps* inside the `test-integration-e2e` job rather
 # than filtering the workflow trigger — the job must still run and report.
 on:
   push:
@@ -74,8 +74,8 @@ jobs:
         continue-on-error: true
 
   # No database, no build: the components project is jsdom only
-  # (vitest.config.ts). This job exists because it used to queue behind 20s of
-  # container init and a 27s build it never touched.
+  # (vitest.config.ts). This job exists because it used to queue behind
+  # container init and a build it never touched.
   test-components:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -116,8 +116,9 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      # Copied verbatim from the pre-split `test` job — see that history for
-      # why DATABASE_URL_TEST must be set explicitly here.
+      # `unit` and `unit-sweeps` resolve their database as
+      # `DATABASE_URL_TEST ?? DATABASE_URL` (vitest.config.ts) — with it unset,
+      # the sweep files run against the shared database.
       DATABASE_URL: postgresql://yoga:test_password@localhost:5432/ethical_yoga
       DATABASE_URL_TEST: postgresql://yoga:test_password@localhost:5432/ethical_yoga_test
       PASSKEY_RP_ID: localhost
@@ -152,9 +153,9 @@ jobs:
       - name: Unit tests
         run: npx vitest run --project unit
 
-      # A SEPARATE invocation, deliberately: per-project
-      # `fileParallelism: false` does not stop sibling projects running
-      # alongside, and these two share a database (#321, spec D3).
+      # A SEPARATE invocation, deliberately: these two share a database
+      # (#321, spec D3) — see vitest.config.ts's `unit-sweeps` project for
+      # why a separate vitest project isn't enough on its own.
       - name: Whole-database sweep tests
         run: npx vitest run --project unit-sweeps
 
@@ -179,21 +180,6 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://yoga:test_password@localhost:5432/ethical_yoga
-      # The unit project runs against a SEPARATE database, exactly as it does
-      # locally. Without this the vitest `unit` project falls back to
-      # `DATABASE_URL` (vitest.config.ts:20), `tests/setup/unit-db.ts` takes its
-      # unset-variable early return, and any suite that refuses a database not
-      # named `*_test` skips itself — silently, on the one run that gates main.
-      # `unit-db.ts` creates and migrates this database through the maintenance
-      # connection, so no extra step is needed here.
-      #
-      # Job-scoped is correct even though the integration tier shares this job:
-      # only the `unit` project overrides `DATABASE_URL` with this value
-      # (vitest.config.ts:71). The integration project deliberately does not —
-      # it drives the HTTP app on :3000, whose fixtures must live in the
-      # database that app process reads, i.e. `DATABASE_URL` above. Build,
-      # `migrate deploy` and `npm run start` are likewise unaffected.
-      DATABASE_URL_TEST: postgresql://yoga:test_password@localhost:5432/ethical_yoga_test
       PASSKEY_RP_ID: localhost
       PASSKEY_RP_NAME: fair.yoga
       CRON_SECRET: ci-cron-secret
@@ -292,6 +278,7 @@ jobs:
   # `always()` would let it report success over a red one.
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: [test-components, test-unit, test-integration-e2e]
     steps:
       - name: All test jobs passed
