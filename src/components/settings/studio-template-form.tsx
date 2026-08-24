@@ -99,7 +99,7 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
     // decoration.
     if (created) return;
     if (!form.classType.trim()) {
-      setError('Class type is required');
+      setError('Class type is required.');
       return;
     }
     if (!form.location.trim()) {

@@ -144,13 +144,13 @@ describe('StudioTemplateForm', () => {
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(screen.getByText('Class type is required')).toBeInTheDocument();
+    expect(screen.getByText('Class type is required.')).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: '   ' } });
     fireEvent.click(screen.getByRole('button', { name: /create/i }));
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(screen.getByText('Class type is required')).toBeInTheDocument();
+    expect(screen.getByText('Class type is required.')).toBeInTheDocument();
   });
 
   /**
