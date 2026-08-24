@@ -149,8 +149,31 @@ describe('StudioTemplateForm', () => {
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: '   ' } });
     fireEvent.click(screen.getByRole('button', { name: /create/i }));
 
+    // Only the request count is pinned on this second submit. `handleSubmit`
+    // clears `error` after its guards, never before, so the banner raised by
+    // the first submit is still mounted here and a copy assertion would pass
+    // on stale state — deleting this click leaves it green. The whitespace
+    // boundary is a request-count fact; the copy is pinned above.
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(screen.getByText('Class type is required.')).toBeInTheDocument();
+  });
+
+  /**
+   * #316. Sibling of the classType guard above and part of the same copy set:
+   * the banner shows one message at a time, so a teacher walking an empty form
+   * reads both in the same element seconds apart. Pins the message the
+   * classType round left bare.
+   *
+   * `Class type` is filled because the guards run classType then location and
+   * the first to fire wins.
+   */
+  it('refuses a blank location with punctuated copy', async () => {
+    stubFetch();
+    render(<StudioTemplateForm mode="create" />);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText('Location is required.')).toBeInTheDocument();
   });
 
   /**

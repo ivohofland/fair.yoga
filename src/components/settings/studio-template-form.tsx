@@ -103,7 +103,7 @@ export function StudioTemplateForm({ mode, templateId, initial }: StudioTemplate
       return;
     }
     if (!form.location.trim()) {
-      setError('Location is required');
+      setError('Location is required.');
       return;
     }
 
