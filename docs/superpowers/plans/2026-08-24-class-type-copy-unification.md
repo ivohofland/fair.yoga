@@ -131,6 +131,7 @@ sees. No edit, no commit.
         server-side Zod copy;
       - the bite-proof results (which mutants, observed behaviour).
 - [ ] File the follow-ups spec §5 records: `template-form.tsx:248`'s wholly
-      unpinned guard, the wizard's ten unpinned `validateStep` messages, and the
-      banner-clears-on-edit behaviour change. Close the edit form's empty-`''`
-      case as WONTFIX with the reasoning in spec §5.
+      unpinned guard (#317), the wizard's ten unpinned `validateStep` messages
+      (#318), the banner-clears-on-edit behaviour change (#319), and the
+      substring-regex pins that cannot express punctuation (#320). Close the edit
+      form's empty-`''` case as WONTFIX with the reasoning in spec §5.

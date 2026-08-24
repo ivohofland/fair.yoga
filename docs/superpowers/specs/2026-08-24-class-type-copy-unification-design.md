@@ -120,7 +120,7 @@ were mutation-proven in their own rounds (#282: guard-deleted and return-dropped
    green. The request-count assertion on that second submit is the real pin for the
    whitespace boundary and stays. Making the banner clear on edit (as the edit form does,
    `studio-class-edit-form.test.tsx:177`) would make a copy assertion there meaningful;
-   that is a behaviour change, and is filed rather than done here.
+   that is a behaviour change, filed as #319 rather than done here.
 4. Component tests hit no dev server, so warm-route discipline does not apply to them;
    `npm run verify` afterwards runs the integration project and needs the app on :3000.
 
@@ -137,9 +137,11 @@ were mutation-proven in their own rounds (#282: guard-deleted and return-dropped
 - **Server-side Zod copy is unaffected** — `min(1)` + `parseBody` developer strings were
   settled by #282 for non-UI clients.
 - **Pin gaps recorded, not filled here.** `template-form.tsx:248`'s banner is not merely
-  copy-unpinned: deleting the whole guard leaves that file green, so nothing observes it.
-  The wizard's ten `validateStep` messages have no pin at all. Both are outside this
-  diff — this branch touches neither file — and are filed at fold time.
+  copy-unpinned: deleting the whole guard leaves that file green, so nothing observes it
+  (#317). The wizard's ten `validateStep` messages have no pin at all (#318). Both are
+  outside this diff — this branch touches neither file. Filed alongside them: the
+  banner-clears-on-edit behaviour change (#319) and the substring-regex pins that cannot
+  express punctuation (#320).
 - **The edit form's empty-`''` case stays unpinned, deliberately.** `''.trim()` and
   `'   '.trim()` take the identical branch, so an empty-string test catches no mutant the
   existing whitespace one misses, while the whitespace one catches the trim-dropped mutant
