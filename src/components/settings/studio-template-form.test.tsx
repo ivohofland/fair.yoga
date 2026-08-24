@@ -131,12 +131,23 @@ describe('StudioTemplateForm', () => {
    * names the outgoing request. Asserted against a stubbed `fetch` because
    * `tests/setup/components.ts` does not mock it — "not called" must be a spy
    * fact, not an inference from absent network noise.
+   *
+   * A second submit fills `'   '` — whitespace-only is the boundary the
+   * guard's `.trim()` exists for: drop the trim and `''` still refuses while
+   * `'   '` reaches the wire schema's `min(1)` and raw Zod returns. The edit
+   * form's test (`studio-class-edit-form.test.tsx`) pins the same boundary.
    */
-  it('refuses an empty class type before any request, with product copy', async () => {
+  it('refuses a blank class type before any request, with product copy', async () => {
     stubFetch();
     render(<StudioTemplateForm mode="create" />);
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
     fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText('Class type is required')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: /create/i }));
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.getByText('Class type is required')).toBeInTheDocument();
