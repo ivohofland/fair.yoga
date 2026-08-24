@@ -119,11 +119,14 @@ describe('NewStudioClassPage', () => {
    * where the class-family twin (`template-form.tsx`) already refuses
    * client-side with product copy.
    *
-   * Both assertions matter independently: the banner alone would pass against
-   * a guard that fires but lets submission continue; the spy alone says
-   * nothing about copy. Asserted against a stubbed `fetch` because
-   * `tests/setup/components.ts` does not mock it — "not called" must be a spy
-   * fact, not an inference from absent network noise.
+   * Both assertions pin different things: the spy (`fetch` not called) is the
+   * load-bearing half for a guard that fires but lets the request go out; the
+   * banner pins the exact copy. The banner alone cannot catch a continuing
+   * guard here, because `handleSubmit` clears `error` with `setError('')`
+   * just before the request, so a guard that fires and continues would hide
+   * its own banner. Asserted against a stubbed `fetch` because
+   * `tests/setup/components.ts` does not mock it — "not called" must be a
+   * spy fact, not an inference from absent network noise.
    */
   it('refuses an empty class type before any request, with product copy', () => {
     stubFetch();

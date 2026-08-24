@@ -123,11 +123,14 @@ describe('StudioTemplateForm', () => {
    * copy, where the class-family twin (`template-form.tsx`) already refuses
    * client-side with product copy.
    *
-   * Both assertions matter independently: the banner alone would pass against
-   * a guard that fires but lets submission continue; the spy alone says
-   * nothing about copy. Asserted against a stubbed `fetch` because
-   * `tests/setup/components.ts` does not mock it — "not called" must be a spy
-   * fact, not an inference from absent network noise.
+   * Both assertions pin different things: the spy (`fetch` not called) is the
+   * load-bearing half for a guard that fires but lets the request go out; the
+   * banner pins the exact copy. The banner alone cannot catch a continuing
+   * guard here, because `handleSubmit` clears `error` with `setError('')`
+   * just before the request, so a guard that fires and continues would hide
+   * its own banner. Asserted against a stubbed `fetch` because
+   * `tests/setup/components.ts` does not mock it — "not called" must be a
+   * spy fact, not an inference from absent network noise.
    */
   it('refuses an empty class type before any request, with product copy', async () => {
     stubFetch();
@@ -145,10 +148,9 @@ describe('StudioTemplateForm', () => {
    * second template and a second generated window, double-counting studio
    * income. Asserted on the fetch count, not on rendered text.
    *
-   * `handleSubmit` only guards `location` before the request (not `classType`),
-   * but both are filled here to match the create-mode setup used by the tests
-   * above — an empty `classType` reaching the server is not this test's
-   * concern, and filling it keeps this test unaffected if that guard changes.
+   * `handleSubmit` also guards `classType` before the request (#282), so the
+   * inline setup fills it alongside `location` — an empty class type would now
+   * refuse the very POST whose count this test audits.
    */
   // G9
   it('cannot submit twice when the create push commits nothing', async () => {
