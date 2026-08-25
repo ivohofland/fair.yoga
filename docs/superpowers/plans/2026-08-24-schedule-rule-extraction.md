@@ -1447,10 +1447,34 @@ can be in flight during erasure, and report which answer the evidence supports.*
 This step may legitimately end in a `known-open` comment beside the code rather
 than a lock.
 
-- [ ] **Step 7: `docs/lock-order.md`**
+- [ ] **Step 7: `docs/lock-order.md` — including one claim this branch has already falsified**
 
-Re-state the plain-`FOR UPDATE` census with what Step 1 measured, and add the
-convention as a named rule: the child row is the lock node for the template
+**Fix `:83`–`:96` first.** That section asserts `lockClassRowsOrdered`'s is *"the
+only production `SELECT … FOR UPDATE OF c` in `src/`"*, and ships the grep that
+proves it, stating *"That returns exactly one line today."* Measured after
+Task 3: it returns **three** —
+
+```bash
+grep -rn 'FOR UPDATE OF' --include="*.ts" src/ | grep -v '\.test\.ts' \
+  | grep -vE ':[0-9]+: *(//|\*|/\*)'
+```
+
+`db-locks.ts`, `class-generator.ts` and `studio-class-generator.ts`. Task 3
+Step 4c added the two claim sites deliberately, and `FOR UPDATE OF` is the
+correct form for them, so the *code* is right and the *census* is stale. This is
+the same failure the file warns about, in the file that warns about it.
+
+Rewrite the claim so it stays checkable: the point was never "exactly one" but
+"every multi-row `Class` lock goes through `lockClassRowsOrdered`". Say that,
+name the two template-family claims as the other legitimate holders, and keep
+the grep as the check with its new expected output.
+
+Its neighbouring census at `:191`–`:198` (the broader plain-`FOR UPDATE` grep)
+still returns 4 and is still true — verify before touching it, and do not
+"correct" a claim that holds.
+
+Then re-state the plain-`FOR UPDATE` census with what Step 1 measured, and add
+the convention as a named rule: the child row is the lock node for the template
 families; a rule's lifecycle and calendar columns are only ever written under
 it. Say plainly that this is a convention enforced by a grep and a test, not by
 the database — the same standing `lockClassRowsOrdered` has — and ship the grep
