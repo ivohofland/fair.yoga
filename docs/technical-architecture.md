@@ -236,23 +236,26 @@ async function dispatch(notification: CreateNotification): Promise<void> {
 
 ### Class Generator (`services/class-generator.ts`)
 
-Runs hourly as part of the in-process scheduler (see Background Jobs below). For each active, unarchived ClassTemplate it tops up the rolling 4-week window — **at most one class per week per template** (#194) — and reports every candidate date it could **not** fill along with the reason:
+Runs hourly as part of the in-process scheduler (see Background Jobs below). For each `ClassTemplate` whose `ScheduleRule` is active and unarchived it tops up the rolling 4-week window — **at most one class per week per template** (#194) — and reports every candidate date it could **not** fill along with the reason:
 
 ```typescript
 // generateInstancesForTemplate — one template, one window.
-// Real identifiers, bodies elided: `dates` and `free` are the actual locals,
-// `getNextOccurrences` and `classStartInstant` the actual helpers. A sketch
-// that invents names is a sketch nobody can grep, which is how the loop this
-// replaced went on being documented after it was gone.
-const dates = getNextOccurrences(template.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
-  .filter((d) => classStartInstant(d, template.startTime, tz) > startDate)
+// Real identifiers, bodies elided: `dates`, `free` and `startTimeStr` are the
+// actual locals, `getNextOccurrences` and `classStartInstant` the actual
+// helpers. A sketch that invents names is a sketch nobody can grep, which is
+// how the loop this replaced went on being documented after it was gone.
+// `dayOfWeek`, `startTime` and `teacherId` left `ClassTemplate` for
+// `ScheduleRule` in issue 298, so they're reached through `template.scheduleRule.*`.
+const startTimeStr = timeToHHmm(template.scheduleRule.startTime);
+const dates = getNextOccurrences(template.scheduleRule.dayOfWeek, startDate, DEFAULT_WEEKS + 1)
+  .filter((d) => classStartInstant(d, startTimeStr, tz) > startDate)
   .slice(0, DEFAULT_WEEKS);
 
 // ONE query per question, and since #194 there are two. This one classifies
 // each candidate DATE: already generated, blocked by a cancelled instance of
 // this template, or the teacher's slot taken by another class.
 const occupants = await db.class.findMany({
-  where: { teacherId: template.teacherId, date: { in: dates } },
+  where: { teacherId: template.scheduleRule.teacherId, date: { in: dates } },
 });
 
 // And this one classifies its WEEK — `already_this_week`. Keyed on
@@ -284,7 +287,7 @@ return { created: inserted.length, skipped }; // GenerationResult
 
 `services/studio-class-generator.ts` is the studio twin and has the same shape and the same `GenerationResult` — apart from the week key, which is #284's.
 
-**A template edit reaches no generated class.** `updateClassTemplate` (`services/class-template-lifecycle.ts`) writes the template row and nothing else: since #194 there is no propagation service, and its `$transaction` survives only to scope `SET LOCAL lock_timeout` over that single `update`. The PUT then runs a read-only probe that predicts the first week the new schedule can reach, and says so in its response.
+**A template edit reaches no generated class.** `updateClassTemplate` (`services/class-template-lifecycle.ts`) still touches no generated class: since #194 there is no propagation service. But it is no longer a single-table, single-statement write — issue 298 split the wire schema across `ClassTemplate` and `ScheduleRule`, so its `$transaction` writes `ClassTemplate` always and `ScheduleRule` only when the edit touches a slot field (`classType`/`dayOfWeek`/`startTime`/`durationMinutes`), up to three statements across the two tables. The transaction also takes the child row's `FOR UPDATE` lock the sibling template functions serialise against (`docs/lock-order.md`, "The child row is the lock node for the template families"), not merely `SET LOCAL lock_timeout` over a single `update`. The PUT then runs a read-only probe that predicts the first week the new schedule can reach, and says so in its response.
 
 ---
 

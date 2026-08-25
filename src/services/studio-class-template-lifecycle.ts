@@ -1357,10 +1357,10 @@ export async function pauseOrResumeStudioTemplate(
  * The update and the delete share a transaction: a half-applied archive is
  * exactly the shelved-but-listed state this exists to prevent.
  *
- * That transaction opens with a compare-and-swap rather than a plain update,
- * so the transition can only be applied once even when two requests race —
- * see `archiveOrUnarchiveTemplate` for the full reasoning, which holds here
- * unchanged.
+ * That transaction takes the child's row lock first, then runs a
+ * compare-and-swap rather than a plain update, so the transition can only be
+ * applied once even when two requests race — see `archiveOrUnarchiveTemplate`
+ * for the full reasoning, which holds here unchanged.
  */
 export async function archiveOrUnarchiveStudioTemplate(
   db: PrismaClient,
@@ -1552,9 +1552,10 @@ export async function archiveOrUnarchiveStudioTemplate(
         // (#97). A second statement rather than folded into the CAS above, on
         // data dependency alone: `deleted` does not exist until the `deleteMany`
         // has run, and the CAS runs before it — see `archiveOrUnarchiveTemplate`
-        // for the separate lock-ordering point that keeps the CAS first. A plain
-        // single-record `update` is enough: the CAS's lock is still held, so
-        // nothing can have moved this row since.
+        // for why the row lock the sweep serialises against is the child's
+        // `FOR UPDATE`, taken before the CAS runs, not the CAS's own lock on
+        // `ScheduleRule`. A plain single-record `update` is enough: the CAS's
+        // lock is still held, so nothing can have moved this row since.
         // `archivedAt`/`withdrawnCount` live on `ScheduleRule` now (issue
         // 298); the CAS's lock on that row is still held, so nothing can
         // have moved it since.

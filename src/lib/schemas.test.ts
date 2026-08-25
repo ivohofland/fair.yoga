@@ -408,9 +408,10 @@ describe('updateTeacherSchema.pageSlug', () => {
 const SERVER_OWNED_FIELDS = [
   'accountId', 'archivedAt', 'cancelledAt', 'claimedAt', 'createdAt',
   'createdById', 'date', 'effectiveTeacherRate', 'id', 'isActive', 'isArchived',
-  'isPublic', 'paidAt', 'photoUrl', 'settingsLocked', 'status', 'studentId',
-  'teacherId', 'templateId', 'tierAtBooking', 'tierSelectedAt', 'totalRevenue',
-  'totalStudents', 'updatedAt', 'withdrawnCount',
+  'isPublic', 'kind', 'paidAt', 'photoUrl', 'scheduleRuleId', 'settingsLocked',
+  'status', 'studentId', 'teacherId', 'templateId', 'tierAtBooking',
+  'tierSelectedAt', 'totalRevenue', 'totalStudents', 'updatedAt',
+  'withdrawnCount',
 ] as const;
 
 // Every name above must be a real column on one of the models in this union.
@@ -518,8 +519,10 @@ describe('server-owned fields', () => {
       'isActive',
       'isArchived',
       'isPublic',
+      'kind',
       'paidAt',
       'photoUrl',
+      'scheduleRuleId',
       'settingsLocked',
       'status',
       'studentId',

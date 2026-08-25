@@ -147,8 +147,9 @@ Classes move through states: `draft → open → in_progress → completed → c
   `withdrawnCount`), and `ClassTemplate`/`StudioClassTemplate` hold only
   their own economics, reaching their teacher through the rule rather than
   directly. Both generators pre-check and skip (`blocked_by_other_family`);
-  ten write endpoints across eight route files answer 409 naming which family
-  holds the slot
+  ten write endpoints across eight route files answer 409 — usually naming
+  which family holds the slot, except the template routes' `heldBy: 'unknown'`
+  case, which deliberately names neither
 - Auto-cancel: system checks at configured time, cancels if below min_students
 - Walk-ins can exceed max_students — teacher rate stays capped at target, extra students lower everyone's price
 - After completion: pricing engine runs → payments created → notifications sent

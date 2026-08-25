@@ -355,7 +355,7 @@ describe('POST /api/class-templates', () => {
     });
   });
 
-  // Door 4 of the room archive lifecycle (issue 76). `ClassTemplate.isActive`
+  // Door 4 of the room archive lifecycle (issue 76). `ScheduleRule.isActive`
   // defaults true, so a template created on an archived room would start
   // generating instances immediately — unlike a class, which is always born
   // `draft` and is caught later at the publish door. A dedicated
@@ -668,7 +668,15 @@ describe('PATCH /api/class-templates/[id]', () => {
     expect(await prisma.class.count({ where: { templateId: templateB.id } })).toBe(0);
 
     await prisma.class.deleteMany({ where: { templateId: { in: [templateA.id, templateB.id] } } });
-    await prisma.classTemplate.deleteMany({ where: { id: { in: [templateA.id, templateB.id] } } });
+    // `scheduleRule.deleteMany`, not `classTemplate.deleteMany`: deleting only
+    // the child leaves its `ScheduleRule` row orphaned and still live, holding
+    // `(teacherId, dayOfWeek, slot)` against `ScheduleRule_teacher_slot_excl`
+    // (issue 298) for the rest of the file — pre-branch, deleting the child
+    // released the slot directly. `ClassTemplate` is `onDelete: Cascade` from
+    // `ScheduleRule`, so this removes both.
+    await prisma.scheduleRule.deleteMany({
+      where: { id: { in: [templateA.scheduleRuleId, templateB.scheduleRuleId] } },
+    });
   });
 
   it('archiving deletes the unbooked future window and reports the counts', async () => {

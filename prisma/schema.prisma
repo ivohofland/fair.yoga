@@ -464,7 +464,55 @@ model ScheduleRule {
 
   isActive        Boolean   @default(true)
   isArchived      Boolean   @default(false)
+
+  /// When this rule was last archived (#97). Issue 298 moved this column
+  /// here from `ClassTemplate`/`StudioClassTemplate` — the semantics are
+  /// unchanged, and it is now shared by both families through `kind`.
+  ///
+  /// Null when no archive has recorded one — which is not the same as
+  /// `isArchived: false`. `deleteTeacherAccount` (src/services/gdpr.ts)
+  /// bulk-archives every rule of an erased teacher with two `updateMany`s
+  /// (one per `kind`) that write `{ isActive: false, isArchived: true }` and
+  /// nothing else, so `isArchived: true` with both this column and
+  /// `withdrawnCount` null is reachable today, as it is for every template
+  /// archived before #97 shipped. Read this as "the archive that recorded
+  /// itself", never as "is it archived" — `isArchived` answers that.
+  ///
+  /// Cleared again on un-archive, which forces `isActive: false` in the same
+  /// write: what has no withdrawal to report is a rule that is no longer
+  /// archived, and it is paused at that moment, not live. Re-archiving
+  /// overwrites rather than accumulating — a teacher asking what archiving
+  /// removed means the archive in force, not every archive this rule has
+  /// had.
   archivedAt      DateTime?
+
+  /// How many future classes that same archive withdrew: the owning child's
+  /// `deleteMany`'s own returned count, written inside its transaction, so it
+  /// cannot claim a number the delete did not produce. Null and cleared on
+  /// exactly the terms `archivedAt` above describes, which is what keeps a
+  /// recorded `0` ("archived, withdrew nothing") distinguishable from no
+  /// record at all.
+  ///
+  /// What counts as "unbooked" is family-specific, and lives with each
+  /// family's own archive function rather than here: for `kind: 'regular'`
+  /// (`archiveOrUnarchiveTemplate`, class-template-lifecycle.ts) it means no
+  /// registration in a CHARGED status. For `kind: 'studio'`
+  /// (`archiveOrUnarchiveStudioTemplate`, studio-class-template-lifecycle.ts),
+  /// `StudioClass` has no registrations to consult, so the filter is
+  /// `cancelledAt: null`, and every uncancelled future studio class the
+  /// boundary reaches counts as withdrawn — an already-cancelled one
+  /// survives, not because it is an income record (it is not: the sole
+  /// `studioClass.findMany` in `settings/reporting/page.tsx` queries with
+  /// `cancelledAt: null` and excludes it from earnings and the month rollup
+  /// outright), but because it holds `(templateId, date)`, and a date the
+  /// teacher cancelled deliberately must not be refilled on the next resume.
+  ///
+  /// What is still scheduled is deliberately not stored beside it. The
+  /// archive PATCH returns a `remaining` count once, for the confirmation
+  /// message shown right after the click; nothing persists it and no page
+  /// recomputes it on load. Only the deletion is unrecoverable, so only the
+  /// deletion is recorded — and a frozen copy would go stale the moment a
+  /// teacher cancels one of the survivors.
   withdrawnCount  Int?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt

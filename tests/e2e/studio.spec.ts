@@ -100,11 +100,15 @@ test.describe('Studio class templates', () => {
     // `isArchived` filter at all would still pass a test that only checks the
     // one template it archives. `isActive: false` so it is never picked up by
     // any generator and never appears among the four counted classes in the
-    // next test. A different `(dayOfWeek, startTime)` keeps this insert clear
-    // of `StudioClassTemplate_teacher_slot_unique`, which both rows are
-    // `isArchived: false` under. A `classType` that is not a substring of
-    // "Studio Flow" and does not contain it keeps every `getByText`/`getByRole`
-    // locator below single-match.
+    // next test. A different DAY OF WEEK — not merely a different start time —
+    // keeps this insert clear of `ScheduleRule_teacher_slot_excl` (issue 298),
+    // which both rows are `isArchived: false` under: that constraint is a
+    // range-overlap `EXCLUDE` on (teacherId, dayOfWeek, slot), so two rows on
+    // the SAME day whose [startTime, startTime + duration) ranges merely
+    // overlap would collide even at different start times — varying only the
+    // start time is not sufficient in general under it. A `classType` that is
+    // not a substring of "Studio Flow" and does not contain it keeps every
+    // `getByText`/`getByRole` locator below single-match.
     otherTemplateId = (
       await prisma.studioClassTemplate.create({
         data: {
@@ -249,7 +253,7 @@ test.describe('Studio class templates', () => {
     await hydrated;
 
     // An ACTIVE template offers Pause and nothing else: Archive is drawn
-    // behind `{!template.isActive && …}` in `settings/studio-classes/[id]/page.tsx`.
+    // behind `{!scheduleRule.isActive && …}` in `settings/studio-classes/[id]/page.tsx`.
     await expect(page.getByRole('button', { name: 'Pause studio class' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Archive studio class' })).toHaveCount(0);
 

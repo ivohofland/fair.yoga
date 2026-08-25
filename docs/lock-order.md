@@ -978,7 +978,7 @@ and **ten endpoints across eight route files** answer 409:
 | How it reaches the 409 | Endpoints |
 |---|---|
 | a `catch` beside their own within-family-conflict branch — `isUniqueConflictOn` for the three entry-level writes, `isExclusionConflictOn(err, 'ScheduleRule_teacher_slot_excl')` for the two template `POST`s since #298 replaced their slot index | `POST /api/classes`, `POST /api/studio-classes`, `PUT /api/studio-classes/[id]`, `POST /api/class-templates`, `POST /api/studio-class-templates` |
-| a `cross_family_slot_conflict` reason their service returns, because they issue no write of their own | `PUT /api/classes/[id]`, `PUT /api/class-templates/[id]`, `PUT /api/studio-class-templates/[id]`, `PATCH /api/class-templates/[id]?state=unarchived`, `PATCH /api/studio-class-templates/[id]?state=unarchived` |
+| a service-returned reason, because they issue no write of their own — `cross_family_slot_conflict` for the one entry-level route, still probing the sibling table directly; `slot_conflict` carrying a `heldBy` (`RuleSlotHolder`) for the four template routes, since #298 replaced the sibling-table probe with a single `ScheduleRule` exclusion constraint that cannot itself say which family it refused | `PUT /api/classes/[id]`; `PUT /api/class-templates/[id]`, `PUT /api/studio-class-templates/[id]`, `PATCH /api/class-templates/[id]?state=unarchived`, `PATCH /api/studio-class-templates/[id]?state=unarchived` |
 
 Five and five. An earlier version of this paragraph said "all eight routes …
 five catch, three return", counting FILES on one side of the sentence and

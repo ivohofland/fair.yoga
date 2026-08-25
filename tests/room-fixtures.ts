@@ -1,12 +1,14 @@
 /**
  * Shared fixtures for the room-archive unit tests (issue 76).
  *
- * A FRESH teacher, room and link per case. Two partial unique indexes make
- * shared-teacher fixtures collide: `ClassTemplate_teacher_slot_unique` on
- * (teacherId, dayOfWeek, startTime) WHERE isArchived = false, and
- * `Class_teacher_slot_unique` on (teacherId, date, startTime) WHERE
- * status <> 'cancelled'. A fresh teacher per case sidesteps both — but only
- * ACROSS fixtures, not within one.
+ * A FRESH teacher, room and link per case. Two constraints make shared-teacher
+ * fixtures collide: `ScheduleRule_teacher_slot_excl` (issue 298) — an
+ * `EXCLUDE USING gist` over (teacherId, dayOfWeek, slot) WHERE isArchived =
+ * false, spanning BOTH template families and matching on RANGE OVERLAP rather
+ * than an exact start time, so it is strictly wider than the two exact-start
+ * partial unique indexes it replaced — and `Class_teacher_slot_unique` on
+ * (teacherId, date, startTime) WHERE status <> 'cancelled'. A fresh teacher
+ * per case sidesteps both — but only ACROSS fixtures, not within one.
  *
  * `addClass` derives `startTime` from `seq`, and `seq` advances only in
  * `makeFixture`, never in `addClass` itself; `date` is fixed at today+14. So

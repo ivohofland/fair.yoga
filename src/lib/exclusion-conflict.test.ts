@@ -19,6 +19,21 @@ describe('isExclusionConflictOn', () => {
     expect(isExclusionConflictOn(raise('ScheduleRule_teacher_slot_excl'), 'ScheduleRule_teacher_slot_excl')).toBe(true);
   });
 
+  it('matches the raw-query shape, which spells the SQLSTATE differently', () => {
+    // `P2010`, the shape `$executeRaw` produces — mirrors
+    // `isCrossFamilySlotConflict`'s equivalent case (`cross-family-conflict.test.ts`).
+    // Nothing in `src/` writes `ScheduleRule` raw today, so this shape is
+    // unreachable as the code stands; matched anyway, per that file's
+    // docblock on why "unreachable" is not an argument for dropping a shape.
+    const err = new Prisma.PrismaClientKnownRequestError(
+      'Invalid `prisma.$executeRaw()` invocation:\n\n\n' +
+        'Raw query failed. Code: `23P01`. Message: `ERROR: conflicting key value ' +
+        'violates exclusion constraint "ScheduleRule_teacher_slot_excl"`',
+      { code: 'P2010', clientVersion: 'test' },
+    );
+    expect(isExclusionConflictOn(err, 'ScheduleRule_teacher_slot_excl')).toBe(true);
+  });
+
   it('does not match a different constraint', () => {
     expect(isExclusionConflictOn(raise('SomeOther_excl'), 'ScheduleRule_teacher_slot_excl')).toBe(false);
   });
